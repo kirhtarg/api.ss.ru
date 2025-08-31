@@ -10,10 +10,11 @@ class CheckRole
 {
     /**
      * Handle an incoming request.
+     *
+     * @param  \Closure(\Illuminate\Http\Request): (\Symfony\Component\HttpFoundation\Response)  $next
      */
     public function handle(Request $request, Closure $next, ...$roles): Response
     {
-        // Проверяем, авторизован ли пользователь
         if (!$request->user()) {
             return response()->json([
                 'success' => false,
@@ -21,24 +22,24 @@ class CheckRole
             ], 401);
         }
 
-        // Если роли не указаны, пропускаем
-        if (empty($roles)) {
-            return $next($request);
-        }
-
-        // Проверяем, есть ли у пользователя одна из указанных ролей
         $userRoles = $request->user()->roles->pluck('name')->toArray();
-
+        
+        // Проверяем, есть ли у пользователя хотя бы одна из требуемых ролей
+        $hasRequiredRole = false;
         foreach ($roles as $role) {
             if (in_array($role, $userRoles)) {
-                return $next($request);
+                $hasRequiredRole = true;
+                break;
             }
         }
 
-        // Если у пользователя нет нужных ролей
-        return response()->json([
-            'success' => false,
-            'message' => 'Insufficient permissions'
-        ], 403);
+        if (!$hasRequiredRole) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Access denied. Insufficient permissions.'
+            ], 403);
+        }
+
+        return $next($request);
     }
 }

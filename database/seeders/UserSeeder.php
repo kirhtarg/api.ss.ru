@@ -58,5 +58,23 @@ class UserSeeder extends Seeder
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+
+        // Создаем тестового пользователя с ролью user
+        $userId = DB::table('users')->insertGetId([
+            'name' => 'Тестовый пользователь',
+            'email' => 'user@skateandsnow.ru',
+            'password' => Hash::make('password'),
+            'email_verified_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        // Привязываем роль user к тестовому пользователю
+        DB::table('user_roles')->insert([
+            'user_id' => $userId,
+            'role_id' => $userRoleId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
     }
 }

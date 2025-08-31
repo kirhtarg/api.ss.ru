@@ -1,0 +1,17 @@
+INSERT INTO `admin_pages` VALUES (1,'Dashboard','dashboard','Панель управления','Главная страница администратора','fas fa-tachometer-alt','Dashboard',1,0,'2025-08-30 21:43:13','2025-08-31 09:00:52');
+INSERT INTO `admin_pages` VALUES (2,'Users','users','Пользователи','Управление пользователями системы','fas fa-users','Users',2,0,'2025-08-30 21:43:13','2025-08-31 09:00:56');
+INSERT INTO `admin_pages` VALUES (3,'Settings','settings','Администратор','Настройки системы','clarity:administrator-line','Settings',0,1,'2025-08-30 21:43:13','2025-08-31 09:02:14');
+INSERT INTO `admin_menu_items` VALUES (1,1,NULL,'fas fa-tachometer-alt','Панель управления','/dashboard','Главная страница администратора',1,1,'2025-08-30 21:43:13','2025-08-30 21:43:13');
+INSERT INTO `admin_menu_items` VALUES (2,2,NULL,'fas fa-users','Пользователи','/users','Управление пользователями системы',2,1,'2025-08-30 21:43:13','2025-08-30 21:43:13');
+INSERT INTO `admin_menu_items` VALUES (3,3,NULL,'line-md:cog-loop','Настройки',NULL,'Редактирование значений переменных системы',0,1,'2025-08-30 21:43:13','2025-08-31 09:04:06');
+INSERT INTO `admin_menu_items` VALUES (4,3,NULL,'flowbite:users-solid','Пользователи','users','Добавление и редактирование пользователей',1,1,'2025-08-30 21:52:41','2025-08-31 09:07:47');
+INSERT INTO `admin_menu_items` VALUES (5,3,NULL,'fluent:braces-variable-24-filled','Переменные','variables','Редактирование переменных сайта',0,1,'2025-08-30 22:34:34','2025-08-31 09:05:43');
+INSERT INTO `admin_menu_items` VALUES (6,3,NULL,'carbon:punctuation-check','Разделы админки','pages','Редактирование разделов админки',0,1,'2025-08-30 23:15:28','2025-08-31 09:06:23');
+INSERT INTO `users` VALUES (1,'Admin','admin@skateandsnow.ru','images/users/avatar_1_1756640485.png','2025-08-30 21:43:13','$2y$12$x6IWINE9FAyoXGp/sKUeBeA18fRXNCQWKeteWu1pGYCyA9opc6WdG',NULL,'2025-08-30 21:43:13','2025-08-31 08:41:25');
+INSERT INTO `settings` VALUES (1,'site_name','Название сайта','Skate and Snow','string','general','Название сайта',NULL,NULL,'2025-08-30 21:43:14','2025-08-30 21:43:14');
+INSERT INTO `settings` VALUES (2,'site_description','Описание сайта (description)','Магазин и аренда оборудования для сноуборда и скейтборда','text','general','Описание сайта',NULL,NULL,'2025-08-30 21:43:14','2025-08-30 21:43:14');
+INSERT INTO `settings` VALUES (3,'site_logo','Логотип сайта','images/settings/setting_3_1756642613.png','image','general','Логотип в шапке сайта и везде, где необходимо',400,400,'2025-08-30 21:43:14','2025-08-31 09:16:53');
+INSERT INTO `settings` VALUES (4,'main_site','URL адрес сайта','https://localhost:3001','string','general','Адрес основного сайта',200,200,'2025-08-30 21:43:14','2025-08-30 21:43:14');
+INSERT INTO `settings` VALUES (5,'quick_login','Быстрый вход','1','boolean','general','Отключает кнопку быстрого входа под тестовым пользователем при аутентификации',200,200,'2025-08-30 21:43:14','2025-08-31 10:14:49');
+INSERT INTO `settings` VALUES (6,'admin_name','Название админки','Skate&Snow CMS','string','general','Значение переменной - в заголовках админки',NULL,NULL,'2025-08-30 22:41:04','2025-08-31 07:43:30');
+INSERT INTO `settings` VALUES (8,'site_favicon','Иконка сайта','images/settings/setting_8_1756636879.png','image','general','Иконка сайта, отображаемая на сайте и в админке',32,32,'2025-08-30 23:00:22','2025-08-31 07:41:19');

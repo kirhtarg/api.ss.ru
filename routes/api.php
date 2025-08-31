@@ -2,6 +2,7 @@
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Storage;
 use App\Http\Controllers\Auth\AuthController;
 
 /*
@@ -15,7 +16,7 @@ use App\Http\Controllers\Auth\AuthController;
 |
 */
 
-// Публичные маршруты для авторизации
+// Публичные маршруты для авторизации (без Sanctum stateful middleware)
 Route::post('/login', [AuthController::class, 'login']);
 
 // Публичные маршруты для получения информации о сайте
@@ -42,7 +43,7 @@ Route::get('/public/debug/settings', function () {
     }
 });
 
-// Защищенные маршруты (требуют авторизации)
+// Защищенные маршруты (требуют авторизации) - используют только token authentication
 Route::middleware('auth:sanctum')->group(function () {
     // Авторизация
     Route::post('/logout', [AuthController::class, 'logout']);
@@ -51,7 +52,10 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Маршруты для администраторов
     Route::middleware('role:admin')->prefix('admin')->group(function () {
-                // Settings management
+        // Profile management
+        Route::get('/profile', [\App\Http\Controllers\Api\Admin\ProfileController::class, 'index']);
+        
+        // Settings management
         Route::prefix('settings')->group(function () {
             Route::get('/', [\App\Http\Controllers\Admin\SettingController::class, 'index']);
             Route::post('/', [\App\Http\Controllers\Admin\SettingController::class, 'store']);
@@ -973,7 +977,7 @@ Route::middleware('auth:sanctum')->group(function () {
                         'success' => true,
                         'message' => 'Аватар успешно загружен',
                         'data' => [
-                            'avatar_url' => $user->avatar_url
+                            'avatar' => Storage::url($user->avatar)
                         ]
                     ]);
                 } catch (\Exception $e) {
@@ -1009,7 +1013,7 @@ Route::middleware('auth:sanctum')->group(function () {
                         'success' => true,
                         'message' => 'Аватар успешно удален',
                         'data' => [
-                            'avatar_url' => null
+                            'avatar' => null
                         ]
                     ]);
                 } catch (\Exception $e) {
