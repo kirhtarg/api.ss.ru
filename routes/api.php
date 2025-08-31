@@ -22,6 +22,26 @@ Route::post('/login', [AuthController::class, 'login']);
 Route::get('/public/site-info', [App\Http\Controllers\Api\Public\SiteInfoController::class, 'index']);
 Route::get('/public/settings', [App\Http\Controllers\Api\Public\SiteInfoController::class, 'settings']);
 
+// Временный отладочный endpoint для проверки всех настроек
+Route::get('/public/debug/settings', function () {
+    try {
+        $settings = \App\Models\Setting::select('key', 'value', 'type', 'group')
+            ->orderBy('group')
+            ->orderBy('key')
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'data' => $settings
+        ]);
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Ошибка: ' . $e->getMessage()
+        ], 500);
+    }
+});
+
 // Защищенные маршруты (требуют авторизации)
 Route::middleware('auth:sanctum')->group(function () {
     // Авторизация
@@ -258,6 +278,83 @@ Route::middleware('auth:sanctum')->group(function () {
                     return response()->json([
                         'success' => false,
                         'message' => 'Ошибка удаления страницы: ' . $e->getMessage()
+                    ], 500);
+                }
+            });
+
+            // Изменить статус страницы
+            Route::put('/{id}/status', function (Request $request, $id) {
+                try {
+                    $page = \App\Models\AdminPage::find($id);
+
+                    if (!$page) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Страница не найдена'
+                        ], 404);
+                    }
+
+                    $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
+                        'is_active' => 'required|boolean'
+                    ]);
+
+                    if ($validator->fails()) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Ошибка валидации',
+                            'errors' => $validator->errors()
+                        ], 422);
+                    }
+
+                    $page->update([
+                        'is_active' => $request->is_active
+                    ]);
+
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Статус страницы успешно обновлен',
+                        'data' => [
+                            'id' => $page->id,
+                            'is_active' => $page->is_active
+                        ]
+                    ]);
+                } catch (\Exception $e) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка обновления статуса: ' . $e->getMessage()
+                    ], 500);
+                }
+            });
+
+            // Изменить порядок страниц
+            Route::post('/order', function (Request $request) {
+                try {
+                    $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
+                        'items' => 'required|array',
+                        'items.*.id' => 'required|exists:admin_pages,id',
+                        'items.*.order' => 'required|integer|min:0'
+                    ]);
+
+                    if ($validator->fails()) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Ошибка валидации',
+                            'errors' => $validator->errors()
+                        ], 422);
+                    }
+
+                    foreach ($request->items as $item) {
+                        \App\Models\AdminPage::where('id', $item['id'])->update(['order' => $item['order']]);
+                    }
+
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Порядок страниц успешно обновлен'
+                    ]);
+                } catch (\Exception $e) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка обновления порядка: ' . $e->getMessage()
                     ], 500);
                 }
             });

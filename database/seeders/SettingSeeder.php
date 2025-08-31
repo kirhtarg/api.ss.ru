@@ -63,6 +63,18 @@ class SettingSeeder extends Seeder
                 'updated_at' => now(),
             ],
             [
+                'key' => 'quick_login',
+                'name' => 'Быстрый вход',
+                'value' => 'true',
+                'type' => 'boolean',
+                'group' => 'admin',
+                'description' => 'Показывать кнопку быстрого входа для администратора',
+                'image_width' => null,
+                'image_height' => null,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
                 'key' => 'default_avatar_width',
                 'name' => 'Ширина аватара по умолчанию',
                 'value' => '200',

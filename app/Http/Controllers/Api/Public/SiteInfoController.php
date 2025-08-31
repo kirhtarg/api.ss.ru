@@ -17,27 +17,18 @@ class SiteInfoController extends Controller
     public function index(): JsonResponse
     {
         try {
-            // Используем кэш для уменьшения нагрузки на базу
-            $cacheKey = 'site_info_public';
-            $siteInfo = Cache::remember($cacheKey, 3600, function () {
-                // Получаем только необходимые настройки
-                $settings = Setting::select('key', 'value')
-                    ->whereIn('key', [
-                        'admin_name',
-                        'site_logo',
-                        'main_site',
-                        'site_description',
-                        'site_keywords'
-                    ])
-                    ->get();
+            // Очищаем кэш для этого API
+            Cache::forget('site_info_public');
 
-                $siteInfo = [];
-                foreach ($settings as $setting) {
-                    $siteInfo[$setting->key] = $setting->value;
-                }
+            // Получаем все настройки с группой general без кэширования
+            $settings = Setting::select('key', 'value', 'type', 'group')
+                ->where('group', 'general')
+                ->get();
 
-                return $siteInfo;
-            });
+            $siteInfo = [];
+            foreach ($settings as $setting) {
+                $siteInfo[$setting->key] = $setting->value;
+            }
 
             return response()->json([
                 'success' => true,

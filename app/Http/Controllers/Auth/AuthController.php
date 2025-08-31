@@ -121,7 +121,7 @@ class AuthController extends Controller
                     'name' => $user->name,
                     'email' => $user->email,
                     'role' => $user->roles->first() ? $user->roles->first()->name : 'user',
-                    'avatar_url' => null,
+                    'avatar_url' => $user->avatar_url,
                     'is_active' => true,
                     'permissions' => $permissions,
                     'last_login_at' => null,
