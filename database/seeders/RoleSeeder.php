@@ -21,21 +21,9 @@ class RoleSeeder extends Seeder
                 'is_active' => true,
             ],
             [
-                'name' => 'manager',
-                'display_name' => 'Менеджер',
-                'description' => 'Доступ к управлению контентом и пользователями',
-                'is_active' => true,
-            ],
-            [
-                'name' => 'moderator',
-                'display_name' => 'Модератор',
-                'description' => 'Доступ к модерации контента',
-                'is_active' => true,
-            ],
-            [
                 'name' => 'user',
                 'display_name' => 'Пользователь',
-                'description' => 'Обычный пользователь',
+                'description' => 'Обычный пользователь без доступа к админке',
                 'is_active' => true,
             ],
         ];

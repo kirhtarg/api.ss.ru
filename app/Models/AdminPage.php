@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class AdminPage extends Model
 {
@@ -29,6 +30,14 @@ class AdminPage extends Model
     public function menuItems(): HasMany
     {
         return $this->hasMany(AdminMenuItem::class, 'page_id');
+    }
+
+    /**
+     * Роли, которые имеют доступ к этой странице
+     */
+    public function roles(): BelongsToMany
+    {
+        return $this->belongsToMany(Role::class, 'admin_page_role', 'admin_page_id', 'role_id');
     }
 
     /**

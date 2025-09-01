@@ -78,14 +78,6 @@ class User extends Authenticatable
     }
 
     /**
-     * Проверить, является ли пользователь менеджером
-     */
-    public function isManager(): bool
-    {
-        return $this->hasRole('manager');
-    }
-
-    /**
      * Проверить, является ли пользователь обычным пользователем
      */
     public function isRegularUser(): bool

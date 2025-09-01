@@ -72,6 +72,34 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/{id}/resize', [\App\Http\Controllers\Admin\SettingController::class, 'resizeImage']);
         });
 
+        // Roles management
+        Route::prefix('roles')->group(function () {
+            Route::get('/', [\App\Http\Controllers\Admin\RoleController::class, 'index']);
+            Route::get('/{id}', [\App\Http\Controllers\Admin\RoleController::class, 'show']);
+            Route::post('/', [\App\Http\Controllers\Admin\RoleController::class, 'store']);
+            Route::put('/{id}', [\App\Http\Controllers\Admin\RoleController::class, 'update']);
+            Route::delete('/{id}', [\App\Http\Controllers\Admin\RoleController::class, 'destroy']);
+            Route::put('/{id}/status', [\App\Http\Controllers\Admin\RoleController::class, 'updateStatus']);
+            Route::get('/statistics/overview', [\App\Http\Controllers\Admin\RoleController::class, 'statistics']);
+        });
+
+        // Debug endpoint для проверки ролей (временно)
+        Route::get('/debug/roles', function () {
+            try {
+                $roles = \App\Models\Role::all();
+                return response()->json([
+                    'success' => true,
+                    'data' => $roles,
+                    'message' => 'Roles debug info'
+                ]);
+            } catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка: ' . $e->getMessage()
+                ], 500);
+            }
+        });
+
         // Users management
         Route::prefix('users')->group(function () {
             Route::get('/statistics', function () {
@@ -362,6 +390,60 @@ Route::middleware('auth:sanctum')->group(function () {
                     ], 500);
                 }
             });
+
+            // Получение доступа к страницам для ролей
+            Route::get('/access', function () {
+                try {
+                    $pageAccess = \App\Models\AdminPage::with('roles')->get()->mapWithKeys(function ($page) {
+                        return [$page->id => $page->roles->pluck('id')->toArray()];
+                    });
+
+                    return response()->json([
+                        'success' => true,
+                        'data' => $pageAccess
+                    ]);
+                } catch (\Exception $e) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка получения доступа к страницам: ' . $e->getMessage()
+                    ], 500);
+                }
+            });
+
+            // Управление доступом к конкретной странице
+            Route::put('/{id}/access', function (Request $request, $id) {
+                try {
+                    $page = \App\Models\AdminPage::find($id);
+                    if (!$page) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Страница не найдена'
+                        ], 404);
+                    }
+
+                    $request->validate([
+                        'role_ids' => 'array',
+                        'role_ids.*' => 'integer|exists:roles,id'
+                    ]);
+
+                    // Синхронизируем роли для страницы
+                    $page->roles()->sync($request->input('role_ids', []));
+
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Доступ к странице обновлен',
+                        'data' => [
+                            'page_id' => $page->id,
+                            'role_ids' => $request->input('role_ids', [])
+                        ]
+                    ]);
+                } catch (\Exception $e) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка обновления доступа: ' . $e->getMessage()
+                    ], 500);
+                }
+            });
         });
 
         // Users management
@@ -380,6 +462,7 @@ Route::middleware('auth:sanctum')->group(function () {
                                 'avatar' => $user->avatar,
                                 'avatar_url' => $user->avatar_url,
                                 'roles' => $user->roles->pluck('name'),
+                                'is_active' => $user->is_active,
                                 'created_at' => $user->created_at,
                                 'updated_at' => $user->updated_at,
                             ];
@@ -405,8 +488,10 @@ Route::middleware('auth:sanctum')->group(function () {
                         'email' => 'required|email|unique:users,email',
                         'password' => 'required|string|min:8',
                         'password_confirmation' => 'required|string|same:password',
-                        'roles' => 'array',
-                        'roles.*' => 'string|exists:roles,name'
+                        'role' => 'string|exists:roles,name', // Принимаем одну роль
+                        'roles' => 'array', // Также поддерживаем массив ролей для совместимости
+                        'roles.*' => 'string|exists:roles,name',
+                        'is_active' => 'boolean' // Статус активности
                     ]);
 
                     if ($validator->fails()) {
@@ -418,14 +503,27 @@ Route::middleware('auth:sanctum')->group(function () {
                     }
 
                     // Создаем пользователя
-                    $user = \App\Models\User::create([
+                    $userData = [
                         'name' => $request->name,
                         'email' => $request->email,
                         'password' => \Illuminate\Support\Facades\Hash::make($request->password),
-                    ]);
+                    ];
+                    
+                    // Добавляем статус активности, если передан
+                    if ($request->has('is_active')) {
+                        $userData['is_active'] = $request->boolean('is_active');
+                    }
+                    
+                    $user = \App\Models\User::create($userData);
 
-                    // Привязываем роли, если они переданы
-                    if ($request->has('roles') && !empty($request->roles)) {
+                    // Привязываем роли
+                    if ($request->has('role') && !empty($request->role)) {
+                        // Если передана одна роль
+                        $user->roles()->attach(
+                            \App\Models\Role::where('name', $request->role)->first()->id
+                        );
+                    } elseif ($request->has('roles') && !empty($request->roles)) {
+                        // Если передан массив ролей
                         $user->roles()->attach(
                             \App\Models\Role::whereIn('name', $request->roles)->pluck('id')
                         );
@@ -449,6 +547,7 @@ Route::middleware('auth:sanctum')->group(function () {
                             'avatar' => $user->avatar,
                             'avatar_url' => $user->avatar_url,
                             'roles' => $user->roles->pluck('name'),
+                            'is_active' => $user->is_active,
                             'created_at' => $user->created_at,
                             'updated_at' => $user->updated_at,
                         ]
@@ -501,6 +600,10 @@ Route::middleware('auth:sanctum')->group(function () {
                     $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
                         'name' => 'required|string|max:255',
                         'email' => 'required|email|unique:users,email,' . $id,
+                        'role' => 'string|exists:roles,name', // Принимаем одну роль
+                        'roles' => 'array', // Также поддерживаем массив ролей для совместимости
+                        'roles.*' => 'string|exists:roles,name',
+                        'is_active' => 'boolean' // Статус активности
                     ]);
 
                     if ($validator->fails()) {
@@ -512,13 +615,26 @@ Route::middleware('auth:sanctum')->group(function () {
                     }
 
                     // Обновляем пользователя
-                    $user->update([
+                    $updateData = [
                         'name' => $request->name,
                         'email' => $request->email,
-                    ]);
+                    ];
+                    
+                    // Добавляем статус активности, если передан
+                    if ($request->has('is_active')) {
+                        $updateData['is_active'] = $request->boolean('is_active');
+                    }
+                    
+                    $user->update($updateData);
 
-                    // Обновляем роли, если они переданы
-                    if ($request->has('roles')) {
+                    // Обновляем роли
+                    if ($request->has('role') && !empty($request->role)) {
+                        // Если передана одна роль
+                        $user->roles()->sync([
+                            \App\Models\Role::where('name', $request->role)->first()->id
+                        ]);
+                    } elseif ($request->has('roles') && !empty($request->roles)) {
+                        // Если передан массив ролей
                         $user->roles()->sync($request->roles);
                     }
 
@@ -535,6 +651,7 @@ Route::middleware('auth:sanctum')->group(function () {
                             'avatar' => $user->avatar,
                             'avatar_url' => $user->avatar_url,
                             'roles' => $user->roles->pluck('name'),
+                            'is_active' => $user->is_active,
                             'created_at' => $user->created_at,
                             'updated_at' => $user->updated_at,
                         ]
@@ -543,6 +660,38 @@ Route::middleware('auth:sanctum')->group(function () {
                     return response()->json([
                         'success' => false,
                         'message' => 'Ошибка обновления пользователя: ' . $e->getMessage()
+                    ], 500);
+                }
+            });
+
+            // Быстрое изменение статуса активности пользователя
+            Route::put('/{id}/toggle-status', function (Request $request, $id) {
+                try {
+                    $user = \App\Models\User::find($id);
+
+                    if (!$user) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Пользователь не найден'
+                        ], 404);
+                    }
+
+                    // Переключаем статус активности
+                    $user->is_active = !$user->is_active;
+                    $user->save();
+
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Статус активности пользователя изменен',
+                        'data' => [
+                            'id' => $user->id,
+                            'is_active' => $user->is_active
+                        ]
+                    ]);
+                } catch (\Exception $e) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка изменения статуса: ' . $e->getMessage()
                     ], 500);
                 }
             });
