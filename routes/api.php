@@ -100,6 +100,17 @@ Route::middleware('auth:sanctum')->group(function () {
             }
         });
 
+        // Categories management
+        Route::prefix('categories')->group(function () {
+            Route::get('/', [\App\Http\Controllers\CategoryController::class, 'index']);
+            Route::get('/active', [\App\Http\Controllers\CategoryController::class, 'active']);
+            Route::get('/{id}', [\App\Http\Controllers\CategoryController::class, 'show']);
+            Route::post('/', [\App\Http\Controllers\CategoryController::class, 'store']);
+            Route::put('/{id}', [\App\Http\Controllers\CategoryController::class, 'update']);
+            Route::delete('/{id}', [\App\Http\Controllers\CategoryController::class, 'destroy']);
+            Route::post('/upload-image', [\App\Http\Controllers\CategoryController::class, 'uploadImage']);
+        });
+
         // Users management
         Route::prefix('users')->group(function () {
             Route::get('/statistics', function () {

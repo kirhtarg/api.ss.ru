@@ -50,6 +50,33 @@ class AdminMenuItemSeeder extends Seeder
                 'created_at' => now(),
                 'updated_at' => now(),
             ],
+
+            // Пункты меню для раздела Shop
+            [
+                'page_id' => 4, // Shop
+                'parent_id' => null,
+                'icon' => 'fas fa-shopping-cart',
+                'label' => 'Управление магазином',
+                'href' => '',
+                'description' => 'Главная страница магазина',
+                'order' => 1,
+                'is_active' => true,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'page_id' => 4, // Shop
+                'parent_id' => null,
+                'icon' => 'fas fa-tags',
+                'label' => 'Категории',
+                'href' => 'categories',
+                'description' => 'Управление категориями товаров',
+                'order' => 2,
+                'is_active' => true,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+
         ];
 
         foreach ($menuItems as $item) {
