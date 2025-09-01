@@ -108,8 +108,49 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/', [\App\Http\Controllers\CategoryController::class, 'store']);
             Route::put('/{id}', [\App\Http\Controllers\CategoryController::class, 'update']);
             Route::delete('/{id}', [\App\Http\Controllers\CategoryController::class, 'destroy']);
+            Route::post('/{id}/image', [\App\Http\Controllers\ImageUploadController::class, 'uploadCategoryImage']);
+            Route::delete('/{id}/image', [\App\Http\Controllers\ImageUploadController::class, 'deleteCategoryImage']);
+            Route::post('/temp/image', [\App\Http\Controllers\ImageUploadController::class, 'uploadTempImage']);
             Route::post('/upload-image', [\App\Http\Controllers\CategoryController::class, 'uploadImage']);
+            Route::post('/sort-alphabetically', [\App\Http\Controllers\CategoryController::class, 'sortAlphabetically']);
+            
+            // Изменить порядок категорий
+            Route::post('/order', function (Request $request) {
+                try {
+                    $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
+                        'items' => 'required|array',
+                        'items.*.id' => 'required|exists:shop_categories,id',
+                        'items.*.sort_order' => 'required|integer|min:0'
+                    ]);
+
+                    if ($validator->fails()) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Ошибка валидации',
+                            'errors' => $validator->errors()
+                        ], 422);
+                    }
+
+                    foreach ($request->items as $item) {
+                        \App\Models\ShopCategory::where('id', $item['id'])->update(['sort_order' => $item['sort_order']]);
+                    }
+
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Порядок категорий успешно обновлен'
+                    ]);
+                } catch (\Exception $e) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка обновления порядка: ' . $e->getMessage()
+                    ], 500);
+                }
+            });
         });
+
+        // Настройки магазина
+        Route::get('/shop-settings', [\App\Http\Controllers\ShopSettingsController::class, 'getShopSettings']);
+        Route::get('/shop-settings/{key}', [\App\Http\Controllers\ShopSettingsController::class, 'getShopSetting']);
 
         // Users management
         Route::prefix('users')->group(function () {

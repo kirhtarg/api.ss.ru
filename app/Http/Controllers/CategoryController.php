@@ -96,7 +96,7 @@ class CategoryController extends Controller
                 'slug' => 'nullable|string|max:255|unique:shop_categories,slug',
                 'is_active' => 'boolean',
                 'sort_order' => 'integer|min:0',
-                'parent_id' => 'nullable|exists:shop_categories,id'
+                'parent_id' => 'nullable|integer|exists:shop_categories,id'
             ]);
 
             if ($validator->fails()) {
@@ -107,7 +107,31 @@ class CategoryController extends Controller
                 ], 422);
             }
 
-            $category = ShopCategory::create($request->all());
+            // Подготавливаем данные для создания
+            $data = $request->all();
+            
+            // Обрабатываем parent_id - если передано null или пустая строка, устанавливаем null
+            if (isset($data['parent_id']) && ($data['parent_id'] === '' || $data['parent_id'] === null)) {
+                $data['parent_id'] = null;
+            }
+
+            // Автоматически генерируем slug из названия, если не передан
+            if (empty($data['slug'])) {
+                $data['slug'] = \Illuminate\Support\Str::slug($data['name']);
+                
+                // Проверяем уникальность slug
+                $counter = 1;
+                $originalSlug = $data['slug'];
+                while (ShopCategory::where('slug', $data['slug'])->exists()) {
+                    $data['slug'] = $originalSlug . '-' . $counter;
+                    $counter++;
+                }
+            }
+
+            $category = ShopCategory::create($data);
+
+            // Загружаем связанные данные для ответа
+            $category->load('parent');
 
             return response()->json([
                 'success' => true,
@@ -145,7 +169,7 @@ class CategoryController extends Controller
                 'slug' => 'nullable|string|max:255|unique:shop_categories,slug,' . $id,
                 'is_active' => 'boolean',
                 'sort_order' => 'integer|min:0',
-                'parent_id' => 'nullable|exists:shop_categories,id'
+                'parent_id' => 'nullable|integer|exists:shop_categories,id'
             ]);
 
             if ($validator->fails()) {
@@ -156,7 +180,31 @@ class CategoryController extends Controller
                 ], 422);
             }
 
-            $category->update($request->all());
+            // Подготавливаем данные для обновления
+            $data = $request->all();
+            
+            // Обрабатываем parent_id - если передано null или пустая строка, устанавливаем null
+            if (isset($data['parent_id']) && ($data['parent_id'] === '' || $data['parent_id'] === null)) {
+                $data['parent_id'] = null;
+            }
+
+            // Автоматически генерируем slug из названия, если не передан и изменилось название
+            if (empty($data['slug']) && isset($data['name']) && $data['name'] !== $category->name) {
+                $data['slug'] = \Illuminate\Support\Str::slug($data['name']);
+                
+                // Проверяем уникальность slug
+                $counter = 1;
+                $originalSlug = $data['slug'];
+                while (ShopCategory::where('slug', $data['slug'])->where('id', '!=', $id)->exists()) {
+                    $data['slug'] = $originalSlug . '-' . $counter;
+                    $counter++;
+                }
+            }
+
+            $category->update($data);
+
+            // Загружаем связанные данные для ответа
+            $category->load('parent');
 
             return response()->json([
                 'success' => true,
@@ -204,6 +252,47 @@ class CategoryController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка при удалении категории: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Сортировать категории по алфавиту
+     */
+    public function sortAlphabetically(Request $request): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'direction' => 'required|in:asc,desc'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $direction = $request->input('direction');
+            
+            // Получаем все категории и сортируем по названию
+            $categories = ShopCategory::orderBy('name', $direction)->get();
+            
+            // Обновляем sort_order для каждой категории
+            foreach ($categories as $index => $category) {
+                $category->update(['sort_order' => $index]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Категории отсортированы по алфавиту',
+                'data' => $categories
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при сортировке категорий: ' . $e->getMessage()
             ], 500);
         }
     }

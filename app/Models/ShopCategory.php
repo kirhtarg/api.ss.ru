@@ -64,7 +64,7 @@ class ShopCategory extends Model
         return $query->orderBy('sort_order', 'asc')->orderBy('name', 'asc');
     }
 
-    // Автоматическое создание slug из названия
+    // Автоматическое создание slug из названия (если не передан)
     protected static function boot()
     {
         parent::boot();
