@@ -27,7 +27,7 @@ class AdminPageAccessSeeder extends Seeder
         $pages = AdminPage::all();
 
         // Страницы, к которым должен иметь доступ менеджер
-        $managerAllowedPages = ['dashboard', 'shop', 'settings'];
+        $managerAllowedPages = ['dashboard', 'shop', 'settings', 'users', 'content', 'rental', 'analytics'];
 
         foreach ($pages as $page) {
             // Администратор имеет доступ ко всем страницам
