@@ -15,6 +15,7 @@ return Application::configure(basePath: dirname(__DIR__))
         // Регистрируем кастомные middleware
         $middleware->alias([
             'role' => \App\Http\Middleware\CheckRole::class,
+            'shop.access' => \App\Http\Middleware\CheckShopAccess::class,
         ]);
         
         // Настраиваем API middleware - только token-based аутентификация

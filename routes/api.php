@@ -112,8 +112,8 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/{id}', [\App\Http\Controllers\CategoryController::class, 'show']);
         });
 
-        // Categories management (создание/редактирование/удаление только для админов)
-        Route::middleware('role:admin')->prefix('categories')->group(function () {
+        // Categories management (создание/редактирование/удаление для пользователей с доступом к shop)
+        Route::middleware('shop.access')->prefix('categories')->group(function () {
             Route::post('/', [\App\Http\Controllers\CategoryController::class, 'store']);
             Route::put('/{id}', [\App\Http\Controllers\CategoryController::class, 'update']);
             Route::delete('/{id}', [\App\Http\Controllers\CategoryController::class, 'destroy']);
@@ -157,8 +157,8 @@ Route::middleware('auth:sanctum')->group(function () {
             });
         });
 
-        // Настройки магазина (только для админов)
-        Route::middleware('role:admin')->group(function () {
+        // Настройки магазина (для пользователей с доступом к shop)
+        Route::middleware('shop.access')->group(function () {
             Route::get('/shop-settings', [\App\Http\Controllers\ShopSettingsController::class, 'getShopSettings']);
             Route::get('/shop-settings/{key}', [\App\Http\Controllers\ShopSettingsController::class, 'getShopSetting']);
         });
