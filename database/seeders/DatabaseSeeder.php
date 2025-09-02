@@ -20,6 +20,7 @@ class DatabaseSeeder extends Seeder
             AdminMenuItemSeeder::class,
             SettingSeeder::class,
             ManagerAccessSeeder::class,
+            ShopSeeder::class,
         ]);
     }
 }

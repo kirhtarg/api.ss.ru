@@ -163,6 +163,99 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/shop-settings/{key}', [\App\Http\Controllers\ShopSettingsController::class, 'getShopSetting']);
         });
 
+        // Shop management (для пользователей с доступом к shop)
+        Route::middleware('shop.access')->prefix('shop')->group(function () {
+            // Товары
+            Route::prefix('goods')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'index']);
+                Route::get('/filters', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'filters']);
+                Route::get('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'show']);
+                Route::post('/', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'store']);
+                Route::put('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'update']);
+                Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'destroy']);
+                Route::post('/bulk-update', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'bulkUpdate']);
+                
+                // Импорт/экспорт товаров
+                Route::prefix('import-export')->group(function () {
+                    Route::post('/export/csv', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'exportCsv']);
+                    Route::post('/export/excel', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'exportExcel']);
+                    Route::post('/import/csv', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'importCsv']);
+                    Route::get('/template', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getTemplate']);
+                });
+                
+                // Вариации товаров
+                Route::prefix('{goodId}/variations')->group(function () {
+                    Route::get('/', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'index']);
+                    Route::get('/attributes', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'attributes']);
+                    Route::get('/{variationId}', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'show']);
+                    Route::post('/', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'store']);
+                    Route::put('/{variationId}', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'update']);
+                    Route::delete('/{variationId}', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'destroy']);
+                });
+                
+                // Изображения товаров
+                Route::prefix('{goodId}/images')->group(function () {
+                    Route::get('/', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'index']);
+                    Route::post('/', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'store']);
+                    Route::put('/{imageId}', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'update']);
+                    Route::delete('/{imageId}', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'destroy']);
+                    Route::put('/{imageId}/main', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'setMain']);
+                    Route::post('/reorder', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'reorder']);
+                });
+                
+                // Видео товаров
+                Route::prefix('{goodId}/videos')->group(function () {
+                    Route::get('/', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'index']);
+                    Route::post('/', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'store']);
+                    Route::put('/{videoId}', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'update']);
+                    Route::delete('/{videoId}', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'destroy']);
+                    Route::put('/{videoId}/main', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'setMain']);
+                    Route::post('/reorder', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'reorder']);
+                });
+            });
+            
+            // Бренды
+            Route::prefix('brands')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Admin\ShopBrandsController::class, 'index']);
+                Route::get('/active', [\App\Http\Controllers\Admin\ShopBrandsController::class, 'active']);
+                Route::get('/{id}', [\App\Http\Controllers\Admin\ShopBrandsController::class, 'show']);
+                Route::post('/', [\App\Http\Controllers\Admin\ShopBrandsController::class, 'store']);
+                Route::put('/{id}', [\App\Http\Controllers\Admin\ShopBrandsController::class, 'update']);
+                Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopBrandsController::class, 'destroy']);
+            });
+            
+            // Теги
+            Route::prefix('tags')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Admin\ShopTagsController::class, 'index']);
+                Route::get('/active', [\App\Http\Controllers\Admin\ShopTagsController::class, 'active']);
+                Route::get('/{id}', [\App\Http\Controllers\Admin\ShopTagsController::class, 'show']);
+                Route::post('/', [\App\Http\Controllers\Admin\ShopTagsController::class, 'store']);
+                Route::put('/{id}', [\App\Http\Controllers\Admin\ShopTagsController::class, 'update']);
+                Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopTagsController::class, 'destroy']);
+            });
+            
+            // Свойства товаров
+            Route::prefix('properties')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Admin\ShopPropertiesController::class, 'index']);
+                Route::get('/active', [\App\Http\Controllers\Admin\ShopPropertiesController::class, 'active']);
+                Route::get('/{id}', [\App\Http\Controllers\Admin\ShopPropertiesController::class, 'show']);
+                Route::post('/', [\App\Http\Controllers\Admin\ShopPropertiesController::class, 'store']);
+                Route::put('/{id}', [\App\Http\Controllers\Admin\ShopPropertiesController::class, 'update']);
+                Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopPropertiesController::class, 'destroy']);
+            });
+            
+            // Заказы
+            Route::prefix('orders')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'index']);
+                Route::get('/{id}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'show']);
+                Route::post('/', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'store']);
+                Route::put('/{id}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'update']);
+                Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'destroy']);
+                Route::put('/{id}/status', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateStatus']);
+                Route::post('/export', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'export']);
+            });
+        });
+
         // Users management
         Route::prefix('users')->group(function () {
             Route::get('/statistics', function () {

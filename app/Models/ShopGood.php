@@ -1,0 +1,309 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Support\Str;
+
+class ShopGood extends Model
+{
+    use HasFactory;
+
+    protected $fillable = [
+        'name',
+        'slug',
+        'sku',
+        'description',
+        'short_description',
+        'price',
+        'sale_price',
+        'stock_quantity',
+        'width',
+        'height',
+        'depth',
+        'weight',
+        'rating',
+        'reviews_count',
+        'meta_title',
+        'meta_description',
+        'is_active',
+        'is_featured',
+        'is_new',
+        'is_sale',
+        'sort_order'
+    ];
+
+    protected $casts = [
+        'price' => 'decimal:2',
+        'sale_price' => 'decimal:2',
+        'stock_quantity' => 'integer',
+        'width' => 'decimal:2',
+        'height' => 'decimal:2',
+        'depth' => 'decimal:2',
+        'weight' => 'decimal:2',
+        'rating' => 'decimal:2',
+        'reviews_count' => 'integer',
+        'is_active' => 'boolean',
+        'is_featured' => 'boolean',
+        'is_new' => 'boolean',
+        'is_sale' => 'boolean',
+        'sort_order' => 'integer'
+    ];
+
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::creating(function ($good) {
+            if (empty($good->slug)) {
+                $good->slug = Str::slug($good->name);
+            }
+        });
+
+        static::updating(function ($good) {
+            if ($good->isDirty('name') && empty($good->slug)) {
+                $good->slug = Str::slug($good->name);
+            }
+        });
+    }
+
+    /**
+     * Категории товара
+     */
+    public function categories(): BelongsToMany
+    {
+        return $this->belongsToMany(ShopCategory::class, 'shop_good_categories', 'good_id', 'category_id');
+    }
+
+    /**
+     * Бренды товара
+     */
+    public function brands(): BelongsToMany
+    {
+        return $this->belongsToMany(ShopBrand::class, 'shop_good_brands', 'good_id', 'brand_id');
+    }
+
+    /**
+     * Теги товара
+     */
+    public function tags(): BelongsToMany
+    {
+        return $this->belongsToMany(ShopTag::class, 'shop_good_tags', 'good_id', 'tag_id');
+    }
+
+    /**
+     * Свойства товара
+     */
+    public function properties(): BelongsToMany
+    {
+        return $this->belongsToMany(ShopProperty::class, 'shop_good_properties', 'good_id', 'property_id')
+            ->withPivot('value')
+            ->withTimestamps();
+    }
+
+    /**
+     * Вариации товара
+     */
+    public function variations(): HasMany
+    {
+        return $this->hasMany(ShopGoodVariation::class, 'good_id');
+    }
+
+    /**
+     * Изображения товара
+     */
+    public function images(): HasMany
+    {
+        return $this->hasMany(ShopGoodImage::class, 'good_id');
+    }
+
+    /**
+     * Видео товара
+     */
+    public function videos(): HasMany
+    {
+        return $this->hasMany(ShopGoodVideo::class, 'good_id');
+    }
+
+    /**
+     * Остатки товара
+     */
+    public function stock(): HasMany
+    {
+        return $this->hasMany(ShopStock::class, 'good_id');
+    }
+
+    /**
+     * Цены товара
+     */
+    public function prices(): HasMany
+    {
+        return $this->hasMany(ShopGoodPrice::class, 'good_id');
+    }
+
+    /**
+     * Аудит товара
+     */
+    public function audit(): HasMany
+    {
+        return $this->hasMany(ShopGoodAudit::class, 'good_id');
+    }
+
+    /**
+     * Главное изображение
+     */
+    public function mainImage(): HasOne
+    {
+        return $this->hasOne(ShopGoodImage::class, 'good_id')->where('is_main', true);
+    }
+
+    /**
+     * Scope для активных товаров
+     */
+    public function scopeActive($query)
+    {
+        return $query->where('is_active', true);
+    }
+
+    /**
+     * Scope для рекомендуемых товаров
+     */
+    public function scopeFeatured($query)
+    {
+        return $query->where('is_featured', true);
+    }
+
+    /**
+     * Scope для новых товаров
+     */
+    public function scopeNew($query)
+    {
+        return $query->where('is_new', true);
+    }
+
+    /**
+     * Scope для товаров со скидкой
+     */
+    public function scopeSale($query)
+    {
+        return $query->where('is_sale', true);
+    }
+
+    /**
+     * Scope для сортировки
+     */
+    public function scopeOrdered($query)
+    {
+        return $query->orderBy('sort_order')->orderBy('name');
+    }
+
+    /**
+     * Scope для поиска по названию, SKU, описанию
+     */
+    public function scopeSearch($query, $search)
+    {
+        return $query->where(function ($q) use ($search) {
+            $q->where('name', 'like', "%{$search}%")
+              ->orWhere('sku', 'like', "%{$search}%")
+              ->orWhere('description', 'like', "%{$search}%")
+              ->orWhere('short_description', 'like', "%{$search}%");
+        });
+    }
+
+    /**
+     * Scope для фильтрации по цене
+     */
+    public function scopePriceRange($query, $minPrice, $maxPrice)
+    {
+        if ($minPrice) {
+            $query->where('price', '>=', $minPrice);
+        }
+        if ($maxPrice) {
+            $query->where('price', '<=', $maxPrice);
+        }
+        return $query;
+    }
+
+    /**
+     * Scope для фильтрации по рейтингу
+     */
+    public function scopeRating($query, $minRating)
+    {
+        return $query->where('rating', '>=', $minRating);
+    }
+
+    /**
+     * Scope для фильтрации по наличию
+     */
+    public function scopeInStock($query)
+    {
+        return $query->where('stock_quantity', '>', 0);
+    }
+
+    /**
+     * Scope для фильтрации по категории
+     */
+    public function scopeByCategory($query, $categoryId)
+    {
+        return $query->whereHas('categories', function ($q) use ($categoryId) {
+            $q->where('categories.id', $categoryId);
+        });
+    }
+
+    /**
+     * Scope для фильтрации по бренду
+     */
+    public function scopeByBrand($query, $brandId)
+    {
+        return $query->whereHas('brands', function ($q) use ($brandId) {
+            $q->where('shop_brands.id', $brandId);
+        });
+    }
+
+    /**
+     * Scope для фильтрации по тегу
+     */
+    public function scopeByTag($query, $tagId)
+    {
+        return $query->whereHas('tags', function ($q) use ($tagId) {
+            $q->where('shop_tags.id', $tagId);
+        });
+    }
+
+    /**
+     * Получить финальную цену (с учетом скидки)
+     */
+    public function getFinalPriceAttribute()
+    {
+        return $this->sale_price ?: $this->price;
+    }
+
+    /**
+     * Получить размер скидки в процентах
+     */
+    public function getDiscountPercentAttribute()
+    {
+        if (!$this->sale_price || $this->sale_price >= $this->price) {
+            return 0;
+        }
+        
+        return round((($this->price - $this->sale_price) / $this->price) * 100);
+    }
+
+    /**
+     * Получить габариты в виде строки
+     */
+    public function getDimensionsAttribute()
+    {
+        $dimensions = [];
+        if ($this->width) $dimensions[] = $this->width . '×';
+        if ($this->height) $dimensions[] = $this->height . '×';
+        if ($this->depth) $dimensions[] = $this->depth;
+        
+        return implode('', $dimensions) ?: null;
+    }
+}
