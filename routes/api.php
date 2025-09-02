@@ -50,30 +50,34 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', [AuthController::class, 'user']);
     Route::get('/auth/check', [AuthController::class, 'check']);
 
-    // Маршруты для администраторов
-    Route::middleware('role:admin')->prefix('admin')->group(function () {
+    // Маршруты для администраторов и менеджеров
+    Route::middleware('role:admin,manager')->prefix('admin')->group(function () {
         // Profile management
         Route::get('/profile', [\App\Http\Controllers\Api\Admin\ProfileController::class, 'index']);
         
-        // Settings management
+        // Settings management (только просмотр для менеджеров)
         Route::prefix('settings')->group(function () {
             Route::get('/', [\App\Http\Controllers\Admin\SettingController::class, 'index']);
-            Route::post('/', [\App\Http\Controllers\Admin\SettingController::class, 'store']);
-            Route::put('/{id}', [\App\Http\Controllers\Admin\SettingController::class, 'update']);
-            Route::delete('/{id}', [\App\Http\Controllers\Admin\SettingController::class, 'destroy']);
+            
+            // Только админы могут изменять настройки
+            Route::middleware('role:admin')->group(function () {
+                Route::post('/', [\App\Http\Controllers\Admin\SettingController::class, 'store']);
+                Route::put('/{id}', [\App\Http\Controllers\Admin\SettingController::class, 'update']);
+                Route::delete('/{id}', [\App\Http\Controllers\Admin\SettingController::class, 'destroy']);
 
-            // Маршрут для загрузки изображений
-            Route::post('/{id}/image', [\App\Http\Controllers\Admin\SettingController::class, 'uploadImage']);
+                // Маршрут для загрузки изображений
+                Route::post('/{id}/image', [\App\Http\Controllers\Admin\SettingController::class, 'uploadImage']);
 
-            // Маршрут для удаления изображений
-            Route::delete('/{id}/image', [\App\Http\Controllers\Admin\SettingController::class, 'deleteImage']);
+                // Маршрут для удаления изображений
+                Route::delete('/{id}/image', [\App\Http\Controllers\Admin\SettingController::class, 'deleteImage']);
 
-            // Маршрут для изменения размера изображения
-            Route::post('/{id}/resize', [\App\Http\Controllers\Admin\SettingController::class, 'resizeImage']);
+                // Маршрут для изменения размера изображения
+                Route::post('/{id}/resize', [\App\Http\Controllers\Admin\SettingController::class, 'resizeImage']);
+            });
         });
 
-        // Roles management
-        Route::prefix('roles')->group(function () {
+        // Roles management (только для админов)
+        Route::middleware('role:admin')->prefix('roles')->group(function () {
             Route::get('/', [\App\Http\Controllers\Admin\RoleController::class, 'index']);
             Route::get('/{id}', [\App\Http\Controllers\Admin\RoleController::class, 'show']);
             Route::post('/', [\App\Http\Controllers\Admin\RoleController::class, 'store']);
@@ -83,8 +87,8 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/statistics/overview', [\App\Http\Controllers\Admin\RoleController::class, 'statistics']);
         });
 
-        // Debug endpoint для проверки ролей (временно)
-        Route::get('/debug/roles', function () {
+        // Debug endpoint для проверки ролей (только для админов)
+        Route::middleware('role:admin')->get('/debug/roles', function () {
             try {
                 $roles = \App\Models\Role::all();
                 return response()->json([
@@ -100,11 +104,16 @@ Route::middleware('auth:sanctum')->group(function () {
             }
         });
 
-        // Categories management
+        // Categories management (просмотр доступен менеджерам и админам)
         Route::prefix('categories')->group(function () {
+            // Просмотр категорий доступен менеджерам и админам
             Route::get('/', [\App\Http\Controllers\CategoryController::class, 'index']);
             Route::get('/active', [\App\Http\Controllers\CategoryController::class, 'active']);
             Route::get('/{id}', [\App\Http\Controllers\CategoryController::class, 'show']);
+        });
+
+        // Categories management (создание/редактирование/удаление только для админов)
+        Route::middleware('role:admin')->prefix('categories')->group(function () {
             Route::post('/', [\App\Http\Controllers\CategoryController::class, 'store']);
             Route::put('/{id}', [\App\Http\Controllers\CategoryController::class, 'update']);
             Route::delete('/{id}', [\App\Http\Controllers\CategoryController::class, 'destroy']);
@@ -148,9 +157,11 @@ Route::middleware('auth:sanctum')->group(function () {
             });
         });
 
-        // Настройки магазина
-        Route::get('/shop-settings', [\App\Http\Controllers\ShopSettingsController::class, 'getShopSettings']);
-        Route::get('/shop-settings/{key}', [\App\Http\Controllers\ShopSettingsController::class, 'getShopSetting']);
+        // Настройки магазина (только для админов)
+        Route::middleware('role:admin')->group(function () {
+            Route::get('/shop-settings', [\App\Http\Controllers\ShopSettingsController::class, 'getShopSettings']);
+            Route::get('/shop-settings/{key}', [\App\Http\Controllers\ShopSettingsController::class, 'getShopSetting']);
+        });
 
         // Users management
         Route::prefix('users')->group(function () {
@@ -179,6 +190,49 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Pages management
         Route::prefix('pages')->group(function () {
+            // Получить только доступные страницы для текущего пользователя
+            Route::get('/accessible', function (Request $request) {
+                try {
+                    $user = $request->user();
+                    $accessiblePages = [];
+                    
+                    // Получаем все страницы
+                    $allPages = \App\Models\AdminPage::orderBy('order')->get();
+                    
+                    foreach ($allPages as $page) {
+                        $hasAccess = false;
+                        
+                        // Админ имеет доступ ко всем страницам
+                        if ($user->hasRole('admin')) {
+                            $hasAccess = true;
+                        } else {
+                            // Dashboard доступен всем авторизованным пользователям
+                            if ($page->slug === 'dashboard') {
+                                $hasAccess = true;
+                            } else {
+                                // Проверяем, есть ли у роли пользователя доступ к этой странице
+                                $hasAccess = $page->roles()->whereIn('role_id', $user->roles->pluck('id'))->exists();
+                            }
+                        }
+                        
+                        if ($hasAccess) {
+                            $accessiblePages[] = $page;
+                        }
+                    }
+
+                    return response()->json([
+                        'success' => true,
+                        'data' => $accessiblePages
+                    ]);
+                } catch (\Exception $e) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка получения доступных страниц: ' . $e->getMessage()
+                    ], 500);
+                }
+            });
+
+            // Получить все страницы (для админов)
             Route::get('/', function () {
                 try {
                     $pages = \App\Models\AdminPage::orderBy('order')->get();
@@ -239,8 +293,10 @@ Route::middleware('auth:sanctum')->group(function () {
                 }
             });
 
-            // Создать новую страницу
-            Route::post('/', function (Request $request) {
+            // Только админы могут создавать/редактировать/удалять страницы
+            Route::middleware('role:admin')->group(function () {
+                // Создать новую страницу
+                Route::post('/', function (Request $request) {
                 try {
                     $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
                         'name' => 'required|string|max:255|unique:admin_pages,name',
@@ -496,10 +552,11 @@ Route::middleware('auth:sanctum')->group(function () {
                     ], 500);
                 }
             });
+            }); // Закрываем middleware для админов
         });
 
-        // Users management
-        Route::prefix('users')->group(function () {
+        // Users management (только для админов)
+        Route::middleware('role:admin')->prefix('users')->group(function () {
             // Получить список всех пользователей
             Route::get('/', function () {
                 try {
@@ -612,30 +669,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 }
             });
 
-            // Получить статистику пользователей
-            Route::get('/statistics', function () {
-                try {
-                    $totalUsers = \App\Models\User::count();
-                    $activeUsers = \App\Models\User::where('created_at', '>=', now()->subDays(30))->count();
-                    $adminUsers = \App\Models\User::whereHas('roles', function ($query) {
-                        $query->where('name', 'admin');
-                    })->count();
 
-                    return response()->json([
-                        'success' => true,
-                        'data' => [
-                            'total_users' => $totalUsers,
-                            'active_users_30_days' => $activeUsers,
-                            'admin_users' => $adminUsers,
-                        ]
-                    ]);
-                } catch (\Exception $e) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Ошибка получения статистики пользователей: ' . $e->getMessage()
-                    ], 500);
-                }
-            });
 
             // Обновить пользователя
             Route::put('/{id}', function (Request $request, $id) {
@@ -786,6 +820,65 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Menu management
         Route::prefix('menu')->group(function () {
+            // Получить пункты меню для конкретного раздела (доступно менеджерам и админам)
+            Route::get('/by-page/{pageId}', function ($pageId) {
+                try {
+                    $user = request()->user();
+                    $page = \App\Models\AdminPage::find($pageId);
+                    
+                    if (!$page) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Страница не найдена'
+                        ], 404);
+                    }
+                    
+                    // Проверяем, есть ли у пользователя доступ к этой странице
+                    $hasAccess = false;
+                    $userRoles = $user->roles->pluck('name')->toArray();
+                    
+                    if ($user->hasRole('admin')) {
+                        $hasAccess = true; // Админ имеет доступ ко всем страницам
+                    } else {
+                        // Dashboard доступен всем авторизованным пользователям
+                        if ($page->slug === 'dashboard') {
+                            $hasAccess = true;
+                        } else {
+                            // Проверяем, есть ли у роли пользователя доступ к этой странице
+                            $hasAccess = $page->roles()->whereIn('role_id', $user->roles->pluck('id'))->exists();
+                        }
+                    }
+                    
+
+                    
+                    if (!$hasAccess) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Доступ запрещен'
+                        ], 403);
+                    }
+                    
+                    // Получаем пункты меню для конкретного раздела
+                    $menuItems = \App\Models\AdminMenuItem::where('page_id', $pageId)
+                        ->where('is_active', true)
+                        ->orderBy('order')
+                        ->get();
+
+                    return response()->json([
+                        'success' => true,
+                        'data' => $menuItems
+                    ]);
+                } catch (\Exception $e) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка получения меню: ' . $e->getMessage()
+                    ], 500);
+                }
+            });
+        });
+
+        // Menu management (только для админов - создание/редактирование/удаление)
+        Route::middleware('role:admin')->prefix('menu')->group(function () {
             // Получить все пункты меню (для MenuManager)
             Route::get('/', function () {
                 try {
@@ -822,26 +915,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 }
             });
 
-            // Получить пункты меню для конкретного раздела
-            Route::get('/by-page/{pageId}', function ($pageId) {
-                try {
-                    // Получаем пункты меню для конкретного раздела
-                    $menuItems = \App\Models\AdminMenuItem::where('page_id', $pageId)
-                        ->where('is_active', true)
-                        ->orderBy('order')
-                        ->get();
 
-                    return response()->json([
-                        'success' => true,
-                        'data' => $menuItems
-                    ]);
-                } catch (\Exception $e) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Ошибка получения меню: ' . $e->getMessage()
-                    ], 500);
-                }
-            });
 
             // Создать новый пункт меню
             Route::post('/', function (Request $request) {
@@ -1014,6 +1088,7 @@ Route::middleware('auth:sanctum')->group(function () {
                         'name' => $user->name,
                         'email' => $user->email,
                         'avatar_url' => $user->avatar_url,
+                        'role' => $user->roles->first()?->name ?? 'user', // Основная роль для совместимости
                         'roles' => $user->roles->map(function($role) {
                             return [
                                 'id' => $role->id,
@@ -1067,6 +1142,7 @@ Route::middleware('auth:sanctum')->group(function () {
                         'name' => $user->name,
                         'email' => $user->email,
                         'avatar_url' => $user->avatar_url,
+                        'role' => $user->roles->first()?->name ?? 'user', // Основная роль для совместимости
                         'roles' => $user->roles->map(function($role) {
                             return [
                                 'id' => $role->id,
@@ -1270,10 +1346,7 @@ Route::middleware('auth:sanctum')->group(function () {
         });
     });
 
-    // Маршруты для менеджеров и администраторов
-    Route::middleware('role:admin,manager')->group(function () {
-        // Здесь будут маршруты для менеджеров и администраторов
-    });
+
 });
 
 // Тестовый маршрут
