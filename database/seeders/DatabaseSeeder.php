@@ -21,6 +21,7 @@ class DatabaseSeeder extends Seeder
             SettingSeeder::class,
             ManagerAccessSeeder::class,
             ShopSeeder::class,
+            SiteTemplateSeeder::class,
         ]);
     }
 }

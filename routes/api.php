@@ -23,6 +23,10 @@ Route::post('/login', [AuthController::class, 'login']);
 Route::get('/public/site-info', [App\Http\Controllers\Api\Public\SiteInfoController::class, 'index']);
 Route::get('/public/settings', [App\Http\Controllers\Api\Public\SiteInfoController::class, 'settings']);
 
+// Публичные маршруты для шаблонов сайта
+Route::get('/public/site/template/active', [App\Http\Controllers\Api\Public\SiteTemplateController::class, 'getActive']);
+Route::get('/public/site/menu', [App\Http\Controllers\Api\Public\SiteTemplateController::class, 'getMenu']);
+
 // Временный отладочный endpoint для проверки всех настроек
 Route::get('/public/debug/settings', function () {
     try {
@@ -967,6 +971,49 @@ Route::middleware('auth:sanctum')->group(function () {
                         'message' => 'Ошибка получения меню: ' . $e->getMessage()
                     ], 500);
                 }
+            });
+        });
+
+        // Site templates management (только для админов)
+        Route::middleware('role:admin')->prefix('site')->group(function () {
+            // Шаблоны сайта
+            Route::prefix('templates')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'index']);
+                Route::post('/', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'store']);
+                Route::get('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'show']);
+                Route::put('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'update']);
+                Route::delete('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'destroy']);
+                Route::put('/{siteTemplate}/activate', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'activate']);
+                Route::get('/menu-templates', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'getMenuTemplates']);
+                Route::get('/auth-templates', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'getAuthTemplates']);
+            });
+
+            // Шаблоны меню
+            Route::prefix('menus')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Admin\SiteMenuController::class, 'index']);
+                Route::post('/', [\App\Http\Controllers\Admin\SiteMenuController::class, 'store']);
+                Route::get('/{siteMenu}', [\App\Http\Controllers\Admin\SiteMenuController::class, 'show']);
+                Route::put('/{siteMenu}', [\App\Http\Controllers\Admin\SiteMenuController::class, 'update']);
+                Route::delete('/{siteMenu}', [\App\Http\Controllers\Admin\SiteMenuController::class, 'destroy']);
+            });
+
+            // Шаблоны блоков авторизации
+            Route::prefix('auth-blocks')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Admin\SiteAuthBlockController::class, 'index']);
+                Route::post('/', [\App\Http\Controllers\Admin\SiteAuthBlockController::class, 'store']);
+                Route::get('/{siteAuthBlock}', [\App\Http\Controllers\Admin\SiteAuthBlockController::class, 'show']);
+                Route::put('/{siteAuthBlock}', [\App\Http\Controllers\Admin\SiteAuthBlockController::class, 'update']);
+                Route::delete('/{siteAuthBlock}', [\App\Http\Controllers\Admin\SiteAuthBlockController::class, 'destroy']);
+            });
+
+            // Пункты меню сайта
+            Route::prefix('menu-items')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'index']);
+                Route::post('/', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'store']);
+                Route::get('/{siteMenuItem}', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'show']);
+                Route::put('/{siteMenuItem}', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'update']);
+                Route::delete('/{siteMenuItem}', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'destroy']);
+                Route::post('/order', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'updateOrder']);
             });
         });
 
