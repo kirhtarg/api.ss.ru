@@ -12,13 +12,16 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // Добавляем тестовый аватар для администратора
-        DB::table('users')
-            ->where('email', 'admin@skateandsnow.ru')
-            ->update([
-                'avatar' => 'avatars/default-admin-avatar.png',
-                'updated_at' => now()
-            ]);
+        // Проверяем, что колонка avatar существует
+        if (Schema::hasColumn('users', 'avatar')) {
+            // Добавляем тестовый аватар для администратора
+            DB::table('users')
+                ->where('email', 'admin@skateandsnow.ru')
+                ->update([
+                    'avatar' => 'avatars/default-admin-avatar.png',
+                    'updated_at' => now()
+                ]);
+        }
     }
 
     /**
@@ -26,12 +29,15 @@ return new class extends Migration
      */
     public function down(): void
     {
-        // Убираем тестовый аватар
-        DB::table('users')
-            ->where('email', 'admin@skateandsnow.ru')
-            ->update([
-                'avatar' => null,
-                'updated_at' => now()
-            ]);
+        // Проверяем, что колонка avatar существует
+        if (Schema::hasColumn('users', 'avatar')) {
+            // Убираем тестовый аватар
+            DB::table('users')
+                ->where('email', 'admin@skateandsnow.ru')
+                ->update([
+                    'avatar' => null,
+                    'updated_at' => now()
+                ]);
+        }
     }
 };
