@@ -28,7 +28,7 @@ class YandexAuthController extends Controller
             // Используем прямой URL для Yandex OAuth
             $clientId = config('services.yandex.client_id');
             $redirectUri = config('services.yandex.redirect');
-            $scope = 'login:email login:info login:avatar login:birthday login:phone';
+            $scope = 'login:email login:info login:avatar';
             
             $url = "https://oauth.yandex.ru/authorize?" . http_build_query([
                 'response_type' => 'code',
@@ -281,7 +281,7 @@ class YandexAuthController extends Controller
             'info' => []
         ];
 
-        // Дата рождения
+        // Дата рождения (может быть доступна в некоторых случаях)
         if (isset($yandexUser['birthday'])) {
             try {
                 $data['birthday'] = \Carbon\Carbon::createFromFormat('Y-m-d', $yandexUser['birthday'])->format('Y-m-d');
@@ -290,12 +290,12 @@ class YandexAuthController extends Controller
             }
         }
 
-        // Телефон
+        // Телефон (может быть доступен в некоторых случаях)
         if (isset($yandexUser['default_phone'])) {
             $data['phone'] = $yandexUser['default_phone'];
         }
 
-        // Дополнительная информация
+        // Дополнительная информация (доступна с базовым scope)
         $infoFields = [
             'sex',
             'first_name',
@@ -304,7 +304,8 @@ class YandexAuthController extends Controller
             'display_name',
             'login',
             'psuid',
-            'client_id'
+            'client_id',
+            'emails'  // Список email адресов
         ];
 
         foreach ($infoFields as $field) {
@@ -332,7 +333,7 @@ class YandexAuthController extends Controller
             // Используем прямой URL для Yandex OAuth
             $clientId = config('services.yandex.client_id');
             $redirectUri = config('services.yandex.redirect');
-            $scope = 'login:email login:info login:avatar login:birthday login:phone';
+            $scope = 'login:email login:info login:avatar';
             
             $url = "https://oauth.yandex.ru/authorize?" . http_build_query([
                 'response_type' => 'code',
