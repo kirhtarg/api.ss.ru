@@ -59,9 +59,20 @@ class VkAuthController extends Controller
         try {
             $code = $request->get('code');
             
+            // Логирование для отладки
+            Log::info('VK Callback received', [
+                'code' => $code,
+                'all_params' => $request->all(),
+                'frontend_url' => config('app.frontend_url')
+            ]);
+            
             if (!$code) {
                 $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
                 $errorUrl = $frontendUrl . '/auth/vk/callback?error=' . urlencode('Код авторизации не получен');
+                Log::error('VK Callback: No code received', [
+                    'request_params' => $request->all(),
+                    'frontend_url' => $frontendUrl
+                ]);
                 return redirect($errorUrl);
             }
             
@@ -239,6 +250,14 @@ class VkAuthController extends Controller
     public function handleVkSdkCallback(Request $request)
     {
         try {
+            // Логирование для отладки
+            Log::info('VK SDK Callback received', [
+                'method' => $request->method(),
+                'all_params' => $request->all(),
+                'query_params' => $request->query(),
+                'post_params' => $request->post()
+            ]);
+            
             $code = $request->input('code');
             $deviceId = $request->input('device_id');
             

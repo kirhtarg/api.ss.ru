@@ -38,7 +38,7 @@ Route::middleware(['web'])->group(function () {
 });
 
 // VK ID SDK маршруты (не требуют сессии)
-Route::post('/auth/vk/sdk-callback', [\App\Http\Controllers\Auth\VkAuthController::class, 'handleVkSdkCallback']);
+Route::match(['get', 'post'], '/auth/vk/sdk-callback', [\App\Http\Controllers\Auth\VkAuthController::class, 'handleVkSdkCallback']);
 
 // Yandex OAuth маршруты (требуют сессии)
 Route::middleware(['web'])->group(function () {
