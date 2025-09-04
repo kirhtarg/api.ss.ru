@@ -335,13 +335,22 @@ class VkAuthController extends Controller
                 $accessToken = $data['access_token'];
                 $email = $data['email'] ?? null;
                 $userId = $data['user_id'] ?? null;
+                $idToken = $data['id_token'] ?? null;
                 
                 Log::info('VK ID SDK access_token received:', [
                     'access_token' => substr($accessToken, 0, 20) . '...',
                     'email' => $email,
                     'user_id' => $userId,
-                    'scope' => $data['scope'] ?? null
+                    'scope' => $data['scope'] ?? null,
+                    'has_id_token' => !empty($idToken)
                 ]);
+                
+                // Пытаемся получить данные из id_token
+                $userDataFromToken = $this->parseIdToken($idToken);
+                if ($userDataFromToken) {
+                    Log::info('VK ID SDK data from id_token:', $userDataFromToken);
+                    $email = $userDataFromToken['email'] ?? $email;
+                }
                 
                 // Получаем данные пользователя через VK API
                 $userResponse = Http::get('https://api.vk.com/method/users.get', [
@@ -397,7 +406,7 @@ class VkAuthController extends Controller
                         ]);
                         
                         // Создаем пользователя с минимальными данными
-                        $user = $this->createUserFromVkSdkData($userId, $email, $data);
+                        $user = $this->createUserFromVkSdkData($userId, $email, $data, $userDataFromToken);
                         
                         if ($user) {
                             $token = $user->createToken('vk-sdk-auth-token')->plainTextToken;
@@ -599,17 +608,24 @@ class VkAuthController extends Controller
     /**
      * Создание пользователя из данных VK ID SDK
      */
-    private function createUserFromVkSdkData($vkId, $email, $data)
+    private function createUserFromVkSdkData($vkId, $email, $data, $userDataFromToken = null)
     {
         try {
             // Проверяем, есть ли пользователь с таким VK ID
             $user = User::where('vk_id', $vkId)->first();
             
             if ($user) {
+                // Получаем данные из id_token для обновления
+                $firstName = $userDataFromToken['given_name'] ?? null;
+                $lastName = $userDataFromToken['family_name'] ?? null;
+                $fullName = trim(($firstName ?? '') . ' ' . ($lastName ?? ''));
+                $finalEmail = $email ?: $userDataFromToken['email'] ?? $user->email;
+                
                 // Пользователь уже существует, обновляем данные
                 $user->update([
-                    'email' => $email ?: $user->email, // Сохраняем существующий email если новый пустой
-                    'email_verified_at' => $email ? now() : $user->email_verified_at,
+                    'name' => !empty($fullName) ? $fullName : $user->name,
+                    'email' => $finalEmail,
+                    'email_verified_at' => $finalEmail !== $user->email ? now() : $user->email_verified_at,
                     'last_login_at' => now(),
                 ]);
             } else {
@@ -628,13 +644,24 @@ class VkAuthController extends Controller
                     ]);
                     $user = $existingUser;
                 } else {
+                    // Получаем имя из id_token или создаем временное
+                    $firstName = $userDataFromToken['given_name'] ?? null;
+                    $lastName = $userDataFromToken['family_name'] ?? null;
+                    $fullName = trim(($firstName ?? '') . ' ' . ($lastName ?? ''));
+                    if (empty($fullName)) {
+                        $fullName = 'VK User ' . $vkId;
+                    }
+                    
+                    // Получаем email из id_token или используем переданный
+                    $finalEmail = $email ?: $userDataFromToken['email'] ?? 'vk_' . $vkId . '@temp.local';
+                    
                     // Создаем нового пользователя
                     $user = User::create([
-                        'name' => 'VK User ' . $vkId, // Временное имя
-                        'email' => $email ?: 'vk_' . $vkId . '@temp.local', // Временный email если нет
+                        'name' => $fullName,
+                        'email' => $finalEmail,
                         'vk_id' => $vkId,
                         'password' => Hash::make(Str::random(32)), // Случайный пароль
-                        'email_verified_at' => $email ? now() : null,
+                        'email_verified_at' => $finalEmail !== 'vk_' . $vkId . '@temp.local' ? now() : null,
                         'is_active' => true,
                         'last_login_at' => now(),
                     ]);
@@ -650,6 +677,51 @@ class VkAuthController extends Controller
             return $user;
         } catch (\Exception $e) {
             Log::error('Error creating user from VK SDK data: ' . $e->getMessage());
+            return null;
+        }
+    }
+    
+    /**
+     * Парсинг id_token для получения данных пользователя
+     */
+    private function parseIdToken($idToken)
+    {
+        try {
+            if (!$idToken) {
+                return null;
+            }
+            
+            // JWT токен состоит из трех частей, разделенных точками
+            $parts = explode('.', $idToken);
+            if (count($parts) !== 3) {
+                Log::error('Invalid JWT token format');
+                return null;
+            }
+            
+            // Декодируем payload (вторая часть)
+            $payload = $parts[1];
+            
+            // Добавляем padding если нужно
+            $payload = str_pad($payload, strlen($payload) % 4, '=', STR_PAD_RIGHT);
+            
+            // Декодируем base64
+            $decoded = base64_decode($payload);
+            if (!$decoded) {
+                Log::error('Failed to decode JWT payload');
+                return null;
+            }
+            
+            $data = json_decode($decoded, true);
+            if (!$data) {
+                Log::error('Failed to parse JWT payload as JSON');
+                return null;
+            }
+            
+            Log::info('JWT token decoded successfully:', $data);
+            
+            return $data;
+        } catch (\Exception $e) {
+            Log::error('Error parsing id_token: ' . $e->getMessage());
             return null;
         }
     }
