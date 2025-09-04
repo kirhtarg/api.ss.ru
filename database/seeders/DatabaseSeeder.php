@@ -23,6 +23,8 @@ class DatabaseSeeder extends Seeder
             
             // Сайт
             SiteTemplateSeeder::class,
+            SiteMenuSeeder::class,
+            SiteMenuItemSeeder::class,
         ]);
     }
 }
