@@ -328,7 +328,9 @@ class VkAuthController extends Controller
             Log::info('Request headers:', $request->headers->all());
             
             // Обрабатываем данные от VK ID SDK
-            if (isset($data['access_token'])) {
+            if (isset($data['access_token']) && !empty($data['access_token'])) {
+                Log::info('Processing VK ID SDK access_token...');
+                
                 // Прямой access_token от VK ID SDK
                 $accessToken = $data['access_token'];
                 $email = $data['email'] ?? null;
@@ -416,6 +418,8 @@ class VkAuthController extends Controller
                         }
                     }
                 }
+                
+                Log::info('VK ID SDK access_token processing completed');
             } elseif (isset($data['code']) && isset($data['device_id'])) {
                 // Обмениваем код на токен через VK API
                 Log::info('Exchanging VK code for token:', [
@@ -500,11 +504,13 @@ class VkAuthController extends Controller
                 }
             }
             
-            Log::error('VK SDK: No valid data received', [
+            Log::error('VK SDK: No valid data processed', [
                 'received_data' => $data,
                 'has_access_token' => isset($data['access_token']),
                 'has_code' => isset($data['code']),
-                'has_device_id' => isset($data['device_id'])
+                'has_device_id' => isset($data['device_id']),
+                'access_token_present' => !empty($data['access_token']),
+                'user_id_present' => !empty($data['user_id'])
             ]);
             
             return response()->json([
