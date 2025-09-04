@@ -28,7 +28,7 @@ return new class extends Migration
             $table->foreign('parent_id')->references('id')->on('site_menu_items')->onDelete('cascade');
             
             // Индексы
-            $table->index(['site_menu_id', 'parent_id', 'sort_order', 'is_active']);
+            $table->index(['site_menu_id', 'parent_id', 'sort_order', 'is_active'], 'site_menu_items_composite_idx');
         });
     }
 
