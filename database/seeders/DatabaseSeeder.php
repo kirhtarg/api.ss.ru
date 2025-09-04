@@ -22,7 +22,6 @@ class DatabaseSeeder extends Seeder
             AdminMenuItemSeeder::class,
             
             // Сайт
-            SiteMenuSeeder::class,
             SiteTemplateSeeder::class,
         ]);
     }
