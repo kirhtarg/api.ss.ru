@@ -11,10 +11,18 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('site_templates', function (Blueprint $table) {
-            // Удаляем старые поля
-            $table->dropColumn(['menu_template_id', 'auth_template_id']);
-        });
+        // Проверяем, что таблица site_templates существует
+        if (Schema::hasTable('site_templates')) {
+            Schema::table('site_templates', function (Blueprint $table) {
+                // Удаляем старые поля только если они существуют
+                if (Schema::hasColumn('site_templates', 'menu_template_id')) {
+                    $table->dropColumn('menu_template_id');
+                }
+                if (Schema::hasColumn('site_templates', 'auth_template_id')) {
+                    $table->dropColumn('auth_template_id');
+                }
+            });
+        }
     }
 
     /**
