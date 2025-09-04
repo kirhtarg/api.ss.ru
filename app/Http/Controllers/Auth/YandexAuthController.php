@@ -85,10 +85,32 @@ class YandexAuthController extends Controller
                 'Authorization' => 'OAuth ' . $tokenData['access_token']
             ])->get('https://login.yandex.ru/info');
             
+            // Получаем расширенные данные пользователя (включая дату рождения и телефон)
+            $extendedUserResponse = \Http::withHeaders([
+                'Authorization' => 'OAuth ' . $tokenData['access_token']
+            ])->get('https://api-yaru.yandex.ru/me');
+            
+            // Пробуем также Yandex ID API для получения дополнительных данных
+            $yandexIdResponse = \Http::withHeaders([
+                'Authorization' => 'OAuth ' . $tokenData['access_token']
+            ])->get('https://id.yandex.ru/info');
+            
             $yandexUser = $userResponse->json();
+            $extendedUserData = $extendedUserResponse->json();
+            $yandexIdData = $yandexIdResponse->json();
+            
+            // Объединяем данные от всех API
+            if ($extendedUserData && !isset($extendedUserData['error'])) {
+                $yandexUser = array_merge($yandexUser, $extendedUserData);
+            }
+            if ($yandexIdData && !isset($yandexIdData['error'])) {
+                $yandexUser = array_merge($yandexUser, $yandexIdData);
+            }
             
             // Логируем данные от Yandex для отладки
             Log::info('Yandex user data:', $yandexUser);
+            Log::info('Yandex extended data:', $extendedUserData);
+            Log::info('Yandex ID data:', $yandexIdData);
             
             // Проверяем все возможные поля для аватара
             $avatarFields = [
@@ -129,6 +151,8 @@ class YandexAuthController extends Controller
                 
                 $user->update([
                     'name' => $yandexUser['display_name'] ?? $yandexUser['real_name'] ?? 'Yandex User',
+                    'first_name' => $additionalData['first_name'],
+                    'last_name' => $additionalData['last_name'],
                     'email' => $yandexUser['default_email'] ?? null,
                     'avatar_url' => $avatarUrl,
                     'birthday' => $additionalData['birthday'],
@@ -150,6 +174,8 @@ class YandexAuthController extends Controller
                     
                     $existingUser->update([
                         'yandex_id' => $yandexUser['id'],
+                        'first_name' => $additionalData['first_name'],
+                        'last_name' => $additionalData['last_name'],
                         'avatar_url' => $avatarUrl,
                         'birthday' => $additionalData['birthday'],
                         'phone' => $additionalData['phone'],
@@ -164,6 +190,8 @@ class YandexAuthController extends Controller
                     
                     $user = User::create([
                         'name' => $yandexUser['display_name'] ?? $yandexUser['real_name'] ?? 'Yandex User',
+                        'first_name' => $additionalData['first_name'],
+                        'last_name' => $additionalData['last_name'],
                         'email' => $yandexUser['default_email'] ?? null,
                         'yandex_id' => $yandexUser['id'],
                         'avatar_url' => $avatarUrl,
@@ -276,30 +304,51 @@ class YandexAuthController extends Controller
     private function getYandexAdditionalData($yandexUser)
     {
         $data = [
+            'first_name' => null,
+            'last_name' => null,
             'birthday' => null,
             'phone' => null,
             'info' => []
         ];
 
-        // Дата рождения (может быть доступна в некоторых случаях)
-        if (isset($yandexUser['birthday'])) {
-            try {
-                $data['birthday'] = \Carbon\Carbon::createFromFormat('Y-m-d', $yandexUser['birthday'])->format('Y-m-d');
-            } catch (\Exception $e) {
-                Log::warning('Yandex birthday format error:', ['birthday' => $yandexUser['birthday'] ?? 'not_set']);
+        // Имя и фамилия (доступны с базовым scope)
+        $data['first_name'] = $yandexUser['first_name'] ?? null;
+        $data['last_name'] = $yandexUser['last_name'] ?? null;
+
+        // Дата рождения (проверяем разные возможные поля)
+        $birthdayFields = ['birthday', 'birth_date', 'date_of_birth'];
+        foreach ($birthdayFields as $field) {
+            if (isset($yandexUser[$field]) && !empty($yandexUser[$field])) {
+                try {
+                    // Пробуем разные форматы даты
+                    $dateFormats = ['Y-m-d', 'd.m.Y', 'd/m/Y', 'Y-m-d H:i:s'];
+                    foreach ($dateFormats as $format) {
+                        try {
+                            $data['birthday'] = \Carbon\Carbon::createFromFormat($format, $yandexUser[$field])->format('Y-m-d');
+                            break;
+                        } catch (\Exception $e) {
+                            continue;
+                        }
+                    }
+                    if ($data['birthday']) break;
+                } catch (\Exception $e) {
+                    Log::warning('Yandex birthday format error:', ['birthday' => $yandexUser[$field] ?? 'not_set', 'field' => $field]);
+                }
             }
         }
 
-        // Телефон (может быть доступен в некоторых случаях)
-        if (isset($yandexUser['default_phone'])) {
-            $data['phone'] = $yandexUser['default_phone'];
+        // Телефон (проверяем разные возможные поля)
+        $phoneFields = ['default_phone', 'phone', 'mobile_phone', 'phone_number'];
+        foreach ($phoneFields as $field) {
+            if (isset($yandexUser[$field]) && !empty($yandexUser[$field])) {
+                $data['phone'] = $yandexUser[$field];
+                break;
+            }
         }
 
         // Дополнительная информация (доступна с базовым scope)
         $infoFields = [
             'sex',
-            'first_name',
-            'last_name',
             'real_name',
             'display_name',
             'login',
