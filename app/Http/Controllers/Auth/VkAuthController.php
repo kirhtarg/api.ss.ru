@@ -318,43 +318,55 @@ class VkAuthController extends Controller
     public function handleVkSdkCallback(Request $request)
     {
         try {
-            // Логирование для отладки
-            Log::info('VK SDK Callback received', [
-                'method' => $request->method(),
-                'all_params' => $request->all(),
-                'query_params' => $request->query(),
-                'post_params' => $request->post()
-            ]);
+            $data = $request->all();
             
-            // Для GET запросов возвращаем HTML страницу с JavaScript
-            if ($request->isMethod('GET')) {
-                $code = $request->query('code');
-                $deviceId = $request->query('device_id');
+            Log::info('VK SDK Callback data:', $data);
+            
+            // Обрабатываем данные от VK ID SDK
+            if (isset($data['access_token'])) {
+                // Получаем данные пользователя через VK API
+                $userResponse = Http::get('https://api.vk.com/method/users.get', [
+                    'access_token' => $data['access_token'],
+                    'fields' => 'email,first_name,last_name,photo',
+                    'v' => '5.131',
+                ]);
                 
-                if (!$code) {
-                    return response()->view('auth.vk-sdk-callback', [
-                        'error' => 'Код авторизации не получен',
-                        'success' => false
+                $userData = $userResponse->json();
+                Log::info('VK API response:', $userData);
+                
+                if (isset($userData['response'][0])) {
+                    $vkUser = $userData['response'][0];
+                    $vkUser['email'] = $data['email'] ?? null;
+                    
+                    // Создаем или обновляем пользователя
+                    $user = $this->createOrUpdateVkUser($vkUser);
+                    
+                    // Создаем токен
+                    $token = $user->createToken('vk-sdk-auth-token')->plainTextToken;
+                    
+                    // Получаем разрешения пользователя
+                    $permissions = $this->getUserPermissions($user);
+                    
+                    return response()->json([
+                        'success' => true,
+                        'token' => $token,
+                        'user' => [
+                            'id' => $user->id,
+                            'name' => $user->name,
+                            'email' => $user->email,
+                            'avatar_url' => $user->avatar_url,
+                            'role' => $user->roles->first()?->name ?? 'user',
+                            'is_active' => $user->is_active,
+                            'permissions' => $permissions
+                        ]
                     ]);
                 }
-                
-                // Возвращаем HTML страницу, которая отправит POST запрос
-                return response()->view('auth.vk-sdk-callback', [
-                    'code' => $code,
-                    'deviceId' => $deviceId,
-                    'success' => true
-                ]);
             }
             
-            $code = $request->input('code');
-            $deviceId = $request->input('device_id');
-            
-            if (!$code) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Код авторизации не получен'
-                ], 400);
-            }
+            return response()->json([
+                'success' => false,
+                'message' => 'Не удалось получить данные пользователя от VK'
+            ], 400);
             
             // Обмениваем код на токен через VK API
             $tokenResponse = Http::post('https://oauth.vk.com/access_token', [
@@ -474,5 +486,62 @@ class VkAuthController extends Controller
                 'error' => $e->getMessage()
             ], 500);
         }
+    }
+    
+    /**
+     * Создание или обновление пользователя VK
+     */
+    private function createOrUpdateVkUser($vkUser)
+    {
+        // Проверяем, есть ли пользователь с таким VK ID
+        $user = User::where('vk_id', $vkUser['id'])->first();
+        
+        if ($user) {
+            // Пользователь уже существует, обновляем данные
+            $user->update([
+                'name' => trim(($vkUser['first_name'] ?? '') . ' ' . ($vkUser['last_name'] ?? '')),
+                'email' => $vkUser['email'],
+                'avatar_url' => $vkUser['photo'] ?? null,
+                'email_verified_at' => $vkUser['email'] ? now() : null,
+                'last_login_at' => now(),
+            ]);
+        } else {
+            // Проверяем, есть ли пользователь с таким email
+            $existingUser = null;
+            if ($vkUser['email']) {
+                $existingUser = User::where('email', $vkUser['email'])->first();
+            }
+            
+            if ($existingUser) {
+                // Связываем существующего пользователя с VK
+                $existingUser->update([
+                    'vk_id' => $vkUser['id'],
+                    'avatar_url' => $vkUser['photo'] ?? null,
+                    'email_verified_at' => $vkUser['email'] ? now() : $existingUser->email_verified_at,
+                    'last_login_at' => now(),
+                ]);
+                $user = $existingUser;
+            } else {
+                // Создаем нового пользователя
+                $user = User::create([
+                    'name' => trim(($vkUser['first_name'] ?? '') . ' ' . ($vkUser['last_name'] ?? '')),
+                    'email' => $vkUser['email'],
+                    'vk_id' => $vkUser['id'],
+                    'avatar_url' => $vkUser['photo'] ?? null,
+                    'password' => Hash::make(Str::random(32)), // Случайный пароль
+                    'email_verified_at' => $vkUser['email'] ? now() : null,
+                    'is_active' => true,
+                    'last_login_at' => now(),
+                ]);
+                
+                // Привязываем роль 'user' по умолчанию
+                $userRole = Role::where('name', 'user')->first();
+                if ($userRole) {
+                    $user->roles()->attach($userRole->id);
+                }
+            }
+        }
+        
+        return $user;
     }
 }
