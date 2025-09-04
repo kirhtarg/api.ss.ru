@@ -322,7 +322,10 @@ class VkAuthController extends Controller
         try {
             $data = $request->all();
             
+            Log::info('=== VK SDK CALLBACK START ===');
             Log::info('VK SDK Callback data:', $data);
+            Log::info('Request method:', $request->method());
+            Log::info('Request headers:', $request->headers->all());
             
             // Обрабатываем данные от VK ID SDK
             if (isset($data['access_token'])) {
@@ -369,6 +372,13 @@ class VkAuthController extends Controller
                 }
             } elseif (isset($data['code']) && isset($data['device_id'])) {
                 // Обмениваем код на токен через VK API
+                Log::info('Exchanging VK code for token:', [
+                    'code' => $data['code'],
+                    'device_id' => $data['device_id'],
+                    'client_id' => config('services.vkontakte.client_id'),
+                    'redirect_uri' => 'https://ss75-api.kirhtarg.ru/api/auth/vk/sdk-callback'
+                ]);
+                
                 $tokenResponse = Http::post('https://oauth.vk.com/access_token', [
                     'client_id' => config('services.vkontakte.client_id'),
                     'client_secret' => config('services.vkontakte.client_secret'),
@@ -377,11 +387,19 @@ class VkAuthController extends Controller
                 ]);
                 
                 $tokenData = $tokenResponse->json();
-                Log::info('VK token exchange response:', $tokenData);
+                Log::info('VK token exchange response:', [
+                    'status' => $tokenResponse->status(),
+                    'data' => $tokenData
+                ]);
                 
                 if (isset($tokenData['access_token'])) {
                     $accessToken = $tokenData['access_token'];
                     $email = $tokenData['email'] ?? null;
+                    
+                    Log::info('VK access token received:', [
+                        'access_token' => substr($accessToken, 0, 20) . '...',
+                        'email' => $email
+                    ]);
                     
                     // Получаем данные пользователя через VK API
                     $userResponse = Http::get('https://api.vk.com/method/users.get', [
@@ -391,7 +409,10 @@ class VkAuthController extends Controller
                     ]);
                     
                     $userData = $userResponse->json();
-                    Log::info('VK API response:', $userData);
+                    Log::info('VK API response:', [
+                        'status' => $userResponse->status(),
+                        'data' => $userData
+                    ]);
                     
                     if (isset($userData['response'][0])) {
                         $vkUser = $userData['response'][0];
@@ -419,9 +440,26 @@ class VkAuthController extends Controller
                                 'permissions' => $permissions
                             ]
                         ]);
+                    } else {
+                        Log::error('VK API: No user data in response', [
+                            'user_response' => $userData,
+                            'status' => $userResponse->status()
+                        ]);
                     }
+                } else {
+                    Log::error('VK token exchange failed:', [
+                        'token_response' => $tokenData,
+                        'status' => $tokenResponse->status()
+                    ]);
                 }
             }
+            
+            Log::error('VK SDK: No valid data received', [
+                'received_data' => $data,
+                'has_access_token' => isset($data['access_token']),
+                'has_code' => isset($data['code']),
+                'has_device_id' => isset($data['device_id'])
+            ]);
             
             return response()->json([
                 'success' => false,
@@ -429,7 +467,13 @@ class VkAuthController extends Controller
             ], 400);
             
         } catch (\Exception $e) {
-            Log::error('VK SDK callback error: ' . $e->getMessage());
+            Log::error('=== VK SDK CALLBACK ERROR ===');
+            Log::error('VK SDK callback error: ' . $e->getMessage(), [
+                'exception' => $e,
+                'trace' => $e->getTraceAsString(),
+                'request_data' => $request->all()
+            ]);
+            Log::error('=== END VK SDK CALLBACK ERROR ===');
             
             return response()->json([
                 'success' => false,
