@@ -2,7 +2,6 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 
 class DatabaseSeeder extends Seeder
@@ -12,15 +11,28 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // Запускаем сидеры для административных таблиц
         $this->call([
+            // Основные данные системы
+            RoleSeeder::class,
             UserSeeder::class,
-            AdminPageSeeder::class,
-            AdminPageAccessSeeder::class,
-            AdminMenuItemSeeder::class,
             SettingSeeder::class,
-            ManagerAccessSeeder::class,
-            ShopSeeder::class,
+            
+            // Админка
+            AdminPageSeeder::class,
+            AdminMenuItemSeeder::class,
+            
+            // Магазин
+            ShopCategorySeeder::class,
+            ShopBrandSeeder::class,
+            ShopPropertySeeder::class,
+            ShopTagSeeder::class,
+            ShopVariationAttributeSeeder::class,
+            ShopPriceTypeSeeder::class,
+            ShopWarehouseSeeder::class,
+            ShopGoodSeeder::class,
+            
+            // Сайт
+            SiteMenuSeeder::class,
             SiteTemplateSeeder::class,
         ]);
     }

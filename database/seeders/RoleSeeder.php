@@ -2,9 +2,8 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
-use App\Models\Role;
+use Illuminate\Support\Facades\DB;
 
 class RoleSeeder extends Seeder
 {
@@ -15,21 +14,42 @@ class RoleSeeder extends Seeder
     {
         $roles = [
             [
+                'id' => 1,
                 'name' => 'admin',
                 'display_name' => 'Администратор',
-                'description' => 'Полный доступ к системе',
-                'is_active' => true,
+                'description' => 'Полный доступ ко всем разделам админки',
+                'permissions' => null,
+                'is_active' => 1,
+                'created_at' => null,
+                'updated_at' => null,
             ],
             [
+                'id' => 2,
                 'name' => 'user',
                 'display_name' => 'Пользователь',
-                'description' => 'Обычный пользователь без доступа к админке',
-                'is_active' => true,
+                'description' => 'Зарегистрированый пользователь',
+                'permissions' => null,
+                'is_active' => 1,
+                'created_at' => null,
+                'updated_at' => null,
+            ],
+            [
+                'id' => 3,
+                'name' => 'manager',
+                'display_name' => 'Менеджер',
+                'description' => 'Доступ к администрированию магазина',
+                'permissions' => null,
+                'is_active' => 1,
+                'created_at' => null,
+                'updated_at' => null,
             ],
         ];
 
         foreach ($roles as $role) {
-            Role::create($role);
+            DB::table('roles')->updateOrInsert(
+                ['id' => $role['id']],
+                $role
+            );
         }
     }
 }

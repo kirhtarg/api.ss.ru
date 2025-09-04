@@ -1,0 +1,203 @@
+<?php
+
+namespace Database\Seeders;
+
+use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\DB;
+
+class SiteMenuSeeder extends Seeder
+{
+    /**
+     * Run the database seeds.
+     */
+    public function run(): void
+    {
+        $menus = [
+            [
+                'id' => 1,
+                'name' => 'Основное меню',
+                'description' => 'Главное меню сайта',
+                'is_active' => 1,
+                'created_at' => '2025-09-03 13:40:15',
+                'updated_at' => '2025-09-03 15:28:29',
+                'template_name' => null,
+                'settings' => null,
+                'sort_order' => 0,
+            ],
+        ];
+
+        foreach ($menus as $menu) {
+            DB::table('site_menus')->updateOrInsert(
+                ['id' => $menu['id']],
+                $menu
+            );
+        }
+
+        // Создаем пункты меню
+        $menuItems = [
+            [
+                'id' => 1,
+                'site_menu_id' => null,
+                'title' => 'Главная',
+                'url' => '/',
+                'parent_id' => null,
+                'sort_order' => 1,
+                'is_active' => 1,
+                'target' => '_self',
+                'attributes' => null,
+                'created_at' => '2025-09-03 09:09:03',
+                'updated_at' => '2025-09-03 09:09:03',
+            ],
+            [
+                'id' => 2,
+                'site_menu_id' => 1,
+                'title' => 'Каталог тест',
+                'url' => '/catalog',
+                'parent_id' => null,
+                'sort_order' => 1,
+                'is_active' => 1,
+                'target' => '_self',
+                'attributes' => null,
+                'created_at' => '2025-09-03 09:09:03',
+                'updated_at' => '2025-09-03 16:34:58',
+            ],
+            [
+                'id' => 3,
+                'site_menu_id' => null,
+                'title' => 'Скейтборды',
+                'url' => '/catalog/skateboards',
+                'parent_id' => 2,
+                'sort_order' => 2,
+                'is_active' => 1,
+                'target' => '_self',
+                'attributes' => null,
+                'created_at' => '2025-09-03 09:09:03',
+                'updated_at' => '2025-09-03 16:31:31',
+            ],
+            [
+                'id' => 4,
+                'site_menu_id' => null,
+                'title' => 'Сноуборды',
+                'url' => '/catalog/snowboards',
+                'parent_id' => 2,
+                'sort_order' => 3,
+                'is_active' => 1,
+                'target' => '_self',
+                'attributes' => null,
+                'created_at' => '2025-09-03 09:09:03',
+                'updated_at' => '2025-09-03 16:31:31',
+            ],
+            [
+                'id' => 5,
+                'site_menu_id' => null,
+                'title' => 'Аксессуары',
+                'url' => '/catalog/accessories',
+                'parent_id' => 2,
+                'sort_order' => 4,
+                'is_active' => 1,
+                'target' => '_self',
+                'attributes' => null,
+                'created_at' => '2025-09-03 09:09:03',
+                'updated_at' => '2025-09-03 16:31:31',
+            ],
+            [
+                'id' => 6,
+                'site_menu_id' => null,
+                'title' => 'Одежда',
+                'url' => '/catalog/clothing',
+                'parent_id' => 2,
+                'sort_order' => 5,
+                'is_active' => 1,
+                'target' => '_self',
+                'attributes' => null,
+                'created_at' => '2025-09-03 09:09:03',
+                'updated_at' => '2025-09-03 16:31:31',
+            ],
+            [
+                'id' => 7,
+                'site_menu_id' => null,
+                'title' => 'О нас',
+                'url' => '/about',
+                'parent_id' => null,
+                'sort_order' => 3,
+                'is_active' => 1,
+                'target' => '_self',
+                'attributes' => null,
+                'created_at' => '2025-09-03 09:09:03',
+                'updated_at' => '2025-09-03 09:09:03',
+            ],
+            [
+                'id' => 8,
+                'site_menu_id' => null,
+                'title' => 'Контакты',
+                'url' => '/contacts',
+                'parent_id' => null,
+                'sort_order' => 4,
+                'is_active' => 1,
+                'target' => '_self',
+                'attributes' => null,
+                'created_at' => '2025-09-03 09:09:03',
+                'updated_at' => '2025-09-03 09:09:03',
+            ],
+            [
+                'id' => 9,
+                'site_menu_id' => 1,
+                'title' => 'Главная',
+                'url' => '/',
+                'parent_id' => null,
+                'sort_order' => 0,
+                'is_active' => 1,
+                'target' => '_self',
+                'attributes' => null,
+                'created_at' => '2025-09-03 13:40:15',
+                'updated_at' => '2025-09-03 16:31:31',
+            ],
+            [
+                'id' => 10,
+                'site_menu_id' => null,
+                'title' => 'Каталог',
+                'url' => '/catalog',
+                'parent_id' => null,
+                'sort_order' => 2,
+                'is_active' => 1,
+                'target' => '_self',
+                'attributes' => null,
+                'created_at' => '2025-09-03 13:40:15',
+                'updated_at' => '2025-09-03 13:40:15',
+            ],
+            [
+                'id' => 11,
+                'site_menu_id' => 1,
+                'title' => 'О нас',
+                'url' => '/about',
+                'parent_id' => null,
+                'sort_order' => 6,
+                'is_active' => 1,
+                'target' => '_self',
+                'attributes' => null,
+                'created_at' => '2025-09-03 13:40:15',
+                'updated_at' => '2025-09-03 16:31:32',
+            ],
+            [
+                'id' => 12,
+                'site_menu_id' => 1,
+                'title' => 'Контакты',
+                'url' => '/contacts',
+                'parent_id' => null,
+                'sort_order' => 7,
+                'is_active' => 1,
+                'target' => '_self',
+                'attributes' => null,
+                'created_at' => '2025-09-03 13:40:15',
+                'updated_at' => '2025-09-03 16:31:32',
+            ],
+        ];
+
+        foreach ($menuItems as $item) {
+            DB::table('site_menu_items')->updateOrInsert(
+                ['id' => $item['id']],
+                $item
+            );
+        }
+    }
+}
