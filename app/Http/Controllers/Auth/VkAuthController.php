@@ -322,70 +322,23 @@ class VkAuthController extends Controller
         try {
             $data = $request->all();
             
-            Log::info('=== VK SDK CALLBACK START ===');
-            Log::info('VK SDK Callback data:', $data);
-            Log::info('Request method:', ['method' => $request->method()]);
-            Log::info('Request headers:', $request->headers->all());
             
-            // Подробный анализ всех данных от VK ID SDK
-            Log::info('=== VK ID SDK DATA ANALYSIS ===');
-            Log::info('Raw data keys:', array_keys($data));
-            Log::info('Access token present:', ['present' => isset($data['access_token'])]);
-            Log::info('Refresh token present:', ['present' => isset($data['refresh_token'])]);
-            Log::info('ID token present:', ['present' => isset($data['id_token'])]);
-            Log::info('User ID present:', ['present' => isset($data['user_id'])]);
-            Log::info('Email present:', ['present' => isset($data['email'])]);
-            Log::info('Scope present:', ['present' => isset($data['scope'])]);
-            Log::info('State present:', ['present' => isset($data['state'])]);
-            Log::info('Token type present:', ['present' => isset($data['token_type'])]);
-            Log::info('Expires in present:', ['present' => isset($data['expires_in'])]);
-            
-            if (isset($data['scope'])) {
-                Log::info('Scope value:', ['value' => $data['scope']]);
-            }
-            if (isset($data['user_id'])) {
-                Log::info('User ID value:', ['value' => $data['user_id']]);
-            }
-            if (isset($data['email'])) {
-                Log::info('Email value:', ['value' => $data['email']]);
-            }
-            Log::info('=== END VK ID SDK DATA ANALYSIS ===');
             
             // Обрабатываем данные от VK ID SDK
             if (isset($data['access_token']) && !empty($data['access_token'])) {
-                Log::info('Processing VK ID SDK access_token...');
-                
                 // Прямой access_token от VK ID SDK
                 $accessToken = $data['access_token'];
                 $email = $data['email'] ?? null;
                 $userId = $data['user_id'] ?? null;
                 $idToken = $data['id_token'] ?? null;
                 
-                Log::info('VK ID SDK access_token received:', [
-                    'access_token' => substr($accessToken, 0, 20) . '...',
-                    'email' => $email,
-                    'user_id' => $userId,
-                    'scope' => $data['scope'] ?? null,
-                    'has_id_token' => !empty($idToken)
-                ]);
-                
                 // Получаем данные пользователя через VK ID API
                 $userDataFromVkId = $this->getUserDataFromVkId($idToken);
                 if ($userDataFromVkId) {
-                    Log::info('VK ID API user data received:', $userDataFromVkId);
                     $email = $userDataFromVkId['email'] ?? $email;
                     $firstName = $userDataFromVkId['first_name'] ?? null;
                     $lastName = $userDataFromVkId['last_name'] ?? null;
                     $avatar = $userDataFromVkId['avatar'] ?? null;
-                    
-                    Log::info('Extracted user data from VK ID API:', [
-                        'email' => $email,
-                        'first_name' => $firstName,
-                        'last_name' => $lastName,
-                        'avatar' => $avatar
-                    ]);
-                } else {
-                    Log::warning('No user data received from VK ID API');
                 }
                 
                 // Получаем данные пользователя через VK API
@@ -396,10 +349,6 @@ class VkAuthController extends Controller
                 ]);
                 
                 $userData = $userResponse->json();
-                Log::info('VK API response:', [
-                    'status' => $userResponse->status(),
-                    'data' => $userData
-                ]);
                 
                 if (isset($userData['response'][0])) {
                     $vkUser = $userData['response'][0];
@@ -436,13 +385,6 @@ class VkAuthController extends Controller
                     
                     // Если VK API не работает, попробуем использовать данные из токена
                     if ($userId) {
-                        Log::info('Trying to create user from VK ID SDK data:', [
-                            'user_id' => $userId,
-                            'email' => $email,
-                            'has_user_data' => !empty($userDataFromVkId),
-                            'user_data_keys' => $userDataFromVkId ? array_keys($userDataFromVkId) : []
-                        ]);
-                        
                         // Создаем пользователя с минимальными данными
                         $user = $this->createUserFromVkSdkData($userId, $email, $data, $userDataFromVkId);
                         
@@ -450,12 +392,7 @@ class VkAuthController extends Controller
                             $token = $user->createToken('vk-sdk-auth-token')->plainTextToken;
                             $permissions = $this->getUserPermissions($user);
                             
-                            Log::info('VK ID SDK: Success - user created from VK SDK data', [
-                                'user_id' => $user->id,
-                                'user_name' => $user->name,
-                                'user_email' => $user->email,
-                                'vk_id' => $user->vk_id
-                            ]);
+                            Log::info('VK ID SDK: Success - user created from VK SDK data');
                             return response()->json([
                                 'success' => true,
                                 'token' => $token,
@@ -515,10 +452,6 @@ class VkAuthController extends Controller
                     ]);
                     
                     $userData = $userResponse->json();
-                    Log::info('VK API response:', [
-                        'status' => $userResponse->status(),
-                        'data' => $userData
-                    ]);
                     
                     if (isset($userData['response'][0])) {
                         $vkUser = $userData['response'][0];
@@ -654,12 +587,6 @@ class VkAuthController extends Controller
     private function createUserFromVkSdkData($vkId, $email, $data, $userDataFromVkId = null)
     {
         try {
-            Log::info('createUserFromVkSdkData called with:', [
-                'vk_id' => $vkId,
-                'email' => $email,
-                'has_user_data' => !empty($userDataFromVkId),
-                'user_data' => $userDataFromVkId
-            ]);
             
             // Проверяем, есть ли пользователь с таким VK ID
             $user = User::where('vk_id', $vkId)->first();
@@ -719,8 +646,6 @@ class VkAuthController extends Controller
                         'last_login_at' => now(),
                     ];
                     
-                    Log::info('Creating new user with data:', $userData);
-                    
                     $user = User::create($userData);
                     
                     // Привязываем роль 'user' по умолчанию
@@ -744,20 +669,12 @@ class VkAuthController extends Controller
     private function getUserDataFromVkId($idToken)
     {
         try {
-            Log::info('Getting user data from VK ID API using id_token...');
-            
             if (!$idToken) {
-                Log::error('No id_token provided for VK ID API');
                 return null;
             }
             
             // Согласно документации VK ID, используем правильный endpoint
             $clientId = config('services.vk.client_id');
-            Log::info('VK ID API request parameters:', [
-                'client_id' => $clientId,
-                'id_token_length' => strlen($idToken),
-                'id_token_preview' => substr($idToken, 0, 50) . '...'
-            ]);
             
             $response = Http::asForm()->post('https://id.vk.com/oauth2/public_info', [
                 'client_id' => $clientId,
@@ -765,20 +682,10 @@ class VkAuthController extends Controller
             ]);
             
             $data = $response->json();
-            Log::info('VK ID API response:', [
-                'status' => $response->status(),
-                'data' => $data
-            ]);
             
             if ($response->successful() && isset($data['user'])) {
-                Log::info('VK ID API: User data received successfully');
                 return $data['user'];
             }
-            
-            Log::error('VK ID API: Failed to get user data', [
-                'status' => $response->status(),
-                'response' => $data
-            ]);
             
             return null;
             
@@ -824,27 +731,6 @@ class VkAuthController extends Controller
                 return null;
             }
             
-            Log::info('JWT token decoded successfully:', $data);
-            
-            // Подробный анализ JWT данных
-            Log::info('=== JWT TOKEN ANALYSIS ===');
-            Log::info('JWT issuer (iss):', ['value' => $data['iss'] ?? 'not set']);
-            Log::info('JWT subject (sub):', ['value' => $data['sub'] ?? 'not set']);
-            Log::info('JWT app (app):', ['value' => $data['app'] ?? 'not set']);
-            Log::info('JWT exp (exp):', ['value' => $data['exp'] ?? 'not set']);
-            Log::info('JWT iat (iat):', ['value' => $data['iat'] ?? 'not set']);
-            Log::info('JWT jti (jti):', ['value' => $data['jti'] ?? 'not set']);
-            
-            // Проверяем наличие данных пользователя в JWT
-            Log::info('Given name in JWT:', ['value' => $data['given_name'] ?? 'not set']);
-            Log::info('Family name in JWT:', ['value' => $data['family_name'] ?? 'not set']);
-            Log::info('Email in JWT:', ['value' => $data['email'] ?? 'not set']);
-            Log::info('Phone in JWT:', ['value' => $data['phone'] ?? 'not set']);
-            Log::info('Birthday in JWT:', ['value' => $data['birthday'] ?? 'not set']);
-            Log::info('Gender in JWT:', ['value' => $data['gender'] ?? 'not set']);
-            Log::info('Picture in JWT:', ['value' => $data['picture'] ?? 'not set']);
-            
-            Log::info('=== END JWT TOKEN ANALYSIS ===');
             
             return $data;
         } catch (\Exception $e) {
