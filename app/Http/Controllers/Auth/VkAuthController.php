@@ -734,8 +734,15 @@ class VkAuthController extends Controller
             }
             
             // Согласно документации VK ID, используем правильный endpoint
+            $clientId = config('services.vk.client_id');
+            Log::info('VK ID API request parameters:', [
+                'client_id' => $clientId,
+                'id_token_length' => strlen($idToken),
+                'id_token_preview' => substr($idToken, 0, 50) . '...'
+            ]);
+            
             $response = Http::asForm()->post('https://id.vk.com/oauth2/public_info', [
-                'client_id' => config('services.vk.client_id'),
+                'client_id' => $clientId,
                 'id_token' => $idToken
             ]);
             
