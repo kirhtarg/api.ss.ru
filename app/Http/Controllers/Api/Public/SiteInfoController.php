@@ -22,7 +22,7 @@ class SiteInfoController extends Controller
 
             // Получаем все настройки с группой general без кэширования
             $settings = Setting::select('key', 'value', 'type', 'group')
-                ->where('group', 'general')
+                ->where('group', '<>', 'private')
                 ->get();
 
             $siteInfo = [];
@@ -90,6 +90,58 @@ class SiteInfoController extends Controller
             return response()->json([
                 'success' => false,
                 'error' => 'Ошибка получения публичных настроек: ' . $e->getMessage(),
+                'data' => []
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить SEO настройки сайта
+     */
+    public function seo(): JsonResponse
+    {
+        try {
+            // Используем кэш для уменьшения нагрузки на базу
+            $cacheKey = 'site_seo_settings';
+            $seoSettings = Cache::remember($cacheKey, 3600, function () {
+                // Получаем SEO настройки из разных групп
+                $settings = Setting::select('key', 'value', 'group')
+                    ->where(function ($query) {
+                        $query->where('group', 'general')
+                              ->orWhere('group', 'seo')
+                              ->orWhere('group', 'global');
+                    })
+                    ->whereIn('key', [
+                        'site_name',
+                        'site_description', 
+                        'site_logo',
+                        'meta_title',
+                        'meta_description',
+                        'meta_image',
+                        'meta_keywords'
+                    ])
+                    ->get();
+
+                $seoSettings = [];
+                foreach ($settings as $setting) {
+                    $seoSettings[$setting->key] = $setting->value;
+                }
+
+                return $seoSettings;
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => $seoSettings
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Ошибка в SiteInfoController::seo: ' . $e->getMessage());
+
+            // Возвращаем ошибку вместо fallback данных
+            return response()->json([
+                'success' => false,
+                'error' => 'Ошибка получения SEO настроек: ' . $e->getMessage(),
                 'data' => []
             ], 500);
         }

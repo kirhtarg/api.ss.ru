@@ -1,0 +1,231 @@
+<?php
+
+namespace App\Http\Controllers\Auth;
+
+use App\Http\Controllers\Controller;
+use App\Models\User;
+use App\Models\Role;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
+use Laravel\Socialite\Facades\Socialite;
+use Illuminate\Support\Facades\Log;
+
+class YandexAuthController extends Controller
+{
+    /**
+     * Перенаправление на Yandex OAuth
+     */
+    public function redirectToYandex()
+    {
+        try {
+            // Проверяем, что сессии настроены
+            if (!session()->isStarted()) {
+                session()->start();
+            }
+            
+            // Используем прямой URL для Yandex OAuth
+            $clientId = config('services.yandex.client_id');
+            $redirectUri = config('services.yandex.redirect');
+            $scope = 'login:email login:info';
+            
+            $url = "https://oauth.yandex.ru/authorize?" . http_build_query([
+                'response_type' => 'code',
+                'client_id' => $clientId,
+                'redirect_uri' => $redirectUri,
+                'scope' => $scope,
+            ]);
+            
+            return redirect($url);
+            
+        } catch (\Exception $e) {
+            Log::error('Yandex OAuth redirect error: ' . $e->getMessage());
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка перенаправления на Yandex',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Обработка callback от Yandex
+     */
+    public function handleYandexCallback(Request $request)
+    {
+        try {
+            $code = $request->get('code');
+            
+            if (!$code) {
+                $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
+                $errorUrl = $frontendUrl . '/auth/yandex/callback?error=' . urlencode('Код авторизации не получен');
+                return redirect($errorUrl);
+            }
+            
+            // Получаем токен
+            $tokenResponse = \Http::asForm()->post('https://oauth.yandex.ru/token', [
+                'grant_type' => 'authorization_code',
+                'code' => $code,
+                'client_id' => config('services.yandex.client_id'),
+                'client_secret' => config('services.yandex.client_secret'),
+            ]);
+            
+            $tokenData = $tokenResponse->json();
+            
+            if (!isset($tokenData['access_token'])) {
+                $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
+                $errorUrl = $frontendUrl . '/auth/yandex/callback?error=' . urlencode('Не удалось получить токен доступа');
+                return redirect($errorUrl);
+            }
+            
+            // Получаем данные пользователя
+            $userResponse = \Http::withHeaders([
+                'Authorization' => 'OAuth ' . $tokenData['access_token']
+            ])->get('https://login.yandex.ru/info');
+            
+            $yandexUser = $userResponse->json();
+            
+            if (!isset($yandexUser['id'])) {
+                $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
+                $errorUrl = $frontendUrl . '/auth/yandex/callback?error=' . urlencode('Не удалось получить данные пользователя');
+                return redirect($errorUrl);
+            }
+            
+            // Проверяем, есть ли пользователь с таким Yandex ID
+            $user = User::where('yandex_id', $yandexUser['id'])->first();
+            
+            if ($user) {
+                // Пользователь уже существует, обновляем данные
+                $user->update([
+                    'name' => $yandexUser['display_name'] ?? $yandexUser['real_name'] ?? 'Yandex User',
+                    'email' => $yandexUser['default_email'] ?? null,
+                    'avatar_url' => $yandexUser['default_avatar_id'] ? 
+                        'https://avatars.yandex.net/get-yapic/' . $yandexUser['default_avatar_id'] . '/islands-200' : null,
+                    'email_verified_at' => $yandexUser['default_email'] ? now() : null,
+                    'last_login_at' => now(),
+                ]);
+            } else {
+                // Проверяем, есть ли пользователь с таким email
+                $existingUser = null;
+                if (isset($yandexUser['default_email'])) {
+                    $existingUser = User::where('email', $yandexUser['default_email'])->first();
+                }
+                
+                if ($existingUser) {
+                    // Связываем существующего пользователя с Yandex
+                    $existingUser->update([
+                        'yandex_id' => $yandexUser['id'],
+                        'avatar_url' => $yandexUser['default_avatar_id'] ? 
+                            'https://avatars.yandex.net/get-yapic/' . $yandexUser['default_avatar_id'] . '/islands-200' : null,
+                        'email_verified_at' => $yandexUser['default_email'] ? now() : $existingUser->email_verified_at,
+                        'last_login_at' => now(),
+                    ]);
+                    $user = $existingUser;
+                } else {
+                    // Создаем нового пользователя
+                    $user = User::create([
+                        'name' => $yandexUser['display_name'] ?? $yandexUser['real_name'] ?? 'Yandex User',
+                        'email' => $yandexUser['default_email'] ?? null,
+                        'yandex_id' => $yandexUser['id'],
+                        'avatar_url' => $yandexUser['default_avatar_id'] ? 
+                            'https://avatars.yandex.net/get-yapic/' . $yandexUser['default_avatar_id'] . '/islands-200' : null,
+                        'password' => Hash::make(Str::random(32)), // Случайный пароль
+                        'email_verified_at' => $yandexUser['default_email'] ? now() : null,
+                        'is_active' => true,
+                        'last_login_at' => now(),
+                    ]);
+                    
+                    // Привязываем роль 'user' по умолчанию
+                    $userRole = Role::where('name', 'user')->first();
+                    if ($userRole) {
+                        $user->roles()->attach($userRole->id);
+                    }
+                }
+            }
+            
+            // Создаем токен для пользователя
+            $token = $user->createToken('yandex-auth-token')->plainTextToken;
+            
+            // Получаем разрешения пользователя
+            $permissions = $this->getUserPermissions($user);
+            
+            // Перенаправляем на фронтенд с токеном
+            $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
+            $redirectUrl = $frontendUrl . '/auth/yandex/callback?token=' . $token . '&user=' . base64_encode(json_encode([
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'avatar_url' => $user->avatar_url,
+                'role' => $user->roles->first() ? $user->roles->first()->name : 'user',
+                'is_active' => true,
+                'permissions' => $permissions,
+            ]));
+            
+            return redirect($redirectUrl);
+            
+        } catch (\Exception $e) {
+            Log::error('Yandex OAuth callback error: ' . $e->getMessage());
+            
+            $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
+            $errorUrl = $frontendUrl . '/auth/yandex/callback?error=' . urlencode('Ошибка авторизации через Yandex');
+            
+            return redirect($errorUrl);
+        }
+    }
+
+    /**
+     * Получить разрешения пользователя
+     */
+    private function getUserPermissions($user)
+    {
+        $permissions = [];
+        
+        foreach ($user->roles as $role) {
+            foreach ($role->permissions as $permission) {
+                $permissions[] = $permission->name;
+            }
+        }
+        
+        return array_unique($permissions);
+    }
+
+    /**
+     * API endpoint для получения URL авторизации Yandex
+     */
+    public function getYandexAuthUrl()
+    {
+        try {
+            // Проверяем, что сессии настроены
+            if (!session()->isStarted()) {
+                session()->start();
+            }
+            
+            // Используем прямой URL для Yandex OAuth
+            $clientId = config('services.yandex.client_id');
+            $redirectUri = config('services.yandex.redirect');
+            $scope = 'login:email login:info';
+            
+            $url = "https://oauth.yandex.ru/authorize?" . http_build_query([
+                'response_type' => 'code',
+                'client_id' => $clientId,
+                'redirect_uri' => $redirectUri,
+                'scope' => $scope,
+            ]);
+                
+            return response()->json([
+                'success' => true,
+                'auth_url' => $url
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Yandex OAuth URL generation error: ' . $e->getMessage());
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения URL авторизации Yandex',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+}

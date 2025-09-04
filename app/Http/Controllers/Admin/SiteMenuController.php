@@ -10,12 +10,14 @@ use Illuminate\Http\Request;
 class SiteMenuController extends Controller
 {
     /**
-     * Получить все шаблоны меню
+     * Получить все меню
      */
     public function index(): JsonResponse
     {
         try {
-            $menus = SiteMenu::ordered()->get();
+            $menus = SiteMenu::orderBy('sort_order', 'asc')
+                ->orderBy('name', 'asc')
+                ->get();
             
             return response()->json([
                 'success' => true,
@@ -25,21 +27,42 @@ class SiteMenuController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения шаблонов меню: ' . $e->getMessage()
+                'message' => 'Ошибка получения меню: ' . $e->getMessage()
             ], 500);
         }
     }
 
     /**
-     * Создать новый шаблон меню
+     * Получить меню по ID
+     */
+    public function show($id): JsonResponse
+    {
+        try {
+            $menu = SiteMenu::findOrFail($id);
+            
+            return response()->json([
+                'success' => true,
+                'data' => $menu
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения меню: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Создать новое меню
      */
     public function store(Request $request): JsonResponse
     {
         try {
             $validated = $request->validate([
-                'name' => 'required|string|max:255',
+                'name' => 'required|string|max:255|unique:site_menus',
                 'description' => 'nullable|string',
-                'template_name' => 'required|string|max:255|unique:site_menus',
+                'template_name' => 'nullable|string|max:255',
                 'is_active' => 'boolean',
                 'settings' => 'nullable|array',
                 'sort_order' => 'integer|min:0',
@@ -50,92 +73,134 @@ class SiteMenuController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $menu,
-                'message' => 'Шаблон меню успешно создан'
+                'message' => 'Меню успешно создано'
             ]);
             
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания шаблона меню: ' . $e->getMessage()
+                'message' => 'Ошибка создания меню: ' . $e->getMessage()
             ], 500);
         }
     }
 
     /**
-     * Получить шаблон меню по ID
+     * Обновить меню
      */
-    public function show(SiteMenu $siteMenu): JsonResponse
+    public function update(Request $request, $id): JsonResponse
     {
         try {
-            return response()->json([
-                'success' => true,
-                'data' => $siteMenu
-            ]);
+            $menu = SiteMenu::findOrFail($id);
             
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка получения шаблона меню: ' . $e->getMessage()
-            ], 500);
-        }
-    }
-
-    /**
-     * Обновить шаблон меню
-     */
-    public function update(Request $request, SiteMenu $siteMenu): JsonResponse
-    {
-        try {
             $validated = $request->validate([
-                'name' => 'required|string|max:255',
+                'name' => 'required|string|max:255|unique:site_menus,name,' . $id,
                 'description' => 'nullable|string',
-                'template_name' => 'required|string|max:255|unique:site_menus,template_name,' . $siteMenu->id,
+                'template_name' => 'nullable|string|max:255',
                 'is_active' => 'boolean',
                 'settings' => 'nullable|array',
                 'sort_order' => 'integer|min:0',
             ]);
 
-            $siteMenu->update($validated);
+            $menu->update($validated);
             
             return response()->json([
                 'success' => true,
-                'data' => $siteMenu,
-                'message' => 'Шаблон меню успешно обновлен'
+                'data' => $menu,
+                'message' => 'Меню успешно обновлено'
             ]);
             
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления шаблона меню: ' . $e->getMessage()
+                'message' => 'Ошибка обновления меню: ' . $e->getMessage()
             ], 500);
         }
     }
 
     /**
-     * Удалить шаблон меню
+     * Удалить меню
      */
-    public function destroy(SiteMenu $siteMenu): JsonResponse
+    public function destroy($id): JsonResponse
     {
         try {
-            // Проверяем, используется ли шаблон в активных шаблонах сайта
-            if ($siteMenu->siteTemplates()->where('is_active', true)->exists()) {
+            $menu = SiteMenu::findOrFail($id);
+            
+            // Проверяем, используется ли меню в активных шаблонах сайта
+            if ($menu->siteTemplates()->where('is_active', true)->exists()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Нельзя удалить шаблон меню, который используется в активном шаблоне сайта'
+                    'message' => 'Нельзя удалить меню, которое используется в активном шаблоне сайта'
                 ], 400);
             }
             
-            $siteMenu->delete();
+            $menu->delete();
             
             return response()->json([
                 'success' => true,
-                'message' => 'Шаблон меню успешно удален'
+                'message' => 'Меню успешно удалено'
             ]);
             
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления шаблона меню: ' . $e->getMessage()
+                'message' => 'Ошибка удаления меню: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Обновить статус меню
+     */
+    public function updateStatus(Request $request, $id): JsonResponse
+    {
+        try {
+            $menu = SiteMenu::findOrFail($id);
+            
+            $validated = $request->validate([
+                'is_active' => 'required|boolean'
+            ]);
+
+            $menu->update($validated);
+            
+            return response()->json([
+                'success' => true,
+                'data' => $menu,
+                'message' => 'Статус меню обновлен'
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка обновления статуса меню: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить статистику меню
+     */
+    public function statistics(): JsonResponse
+    {
+        try {
+            $totalMenus = SiteMenu::count();
+            $activeMenus = SiteMenu::where('is_active', true)->count();
+            $systemMenus = SiteMenu::whereIn('name', ['main', 'footer', 'header'])->count();
+            $menusWithTemplates = SiteMenu::whereHas('siteTemplates')->count();
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'total_menus' => $totalMenus,
+                    'active_menus' => $activeMenus,
+                    'system_menus' => $systemMenus,
+                    'menus_with_templates' => $menusWithTemplates
+                ]
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения статистики: ' . $e->getMessage()
             ], 500);
         }
     }

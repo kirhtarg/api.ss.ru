@@ -52,7 +52,7 @@ class SettingController extends Controller
             $validator = Validator::make($request->all(), [
                 'key' => 'required|string|max:255|unique:settings,key',
                 'name' => 'nullable|string|max:255',
-                'type' => 'required|string|in:string,text,number,boolean,image',
+                'type' => 'required|string|in:string,text,textarea,number,boolean,color,image,json',
                 'group' => 'nullable|string|max:255',
                 'description' => 'nullable|string|max:1000',
                 'value' => 'nullable|string',
@@ -123,7 +123,7 @@ class SettingController extends Controller
             }
 
             if ($request->has('type')) {
-                $validationRules['type'] = 'required|string|max:255';
+                $validationRules['type'] = 'required|string|in:string,text,textarea,number,boolean,color,image,json';
                 $updateData['type'] = $request->type;
             }
 

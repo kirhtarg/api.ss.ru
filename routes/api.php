@@ -18,14 +18,73 @@ use App\Http\Controllers\Auth\AuthController;
 
 // Публичные маршруты для авторизации (без Sanctum stateful middleware)
 Route::post('/login', [AuthController::class, 'login']);
+Route::post('/register', [AuthController::class, 'register']);
+Route::post('/verify-email', [AuthController::class, 'verifyEmail']);
+Route::post('/resend-verification', [AuthController::class, 'resendVerificationEmail']);
+Route::post('/check-email', [AuthController::class, 'checkEmail']);
+
+// Google OAuth маршруты (требуют сессии)
+Route::middleware(['web'])->group(function () {
+    Route::get('/auth/google', [\App\Http\Controllers\Auth\GoogleAuthController::class, 'redirectToGoogle']);
+    Route::get('/auth/google/callback', [\App\Http\Controllers\Auth\GoogleAuthController::class, 'handleGoogleCallback']);
+    Route::get('/auth/google/url', [\App\Http\Controllers\Auth\GoogleAuthController::class, 'getGoogleAuthUrl']);
+});
+
+// VK OAuth маршруты (требуют сессии)
+Route::middleware(['web'])->group(function () {
+    Route::get('/auth/vk', [\App\Http\Controllers\Auth\VkAuthController::class, 'redirectToVk']);
+    Route::get('/auth/vk/callback', [\App\Http\Controllers\Auth\VkAuthController::class, 'handleVkCallback']);
+    Route::get('/auth/vk/url', [\App\Http\Controllers\Auth\VkAuthController::class, 'getVkAuthUrl']);
+});
+
+// Yandex OAuth маршруты (требуют сессии)
+Route::middleware(['web'])->group(function () {
+    Route::get('/auth/yandex', [\App\Http\Controllers\Auth\YandexAuthController::class, 'redirectToYandex']);
+    Route::get('/auth/yandex/callback', [\App\Http\Controllers\Auth\YandexAuthController::class, 'handleYandexCallback']);
+    Route::get('/auth/yandex/url', [\App\Http\Controllers\Auth\YandexAuthController::class, 'getYandexAuthUrl']);
+});
+
+// Тестовый маршрут для проверки OAuth
+Route::get('/test/oauth', function () {
+    $sessionDriver = config('session.driver');
+    $sessionTableExists = \Schema::hasTable('sessions');
+    
+    return response()->json([
+        'success' => true,
+        'message' => 'OAuth маршруты работают',
+        'config' => [
+            'google' => [
+                'client_id' => config('services.google.client_id') ? 'настроен' : 'не настроен',
+                'client_secret' => config('services.google.client_secret') ? 'настроен' : 'не настроен',
+                'redirect' => config('services.google.redirect'),
+            ],
+            'vk' => [
+                'client_id' => config('services.vkontakte.client_id') ? 'настроен' : 'не настроен',
+                'client_secret' => config('services.vkontakte.client_secret') ? 'настроен' : 'не настроен',
+                'redirect' => config('services.vkontakte.redirect'),
+            ],
+            'yandex' => [
+                'client_id' => config('services.yandex.client_id') ? 'настроен' : 'не настроен',
+                'client_secret' => config('services.yandex.client_secret') ? 'настроен' : 'не настроен',
+                'redirect' => config('services.yandex.redirect'),
+            ]
+        ],
+        'session' => [
+            'driver' => $sessionDriver,
+            'table_exists' => $sessionTableExists,
+            'status' => $sessionTableExists ? 'OK' : 'Нужно запустить миграцию'
+        ]
+    ]);
+});
 
 // Публичные маршруты для получения информации о сайте
 Route::get('/public/site-info', [App\Http\Controllers\Api\Public\SiteInfoController::class, 'index']);
 Route::get('/public/settings', [App\Http\Controllers\Api\Public\SiteInfoController::class, 'settings']);
+Route::get('/public/settings/seo', [App\Http\Controllers\Api\Public\SiteInfoController::class, 'seo']);
 
 // Публичные маршруты для шаблонов сайта
 Route::get('/public/site/template/active', [App\Http\Controllers\Api\Public\SiteTemplateController::class, 'getActive']);
-Route::get('/public/site/menu', [App\Http\Controllers\Api\Public\SiteTemplateController::class, 'getMenu']);
+Route::get('/public/site/menu', [App\Http\Controllers\Api\Public\SiteMenuController::class, 'getMenu']);
 
 // Временный отладочный endpoint для проверки всех настроек
 Route::get('/public/debug/settings', function () {
@@ -90,6 +149,25 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::put('/{id}/status', [\App\Http\Controllers\Admin\RoleController::class, 'updateStatus']);
             Route::get('/statistics/overview', [\App\Http\Controllers\Admin\RoleController::class, 'statistics']);
         });
+
+            // Site Menus management (только для админов)
+    Route::middleware('role:admin')->prefix('site-menus')->group(function () {
+        Route::get('/', [\App\Http\Controllers\Admin\SiteMenuController::class, 'index']);
+        Route::get('/{id}', [\App\Http\Controllers\Admin\SiteMenuController::class, 'show']);
+        Route::post('/', [\App\Http\Controllers\Admin\SiteMenuController::class, 'store']);
+        Route::put('/{id}', [\App\Http\Controllers\Admin\SiteMenuController::class, 'update']);
+        Route::delete('/{id}', [\App\Http\Controllers\Admin\SiteMenuController::class, 'destroy']);
+        Route::put('/{id}/status', [\App\Http\Controllers\Admin\SiteMenuController::class, 'updateStatus']);
+        Route::get('/statistics/overview', [\App\Http\Controllers\Admin\SiteMenuController::class, 'statistics']);
+        
+        // Menu Items management
+        Route::get('/{menuId}/items', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'index']);
+        Route::post('/{menuId}/items', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'store']);
+        Route::put('/items/order', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'updateOrder']);
+        Route::get('/items/{id}', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'show']);
+        Route::put('/items/{id}', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'update']);
+        Route::delete('/items/{id}', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'destroy']);
+    });
 
         // Debug endpoint для проверки ролей (только для админов)
         Route::middleware('role:admin')->get('/debug/roles', function () {
@@ -972,10 +1050,56 @@ Route::middleware('auth:sanctum')->group(function () {
                     ], 500);
                 }
             });
+
+            // Site management (только для админов)
+            Route::middleware(['auth:sanctum', 'role:admin'])->prefix('site')->group(function () {
+                // Шаблоны сайта
+                Route::prefix('templates')->group(function () {
+                    Route::get('/', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'index']);
+                    Route::post('/', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'store']);
+                    Route::get('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'show']);
+                    Route::put('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'update']);
+                    Route::delete('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'destroy']);
+                    Route::put('/{siteTemplate}/activate', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'activate']);
+                });
+            });
         });
 
         // Site templates management (только для админов)
-        Route::middleware('role:admin')->prefix('site')->group(function () {
+        Route::middleware('auth:sanctum')->prefix('site')->group(function () {
+            // Тестовый endpoint для проверки меню
+            Route::get('/test-menus', function () {
+                try {
+                    $count = \App\Models\SiteMenu::count();
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Модель SiteMenu работает',
+                        'count' => $count
+                    ]);
+                } catch (\Exception $e) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка: ' . $e->getMessage()
+                    ], 500);
+                }
+            });
+
+            // Тестовый endpoint для проверки пунктов меню
+            Route::get('/test-menu-items', function () {
+                try {
+                    $count = \App\Models\SiteMenuItem::count();
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Модель SiteMenuItem работает',
+                        'count' => $count
+                    ]);
+                } catch (\Exception $e) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка: ' . $e->getMessage()
+                    ], 500);
+                }
+            });
             // Шаблоны сайта
             Route::prefix('templates')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'index']);
@@ -984,11 +1108,10 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::put('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'update']);
                 Route::delete('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'destroy']);
                 Route::put('/{siteTemplate}/activate', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'activate']);
-                Route::get('/menu-templates', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'getMenuTemplates']);
-                Route::get('/auth-templates', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'getAuthTemplates']);
+
             });
 
-            // Шаблоны меню
+            // Меню сайта
             Route::prefix('menus')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Admin\SiteMenuController::class, 'index']);
                 Route::post('/', [\App\Http\Controllers\Admin\SiteMenuController::class, 'store']);
@@ -997,14 +1120,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::delete('/{siteMenu}', [\App\Http\Controllers\Admin\SiteMenuController::class, 'destroy']);
             });
 
-            // Шаблоны блоков авторизации
-            Route::prefix('auth-blocks')->group(function () {
-                Route::get('/', [\App\Http\Controllers\Admin\SiteAuthBlockController::class, 'index']);
-                Route::post('/', [\App\Http\Controllers\Admin\SiteAuthBlockController::class, 'store']);
-                Route::get('/{siteAuthBlock}', [\App\Http\Controllers\Admin\SiteAuthBlockController::class, 'show']);
-                Route::put('/{siteAuthBlock}', [\App\Http\Controllers\Admin\SiteAuthBlockController::class, 'update']);
-                Route::delete('/{siteAuthBlock}', [\App\Http\Controllers\Admin\SiteAuthBlockController::class, 'destroy']);
-            });
+
 
             // Пункты меню сайта
             Route::prefix('menu-items')->group(function () {
@@ -1496,4 +1612,59 @@ Route::get('/test', function () {
         'version' => '1.0.0',
         'timestamp' => now()->toISOString()
     ]);
+});
+
+// Тестовый маршрут для проверки меню без авторизации
+Route::get('/test-menus-no-auth', function () {
+    try {
+        $count = \App\Models\SiteMenu::count();
+        return response()->json([
+            'success' => true,
+            'message' => 'Модель SiteMenu работает без авторизации',
+            'count' => $count
+        ]);
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Ошибка: ' . $e->getMessage()
+        ], 500);
+    }
+});
+
+// Тестовый маршрут для проверки авторизации
+Route::middleware('auth:sanctum')->get('/test-auth', function (Request $request) {
+    try {
+        $user = $request->user();
+        return response()->json([
+            'success' => true,
+            'message' => 'Авторизация работает',
+            'user_id' => $user->id,
+            'user_name' => $user->name,
+            'user_roles' => $user->roles->pluck('name')->toArray()
+        ]);
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Ошибка авторизации: ' . $e->getMessage()
+        ], 500);
+    }
+});
+
+// Тестовый маршрут для проверки роли админа
+Route::middleware(['auth:sanctum', 'role:admin'])->get('/test-admin-role', function (Request $request) {
+    try {
+        $user = $request->user();
+        return response()->json([
+            'success' => true,
+            'message' => 'Роль админа работает',
+            'user_id' => $user->id,
+            'user_name' => $user->name,
+            'user_roles' => $user->roles->pluck('name')->toArray()
+        ]);
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Ошибка проверки роли: ' . $e->getMessage()
+        ], 500);
+    }
 });

@@ -29,7 +29,15 @@ class SiteMenu extends Model
      */
     public function siteTemplates(): HasMany
     {
-        return $this->hasMany(SiteTemplate::class, 'menu_template_id');
+        return $this->hasMany(SiteTemplate::class, 'menu_id');
+    }
+
+    /**
+     * Связь с пунктами меню
+     */
+    public function menuItems(): HasMany
+    {
+        return $this->hasMany(SiteMenuItem::class, 'site_menu_id');
     }
 
     /**
@@ -45,14 +53,6 @@ class SiteMenu extends Model
      */
     public function scopeOrdered($query)
     {
-        return $query->orderBy('sort_order')->orderBy('name');
-    }
-
-    /**
-     * Получить дефолтный шаблон меню
-     */
-    public static function getDefault()
-    {
-        return static::active()->ordered()->first() ?? static::where('template_name', 'default')->first();
+        return $query->orderBy('name');
     }
 }

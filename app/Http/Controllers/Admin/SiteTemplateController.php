@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\SiteTemplate;
 use App\Models\SiteMenu;
-use App\Models\SiteAuthBlock;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -18,7 +17,7 @@ class SiteTemplateController extends Controller
     public function index(): JsonResponse
     {
         try {
-            $templates = SiteTemplate::with(['menuTemplate', 'authTemplate'])
+            $templates = SiteTemplate::with(['menu'])
                 ->ordered()
                 ->get();
             
@@ -45,8 +44,7 @@ class SiteTemplateController extends Controller
                 'name' => 'required|string|max:255',
                 'description' => 'nullable|string',
                 'folder_name' => 'required|string|max:255|unique:site_templates',
-                'menu_template_id' => 'nullable|exists:site_menus,id',
-                'auth_template_id' => 'nullable|exists:site_auth_blocks,id',
+                'menu_id' => 'nullable|exists:site_menus,id',
                 'is_active' => 'boolean',
                 'settings' => 'nullable|array',
                 'sort_order' => 'integer|min:0',
@@ -81,7 +79,7 @@ class SiteTemplateController extends Controller
         try {
             return response()->json([
                 'success' => true,
-                'data' => $siteTemplate->load(['menuTemplate', 'authTemplate'])
+                'data' => $siteTemplate->load(['menu'])
             ]);
             
         } catch (\Exception $e) {
@@ -107,8 +105,7 @@ class SiteTemplateController extends Controller
                     'max:255',
                     Rule::unique('site_templates')->ignore($siteTemplate->id)
                 ],
-                'menu_template_id' => 'nullable|exists:site_menus,id',
-                'auth_template_id' => 'nullable|exists:site_auth_blocks,id',
+                'menu_id' => 'nullable|exists:site_menus,id',
                 'is_active' => 'boolean',
                 'settings' => 'nullable|array',
                 'sort_order' => 'integer|min:0',
@@ -123,7 +120,7 @@ class SiteTemplateController extends Controller
             
             return response()->json([
                 'success' => true,
-                'data' => $siteTemplate->load(['menuTemplate', 'authTemplate']),
+                'data' => $siteTemplate->load(['menu']),
                 'message' => 'Шаблон успешно обновлен'
             ]);
             
@@ -185,45 +182,5 @@ class SiteTemplateController extends Controller
         }
     }
 
-    /**
-     * Получить доступные шаблоны меню
-     */
-    public function getMenuTemplates(): JsonResponse
-    {
-        try {
-            $menus = SiteMenu::active()->ordered()->get();
-            
-            return response()->json([
-                'success' => true,
-                'data' => $menus
-            ]);
-            
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка получения шаблонов меню: ' . $e->getMessage()
-            ], 500);
-        }
-    }
 
-    /**
-     * Получить доступные шаблоны блоков авторизации
-     */
-    public function getAuthTemplates(): JsonResponse
-    {
-        try {
-            $authBlocks = SiteAuthBlock::active()->ordered()->get();
-            
-            return response()->json([
-                'success' => true,
-                'data' => $authBlocks
-            ]);
-            
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка получения шаблонов авторизации: ' . $e->getMessage()
-            ], 500);
-        }
-    }
 }

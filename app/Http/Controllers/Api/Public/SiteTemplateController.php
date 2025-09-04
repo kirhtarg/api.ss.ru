@@ -71,7 +71,7 @@ class SiteTemplateController extends Controller
     public function getAll(): JsonResponse
     {
         try {
-            $templates = SiteTemplate::with(['menuTemplate', 'authTemplate'])
+            $templates = SiteTemplate::with(['menu'])
                 ->ordered()
                 ->get();
             
@@ -83,8 +83,7 @@ class SiteTemplateController extends Controller
                         'name' => $template->name,
                         'description' => $template->description,
                         'folder_name' => $template->folder_name,
-                        'menu_template' => $template->menuTemplate?->name,
-                        'auth_template' => $template->authTemplate?->name,
+                        'menu_name' => $template->menu?->name,
                         'is_active' => $template->is_active,
                         'sort_order' => $template->sort_order,
                         'created_at' => $template->created_at,

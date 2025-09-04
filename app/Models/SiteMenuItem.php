@@ -12,6 +12,7 @@ class SiteMenuItem extends Model
     use HasFactory;
 
     protected $fillable = [
+        'site_menu_id',
         'title',
         'url',
         'parent_id',
@@ -25,6 +26,14 @@ class SiteMenuItem extends Model
         'is_active' => 'boolean',
         'attributes' => 'array',
     ];
+
+    /**
+     * Связь с меню
+     */
+    public function siteMenu(): BelongsTo
+    {
+        return $this->belongsTo(SiteMenu::class, 'site_menu_id');
+    }
 
     /**
      * Связь с родительским пунктом меню
@@ -67,17 +76,19 @@ class SiteMenuItem extends Model
     }
 
     /**
-     * Получить все активные пункты меню с иерархией
+     * Получить все активные пункты меню с иерархией для конкретного меню
      */
-    public static function getMenuTree()
+    public static function getMenuTree($siteMenuId = null)
     {
-        return static::active()
-            ->root()
-            ->ordered()
-            ->with(['children' => function ($query) {
-                $query->active()->ordered();
-            }])
-            ->get();
+        $query = static::active()->root()->ordered();
+        
+        if ($siteMenuId) {
+            $query->where('site_menu_id', $siteMenuId);
+        }
+        
+        return $query->with(['children' => function ($query) {
+            $query->active()->ordered();
+        }])->get();
     }
 
     /**

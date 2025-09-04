@@ -13,6 +13,7 @@ return new class extends Migration
     {
         Schema::create('site_menu_items', function (Blueprint $table) {
             $table->id();
+            $table->unsignedBigInteger('site_menu_id')->comment('ID меню сайта');
             $table->string('title')->comment('Название пункта меню');
             $table->string('url')->comment('URL пункта меню');
             $table->unsignedBigInteger('parent_id')->nullable()->comment('ID родительского пункта меню');
@@ -22,11 +23,12 @@ return new class extends Migration
             $table->json('attributes')->nullable()->comment('Дополнительные атрибуты в JSON');
             $table->timestamps();
             
-            // Внешний ключ для иерархии
+            // Внешние ключи
+            $table->foreign('site_menu_id')->references('id')->on('site_menus')->onDelete('cascade');
             $table->foreign('parent_id')->references('id')->on('site_menu_items')->onDelete('cascade');
             
             // Индексы
-            $table->index(['parent_id', 'sort_order', 'is_active']);
+            $table->index(['site_menu_id', 'parent_id', 'sort_order', 'is_active']);
         });
     }
 

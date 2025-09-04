@@ -14,8 +14,7 @@ class SiteTemplate extends Model
         'name',
         'description',
         'folder_name',
-        'menu_template_id',
-        'auth_template_id',
+        'menu_id',
         'is_active',
         'settings',
         'sort_order',
@@ -27,19 +26,11 @@ class SiteTemplate extends Model
     ];
 
     /**
-     * Связь с шаблоном меню
+     * Связь с меню
      */
-    public function menuTemplate(): BelongsTo
+    public function menu(): BelongsTo
     {
-        return $this->belongsTo(SiteMenu::class, 'menu_template_id');
-    }
-
-    /**
-     * Связь с шаблоном блока авторизации
-     */
-    public function authTemplate(): BelongsTo
-    {
-        return $this->belongsTo(SiteAuthBlock::class, 'auth_template_id');
+        return $this->belongsTo(SiteMenu::class, 'menu_id');
     }
 
     /**
@@ -63,7 +54,7 @@ class SiteTemplate extends Model
      */
     public static function getActive()
     {
-        return static::active()->with(['menuTemplate', 'authTemplate'])->first();
+        return static::active()->with(['menu'])->first();
     }
 
     /**
@@ -71,7 +62,7 @@ class SiteTemplate extends Model
      */
     public static function getDefault()
     {
-        return static::where('folder_name', 'default')->with(['menuTemplate', 'authTemplate'])->first();
+        return static::where('folder_name', 'default')->with(['menu'])->first();
     }
 
     /**
