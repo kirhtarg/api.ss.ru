@@ -2,7 +2,7 @@
 
 ## Обзор
 
-Созданы новые миграции для таблиц `site_menus` и `site_menu_items` в правильном порядке, а также сидеры для заполнения данными из дампа.
+Созданы новые миграции для таблиц `site_menus` и `site_menu_items` в правильном порядке, а также сидеры для заполнения данными из дампа. Удалены все старые миграции, связанные с этими таблицами.
 
 ## Новые файлы
 
@@ -13,6 +13,15 @@
 ### Сидеры:
 - `SiteMenuSeeder.php` - заполнение таблицы site_menus
 - `SiteMenuItemSeeder.php` - заполнение таблицы site_menu_items
+
+## Удаленные файлы
+
+### Старые миграции (удалены):
+- `2025_09_03_000001_create_site_menus_table.php`
+- `2025_09_03_000004_create_site_menu_items_table.php`
+- `2025_09_03_162200_create_new_site_menus_table.php`
+- `2025_09_03_162326_drop_site_menus_and_auth_blocks_tables.php`
+- `2025_09_03_181210_add_missing_fields_to_site_menus_table.php`
 
 ## Выполнение на удаленном сервере
 
