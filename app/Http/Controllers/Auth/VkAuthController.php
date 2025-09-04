@@ -369,11 +369,14 @@ class VkAuthController extends Controller
                     'has_id_token' => !empty($idToken)
                 ]);
                 
-                // Пытаемся получить данные из id_token
-                $userDataFromToken = $this->parseIdToken($idToken);
-                if ($userDataFromToken) {
-                    Log::info('VK ID SDK data from id_token:', $userDataFromToken);
-                    $email = $userDataFromToken['email'] ?? $email;
+                // Получаем данные пользователя через VK ID API
+                $userDataFromVkId = $this->getUserDataFromVkId($accessToken);
+                if ($userDataFromVkId) {
+                    Log::info('VK ID API user data:', $userDataFromVkId);
+                    $email = $userDataFromVkId['email'] ?? $email;
+                    $firstName = $userDataFromVkId['first_name'] ?? null;
+                    $lastName = $userDataFromVkId['last_name'] ?? null;
+                    $avatar = $userDataFromVkId['avatar'] ?? null;
                 }
                 
                 // Получаем данные пользователя через VK API
@@ -430,7 +433,7 @@ class VkAuthController extends Controller
                         ]);
                         
                         // Создаем пользователя с минимальными данными
-                        $user = $this->createUserFromVkSdkData($userId, $email, $data, $userDataFromToken);
+                        $user = $this->createUserFromVkSdkData($userId, $email, $data, $userDataFromVkId);
                         
                         if ($user) {
                             $token = $user->createToken('vk-sdk-auth-token')->plainTextToken;
@@ -632,18 +635,19 @@ class VkAuthController extends Controller
     /**
      * Создание пользователя из данных VK ID SDK
      */
-    private function createUserFromVkSdkData($vkId, $email, $data, $userDataFromToken = null)
+    private function createUserFromVkSdkData($vkId, $email, $data, $userDataFromVkId = null)
     {
         try {
             // Проверяем, есть ли пользователь с таким VK ID
             $user = User::where('vk_id', $vkId)->first();
             
             if ($user) {
-                // Получаем данные из id_token для обновления
-                $firstName = $userDataFromToken['given_name'] ?? null;
-                $lastName = $userDataFromToken['family_name'] ?? null;
+                // Получаем данные из VK ID API для обновления
+                $firstName = $userDataFromVkId['first_name'] ?? null;
+                $lastName = $userDataFromVkId['last_name'] ?? null;
                 $fullName = trim(($firstName ?? '') . ' ' . ($lastName ?? ''));
-                $finalEmail = $email ?: $userDataFromToken['email'] ?? $user->email;
+                $finalEmail = $email ?: $userDataFromVkId['email'] ?? $user->email;
+                $avatar = $userDataFromVkId['avatar'] ?? null;
                 
                 // Пользователь уже существует, обновляем данные
                 $user->update([
@@ -668,22 +672,24 @@ class VkAuthController extends Controller
                     ]);
                     $user = $existingUser;
                 } else {
-                    // Получаем имя из id_token или создаем временное
-                    $firstName = $userDataFromToken['given_name'] ?? null;
-                    $lastName = $userDataFromToken['family_name'] ?? null;
+                    // Получаем имя из VK ID API или создаем временное
+                    $firstName = $userDataFromVkId['first_name'] ?? null;
+                    $lastName = $userDataFromVkId['last_name'] ?? null;
                     $fullName = trim(($firstName ?? '') . ' ' . ($lastName ?? ''));
                     if (empty($fullName)) {
                         $fullName = 'VK User ' . $vkId;
                     }
                     
-                    // Получаем email из id_token или используем переданный
-                    $finalEmail = $email ?: $userDataFromToken['email'] ?? 'vk_' . $vkId . '@temp.local';
+                    // Получаем email из VK ID API или используем переданный
+                    $finalEmail = $email ?: $userDataFromVkId['email'] ?? 'vk_' . $vkId . '@temp.local';
+                    $avatar = $userDataFromVkId['avatar'] ?? null;
                     
                     // Создаем нового пользователя
                     $user = User::create([
                         'name' => $fullName,
                         'email' => $finalEmail,
                         'vk_id' => $vkId,
+                        'avatar_url' => $avatar,
                         'password' => Hash::make(Str::random(32)), // Случайный пароль
                         'email_verified_at' => $finalEmail !== 'vk_' . $vkId . '@temp.local' ? now() : null,
                         'is_active' => true,
@@ -701,6 +707,41 @@ class VkAuthController extends Controller
             return $user;
         } catch (\Exception $e) {
             Log::error('Error creating user from VK SDK data: ' . $e->getMessage());
+            return null;
+        }
+    }
+    
+    /**
+     * Получение данных пользователя через VK ID API
+     */
+    private function getUserDataFromVkId($accessToken)
+    {
+        try {
+            Log::info('Getting user data from VK ID API...');
+            
+            // Согласно документации VK ID, используем специальный endpoint
+            $response = Http::get('https://id.vk.com/userinfo', [
+                'access_token' => $accessToken
+            ]);
+            
+            $data = $response->json();
+            Log::info('VK ID API response:', [
+                'status' => $response->status(),
+                'data' => $data
+            ]);
+            
+            if (isset($data['user'])) {
+                return $data['user'];
+            }
+            
+            Log::error('VK ID API: No user data in response', [
+                'response' => $data,
+                'status' => $response->status()
+            ]);
+            
+            return null;
+        } catch (\Exception $e) {
+            Log::error('Error getting user data from VK ID API: ' . $e->getMessage());
             return null;
         }
     }
@@ -745,12 +786,12 @@ class VkAuthController extends Controller
             
             // Подробный анализ JWT данных
             Log::info('=== JWT TOKEN ANALYSIS ===');
-            Log::info('JWT issuer (iss):', $data['iss'] ?? 'not set');
-            Log::info('JWT subject (sub):', $data['sub'] ?? 'not set');
-            Log::info('JWT app (app):', $data['app'] ?? 'not set');
-            Log::info('JWT exp (exp):', $data['exp'] ?? 'not set');
-            Log::info('JWT iat (iat):', $data['iat'] ?? 'not set');
-            Log::info('JWT jti (jti):', $data['jti'] ?? 'not set');
+            Log::info('JWT issuer (iss):', ['value' => $data['iss'] ?? 'not set']);
+            Log::info('JWT subject (sub):', ['value' => $data['sub'] ?? 'not set']);
+            Log::info('JWT app (app):', ['value' => $data['app'] ?? 'not set']);
+            Log::info('JWT exp (exp):', ['value' => $data['exp'] ?? 'not set']);
+            Log::info('JWT iat (iat):', ['value' => $data['iat'] ?? 'not set']);
+            Log::info('JWT jti (jti):', ['value' => $data['jti'] ?? 'not set']);
             
             // Проверяем наличие данных пользователя в JWT
             Log::info('Given name in JWT:', ['value' => $data['given_name'] ?? 'not set']);
