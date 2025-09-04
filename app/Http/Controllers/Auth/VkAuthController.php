@@ -369,6 +369,7 @@ class VkAuthController extends Controller
                     // Получаем разрешения пользователя
                     $permissions = $this->getUserPermissions($user);
                     
+                    Log::info('VK ID SDK: Success - user created from VK API data');
                     return response()->json([
                         'success' => true,
                         'token' => $token,
@@ -402,6 +403,7 @@ class VkAuthController extends Controller
                             $token = $user->createToken('vk-sdk-auth-token')->plainTextToken;
                             $permissions = $this->getUserPermissions($user);
                             
+                            Log::info('VK ID SDK: Success - user created from VK SDK data');
                             return response()->json([
                                 'success' => true,
                                 'token' => $token,
@@ -415,6 +417,8 @@ class VkAuthController extends Controller
                                     'permissions' => $permissions
                                 ]
                             ]);
+                        } else {
+                            Log::error('VK ID SDK: Failed to create user from VK SDK data');
                         }
                     }
                 }
