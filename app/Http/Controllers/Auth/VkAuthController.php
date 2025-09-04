@@ -46,7 +46,8 @@ class VkAuthController extends Controller
                 'redirect_uri' => $redirectUri,
                 'scope' => $scope,
                 'response_type' => 'code',
-                'v' => '5.131'
+                'v' => '5.199', // Обновленная версия API для OAuth 2.1
+                'state' => Str::random(32) // Рекомендуется для OAuth 2.1
             ]);
             
             Log::info('Generated VK Auth URL:', ['url' => $url]);
@@ -294,7 +295,8 @@ class VkAuthController extends Controller
                 'redirect_uri' => $redirectUri,
                 'scope' => $scope,
                 'response_type' => 'code',
-                'v' => '5.131'
+                'v' => '5.199', // Обновленная версия API для OAuth 2.1
+                'state' => Str::random(32) // Рекомендуется для OAuth 2.1
             ]);
                 
             return response()->json([
