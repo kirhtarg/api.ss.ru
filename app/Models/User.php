@@ -134,9 +134,16 @@ class User extends Authenticatable
      */
     public function getAvatarUrlAttribute(): ?string
     {
+        // Если есть URL аватара (от OAuth провайдеров), используем его
+        if ($this->attributes['avatar_url']) {
+            return $this->attributes['avatar_url'];
+        }
+        
+        // Если есть локальный файл аватара, используем его
         if ($this->avatar) {
             return asset('storage/' . $this->avatar);
         }
+        
         return null;
     }
 
