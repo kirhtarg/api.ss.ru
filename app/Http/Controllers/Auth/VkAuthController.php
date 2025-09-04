@@ -372,11 +372,20 @@ class VkAuthController extends Controller
                 // Получаем данные пользователя через VK ID API
                 $userDataFromVkId = $this->getUserDataFromVkId($accessToken);
                 if ($userDataFromVkId) {
-                    Log::info('VK ID API user data:', $userDataFromVkId);
+                    Log::info('VK ID API user data received:', $userDataFromVkId);
                     $email = $userDataFromVkId['email'] ?? $email;
                     $firstName = $userDataFromVkId['first_name'] ?? null;
                     $lastName = $userDataFromVkId['last_name'] ?? null;
                     $avatar = $userDataFromVkId['avatar'] ?? null;
+                    
+                    Log::info('Extracted user data:', [
+                        'email' => $email,
+                        'first_name' => $firstName,
+                        'last_name' => $lastName,
+                        'avatar' => $avatar
+                    ]);
+                } else {
+                    Log::warning('No user data received from VK ID API');
                 }
                 
                 // Получаем данные пользователя через VK API
@@ -719,29 +728,65 @@ class VkAuthController extends Controller
         try {
             Log::info('Getting user data from VK ID API...');
             
-            // Согласно документации VK ID, используем специальный endpoint
-            $response = Http::get('https://id.vk.com/userinfo', [
-                'access_token' => $accessToken
-            ]);
+            // Пробуем разные endpoints VK ID API
+            $endpoints = [
+                'https://id.vk.com/userinfo',
+                'https://api.vk.com/method/users.get',
+                'https://api.vk.com/method/account.getProfileInfo'
+            ];
             
-            $data = $response->json();
-            Log::info('VK ID API response:', [
-                'status' => $response->status(),
-                'data' => $data
-            ]);
-            
-            if (isset($data['user'])) {
-                return $data['user'];
+            foreach ($endpoints as $endpoint) {
+                Log::info("Trying VK API endpoint: $endpoint");
+                
+                if (strpos($endpoint, 'id.vk.com') !== false) {
+                    // VK ID API
+                    $response = Http::withHeaders([
+                        'Authorization' => 'Bearer ' . $accessToken
+                    ])->get($endpoint);
+                } else {
+                    // VK API
+                    $response = Http::get($endpoint, [
+                        'access_token' => $accessToken,
+                        'fields' => 'first_name,last_name,email,photo_200,photo_400_orig',
+                        'v' => '5.131'
+                    ]);
+                }
+                
+                $data = $response->json();
+                Log::info("VK API response from $endpoint:", [
+                    'status' => $response->status(),
+                    'data' => $data
+                ]);
+                
+                // Проверяем разные структуры ответа
+                if (isset($data['user'])) {
+                    Log::info('Found user data in response.user');
+                    return $data['user'];
+                } elseif (isset($data['response']) && is_array($data['response']) && count($data['response']) > 0) {
+                    Log::info('Found user data in response.response[0]');
+                    $userData = $data['response'][0];
+                    // Преобразуем VK API формат в наш формат
+                    return [
+                        'user_id' => $userData['id'] ?? null,
+                        'first_name' => $userData['first_name'] ?? null,
+                        'last_name' => $userData['last_name'] ?? null,
+                        'email' => $userData['email'] ?? null,
+                        'avatar' => $userData['photo_400_orig'] ?? $userData['photo_200'] ?? null,
+                        'phone' => $userData['phone'] ?? null,
+                        'sex' => $userData['sex'] ?? null,
+                        'birthday' => $userData['bdate'] ?? null
+                    ];
+                } elseif (isset($data['first_name']) || isset($data['email'])) {
+                    Log::info('Found user data in root response');
+                    return $data;
+                }
             }
             
-            Log::error('VK ID API: No user data in response', [
-                'response' => $data,
-                'status' => $response->status()
-            ]);
-            
+            Log::error('VK API: No user data found in any endpoint');
             return null;
+            
         } catch (\Exception $e) {
-            Log::error('Error getting user data from VK ID API: ' . $e->getMessage());
+            Log::error('Error getting user data from VK API: ' . $e->getMessage());
             return null;
         }
     }
