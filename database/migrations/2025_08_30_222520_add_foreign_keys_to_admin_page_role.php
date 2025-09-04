@@ -13,19 +13,29 @@ return new class extends Migration
     {
         // Добавляем внешние ключи только если таблица существует и не имеет внешних ключей
         if (Schema::hasTable('admin_page_role')) {
-            Schema::table('admin_page_role', function (Blueprint $table) {
-                // Проверяем, что внешние ключи еще не существуют
-                if (!Schema::hasColumn('admin_page_role', 'admin_page_id')) {
-                    $table->unsignedBigInteger('admin_page_id')->change();
-                }
-                if (!Schema::hasColumn('admin_page_role', 'role_id')) {
-                    $table->unsignedBigInteger('role_id')->change();
-                }
+            // Проверяем, существуют ли уже внешние ключи
+            $foreignKeys = \DB::select("
+                SELECT CONSTRAINT_NAME 
+                FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
+                WHERE TABLE_NAME = 'admin_page_role' 
+                AND CONSTRAINT_NAME LIKE '%_foreign'
+            ");
+            
+            $existingForeignKeys = collect($foreignKeys)->pluck('CONSTRAINT_NAME')->toArray();
+            
+            if (!in_array('admin_page_role_admin_page_id_foreign', $existingForeignKeys) || 
+                !in_array('admin_page_role_role_id_foreign', $existingForeignKeys)) {
                 
-                // Добавляем внешние ключи
-                $table->foreign('admin_page_id')->references('id')->on('admin_pages')->onDelete('cascade');
-                $table->foreign('role_id')->references('id')->on('roles')->onDelete('cascade');
-            });
+                Schema::table('admin_page_role', function (Blueprint $table) {
+                    // Добавляем внешние ключи только если их еще нет
+                    if (!in_array('admin_page_role_admin_page_id_foreign', $existingForeignKeys)) {
+                        $table->foreign('admin_page_id')->references('id')->on('admin_pages')->onDelete('cascade');
+                    }
+                    if (!in_array('admin_page_role_role_id_foreign', $existingForeignKeys)) {
+                        $table->foreign('role_id')->references('id')->on('roles')->onDelete('cascade');
+                    }
+                });
+            }
         }
     }
 
