@@ -28,7 +28,7 @@ class YandexAuthController extends Controller
             // Используем прямой URL для Yandex OAuth
             $clientId = config('services.yandex.client_id');
             $redirectUri = config('services.yandex.redirect');
-            $scope = 'login:email login:info login:avatar';
+            $scope = 'login:email login:info login:avatar login:birthday login:phone';
             
             $url = "https://oauth.yandex.ru/authorize?" . http_build_query([
                 'response_type' => 'code',
@@ -117,6 +117,9 @@ class YandexAuthController extends Controller
             // Получаем URL аватара
             $avatarUrl = $this->getYandexAvatarUrl($yandexUser);
             
+            // Получаем дополнительные данные
+            $additionalData = $this->getYandexAdditionalData($yandexUser);
+            
             // Проверяем, есть ли пользователь с таким Yandex ID
             $user = User::where('yandex_id', $yandexUser['id'])->first();
             
@@ -128,6 +131,9 @@ class YandexAuthController extends Controller
                     'name' => $yandexUser['display_name'] ?? $yandexUser['real_name'] ?? 'Yandex User',
                     'email' => $yandexUser['default_email'] ?? null,
                     'avatar_url' => $avatarUrl,
+                    'birthday' => $additionalData['birthday'],
+                    'phone' => $additionalData['phone'],
+                    'additional_info' => $additionalData['info'],
                     'email_verified_at' => $yandexUser['default_email'] ? now() : null,
                     'last_login_at' => now(),
                 ]);
@@ -145,6 +151,9 @@ class YandexAuthController extends Controller
                     $existingUser->update([
                         'yandex_id' => $yandexUser['id'],
                         'avatar_url' => $avatarUrl,
+                        'birthday' => $additionalData['birthday'],
+                        'phone' => $additionalData['phone'],
+                        'additional_info' => $additionalData['info'],
                         'email_verified_at' => $yandexUser['default_email'] ? now() : $existingUser->email_verified_at,
                         'last_login_at' => now(),
                     ]);
@@ -158,6 +167,9 @@ class YandexAuthController extends Controller
                         'email' => $yandexUser['default_email'] ?? null,
                         'yandex_id' => $yandexUser['id'],
                         'avatar_url' => $avatarUrl,
+                        'birthday' => $additionalData['birthday'],
+                        'phone' => $additionalData['phone'],
+                        'additional_info' => $additionalData['info'],
                         'password' => Hash::make(Str::random(32)), // Случайный пароль
                         'email_verified_at' => $yandexUser['default_email'] ? now() : null,
                         'is_active' => true,
@@ -259,6 +271,54 @@ class YandexAuthController extends Controller
     }
 
     /**
+     * Получить дополнительные данные от Yandex
+     */
+    private function getYandexAdditionalData($yandexUser)
+    {
+        $data = [
+            'birthday' => null,
+            'phone' => null,
+            'info' => []
+        ];
+
+        // Дата рождения
+        if (isset($yandexUser['birthday'])) {
+            try {
+                $data['birthday'] = \Carbon\Carbon::createFromFormat('Y-m-d', $yandexUser['birthday'])->format('Y-m-d');
+            } catch (\Exception $e) {
+                Log::warning('Yandex birthday format error:', ['birthday' => $yandexUser['birthday'] ?? 'not_set']);
+            }
+        }
+
+        // Телефон
+        if (isset($yandexUser['default_phone'])) {
+            $data['phone'] = $yandexUser['default_phone'];
+        }
+
+        // Дополнительная информация
+        $infoFields = [
+            'sex',
+            'first_name',
+            'last_name',
+            'real_name',
+            'display_name',
+            'login',
+            'psuid',
+            'client_id'
+        ];
+
+        foreach ($infoFields as $field) {
+            if (isset($yandexUser[$field])) {
+                $data['info'][$field] = $yandexUser[$field];
+            }
+        }
+
+        Log::info('Yandex additional data:', $data);
+
+        return $data;
+    }
+
+    /**
      * API endpoint для получения URL авторизации Yandex
      */
     public function getYandexAuthUrl()
@@ -272,7 +332,7 @@ class YandexAuthController extends Controller
             // Используем прямой URL для Yandex OAuth
             $clientId = config('services.yandex.client_id');
             $redirectUri = config('services.yandex.redirect');
-            $scope = 'login:email login:info login:avatar';
+            $scope = 'login:email login:info login:avatar login:birthday login:phone';
             
             $url = "https://oauth.yandex.ru/authorize?" . http_build_query([
                 'response_type' => 'code',

@@ -18,6 +18,9 @@ class User extends Authenticatable
         'password',
         'avatar',
         'avatar_url',
+        'birthday',
+        'phone',
+        'additional_info',
         'google_id',
         'vk_id',
         'yandex_id',
@@ -36,6 +39,8 @@ class User extends Authenticatable
         'password' => 'hashed',
         'is_active' => 'boolean',
         'last_login_at' => 'datetime',
+        'birthday' => 'date',
+        'additional_info' => 'array',
     ];
 
     protected $appends = ['avatar_url'];
