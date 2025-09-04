@@ -47,7 +47,7 @@ Route::middleware(['web'])->group(function () {
 // Тестовый маршрут для проверки OAuth
 Route::get('/test/oauth', function () {
     $sessionDriver = config('session.driver');
-    $sessionTableExists = \Schema::hasTable('sessions');
+    $sessionTableExists = \Illuminate\Support\Facades\Schema::hasTable('sessions');
     
     return response()->json([
         'success' => true,
@@ -77,14 +77,34 @@ Route::get('/test/oauth', function () {
     ]);
 });
 
-// Публичные маршруты для получения информации о сайте
-Route::get('/public/site-info', [App\Http\Controllers\Api\Public\SiteInfoController::class, 'index']);
-Route::get('/public/settings', [App\Http\Controllers\Api\Public\SiteInfoController::class, 'settings']);
-Route::get('/public/settings/seo', [App\Http\Controllers\Api\Public\SiteInfoController::class, 'seo']);
+// Публичные маршруты для получения информации о сайте (с CORS middleware)
+Route::middleware(['cors'])->group(function () {
+    Route::options('/public/site-info', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/site-info', [App\Http\Controllers\Api\Public\SiteInfoController::class, 'index']);
 
-// Публичные маршруты для шаблонов сайта
-Route::get('/public/site/template/active', [App\Http\Controllers\Api\Public\SiteTemplateController::class, 'getActive']);
-Route::get('/public/site/menu', [App\Http\Controllers\Api\Public\SiteMenuController::class, 'getMenu']);
+    Route::options('/public/settings', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/settings', [App\Http\Controllers\Api\Public\SiteInfoController::class, 'settings']);
+
+    Route::options('/public/settings/seo', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/settings/seo', [App\Http\Controllers\Api\Public\SiteInfoController::class, 'seo']);
+
+    // Публичные маршруты для шаблонов сайта
+    Route::options('/public/site/template/active', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/site/template/active', [App\Http\Controllers\Api\Public\SiteTemplateController::class, 'getActive']);
+
+    Route::options('/public/site/menu', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/site/menu', [App\Http\Controllers\Api\Public\SiteMenuController::class, 'getMenu']);
+});
 
 // Временный отладочный endpoint для проверки всех настроек
 Route::get('/public/debug/settings', function () {
@@ -1610,6 +1630,18 @@ Route::get('/test', function () {
     return response()->json([
         'message' => 'API работает!',
         'version' => '1.0.0',
+        'timestamp' => now()->toISOString()
+    ]);
+});
+
+// Тестовый маршрут для проверки CORS
+Route::options('/test-cors', function () {
+    return response()->json([], 200);
+});
+Route::get('/test-cors', function () {
+    return response()->json([
+        'message' => 'CORS тест работает!',
+        'origin' => request()->header('Origin'),
         'timestamp' => now()->toISOString()
     ]);
 });

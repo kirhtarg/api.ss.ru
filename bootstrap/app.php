@@ -16,11 +16,12 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'role' => \App\Http\Middleware\CheckRole::class,
             'shop.access' => \App\Http\Middleware\CheckShopAccess::class,
+            'cors' => \App\Http\Middleware\CustomCors::class,
         ]);
         
         // Настраиваем API middleware - только token-based аутентификация
         $middleware->api([
-            \Illuminate\Http\Middleware\HandleCors::class,
+            \App\Http\Middleware\CustomCors::class,
             'throttle:api',
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ]);

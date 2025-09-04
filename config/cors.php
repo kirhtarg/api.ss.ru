@@ -25,20 +25,30 @@ return [
         'http://127.0.0.1:3000',
         'http://127.0.0.1:3001',
         'http://admin.skateandsnow.ru',
-        'https://admin.skateandsnow.ru'
+        'https://admin.skateandsnow.ru',
+        'https://ss75.kirhtarg.ru',
+        'http://ss75.kirhtarg.ru'
     ],
 
-    'allowed_origins_patterns' => [],
+    'allowed_origins_patterns' => [
+        '*\.kirhtarg\.ru$',
+    ],
 
     'allowed_headers' => [
         'Content-Type',
         'Authorization',
         'X-Requested-With',
         'Accept',
-        'Origin'
+        'Origin',
+        'X-CSRF-TOKEN',
+        'X-XSRF-TOKEN'
     ],
 
-    'exposed_headers' => [],
+    'exposed_headers' => [
+        'X-Total-Count',
+        'X-Page-Count',
+        'X-Current-Page'
+    ],
 
     'max_age' => 0,
 
