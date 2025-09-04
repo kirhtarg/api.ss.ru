@@ -24,7 +24,8 @@ return new class extends Migration
             // Индексы для производительности
             $table->index('good_id');
             $table->index('property_id');
-            $table->index('value');
+            // Убираем индекс на TEXT колонке, так как MySQL требует указания длины ключа
+            // $table->index('value');
         });
     }
 
