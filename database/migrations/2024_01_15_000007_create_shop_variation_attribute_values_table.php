@@ -21,8 +21,8 @@ return new class extends Migration
             $table->timestamps();
             
             // Индексы для производительности
-            $table->index(['attribute_id', 'is_active', 'sort_order']);
-            $table->index('value');
+            $table->index(['attribute_id', 'is_active', 'sort_order'], 'shop_var_attr_vals_attr_active_sort_idx');
+            $table->index('value', 'shop_var_attr_vals_value_idx');
         });
     }
 

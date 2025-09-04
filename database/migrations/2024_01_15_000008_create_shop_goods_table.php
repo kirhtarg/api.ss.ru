@@ -49,8 +49,8 @@ return new class extends Migration
             $table->index('created_at');
             
             // Составные индексы для поиска
-            $table->index(['name', 'is_active']);
-            $table->index(['sku', 'is_active']);
+            $table->index(['name', 'is_active'], 'shop_goods_name_active_idx');
+            $table->index(['sku', 'is_active'], 'shop_goods_sku_active_idx');
         });
     }
 
