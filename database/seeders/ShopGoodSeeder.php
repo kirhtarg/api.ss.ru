@@ -39,6 +39,7 @@ class ShopGoodSeeder extends Seeder
                 'meta_description' => null,
                 'created_at' => '2025-09-02 09:02:12',
                 'updated_at' => '2025-09-02 09:02:19',
+                'deleted_at' => null,
             ],
         ];
 

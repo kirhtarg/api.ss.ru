@@ -16,7 +16,7 @@ class ShopPropertySeeder extends Seeder
             [
                 'id' => 1,
                 'name' => 'Материал',
-                'slug' => 'material',
+                'is_filterable' => 1,
                 'sort_order' => 1,
                 'created_at' => '2025-09-02 10:27:59',
                 'updated_at' => '2025-09-02 10:27:59',
@@ -24,7 +24,7 @@ class ShopPropertySeeder extends Seeder
             [
                 'id' => 2,
                 'name' => 'Цвет',
-                'slug' => 'color',
+                'is_filterable' => 1,
                 'sort_order' => 2,
                 'created_at' => '2025-09-02 10:27:59',
                 'updated_at' => '2025-09-02 10:27:59',
@@ -32,7 +32,7 @@ class ShopPropertySeeder extends Seeder
             [
                 'id' => 3,
                 'name' => 'Размер',
-                'slug' => 'size',
+                'is_filterable' => 1,
                 'sort_order' => 3,
                 'created_at' => '2025-09-02 10:27:59',
                 'updated_at' => '2025-09-02 10:27:59',
@@ -40,7 +40,7 @@ class ShopPropertySeeder extends Seeder
             [
                 'id' => 4,
                 'name' => 'Вес',
-                'slug' => 'weight',
+                'is_filterable' => 0,
                 'sort_order' => 4,
                 'created_at' => '2025-09-02 10:27:59',
                 'updated_at' => '2025-09-02 10:27:59',
@@ -48,7 +48,7 @@ class ShopPropertySeeder extends Seeder
             [
                 'id' => 5,
                 'name' => 'Страна производитель',
-                'slug' => 'country',
+                'is_filterable' => 1,
                 'sort_order' => 5,
                 'created_at' => '2025-09-02 10:27:59',
                 'updated_at' => '2025-09-02 10:27:59',
@@ -56,7 +56,7 @@ class ShopPropertySeeder extends Seeder
             [
                 'id' => 6,
                 'name' => 'Гарантия',
-                'slug' => 'warranty',
+                'is_filterable' => 0,
                 'sort_order' => 6,
                 'created_at' => '2025-09-02 10:27:59',
                 'updated_at' => '2025-09-02 10:27:59',
