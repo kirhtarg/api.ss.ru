@@ -120,9 +120,13 @@ class YandexAuthController extends Controller
             }
             
             // Логируем данные от Yandex для отладки
-            Log::info('Yandex user data:', $yandexUser ?? []);
-            Log::info('Yandex extended data:', $extendedUserData ?? []);
-            Log::info('Yandex ID data:', $yandexIdData ?? []);
+            Log::info('=== YANDEX API RESPONSE DEBUG ===');
+            Log::info('Yandex user data (login.yandex.ru/info):', $yandexUser ?? []);
+            Log::info('Yandex extended data (api-yaru.yandex.ru/me):', $extendedUserData ?? []);
+            Log::info('Yandex ID data (id.yandex.ru/info):', $yandexIdData ?? []);
+            Log::info('=== MERGED DATA ===');
+            Log::info('Final merged user data:', $yandexUser ?? []);
+            Log::info('=== END DEBUG ===');
             
             // Проверяем все возможные поля для аватара
             $avatarFields = [
@@ -375,7 +379,10 @@ class YandexAuthController extends Controller
             }
         }
 
-        Log::info('Yandex additional data:', $data ?? []);
+        Log::info('=== YANDEX ADDITIONAL DATA DEBUG ===');
+        Log::info('Input yandexUser data:', $yandexUser ?? []);
+        Log::info('Processed additional data:', $data ?? []);
+        Log::info('=== END ADDITIONAL DATA DEBUG ===');
 
         return $data;
     }
