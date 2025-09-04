@@ -8,6 +8,7 @@ use App\Models\Role;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Laravel\Socialite\Facades\Socialite;
 use Illuminate\Support\Facades\Log;
@@ -65,7 +66,7 @@ class YandexAuthController extends Controller
             }
             
             // Получаем токен
-            $tokenResponse = \Http::asForm()->post('https://oauth.yandex.ru/token', [
+            $tokenResponse = Http::asForm()->post('https://oauth.yandex.ru/token', [
                 'grant_type' => 'authorization_code',
                 'code' => $code,
                 'client_id' => config('services.yandex.client_id'),
@@ -81,7 +82,7 @@ class YandexAuthController extends Controller
             }
             
             // Получаем данные пользователя
-            $userResponse = \Http::withHeaders([
+            $userResponse = Http::withHeaders([
                 'Authorization' => 'OAuth ' . $tokenData['access_token']
             ])->get('https://login.yandex.ru/info');
             
@@ -90,7 +91,7 @@ class YandexAuthController extends Controller
             $yandexIdResponse = null;
             
             try {
-                $extendedUserResponse = \Http::withHeaders([
+                $extendedUserResponse = Http::withHeaders([
                     'Authorization' => 'OAuth ' . $tokenData['access_token']
                 ])->get('https://api-yaru.yandex.ru/me');
             } catch (\Exception $e) {
@@ -99,7 +100,7 @@ class YandexAuthController extends Controller
             
             try {
                 // Пробуем также Yandex ID API для получения дополнительных данных
-                $yandexIdResponse = \Http::withHeaders([
+                $yandexIdResponse = Http::withHeaders([
                     'Authorization' => 'OAuth ' . $tokenData['access_token']
                 ])->get('https://id.yandex.ru/info');
             } catch (\Exception $e) {
