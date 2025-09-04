@@ -19,20 +19,17 @@ return [
 
     'allowed_methods' => ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
 
-    'allowed_origins' => [
+    'allowed_origins' => array_filter(array_merge([
         'http://localhost:3000',
         'http://localhost:3001',
         'http://127.0.0.1:3000',
         'http://127.0.0.1:3001',
-        'http://admin.skateandsnow.ru',
-        'https://admin.skateandsnow.ru',
-        'https://ss75.kirhtarg.ru',
-        'http://ss75.kirhtarg.ru'
-    ],
+    ], explode(',', env('CORS_ALLOWED_ORIGINS', '')))),
 
-    'allowed_origins_patterns' => [
-        '*\.kirhtarg\.ru$',
-    ],
+    'allowed_origins_patterns' => array_filter(array_merge([
+        'localhost:\d+',
+        '127\.0\.0\.1:\d+',
+    ], explode(',', env('CORS_ALLOWED_PATTERNS', '')))),
 
     'allowed_headers' => [
         'Content-Type',

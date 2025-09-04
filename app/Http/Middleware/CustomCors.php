@@ -17,26 +17,31 @@ class CustomCors
     {
         $response = $next($request);
 
-        // Разрешенные домены
-        $allowedOrigins = [
-            'http://localhost:3000',
-            'http://localhost:3001',
-            'http://127.0.0.1:3000',
-            'http://127.0.0.1:3001',
-            'http://admin.skateandsnow.ru',
-            'https://admin.skateandsnow.ru',
-            'https://ss75.kirhtarg.ru',
-            'http://ss75.kirhtarg.ru'
-        ];
+        // Получаем разрешенные домены из конфигурации
+        $allowedOrigins = config('cors.allowed_origins', []);
+        $allowedPatterns = config('cors.allowed_origins_patterns', []);
 
-        // Проверяем паттерн для поддоменов kirhtarg.ru
+        // Проверяем паттерны для поддоменов
         $origin = $request->header('Origin');
-        if ($origin && preg_match('/^https?:\/\/[a-zA-Z0-9-]+\.kirhtarg\.ru$/', $origin)) {
-            $allowedOrigins[] = $origin;
+        $isAllowed = false;
+
+        if ($origin) {
+            // Проверяем точные совпадения
+            if (in_array($origin, $allowedOrigins)) {
+                $isAllowed = true;
+            } else {
+                // Проверяем паттерны
+                foreach ($allowedPatterns as $pattern) {
+                    if (preg_match('/' . $pattern . '/', $origin)) {
+                        $isAllowed = true;
+                        break;
+                    }
+                }
+            }
         }
 
         // Устанавливаем CORS заголовки
-        if ($origin && in_array($origin, $allowedOrigins)) {
+        if ($origin && $isAllowed) {
             $response->headers->set('Access-Control-Allow-Origin', $origin);
         }
 
