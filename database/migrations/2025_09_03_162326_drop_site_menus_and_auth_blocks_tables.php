@@ -11,6 +11,28 @@ return new class extends Migration
      */
     public function up(): void
     {
+        // Сначала удаляем внешние ключи из site_menu_items
+        if (Schema::hasTable('site_menu_items')) {
+            Schema::table('site_menu_items', function (Blueprint $table) {
+                // Проверяем существование внешних ключей перед удалением
+                $foreignKeys = \DB::select("
+                    SELECT CONSTRAINT_NAME 
+                    FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
+                    WHERE TABLE_NAME = 'site_menu_items' 
+                    AND CONSTRAINT_NAME LIKE '%_foreign'
+                ");
+                
+                $existingForeignKeys = collect($foreignKeys)->pluck('CONSTRAINT_NAME')->toArray();
+                
+                if (in_array('site_menu_items_site_menu_id_foreign', $existingForeignKeys)) {
+                    $table->dropForeign(['site_menu_id']);
+                }
+                if (in_array('site_menu_items_parent_id_foreign', $existingForeignKeys)) {
+                    $table->dropForeign(['parent_id']);
+                }
+            });
+        }
+        
         // Проверяем существование внешних ключей перед удалением
         if (Schema::hasTable('site_templates')) {
             Schema::table('site_templates', function (Blueprint $table) {
