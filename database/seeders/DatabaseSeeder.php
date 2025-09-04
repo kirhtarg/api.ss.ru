@@ -21,16 +21,6 @@ class DatabaseSeeder extends Seeder
             AdminPageSeeder::class,
             AdminMenuItemSeeder::class,
             
-            // Магазин
-            ShopCategorySeeder::class,
-            ShopBrandSeeder::class,
-            ShopPropertySeeder::class,
-            ShopTagSeeder::class,
-            ShopVariationAttributeSeeder::class,
-            ShopPriceTypeSeeder::class,
-            ShopWarehouseSeeder::class,
-            ShopGoodSeeder::class,
-            
             // Сайт
             SiteMenuSeeder::class,
             SiteTemplateSeeder::class,
