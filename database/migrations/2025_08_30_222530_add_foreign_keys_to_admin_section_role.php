@@ -13,11 +13,29 @@ return new class extends Migration
     {
         // Добавляем внешние ключи только если таблица существует
         if (Schema::hasTable('admin_section_role')) {
-            Schema::table('admin_section_role', function (Blueprint $table) {
-                // Добавляем внешние ключи
-                $table->foreign('admin_section_id')->references('id')->on('admin_sections')->onDelete('cascade');
-                $table->foreign('role_id')->references('id')->on('roles')->onDelete('cascade');
-            });
+            // Проверяем, существуют ли уже внешние ключи
+            $foreignKeys = \DB::select("
+                SELECT CONSTRAINT_NAME 
+                FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
+                WHERE TABLE_NAME = 'admin_section_role' 
+                AND CONSTRAINT_NAME LIKE '%_foreign'
+            ");
+            
+            $existingForeignKeys = collect($foreignKeys)->pluck('CONSTRAINT_NAME')->toArray();
+            
+            if (!in_array('admin_section_role_admin_section_id_foreign', $existingForeignKeys) || 
+                !in_array('admin_section_role_role_id_foreign', $existingForeignKeys)) {
+                
+                Schema::table('admin_section_role', function (Blueprint $table) {
+                    // Добавляем внешние ключи только если их еще нет
+                    if (!in_array('admin_section_role_admin_section_id_foreign', $existingForeignKeys)) {
+                        $table->foreign('admin_section_id')->references('id')->on('admin_sections')->onDelete('cascade');
+                    }
+                    if (!in_array('admin_section_role_role_id_foreign', $existingForeignKeys)) {
+                        $table->foreign('role_id')->references('id')->on('roles')->onDelete('cascade');
+                    }
+                });
+            }
         }
     }
 
