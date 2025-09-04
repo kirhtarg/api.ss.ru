@@ -25,4 +25,5 @@ return new class extends Migration
             $table->dropColumn('phone_verified_at');
         });
     }
+    
 };
