@@ -23,7 +23,6 @@ class ShopBrandSeeder extends Seeder
                 'sort_order' => 0,
                 'created_at' => '2025-09-02 10:24:25',
                 'updated_at' => '2025-09-02 10:24:25',
-                'deleted_at' => null,
             ],
             [
                 'id' => 2,
@@ -35,7 +34,6 @@ class ShopBrandSeeder extends Seeder
                 'sort_order' => 0,
                 'created_at' => '2025-09-02 10:24:25',
                 'updated_at' => '2025-09-02 10:24:25',
-                'deleted_at' => null,
             ],
             [
                 'id' => 3,
@@ -47,7 +45,6 @@ class ShopBrandSeeder extends Seeder
                 'sort_order' => 0,
                 'created_at' => '2025-09-02 10:24:25',
                 'updated_at' => '2025-09-02 10:24:25',
-                'deleted_at' => null,
             ],
             [
                 'id' => 4,
@@ -59,7 +56,6 @@ class ShopBrandSeeder extends Seeder
                 'sort_order' => 0,
                 'created_at' => '2025-09-02 10:24:25',
                 'updated_at' => '2025-09-02 10:24:25',
-                'deleted_at' => null,
             ],
             [
                 'id' => 5,
@@ -71,7 +67,6 @@ class ShopBrandSeeder extends Seeder
                 'sort_order' => 0,
                 'created_at' => '2025-09-02 10:24:25',
                 'updated_at' => '2025-09-02 10:24:25',
-                'deleted_at' => null,
             ],
         ];
 

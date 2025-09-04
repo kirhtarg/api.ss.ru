@@ -25,7 +25,6 @@ class ShopCategorySeeder extends Seeder
                 'parent_id' => null,
                 'created_at' => '2025-09-02 08:25:09',
                 'updated_at' => '2025-09-02 12:00:01',
-                'deleted_at' => null,
             ],
             [
                 'id' => 2,
@@ -39,7 +38,6 @@ class ShopCategorySeeder extends Seeder
                 'parent_id' => null,
                 'created_at' => '2025-09-02 08:27:32',
                 'updated_at' => '2025-09-02 12:00:01',
-                'deleted_at' => null,
             ],
             [
                 'id' => 3,
@@ -53,7 +51,6 @@ class ShopCategorySeeder extends Seeder
                 'parent_id' => null,
                 'created_at' => '2025-09-02 08:29:00',
                 'updated_at' => '2025-09-02 12:00:01',
-                'deleted_at' => null,
             ],
             [
                 'id' => 4,
@@ -67,7 +64,6 @@ class ShopCategorySeeder extends Seeder
                 'parent_id' => null,
                 'created_at' => '2025-09-02 08:30:59',
                 'updated_at' => '2025-09-02 12:00:01',
-                'deleted_at' => null,
             ],
             [
                 'id' => 5,
@@ -81,7 +77,6 @@ class ShopCategorySeeder extends Seeder
                 'parent_id' => null,
                 'created_at' => '2025-09-02 08:32:54',
                 'updated_at' => '2025-09-02 12:00:01',
-                'deleted_at' => null,
             ],
         ];
 
