@@ -608,8 +608,8 @@ class VkAuthController extends Controller
             if ($user) {
                 // Пользователь уже существует, обновляем данные
                 $user->update([
-                    'email' => $email,
-                    'email_verified_at' => $email ? now() : null,
+                    'email' => $email ?: $user->email, // Сохраняем существующий email если новый пустой
+                    'email_verified_at' => $email ? now() : $user->email_verified_at,
                     'last_login_at' => now(),
                 ]);
             } else {
@@ -631,7 +631,7 @@ class VkAuthController extends Controller
                     // Создаем нового пользователя
                     $user = User::create([
                         'name' => 'VK User ' . $vkId, // Временное имя
-                        'email' => $email,
+                        'email' => $email ?: 'vk_' . $vkId . '@temp.local', // Временный email если нет
                         'vk_id' => $vkId,
                         'password' => Hash::make(Str::random(32)), // Случайный пароль
                         'email_verified_at' => $email ? now() : null,
