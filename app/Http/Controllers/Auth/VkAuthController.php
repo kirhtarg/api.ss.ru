@@ -221,7 +221,7 @@ class VkAuthController extends Controller
                 'id' => $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
-                'avatar_url' => $user->avatar_url,
+                'avatar_url' => $user->avatar_url ?? null,
                 'role' => $user->roles->first() ? $user->roles->first()->name : 'user',
                 'is_active' => true,
                 'permissions' => $permissions,
@@ -377,7 +377,7 @@ class VkAuthController extends Controller
                             'id' => $user->id,
                             'name' => $user->name,
                             'email' => $user->email,
-                            'avatar_url' => $user->avatar_url,
+                            'avatar_url' => $user->avatar_url ?? null,
                             'role' => $user->roles->first()?->name ?? 'user',
                             'is_active' => $user->is_active,
                             'permissions' => $permissions
@@ -411,7 +411,7 @@ class VkAuthController extends Controller
                                     'id' => $user->id,
                                     'name' => $user->name,
                                     'email' => $user->email,
-                                    'avatar_url' => $user->avatar_url,
+                                    'avatar_url' => $user->avatar_url ?? null,
                                     'role' => $user->roles->first()?->name ?? 'user',
                                     'is_active' => $user->is_active,
                                     'permissions' => $permissions
@@ -488,7 +488,7 @@ class VkAuthController extends Controller
                                 'id' => $user->id,
                                 'name' => $user->name,
                                 'email' => $user->email,
-                                'avatar_url' => $user->avatar_url,
+                                'avatar_url' => $user->avatar_url ?? null,
                                 'role' => $user->roles->first()?->name ?? 'user',
                                 'is_active' => $user->is_active,
                                 'permissions' => $permissions
