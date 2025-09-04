@@ -438,7 +438,9 @@ class VkAuthController extends Controller
                     if ($userId) {
                         Log::info('Trying to create user from VK ID SDK data:', [
                             'user_id' => $userId,
-                            'email' => $email
+                            'email' => $email,
+                            'has_user_data' => !empty($userDataFromVkId),
+                            'user_data_keys' => $userDataFromVkId ? array_keys($userDataFromVkId) : []
                         ]);
                         
                         // Создаем пользователя с минимальными данными
@@ -448,7 +450,12 @@ class VkAuthController extends Controller
                             $token = $user->createToken('vk-sdk-auth-token')->plainTextToken;
                             $permissions = $this->getUserPermissions($user);
                             
-                            Log::info('VK ID SDK: Success - user created from VK SDK data');
+                            Log::info('VK ID SDK: Success - user created from VK SDK data', [
+                                'user_id' => $user->id,
+                                'user_name' => $user->name,
+                                'user_email' => $user->email,
+                                'vk_id' => $user->vk_id
+                            ]);
                             return response()->json([
                                 'success' => true,
                                 'token' => $token,
@@ -647,6 +654,13 @@ class VkAuthController extends Controller
     private function createUserFromVkSdkData($vkId, $email, $data, $userDataFromVkId = null)
     {
         try {
+            Log::info('createUserFromVkSdkData called with:', [
+                'vk_id' => $vkId,
+                'email' => $email,
+                'has_user_data' => !empty($userDataFromVkId),
+                'user_data' => $userDataFromVkId
+            ]);
+            
             // Проверяем, есть ли пользователь с таким VK ID
             $user = User::where('vk_id', $vkId)->first();
             
@@ -694,7 +708,7 @@ class VkAuthController extends Controller
                     $avatar = $userDataFromVkId['avatar'] ?? null;
                     
                     // Создаем нового пользователя
-                    $user = User::create([
+                    $userData = [
                         'name' => $fullName,
                         'email' => $finalEmail,
                         'vk_id' => $vkId,
@@ -703,7 +717,11 @@ class VkAuthController extends Controller
                         'email_verified_at' => $finalEmail !== 'vk_' . $vkId . '@temp.local' ? now() : null,
                         'is_active' => true,
                         'last_login_at' => now(),
-                    ]);
+                    ];
+                    
+                    Log::info('Creating new user with data:', $userData);
+                    
+                    $user = User::create($userData);
                     
                     // Привязываем роль 'user' по умолчанию
                     $userRole = Role::where('name', 'user')->first();
