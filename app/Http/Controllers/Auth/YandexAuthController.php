@@ -28,7 +28,7 @@ class YandexAuthController extends Controller
             // Используем прямой URL для Yandex OAuth
             $clientId = config('services.yandex.client_id');
             $redirectUri = config('services.yandex.redirect');
-            $scope = 'login:email login:info';
+            $scope = 'login:email login:info avatar';
             
             $url = "https://oauth.yandex.ru/authorize?" . http_build_query([
                 'response_type' => 'code',
@@ -234,7 +234,8 @@ class YandexAuthController extends Controller
             'avatar',
             'picture',
             'photo',
-            'image'
+            'image',
+            'portrait'  // Добавляем поле portrait для Yandex ID API
         ];
         
         foreach ($avatarFields as $field) {
@@ -270,7 +271,7 @@ class YandexAuthController extends Controller
             // Используем прямой URL для Yandex OAuth
             $clientId = config('services.yandex.client_id');
             $redirectUri = config('services.yandex.redirect');
-            $scope = 'login:email login:info';
+            $scope = 'login:email login:info avatar';
             
             $url = "https://oauth.yandex.ru/authorize?" . http_build_query([
                 'response_type' => 'code',
