@@ -22,11 +22,11 @@ return new class extends Migration
             $table->timestamps();
         });
 
-        // Таблица связи разделов с ролями
+        // Таблица связи разделов с ролями (без внешних ключей пока)
         Schema::create('admin_section_role', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('admin_section_id')->constrained()->onDelete('cascade');
-            $table->foreignId('role_id')->constrained()->onDelete('cascade');
+            $table->unsignedBigInteger('admin_section_id');
+            $table->unsignedBigInteger('role_id');
             $table->timestamps();
 
             $table->unique(['admin_section_id', 'role_id']);
