@@ -22,7 +22,7 @@ return new class extends Migration
             $table->timestamps();
             
             // Уникальный индекс для предотвращения дублирования
-            $table->unique(['good_id', 'variation_id', 'warehouse_id']);
+            $table->unique(['good_id', 'variation_id', 'warehouse_id'], 'shop_stock_unique');
             
             // Индексы для производительности
             $table->index(['good_id', 'warehouse_id']);

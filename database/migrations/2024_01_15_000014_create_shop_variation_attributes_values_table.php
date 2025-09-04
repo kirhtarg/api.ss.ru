@@ -18,7 +18,7 @@ return new class extends Migration
             $table->timestamps();
             
             // Уникальный индекс для предотвращения дублирования
-            $table->unique(['variation_id', 'attribute_value_id']);
+            $table->unique(['variation_id', 'attribute_value_id'], 'shop_var_attr_vals_unique');
             
             // Индексы для производительности
             $table->index('variation_id');
