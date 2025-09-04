@@ -25,13 +25,32 @@ class VkAuthController extends Controller
                 session()->start();
             }
             
-            // Используем Socialite для VK OAuth
-            return Socialite::driver('vkontakte')
+            // Логируем конфигурацию VK
+            Log::info('=== VK REDIRECT DEBUG ===');
+            Log::info('VK Config:', [
+                'client_id' => config('services.vkontakte.client_id'),
+                'client_secret' => config('services.vkontakte.client_secret') ? 'настроен' : 'не настроен',
+                'redirect_uri' => config('services.vkontakte.redirect'),
+                'app_url' => config('app.url'),
+                'frontend_url' => config('app.frontend_url')
+            ]);
+            
+            // Генерируем URL для VK OAuth
+            $url = Socialite::driver('vkontakte')
                 ->scopes(['email'])
-                ->redirect();
+                ->redirect()
+                ->getTargetUrl();
+            
+            Log::info('Generated VK Auth URL:', ['url' => $url]);
+            Log::info('=== END VK REDIRECT DEBUG ===');
+            
+            return redirect($url);
             
         } catch (\Exception $e) {
-            Log::error('VK OAuth redirect error: ' . $e->getMessage());
+            Log::error('VK OAuth redirect error: ' . $e->getMessage(), [
+                'exception' => $e,
+                'trace' => $e->getTraceAsString()
+            ]);
             
             return response()->json([
                 'success' => false,
@@ -47,13 +66,19 @@ class VkAuthController extends Controller
     public function handleVkCallback(Request $request)
     {
         try {
-            // Логирование для отладки
-            Log::info('VK Callback received', [
-                'all_params' => $request->all(),
-                'frontend_url' => config('app.frontend_url')
-            ]);
+            // Подробное логирование для отладки
+            Log::info('=== VK CALLBACK DEBUG ===');
+            Log::info('Request method:', ['method' => $request->method()]);
+            Log::info('Request URL:', ['url' => $request->fullUrl()]);
+            Log::info('Request headers:', $request->headers->all());
+            Log::info('Request params:', $request->all());
+            Log::info('Request query:', $request->query());
+            Log::info('Request input:', $request->input());
+            Log::info('Frontend URL:', ['frontend_url' => config('app.frontend_url')]);
+            Log::info('App URL:', ['app_url' => config('app.url')]);
             
             // Получаем пользователя через Socialite
+            Log::info('Getting VK user via Socialite...');
             $vkUser = Socialite::driver('vkontakte')->user();
             
             // Логируем данные пользователя для отладки
@@ -133,10 +158,25 @@ class VkAuthController extends Controller
                 'permissions' => $permissions,
             ]));
             
+            Log::info('Redirecting to frontend:', [
+                'frontend_url' => $frontendUrl,
+                'redirect_url' => $redirectUrl,
+                'user_id' => $user->id,
+                'user_name' => $user->name
+            ]);
+            Log::info('=== END VK CALLBACK DEBUG ===');
+            
             return redirect($redirectUrl);
             
         } catch (\Exception $e) {
-            Log::error('VK OAuth callback error: ' . $e->getMessage());
+            Log::error('=== VK CALLBACK ERROR ===');
+            Log::error('VK OAuth callback error: ' . $e->getMessage(), [
+                'exception' => $e,
+                'trace' => $e->getTraceAsString(),
+                'request_params' => $request->all(),
+                'request_url' => $request->fullUrl()
+            ]);
+            Log::error('=== END VK CALLBACK ERROR ===');
             
             $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
             $errorUrl = $frontendUrl . '/auth/vk/callback?error=' . urlencode('Ошибка авторизации через VK');
