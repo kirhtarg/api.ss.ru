@@ -11,11 +11,18 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // Сначала удаляем внешние ключи
-        Schema::table('site_templates', function (Blueprint $table) {
-            $table->dropForeign(['menu_template_id']);
-            $table->dropForeign(['auth_template_id']);
-        });
+        // Проверяем существование внешних ключей перед удалением
+        if (Schema::hasTable('site_templates')) {
+            Schema::table('site_templates', function (Blueprint $table) {
+                // Проверяем существование колонок перед удалением внешних ключей
+                if (Schema::hasColumn('site_templates', 'menu_template_id')) {
+                    $table->dropForeign(['menu_template_id']);
+                }
+                if (Schema::hasColumn('site_templates', 'auth_template_id')) {
+                    $table->dropForeign(['auth_template_id']);
+                }
+            });
+        }
         
         // Затем удаляем таблицы site_menus и site_auth_blocks
         Schema::dropIfExists('site_menus');

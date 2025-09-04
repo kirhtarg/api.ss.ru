@@ -11,14 +11,27 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('admin_page_role', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('admin_page_id')->constrained('admin_pages')->onDelete('cascade');
-            $table->foreignId('role_id')->constrained('roles')->onDelete('cascade');
-            $table->timestamps();
+        // Проверяем, что таблицы admin_pages и roles существуют
+        if (Schema::hasTable('admin_pages') && Schema::hasTable('roles')) {
+            Schema::create('admin_page_role', function (Blueprint $table) {
+                $table->id();
+                $table->foreignId('admin_page_id')->constrained('admin_pages')->onDelete('cascade');
+                $table->foreignId('role_id')->constrained('roles')->onDelete('cascade');
+                $table->timestamps();
 
-            $table->unique(['admin_page_id', 'role_id']);
-        });
+                $table->unique(['admin_page_id', 'role_id']);
+            });
+        } else {
+            // Если таблицы не существуют, создаем таблицу без внешних ключей
+            Schema::create('admin_page_role', function (Blueprint $table) {
+                $table->id();
+                $table->unsignedBigInteger('admin_page_id');
+                $table->unsignedBigInteger('role_id');
+                $table->timestamps();
+
+                $table->unique(['admin_page_id', 'role_id']);
+            });
+        }
     }
 
     /**

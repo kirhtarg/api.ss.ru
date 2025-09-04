@@ -11,11 +11,8 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('site_templates', function (Blueprint $table) {
-            // Добавляем новое поле menu_id для связи с таблицей site_menus
-            $table->unsignedBigInteger('menu_id')->nullable()->after('folder_name');
-            $table->foreign('menu_id')->references('id')->on('site_menus')->onDelete('set null');
-        });
+        // Эта миграция дублирует предыдущую, поэтому ничего не делаем
+        // Изменения уже применены в миграции 2025_09_03_162400_modify_site_templates_table.php
     }
 
     /**
@@ -23,10 +20,7 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('site_templates', function (Blueprint $table) {
-            // Удаляем новое поле
-            $table->dropForeign(['menu_id']);
-            $table->dropColumn('menu_id');
-        });
+        // Эта миграция дублирует предыдущую, поэтому ничего не делаем
+        // Откат уже выполнен в миграции 2025_09_03_162400_modify_site_templates_table.php
     }
 };

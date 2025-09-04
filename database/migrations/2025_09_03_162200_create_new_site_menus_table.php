@@ -11,13 +11,8 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('site_menus', function (Blueprint $table) {
-            $table->id();
-            $table->string('name');
-            $table->text('description')->nullable();
-            $table->boolean('is_active')->default(true);
-            $table->timestamps();
-        });
+        // Таблица site_menus уже создана в предыдущей миграции
+        // Эта миграция больше не нужна, так как таблица уже существует
     }
 
     /**
@@ -25,6 +20,7 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('site_menus');
+        // Таблица site_menus не создается в этой миграции
+        // Поэтому ничего не удаляем
     }
 };
