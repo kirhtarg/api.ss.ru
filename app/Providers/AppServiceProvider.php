@@ -3,6 +3,9 @@
 namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Facades\Event;
+use App\Listeners\SocialiteWasCalledListener;
+use SocialiteProviders\Manager\SocialiteWasCalled;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -30,5 +33,8 @@ class AppServiceProvider extends ServiceProvider
                 config(['mail.from.address' => 'noreply@example.com']);
             }
         }
+
+        // Регистрируем VK провайдер для Socialite
+        Event::listen(SocialiteWasCalled::class, SocialiteWasCalledListener::class);
     }
 }

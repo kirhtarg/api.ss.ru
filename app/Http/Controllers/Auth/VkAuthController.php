@@ -25,20 +25,10 @@ class VkAuthController extends Controller
                 session()->start();
             }
             
-            // Используем прямой URL для VK OAuth
-            $clientId = config('services.vkontakte.client_id');
-            $redirectUri = config('services.vkontakte.redirect');
-            $scope = 'email';
-            
-            $url = "https://oauth.vk.com/authorize?" . http_build_query([
-                'client_id' => $clientId,
-                'redirect_uri' => $redirectUri,
-                'scope' => $scope,
-                'response_type' => 'code',
-                'v' => '5.131'
-            ]);
-            
-            return redirect($url);
+            // Используем Socialite для VK OAuth
+            return Socialite::driver('vkontakte')
+                ->scopes(['email'])
+                ->redirect();
             
         } catch (\Exception $e) {
             Log::error('VK OAuth redirect error: ' . $e->getMessage());
@@ -57,96 +47,62 @@ class VkAuthController extends Controller
     public function handleVkCallback(Request $request)
     {
         try {
-            $code = $request->get('code');
-            
             // Логирование для отладки
             Log::info('VK Callback received', [
-                'code' => $code,
                 'all_params' => $request->all(),
                 'frontend_url' => config('app.frontend_url')
             ]);
             
-            if (!$code) {
-                $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
-                $errorUrl = $frontendUrl . '/auth/vk/callback?error=' . urlencode('Код авторизации не получен');
-                Log::error('VK Callback: No code received', [
-                    'request_params' => $request->all(),
-                    'frontend_url' => $frontendUrl
-                ]);
-                return redirect($errorUrl);
-            }
+            // Получаем пользователя через Socialite
+            $vkUser = Socialite::driver('vkontakte')->user();
             
-            // Получаем токен
-            $tokenResponse = \Http::get('https://oauth.vk.com/access_token', [
-                'client_id' => config('services.vkontakte.client_id'),
-                'client_secret' => config('services.vkontakte.client_secret'),
-                'redirect_uri' => config('services.vkontakte.redirect'),
-                'code' => $code,
+            // Логируем данные пользователя для отладки
+            Log::info('VK User data:', [
+                'id' => $vkUser->getId(),
+                'name' => $vkUser->getName(),
+                'email' => $vkUser->getEmail(),
+                'avatar' => $vkUser->getAvatar(),
+                'nickname' => $vkUser->getNickname(),
+                'raw' => $vkUser->getRaw()
             ]);
-            
-            $tokenData = $tokenResponse->json();
-            
-            if (!isset($tokenData['access_token'])) {
-                $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
-                $errorUrl = $frontendUrl . '/auth/vk/callback?error=' . urlencode('Не удалось получить токен доступа');
-                return redirect($errorUrl);
-            }
-            
-            // Получаем данные пользователя
-            $userResponse = \Http::get('https://api.vk.com/method/users.get', [
-                'access_token' => $tokenData['access_token'],
-                'fields' => 'email,first_name,last_name,photo',
-                'v' => '5.131',
-            ]);
-            
-            $userData = $userResponse->json();
-            
-            if (!isset($userData['response'][0])) {
-                $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
-                $errorUrl = $frontendUrl . '/auth/vk/callback?error=' . urlencode('Не удалось получить данные пользователя');
-                return redirect($errorUrl);
-            }
-            
-            $vkUser = $userData['response'][0];
-            $vkUser['email'] = $tokenData['email'] ?? null;
             
             // Проверяем, есть ли пользователь с таким VK ID
-            $user = User::where('vk_id', $vkUser['id'])->first();
+            $user = User::where('vk_id', $vkUser->getId())->first();
             
             if ($user) {
                 // Пользователь уже существует, обновляем данные
                 $user->update([
-                    'name' => trim($vkUser['first_name'] . ' ' . $vkUser['last_name']),
-                    'email' => $vkUser['email'],
-                    'avatar_url' => $vkUser['photo'] ?? null,
-                    'email_verified_at' => $vkUser['email'] ? now() : null,
+                    'name' => $vkUser->getName(),
+                    'email' => $vkUser->getEmail(),
+                    'avatar_url' => $vkUser->getAvatar(),
+                    'email_verified_at' => $vkUser->getEmail() ? now() : null,
                     'last_login_at' => now(),
                 ]);
             } else {
                 // Проверяем, есть ли пользователь с таким email
                 $existingUser = null;
-                if ($vkUser['email']) {
-                    $existingUser = User::where('email', $vkUser['email'])->first();
+                if ($vkUser->getEmail()) {
+                    $existingUser = User::where('email', $vkUser->getEmail())->first();
                 }
                 
                 if ($existingUser) {
                     // Связываем существующего пользователя с VK
                     $existingUser->update([
-                        'vk_id' => $vkUser['id'],
-                        'avatar_url' => $vkUser['photo'] ?? null,
-                        'email_verified_at' => $vkUser['email'] ? now() : $existingUser->email_verified_at,
+                        'vk_id' => $vkUser->getId(),
+                        'avatar_url' => $vkUser->getAvatar(),
+                        'email_verified_at' => $vkUser->getEmail() ? now() : $existingUser->email_verified_at,
                         'last_login_at' => now(),
                     ]);
                     $user = $existingUser;
                 } else {
                     // Создаем нового пользователя
                     $user = User::create([
-                        'name' => trim($vkUser['first_name'] . ' ' . $vkUser['last_name']),
-                        'email' => $vkUser['email'],
-                        'vk_id' => $vkUser['id'],
-                        'avatar_url' => $vkUser['photo'] ?? null,
+                        'name' => $vkUser->getName(),
+                        'email' => $vkUser->getEmail(),
+                        'vk_id' => $vkUser->getId(),
+                        'avatar_url' => $vkUser->getAvatar(),
                         'password' => Hash::make(Str::random(32)), // Случайный пароль
-                        'email_verified_at' => $vkUser['email'] ? now() : null,
+                        'email_verified_at' => $vkUser->getEmail() ? now() : null,
                         'is_active' => true,
                         'last_login_at' => now(),
                     ]);
@@ -220,18 +176,11 @@ class VkAuthController extends Controller
                 session()->start();
             }
             
-            // Используем прямой URL для VK OAuth
-            $clientId = config('services.vkontakte.client_id');
-            $redirectUri = config('services.vkontakte.redirect');
-            $scope = 'email';
-            
-            $url = "https://oauth.vk.com/authorize?" . http_build_query([
-                'client_id' => $clientId,
-                'redirect_uri' => $redirectUri,
-                'scope' => $scope,
-                'response_type' => 'code',
-                'v' => '5.131'
-            ]);
+            // Используем Socialite для генерации URL
+            $url = Socialite::driver('vkontakte')
+                ->scopes(['email'])
+                ->redirect()
+                ->getTargetUrl();
                 
             return response()->json([
                 'success' => true,
