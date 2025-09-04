@@ -29,7 +29,7 @@ class YandexAuthController extends Controller
             // Используем прямой URL для Yandex OAuth
             $clientId = config('services.yandex.client_id');
             $redirectUri = config('services.yandex.redirect');
-            $scope = 'login:email login:info login:avatar login:phone login:birthday';
+            $scope = 'login:email login:info login:avatar';
             
             $url = "https://oauth.yandex.ru/authorize?" . http_build_query([
                 'response_type' => 'code',
@@ -327,21 +327,35 @@ class YandexAuthController extends Controller
         $data['first_name'] = $yandexUser['first_name'] ?? null;
         $data['last_name'] = $yandexUser['last_name'] ?? null;
 
-        // Дата рождения (основное поле от Yandex API с scope login:birthday)
-        if (isset($yandexUser['birthday']) && !empty($yandexUser['birthday'])) {
-            try {
-                // Yandex возвращает дату в формате YYYY-MM-DD
-                $data['birthday'] = \Carbon\Carbon::createFromFormat('Y-m-d', $yandexUser['birthday'])->format('Y-m-d');
-            } catch (\Exception $e) {
-                Log::warning('Yandex birthday format error:', ['birthday' => $yandexUser['birthday'] ?? 'not_set', 'error' => $e->getMessage()]);
+        // Дата рождения (ищем в разных полях)
+        $birthdayFields = ['birthday', 'birth_date', 'date_of_birth', 'birthday_date'];
+        foreach ($birthdayFields as $field) {
+            if (isset($yandexUser[$field]) && !empty($yandexUser[$field])) {
+                try {
+                    // Пробуем разные форматы даты
+                    $dateFormats = ['Y-m-d', 'd.m.Y', 'd/m/Y', 'Y-m-d H:i:s', 'Y-m-d\TH:i:s\Z'];
+                    foreach ($dateFormats as $format) {
+                        try {
+                            $data['birthday'] = \Carbon\Carbon::createFromFormat($format, $yandexUser[$field])->format('Y-m-d');
+                            break;
+                        } catch (\Exception $e) {
+                            continue;
+                        }
+                    }
+                    if ($data['birthday']) break;
+                } catch (\Exception $e) {
+                    Log::warning('Yandex birthday format error:', ['birthday' => $yandexUser[$field] ?? 'not_set', 'field' => $field, 'error' => $e->getMessage()]);
+                }
             }
         }
 
-        // Телефон (основное поле от Yandex API с scope login:phone)
-        if (isset($yandexUser['default_phone']) && !empty($yandexUser['default_phone'])) {
-            $data['phone'] = $yandexUser['default_phone'];
-        } elseif (isset($yandexUser['phone']) && !empty($yandexUser['phone'])) {
-            $data['phone'] = $yandexUser['phone'];
+        // Телефон (ищем в разных полях)
+        $phoneFields = ['phone', 'default_phone', 'mobile_phone', 'phone_number', 'mobile', 'tel'];
+        foreach ($phoneFields as $field) {
+            if (isset($yandexUser[$field]) && !empty($yandexUser[$field])) {
+                $data['phone'] = $yandexUser[$field];
+                break;
+            }
         }
 
         // Дополнительная информация (доступна с базовым scope)
@@ -380,7 +394,7 @@ class YandexAuthController extends Controller
             // Используем прямой URL для Yandex OAuth
             $clientId = config('services.yandex.client_id');
             $redirectUri = config('services.yandex.redirect');
-            $scope = 'login:email login:info login:avatar login:phone login:birthday';
+            $scope = 'login:email login:info login:avatar';
             
             $url = "https://oauth.yandex.ru/authorize?" . http_build_query([
                 'response_type' => 'code',
