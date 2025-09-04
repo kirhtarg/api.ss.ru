@@ -139,9 +139,13 @@ class GoogleAuthController extends Controller
     {
         $permissions = [];
         
-        foreach ($user->roles as $role) {
-            foreach ($role->permissions as $permission) {
-                $permissions[] = $permission->name;
+        if ($user->roles) {
+            foreach ($user->roles as $role) {
+                if ($role->permissions) {
+                    foreach ($role->permissions as $permission) {
+                        $permissions[] = $permission->name;
+                    }
+                }
             }
         }
         

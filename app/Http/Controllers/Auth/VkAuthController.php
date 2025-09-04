@@ -258,6 +258,26 @@ class VkAuthController extends Controller
                 'post_params' => $request->post()
             ]);
             
+            // Для GET запросов возвращаем HTML страницу с JavaScript
+            if ($request->isMethod('GET')) {
+                $code = $request->query('code');
+                $deviceId = $request->query('device_id');
+                
+                if (!$code) {
+                    return response()->view('auth.vk-sdk-callback', [
+                        'error' => 'Код авторизации не получен',
+                        'success' => false
+                    ]);
+                }
+                
+                // Возвращаем HTML страницу, которая отправит POST запрос
+                return response()->view('auth.vk-sdk-callback', [
+                    'code' => $code,
+                    'deviceId' => $deviceId,
+                    'success' => true
+                ]);
+            }
+            
             $code = $request->input('code');
             $deviceId = $request->input('device_id');
             

@@ -101,7 +101,7 @@ class YandexAuthController extends Controller
                 $user->update([
                     'name' => $yandexUser['display_name'] ?? $yandexUser['real_name'] ?? 'Yandex User',
                     'email' => $yandexUser['default_email'] ?? null,
-                    'avatar_url' => $yandexUser['default_avatar_id'] ? 
+                    'avatar_url' => isset($yandexUser['default_avatar_id']) && $yandexUser['default_avatar_id'] ? 
                         'https://avatars.yandex.net/get-yapic/' . $yandexUser['default_avatar_id'] . '/islands-200' : null,
                     'email_verified_at' => $yandexUser['default_email'] ? now() : null,
                     'last_login_at' => now(),
@@ -117,7 +117,7 @@ class YandexAuthController extends Controller
                     // Связываем существующего пользователя с Yandex
                     $existingUser->update([
                         'yandex_id' => $yandexUser['id'],
-                        'avatar_url' => $yandexUser['default_avatar_id'] ? 
+                        'avatar_url' => isset($yandexUser['default_avatar_id']) && $yandexUser['default_avatar_id'] ? 
                             'https://avatars.yandex.net/get-yapic/' . $yandexUser['default_avatar_id'] . '/islands-200' : null,
                         'email_verified_at' => $yandexUser['default_email'] ? now() : $existingUser->email_verified_at,
                         'last_login_at' => now(),
@@ -129,7 +129,7 @@ class YandexAuthController extends Controller
                         'name' => $yandexUser['display_name'] ?? $yandexUser['real_name'] ?? 'Yandex User',
                         'email' => $yandexUser['default_email'] ?? null,
                         'yandex_id' => $yandexUser['id'],
-                        'avatar_url' => $yandexUser['default_avatar_id'] ? 
+                        'avatar_url' => isset($yandexUser['default_avatar_id']) && $yandexUser['default_avatar_id'] ? 
                             'https://avatars.yandex.net/get-yapic/' . $yandexUser['default_avatar_id'] . '/islands-200' : null,
                         'password' => Hash::make(Str::random(32)), // Случайный пароль
                         'email_verified_at' => $yandexUser['default_email'] ? now() : null,
