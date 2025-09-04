@@ -5,8 +5,6 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 use App\Http\Controllers\Auth\AuthController;
 
-// Подключаем тестовые маршруты
-require_once __DIR__ . '/test.php';
 
 /*
 |--------------------------------------------------------------------------

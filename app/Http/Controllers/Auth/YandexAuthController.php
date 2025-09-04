@@ -86,18 +86,29 @@ class YandexAuthController extends Controller
             ])->get('https://login.yandex.ru/info');
             
             // Получаем расширенные данные пользователя (включая дату рождения и телефон)
-            $extendedUserResponse = \Http::withHeaders([
-                'Authorization' => 'OAuth ' . $tokenData['access_token']
-            ])->get('https://api-yaru.yandex.ru/me');
+            $extendedUserResponse = null;
+            $yandexIdResponse = null;
             
-            // Пробуем также Yandex ID API для получения дополнительных данных
-            $yandexIdResponse = \Http::withHeaders([
-                'Authorization' => 'OAuth ' . $tokenData['access_token']
-            ])->get('https://id.yandex.ru/info');
+            try {
+                $extendedUserResponse = \Http::withHeaders([
+                    'Authorization' => 'OAuth ' . $tokenData['access_token']
+                ])->get('https://api-yaru.yandex.ru/me');
+            } catch (\Exception $e) {
+                Log::warning('Yandex extended API error:', ['error' => $e->getMessage()]);
+            }
+            
+            try {
+                // Пробуем также Yandex ID API для получения дополнительных данных
+                $yandexIdResponse = \Http::withHeaders([
+                    'Authorization' => 'OAuth ' . $tokenData['access_token']
+                ])->get('https://id.yandex.ru/info');
+            } catch (\Exception $e) {
+                Log::warning('Yandex ID API error:', ['error' => $e->getMessage()]);
+            }
             
             $yandexUser = $userResponse->json();
-            $extendedUserData = $extendedUserResponse->json();
-            $yandexIdData = $yandexIdResponse->json();
+            $extendedUserData = $extendedUserResponse ? $extendedUserResponse->json() : null;
+            $yandexIdData = $yandexIdResponse ? $yandexIdResponse->json() : null;
             
             // Объединяем данные от всех API
             if ($extendedUserData && !isset($extendedUserData['error'])) {
@@ -108,9 +119,9 @@ class YandexAuthController extends Controller
             }
             
             // Логируем данные от Yandex для отладки
-            Log::info('Yandex user data:', $yandexUser);
-            Log::info('Yandex extended data:', $extendedUserData);
-            Log::info('Yandex ID data:', $yandexIdData);
+            Log::info('Yandex user data:', $yandexUser ?? []);
+            Log::info('Yandex extended data:', $extendedUserData ?? []);
+            Log::info('Yandex ID data:', $yandexIdData ?? []);
             
             // Проверяем все возможные поля для аватара
             $avatarFields = [
@@ -128,7 +139,7 @@ class YandexAuthController extends Controller
                     $avatarInfo[$field] = $yandexUser[$field];
                 }
             }
-            Log::info('Yandex avatar fields found:', $avatarInfo);
+            Log::info('Yandex avatar fields found:', $avatarInfo ?? []);
             
             if (!isset($yandexUser['id'])) {
                 $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
@@ -363,7 +374,7 @@ class YandexAuthController extends Controller
             }
         }
 
-        Log::info('Yandex additional data:', $data);
+        Log::info('Yandex additional data:', $data ?? []);
 
         return $data;
     }
