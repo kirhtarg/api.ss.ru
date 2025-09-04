@@ -332,6 +332,14 @@ class VkAuthController extends Controller
                 // Прямой access_token от VK ID SDK
                 $accessToken = $data['access_token'];
                 $email = $data['email'] ?? null;
+                $userId = $data['user_id'] ?? null;
+                
+                Log::info('VK ID SDK access_token received:', [
+                    'access_token' => substr($accessToken, 0, 20) . '...',
+                    'email' => $email,
+                    'user_id' => $userId,
+                    'scope' => $data['scope'] ?? null
+                ]);
                 
                 // Получаем данные пользователя через VK API
                 $userResponse = Http::get('https://api.vk.com/method/users.get', [
@@ -341,7 +349,10 @@ class VkAuthController extends Controller
                 ]);
                 
                 $userData = $userResponse->json();
-                Log::info('VK API response:', $userData);
+                Log::info('VK API response:', [
+                    'status' => $userResponse->status(),
+                    'data' => $userData
+                ]);
                 
                 if (isset($userData['response'][0])) {
                     $vkUser = $userData['response'][0];
@@ -369,6 +380,41 @@ class VkAuthController extends Controller
                             'permissions' => $permissions
                         ]
                     ]);
+                } else {
+                    Log::error('VK API: No user data in response', [
+                        'user_response' => $userData,
+                        'status' => $userResponse->status()
+                    ]);
+                    
+                    // Если VK API не работает, попробуем использовать данные из токена
+                    if ($userId) {
+                        Log::info('Trying to create user from VK ID SDK data:', [
+                            'user_id' => $userId,
+                            'email' => $email
+                        ]);
+                        
+                        // Создаем пользователя с минимальными данными
+                        $user = $this->createUserFromVkSdkData($userId, $email, $data);
+                        
+                        if ($user) {
+                            $token = $user->createToken('vk-sdk-auth-token')->plainTextToken;
+                            $permissions = $this->getUserPermissions($user);
+                            
+                            return response()->json([
+                                'success' => true,
+                                'token' => $token,
+                                'user' => [
+                                    'id' => $user->id,
+                                    'name' => $user->name,
+                                    'email' => $user->email,
+                                    'avatar_url' => $user->avatar_url,
+                                    'role' => $user->roles->first()?->name ?? 'user',
+                                    'is_active' => $user->is_active,
+                                    'permissions' => $permissions
+                                ]
+                            ]);
+                        }
+                    }
                 }
             } elseif (isset($data['code']) && isset($data['device_id'])) {
                 // Обмениваем код на токен через VK API
@@ -538,5 +584,63 @@ class VkAuthController extends Controller
         }
         
         return $user;
+    }
+    
+    /**
+     * Создание пользователя из данных VK ID SDK
+     */
+    private function createUserFromVkSdkData($vkId, $email, $data)
+    {
+        try {
+            // Проверяем, есть ли пользователь с таким VK ID
+            $user = User::where('vk_id', $vkId)->first();
+            
+            if ($user) {
+                // Пользователь уже существует, обновляем данные
+                $user->update([
+                    'email' => $email,
+                    'email_verified_at' => $email ? now() : null,
+                    'last_login_at' => now(),
+                ]);
+            } else {
+                // Проверяем, есть ли пользователь с таким email
+                $existingUser = null;
+                if ($email) {
+                    $existingUser = User::where('email', $email)->first();
+                }
+                
+                if ($existingUser) {
+                    // Связываем существующего пользователя с VK
+                    $existingUser->update([
+                        'vk_id' => $vkId,
+                        'email_verified_at' => $email ? now() : $existingUser->email_verified_at,
+                        'last_login_at' => now(),
+                    ]);
+                    $user = $existingUser;
+                } else {
+                    // Создаем нового пользователя
+                    $user = User::create([
+                        'name' => 'VK User ' . $vkId, // Временное имя
+                        'email' => $email,
+                        'vk_id' => $vkId,
+                        'password' => Hash::make(Str::random(32)), // Случайный пароль
+                        'email_verified_at' => $email ? now() : null,
+                        'is_active' => true,
+                        'last_login_at' => now(),
+                    ]);
+                    
+                    // Привязываем роль 'user' по умолчанию
+                    $userRole = Role::where('name', 'user')->first();
+                    if ($userRole) {
+                        $user->roles()->attach($userRole->id);
+                    }
+                }
+            }
+            
+            return $user;
+        } catch (\Exception $e) {
+            Log::error('Error creating user from VK SDK data: ' . $e->getMessage());
+            return null;
+        }
     }
 }
