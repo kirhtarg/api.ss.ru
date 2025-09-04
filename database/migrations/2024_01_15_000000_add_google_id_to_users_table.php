@@ -13,7 +13,13 @@ return new class extends Migration
     {
         Schema::table('users', function (Blueprint $table) {
             $table->string('google_id')->nullable()->unique()->after('email');
-            $table->string('avatar_url')->nullable()->after('avatar');
+            
+            // Добавляем avatar_url только если колонка avatar существует
+            if (Schema::hasColumn('users', 'avatar')) {
+                $table->string('avatar_url')->nullable()->after('avatar');
+            } else {
+                $table->string('avatar_url')->nullable();
+            }
         });
     }
 
