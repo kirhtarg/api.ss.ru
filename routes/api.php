@@ -1614,6 +1614,27 @@ Route::get('/test', function () {
     ]);
 });
 
+// Диагностический маршрут для проверки API
+Route::get('/debug/api', function () {
+    return response()->json([
+        'success' => true,
+        'message' => 'API маршруты работают',
+        'server' => [
+            'php_version' => PHP_VERSION,
+            'laravel_version' => app()->version(),
+            'environment' => app()->environment(),
+            'url' => request()->url(),
+            'method' => request()->method(),
+            'headers' => request()->headers->all(),
+        ],
+        'routes' => [
+            'api_prefix' => 'api',
+            'public_site_info' => 'api/public/site-info',
+            'test_route' => 'api/test'
+        ]
+    ]);
+});
+
 // Тестовый маршрут для проверки меню без авторизации
 Route::get('/test-menus-no-auth', function () {
     try {
