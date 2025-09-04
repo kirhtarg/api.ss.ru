@@ -327,6 +327,30 @@ class VkAuthController extends Controller
             Log::info('Request method:', ['method' => $request->method()]);
             Log::info('Request headers:', $request->headers->all());
             
+            // Подробный анализ всех данных от VK ID SDK
+            Log::info('=== VK ID SDK DATA ANALYSIS ===');
+            Log::info('Raw data keys:', array_keys($data));
+            Log::info('Access token present:', isset($data['access_token']));
+            Log::info('Refresh token present:', isset($data['refresh_token']));
+            Log::info('ID token present:', isset($data['id_token']));
+            Log::info('User ID present:', isset($data['user_id']));
+            Log::info('Email present:', isset($data['email']));
+            Log::info('Scope present:', isset($data['scope']));
+            Log::info('State present:', isset($data['state']));
+            Log::info('Token type present:', isset($data['token_type']));
+            Log::info('Expires in present:', isset($data['expires_in']));
+            
+            if (isset($data['scope'])) {
+                Log::info('Scope value:', $data['scope']);
+            }
+            if (isset($data['user_id'])) {
+                Log::info('User ID value:', $data['user_id']);
+            }
+            if (isset($data['email'])) {
+                Log::info('Email value:', $data['email']);
+            }
+            Log::info('=== END VK ID SDK DATA ANALYSIS ===');
+            
             // Обрабатываем данные от VK ID SDK
             if (isset($data['access_token']) && !empty($data['access_token'])) {
                 Log::info('Processing VK ID SDK access_token...');
@@ -718,6 +742,26 @@ class VkAuthController extends Controller
             }
             
             Log::info('JWT token decoded successfully:', $data);
+            
+            // Подробный анализ JWT данных
+            Log::info('=== JWT TOKEN ANALYSIS ===');
+            Log::info('JWT issuer (iss):', $data['iss'] ?? 'not set');
+            Log::info('JWT subject (sub):', $data['sub'] ?? 'not set');
+            Log::info('JWT app (app):', $data['app'] ?? 'not set');
+            Log::info('JWT exp (exp):', $data['exp'] ?? 'not set');
+            Log::info('JWT iat (iat):', $data['iat'] ?? 'not set');
+            Log::info('JWT jti (jti):', $data['jti'] ?? 'not set');
+            
+            // Проверяем наличие данных пользователя в JWT
+            Log::info('Given name in JWT:', $data['given_name'] ?? 'not set');
+            Log::info('Family name in JWT:', $data['family_name'] ?? 'not set');
+            Log::info('Email in JWT:', $data['email'] ?? 'not set');
+            Log::info('Phone in JWT:', $data['phone'] ?? 'not set');
+            Log::info('Birthday in JWT:', $data['birthday'] ?? 'not set');
+            Log::info('Gender in JWT:', $data['gender'] ?? 'not set');
+            Log::info('Picture in JWT:', $data['picture'] ?? 'not set');
+            
+            Log::info('=== END JWT TOKEN ANALYSIS ===');
             
             return $data;
         } catch (\Exception $e) {
