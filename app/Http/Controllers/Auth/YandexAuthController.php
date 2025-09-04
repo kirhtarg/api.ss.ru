@@ -87,22 +87,47 @@ class YandexAuthController extends Controller
             
             $yandexUser = $userResponse->json();
             
+            // Логируем данные от Yandex для отладки
+            Log::info('Yandex user data:', $yandexUser);
+            
+            // Проверяем все возможные поля для аватара
+            $avatarFields = [
+                'default_avatar_id',
+                'avatar_id', 
+                'avatar',
+                'picture',
+                'photo',
+                'image'
+            ];
+            
+            $avatarInfo = [];
+            foreach ($avatarFields as $field) {
+                if (isset($yandexUser[$field])) {
+                    $avatarInfo[$field] = $yandexUser[$field];
+                }
+            }
+            Log::info('Yandex avatar fields found:', $avatarInfo);
+            
             if (!isset($yandexUser['id'])) {
                 $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
                 $errorUrl = $frontendUrl . '/auth/yandex/callback?error=' . urlencode('Не удалось получить данные пользователя');
                 return redirect($errorUrl);
             }
             
+            // Получаем URL аватара
+            $avatarUrl = $this->getYandexAvatarUrl($yandexUser);
+            
             // Проверяем, есть ли пользователь с таким Yandex ID
             $user = User::where('yandex_id', $yandexUser['id'])->first();
             
             if ($user) {
                 // Пользователь уже существует, обновляем данные
+                Log::info('Yandex avatar URL:', ['avatar_url' => $avatarUrl]);
+                
                 $user->update([
                     'name' => $yandexUser['display_name'] ?? $yandexUser['real_name'] ?? 'Yandex User',
                     'email' => $yandexUser['default_email'] ?? null,
-                    'avatar_url' => isset($yandexUser['default_avatar_id']) && $yandexUser['default_avatar_id'] ? 
-                        'https://avatars.yandex.net/get-yapic/' . $yandexUser['default_avatar_id'] . '/islands-200' : null,
+                    'avatar_url' => $avatarUrl,
                     'email_verified_at' => $yandexUser['default_email'] ? now() : null,
                     'last_login_at' => now(),
                 ]);
@@ -115,22 +140,24 @@ class YandexAuthController extends Controller
                 
                 if ($existingUser) {
                     // Связываем существующего пользователя с Yandex
+                    Log::info('Yandex existing user avatar URL:', ['avatar_url' => $avatarUrl]);
+                    
                     $existingUser->update([
                         'yandex_id' => $yandexUser['id'],
-                        'avatar_url' => isset($yandexUser['default_avatar_id']) && $yandexUser['default_avatar_id'] ? 
-                            'https://avatars.yandex.net/get-yapic/' . $yandexUser['default_avatar_id'] . '/islands-200' : null,
+                        'avatar_url' => $avatarUrl,
                         'email_verified_at' => $yandexUser['default_email'] ? now() : $existingUser->email_verified_at,
                         'last_login_at' => now(),
                     ]);
                     $user = $existingUser;
                 } else {
                     // Создаем нового пользователя
+                    Log::info('Yandex new user avatar URL:', ['avatar_url' => $avatarUrl]);
+                    
                     $user = User::create([
                         'name' => $yandexUser['display_name'] ?? $yandexUser['real_name'] ?? 'Yandex User',
                         'email' => $yandexUser['default_email'] ?? null,
                         'yandex_id' => $yandexUser['id'],
-                        'avatar_url' => isset($yandexUser['default_avatar_id']) && $yandexUser['default_avatar_id'] ? 
-                            'https://avatars.yandex.net/get-yapic/' . $yandexUser['default_avatar_id'] . '/islands-200' : null,
+                        'avatar_url' => $avatarUrl,
                         'password' => Hash::make(Str::random(32)), // Случайный пароль
                         'email_verified_at' => $yandexUser['default_email'] ? now() : null,
                         'is_active' => true,
@@ -193,6 +220,40 @@ class YandexAuthController extends Controller
         }
         
         return array_unique($permissions);
+    }
+
+    /**
+     * Получить URL аватара от Yandex
+     */
+    private function getYandexAvatarUrl($yandexUser)
+    {
+        // Проверяем разные возможные поля для аватара
+        $avatarFields = [
+            'default_avatar_id',
+            'avatar_id', 
+            'avatar',
+            'picture',
+            'photo',
+            'image'
+        ];
+        
+        foreach ($avatarFields as $field) {
+            if (isset($yandexUser[$field]) && !empty($yandexUser[$field])) {
+                $avatarId = $yandexUser[$field];
+                
+                // Если это ID аватара, формируем URL
+                if (is_string($avatarId) && !filter_var($avatarId, FILTER_VALIDATE_URL)) {
+                    return 'https://avatars.yandex.net/get-yapic/' . $avatarId . '/islands-200';
+                }
+                
+                // Если это уже URL, возвращаем как есть
+                if (filter_var($avatarId, FILTER_VALIDATE_URL)) {
+                    return $avatarId;
+                }
+            }
+        }
+        
+        return null;
     }
 
     /**
