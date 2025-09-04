@@ -12,7 +12,10 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('shop_tags', function (Blueprint $table) {
-            $table->integer('sort_order')->default(0)->after('is_active');
+            // Добавляем sort_order только если колонка не существует
+            if (!Schema::hasColumn('shop_tags', 'sort_order')) {
+                $table->integer('sort_order')->default(0)->after('is_active');
+            }
         });
     }
 
