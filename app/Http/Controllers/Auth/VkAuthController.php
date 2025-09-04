@@ -103,7 +103,7 @@ class VkAuthController extends Controller
             Log::info('VK authorization code received:', ['code' => $code]);
             
             // Получаем токен доступа
-            Log::info('Getting VK access token...');
+            Log::info('Getting VK access token...', []);
             $tokenResponse = Http::get('https://oauth.vk.com/access_token', [
                 'client_id' => config('services.vkontakte.client_id'),
                 'client_secret' => config('services.vkontakte.client_secret'),
@@ -126,7 +126,7 @@ class VkAuthController extends Controller
             }
             
             // Получаем данные пользователя
-            Log::info('Getting VK user data...');
+            Log::info('Getting VK user data...', []);
             $userResponse = Http::get('https://api.vk.com/method/users.get', [
                 'access_token' => $tokenData['access_token'],
                 'fields' => 'email,first_name,last_name,photo',
@@ -324,7 +324,7 @@ class VkAuthController extends Controller
             
             Log::info('=== VK SDK CALLBACK START ===');
             Log::info('VK SDK Callback data:', $data);
-            Log::info('Request method:', $request->method());
+            Log::info('Request method:', ['method' => $request->method()]);
             Log::info('Request headers:', $request->headers->all());
             
             // Обрабатываем данные от VK ID SDK
