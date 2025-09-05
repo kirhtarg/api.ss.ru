@@ -29,10 +29,10 @@ class PhoneAuthController extends Controller
     {
         try {
             $request->validate([
-                'phone' => 'required|string|regex:/^\+7[0-9]{10}$/',
+                'phone' => 'required|string|min:10|max:15',
             ]);
 
-            $phone = $request->phone;
+            $phone = $this->normalizePhone($request->phone);
             
             // Проверяем, не слишком ли часто запрашивается код
             $cacheKey = "phone_code_attempts_{$phone}";
@@ -93,11 +93,11 @@ class PhoneAuthController extends Controller
     {
         try {
             $request->validate([
-                'phone' => 'required|string|regex:/^\+7[0-9]{10}$/',
+                'phone' => 'required|string|min:10|max:15',
                 'code' => 'required|string|size:4',
             ]);
 
-            $phone = $request->phone;
+            $phone = $this->normalizePhone($request->phone);
             $code = $request->code;
 
             // Проверяем код
@@ -186,10 +186,10 @@ class PhoneAuthController extends Controller
     {
         try {
             $request->validate([
-                'phone' => 'required|string|regex:/^\+7[0-9]{10}$/',
+                'phone' => 'required|string|min:10|max:15',
             ]);
 
-            $phone = $request->phone;
+            $phone = $this->normalizePhone($request->phone);
             $hasCode = Cache::has("phone_code_{$phone}");
             
             return response()->json([
@@ -236,6 +236,32 @@ class PhoneAuthController extends Controller
         if (strlen($phone) === 12 && str_starts_with($phone, '+7')) {
             return '+7 *** *** ' . substr($phone, -2);
         }
+        return $phone;
+    }
+
+    /**
+     * Нормализовать номер телефона
+     */
+    private function normalizePhone(string $phone): string
+    {
+        // Убираем все символы кроме цифр и +
+        $phone = preg_replace('/[^\d+]/', '', $phone);
+        
+        // Если номер начинается с 8, заменяем на +7
+        if (str_starts_with($phone, '8')) {
+            $phone = '+7' . substr($phone, 1);
+        }
+        
+        // Если номер начинается с 7, добавляем +
+        if (str_starts_with($phone, '7') && !str_starts_with($phone, '+7')) {
+            $phone = '+' . $phone;
+        }
+        
+        // Проверяем, что номер соответствует российскому формату
+        if (!preg_match('/^\+7[0-9]{10}$/', $phone)) {
+            throw new \InvalidArgumentException('Неверный формат номера телефона');
+        }
+        
         return $phone;
     }
 }
