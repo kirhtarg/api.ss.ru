@@ -157,14 +157,14 @@ class PhoneAuthController extends Controller
                     'phone' => $phone,
                     'avatar_url' => '/ph.png', // Аватар по умолчанию
                     'phone_verified_at' => now(),
-                    'is_active' => true,
+                    'email_verified_at' => now(), // Активируем пользователя
                 ]);
 
                 // Привязываем роль 'user' по умолчанию
                 $userRole = \App\Models\Role::where('name', 'user')->first();
                 if ($userRole) {
                     $user->roles()->attach($userRole->id, [
-                        'is_active' => true,
+                        'email_verified_at' => now(),
                         'assigned_at' => now()
                     ]);
                 }
@@ -195,7 +195,7 @@ class PhoneAuthController extends Controller
                     'phone' => $user->phone,
                     'role' => $user->roles->first() ? $user->roles->first()->name : 'user',
                     'avatar_url' => $user->avatar_url ?? null,
-                    'is_active' => true,
+                    'email_verified_at' => $user->email_verified_at,
                     'permissions' => $permissions,
                     'last_login_at' => $user->last_login_at,
                 ],

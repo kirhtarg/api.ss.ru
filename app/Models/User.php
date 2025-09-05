@@ -26,10 +26,10 @@ class User extends Authenticatable
         'google_id',
         'vk_id',
         'yandex_id',
-        'is_active',
         'last_login_at',
         'email_verified_at',
         'phone_verified_at',
+        'is_active',
     ];
 
     protected $hidden = [
@@ -41,10 +41,10 @@ class User extends Authenticatable
         'email_verified_at' => 'datetime',
         'phone_verified_at' => 'datetime',
         'password' => 'hashed',
-        'is_active' => 'boolean',
         'last_login_at' => 'datetime',
         'birthday' => 'date',
         'additional_info' => 'array',
+        'is_active' => 'boolean',
     ];
 
     protected $appends = ['avatar_url'];
@@ -157,11 +157,11 @@ class User extends Authenticatable
     }
 
     /**
-     * Получить только активных пользователей
+     * Получить только активных пользователей (с подтвержденным email и не заблокированных)
      */
     public function scopeActive($query)
     {
-        return $query->where('is_active', true);
+        return $query->whereNotNull('email_verified_at')->where('is_active', true);
     }
 
     /**

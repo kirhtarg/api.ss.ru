@@ -40,7 +40,7 @@ class AuthController extends Controller
             $userRole = \App\Models\Role::where('name', 'user')->first();
             if ($userRole) {
                 $user->roles()->attach($userRole->id, [
-                    'is_active' => true,
+                    'email_verified_at' => now(),
                     'assigned_at' => now()
                 ]);
             }
@@ -149,7 +149,7 @@ class AuthController extends Controller
                     'email' => $user->email,
                     'role' => $user->roles->first() ? $user->roles->first()->name : 'user',
                     'avatar_url' => null,
-                    'is_active' => true,
+                    'email_verified_at' => now(),
                     'permissions' => $permissions,
                     'last_login_at' => null,
                 ],
@@ -209,7 +209,7 @@ class AuthController extends Controller
                     'email' => $user->email,
                     'role' => $user->roles->first() ? $user->roles->first()->name : 'user',
                     'avatar_url' => $user->avatar_url,
-                    'is_active' => true,
+                    'email_verified_at' => now(),
                     'permissions' => $permissions,
                     'last_login_at' => null,
                 ]

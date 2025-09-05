@@ -768,17 +768,28 @@ Route::middleware('auth:sanctum')->group(function () {
                         ->orderBy('created_at', 'desc')
                         ->get()
                         ->map(function ($user) {
-                            return [
+                            $userData = [
                                 'id' => $user->id,
                                 'name' => $user->name,
                                 'email' => $user->email,
                                 'avatar' => $user->avatar,
                                 'avatar_url' => $user->avatar_url,
+                                'google_id' => $user->google_id,
+                                'yandex_id' => $user->yandex_id,
+                                'vk_id' => $user->vk_id,
                                 'roles' => $user->roles->pluck('name'),
+                                'email_verified_at' => $user->email_verified_at ? 1 : 0, // 1 если есть дата, 0 если null
                                 'is_active' => $user->is_active,
                                 'created_at' => $user->created_at,
                                 'updated_at' => $user->updated_at,
                             ];
+                            
+                            // Добавляем поля авторизации
+                            $userData['google_id'] = $user->google_id;
+                            $userData['yandex_id'] = $user->yandex_id;
+                            $userData['vk_id'] = $user->vk_id;
+                            
+                            return $userData;
                         });
 
                     return response()->json([
@@ -804,7 +815,8 @@ Route::middleware('auth:sanctum')->group(function () {
                         'role' => 'string|exists:roles,name', // Принимаем одну роль
                         'roles' => 'array', // Также поддерживаем массив ролей для совместимости
                         'roles.*' => 'string|exists:roles,name',
-                        'is_active' => 'boolean' // Статус активности
+                        'email_verified_at' => 'nullable|date', // Статус активности на основе email_verified_at
+                        'is_active' => 'boolean' // Статус блокировки пользователя
                     ]);
 
                     if ($validator->fails()) {
@@ -822,7 +834,12 @@ Route::middleware('auth:sanctum')->group(function () {
                         'password' => \Illuminate\Support\Facades\Hash::make($request->password),
                     ];
                     
-                    // Добавляем статус активности, если передан
+                    // Добавляем статус активности на основе email_verified_at, если передан
+                    if ($request->has('email_verified_at')) {
+                        $userData['email_verified_at'] = $request->email_verified_at;
+                    }
+                    
+                    // Добавляем статус блокировки, если передан
                     if ($request->has('is_active')) {
                         $userData['is_active'] = $request->boolean('is_active');
                     }
@@ -860,6 +877,7 @@ Route::middleware('auth:sanctum')->group(function () {
                             'avatar' => $user->avatar,
                             'avatar_url' => $user->avatar_url,
                             'roles' => $user->roles->pluck('name'),
+                            'email_verified_at' => $user->email_verified_at,
                             'is_active' => $user->is_active,
                             'created_at' => $user->created_at,
                             'updated_at' => $user->updated_at,
@@ -893,7 +911,8 @@ Route::middleware('auth:sanctum')->group(function () {
                         'role' => 'string|exists:roles,name', // Принимаем одну роль
                         'roles' => 'array', // Также поддерживаем массив ролей для совместимости
                         'roles.*' => 'string|exists:roles,name',
-                        'is_active' => 'boolean' // Статус активности
+                        'email_verified_at' => 'nullable|date', // Статус активности на основе email_verified_at
+                        'is_active' => 'boolean' // Статус блокировки пользователя
                     ]);
 
                     if ($validator->fails()) {
@@ -910,7 +929,12 @@ Route::middleware('auth:sanctum')->group(function () {
                         'email' => $request->email,
                     ];
                     
-                    // Добавляем статус активности, если передан
+                    // Добавляем статус активности на основе email_verified_at, если передан
+                    if ($request->has('email_verified_at')) {
+                        $updateData['email_verified_at'] = $request->email_verified_at;
+                    }
+                    
+                    // Добавляем статус блокировки, если передан
                     if ($request->has('is_active')) {
                         $updateData['is_active'] = $request->boolean('is_active');
                     }
@@ -941,6 +965,7 @@ Route::middleware('auth:sanctum')->group(function () {
                             'avatar' => $user->avatar,
                             'avatar_url' => $user->avatar_url,
                             'roles' => $user->roles->pluck('name'),
+                            'email_verified_at' => $user->email_verified_at,
                             'is_active' => $user->is_active,
                             'created_at' => $user->created_at,
                             'updated_at' => $user->updated_at,
@@ -954,8 +979,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 }
             });
 
-            // Быстрое изменение статуса активности пользователя
-            Route::put('/{id}/toggle-status', function (Request $request, $id) {
+            // Быстрое изменение статуса активности пользователя (email_verified_at)
+            Route::put('/{id}/toggle-email-verification', function (Request $request, $id) {
                 try {
                     $user = \App\Models\User::find($id);
 
@@ -966,13 +991,51 @@ Route::middleware('auth:sanctum')->group(function () {
                         ], 404);
                     }
 
-                    // Переключаем статус активности
+                    // Переключаем статус подтверждения email
+                    if ($user->email_verified_at) {
+                        // Если email подтвержден - очищаем поле (деактивируем)
+                        $user->email_verified_at = null;
+                    } else {
+                        // Если email не подтвержден - устанавливаем timestamp (активируем)
+                        $user->email_verified_at = now();
+                    }
+                    $user->save();
+
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Статус подтверждения email изменен',
+                        'data' => [
+                            'id' => $user->id,
+                            'email_verified_at' => $user->email_verified_at
+                        ]
+                    ]);
+                } catch (\Exception $e) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка изменения статуса: ' . $e->getMessage()
+                    ], 500);
+                }
+            });
+
+            // Быстрое изменение статуса блокировки пользователя (is_active)
+            Route::put('/{id}/toggle-block', function (Request $request, $id) {
+                try {
+                    $user = \App\Models\User::find($id);
+
+                    if (!$user) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Пользователь не найден'
+                        ], 404);
+                    }
+
+                    // Переключаем статус блокировки
                     $user->is_active = !$user->is_active;
                     $user->save();
 
                     return response()->json([
                         'success' => true,
-                        'message' => 'Статус активности пользователя изменен',
+                        'message' => 'Статус блокировки пользователя изменен',
                         'data' => [
                             'id' => $user->id,
                             'is_active' => $user->is_active
@@ -981,7 +1044,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 } catch (\Exception $e) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Ошибка изменения статуса: ' . $e->getMessage()
+                        'message' => 'Ошибка изменения статуса блокировки: ' . $e->getMessage()
                     ], 500);
                 }
             });

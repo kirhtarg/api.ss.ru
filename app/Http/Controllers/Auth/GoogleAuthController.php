@@ -90,7 +90,7 @@ class GoogleAuthController extends Controller
                         'avatar_url' => $googleUser->getAvatar(),
                         'password' => Hash::make(Str::random(32)), // Случайный пароль
                         'email_verified_at' => now(),
-                        'is_active' => true,
+                        'email_verified_at' => now(),
                         'last_login_at' => now(),
                     ]);
                     
@@ -116,7 +116,7 @@ class GoogleAuthController extends Controller
                 'email' => $user->email,
                 'avatar_url' => $user->avatar_url,
                 'role' => $user->roles->first() ? $user->roles->first()->name : 'user',
-                'is_active' => true,
+                'email_verified_at' => now(),
                 'permissions' => $permissions,
             ]));
             

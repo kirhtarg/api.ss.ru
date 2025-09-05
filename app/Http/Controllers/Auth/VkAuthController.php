@@ -197,7 +197,7 @@ class VkAuthController extends Controller
                         'avatar_url' => $vkUser['photo'] ?? null,
                         'password' => Hash::make(Str::random(32)), // Случайный пароль
                         'email_verified_at' => $vkUser['email'] ? now() : null,
-                        'is_active' => true,
+                        'email_verified_at' => now(),
                         'last_login_at' => now(),
                     ]);
                     
@@ -223,7 +223,7 @@ class VkAuthController extends Controller
                 'email' => $user->email,
                 'avatar_url' => $user->avatar_url ?? null,
                 'role' => $user->roles->first() ? $user->roles->first()->name : 'user',
-                'is_active' => true,
+                'email_verified_at' => now(),
                 'permissions' => $permissions,
             ]));
             
@@ -373,7 +373,7 @@ class VkAuthController extends Controller
                             'email' => $user->email,
                             'avatar_url' => $user->avatar_url ?? null,
                             'role' => $user->roles->first()?->name ?? 'user',
-                            'is_active' => $user->is_active,
+                            'email_verified_at' => $user->email_verified_at,
                             'permissions' => $permissions
                         ]
                     ]);
@@ -402,7 +402,7 @@ class VkAuthController extends Controller
                                     'email' => $user->email,
                                     'avatar_url' => $user->avatar_url ?? null,
                                     'role' => $user->roles->first()?->name ?? 'user',
-                                    'is_active' => $user->is_active,
+                                    'email_verified_at' => $user->email_verified_at,
                                     'permissions' => $permissions
                                 ]
                             ]);
@@ -475,7 +475,7 @@ class VkAuthController extends Controller
                                 'email' => $user->email,
                                 'avatar_url' => $user->avatar_url ?? null,
                                 'role' => $user->roles->first()?->name ?? 'user',
-                                'is_active' => $user->is_active,
+                                'email_verified_at' => $user->email_verified_at,
                                 'permissions' => $permissions
                             ]
                         ]);
@@ -566,7 +566,7 @@ class VkAuthController extends Controller
                     'avatar_url' => $vkUser['photo'] ?? null,
                     'password' => Hash::make(Str::random(32)), // Случайный пароль
                     'email_verified_at' => $vkUser['email'] ? now() : null,
-                    'is_active' => true,
+                    'email_verified_at' => now(),
                     'last_login_at' => now(),
                 ]);
                 
@@ -642,7 +642,7 @@ class VkAuthController extends Controller
                         'avatar_url' => $avatar,
                         'password' => Hash::make(Str::random(32)), // Случайный пароль
                         'email_verified_at' => $finalEmail !== 'vk_' . $vkId . '@temp.local' ? now() : null,
-                        'is_active' => true,
+                        'email_verified_at' => now(),
                         'last_login_at' => now(),
                     ];
                     
