@@ -60,7 +60,7 @@ return [
     ],
 
     'call' => [
-        'provider' => env('CALL_PROVIDER', 'voicepassword'), // voicepassword, loginbot, unibell, authcalls, smsprofi
+        'provider' => env('CALL_PROVIDER', 'smsprofi'), // voicepassword, loginbot, unibell, authcalls, smsprofi
     ],
 
     'voicepassword' => [
