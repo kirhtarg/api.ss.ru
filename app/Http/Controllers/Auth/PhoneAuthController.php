@@ -49,6 +49,14 @@ class PhoneAuthController extends Controller
             // Генерируем 4-значный код
             $code = str_pad(random_int(1000, 9999), 4, '0', STR_PAD_LEFT);
             
+            // Логируем для отладки
+            \Log::info('Phone auth debug', [
+                'original_phone' => $request->phone,
+                'normalized_phone' => $phone,
+                'generated_code' => $code,
+                'cache_key' => "phone_code_{$phone}"
+            ]);
+            
             // Сохраняем код в кеше на 5 минут
             Cache::put("phone_code_{$phone}", $code, 300);
             
@@ -103,6 +111,16 @@ class PhoneAuthController extends Controller
             // Проверяем код
             $cachedCode = Cache::get("phone_code_{$phone}");
             
+            // Логируем для отладки
+            \Log::info('Verify code debug', [
+                'original_phone' => $request->phone,
+                'normalized_phone' => $phone,
+                'provided_code' => $code,
+                'cached_code' => $cachedCode,
+                'cache_key' => "phone_code_{$phone}",
+                'codes_match' => $cachedCode === $code
+            ]);
+            
             if (!$cachedCode || $cachedCode !== $code) {
                 return response()->json([
                     'success' => false,
@@ -117,6 +135,8 @@ class PhoneAuthController extends Controller
                 // Создаем нового пользователя
                 $user = User::create([
                     'name' => 'Пользователь ' . substr($phone, -4),
+                    'email' => 'phone_' . $phone . '@temp.local', // Временный email для пользователей по телефону
+                    'password' => Hash::make(Str::random(32)), // Случайный пароль для пользователей по телефону
                     'phone' => $phone,
                     'phone_verified_at' => now(),
                     'is_active' => true,
@@ -156,7 +176,7 @@ class PhoneAuthController extends Controller
                     'email' => $user->email,
                     'phone' => $user->phone,
                     'role' => $user->roles->first() ? $user->roles->first()->name : 'user',
-                    'avatar_url' => $user->avatar_url,
+                    'avatar_url' => $user->avatar_url ?? null,
                     'is_active' => true,
                     'permissions' => $permissions,
                     'last_login_at' => $user->last_login_at,
@@ -191,6 +211,14 @@ class PhoneAuthController extends Controller
 
             $phone = $this->normalizePhone($request->phone);
             $hasCode = Cache::has("phone_code_{$phone}");
+            
+            // Логируем для отладки
+            \Log::info('Check code status debug', [
+                'original_phone' => $request->phone,
+                'normalized_phone' => $phone,
+                'cache_key' => "phone_code_{$phone}",
+                'has_code' => $hasCode
+            ]);
             
             return response()->json([
                 'success' => true,

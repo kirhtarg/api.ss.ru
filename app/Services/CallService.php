@@ -226,8 +226,10 @@ class CallService
             'tags' => ['auth', 'callpassword']
         ];
 
-        // Отправляем запрос с X-Token в заголовке
-        $response = Http::timeout(30)->withHeaders([
+        // Отправляем запрос с X-Token в заголовке (отключаем проверку SSL)
+        $response = Http::timeout(30)->withOptions([
+            'verify' => false
+        ])->withHeaders([
             'Content-Type' => 'application/json',
             'Accept' => 'application/json',
             'X-Token' => $this->apiKey
