@@ -217,8 +217,11 @@ class CallService
         $requestId = 'call_' . time() . '_' . substr(md5($phone . $code), 0, 8);
         
         // Подготавливаем данные согласно API документации
+        // SMSProfi.ru ожидает номер без + в начале
+        $recipientPhone = str_starts_with($phone, '+7') ? substr($phone, 1) : $phone;
+        
         $requestData = [
-            'recipient' => $phone,
+            'recipient' => $recipientPhone,
             'id' => $requestId,
             'tags' => ['auth', 'callpassword']
         ];
@@ -236,7 +239,8 @@ class CallService
             // Проверяем успешность по структуре ответа SMSProfi
             if (isset($data['success']) && $data['success'] === true) {
                 Log::info('Call sent successfully via SMSProfi', [
-                    'phone' => $phone, 
+                    'original_phone' => $phone,
+                    'recipient_phone' => $recipientPhone,
                     'request_id' => $requestId,
                     'call_id' => $data['result']['id'] ?? null,
                     'code' => $data['result']['code'] ?? null
@@ -252,7 +256,8 @@ class CallService
                 ];
             } else {
                 Log::error('Call sending failed via SMSProfi', [
-                    'phone' => $phone, 
+                    'original_phone' => $phone,
+                    'recipient_phone' => $recipientPhone,
                     'request_id' => $requestId,
                     'response' => $data
                 ]);
@@ -265,7 +270,8 @@ class CallService
             }
         } else {
             Log::error('Call sending failed via SMSProfi - HTTP error', [
-                'phone' => $phone, 
+                'original_phone' => $phone,
+                'recipient_phone' => $recipientPhone,
                 'request_id' => $requestId,
                 'status' => $response->status(),
                 'response' => $data
