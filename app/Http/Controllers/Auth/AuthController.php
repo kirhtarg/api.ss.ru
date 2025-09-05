@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -60,7 +61,7 @@ class AuthController extends Controller
                 $this->sendVerificationEmail($user, $verificationToken);
             } catch (\Exception $e) {
                 // Логируем ошибку, но не прерываем регистрацию
-                \Log::error('Email sending failed: ' . $e->getMessage());
+                Log::error('Email sending failed: ' . $e->getMessage());
             }
 
             return response()->json([
@@ -122,6 +123,15 @@ class AuthController extends Controller
                     'message' => 'Неверный пароль',
                     'debug' => 'Пароль не совпадает для пользователя ' . $user->name
                 ], 401);
+            }
+
+            // Проверяем, что пользователь не заблокирован
+            if ($user->is_active === 0 || $user->is_active === false) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ваш аккаунт заблокирован. Обратитесь к администратору.',
+                    'error' => 'account_blocked'
+                ], 403);
             }
 
             // Проверяем подтверждение email

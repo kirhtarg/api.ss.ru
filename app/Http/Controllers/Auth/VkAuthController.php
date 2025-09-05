@@ -164,6 +164,13 @@ class VkAuthController extends Controller
             $user = User::where('vk_id', $vkUser['id'])->first();
             
             if ($user) {
+                // Проверяем, что пользователь не заблокирован
+                if ($user->is_active === 0 || $user->is_active === false) {
+                    $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
+                    $errorUrl = $frontendUrl . '/auth/vk/callback?error=' . urlencode('Ваш аккаунт заблокирован. Обратитесь к администратору.');
+                    return redirect($errorUrl);
+                }
+                
                 // Пользователь уже существует, обновляем данные
                 $user->update([
                     'name' => trim(($vkUser['first_name'] ?? '') . ' ' . ($vkUser['last_name'] ?? '')),
@@ -180,6 +187,13 @@ class VkAuthController extends Controller
                 }
                 
                 if ($existingUser) {
+                    // Проверяем, что пользователь не заблокирован
+                    if ($existingUser->is_active === 0 || $existingUser->is_active === false) {
+                        $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
+                        $errorUrl = $frontendUrl . '/auth/vk/callback?error=' . urlencode('Ваш аккаунт заблокирован. Обратитесь к администратору.');
+                        return redirect($errorUrl);
+                    }
+                    
                     // Связываем существующего пользователя с VK
                     $existingUser->update([
                         'vk_id' => $vkUser['id'],
@@ -533,6 +547,11 @@ class VkAuthController extends Controller
         $user = User::where('vk_id', $vkUser['id'])->first();
         
         if ($user) {
+            // Проверяем, что пользователь не заблокирован
+            if ($user->is_active === 0 || $user->is_active === false) {
+                throw new \Exception('Ваш аккаунт заблокирован. Обратитесь к администратору.');
+            }
+            
             // Пользователь уже существует, обновляем данные
             $user->update([
                 'name' => trim(($vkUser['first_name'] ?? '') . ' ' . ($vkUser['last_name'] ?? '')),
@@ -549,6 +568,11 @@ class VkAuthController extends Controller
             }
             
             if ($existingUser) {
+                // Проверяем, что пользователь не заблокирован
+                if ($existingUser->is_active === 0 || $existingUser->is_active === false) {
+                    throw new \Exception('Ваш аккаунт заблокирован. Обратитесь к администратору.');
+                }
+                
                 // Связываем существующего пользователя с VK
                 $existingUser->update([
                     'vk_id' => $vkUser['id'],
@@ -592,6 +616,11 @@ class VkAuthController extends Controller
             $user = User::where('vk_id', $vkId)->first();
             
             if ($user) {
+                // Проверяем, что пользователь не заблокирован
+                if ($user->is_active === 0 || $user->is_active === false) {
+                    throw new \Exception('Ваш аккаунт заблокирован. Обратитесь к администратору.');
+                }
+                
                 // Получаем данные из VK ID API для обновления
                 $firstName = $userDataFromVkId['first_name'] ?? null;
                 $lastName = $userDataFromVkId['last_name'] ?? null;
@@ -614,6 +643,11 @@ class VkAuthController extends Controller
                 }
                 
                 if ($existingUser) {
+                    // Проверяем, что пользователь не заблокирован
+                    if ($existingUser->is_active === 0 || $existingUser->is_active === false) {
+                        throw new \Exception('Ваш аккаунт заблокирован. Обратитесь к администратору.');
+                    }
+                    
                     // Связываем существующего пользователя с VK
                     $existingUser->update([
                         'vk_id' => $vkId,

@@ -152,7 +152,7 @@ class PhoneAuthController extends Controller
                 // Создаем нового пользователя
                 $user = User::create([
                     'name' => $phone, // Используем номер телефона как имя
-                    'email' => 'phone_' . $phone . '@temp.local', // Временный email для пользователей по телефону
+                    'email' => 'NO', // Для пользователей по телефону email = NO
                     'password' => Hash::make(Str::random(32)), // Случайный пароль для пользователей по телефону
                     'phone' => $phone,
                     'avatar_url' => '/ph.png', // Аватар по умолчанию

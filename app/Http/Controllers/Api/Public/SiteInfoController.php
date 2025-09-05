@@ -20,9 +20,9 @@ class SiteInfoController extends Controller
             // Очищаем кэш для этого API
             Cache::forget('site_info_public');
 
-            // Получаем все настройки с группой general без кэширования
+            // Получаем все настройки с группой general и auth без кэширования
             $settings = Setting::select('key', 'value', 'type', 'group')
-                ->where('group', '<>', 'private')
+                ->whereIn('group', ['general', 'site', 'auth'])
                 ->get();
 
             $siteInfo = [];

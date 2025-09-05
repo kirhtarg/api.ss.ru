@@ -772,16 +772,19 @@ Route::middleware('auth:sanctum')->group(function () {
                                 'id' => $user->id,
                                 'name' => $user->name,
                                 'email' => $user->email,
+                                'phone' => $user->phone,
                                 'avatar' => $user->avatar,
                                 'avatar_url' => $user->avatar_url,
                                 'google_id' => $user->google_id,
                                 'yandex_id' => $user->yandex_id,
                                 'vk_id' => $user->vk_id,
+                                'phone_verified_at' => $user->phone_verified_at ? 1 : 0, // 1 если есть дата, 0 если null
                                 'roles' => $user->roles->pluck('name'),
                                 'email_verified_at' => $user->email_verified_at ? 1 : 0, // 1 если есть дата, 0 если null
                                 'is_active' => $user->is_active,
                                 'created_at' => $user->created_at,
                                 'updated_at' => $user->updated_at,
+                                'last_login_at' => $user->last_login_at,
                             ];
                             
                             // Добавляем поля авторизации
@@ -816,7 +819,8 @@ Route::middleware('auth:sanctum')->group(function () {
                         'roles' => 'array', // Также поддерживаем массив ролей для совместимости
                         'roles.*' => 'string|exists:roles,name',
                         'email_verified_at' => 'nullable|date', // Статус активности на основе email_verified_at
-                        'is_active' => 'boolean' // Статус блокировки пользователя
+                        'is_active' => 'boolean', // Статус блокировки пользователя
+                        'avatar_url' => 'nullable|url|max:255' // URL аватара пользователя
                     ]);
 
                     if ($validator->fails()) {
@@ -842,6 +846,11 @@ Route::middleware('auth:sanctum')->group(function () {
                     // Добавляем статус блокировки, если передан
                     if ($request->has('is_active')) {
                         $userData['is_active'] = $request->boolean('is_active');
+                    }
+                    
+                    // Добавляем URL аватара, если передан
+                    if ($request->has('avatar_url')) {
+                        $userData['avatar_url'] = $request->avatar_url;
                     }
                     
                     $user = \App\Models\User::create($userData);
@@ -912,7 +921,8 @@ Route::middleware('auth:sanctum')->group(function () {
                         'roles' => 'array', // Также поддерживаем массив ролей для совместимости
                         'roles.*' => 'string|exists:roles,name',
                         'email_verified_at' => 'nullable|date', // Статус активности на основе email_verified_at
-                        'is_active' => 'boolean' // Статус блокировки пользователя
+                        'is_active' => 'boolean', // Статус блокировки пользователя
+                        'avatar_url' => 'nullable|url|max:255' // URL аватара пользователя
                     ]);
 
                     if ($validator->fails()) {
@@ -937,6 +947,11 @@ Route::middleware('auth:sanctum')->group(function () {
                     // Добавляем статус блокировки, если передан
                     if ($request->has('is_active')) {
                         $updateData['is_active'] = $request->boolean('is_active');
+                    }
+                    
+                    // Добавляем URL аватара, если передан
+                    if ($request->has('avatar_url')) {
+                        $updateData['avatar_url'] = $request->avatar_url;
                     }
                     
                     $user->update($updateData);

@@ -60,6 +60,13 @@ class GoogleAuthController extends Controller
             $user = User::where('google_id', $googleUser->getId())->first();
             
             if ($user) {
+                // Проверяем, что пользователь не заблокирован
+                if ($user->is_active === 0 || $user->is_active === false) {
+                    $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
+                    $errorUrl = $frontendUrl . '/auth/google/callback?error=' . urlencode('Ваш аккаунт заблокирован. Обратитесь к администратору.');
+                    return redirect($errorUrl);
+                }
+                
                 // Пользователь уже существует, обновляем данные
                 $user->update([
                     'name' => $googleUser->getName(),
@@ -73,6 +80,13 @@ class GoogleAuthController extends Controller
                 $existingUser = User::where('email', $googleUser->getEmail())->first();
                 
                 if ($existingUser) {
+                    // Проверяем, что пользователь не заблокирован
+                    if ($existingUser->is_active === 0 || $existingUser->is_active === false) {
+                        $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
+                        $errorUrl = $frontendUrl . '/auth/google/callback?error=' . urlencode('Ваш аккаунт заблокирован. Обратитесь к администратору.');
+                        return redirect($errorUrl);
+                    }
+                    
                     // Связываем существующего пользователя с Google
                     $existingUser->update([
                         'google_id' => $googleUser->getId(),
