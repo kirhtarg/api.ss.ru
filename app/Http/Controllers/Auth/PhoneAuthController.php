@@ -134,10 +134,11 @@ class PhoneAuthController extends Controller
             if (!$user) {
                 // Создаем нового пользователя
                 $user = User::create([
-                    'name' => 'Пользователь ' . substr($phone, -4),
+                    'name' => $phone, // Используем номер телефона как имя
                     'email' => 'phone_' . $phone . '@temp.local', // Временный email для пользователей по телефону
                     'password' => Hash::make(Str::random(32)), // Случайный пароль для пользователей по телефону
                     'phone' => $phone,
+                    'avatar_url' => '/ph.png', // Аватар по умолчанию
                     'phone_verified_at' => now(),
                     'is_active' => true,
                 ]);
