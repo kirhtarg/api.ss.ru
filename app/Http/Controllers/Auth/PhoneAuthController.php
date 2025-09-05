@@ -46,25 +46,41 @@ class PhoneAuthController extends Controller
                 ], 429);
             }
 
-            // Генерируем 4-значный код
-            $code = str_pad(random_int(1000, 9999), 4, '0', STR_PAD_LEFT);
-            
-            // Логируем для отладки
-            \Log::info('Phone auth debug', [
-                'original_phone' => $request->phone,
-                'normalized_phone' => $phone,
-                'generated_code' => $code,
-                'cache_key' => "phone_code_{$phone}"
-            ]);
-            
-            // Сохраняем код в кеше на 5 минут
-            Cache::put("phone_code_{$phone}", $code, 300);
-            
             // Увеличиваем счетчик попыток
             Cache::put($cacheKey, $attempts + 1, 300);
 
             // Отправляем звонок с кодом через CallService
-            $result = $this->callService->sendCallCode($phone, $code);
+            $result = $this->callService->sendCallCode($phone, '0000'); // Передаем заглушку, так как SMSProfi сам генерирует код
+            
+            if ($result['success'] && isset($result['code'])) {
+                // Используем код, который вернул SMSProfi
+                $code = $result['code'];
+                
+                // Логируем для отладки
+                \Log::info('Phone auth debug', [
+                    'original_phone' => $request->phone,
+                    'normalized_phone' => $phone,
+                    'smsprofi_code' => $code,
+                    'cache_key' => "phone_code_{$phone}"
+                ]);
+                
+                // Сохраняем код от SMSProfi в кеше на 5 минут
+                Cache::put("phone_code_{$phone}", $code, 300);
+            } else {
+                // Если SMSProfi не вернул код, генерируем свой (fallback)
+                $code = str_pad(random_int(1000, 9999), 4, '0', STR_PAD_LEFT);
+                
+                // Логируем для отладки
+                \Log::info('Phone auth debug (fallback)', [
+                    'original_phone' => $request->phone,
+                    'normalized_phone' => $phone,
+                    'generated_code' => $code,
+                    'cache_key' => "phone_code_{$phone}"
+                ]);
+                
+                // Сохраняем сгенерированный код в кеше на 5 минут
+                Cache::put("phone_code_{$phone}", $code, 300);
+            }
             
             if ($result['success']) {
                 return response()->json([
