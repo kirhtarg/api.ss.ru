@@ -104,13 +104,6 @@ return [
         'from' => env('SMSRU_FROM', 'SkateAndSnow'),
     ],
 
-    'smsprofi' => [
-        'login' => env('SMSPROFI_LOGIN'),
-        'password' => env('SMSPROFI_PASSWORD'),
-        'api_url' => env('SMSPROFI_API_URL', 'https://api.smsprofi.ru/send'),
-        'from' => env('SMSPROFI_FROM', 'SkateAndSnow'),
-    ],
-
     'notifylk' => [
         'user_id' => env('NOTIFYLK_USER_ID'),
         'api_key' => env('NOTIFYLK_API_KEY'),
