@@ -17,32 +17,43 @@ echo "1. Очищаем кеш для номера $phone\n";
 Cache::forget("phone_code_$phone");
 
 echo "2. Тестируем отправку кода (с фейковым SMSProfi)\n";
+
+// Создаем фейковый код заранее
+$fakeCode = str_pad(random_int(1000, 9999), 4, '0', STR_PAD_LEFT);
+echo "   📞 Фейковый звонок отправлен на $phone\n";
+echo "   🔢 Код в звонке: $fakeCode\n";
+
+// Создаем контроллер с реальным CallService
 $controller = new PhoneAuthController(new \App\Services\CallService());
 
-// Создаем мок-объект для CallService, который возвращает фейковый код
-class MockCallService {
+// Временно перехватываем вызов sendCallCode через рефлексию
+$reflection = new ReflectionClass($controller);
+$callServiceProperty = $reflection->getProperty('callService');
+$callServiceProperty->setAccessible(true);
+
+// Создаем мок-объект
+$mockCallService = new class($fakeCode) {
+    private $fakeCode;
+    
+    public function __construct($fakeCode) {
+        $this->fakeCode = $fakeCode;
+    }
+    
     public function sendCallCode($phone, $code) {
-        // Генерируем фейковый 4-значный код
-        $fakeCode = str_pad(random_int(1000, 9999), 4, '0', STR_PAD_LEFT);
-        
-        echo "   📞 Фейковый звонок отправлен на $phone\n";
-        echo "   🔢 Код в звонке: $fakeCode\n";
-        
         return [
             'success' => true,
             'message' => 'Звонок отправлен',
             'data' => [
                 'call_id' => 'fake_call_' . time(),
-                'code' => $fakeCode,
+                'code' => $this->fakeCode,
                 'mobile_operator' => 'Test'
             ]
         ];
     }
-}
+};
 
 // Заменяем CallService на мок
-$mockCallService = new MockCallService();
-$controller = new PhoneAuthController($mockCallService);
+$callServiceProperty->setValue($controller, $mockCallService);
 
 $request = new Request(['phone' => $phone]);
 $response = $controller->sendPhoneCode($request);
