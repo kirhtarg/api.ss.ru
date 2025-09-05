@@ -29,7 +29,7 @@ class PhoneAuthController extends Controller
     {
         try {
             $request->validate([
-                'phone' => 'required|string|min:10|max:15',
+                'phone' => 'required|string|min:10|max:20',
             ]);
 
             $phone = $this->normalizePhone($request->phone);
@@ -93,7 +93,7 @@ class PhoneAuthController extends Controller
     {
         try {
             $request->validate([
-                'phone' => 'required|string|min:10|max:15',
+                'phone' => 'required|string|min:10|max:20',
                 'code' => 'required|string|size:4',
             ]);
 
@@ -186,7 +186,7 @@ class PhoneAuthController extends Controller
     {
         try {
             $request->validate([
-                'phone' => 'required|string|min:10|max:15',
+                'phone' => 'required|string|min:10|max:20',
             ]);
 
             $phone = $this->normalizePhone($request->phone);
