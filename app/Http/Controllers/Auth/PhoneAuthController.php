@@ -53,9 +53,9 @@ class PhoneAuthController extends Controller
             // Отправляем звонок с кодом через CallService
             $result = $this->callService->sendCallCode($phone, '0000'); // Передаем заглушку, так как SMSProfi сам генерирует код
             
-            if ($result['success'] && isset($result['code'])) {
+            if ($result['success'] && isset($result['data']['code'])) {
                 // Используем код, который вернул SMSProfi
-                $code = $result['code'];
+                $code = $result['data']['code'];
                 
                 // Логируем для отладки
                 \Log::info('Phone auth debug', [
