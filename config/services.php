@@ -88,9 +88,8 @@ return [
     ],
 
     'smsprofi' => [
-        'login' => env('SMSPROFI_LOGIN'),
-        'password' => env('SMSPROFI_PASSWORD'),
-        'api_url' => env('SMSPROFI_CALL_API_URL', 'https://api.smsprofi.ru/call'),
+        'api_key' => env('SMSPROFI_API_KEY'),
+        'api_url' => env('SMSPROFI_CALL_API_URL', 'https://lcab.smsprofi.ru/json/v1.0/callpassword/send'),
         'from' => env('SMSPROFI_FROM', 'SkateAndSnow'),
     ],
 

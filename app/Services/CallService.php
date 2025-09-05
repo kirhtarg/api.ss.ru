@@ -41,9 +41,8 @@ class CallService
                 $this->from = config('services.authcalls.from', 'SkateAndSnow');
                 break;
             case 'smsprofi':
-                $this->login = config('services.smsprofi.login');
-                $this->password = config('services.smsprofi.password');
-                $this->apiUrl = config('services.smsprofi.api_url', 'https://api.smsprofi.ru/call');
+                $this->apiKey = config('services.smsprofi.api_key');
+                $this->apiUrl = config('services.smsprofi.api_url', 'https://lcab.smsprofi.ru/json/v1.0/callpassword/send');
                 $this->from = config('services.smsprofi.from', 'SkateAndSnow');
                 break;
             default:
@@ -213,28 +212,67 @@ class CallService
      */
     private function sendSmsProfiCall(string $phone, string $code): array
     {
-        $response = Http::timeout(30)->post($this->apiUrl, [
-            'login' => $this->login,
-            'password' => $this->password,
-            'phone' => $phone,
-            'code' => $code,
-            'sender' => $this->from
-        ]);
+        // Согласно документации SMSProfi.ru для Callpassword
+        // Генерируем уникальный ID для запроса
+        $requestId = 'call_' . time() . '_' . substr(md5($phone . $code), 0, 8);
+        
+        // Подготавливаем данные согласно API документации
+        $requestData = [
+            'recipient' => $phone,
+            'id' => $requestId,
+            'tags' => ['auth', 'callpassword']
+        ];
+
+        // Отправляем запрос с X-Token в заголовке
+        $response = Http::timeout(30)->withHeaders([
+            'Content-Type' => 'application/json',
+            'Accept' => 'application/json',
+            'X-Token' => $this->apiKey
+        ])->post($this->apiUrl, $requestData);
 
         $data = $response->json();
 
-        if ($response->successful() && isset($data['status']) && $data['status'] === 'success') {
-            Log::info('Call sent successfully via SMSProfi', ['phone' => $phone, 'code' => $code]);
-            return [
-                'success' => true,
-                'message' => 'Звонок отправлен',
-                'data' => $data
-            ];
+        if ($response->successful()) {
+            // Проверяем успешность по структуре ответа SMSProfi
+            if (isset($data['success']) && $data['success'] === true) {
+                Log::info('Call sent successfully via SMSProfi', [
+                    'phone' => $phone, 
+                    'request_id' => $requestId,
+                    'call_id' => $data['result']['id'] ?? null,
+                    'code' => $data['result']['code'] ?? null
+                ]);
+                return [
+                    'success' => true,
+                    'message' => 'Звонок отправлен',
+                    'data' => [
+                        'call_id' => $data['result']['id'] ?? null,
+                        'code' => $data['result']['code'] ?? null,
+                        'mobile_operator' => $data['result']['mobileOperator'] ?? null
+                    ]
+                ];
+            } else {
+                Log::error('Call sending failed via SMSProfi', [
+                    'phone' => $phone, 
+                    'request_id' => $requestId,
+                    'response' => $data
+                ]);
+                return [
+                    'success' => false,
+                    'message' => $data['error']['descr'] ?? 'Ошибка отправки звонка',
+                    'error_code' => $data['error']['code'] ?? null,
+                    'data' => $data
+                ];
+            }
         } else {
-            Log::error('Call sending failed via SMSProfi', ['phone' => $phone, 'response' => $data]);
+            Log::error('Call sending failed via SMSProfi - HTTP error', [
+                'phone' => $phone, 
+                'request_id' => $requestId,
+                'status' => $response->status(),
+                'response' => $data
+            ]);
             return [
                 'success' => false,
-                'message' => $data['message'] ?? 'Ошибка отправки звонка',
+                'message' => 'HTTP ошибка: ' . $response->status() . ' - ' . ($data['error']['descr'] ?? 'Неизвестная ошибка'),
                 'data' => $data
             ];
         }
