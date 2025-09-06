@@ -12,8 +12,12 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('shop_good_audits', function (Blueprint $table) {
-            $table->string('ip_address')->nullable()->after('new_values');
-            $table->text('user_agent')->nullable()->after('ip_address');
+            if (!Schema::hasColumn('shop_good_audits', 'ip_address')) {
+                $table->string('ip_address')->nullable()->after('new_values');
+            }
+            if (!Schema::hasColumn('shop_good_audits', 'user_agent')) {
+                $table->text('user_agent')->nullable()->after('ip_address');
+            }
         });
     }
 
@@ -23,7 +27,17 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('shop_good_audits', function (Blueprint $table) {
-            $table->dropColumn(['ip_address', 'user_agent']);
+            $columnsToDrop = [];
+            if (Schema::hasColumn('shop_good_audits', 'ip_address')) {
+                $columnsToDrop[] = 'ip_address';
+            }
+            if (Schema::hasColumn('shop_good_audits', 'user_agent')) {
+                $columnsToDrop[] = 'user_agent';
+            }
+            
+            if (!empty($columnsToDrop)) {
+                $table->dropColumn($columnsToDrop);
+            }
         });
     }
 };
