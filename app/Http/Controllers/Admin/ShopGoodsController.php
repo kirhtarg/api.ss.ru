@@ -67,7 +67,7 @@ class ShopGoodsController extends Controller
         }
 
         // Фильтр по статусу
-        if ($request->has('is_active')) {
+        if ($request->filled('is_active')) {
             $query->where('is_active', $request->boolean('is_active'));
         }
 
@@ -152,7 +152,7 @@ class ShopGoodsController extends Controller
             'is_sale' => 'boolean',
             'sort_order' => 'integer',
             'category_ids' => 'array',
-            'category_ids.*' => 'exists:categories,id',
+            'category_ids.*' => 'exists:shop_categories,id',
             'brand_ids' => 'array',
             'brand_ids.*' => 'exists:shop_brands,id',
             'tag_ids' => 'array',
@@ -254,7 +254,7 @@ class ShopGoodsController extends Controller
             'is_sale' => 'boolean',
             'sort_order' => 'integer',
             'category_ids' => 'array',
-            'category_ids.*' => 'exists:categories,id',
+            'category_ids.*' => 'exists:shop_categories,id',
             'brand_ids' => 'array',
             'brand_ids.*' => 'exists:shop_brands,id',
             'tag_ids' => 'array',
@@ -467,12 +467,494 @@ class ShopGoodsController extends Controller
     }
 
     /**
+     * Скачать и сохранить изображение по URL
+     */
+    public function downloadImage(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'imageUrl' => 'required|url',
+            'storagePath' => 'required|string',
+            'optimize' => 'boolean',
+            'naming' => 'string|in:original,hash',
+            'resize' => 'string|in:no_change,crop_proportional,fit_with_white,fit_system,custom',
+            'width' => 'nullable|integer|min:1',
+            'height' => 'nullable|integer|min:1'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $imageUrl = $request->input('imageUrl');
+            $storagePath = $request->input('storagePath');
+            $optimize = $request->input('optimize', true);
+            $naming = $request->input('naming', 'hash');
+            $resize = $request->input('resize', 'no_change');
+            $width = $request->input('width');
+            $height = $request->input('height');
+
+            // Валидация URL
+            if (!filter_var($imageUrl, FILTER_VALIDATE_URL)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Неверный формат URL'
+                ], 400);
+            }
+
+            // Проверка формата изображения
+            $imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'tiff', 'ico'];
+            $urlPath = parse_url($imageUrl, PHP_URL_PATH);
+            $extension = strtolower(pathinfo($urlPath, PATHINFO_EXTENSION));
+            
+            if (!in_array($extension, $imageExtensions)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Неподдерживаемый формат изображения'
+                ], 400);
+            }
+
+            // Генерация имени файла
+            if ($naming === 'original') {
+                // Используем оригинальное имя файла
+                $originalName = pathinfo(parse_url($imageUrl, PHP_URL_PATH), PATHINFO_FILENAME);
+                $fileName = $originalName . '.' . $extension;
+                
+                // Очищаем имя файла от недопустимых символов
+                $fileName = preg_replace('/[^a-zA-Z0-9._-]/', '_', $fileName);
+            } else {
+                // Используем хеш
+                $hash = hash('sha256', $imageUrl);
+                $fileName = $hash . '.' . $extension;
+            }
+            
+            // Полный путь для сохранения
+            $fullPath = $storagePath . '/' . $fileName;
+            $storageFullPath = storage_path('app/public' . $fullPath);
+            
+            // Создаем директорию если не существует
+            $directory = dirname($storageFullPath);
+            if (!file_exists($directory)) {
+                mkdir($directory, 0755, true);
+            }
+
+            // Скачиваем изображение
+            $imageData = file_get_contents($imageUrl);
+            if ($imageData === false) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не удалось скачать изображение'
+                ], 400);
+            }
+
+            // Проверка размера файла (максимум 10MB)
+            if (strlen($imageData) > 10 * 1024 * 1024) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Файл слишком большой (максимум 10MB)'
+                ], 400);
+            }
+
+            // Сохраняем файл
+            file_put_contents($storageFullPath, $imageData);
+
+            // Обработка изображения
+            if ($optimize || $resize !== 'no_change') {
+                $this->processImage($storageFullPath, $resize, $width, $height);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'path' => $fullPath,
+                    'originalUrl' => $imageUrl,
+                    'size' => strlen($imageData),
+                    'optimized' => $optimize
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка скачивания изображения: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Оптимизация изображения
+     */
+    private function optimizeImage($filePath)
+    {
+        try {
+            $imageInfo = getimagesize($filePath);
+            if (!$imageInfo) {
+                return;
+            }
+
+            $width = $imageInfo[0];
+            $height = $imageInfo[1];
+            $mimeType = $imageInfo['mime'];
+            
+            // Если изображение слишком большое, уменьшаем его
+            if ($width > 2000 || $height > 2000) {
+                $newWidth = $width > $height ? 2000 : intval(2000 * $width / $height);
+                $newHeight = $height > $width ? 2000 : intval(2000 * $height / $width);
+                
+                // Создаем новое изображение
+                $sourceImage = null;
+                switch ($mimeType) {
+                    case 'image/jpeg':
+                        $sourceImage = imagecreatefromjpeg($filePath);
+                        break;
+                    case 'image/png':
+                        $sourceImage = imagecreatefrompng($filePath);
+                        break;
+                    case 'image/gif':
+                        $sourceImage = imagecreatefromgif($filePath);
+                        break;
+                    case 'image/webp':
+                        $sourceImage = imagecreatefromwebp($filePath);
+                        break;
+                }
+                
+                if ($sourceImage) {
+                    $resizedImage = imagecreatetruecolor($newWidth, $newHeight);
+                    
+                    // Сохраняем прозрачность для PNG
+                    if ($mimeType === 'image/png') {
+                        imagealphablending($resizedImage, false);
+                        imagesavealpha($resizedImage, true);
+                        $transparent = imagecolorallocatealpha($resizedImage, 255, 255, 255, 127);
+                        imagefilledrectangle($resizedImage, 0, 0, $newWidth, $newHeight, $transparent);
+                    }
+                    
+                    imagecopyresampled($resizedImage, $sourceImage, 0, 0, 0, 0, $newWidth, $newHeight, $width, $height);
+                    
+                    // Сохраняем оптимизированное изображение
+                    switch ($mimeType) {
+                        case 'image/jpeg':
+                            imagejpeg($resizedImage, $filePath, 85); // 85% качество
+                            break;
+                        case 'image/png':
+                            imagepng($resizedImage, $filePath, 8); // 8 уровень сжатия
+                            break;
+                        case 'image/gif':
+                            imagegif($resizedImage, $filePath);
+                            break;
+                        case 'image/webp':
+                            imagewebp($resizedImage, $filePath, 85); // 85% качество
+                            break;
+                    }
+                    
+                    imagedestroy($sourceImage);
+                    imagedestroy($resizedImage);
+                }
+            }
+        } catch (\Exception $e) {
+            // Логируем ошибку, но не прерываем выполнение
+            \Log::warning('Ошибка оптимизации изображения: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Обработка изображения с различными типами изменения размера
+     */
+    private function processImage($filePath, $resize, $width, $height)
+    {
+        try {
+            $imageInfo = getimagesize($filePath);
+            if (!$imageInfo) {
+                return;
+            }
+
+            $originalWidth = $imageInfo[0];
+            $originalHeight = $imageInfo[1];
+            $mimeType = $imageInfo['mime'];
+            
+            // Если размеры не заданы, используем оригинальные
+            if (!$width || !$height) {
+                $width = $originalWidth;
+                $height = $originalHeight;
+            }
+            
+            // Если не нужно изменять размер
+            if ($resize === 'no_change') {
+                $this->optimizeImage($filePath);
+                return;
+            }
+            
+            // Создаем исходное изображение
+            $sourceImage = null;
+            switch ($mimeType) {
+                case 'image/jpeg':
+                    $sourceImage = imagecreatefromjpeg($filePath);
+                    break;
+                case 'image/png':
+                    $sourceImage = imagecreatefrompng($filePath);
+                    break;
+                case 'image/gif':
+                    $sourceImage = imagecreatefromgif($filePath);
+                    break;
+                case 'image/webp':
+                    $sourceImage = imagecreatefromwebp($filePath);
+                    break;
+            }
+            
+            if (!$sourceImage) {
+                return;
+            }
+            
+            $newImage = null;
+            
+            if ($resize === 'crop_proportional') {
+                // Обрезка с сохранением пропорций (использует системные размеры)
+                $systemWidth = $width ?: $this->getSystemImageWidth();
+                $systemHeight = $height ?: $this->getSystemImageHeight();
+                $newImage = $this->cropProportional($sourceImage, $originalWidth, $originalHeight, $systemWidth, $systemHeight);
+            } elseif ($resize === 'fit_with_white') {
+                // Подгонка под размеры с белым фоном (использует системные размеры)
+                $systemWidth = $width ?: $this->getSystemImageWidth();
+                $systemHeight = $height ?: $this->getSystemImageHeight();
+                $newImage = $this->fitWithWhiteBackground($sourceImage, $originalWidth, $originalHeight, $systemWidth, $systemHeight);
+            } elseif ($resize === 'fit_system') {
+                // Подгонка под размеры системы (уменьшение если превышает лимиты)
+                $systemWidth = $width ?: $this->getSystemImageWidth();
+                $systemHeight = $height ?: $this->getSystemImageHeight();
+                $newImage = $this->fitSystemSize($sourceImage, $originalWidth, $originalHeight, $systemWidth, $systemHeight);
+            } elseif ($resize === 'custom') {
+                // Пользовательские размеры (использует переданные размеры или системные)
+                $customWidth = $width ?: $this->getSystemImageWidth();
+                $customHeight = $height ?: $this->getSystemImageHeight();
+                $newImage = $this->cropProportional($sourceImage, $originalWidth, $originalHeight, $customWidth, $customHeight);
+            }
+            
+            if ($newImage) {
+                // Сохраняем обработанное изображение
+                switch ($mimeType) {
+                    case 'image/jpeg':
+                        imagejpeg($newImage, $filePath, 85);
+                        break;
+                    case 'image/png':
+                        imagepng($newImage, $filePath, 8);
+                        break;
+                    case 'image/gif':
+                        imagegif($newImage, $filePath);
+                        break;
+                    case 'image/webp':
+                        imagewebp($newImage, $filePath, 85);
+                        break;
+                }
+                
+                imagedestroy($newImage);
+            }
+            
+            imagedestroy($sourceImage);
+            
+        } catch (\Exception $e) {
+            \Log::warning('Ошибка обработки изображения: ' . $e->getMessage());
+        }
+    }
+    
+    /**
+     * Обрезка с сохранением пропорций
+     */
+    private function cropProportional($sourceImage, $originalWidth, $originalHeight, $targetWidth, $targetHeight)
+    {
+        // Вычисляем коэффициенты масштабирования
+        $scaleX = $targetWidth / $originalWidth;
+        $scaleY = $targetHeight / $originalHeight;
+        $scale = max($scaleX, $scaleY); // Берем больший коэффициент
+        
+        // Вычисляем новые размеры
+        $newWidth = intval($originalWidth * $scale);
+        $newHeight = intval($originalHeight * $scale);
+        
+        // Создаем новое изображение
+        $newImage = imagecreatetruecolor($targetWidth, $targetHeight);
+        
+        // Сохраняем прозрачность для PNG
+        if (imageistruecolor($sourceImage)) {
+            imagealphablending($newImage, false);
+            imagesavealpha($newImage, true);
+            $transparent = imagecolorallocatealpha($newImage, 255, 255, 255, 127);
+            imagefilledrectangle($newImage, 0, 0, $targetWidth, $targetHeight, $transparent);
+        }
+        
+        // Вычисляем координаты для обрезки (центрируем)
+        $cropX = intval(($newWidth - $targetWidth) / 2);
+        $cropY = intval(($newHeight - $targetHeight) / 2);
+        
+        // Сначала масштабируем
+        $scaledImage = imagecreatetruecolor($newWidth, $newHeight);
+        if (imageistruecolor($sourceImage)) {
+            imagealphablending($scaledImage, false);
+            imagesavealpha($scaledImage, true);
+        }
+        imagecopyresampled($scaledImage, $sourceImage, 0, 0, 0, 0, $newWidth, $newHeight, $originalWidth, $originalHeight);
+        
+        // Затем обрезаем
+        imagecopy($newImage, $scaledImage, 0, 0, $cropX, $cropY, $targetWidth, $targetHeight);
+        
+        imagedestroy($scaledImage);
+        
+        return $newImage;
+    }
+    
+    /**
+     * Подгонка под размеры с белым фоном
+     */
+    private function fitWithWhiteBackground($sourceImage, $originalWidth, $originalHeight, $targetWidth, $targetHeight)
+    {
+        // Вычисляем коэффициенты масштабирования
+        $scaleX = $targetWidth / $originalWidth;
+        $scaleY = $targetHeight / $originalHeight;
+        $scale = min($scaleX, $scaleY); // Берем меньший коэффициент для вписывания
+        
+        // Вычисляем новые размеры
+        $newWidth = intval($originalWidth * $scale);
+        $newHeight = intval($originalHeight * $scale);
+        
+        // Создаем новое изображение с белым фоном
+        $newImage = imagecreatetruecolor($targetWidth, $targetHeight);
+        $white = imagecolorallocate($newImage, 255, 255, 255);
+        imagefill($newImage, 0, 0, $white);
+        
+        // Вычисляем координаты для центрирования
+        $x = intval(($targetWidth - $newWidth) / 2);
+        $y = intval(($targetHeight - $newHeight) / 2);
+        
+        // Сначала масштабируем
+        $scaledImage = imagecreatetruecolor($newWidth, $newHeight);
+        if (imageistruecolor($sourceImage)) {
+            imagealphablending($scaledImage, false);
+            imagesavealpha($scaledImage, true);
+        }
+        imagecopyresampled($scaledImage, $sourceImage, 0, 0, 0, 0, $newWidth, $newHeight, $originalWidth, $originalHeight);
+        
+        // Затем вставляем в центр
+        imagecopy($newImage, $scaledImage, $x, $y, 0, 0, $newWidth, $newHeight);
+        
+        imagedestroy($scaledImage);
+        
+        return $newImage;
+    }
+    
+    /**
+     * Подгонка под размеры системы (уменьшение если превышает лимиты)
+     */
+    private function fitSystemSize($sourceImage, $originalWidth, $originalHeight, $maxWidth, $maxHeight)
+    {
+        // Если изображение уже меньше или равно максимальным размерам, возвращаем как есть
+        if ($originalWidth <= $maxWidth && $originalHeight <= $maxHeight) {
+            return $sourceImage;
+        }
+        
+        // Вычисляем коэффициенты масштабирования
+        $scaleX = $maxWidth / $originalWidth;
+        $scaleY = $maxHeight / $originalHeight;
+        $scale = min($scaleX, $scaleY); // Берем меньший коэффициент для вписывания
+        
+        // Вычисляем новые размеры
+        $newWidth = intval($originalWidth * $scale);
+        $newHeight = intval($originalHeight * $scale);
+        
+        // Создаем новое изображение
+        $newImage = imagecreatetruecolor($newWidth, $newHeight);
+        
+        // Сохраняем прозрачность для PNG
+        if (imageistruecolor($sourceImage)) {
+            imagealphablending($newImage, false);
+            imagesavealpha($newImage, true);
+            $transparent = imagecolorallocatealpha($newImage, 255, 255, 255, 127);
+            imagefilledrectangle($newImage, 0, 0, $newWidth, $newHeight, $transparent);
+        }
+        
+        // Масштабируем изображение
+        imagecopyresampled($newImage, $sourceImage, 0, 0, 0, 0, $newWidth, $newHeight, $originalWidth, $originalHeight);
+        
+        return $newImage;
+    }
+    
+    /**
+     * Получить системную ширину изображений товаров
+     */
+    private function getSystemImageWidth()
+    {
+        $setting = \App\Models\Setting::where('key', 'shop_good_width')->first();
+        return $setting ? (int)$setting->value : 500;
+    }
+    
+    /**
+     * Получить системную высоту изображений товаров
+     */
+    private function getSystemImageHeight()
+    {
+        $setting = \App\Models\Setting::where('key', 'shop_good_height')->first();
+        return $setting ? (int)$setting->value : 500;
+    }
+
+    /**
+     * Check for duplicates by specified fields
+     */
+    public function checkDuplicates(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'fields' => 'required|array',
+            'fields.*' => 'required|string',
+            'data' => 'required|array',
+            'data.*' => 'required|array'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $fields = $request->input('fields');
+        $data = $request->input('data');
+        $results = [];
+
+        foreach ($data as $index => $item) {
+            $query = ShopGood::query();
+            
+            // Build query for each field
+            foreach ($fields as $field) {
+                if (isset($item[$field]) && $item[$field] !== '') {
+                    $query->where($field, $item[$field]);
+                }
+            }
+            
+            $existing = $query->first();
+            
+            $results[] = [
+                'index' => $index,
+                'exists' => $existing !== null,
+                'id' => $existing ? $existing->id : null,
+                'item' => $item
+            ];
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $results
+        ]);
+    }
+
+    /**
      * Логирование аудита
      */
     private function logAudit($good, $action, $oldValues, $newValues)
     {
         $good->audit()->create([
-            'user_id' => auth()->id(),
+            'user_id' => request()->user()->id,
             'action' => $action,
             'old_values' => $oldValues,
             'new_values' => $newValues,

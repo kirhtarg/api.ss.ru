@@ -250,7 +250,7 @@ class ShopGood extends Model
     public function scopeByCategory($query, $categoryId)
     {
         return $query->whereHas('categories', function ($q) use ($categoryId) {
-            $q->where('categories.id', $categoryId);
+            $q->where('shop_categories.id', $categoryId);
         });
     }
 

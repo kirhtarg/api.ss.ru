@@ -63,7 +63,7 @@ class AdminPageSeeder extends Seeder
 
         // Создаем связи страниц с ролями
         $pageRoles = [
-            ['admin_page_id' => 2, 'role_id' => 3],
+            ['admin_page_id' => 2, 'role_id' => 3], // manager имеет доступ к shop
         ];
 
         foreach ($pageRoles as $pageRole) {

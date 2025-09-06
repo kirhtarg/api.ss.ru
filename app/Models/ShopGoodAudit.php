@@ -10,6 +10,8 @@ class ShopGoodAudit extends Model
 {
     use HasFactory;
 
+    protected $table = 'shop_good_audits';
+
     protected $fillable = [
         'good_id',
         'user_id',

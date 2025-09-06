@@ -135,6 +135,7 @@ Route::get('/public/debug/settings', function () {
     }
 });
 
+
 // Защищенные маршруты (требуют авторизации) - используют только token authentication
 Route::middleware('auth:sanctum')->group(function () {
     // Авторизация
@@ -285,6 +286,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::put('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'update']);
                 Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'destroy']);
                 Route::post('/bulk-update', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'bulkUpdate']);
+                Route::post('/check-duplicates', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'checkDuplicates']);
                 
                 // Импорт/экспорт товаров
                 Route::prefix('import-export')->group(function () {
@@ -293,6 +295,9 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::post('/import/csv', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'importCsv']);
                     Route::get('/template', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getTemplate']);
                 });
+                
+                // Скачивание изображений для импорта
+                Route::post('/download-image', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'downloadImage']);
                 
                 // Вариации товаров
                 Route::prefix('{goodId}/variations')->group(function () {
@@ -312,6 +317,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::delete('/{imageId}', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'destroy']);
                     Route::put('/{imageId}/main', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'setMain']);
                     Route::post('/reorder', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'reorder']);
+                    Route::post('/import', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'createFromImport']);
                 });
                 
                 // Видео товаров
