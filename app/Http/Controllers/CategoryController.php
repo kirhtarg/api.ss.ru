@@ -13,12 +13,33 @@ class CategoryController extends Controller
     /**
      * Получить список всех категорий
      */
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
         try {
-            $categories = ShopCategory::with('parent')
-                ->ordered()
-                ->get();
+            $query = ShopCategory::with('parent');
+
+            // Поиск
+            if ($request->filled('search')) {
+                $search = $request->get('search');
+                $query->where('name', 'like', "%{$search}%");
+            }
+
+            // Фильтр по статусу
+            if ($request->has('is_active')) {
+                $query->where('is_active', $request->boolean('is_active'));
+            }
+
+            // Сортировка
+            $sortBy = $request->get('sort_by', 'sort_order');
+            $sortDirection = $request->get('sort_direction', 'asc');
+            
+            if (in_array($sortBy, ['name', 'created_at', 'sort_order'])) {
+                $query->orderBy($sortBy, $sortDirection);
+            } else {
+                $query->ordered();
+            }
+
+            $categories = $query->get();
 
             return response()->json([
                 'success' => true,
@@ -35,13 +56,18 @@ class CategoryController extends Controller
     /**
      * Получить активные категории
      */
-    public function active(): JsonResponse
+    public function active(Request $request): JsonResponse
     {
         try {
-            $categories = ShopCategory::with('parent')
-                ->active()
-                ->ordered()
-                ->get();
+            $query = ShopCategory::with('parent')->active();
+
+            // Поиск
+            if ($request->filled('search')) {
+                $search = $request->get('search');
+                $query->where('name', 'like', "%{$search}%");
+            }
+
+            $categories = $query->ordered()->get();
 
             return response()->json([
                 'success' => true,
