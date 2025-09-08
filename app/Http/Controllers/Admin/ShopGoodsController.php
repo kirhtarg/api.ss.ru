@@ -26,7 +26,7 @@ class ShopGoodsController extends Controller
             'brands:id,name',
             'tags:id,name,color',
             'properties:id,name',
-            'mainImage:id,good_id,file_path,is_main',
+            'images:id,good_id,file_path,alt_text,is_main,sort_order',
             'variations:id,good_id,name,price,sale_price,stock_quantity,is_active'
         ]);
 
@@ -464,6 +464,82 @@ class ShopGoodsController extends Controller
                 'properties' => $properties
             ]
         ]);
+    }
+
+    /**
+     * Создать новую категорию
+     */
+    public function createCategory(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'name' => 'required|string|max:255'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $category = ShopCategory::create([
+                'name' => $request->get('name'),
+                'is_active' => true,
+                'sort_order' => ShopCategory::max('sort_order') + 1
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Категория успешно создана',
+                'data' => $category
+            ], 201);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка создания категории: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Создать новый бренд
+     */
+    public function createBrand(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'name' => 'required|string|max:255'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $brand = ShopBrand::create([
+                'name' => $request->get('name'),
+                'is_active' => true,
+                'sort_order' => ShopBrand::max('sort_order') + 1
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Бренд успешно создан',
+                'data' => $brand
+            ], 201);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка создания бренда: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     /**
@@ -928,7 +1004,7 @@ class ShopGoodsController extends Controller
             imagedestroy($sourceImage);
             
         } catch (\Exception $e) {
-            \Log::warning('Ошибка обработки изображения: ' . $e->getMessage());
+            \Illuminate\Support\Facades\Log::warning('Ошибка обработки изображения: ' . $e->getMessage());
         }
     }
     

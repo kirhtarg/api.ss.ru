@@ -306,4 +306,24 @@ class ShopGood extends Model
         
         return implode('', $dimensions) ?: null;
     }
+
+    /**
+     * Получить главное изображение или первое доступное
+     */
+    public function getMainImageAttribute()
+    {
+        if (!$this->relationLoaded('images')) {
+            return null;
+        }
+
+        // Ищем главное изображение
+        $mainImage = $this->images->where('is_main', true)->first();
+        
+        // Если главного нет, берем первое
+        if (!$mainImage) {
+            $mainImage = $this->images->sortBy('sort_order')->first();
+        }
+        
+        return $mainImage;
+    }
 }

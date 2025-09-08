@@ -552,6 +552,8 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::prefix('goods')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'index']);
                 Route::get('/filters', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'filters']);
+                Route::post('/categories', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'createCategory']);
+                Route::post('/brands', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'createBrand']);
                 Route::get('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'show']);
                 Route::post('/', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'store']);
                 Route::put('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'update']);
