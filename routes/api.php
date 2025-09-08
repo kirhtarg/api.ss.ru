@@ -4,6 +4,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 use App\Http\Controllers\Auth\AuthController;
+use App\Http\Controllers\Admin\ShopGoodImageController;
 
 
 /*
@@ -384,6 +385,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Маршруты для администраторов и менеджеров
     Route::middleware('role:admin,manager')->prefix('admin')->group(function () {
+        // Site info for admin
+        Route::get('/site-info', [\App\Http\Controllers\Api\Public\SiteInfoController::class, 'index']);
+        
         // Profile management
         Route::get('/profile', [\App\Http\Controllers\Api\Admin\ProfileController::class, 'index']);
         
@@ -561,6 +565,15 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/bulk-update', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'bulkUpdate']);
                 Route::post('/check-duplicates', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'checkDuplicates']);
                 Route::post('/bulk-import', [\App\Http\Controllers\Admin\BulkGoodsImportController::class, 'bulkImport']);
+                
+                // Управление изображениями товаров
+                Route::prefix('{good}/images')->group(function () {
+                    Route::get('/', [ShopGoodImageController::class, 'index']);
+                    Route::post('/', [ShopGoodImageController::class, 'store']);
+                    Route::post('/{image}/set-main', [ShopGoodImageController::class, 'setMain']);
+                    Route::delete('/{image}', [ShopGoodImageController::class, 'destroy']);
+                    Route::post('/reorder', [ShopGoodImageController::class, 'reorder']);
+                });
                 
                 // Импорт/экспорт товаров
                 Route::prefix('import-export')->group(function () {

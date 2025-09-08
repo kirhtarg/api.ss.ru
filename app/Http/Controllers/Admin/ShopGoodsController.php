@@ -28,7 +28,7 @@ class ShopGoodsController extends Controller
             'properties:id,name',
             'images:id,good_id,file_path,alt_text,is_main,sort_order',
             'variations:id,good_id,name,price,sale_price,stock_quantity,is_active'
-        ]);
+        ])->withCount('variations');
 
         // Поиск
         if ($request->filled('search')) {
@@ -71,6 +71,16 @@ class ShopGoodsController extends Controller
             } elseif ($inStock === 'low') {
                 $query->where('stock_quantity', '>', 0)
                       ->where('stock_quantity', '<', 3);
+            }
+        }
+
+        // Фильтр по вариациям
+        if ($request->filled('has_variations')) {
+            $hasVariations = $request->get('has_variations');
+            if ($hasVariations === 'true') {
+                $query->whereHas('variations');
+            } elseif ($hasVariations === 'false') {
+                $query->whereDoesntHave('variations');
             }
         }
 
