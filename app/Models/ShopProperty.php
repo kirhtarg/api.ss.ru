@@ -13,19 +13,29 @@ class ShopProperty extends Model
 
     protected $fillable = [
         'name',
-        'is_filterable',
+        'slug',
         'sort_order'
     ];
 
     protected $casts = [
-        'is_filterable' => 'boolean',
         'sort_order' => 'integer'
     ];
 
     protected static function boot()
     {
         parent::boot();
-        // Убираем автоматическое создание slug, так как поле не существует в таблице
+
+        static::creating(function ($property) {
+            if (empty($property->slug)) {
+                $property->slug = Str::slug($property->name);
+            }
+        });
+
+        static::updating(function ($property) {
+            if ($property->isDirty('name') && empty($property->slug)) {
+                $property->slug = Str::slug($property->name);
+            }
+        });
     }
 
     /**
@@ -33,17 +43,17 @@ class ShopProperty extends Model
      */
     public function goods(): BelongsToMany
     {
-        return $this->belongsToMany(ShopGood::class, 'shop_good_properties')
+        return $this->belongsToMany(ShopGood::class, 'shop_good_properties', 'property_id', 'good_id')
             ->withPivot('value')
             ->withTimestamps();
     }
 
     /**
-     * Scope для фильтруемых свойств
+     * Scope для всех свойств (без фильтрации по активности)
      */
-    public function scopeFilterable($query)
+    public function scopeActive($query)
     {
-        return $query->where('is_filterable', true);
+        return $query; // Возвращаем все свойства
     }
 
     /**

@@ -25,7 +25,7 @@ class ShopGoodsController extends Controller
             'categories:id,name',
             'brands:id,name',
             'tags:id,name,color',
-            'properties:id,name',
+            'properties:id,name,slug',
             'images:id,good_id,file_path,alt_text,is_main,sort_order',
             'variations:id,good_id,name,price,sale_price,stock_quantity,is_active'
         ])->withCount('variations');
@@ -128,8 +128,8 @@ class ShopGoodsController extends Controller
             'tags:id,name,color,slug',
             'properties:id,name,slug',
             'images:id,good_id,variation_id,file_path,alt_text,is_main,sort_order',
-            'videos:id,good_id,variation_id,video_path,video_url,title,is_main,sort_order',
-            'variations:id,good_id,name,description,price,sale_price,stock_quantity,sku,is_active,sort_order',
+            'videos:id,good_id,variation_id,video_path,external_url,file_path,title,sort_order',
+            'variations:id,good_id,name,description,price,sale_price,stock_quantity,sku,is_active',
             'variations.attributeValues:id,value,color',
             'variations.attributeValues.attribute:id,name',
             'stock:id,good_id,warehouse_id,quantity,reserved_quantity,min_quantity',
@@ -471,7 +471,7 @@ class ShopGoodsController extends Controller
         $categories = ShopCategory::active()->ordered()->get(['id', 'name']);
         $brands = ShopBrand::active()->ordered()->get(['id', 'name']);
         $tags = ShopTag::active()->ordered()->get(['id', 'name', 'color']);
-        $properties = ShopProperty::filterable()->ordered()->get(['id', 'name']);
+        $properties = ShopProperty::active()->ordered()->get(['id', 'name', 'slug']);
 
         return response()->json([
             'success' => true,

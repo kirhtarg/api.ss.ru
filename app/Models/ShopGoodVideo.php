@@ -14,18 +14,17 @@ class ShopGoodVideo extends Model
         'good_id',
         'variation_id',
         'video_path',
-        'video_url',
+        'external_url',
+        'file_path',
         'title',
         'description',
         'duration',
         'thumbnail',
-        'is_main',
         'sort_order'
     ];
 
     protected $casts = [
         'duration' => 'integer',
-        'is_main' => 'boolean',
         'sort_order' => 'integer'
     ];
 
@@ -53,25 +52,22 @@ class ShopGoodVideo extends Model
         return $query->orderBy('sort_order')->orderBy('id');
     }
 
-    /**
-     * Scope для главных видео
-     */
-    public function scopeMain($query)
-    {
-        return $query->where('is_main', true);
-    }
 
     /**
      * Получить полный URL видео
      */
     public function getUrlAttribute()
     {
-        if ($this->video_url) {
-            return $this->video_url;
+        if ($this->external_url) {
+            return $this->external_url;
         }
         
         if ($this->video_path) {
             return asset('storage/' . $this->video_path);
+        }
+        
+        if ($this->file_path) {
+            return asset('storage/' . $this->file_path);
         }
         
         return null;

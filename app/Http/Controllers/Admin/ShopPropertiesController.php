@@ -72,7 +72,6 @@ class ShopPropertiesController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'slug' => 'nullable|string|max:255|unique:shop_properties,slug',
-            'is_active' => 'boolean',
             'sort_order' => 'integer'
         ]);
 
@@ -103,7 +102,6 @@ class ShopPropertiesController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'slug' => ['nullable', 'string', 'max:255', Rule::unique('shop_properties', 'slug')->ignore($id)],
-            'is_active' => 'boolean',
             'sort_order' => 'integer'
         ]);
 

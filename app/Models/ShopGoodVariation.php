@@ -25,8 +25,7 @@ class ShopGoodVariation extends Model
         'depth',
         'weight',
         'sku',
-        'is_active',
-        'sort_order'
+        'is_active'
     ];
 
     protected $casts = [
@@ -37,8 +36,7 @@ class ShopGoodVariation extends Model
         'height' => 'decimal:2',
         'depth' => 'decimal:2',
         'weight' => 'decimal:2',
-        'is_active' => 'boolean',
-        'sort_order' => 'integer'
+        'is_active' => 'boolean'
     ];
 
     /**
@@ -105,7 +103,7 @@ class ShopGoodVariation extends Model
      */
     public function scopeOrdered($query)
     {
-        return $query->orderBy('sort_order')->orderBy('name');
+        return $query->orderBy('name');
     }
 
     /**

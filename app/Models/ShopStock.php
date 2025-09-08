@@ -65,6 +65,7 @@ class ShopStock extends Model
         return $this->available_quantity > 0;
     }
 
+
     /**
      * Проверить, низкий ли остаток
      */
