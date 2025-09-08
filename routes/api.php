@@ -143,10 +143,281 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', [AuthController::class, 'user']);
     Route::get('/auth/check', [AuthController::class, 'check']);
 
+    // Временный тестовый маршрут для Google Sheets (без авторизации)
+    Route::get('/test-google-sheets/{spreadsheetId}', function ($spreadsheetId) {
+        try {
+            $csvUrl = "https://docs.google.com/spreadsheets/d/{$spreadsheetId}/export?format=csv&gid=0";
+            
+            $response = \Illuminate\Support\Facades\Http::timeout(30)
+                ->withHeaders([
+                    'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'Accept' => 'text/csv,text/plain,*/*',
+                ])
+                ->get($csvUrl);
+            
+            return response()->json([
+                'url' => $csvUrl,
+                'status' => $response->status(),
+                'successful' => $response->successful(),
+                'headers' => $response->headers(),
+                'body_preview' => substr($response->body(), 0, 1000),
+                'body_length' => strlen($response->body())
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['error' => $e->getMessage()]);
+        }
+    });
+
+    // Google Sheets (вне middleware для тестирования)
+    Route::post('/admin/shop/goods/load-google-sheets', function (Request $request) {
+        try {
+            $request->validate([
+                'spreadsheetId' => 'required|string'
+            ]);
+
+            $spreadsheetId = $request->input('spreadsheetId');
+            
+            // Извлекаем ID из полного URL, если пользователь ввел полный URL
+            if (strpos($spreadsheetId, 'docs.google.com/spreadsheets/d/') !== false) {
+                preg_match('/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/', $spreadsheetId, $matches);
+                if (isset($matches[1])) {
+                    $spreadsheetId = $matches[1];
+                }
+            }
+            
+            \Log::info('Loading Google Sheets', [
+                'original_id' => $request->input('spreadsheetId'),
+                'extracted_id' => $spreadsheetId
+            ]);
+            $sheets = [];
+
+            // Пробуем загрузить разные листы (обычно gid=0, 1, 2, 3...)
+            $maxSheets = 10; // Максимум 10 листов для проверки
+
+            // Пробуем разные подходы к загрузке Google Sheets
+            
+            // Подход 1: Стандартный CSV export
+            $gidsToTry = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+            
+            foreach ($gidsToTry as $gid) {
+                try {
+                    // Пробуем разные варианты URL
+                    $csvUrls = [
+                        "https://docs.google.com/spreadsheets/d/{$spreadsheetId}/export?format=csv&gid={$gid}",
+                        "https://docs.google.com/spreadsheets/d/{$spreadsheetId}/export?format=csv&gid={$gid}&usp=sharing",
+                        "https://docs.google.com/spreadsheets/d/{$spreadsheetId}/gviz/tq?tqx=out:csv&gid={$gid}",
+                    ];
+                    
+                    foreach ($csvUrls as $csvUrl) {
+                        \Log::info("Trying CSV export gid={$gid}", ['url' => $csvUrl]);
+                        
+                        $response = \Illuminate\Support\Facades\Http::timeout(30)
+                            ->withHeaders([
+                                'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                                'Accept' => 'text/csv,text/plain,*/*',
+                                'Accept-Language' => 'en-US,en;q=0.9',
+                                'Accept-Encoding' => 'gzip, deflate, br',
+                                'Connection' => 'keep-alive',
+                                'Upgrade-Insecure-Requests' => '1',
+                            ])
+                            ->get($csvUrl);
+                        
+                        \Log::info("CSV response for gid={$gid}", [
+                            'url' => $csvUrl,
+                            'status' => $response->status(),
+                            'successful' => $response->successful(),
+                            'body_length' => strlen($response->body()),
+                            'headers' => $response->headers()
+                        ]);
+
+                        if ($response->successful()) {
+                            $csvText = $response->body();
+                            $lines = array_filter(explode("\n", $csvText), 'trim');
+
+                            \Log::info("CSV data for gid={$gid}", [
+                                'lines_count' => count($lines),
+                                'first_line' => $lines[0] ?? 'empty',
+                                'sample_data' => array_slice($lines, 0, 3)
+                            ]);
+
+                            if (count($lines) > 0) {
+                                $headers = str_getcsv($lines[0]);
+                                $data = array_map('str_getcsv', array_slice($lines, 1));
+
+                                \Log::info("Parsed data for gid={$gid}", [
+                                    'headers_count' => count($headers),
+                                    'data_rows' => count($data),
+                                    'headers' => $headers,
+                                    'sample_row' => $data[0] ?? 'empty'
+                                ]);
+
+                                // Проверяем, что лист не пустой
+                                if (count($headers) > 0 && count($data) > 0) {
+                                    $sheets[] = [
+                                        'gid' => $gid,
+                                        'name' => "Лист " . ($gid + 1),
+                                        'headers' => $headers,
+                                        'data' => $data,
+                                    ];
+                                    \Log::info("Sheet gid={$gid} added successfully");
+                                    break 2; // Выходим из обоих циклов, если нашли данные
+                                } else {
+                                    \Log::info("Sheet gid={$gid} is empty or invalid");
+                                }
+                            } else {
+                                \Log::info("Sheet gid={$gid} has no lines");
+                            }
+                        } else {
+                            \Log::warning("Sheet gid={$gid} failed to load", [
+                                'url' => $csvUrl,
+                                'status' => $response->status(),
+                                'body' => substr($response->body(), 0, 500) // Первые 500 символов
+                            ]);
+                        }
+                    }
+                } catch (\Exception $e) {
+                    \Log::debug("Google Sheets gid {$gid} error: " . $e->getMessage());
+                    continue;
+                }
+            }
+            
+            // Подход 2: Если CSV не работает, пробуем HTML export
+            if (empty($sheets)) {
+                \Log::info("CSV export failed, trying HTML export");
+                
+                try {
+                    $htmlUrl = "https://docs.google.com/spreadsheets/d/{$spreadsheetId}/export?format=html&gid=0";
+                    \Log::info("Trying HTML export", ['url' => $htmlUrl]);
+                    
+                    $response = \Illuminate\Support\Facades\Http::timeout(30)->get($htmlUrl);
+                    
+                    if ($response->successful()) {
+                        \Log::info("HTML export successful", [
+                            'status' => $response->status(),
+                            'body_length' => strlen($response->body())
+                        ]);
+                        
+                        // Парсим HTML таблицу
+                        $html = $response->body();
+                        if (preg_match('/<table[^>]*>(.*?)<\/table>/s', $html, $matches)) {
+                            $tableHtml = $matches[1];
+                            \Log::info("Found HTML table", ['table_length' => strlen($tableHtml)]);
+                            
+                            // Простой парсинг HTML таблицы
+                            if (preg_match_all('/<tr[^>]*>(.*?)<\/tr>/s', $tableHtml, $rows)) {
+                                $data = [];
+                                foreach ($rows[1] as $rowHtml) {
+                                    if (preg_match_all('/<t[hd][^>]*>(.*?)<\/t[hd]>/s', $rowHtml, $cells)) {
+                                        $rowData = array_map('strip_tags', $cells[1]);
+                                        $rowData = array_map('trim', $rowData);
+                                        if (!empty(array_filter($rowData))) {
+                                            $data[] = $rowData;
+                                        }
+                                    }
+                                }
+                                
+                                if (count($data) > 1) {
+                                    $headers = $data[0];
+                                    $rows = array_slice($data, 1);
+                                    
+                                    $sheets[] = [
+                                        'gid' => 0,
+                                        'name' => "Лист 1",
+                                        'headers' => $headers,
+                                        'data' => $rows,
+                                    ];
+                                    \Log::info("HTML sheet added successfully", [
+                                        'headers_count' => count($headers),
+                                        'rows_count' => count($rows)
+                                    ]);
+                                }
+                            }
+                        }
+                    }
+                } catch (\Exception $e) {
+                    \Log::error("HTML export failed: " . $e->getMessage());
+                }
+            }
+
+            if (empty($sheets)) {
+                \Log::warning('No sheets found in Google Sheets', [
+                    'spreadsheetId' => $spreadsheetId,
+                    'tried_gids' => $gidsToTry,
+                    'total_attempts' => count($gidsToTry)
+                ]);
+                
+                // Возвращаем детальную информацию для отладки
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не найдено ни одного листа с данными в таблице',
+                    'debug' => [
+                        'spreadsheetId' => $spreadsheetId,
+                        'tried_gids' => $gidsToTry,
+                        'total_attempts' => count($gidsToTry),
+                        'suggestion' => 'Проверьте, что таблица публично доступна для чтения'
+                    ]
+                ], 404);
+            }
+
+            \Log::info('Google Sheets loaded successfully', [
+                'spreadsheetId' => $spreadsheetId,
+                'sheetsCount' => count($sheets)
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'sheets' => $sheets
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Ошибка загрузки Google Sheets: ' . $e->getMessage());
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка загрузки данных: ' . $e->getMessage()
+            ], 500);
+        }
+    });
+    
+
     // Маршруты для администраторов и менеджеров
     Route::middleware('role:admin,manager')->prefix('admin')->group(function () {
         // Profile management
         Route::get('/profile', [\App\Http\Controllers\Api\Admin\ProfileController::class, 'index']);
+        
+        // Тестовые маршруты для Google Sheets
+        Route::get('/test-google-sheets', function () {
+            return response()->json(['message' => 'Google Sheets API is working']);
+        });
+        
+        Route::get('/test-controller', [\App\Http\Controllers\Admin\GoogleSheetsController::class, 'test']);
+        
+        // Тестовый маршрут для проверки Google Sheets
+        Route::get('/test-google-sheets/{spreadsheetId}', function ($spreadsheetId) {
+            try {
+                $csvUrl = "https://docs.google.com/spreadsheets/d/{$spreadsheetId}/export?format=csv&gid=0";
+                
+                $response = \Illuminate\Support\Facades\Http::timeout(30)
+                    ->withHeaders([
+                        'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                        'Accept' => 'text/csv,text/plain,*/*',
+                    ])
+                    ->get($csvUrl);
+                
+                return response()->json([
+                    'url' => $csvUrl,
+                    'status' => $response->status(),
+                    'successful' => $response->successful(),
+                    'headers' => $response->headers(),
+                    'body_preview' => substr($response->body(), 0, 1000),
+                    'body_length' => strlen($response->body())
+                ]);
+            } catch (\Exception $e) {
+                return response()->json(['error' => $e->getMessage()]);
+            }
+        });
         
         // Settings management (только просмотр для менеджеров)
         Route::prefix('settings')->group(function () {

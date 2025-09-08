@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Google Sheets</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .result { background: #f5f5f5; padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .error { background: #ffebee; color: #c62828; }
+        .success { background: #e8f5e8; color: #2e7d32; }
+        button { padding: 10px 20px; background: #2196f3; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        button:hover { background: #1976d2; }
+        pre { white-space: pre-wrap; word-wrap: break-word; }
+    </style>
+</head>
+<body>
+    <h1>Test Google Sheets API</h1>
+    
+    <div>
+        <label>Spreadsheet ID:</label><br>
+        <input type="text" id="spreadsheetId" value="1umgjxAiLZi8jpMnhQXKQaBMdUUQiYNRIL_lhPkkbOGY" style="width: 400px; padding: 5px;">
+        <br><br>
+        <button onclick="testGoogleSheets()">Test Google Sheets</button>
+    </div>
+    
+    <div id="result"></div>
+
+    <script>
+        async function testGoogleSheets() {
+            const spreadsheetId = document.getElementById('spreadsheetId').value;
+            const resultDiv = document.getElementById('result');
+            
+            resultDiv.innerHTML = '<div class="result">Testing...</div>';
+            
+            try {
+                // Тестируем разные URL форматы
+                const urls = [
+                    `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=0`,
+                    `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=0&usp=sharing`,
+                    `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&gid=0`
+                ];
+                
+                let results = [];
+                
+                for (let i = 0; i < urls.length; i++) {
+                    const url = urls[i];
+                    try {
+                        const response = await fetch(url, {
+                            method: 'GET',
+                            headers: {
+                                'Accept': 'text/csv,text/plain,*/*',
+                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                            }
+                        });
+                        
+                        const text = await response.text();
+                        
+                        results.push({
+                            url: url,
+                            status: response.status,
+                            success: response.ok,
+                            bodyLength: text.length,
+                            bodyPreview: text.substring(0, 500),
+                            headers: Object.fromEntries(response.headers.entries())
+                        });
+                        
+                    } catch (error) {
+                        results.push({
+                            url: url,
+                            error: error.message
+                        });
+                    }
+                }
+                
+                // Отображаем результаты
+                let html = '<h2>Test Results:</h2>';
+                
+                results.forEach((result, index) => {
+                    const className = result.error ? 'error' : (result.success ? 'success' : 'result');
+                    html += `<div class="${className}">`;
+                    html += `<h3>Test ${index + 1}: ${result.url}</h3>`;
+                    
+                    if (result.error) {
+                        html += `<p><strong>Error:</strong> ${result.error}</p>`;
+                    } else {
+                        html += `<p><strong>Status:</strong> ${result.status}</p>`;
+                        html += `<p><strong>Success:</strong> ${result.success}</p>`;
+                        html += `<p><strong>Body Length:</strong> ${result.bodyLength}</p>`;
+                        html += `<p><strong>Body Preview:</strong></p>`;
+                        html += `<pre>${result.bodyPreview}</pre>`;
+                        html += `<p><strong>Headers:</strong></p>`;
+                        html += `<pre>${JSON.stringify(result.headers, null, 2)}</pre>`;
+                    }
+                    
+                    html += '</div>';
+                });
+                
+                resultDiv.innerHTML = html;
+                
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+    </script>
+</body>
+</html>
