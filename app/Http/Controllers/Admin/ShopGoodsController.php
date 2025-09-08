@@ -586,6 +586,179 @@ class ShopGoodsController extends Controller
     }
 
     /**
+     * Пакетная загрузка изображений
+     */
+    public function downloadImagesBatch(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'imageUrls' => 'required|array|min:1|max:50', // Максимум 50 изображений за раз
+            'imageUrls.*' => 'required|url',
+            'storagePath' => 'required|string',
+            'optimize' => 'boolean',
+            'naming' => 'string|in:original,hash',
+            'resize' => 'string|in:no_change,crop_proportional,fit_with_white,fit_system,custom',
+            'width' => 'nullable|integer|min:1',
+            'height' => 'nullable|integer|min:1'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $imageUrls = $request->input('imageUrls');
+            $storagePath = $request->input('storagePath');
+            $optimize = $request->input('optimize', true);
+            $naming = $request->input('naming', 'hash');
+            $resize = $request->input('resize', 'no_change');
+            $width = $request->input('width');
+            $height = $request->input('height');
+
+            $results = [];
+            $errors = [];
+
+            // Обрабатываем изображения параллельно
+            $promises = [];
+            foreach ($imageUrls as $index => $imageUrl) {
+                $promises[] = $this->downloadSingleImage(
+                    $imageUrl,
+                    $storagePath,
+                    $optimize,
+                    $naming,
+                    $resize,
+                    $width,
+                    $height,
+                    $index
+                );
+            }
+
+            // Выполняем все запросы параллельно
+            $responses = $promises;
+            foreach ($responses as $response) {
+                if ($response['success']) {
+                    $results[$response['originalUrl']] = $response['path'];
+                } else {
+                    $errors[] = [
+                        'url' => $response['originalUrl'],
+                        'error' => $response['error']
+                    ];
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'paths' => $results,
+                    'errors' => $errors,
+                    'total' => count($imageUrls),
+                    'successful' => count($results),
+                    'failed' => count($errors)
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка пакетной загрузки изображений: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Загрузка одного изображения (вспомогательный метод для пакетной загрузки)
+     */
+    private function downloadSingleImage($imageUrl, $storagePath, $optimize, $naming, $resize, $width, $height, $index)
+    {
+        try {
+            // Валидация URL
+            if (!filter_var($imageUrl, FILTER_VALIDATE_URL)) {
+                return [
+                    'success' => false,
+                    'originalUrl' => $imageUrl,
+                    'error' => 'Неверный формат URL'
+                ];
+            }
+
+            // Проверка формата изображения
+            $imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'tiff', 'ico'];
+            $urlPath = parse_url($imageUrl, PHP_URL_PATH);
+            $extension = strtolower(pathinfo($urlPath, PATHINFO_EXTENSION));
+            
+            if (!in_array($extension, $imageExtensions)) {
+                return [
+                    'success' => false,
+                    'originalUrl' => $imageUrl,
+                    'error' => 'Неподдерживаемый формат изображения'
+                ];
+            }
+
+            // Генерация имени файла
+            if ($naming === 'original') {
+                $originalName = pathinfo(parse_url($imageUrl, PHP_URL_PATH), PATHINFO_FILENAME);
+                $fileName = $originalName . '.' . $extension;
+                $fileName = preg_replace('/[^a-zA-Z0-9._-]/', '_', $fileName);
+            } else {
+                $hash = hash('sha256', $imageUrl . $index); // Добавляем индекс для уникальности
+                $fileName = $hash . '.' . $extension;
+            }
+            
+            // Полный путь для сохранения
+            $fullPath = $storagePath . '/' . $fileName;
+            $storageFullPath = storage_path('app/public' . $fullPath);
+            
+            // Создаем директорию если не существует
+            $directory = dirname($storageFullPath);
+            if (!file_exists($directory)) {
+                mkdir($directory, 0755, true);
+            }
+
+            // Скачиваем изображение
+            $imageData = file_get_contents($imageUrl);
+            if ($imageData === false) {
+                return [
+                    'success' => false,
+                    'originalUrl' => $imageUrl,
+                    'error' => 'Не удалось скачать изображение'
+                ];
+            }
+
+            // Проверка размера файла (максимум 10MB)
+            if (strlen($imageData) > 10 * 1024 * 1024) {
+                return [
+                    'success' => false,
+                    'originalUrl' => $imageUrl,
+                    'error' => 'Файл слишком большой (максимум 10MB)'
+                ];
+            }
+
+            // Сохраняем файл
+            file_put_contents($storageFullPath, $imageData);
+
+            // Обработка изображения
+            if ($optimize || $resize !== 'no_change') {
+                $this->processImage($storageFullPath, $resize, $width, $height);
+            }
+
+            return [
+                'success' => true,
+                'originalUrl' => $imageUrl,
+                'path' => $fullPath
+            ];
+
+        } catch (\Exception $e) {
+            return [
+                'success' => false,
+                'originalUrl' => $imageUrl,
+                'error' => 'Ошибка: ' . $e->getMessage()
+            ];
+        }
+    }
+
+    /**
      * Оптимизация изображения
      */
     private function optimizeImage($filePath)
@@ -656,8 +829,7 @@ class ShopGoodsController extends Controller
                 }
             }
         } catch (\Exception $e) {
-            // Логируем ошибку, но не прерываем выполнение
-            \Log::warning('Ошибка оптимизации изображения: ' . $e->getMessage());
+            // Ошибка оптимизации не критична, продолжаем выполнение
         }
     }
 

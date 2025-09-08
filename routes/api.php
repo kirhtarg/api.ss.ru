@@ -300,6 +300,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 
                 // Скачивание изображений для импорта
                 Route::post('/download-image', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'downloadImage']);
+                Route::post('/download-images-batch', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'downloadImagesBatch']);
                 
                 // Вариации товаров
                 Route::prefix('{goodId}/variations')->group(function () {
@@ -321,6 +322,9 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::post('/reorder', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'reorder']);
                     Route::post('/import', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'createFromImport']);
                 });
+                
+                // Пакетное создание изображений для импорта
+                Route::post('/images/import-batch', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'createFromImportBatch']);
                 
                 // Видео товаров
                 Route::prefix('{goodId}/videos')->group(function () {
