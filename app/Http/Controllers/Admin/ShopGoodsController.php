@@ -63,7 +63,15 @@ class ShopGoodsController extends Controller
 
         // Фильтр по наличию
         if ($request->filled('in_stock')) {
-            $query->inStock();
+            $inStock = $request->get('in_stock');
+            if ($inStock === 'true') {
+                $query->where('stock_quantity', '>', 0);
+            } elseif ($inStock === 'false') {
+                $query->where('stock_quantity', '=', 0);
+            } elseif ($inStock === 'low') {
+                $query->where('stock_quantity', '>', 0)
+                      ->where('stock_quantity', '<', 3);
+            }
         }
 
         // Фильтр по статусу
