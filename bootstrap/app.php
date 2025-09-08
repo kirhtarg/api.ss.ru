@@ -19,6 +19,11 @@ return Application::configure(basePath: dirname(__DIR__))
             'cors' => \App\Http\Middleware\CustomCors::class,
         ]);
         
+        // Настраиваем web middleware с CSRF
+        $middleware->web([
+            \App\Http\Middleware\VerifyCsrfToken::class,
+        ]);
+        
         // Настраиваем API middleware - только token-based аутентификация
         $middleware->api([
             \App\Http\Middleware\CustomCors::class,

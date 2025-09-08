@@ -18,7 +18,7 @@ use App\Http\Controllers\Auth\AuthController;
 */
 
 // Публичные маршруты для авторизации (без Sanctum stateful middleware)
-Route::post('/login', [AuthController::class, 'login']);
+Route::post('/login', [AuthController::class, 'login'])->name('login');
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/verify-email', [AuthController::class, 'verifyEmail']);
 Route::post('/resend-verification', [AuthController::class, 'resendVerificationEmail']);
@@ -287,6 +287,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'destroy']);
                 Route::post('/bulk-update', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'bulkUpdate']);
                 Route::post('/check-duplicates', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'checkDuplicates']);
+                Route::post('/bulk-import', [\App\Http\Controllers\Admin\BulkGoodsImportController::class, 'bulkImport']);
                 
                 // Импорт/экспорт товаров
                 Route::prefix('import-export')->group(function () {
@@ -295,6 +296,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::post('/import/csv', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'importCsv']);
                     Route::get('/template', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getTemplate']);
                 });
+                
                 
                 // Скачивание изображений для импорта
                 Route::post('/download-image', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'downloadImage']);
@@ -330,6 +332,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::post('/reorder', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'reorder']);
                 });
             });
+            
             
             // Бренды
             Route::prefix('brands')->group(function () {
@@ -1713,6 +1716,17 @@ Route::middleware('auth:sanctum')->group(function () {
                 }
             });
         });
+        
+        // Шаблоны импорта товаров
+        Route::prefix('import-templates')->group(function () {
+            Route::get('/', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'index']);
+            Route::get('/{id}', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'show']);
+            Route::post('/', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'store']);
+            Route::put('/{id}', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'update']);
+            Route::delete('/{id}', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'destroy']);
+            Route::post('/{id}/duplicate', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'duplicate']);
+            Route::put('/{id}/set-default', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'setDefault']);
+        });
     });
 
 
@@ -1726,6 +1740,10 @@ Route::get('/test', function () {
         'timestamp' => now()->toISOString()
     ]);
 });
+
+
+
+
 
 // Тестовый маршрут для проверки CORS
 Route::options('/test-cors', function () {
