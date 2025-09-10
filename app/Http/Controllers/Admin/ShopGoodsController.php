@@ -585,7 +585,7 @@ class ShopGoodsController extends Controller
 
         try {
             $imageUrl = $request->input('imageUrl');
-            $storagePath = $request->input('storagePath');
+            $storagePath = $request->input('storagePath', '/images/shop/goods'); // Исправляем путь по умолчанию
             $optimize = $request->input('optimize', true);
             $naming = $request->input('naming', 'hash');
             $resize = $request->input('resize', 'no_change');
@@ -705,20 +705,28 @@ class ShopGoodsController extends Controller
 
         try {
             $imageUrls = $request->input('imageUrls');
-            $storagePath = $request->input('storagePath');
+            $storagePath = $request->input('storagePath', '/images/shop/goods'); // Исправляем путь по умолчанию
             $optimize = $request->input('optimize', true);
             $naming = $request->input('naming', 'hash');
             $resize = $request->input('resize', 'no_change');
             $width = $request->input('width');
             $height = $request->input('height');
 
+            \Log::info('🖼️ downloadImagesBatch вызван', [
+                'imageUrls_count' => count($imageUrls),
+                'storagePath' => $storagePath,
+                'optimize' => $optimize,
+                'naming' => $naming,
+                'resize' => $resize,
+                'first_url' => $imageUrls[0] ?? null
+            ]);
+
             $results = [];
             $errors = [];
 
-            // Обрабатываем изображения параллельно
-            $promises = [];
+            // Обрабатываем изображения последовательно (для стабильности)
             foreach ($imageUrls as $index => $imageUrl) {
-                $promises[] = $this->downloadSingleImage(
+                $response = $this->downloadSingleImage(
                     $imageUrl,
                     $storagePath,
                     $optimize,
@@ -728,11 +736,7 @@ class ShopGoodsController extends Controller
                     $height,
                     $index
                 );
-            }
 
-            // Выполняем все запросы параллельно
-            $responses = $promises;
-            foreach ($responses as $response) {
                 if ($response['success']) {
                     $results[$response['originalUrl']] = $response['path'];
                 } else {
@@ -742,6 +746,13 @@ class ShopGoodsController extends Controller
                     ];
                 }
             }
+
+            \Log::info("📦 downloadImagesBatch завершен", [
+                'total' => count($imageUrls),
+                'successful' => count($results),
+                'failed' => count($errors),
+                'results' => $results
+            ]);
 
             return response()->json([
                 'success' => true,
@@ -768,8 +779,11 @@ class ShopGoodsController extends Controller
     private function downloadSingleImage($imageUrl, $storagePath, $optimize, $naming, $resize, $width, $height, $index)
     {
         try {
+            \Log::info("📥 Загружаем изображение {$index}: {$imageUrl}");
+
             // Валидация URL
             if (!filter_var($imageUrl, FILTER_VALIDATE_URL)) {
+                \Log::error("❌ Неверный формат URL: {$imageUrl}");
                 return [
                     'success' => false,
                     'originalUrl' => $imageUrl,
@@ -837,6 +851,12 @@ class ShopGoodsController extends Controller
                 $this->processImage($storageFullPath, $resize, $width, $height);
             }
 
+            \Log::info("✅ Изображение успешно загружено", [
+                'originalUrl' => $imageUrl,
+                'path' => $fullPath,
+                'size' => strlen($imageData)
+            ]);
+
             return [
                 'success' => true,
                 'originalUrl' => $imageUrl,
@@ -844,6 +864,12 @@ class ShopGoodsController extends Controller
             ];
 
         } catch (\Exception $e) {
+            \Log::error("❌ Ошибка загрузки изображения", [
+                'url' => $imageUrl,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
             return [
                 'success' => false,
                 'originalUrl' => $imageUrl,
