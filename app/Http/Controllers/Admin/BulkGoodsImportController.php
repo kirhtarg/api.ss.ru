@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class BulkGoodsImportController extends Controller
@@ -37,8 +38,8 @@ class BulkGoodsImportController extends Controller
 
         $goods = $request->input('goods');
         $duplicateAction = $request->input('duplicate_action', 'skip');
-        $autoCreateCategories = $request->input('auto_create_categories', true);
-        $autoCreateBrands = $request->input('auto_create_brands', true);
+        $autoCreateCategories = $request->input('auto_create_categories', false);
+        $autoCreateBrands = $request->input('auto_create_brands', false);
         $processCategoriesAndBrands = $request->input('process_categories_and_brands', false);
 
         $results = [
@@ -166,6 +167,11 @@ class BulkGoodsImportController extends Controller
             $this->processImages($good, $goodData['images']);
         }
 
+        // Обрабатываем свойства товаров
+        if (isset($goodData['properties']) && is_array($goodData['properties'])) {
+            $this->processProperties($good, $goodData['properties']);
+        }
+
         return $good;
     }
 
@@ -217,6 +223,11 @@ class BulkGoodsImportController extends Controller
         // Обрабатываем изображения
         if (isset($goodData['images']) && is_array($goodData['images'])) {
             $this->processImages($existingGood, $goodData['images']);
+        }
+
+        // Обрабатываем свойства товаров
+        if (isset($goodData['properties']) && is_array($goodData['properties'])) {
+            $this->processProperties($existingGood, $goodData['properties']);
         }
 
         return $existingGood;
@@ -410,7 +421,7 @@ class BulkGoodsImportController extends Controller
         }
 
         // Применяем найденные ID к товарам
-        $this->applyCategoryAndBrandIds($goods);
+        $this->applyCategoryAndBrandIds($goods, $autoCreateCategories, $autoCreateBrands);
     }
 
     /**
@@ -430,6 +441,7 @@ class BulkGoodsImportController extends Controller
         });
 
         // Создаем недостающие категории
+        $createdCategories = [];
         if ($autoCreate) {
             $categoriesToCreate = $allCategories->filter(function($name) use ($categoryMap) {
                 return !$categoryMap->has(strtolower($name));
@@ -443,8 +455,12 @@ class BulkGoodsImportController extends Controller
                 ]);
 
                 $categoryMap[strtolower($categoryName)] = $category->id;
+                $createdCategories[] = $category->id;
             }
         }
+
+        // Сохраняем информацию о созданных категориях в кэше
+        cache(['created_categories_' . auth()->id() => $createdCategories], 300);
 
         // Сохраняем карту в кэше для использования в applyCategoryAndBrandIds
         cache(['category_map_' . auth()->id() => $categoryMap], 300); // 5 минут
@@ -467,6 +483,7 @@ class BulkGoodsImportController extends Controller
         });
 
         // Создаем недостающие бренды
+        $createdBrands = [];
         if ($autoCreate) {
             $brandsToCreate = $allBrands->filter(function($name) use ($brandMap) {
                 return !$brandMap->has(strtolower($name));
@@ -482,9 +499,13 @@ class BulkGoodsImportController extends Controller
                 ]);
 
                 $brandMap[strtolower($brandName)] = $brand->id;
+                $createdBrands[] = $brand->id;
                 \Log::info('Created brand', ['brand_name' => $brandName, 'brand_id' => $brand->id]);
             }
         }
+
+        // Сохраняем информацию о созданных брендах в кэше
+        cache(['created_brands_' . auth()->id() => $createdBrands], 300);
 
         \Log::info('Final brand map', ['brand_map' => $brandMap->toArray()]);
 
@@ -495,7 +516,7 @@ class BulkGoodsImportController extends Controller
     /**
      * Применение найденных ID к товарам
      */
-    private function applyCategoryAndBrandIds(&$goods)
+    private function applyCategoryAndBrandIds(&$goods, $autoCreateCategories = true, $autoCreateBrands = true)
     {
         $categoryMap = cache('category_map_' . auth()->id(), collect());
         $brandMap = cache('brand_map_' . auth()->id(), collect());
@@ -503,7 +524,9 @@ class BulkGoodsImportController extends Controller
         \Log::info('Applying category and brand IDs', [
             'category_map_size' => $categoryMap->count(),
             'brand_map_size' => $brandMap->count(),
-            'goods_count' => count($goods)
+            'goods_count' => count($goods),
+            'autoCreateCategories' => $autoCreateCategories,
+            'autoCreateBrands' => $autoCreateBrands
         ]);
 
         foreach ($goods as &$good) {
@@ -515,7 +538,9 @@ class BulkGoodsImportController extends Controller
                     \Log::info('Applied single category ID', ['category_name' => $good['category'], 'category_id' => $categoryId]);
                 } else {
                     \Log::warning('Category not found in map', ['category_name' => $good['category']]);
-                    unset($good['category']);
+                    if (!$autoCreateCategories) {
+                        unset($good['category']);
+                    }
                 }
             } elseif (isset($good['categories'])) {
                 if (is_string($good['categories'])) {
@@ -526,6 +551,8 @@ class BulkGoodsImportController extends Controller
                         $categoryId = $categoryMap[strtolower($categoryName)] ?? null;
                         if ($categoryId) {
                             $categoryIds[] = $categoryId;
+                        } else {
+                            \Log::warning('Category not found in map', ['category_name' => $categoryName]);
                         }
                     }
 
@@ -538,6 +565,8 @@ class BulkGoodsImportController extends Controller
                             $categoryId = $categoryMap[strtolower($category)] ?? null;
                             if ($categoryId) {
                                 $categoryIds[] = $categoryId;
+                            } else {
+                                \Log::warning('Category not found in map', ['category_name' => $category]);
                             }
                         } elseif (is_numeric($category)) {
                             $categoryIds[] = (int)$category;
@@ -556,7 +585,9 @@ class BulkGoodsImportController extends Controller
                     \Log::info('Applied single brand ID', ['brand_name' => $good['brand'], 'brand_id' => $brandId]);
                 } else {
                     \Log::warning('Brand not found in map', ['brand_name' => $good['brand']]);
-                    unset($good['brand']);
+                    if (!$autoCreateBrands) {
+                        unset($good['brand']);
+                    }
                 }
             } elseif (isset($good['brands'])) {
                 if (is_string($good['brands'])) {
@@ -567,6 +598,8 @@ class BulkGoodsImportController extends Controller
                         $brandId = $brandMap[strtolower($brandName)] ?? null;
                         if ($brandId) {
                             $brandIds[] = $brandId;
+                        } else {
+                            \Log::warning('Brand not found in map', ['brand_name' => $brandName]);
                         }
                     }
 
@@ -579,6 +612,8 @@ class BulkGoodsImportController extends Controller
                             $brandId = $brandMap[strtolower($brand)] ?? null;
                             if ($brandId) {
                                 $brandIds[] = $brandId;
+                            } else {
+                                \Log::warning('Brand not found in map', ['brand_name' => $brand]);
                             }
                         } elseif (is_numeric($brand)) {
                             $brandIds[] = (int)$brand;
@@ -627,13 +662,17 @@ class BulkGoodsImportController extends Controller
         $categoryMap = cache('category_map_' . auth()->id(), collect());
         $brandMap = cache('brand_map_' . auth()->id(), collect());
 
+        // Получаем информацию о том, какие элементы были созданы в этом сеансе
+        $createdCategories = cache('created_categories_' . auth()->id(), []);
+        $createdBrands = cache('created_brands_' . auth()->id(), []);
+
         foreach ($goods as $index => $goodData) {
             \Log::info("Processing good {$index}", ['good_data' => $goodData]);
             
-            // Собираем новые категории - ищем по ID в кэше
+            // Собираем только те категории, которые были созданы в этом сеансе
             if (isset($goodData['categories']) && is_array($goodData['categories'])) {
                 foreach ($goodData['categories'] as $categoryId) {
-                    if (is_numeric($categoryId)) {
+                    if (is_numeric($categoryId) && in_array($categoryId, $createdCategories)) {
                         // Ищем название категории по ID в кэше
                         $categoryName = $categoryMap->search(function($item, $key) use ($categoryId) {
                             return $item == $categoryId;
@@ -647,7 +686,7 @@ class BulkGoodsImportController extends Controller
                 }
             }
             
-            if (isset($goodData['category']) && is_numeric($goodData['category'])) {
+            if (isset($goodData['category']) && is_numeric($goodData['category']) && in_array($goodData['category'], $createdCategories)) {
                 $categoryName = $categoryMap->search(function($item, $key) use ($goodData) {
                     return $item == $goodData['category'];
                 });
@@ -658,10 +697,10 @@ class BulkGoodsImportController extends Controller
                 }
             }
 
-            // Собираем новые бренды - ищем по ID в кэше
+            // Собираем только те бренды, которые были созданы в этом сеансе
             if (isset($goodData['brands']) && is_array($goodData['brands'])) {
                 foreach ($goodData['brands'] as $brandId) {
-                    if (is_numeric($brandId)) {
+                    if (is_numeric($brandId) && in_array($brandId, $createdBrands)) {
                         // Ищем название бренда по ID в кэше
                         $brandName = $brandMap->search(function($item, $key) use ($brandId) {
                             return $item == $brandId;
@@ -675,7 +714,7 @@ class BulkGoodsImportController extends Controller
                 }
             }
             
-            if (isset($goodData['brand']) && is_numeric($goodData['brand'])) {
+            if (isset($goodData['brand']) && is_numeric($goodData['brand']) && in_array($goodData['brand'], $createdBrands)) {
                 $brandName = $brandMap->search(function($item, $key) use ($goodData) {
                     return $item == $goodData['brand'];
                 });
@@ -691,7 +730,9 @@ class BulkGoodsImportController extends Controller
             'newCategories' => $newCategories,
             'newBrands' => $newBrands,
             'newCategoriesCount' => count($newCategories),
-            'newBrandsCount' => count($newBrands)
+            'newBrandsCount' => count($newBrands),
+            'createdCategories' => $createdCategories,
+            'createdBrands' => $createdBrands
         ]);
 
         $results['newCategories'] = $newCategories;
@@ -756,6 +797,39 @@ class BulkGoodsImportController extends Controller
                 return null;
             }
             return $this->applyPriceModification($salePrice, $saleModification);
+        }
+    }
+
+    /**
+     * Обрабатывает свойства товара
+     */
+    private function processProperties($good, $properties)
+    {
+        if (empty($properties)) {
+            return;
+        }
+
+        \Log::info('Processing properties for good', [
+            'good_id' => $good->id,
+            'properties' => $properties
+        ]);
+
+        // Подготавливаем данные для синхронизации
+        $propertiesToSync = [];
+        
+        foreach ($properties as $propertyId => $value) {
+            if (is_numeric($propertyId) && !empty($value)) {
+                $propertiesToSync[$propertyId] = ['value' => $value];
+            }
+        }
+
+        if (!empty($propertiesToSync)) {
+            \Log::info('Syncing properties', [
+                'good_id' => $good->id,
+                'properties_to_sync' => $propertiesToSync
+            ]);
+            
+            $good->properties()->sync($propertiesToSync);
         }
     }
 }

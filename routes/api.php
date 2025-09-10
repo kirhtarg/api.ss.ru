@@ -30,6 +30,9 @@ Route::post('/phone/send-code', [\App\Http\Controllers\Auth\PhoneAuthController:
 Route::post('/phone/verify-code', [\App\Http\Controllers\Auth\PhoneAuthController::class, 'verifyPhoneCode']);
 Route::post('/phone/check-status', [\App\Http\Controllers\Auth\PhoneAuthController::class, 'checkCodeStatus']);
 
+// Свойства товаров для импорта (временно без middleware для тестирования)
+Route::get('/admin/shop/goods/properties', [\App\Http\Controllers\Admin\ShopPropertiesController::class, 'list']);
+
 // Google OAuth маршруты (требуют сессии)
 Route::middleware(['web'])->group(function () {
     Route::get('/auth/google', [\App\Http\Controllers\Auth\GoogleAuthController::class, 'redirectToGoogle']);
@@ -549,6 +552,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/shop-settings', [\App\Http\Controllers\ShopSettingsController::class, 'getShopSettings']);
             Route::get('/shop-settings/{key}', [\App\Http\Controllers\ShopSettingsController::class, 'getShopSetting']);
         });
+
 
         // Shop management (для пользователей с доступом к shop)
         Route::middleware('shop.access')->prefix('shop')->group(function () {
@@ -2126,6 +2130,7 @@ Route::middleware('auth:sanctum')->get('/test-auth', function (Request $request)
         ], 500);
     }
 });
+
 
 // Тестовый маршрут для проверки роли админа
 Route::middleware(['auth:sanctum', 'role:admin'])->get('/test-admin-role', function (Request $request) {
