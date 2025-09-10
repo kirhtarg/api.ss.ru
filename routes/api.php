@@ -2009,13 +2009,36 @@ Route::middleware('auth:sanctum')->group(function () {
         
         // Шаблоны импорта товаров
         Route::prefix('import-templates')->group(function () {
-            Route::get('/', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'index']);
+            Route::get('/list', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'list']); // Легкий список для выпадающих меню
+            Route::get('/', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'index']); // Полный список с настройками
+            Route::post('/cleanup', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'cleanup']); // Очистка старых шаблонов
             Route::get('/{id}', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'show']);
             Route::post('/', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'store']);
             Route::put('/{id}', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'update']);
             Route::delete('/{id}', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'destroy']);
             Route::post('/{id}/duplicate', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'duplicate']);
             Route::put('/{id}/set-default', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'setDefault']);
+        });
+        
+        // Тестовый endpoint для проверки шаблонов импорта
+        Route::get('/test-import-templates', function (Request $request) {
+            try {
+                $user = $request->user();
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Тест шаблонов импорта',
+                    'user_id' => $user ? $user->id : null,
+                    'user_roles' => $user ? $user->roles->pluck('name')->toArray() : [],
+                    'templates_count' => \App\Models\ImportTemplate::count(),
+                    'templates' => \App\Models\ImportTemplate::all()
+                ]);
+            } catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка: ' . $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ], 500);
+            }
         });
     });
 

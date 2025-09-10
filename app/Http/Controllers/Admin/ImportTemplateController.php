@@ -7,6 +7,8 @@ use App\Models\ImportTemplate;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 class ImportTemplateController extends Controller
 {
@@ -16,17 +18,38 @@ class ImportTemplateController extends Controller
     public function index(): JsonResponse
     {
         try {
-            $templates = ImportTemplate::orderBy('name')->get();
+            Log::info('ImportTemplateController::index - Начало выполнения');
+            
+            // Проверяем, существует ли таблица
+            if (!Schema::hasTable('import_templates')) {
+                Log::error('Таблица import_templates не существует');
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Таблица import_templates не существует. Необходимо выполнить миграцию.',
+                    'error' => 'Table import_templates does not exist'
+                ], 500);
+            }
+            
+            // Ограничиваем количество записей и оптимизируем запрос
+            $templates = ImportTemplate::select('id', 'name', 'description', 'is_default', 'created_at', 'updated_at')
+                ->orderBy('name')
+                ->limit(100) // Ограничиваем до 100 записей
+                ->get();
+            Log::info('ImportTemplateController::index - Найдено шаблонов: ' . $templates->count());
             
             return response()->json([
                 'success' => true,
                 'data' => $templates
             ]);
         } catch (\Exception $e) {
+            Log::error('ImportTemplateController::index - Ошибка: ' . $e->getMessage());
+            Log::error('ImportTemplateController::index - Trace: ' . $e->getTraceAsString());
+            
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка при получении списка шаблонов',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ], 500);
         }
     }
@@ -37,13 +60,15 @@ class ImportTemplateController extends Controller
     public function show(int $id): JsonResponse
     {
         try {
-            $template = ImportTemplate::findOrFail($id);
+            $template = ImportTemplate::select('id', 'name', 'description', 'settings', 'is_default', 'created_at', 'updated_at')
+                ->findOrFail($id);
             
             return response()->json([
                 'success' => true,
                 'data' => $template
             ]);
         } catch (\Exception $e) {
+            Log::error('ImportTemplateController::show - Ошибка: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Шаблон не найден',
@@ -233,6 +258,97 @@ class ImportTemplateController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка при установке шаблона по умолчанию',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить только список шаблонов без настроек (для выпадающего списка)
+     */
+    public function list(): JsonResponse
+    {
+        try {
+            Log::info('ImportTemplateController::list - Начало выполнения');
+            
+            // Проверяем, существует ли таблица
+            if (!Schema::hasTable('import_templates')) {
+                Log::error('Таблица import_templates не существует');
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Таблица import_templates не существует. Необходимо выполнить миграцию.',
+                    'error' => 'Table import_templates does not exist'
+                ], 500);
+            }
+            
+            // Получаем только необходимые поля для списка
+            $templates = ImportTemplate::select('id', 'name', 'description', 'is_default')
+                ->orderBy('is_default', 'desc') // Сначала шаблоны по умолчанию
+                ->orderBy('name')
+                ->limit(50) // Ограничиваем до 50 записей для списка
+                ->get();
+            
+            Log::info('ImportTemplateController::list - Найдено шаблонов: ' . $templates->count());
+            
+            return response()->json([
+                'success' => true,
+                'data' => $templates
+            ]);
+        } catch (\Exception $e) {
+            Log::error('ImportTemplateController::list - Ошибка: ' . $e->getMessage());
+            Log::error('ImportTemplateController::list - Trace: ' . $e->getTraceAsString());
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при получении списка шаблонов',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Очистить старые шаблоны (оставить только последние 100)
+     */
+    public function cleanup(): JsonResponse
+    {
+        try {
+            Log::info('ImportTemplateController::cleanup - Начало очистки');
+            
+            // Получаем общее количество шаблонов
+            $totalCount = ImportTemplate::count();
+            
+            if ($totalCount <= 100) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Очистка не требуется. Количество шаблонов: ' . $totalCount
+                ]);
+            }
+            
+            // Получаем ID шаблонов, которые нужно оставить (последние 100)
+            $templatesToKeep = ImportTemplate::select('id')
+                ->orderBy('created_at', 'desc')
+                ->limit(100)
+                ->pluck('id')
+                ->toArray();
+            
+            // Удаляем старые шаблоны (кроме шаблонов по умолчанию)
+            $deletedCount = ImportTemplate::whereNotIn('id', $templatesToKeep)
+                ->where('is_default', false)
+                ->delete();
+            
+            Log::info('ImportTemplateController::cleanup - Удалено шаблонов: ' . $deletedCount);
+            
+            return response()->json([
+                'success' => true,
+                'message' => "Очистка завершена. Удалено шаблонов: {$deletedCount}",
+                'deleted_count' => $deletedCount
+            ]);
+        } catch (\Exception $e) {
+            Log::error('ImportTemplateController::cleanup - Ошибка: ' . $e->getMessage());
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при очистке шаблонов',
                 'error' => $e->getMessage()
             ], 500);
         }
