@@ -73,6 +73,13 @@ class BulkGoodsImportController extends Controller
             
             $this->importLogService->logGeneralError('Ошибка валидации: ' . implode('; ', $errorMessages));
             
+            // Логируем ошибки валидации файлов отдельно
+            foreach ($errorMessages as $error) {
+                if (strpos($error, 'goods') !== false || strpos($error, 'file') !== false || strpos($error, 'required') !== false) {
+                    $this->importLogService->logFileLoadingError($error);
+                }
+            }
+            
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
@@ -139,7 +146,8 @@ class BulkGoodsImportController extends Controller
                         ];
                         
                         // Добавляем в группу для ошибок
-                        $errorItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'error' => 'Отсутствуют обязательные поля (SKU или название)'];
+                        $sheet = $goodData['_sheet'] ?? 'неизвестно';
+                        $errorItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'error' => 'Отсутствуют обязательные поля (SKU или название)'];
                         continue;
                     }
                     
@@ -153,12 +161,14 @@ class BulkGoodsImportController extends Controller
                             $results['goodIds'][$sku] = $existingGood->id;
                             
                             // Добавляем в группу для обновления
-                            $updateItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name];
+                            $sheet = $goodData['_sheet'] ?? 'неизвестно';
+                            $updateItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet];
                         } else {
                             $results['skipped']++;
                             
                             // Добавляем в группу для пропуска
-                            $skipItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'reason' => 'Дубликат (настройка: пропустить)'];
+                            $sheet = $goodData['_sheet'] ?? 'неизвестно';
+                            $skipItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'reason' => 'Дубликат (настройка: пропустить)'];
                         }
                     } else {
                         // Создаем новый товар
@@ -167,7 +177,8 @@ class BulkGoodsImportController extends Controller
                         $results['goodIds'][$sku] = $newGood->id;
                         
                         // Добавляем в группу для загрузки
-                        $loadItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name];
+                        $sheet = $goodData['_sheet'] ?? 'неизвестно';
+                        $loadItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet];
                     }
                 } catch (\Exception $e) {
                     $results['failed']++;
@@ -178,7 +189,8 @@ class BulkGoodsImportController extends Controller
                     ];
                     
                     // Добавляем в группу для ошибок
-                    $errorItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'error' => $e->getMessage()];
+                    $sheet = $goodData['_sheet'] ?? 'неизвестно';
+                    $errorItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'error' => $e->getMessage()];
                 }
             }
 
@@ -210,6 +222,15 @@ class BulkGoodsImportController extends Controller
             
             // Логируем общую ошибку
             $this->importLogService->logGeneralError('Общая ошибка импорта: ' . $e->getMessage());
+            
+            // Логируем ошибки загрузки файлов отдельно
+            $errorMessage = $e->getMessage();
+            if (strpos($errorMessage, 'file') !== false || 
+                strpos($errorMessage, 'upload') !== false || 
+                strpos($errorMessage, 'parse') !== false ||
+                strpos($errorMessage, 'read') !== false) {
+                $this->importLogService->logFileLoadingError($errorMessage);
+            }
             
             return response()->json([
                 'success' => false,

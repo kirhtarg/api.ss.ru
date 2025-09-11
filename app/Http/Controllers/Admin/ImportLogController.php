@@ -151,10 +151,17 @@ class ImportLogController extends Controller
         $sku = $request->input('sku');
         $name = $request->input('name');
         $error = $request->input('error');
+        $type = $request->input('type');
         
         // Если передана только строка ошибки (общая ошибка)
         if ($error && !$count && !$sku && !$name) {
-            $this->importLogService->logGeneralError($error);
+            if ($type === 'image_loading') {
+                $imageUrl = $request->input('imageUrl');
+                $goodSku = $request->input('goodSku');
+                $this->importLogService->logImageLoadingError($error, $imageUrl, $goodSku);
+            } else {
+                $this->importLogService->logGeneralError($error);
+            }
         } else {
             // Конкретная ошибка товара
             $this->importLogService->logError($count, $sku, $name, $error);

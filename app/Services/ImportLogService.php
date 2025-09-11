@@ -81,6 +81,26 @@ class ImportLogService
     }
     
     /**
+     * Записать ошибку загрузки файла
+     */
+    public function logFileLoadingError($error, $fileName = null, $sheetName = null)
+    {
+        $fileName = $fileName ? " ({$fileName})" : '';
+        $sheetName = $sheetName ? " - Лист: {$sheetName}" : '';
+        $this->writeLog('import-error', "FILE_LOADING{$fileName}{$sheetName} - FILE_LOADING - FILE_LOADING - {$error}");
+    }
+    
+    /**
+     * Записать ошибку загрузки изображения
+     */
+    public function logImageLoadingError($error, $imageUrl = null, $goodSku = null)
+    {
+        $imageUrl = $imageUrl ? " ({$imageUrl})" : '';
+        $goodSku = $goodSku ? " - Товар: {$goodSku}" : '';
+        $this->writeLog('import-error', "IMAGE_LOADING{$imageUrl}{$goodSku} - IMAGE_LOADING - IMAGE_LOADING - {$error}");
+    }
+    
+    /**
      * Записать в лог-файл
      */
     private function writeLog($type, $message)
@@ -108,7 +128,8 @@ class ImportLogService
     {
         $lines = [];
         foreach ($items as $item) {
-            $lines[] = "{$item['count']} - {$item['sku']} - {$item['name']}";
+            $sheet = $item['sheet'] ?? 'неизвестно';
+            $lines[] = "{$item['count']} - {$item['sku']} - {$item['name']} - Лист: {$sheet}";
         }
         
         if (!empty($lines)) {
@@ -123,7 +144,8 @@ class ImportLogService
     {
         $lines = [];
         foreach ($items as $item) {
-            $lines[] = "{$item['count']} - {$item['sku']} - {$item['name']}";
+            $sheet = $item['sheet'] ?? 'неизвестно';
+            $lines[] = "{$item['count']} - {$item['sku']} - {$item['name']} - Лист: {$sheet}";
         }
         
         if (!empty($lines)) {
@@ -138,7 +160,8 @@ class ImportLogService
     {
         $lines = [];
         foreach ($items as $item) {
-            $lines[] = "{$item['count']} - {$item['sku']} - {$item['name']} - {$item['reason']}";
+            $sheet = $item['sheet'] ?? 'неизвестно';
+            $lines[] = "{$item['count']} - {$item['sku']} - {$item['name']} - Лист: {$sheet} - {$item['reason']}";
         }
         
         if (!empty($lines)) {
@@ -153,7 +176,8 @@ class ImportLogService
     {
         $lines = [];
         foreach ($items as $item) {
-            $lines[] = "{$item['count']} - {$item['sku']} - {$item['name']} - {$item['error']}";
+            $sheet = $item['sheet'] ?? 'неизвестно';
+            $lines[] = "{$item['count']} - {$item['sku']} - {$item['name']} - Лист: {$sheet} - {$item['error']}";
         }
         
         if (!empty($lines)) {
