@@ -50,8 +50,16 @@ class BulkGoodsImportController extends Controller
         $autoCreateBrands = $request->input('auto_create_brands', false);
         $processCategoriesAndBrands = $request->input('process_categories_and_brands', false);
         
-        // Очищаем логи перед новым импортом
-        $this->importLogService->clearAllLogs();
+        // Получаем информацию о батче
+        $batchNumber = $request->input('batch_number', 1);
+        $isFirstBatch = $request->input('is_first_batch', false);
+        $totalBatches = $request->input('total_batches', 1);
+        
+        // Очищаем логи только для первого батча
+        if ($isFirstBatch) {
+            $this->importLogService->clearAllLogs();
+        }
+        
 
         $results = [
             'imported' => 0,
@@ -148,17 +156,6 @@ class BulkGoodsImportController extends Controller
             DB::commit();
             
             // Пакетное логирование после успешного коммита
-            \Log::info('Logging import results', [
-                'total_goods' => count($goods),
-                'load_items' => count($loadItems),
-                'update_items' => count($updateItems),
-                'skip_items' => count($skipItems),
-                'error_items' => count($errorItems),
-                'results_imported' => $results['imported'],
-                'results_updated' => $results['updated'],
-                'results_skipped' => $results['skipped'],
-                'results_failed' => $results['failed']
-            ]);
             
             if (!empty($loadItems)) {
                 $this->importLogService->logLoadedBatch($loadItems);

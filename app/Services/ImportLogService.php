@@ -28,6 +28,7 @@ class ImportLogService
         foreach ($logTypes as $type) {
             $this->clearLog($type);
         }
+        
     }
     
     /**
@@ -87,6 +88,7 @@ class ImportLogService
         $logPath = $this->getLogPath($type);
         $timestamp = now()->format('Y-m-d H:i:s');
         $logEntry = "[{$timestamp}] {$message}" . PHP_EOL;
+        
         
         File::append($logPath, $logEntry);
     }
