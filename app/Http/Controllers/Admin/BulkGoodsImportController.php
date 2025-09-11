@@ -29,12 +29,12 @@ class BulkGoodsImportController extends Controller
         // Получаем информацию о батче для очистки логов
         $isFirstBatch = $request->input('is_first_batch', false);
         
-        // Очищаем логи для первого батча
+        // Очищаем логи только для первого батча
         if ($isFirstBatch) {
             $this->importLogService->clearAllLogs();
         }
         
-        // Получаем и фильтруем данные перед валидацией
+        // Получаем данные товаров
         $allGoods = $request->input('goods', []);
         
         // Фильтруем пустые строки - оставляем только товары с заполненными SKU и названием
@@ -45,20 +45,23 @@ class BulkGoodsImportController extends Controller
             $sku = isset($good['sku']) ? trim((string) $good['sku']) : '';
             $name = isset($good['name']) ? trim((string) $good['name']) : '';
             
+            // Создаем уникальный идентификатор для товара
+            $itemId = 'item_' . $index . '_' . substr(md5($sku . $name), 0, 8);
+            
             // Пропускаем только полностью пустые строки (где И SKU И название пустые)
             if (empty($sku) && empty($name)) {
                 $reason = 'Пустая строка';
                 
-                // Временное логирование для отладки
-                \Log::info("Пропущенная строка {$index}: SKU='{$sku}', Name='{$name}', Reason={$reason}");
+                // Логируем пропущенную строку с уникальным ID
+                \Log::info("Пропущенная строка {$itemId}: SKU='{$sku}', Name='{$name}', Reason={$reason}");
                 
                 $skippedRows[] = [
                     'count' => $index + 1,
                     'sku' => $sku,
                     'name' => $name,
-                    'sheet' => $good['_sheet'] ?? 'неизвестно',
                     'reason' => $reason
                 ];
+                
                 continue;
             }
             
@@ -66,14 +69,13 @@ class BulkGoodsImportController extends Controller
             if (empty($sku) || empty($name)) {
                 $reason = 'Отсутствует ' . (empty($sku) ? 'SKU' : 'название');
                 
-                // Временное логирование для отладки
-                \Log::info("Ошибка валидации строка {$index}: SKU='{$sku}', Name='{$name}', Reason={$reason}");
+                // Логируем ошибку валидации с уникальным ID
+                \Log::info("Ошибка валидации {$itemId}: SKU='{$sku}', Name='{$name}', Reason={$reason}");
                 
                 $skippedRows[] = [
                     'count' => $index + 1,
                     'sku' => $sku,
                     'name' => $name,
-                    'sheet' => $good['_sheet'] ?? 'неизвестно',
                     'reason' => $reason
                 ];
                 continue;
@@ -84,13 +86,19 @@ class BulkGoodsImportController extends Controller
             $good['name'] = $name;
             $goods[] = $good;
             
-            // Временное логирование для отладки
-            \Log::info("Валидный товар {$index}: SKU='{$sku}', Name='{$name}'");
+            // Логируем валидный товар с уникальным ID
+            \Log::info("Валидный товар {$itemId}: SKU='{$sku}', Name='{$name}'");
         }
         
         // Логируем пропущенные строки
         if (!empty($skippedRows)) {
+            Log::info("BulkImport Debug - Логируем skippedRows:", [
+                'count' => count($skippedRows),
+                'first_skipped' => $skippedRows[0] ?? null
+            ]);
             $this->importLogService->logSkippedBatch($skippedRows);
+        } else {
+            Log::info("BulkImport Debug - Нет skippedRows");
         }
         
         // Валидируем только непустые товары
