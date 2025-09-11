@@ -2024,6 +2024,13 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::put('/{id}/set-default', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'setDefault']);
         });
         
+        // Логи импорта товаров
+        Route::prefix('import-logs')->group(function () {
+            Route::get('/stats', [\App\Http\Controllers\Admin\ImportLogController::class, 'getLogStats']);
+            Route::get('/{type}', [\App\Http\Controllers\Admin\ImportLogController::class, 'getLog']);
+            Route::delete('/{type}', [\App\Http\Controllers\Admin\ImportLogController::class, 'clearLog']);
+        });
+        
         // Тестовый endpoint для проверки шаблонов импорта
         Route::get('/test-import-templates', function (Request $request) {
             try {

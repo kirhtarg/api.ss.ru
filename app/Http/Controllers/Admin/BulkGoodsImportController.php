@@ -7,6 +7,7 @@ use App\Models\ShopGood;
 use App\Models\ShopCategory;
 use App\Models\ShopBrand;
 use App\Models\ShopGoodImage;
+use App\Services\ImportLogService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -16,6 +17,13 @@ use Illuminate\Support\Str;
 
 class BulkGoodsImportController extends Controller
 {
+    private $importLogService;
+    
+    public function __construct(ImportLogService $importLogService)
+    {
+        $this->importLogService = $importLogService;
+    }
+    
     public function bulkImport(Request $request)
     {
         $validator = Validator::make($request->all(), [
@@ -41,6 +49,9 @@ class BulkGoodsImportController extends Controller
         $autoCreateCategories = $request->input('auto_create_categories', false);
         $autoCreateBrands = $request->input('auto_create_brands', false);
         $processCategoriesAndBrands = $request->input('process_categories_and_brands', false);
+        
+        // Очищаем логи перед новым импортом
+        $this->importLogService->clearAllLogs();
 
         $results = [
             'imported' => 0,
@@ -69,6 +80,8 @@ class BulkGoodsImportController extends Controller
             foreach ($goods as $index => $goodData) {
                 try {
                     $sku = $goodData['sku'];
+                    $name = $goodData['name'];
+                    $count = $index + 1;
                     $existingGood = ShopGood::where('sku', $sku)->first();
 
                     if ($existingGood) {
@@ -77,14 +90,23 @@ class BulkGoodsImportController extends Controller
                             $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands);
                             $results['updated']++;
                             $results['goodIds'][$sku] = $existingGood->id;
+                            
+                            // Логируем обновление
+                            $this->importLogService->logUpdated($count, $sku, $name);
                         } else {
                             $results['skipped']++;
+                            
+                            // Логируем пропуск
+                            $this->importLogService->logSkipped($count, $sku, $name, 'Дубликат (настройка: пропустить)');
                         }
                     } else {
                         // Создаем новый товар
                         $newGood = $this->createGood($goodData, $autoCreateCategories, $autoCreateBrands);
                         $results['imported']++;
                         $results['goodIds'][$sku] = $newGood->id;
+                        
+                        // Логируем загрузку
+                        $this->importLogService->logLoaded($count, $sku, $name);
                     }
                 } catch (\Exception $e) {
                     $results['failed']++;
@@ -93,6 +115,9 @@ class BulkGoodsImportController extends Controller
                         'sku' => $goodData['sku'] ?? 'неизвестно',
                         'error' => $e->getMessage()
                     ];
+                    
+                    // Логируем ошибку
+                    $this->importLogService->logError($index + 1, $goodData['sku'] ?? 'неизвестно', $goodData['name'] ?? 'неизвестно', $e->getMessage());
                 }
             }
 
@@ -106,6 +131,9 @@ class BulkGoodsImportController extends Controller
 
         } catch (\Exception $e) {
             DB::rollBack();
+            
+            // Логируем общую ошибку
+            $this->importLogService->logGeneralError('Общая ошибка импорта: ' . $e->getMessage());
             
             return response()->json([
                 'success' => false,
