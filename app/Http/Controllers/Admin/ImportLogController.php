@@ -3,12 +3,19 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Services\ImportLogService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\File;
 
 class ImportLogController extends Controller
 {
+    protected $importLogService;
+    
+    public function __construct(ImportLogService $importLogService)
+    {
+        $this->importLogService = $importLogService;
+    }
     /**
      * Получить содержимое лог-файла
      */
@@ -90,5 +97,111 @@ class ImportLogController extends Controller
         }
         
         return response()->json($stats);
+    }
+    
+    /**
+     * Записать строку в лог загрузки
+     */
+    public function logLoad(Request $request)
+    {
+        $count = $request->input('count');
+        $sku = $request->input('sku');
+        $name = $request->input('name');
+        
+        $this->importLogService->logLoaded($count, $sku, $name);
+        
+        return response()->json(['success' => true]);
+    }
+    
+    /**
+     * Записать строку в лог обновления
+     */
+    public function logUpdate(Request $request)
+    {
+        $count = $request->input('count');
+        $sku = $request->input('sku');
+        $name = $request->input('name');
+        
+        $this->importLogService->logUpdated($count, $sku, $name);
+        
+        return response()->json(['success' => true]);
+    }
+    
+    /**
+     * Записать строку в лог пропуска
+     */
+    public function logSkip(Request $request)
+    {
+        $count = $request->input('count');
+        $sku = $request->input('sku');
+        $name = $request->input('name');
+        $reason = $request->input('reason');
+        
+        $this->importLogService->logSkipped($count, $sku, $name, $reason);
+        
+        return response()->json(['success' => true]);
+    }
+    
+    /**
+     * Записать строку в лог ошибок
+     */
+    public function logError(Request $request)
+    {
+        $count = $request->input('count');
+        $sku = $request->input('sku');
+        $name = $request->input('name');
+        $error = $request->input('error');
+        
+        $this->importLogService->logError($count, $sku, $name, $error);
+        
+        return response()->json(['success' => true]);
+    }
+    
+    /**
+     * Пакетная запись в лог загрузки
+     */
+    public function logLoadBatch(Request $request)
+    {
+        $items = $request->input('items', []);
+        
+        $this->importLogService->logLoadedBatch($items);
+        
+        return response()->json(['success' => true, 'count' => count($items)]);
+    }
+    
+    /**
+     * Пакетная запись в лог обновления
+     */
+    public function logUpdateBatch(Request $request)
+    {
+        $items = $request->input('items', []);
+        
+        $this->importLogService->logUpdatedBatch($items);
+        
+        return response()->json(['success' => true, 'count' => count($items)]);
+    }
+    
+    /**
+     * Пакетная запись в лог пропуска
+     */
+    public function logSkipBatch(Request $request)
+    {
+        $items = $request->input('items', []);
+        
+        $this->importLogService->logSkippedBatch($items);
+        
+        return response()->json(['success' => true, 'count' => count($items)]);
+    }
+    
+    /**
+     * Пакетная запись в лог ошибок
+     */
+    public function logErrorBatch(Request $request)
+    {
+        $items = $request->input('items', []);
+        
+        $this->importLogService->logErrorBatch($items);
+        
+        return response()->json(['success' => true, 'count' => count($items)]);
     }
 }

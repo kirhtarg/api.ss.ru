@@ -100,6 +100,66 @@ class ImportLogService
     }
     
     /**
+     * Пакетная запись в лог загрузки
+     */
+    public function logLoadedBatch($items)
+    {
+        $lines = [];
+        foreach ($items as $item) {
+            $lines[] = "{$item['count']} - {$item['sku']} - {$item['name']}";
+        }
+        
+        if (!empty($lines)) {
+            $this->writeLog('import-load', implode("\n", $lines));
+        }
+    }
+    
+    /**
+     * Пакетная запись в лог обновления
+     */
+    public function logUpdatedBatch($items)
+    {
+        $lines = [];
+        foreach ($items as $item) {
+            $lines[] = "{$item['count']} - {$item['sku']} - {$item['name']}";
+        }
+        
+        if (!empty($lines)) {
+            $this->writeLog('import-update', implode("\n", $lines));
+        }
+    }
+    
+    /**
+     * Пакетная запись в лог пропуска
+     */
+    public function logSkippedBatch($items)
+    {
+        $lines = [];
+        foreach ($items as $item) {
+            $lines[] = "{$item['count']} - {$item['sku']} - {$item['name']} - {$item['reason']}";
+        }
+        
+        if (!empty($lines)) {
+            $this->writeLog('import-skip', implode("\n", $lines));
+        }
+    }
+    
+    /**
+     * Пакетная запись в лог ошибок
+     */
+    public function logErrorBatch($items)
+    {
+        $lines = [];
+        foreach ($items as $item) {
+            $lines[] = "{$item['count']} - {$item['sku']} - {$item['name']} - {$item['error']}";
+        }
+        
+        if (!empty($lines)) {
+            $this->writeLog('import-error', implode("\n", $lines));
+        }
+    }
+
+    /**
      * Получить статистику логов
      */
     public function getLogStats()

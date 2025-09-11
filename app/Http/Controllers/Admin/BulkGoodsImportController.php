@@ -77,11 +77,35 @@ class BulkGoodsImportController extends Controller
         DB::beginTransaction();
 
         try {
+            // Группируем товары для пакетного логирования
+            $loadItems = [];
+            $updateItems = [];
+            $skipItems = [];
+            $errorItems = [];
+            
             foreach ($goods as $index => $goodData) {
+                $count = $index + 1;
+                $sku = $goodData['sku'] ?? 'неизвестно';
+                $name = $goodData['name'] ?? 'неизвестно';
+                
                 try {
-                    $sku = $goodData['sku'];
-                    $name = $goodData['name'];
-                    $count = $index + 1;
+                    // Валидация обязательных полей
+                    if (empty($sku) || empty($name) || 
+                        (is_string($sku) && trim($sku) === '') || 
+                        (is_string($name) && trim($name) === '')) {
+                        
+                        $results['failed']++;
+                        $results['errors'][] = [
+                            'row' => $count,
+                            'sku' => $sku,
+                            'error' => 'Отсутствуют обязательные поля (SKU или название)'
+                        ];
+                        
+                        // Добавляем в группу для ошибок
+                        $errorItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'error' => 'Отсутствуют обязательные поля (SKU или название)'];
+                        continue;
+                    }
+                    
                     $existingGood = ShopGood::where('sku', $sku)->first();
 
                     if ($existingGood) {
@@ -91,13 +115,13 @@ class BulkGoodsImportController extends Controller
                             $results['updated']++;
                             $results['goodIds'][$sku] = $existingGood->id;
                             
-                            // Логируем обновление
-                            $this->importLogService->logUpdated($count, $sku, $name);
+                            // Добавляем в группу для обновления
+                            $updateItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name];
                         } else {
                             $results['skipped']++;
                             
-                            // Логируем пропуск
-                            $this->importLogService->logSkipped($count, $sku, $name, 'Дубликат (настройка: пропустить)');
+                            // Добавляем в группу для пропуска
+                            $skipItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'reason' => 'Дубликат (настройка: пропустить)'];
                         }
                     } else {
                         // Создаем новый товар
@@ -105,23 +129,49 @@ class BulkGoodsImportController extends Controller
                         $results['imported']++;
                         $results['goodIds'][$sku] = $newGood->id;
                         
-                        // Логируем загрузку
-                        $this->importLogService->logLoaded($count, $sku, $name);
+                        // Добавляем в группу для загрузки
+                        $loadItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name];
                     }
                 } catch (\Exception $e) {
                     $results['failed']++;
                     $results['errors'][] = [
-                        'row' => $index + 1,
-                        'sku' => $goodData['sku'] ?? 'неизвестно',
+                        'row' => $count,
+                        'sku' => $sku,
                         'error' => $e->getMessage()
                     ];
                     
-                    // Логируем ошибку
-                    $this->importLogService->logError($index + 1, $goodData['sku'] ?? 'неизвестно', $goodData['name'] ?? 'неизвестно', $e->getMessage());
+                    // Добавляем в группу для ошибок
+                    $errorItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'error' => $e->getMessage()];
                 }
             }
 
             DB::commit();
+            
+            // Пакетное логирование после успешного коммита
+            \Log::info('Logging import results', [
+                'total_goods' => count($goods),
+                'load_items' => count($loadItems),
+                'update_items' => count($updateItems),
+                'skip_items' => count($skipItems),
+                'error_items' => count($errorItems),
+                'results_imported' => $results['imported'],
+                'results_updated' => $results['updated'],
+                'results_skipped' => $results['skipped'],
+                'results_failed' => $results['failed']
+            ]);
+            
+            if (!empty($loadItems)) {
+                $this->importLogService->logLoadedBatch($loadItems);
+            }
+            if (!empty($updateItems)) {
+                $this->importLogService->logUpdatedBatch($updateItems);
+            }
+            if (!empty($skipItems)) {
+                $this->importLogService->logSkippedBatch($skipItems);
+            }
+            if (!empty($errorItems)) {
+                $this->importLogService->logErrorBatch($errorItems);
+            }
 
             return response()->json([
                 'success' => true,
@@ -132,8 +182,7 @@ class BulkGoodsImportController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
             
-            // Логируем общую ошибку
-            $this->importLogService->logGeneralError('Общая ошибка импорта: ' . $e->getMessage());
+            // Логирование происходит на фронтенде
             
             return response()->json([
                 'success' => false,
@@ -142,6 +191,7 @@ class BulkGoodsImportController extends Controller
             ], 500);
         }
     }
+    
 
     private function createGood($goodData, $autoCreateCategories, $autoCreateBrands)
     {

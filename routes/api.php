@@ -2024,12 +2024,21 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::put('/{id}/set-default', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'setDefault']);
         });
         
-        // Логи импорта товаров
-        Route::prefix('import-logs')->group(function () {
-            Route::get('/stats', [\App\Http\Controllers\Admin\ImportLogController::class, 'getLogStats']);
-            Route::get('/{type}', [\App\Http\Controllers\Admin\ImportLogController::class, 'getLog']);
-            Route::delete('/{type}', [\App\Http\Controllers\Admin\ImportLogController::class, 'clearLog']);
-        });
+// Логи импорта товаров
+Route::prefix('import-logs')->group(function () {
+    Route::get('/stats', [\App\Http\Controllers\Admin\ImportLogController::class, 'getLogStats']);
+    Route::get('/{type}', [\App\Http\Controllers\Admin\ImportLogController::class, 'getLog']);
+    Route::delete('/{type}', [\App\Http\Controllers\Admin\ImportLogController::class, 'clearLog']);
+    Route::post('/load', [\App\Http\Controllers\Admin\ImportLogController::class, 'logLoad']);
+    Route::post('/update', [\App\Http\Controllers\Admin\ImportLogController::class, 'logUpdate']);
+    Route::post('/skip', [\App\Http\Controllers\Admin\ImportLogController::class, 'logSkip']);
+    Route::post('/error', [\App\Http\Controllers\Admin\ImportLogController::class, 'logError']);
+    // Пакетные запросы
+    Route::post('/load/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logLoadBatch']);
+    Route::post('/update/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logUpdateBatch']);
+    Route::post('/skip/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logSkipBatch']);
+    Route::post('/error/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logErrorBatch']);
+});
         
         // Тестовый endpoint для проверки шаблонов импорта
         Route::get('/test-import-templates', function (Request $request) {
