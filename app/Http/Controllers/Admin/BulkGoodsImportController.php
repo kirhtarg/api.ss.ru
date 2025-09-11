@@ -45,8 +45,11 @@ class BulkGoodsImportController extends Controller
             $sku = isset($good['sku']) ? trim((string) $good['sku']) : '';
             $name = isset($good['name']) ? trim((string) $good['name']) : '';
             
+            // Получаем информацию о листе
+            $sheet = $good['_sheet'] ?? 'неизвестно';
+            
             // Создаем уникальный идентификатор для товара
-            $itemId = 'item_' . $index . '_' . substr(md5($sku . $name), 0, 8);
+            $itemId = $sheet . '_' . $index . '_' . substr(md5($sku . $name), 0, 8);
             
             // Пропускаем только полностью пустые строки (где И SKU И название пустые)
             if (empty($sku) && empty($name)) {
@@ -59,6 +62,7 @@ class BulkGoodsImportController extends Controller
                     'count' => $index + 1,
                     'sku' => $sku,
                     'name' => $name,
+                    'sheet' => $sheet,
                     'reason' => $reason
                 ];
                 
@@ -76,6 +80,7 @@ class BulkGoodsImportController extends Controller
                     'count' => $index + 1,
                     'sku' => $sku,
                     'name' => $name,
+                    'sheet' => $sheet,
                     'reason' => $reason
                 ];
                 continue;
@@ -87,18 +92,12 @@ class BulkGoodsImportController extends Controller
             $goods[] = $good;
             
             // Логируем валидный товар с уникальным ID
-            \Log::info("Валидный товар {$itemId}: SKU='{$sku}', Name='{$name}'");
+            \Log::info("Валидный товар {$itemId}: SKU='{$sku}', Name='{$name}', Лист='{$sheet}'");
         }
         
         // Логируем пропущенные строки
         if (!empty($skippedRows)) {
-            Log::info("BulkImport Debug - Логируем skippedRows:", [
-                'count' => count($skippedRows),
-                'first_skipped' => $skippedRows[0] ?? null
-            ]);
             $this->importLogService->logSkippedBatch($skippedRows);
-        } else {
-            Log::info("BulkImport Debug - Нет skippedRows");
         }
         
         // Валидируем только непустые товары
