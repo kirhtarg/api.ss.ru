@@ -34,19 +34,73 @@ class BulkGoodsImportController extends Controller
             $this->importLogService->clearAllLogs();
         }
         
-        // Нормализуем данные перед валидацией
-        $goods = $request->input('goods', []);
-        foreach ($goods as &$good) {
-            // Преобразуем sku и name в строки, если они не пустые
-            if (isset($good['sku'])) {
-                $good['sku'] = trim((string) $good['sku']);
+        // Получаем и фильтруем данные перед валидацией
+        $allGoods = $request->input('goods', []);
+        
+        // Фильтруем пустые строки - оставляем только товары с заполненными SKU и названием
+        $goods = [];
+        $skippedRows = [];
+        
+        foreach ($allGoods as $index => $good) {
+            $sku = isset($good['sku']) ? trim((string) $good['sku']) : '';
+            $name = isset($good['name']) ? trim((string) $good['name']) : '';
+            
+            // Пропускаем только полностью пустые строки (где И SKU И название пустые)
+            if (empty($sku) && empty($name)) {
+                $reason = 'Пустая строка';
+                
+                // Временное логирование для отладки
+                \Log::info("Пропущенная строка {$index}: SKU='{$sku}', Name='{$name}', Reason={$reason}");
+                
+                $skippedRows[] = [
+                    'count' => $index + 1,
+                    'sku' => $sku,
+                    'name' => $name,
+                    'sheet' => $good['_sheet'] ?? 'неизвестно',
+                    'reason' => $reason
+                ];
+                continue;
             }
-            if (isset($good['name'])) {
-                $good['name'] = trim((string) $good['name']);
+            
+            // Если отсутствует SKU или название, но не оба - это ошибка валидации
+            if (empty($sku) || empty($name)) {
+                $reason = 'Отсутствует ' . (empty($sku) ? 'SKU' : 'название');
+                
+                // Временное логирование для отладки
+                \Log::info("Ошибка валидации строка {$index}: SKU='{$sku}', Name='{$name}', Reason={$reason}");
+                
+                $skippedRows[] = [
+                    'count' => $index + 1,
+                    'sku' => $sku,
+                    'name' => $name,
+                    'sheet' => $good['_sheet'] ?? 'неизвестно',
+                    'reason' => $reason
+                ];
+                continue;
             }
+            
+            // Нормализуем данные для непустых товаров
+            $good['sku'] = $sku;
+            $good['name'] = $name;
+            $goods[] = $good;
+            
+            // Временное логирование для отладки
+            \Log::info("Валидный товар {$index}: SKU='{$sku}', Name='{$name}'");
         }
         
-        $validator = Validator::make($request->all(), [
+        // Логируем пропущенные строки
+        if (!empty($skippedRows)) {
+            $this->importLogService->logSkippedBatch($skippedRows);
+        }
+        
+        // Валидируем только непустые товары
+        $validator = Validator::make([
+            'goods' => $goods,
+            'duplicate_action' => $request->input('duplicate_action'),
+            'auto_create_categories' => $request->input('auto_create_categories'),
+            'auto_create_brands' => $request->input('auto_create_brands'),
+            'process_categories_and_brands' => $request->input('process_categories_and_brands'),
+        ], [
             'goods' => 'required|array',
             'goods.*.sku' => 'required|string|min:1',
             'goods.*.name' => 'required|string|min:1',
@@ -55,6 +109,25 @@ class BulkGoodsImportController extends Controller
             'auto_create_brands' => 'boolean',
             'process_categories_and_brands' => 'boolean',
         ]);
+
+        // Проверяем, есть ли товары для обработки после фильтрации
+        if (empty($goods)) {
+            $skippedCount = count($skippedRows);
+            return response()->json([
+                'success' => true,
+                'message' => "Нет товаров для импорта (все {$skippedCount} строк пустые или неполные)",
+                'results' => [
+                    'imported' => 0,
+                    'updated' => 0,
+                    'skipped' => $skippedCount,
+                    'failed' => 0,
+                    'errors' => [],
+                    'goodIds' => [],
+                    'newCategories' => [],
+                    'newBrands' => []
+                ]
+            ]);
+        }
 
         if ($validator->fails()) {
             // Логируем ошибки валидации с детальной информацией
@@ -100,7 +173,7 @@ class BulkGoodsImportController extends Controller
         $results = [
             'imported' => 0,
             'updated' => 0,
-            'skipped' => 0,
+            'skipped' => count($skippedRows), // Включаем пропущенные строки
             'failed' => 0,
             'errors' => [],
             'goodIds' => [],
@@ -133,23 +206,8 @@ class BulkGoodsImportController extends Controller
                 $name = $goodData['name'] ?? 'неизвестно';
                 
                 try {
-                    // Валидация обязательных полей
-                    if (empty($sku) || empty($name) || 
-                        (is_string($sku) && trim($sku) === '') || 
-                        (is_string($name) && trim($name) === '')) {
-                        
-                        $results['failed']++;
-                        $results['errors'][] = [
-                            'row' => $count,
-                            'sku' => $sku,
-                            'error' => 'Отсутствуют обязательные поля (SKU или название)'
-                        ];
-                        
-                        // Добавляем в группу для ошибок
-                        $sheet = $goodData['_sheet'] ?? 'неизвестно';
-                        $errorItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'error' => 'Отсутствуют обязательные поля (SKU или название)'];
-                        continue;
-                    }
+                    // Пустые строки уже отфильтрованы на этапе валидации
+                    // Здесь обрабатываем только валидные товары
                     
                     $existingGood = ShopGood::where('sku', $sku)->first();
 
