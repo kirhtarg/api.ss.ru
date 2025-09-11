@@ -26,10 +26,30 @@ class BulkGoodsImportController extends Controller
     
     public function bulkImport(Request $request)
     {
+        // Получаем информацию о батче для очистки логов
+        $isFirstBatch = $request->input('is_first_batch', false);
+        
+        // Очищаем логи для первого батча
+        if ($isFirstBatch) {
+            $this->importLogService->clearAllLogs();
+        }
+        
+        // Нормализуем данные перед валидацией
+        $goods = $request->input('goods', []);
+        foreach ($goods as &$good) {
+            // Преобразуем sku и name в строки, если они не пустые
+            if (isset($good['sku'])) {
+                $good['sku'] = trim((string) $good['sku']);
+            }
+            if (isset($good['name'])) {
+                $good['name'] = trim((string) $good['name']);
+            }
+        }
+        
         $validator = Validator::make($request->all(), [
             'goods' => 'required|array',
-            'goods.*.sku' => 'required|string',
-            'goods.*.name' => 'required|string',
+            'goods.*.sku' => 'required|string|min:1',
+            'goods.*.name' => 'required|string|min:1',
             'duplicate_action' => 'required|in:skip,update',
             'auto_create_categories' => 'boolean',
             'auto_create_brands' => 'boolean',
@@ -37,6 +57,22 @@ class BulkGoodsImportController extends Controller
         ]);
 
         if ($validator->fails()) {
+            // Логируем ошибки валидации с детальной информацией
+            $errors = $validator->errors();
+            $errorMessages = [];
+            foreach ($errors->all() as $error) {
+                $errorMessages[] = $error;
+            }
+            
+            // Логируем первые несколько товаров для диагностики
+            $firstGoods = array_slice($goods, 0, 3);
+            \Log::info('Validation failed - sample goods data:', [
+                'first_goods' => $firstGoods,
+                'validation_errors' => $errors->toArray()
+            ]);
+            
+            $this->importLogService->logGeneralError('Ошибка валидации: ' . implode('; ', $errorMessages));
+            
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
@@ -44,7 +80,6 @@ class BulkGoodsImportController extends Controller
             ], 422);
         }
 
-        $goods = $request->input('goods');
         $duplicateAction = $request->input('duplicate_action', 'skip');
         $autoCreateCategories = $request->input('auto_create_categories', false);
         $autoCreateBrands = $request->input('auto_create_brands', false);
@@ -52,13 +87,7 @@ class BulkGoodsImportController extends Controller
         
         // Получаем информацию о батче
         $batchNumber = $request->input('batch_number', 1);
-        $isFirstBatch = $request->input('is_first_batch', false);
         $totalBatches = $request->input('total_batches', 1);
-        
-        // Очищаем логи только для первого батча
-        if ($isFirstBatch) {
-            $this->importLogService->clearAllLogs();
-        }
         
 
         $results = [
@@ -179,7 +208,8 @@ class BulkGoodsImportController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
             
-            // Логирование происходит на фронтенде
+            // Логируем общую ошибку
+            $this->importLogService->logGeneralError('Общая ошибка импорта: ' . $e->getMessage());
             
             return response()->json([
                 'success' => false,

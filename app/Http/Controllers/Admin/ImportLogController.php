@@ -152,7 +152,13 @@ class ImportLogController extends Controller
         $name = $request->input('name');
         $error = $request->input('error');
         
-        $this->importLogService->logError($count, $sku, $name, $error);
+        // Если передана только строка ошибки (общая ошибка)
+        if ($error && !$count && !$sku && !$name) {
+            $this->importLogService->logGeneralError($error);
+        } else {
+            // Конкретная ошибка товара
+            $this->importLogService->logError($count, $sku, $name, $error);
+        }
         
         return response()->json(['success' => true]);
     }
