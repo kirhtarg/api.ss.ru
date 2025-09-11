@@ -274,19 +274,29 @@ class BulkGoodsImportController extends Controller
                 \Log::info('Added numeric brand ID', ['brand_id' => $brand]);
             } else {
                 // Это название бренда
-                $existingBrand = ShopBrand::where('name', $brand)->first();
+                $brandSlug = Str::slug($brand);
+                $existingBrand = ShopBrand::where('name', $brand)
+                    ->orWhere('slug', $brandSlug)
+                    ->first();
                 
                 if ($existingBrand) {
                     $brandIds[] = $existingBrand->id;
                     \Log::info('Found existing brand', ['brand_name' => $brand, 'brand_id' => $existingBrand->id]);
                 } elseif ($autoCreate) {
-                    $newBrand = ShopBrand::create([
-                        'name' => $brand,
-                        'slug' => Str::slug($brand),
-                        'is_active' => true
-                    ]);
-                    $brandIds[] = $newBrand->id;
-                    \Log::info('Created new brand', ['brand_name' => $brand, 'brand_id' => $newBrand->id]);
+                    // Проверяем, не существует ли уже бренд с таким slug
+                    $existingBrandBySlug = ShopBrand::where('slug', $brandSlug)->first();
+                    if ($existingBrandBySlug) {
+                        $brandIds[] = $existingBrandBySlug->id;
+                        \Log::info('Found existing brand by slug', ['brand_name' => $brand, 'slug' => $brandSlug, 'brand_id' => $existingBrandBySlug->id]);
+                    } else {
+                        $newBrand = ShopBrand::create([
+                            'name' => $brand,
+                            'slug' => $brandSlug,
+                            'is_active' => true
+                        ]);
+                        $brandIds[] = $newBrand->id;
+                        \Log::info('Created new brand', ['brand_name' => $brand, 'brand_id' => $newBrand->id]);
+                    }
                 } else {
                     \Log::warning('Brand not found and autoCreate disabled', ['brand_name' => $brand]);
                 }
@@ -471,34 +481,52 @@ class BulkGoodsImportController extends Controller
      */
     private function processBrandsBatch($allBrands, $autoCreate)
     {
-        // Загружаем существующие бренды
-        $existingBrands = ShopBrand::whereIn('name', $allBrands->toArray())
-            ->get()
-            ->keyBy(function($item) {
-                return strtolower($item->name);
-            });
+        // Загружаем существующие бренды по имени и slug
+        $existingBrands = ShopBrand::where(function($query) use ($allBrands) {
+            $query->whereIn('name', $allBrands->toArray())
+                  ->orWhereIn('slug', $allBrands->map(function($name) {
+                      return Str::slug($name);
+                  })->toArray());
+        })->get();
 
-        $brandMap = $existingBrands->mapWithKeys(function($item) {
-            return [strtolower($item->name) => $item->id];
-        });
+        $brandMap = collect();
+        
+        // Создаем карту по имени и slug
+        foreach ($existingBrands as $brand) {
+            $brandMap[strtolower($brand->name)] = $brand->id;
+            $brandMap[strtolower($brand->slug)] = $brand->id;
+        }
 
         // Создаем недостающие бренды
         $createdBrands = [];
         if ($autoCreate) {
             $brandsToCreate = $allBrands->filter(function($name) use ($brandMap) {
-                return !$brandMap->has(strtolower($name));
+                $nameLower = strtolower($name);
+                $slugLower = strtolower(Str::slug($name));
+                return !$brandMap->has($nameLower) && !$brandMap->has($slugLower);
             });
 
             \Log::info('Creating brands batch', ['brands_to_create' => $brandsToCreate->toArray()]);
 
             foreach ($brandsToCreate as $brandName) {
+                $brandSlug = Str::slug($brandName);
+                
+                // Дополнительная проверка на случай, если slug уже существует
+                $existingBrandBySlug = ShopBrand::where('slug', $brandSlug)->first();
+                if ($existingBrandBySlug) {
+                    $brandMap[strtolower($brandName)] = $existingBrandBySlug->id;
+                    \Log::info('Found existing brand by slug during batch', ['brand_name' => $brandName, 'slug' => $brandSlug, 'brand_id' => $existingBrandBySlug->id]);
+                    continue;
+                }
+
                 $brand = ShopBrand::create([
                     'name' => $brandName,
-                    'slug' => Str::slug($brandName),
+                    'slug' => $brandSlug,
                     'is_active' => true
                 ]);
 
                 $brandMap[strtolower($brandName)] = $brand->id;
+                $brandMap[strtolower($brandSlug)] = $brand->id;
                 $createdBrands[] = $brand->id;
                 \Log::info('Created brand', ['brand_name' => $brandName, 'brand_id' => $brand->id]);
             }
