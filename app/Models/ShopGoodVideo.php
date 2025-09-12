@@ -16,11 +16,12 @@ class ShopGoodVideo extends Model
         'video_path',
         'external_url',
         'title',
-        'thumbnail'
+        'thumbnail',
+        'sort_order'
     ];
 
     protected $casts = [
-        // Базовые поля для кастинга
+        'sort_order' => 'integer'
     ];
 
     protected $appends = [
@@ -50,7 +51,7 @@ class ShopGoodVideo extends Model
      */
     public function scopeOrdered($query)
     {
-        return $query->orderBy('id');
+        return $query->orderBy('sort_order')->orderBy('id');
     }
 
 

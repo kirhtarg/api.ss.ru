@@ -83,7 +83,7 @@ class ShopGoodImageController extends Controller
 
             foreach ($request->file('images') as $file) {
                 $filename = Str::uuid() . '.' . $file->getClientOriginalExtension();
-                $path = 'shop/goods/' . $good->id . '/' . $filename;
+                $path = 'images/shop/goods/' . $good->id . '/' . $filename;
 
                 // Обрабатываем изображение в зависимости от типа
                 $processedImage = $this->processImage($file, $uploadType, $systemWidth, $systemHeight, $customWidth, $customHeight);

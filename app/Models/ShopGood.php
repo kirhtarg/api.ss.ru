@@ -118,7 +118,7 @@ class ShopGood extends Model
      */
     public function images(): HasMany
     {
-        return $this->hasMany(ShopGoodImage::class, 'good_id');
+        return $this->hasMany(ShopGoodImage::class, 'good_id')->ordered();
     }
 
     /**

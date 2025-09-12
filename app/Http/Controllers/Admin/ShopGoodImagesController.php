@@ -60,7 +60,7 @@ class ShopGoodImagesController extends Controller
 
         try {
             $image = $request->file('image');
-            $path = $image->store('shop/goods', 'public');
+            $path = $image->store("images/shop/goods/{$goodId}", 'public');
 
             $imageData = [
                 'good_id' => $goodId,

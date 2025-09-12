@@ -130,6 +130,10 @@ class ShopGoodVideosController extends Controller
                 $videoData['thumbnail'] = $thumbnail->store('shop/videos/thumbnails', 'public');
             }
 
+            // Устанавливаем sort_order (следующий номер после последнего видео)
+            $lastVideo = ShopGoodVideo::where('good_id', $goodId)->orderBy('sort_order', 'desc')->first();
+            $videoData['sort_order'] = $lastVideo ? $lastVideo->sort_order + 1 : 1;
+            
             Log::info('Creating video record', $videoData);
             
             // Проверяем, что все необходимые поля заполнены
