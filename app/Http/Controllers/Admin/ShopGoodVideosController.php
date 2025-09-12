@@ -38,6 +38,36 @@ class ShopGoodVideosController extends Controller
     }
 
     /**
+     * Получить все видео товара с группировкой по вариациям
+     */
+    public function getAllWithVariations(Request $request, $goodId): JsonResponse
+    {
+        $good = ShopGood::findOrFail($goodId);
+        
+        // Получаем все видео товара (где good_id = $goodId И variation_id = null)
+        $goodVideos = ShopGoodVideo::where('good_id', $goodId)
+            ->whereNull('variation_id')
+            ->ordered()
+            ->get();
+        
+        // Получаем все видео вариаций этого товара (где good_id = null И variation_id принадлежит вариациям товара)
+        $variationIds = ShopGoodVariation::where('good_id', $goodId)->pluck('id');
+        $variationVideos = ShopGoodVideo::whereIn('variation_id', $variationIds)
+            ->whereNull('good_id')
+            ->ordered()
+            ->get()
+            ->groupBy('variation_id');
+        
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'good' => $goodVideos,
+                'variations' => $variationVideos
+            ]
+        ]);
+    }
+
+    /**
      * Загрузить видео
      */
     public function store(Request $request, $goodId): JsonResponse
@@ -101,15 +131,20 @@ class ShopGoodVideosController extends Controller
 
         try {
             $videoData = [
-                'good_id' => $goodId,
                 'title' => $request->get('title') ?: null
             ];
 
-
+            // Определяем, для товара или вариации создаем видео
             if ($request->filled('variation_id') && $request->get('variation_id') !== null) {
+                // Для вариации: good_id = null, variation_id = ID вариации
                 $variation = ShopGoodVariation::where('good_id', $goodId)
                     ->findOrFail($request->get('variation_id'));
                 $videoData['variation_id'] = $variation->id;
+                $videoData['good_id'] = null;
+            } else {
+                // Для товара: good_id = ID товара, variation_id = null
+                $videoData['good_id'] = $goodId;
+                $videoData['variation_id'] = null;
             }
 
             // Загрузка файла видео
@@ -131,7 +166,16 @@ class ShopGoodVideosController extends Controller
             }
 
             // Устанавливаем sort_order (следующий номер после последнего видео)
-            $lastVideo = ShopGoodVideo::where('good_id', $goodId)->orderBy('sort_order', 'desc')->first();
+            if ($videoData['variation_id']) {
+                // Для вариации
+                $lastVideo = ShopGoodVideo::where('variation_id', $videoData['variation_id'])
+                    ->orderBy('sort_order', 'desc')->first();
+            } else {
+                // Для товара
+                $lastVideo = ShopGoodVideo::where('good_id', $goodId)
+                    ->whereNull('variation_id')
+                    ->orderBy('sort_order', 'desc')->first();
+            }
             $videoData['sort_order'] = $lastVideo ? $lastVideo->sort_order + 1 : 1;
             
             Log::info('Creating video record', $videoData);
@@ -176,7 +220,18 @@ class ShopGoodVideosController extends Controller
      */
     public function update(Request $request, $goodId, $videoId): JsonResponse
     {
-        $video = ShopGoodVideo::where('good_id', $goodId)->findOrFail($videoId);
+        // Определяем, для товара или вариации обновляем видео
+        if ($request->filled('variation_id')) {
+            // Для вариации: ищем видео по variation_id
+            $video = ShopGoodVideo::where('variation_id', $request->get('variation_id'))
+                ->whereNull('good_id')
+                ->findOrFail($videoId);
+        } else {
+            // Для товара: ищем видео по good_id
+            $video = ShopGoodVideo::where('good_id', $goodId)
+                ->whereNull('variation_id')
+                ->findOrFail($videoId);
+        }
 
         $validator = Validator::make($request->all(), [
             'title' => 'nullable|string|max:255',
@@ -203,9 +258,20 @@ class ShopGoodVideosController extends Controller
     /**
      * Удалить видео
      */
-    public function destroy($goodId, $videoId): JsonResponse
+    public function destroy(Request $request, $goodId, $videoId): JsonResponse
     {
-        $video = ShopGoodVideo::where('good_id', $goodId)->findOrFail($videoId);
+        // Определяем, для товара или вариации удаляем видео
+        if ($request->filled('variation_id')) {
+            // Для вариации: ищем видео по variation_id
+            $video = ShopGoodVideo::where('variation_id', $request->get('variation_id'))
+                ->whereNull('good_id')
+                ->findOrFail($videoId);
+        } else {
+            // Для товара: ищем видео по good_id
+            $video = ShopGoodVideo::where('good_id', $goodId)
+                ->whereNull('variation_id')
+                ->findOrFail($videoId);
+        }
 
         try {
             // Удаляем файлы
@@ -235,15 +301,34 @@ class ShopGoodVideosController extends Controller
     /**
      * Установить главное видео
      */
-    public function setMain($goodId, $videoId): JsonResponse
+    public function setMain(Request $request, $goodId, $videoId): JsonResponse
     {
-        $video = ShopGoodVideo::where('good_id', $goodId)->findOrFail($videoId);
+        // Определяем, для товара или вариации устанавливаем главное видео
+        if ($request->filled('variation_id')) {
+            // Для вариации: ищем видео по variation_id
+            $video = ShopGoodVideo::where('variation_id', $request->get('variation_id'))
+                ->whereNull('good_id')
+                ->findOrFail($videoId);
+        } else {
+            // Для товара: ищем видео по good_id
+            $video = ShopGoodVideo::where('good_id', $goodId)
+                ->whereNull('variation_id')
+                ->findOrFail($videoId);
+        }
 
-        // Снимаем флаг с других видео
-        ShopGoodVideo::where('good_id', $goodId)
-            ->where('id', '!=', $video->id)
-            ->where('variation_id', $video->variation_id)
-            ->update(['is_main' => false]);
+        // Снимаем флаг с других видео того же типа (товар или вариация)
+        if ($video->variation_id) {
+            // Для вариации: снимаем флаг с других видео этой вариации
+            ShopGoodVideo::where('variation_id', $video->variation_id)
+                ->where('id', '!=', $video->id)
+                ->update(['is_main' => false]);
+        } else {
+            // Для товара: снимаем флаг с других видео товара (где variation_id = null)
+            ShopGoodVideo::where('good_id', $goodId)
+                ->whereNull('variation_id')
+                ->where('id', '!=', $video->id)
+                ->update(['is_main' => false]);
+        }
 
         // Устанавливаем флаг для выбранного видео
         $video->update(['is_main' => true]);

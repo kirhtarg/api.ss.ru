@@ -239,7 +239,7 @@ class SettingController extends Controller
             }
 
             $validator = Validator::make($request->all(), [
-                'image' => 'required|image|mimes:jpeg,png,jpg,gif,webp|max:5120', // 5MB максимум
+                'image' => 'required|image|mimes:jpeg,png,jpg,gif,webp|max:51200', // 50MB максимум
                 'width' => 'nullable|integer|min:1',
                 'height' => 'nullable|integer|min:1'
             ]);

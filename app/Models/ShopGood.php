@@ -114,17 +114,35 @@ class ShopGood extends Model
     }
 
     /**
-     * Изображения товара
+     * Изображения товара (только товара, без вариаций)
      */
     public function images(): HasMany
+    {
+        return $this->hasMany(ShopGoodImage::class, 'good_id')
+            ->whereNull('variation_id')
+            ->ordered();
+    }
+
+    /**
+     * Все изображения (товара + вариаций)
+     */
+    public function allImages(): HasMany
     {
         return $this->hasMany(ShopGoodImage::class, 'good_id')->ordered();
     }
 
     /**
-     * Видео товара
+     * Видео товара (только для товара, не для вариаций)
      */
     public function videos(): HasMany
+    {
+        return $this->hasMany(ShopGoodVideo::class, 'good_id')->whereNull('variation_id');
+    }
+
+    /**
+     * Все видео товара (включая вариации)
+     */
+    public function allVideos(): HasMany
     {
         return $this->hasMany(ShopGoodVideo::class, 'good_id');
     }

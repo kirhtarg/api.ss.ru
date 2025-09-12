@@ -64,9 +64,8 @@ class ShopGoodVariationsController extends Controller
         try {
             DB::beginTransaction();
 
-            // Генерируем уникальный SKU для вариации
-            $baseSku = $request->get('sku') ?: $good->sku;
-            $variationSku = $this->generateUniqueSku($baseSku, $goodId);
+            // Используем артикул родительского товара без добавлений
+            $variationSku = $request->get('sku') ?: $good->sku;
 
             // Создаем вариацию
             $variation = ShopGoodVariation::create([
@@ -154,8 +153,8 @@ class ShopGoodVariationsController extends Controller
                     }
                     $variationName = implode(', ', $nameParts);
 
-                    // Генерируем уникальный SKU для вариации
-                    $variationSku = $this->generateUniqueSku($good->sku . '-' . $nextSortOrder, $goodId);
+                    // Используем артикул родительского товара без добавлений
+                    $variationSku = $good->sku;
 
                     // Создаем вариацию
                     $variation = ShopGoodVariation::create([
@@ -538,20 +537,4 @@ class ShopGoodVariationsController extends Controller
         return true;
     }
 
-    /**
-     * Генерировать уникальный SKU для вариации
-     */
-    private function generateUniqueSku($baseSku, $goodId)
-    {
-        $counter = 1;
-        $originalSku = $baseSku;
-        
-        do {
-            $testSku = $originalSku . '-' . $counter;
-            $exists = ShopGoodVariation::where('sku', $testSku)->exists();
-            $counter++;
-        } while ($exists);
-        
-        return $testSku;
-    }
 }

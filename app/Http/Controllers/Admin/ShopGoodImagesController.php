@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Log;
 
 class ShopGoodImagesController extends Controller
 {
@@ -20,18 +21,81 @@ class ShopGoodImagesController extends Controller
     {
         $good = ShopGood::findOrFail($goodId);
         
-        $query = $good->images();
-        
         // Фильтр по вариации
         if ($request->filled('variation_id')) {
-            $query->where('variation_id', $request->get('variation_id'));
+            // Для вариаций: good_id = null, variation_id = ID вариации
+            $variationId = $request->get('variation_id');
+            $images = ShopGoodImage::whereNull('good_id')
+                ->where('variation_id', $variationId)
+                ->ordered()
+                ->get();
+            
+            Log::info('Loading variation images', [
+                'good_id' => $goodId,
+                'variation_id' => $variationId,
+                'images_count' => $images->count(),
+                'images' => $images->map(fn($img) => [
+                    'id' => $img->id,
+                    'good_id' => $img->good_id,
+                    'variation_id' => $img->variation_id,
+                    'file_path' => $img->file_path
+                ])
+            ]);
+        } else {
+            // Для товаров: good_id = ID товара, variation_id = null
+            $images = ShopGoodImage::where('good_id', $goodId)
+                ->whereNull('variation_id')
+                ->ordered()
+                ->get();
+            
+            Log::info('Loading product images', [
+                'good_id' => $goodId,
+                'images_count' => $images->count()
+            ]);
         }
-
-        $images = $query->ordered()->get();
 
         return response()->json([
             'success' => true,
             'data' => $images
+        ]);
+    }
+
+    /**
+     * Получить все изображения товара с группировкой по вариациям
+     */
+    public function getAllWithVariations(Request $request, $goodId): JsonResponse
+    {
+        $good = ShopGood::findOrFail($goodId);
+        
+        // Получаем изображения товара (good_id = $goodId, variation_id = null)
+        $goodImages = ShopGoodImage::where('good_id', $goodId)
+            ->whereNull('variation_id')
+            ->ordered()
+            ->get();
+        
+        // Получаем изображения всех вариаций этого товара (good_id = null, variation_id IN (...))
+        $variationIds = $good->variations()->pluck('id');
+        $variationImages = ShopGoodImage::whereNull('good_id')
+            ->whereIn('variation_id', $variationIds)
+            ->ordered()
+            ->get();
+        
+        // Группируем изображения по вариациям
+        $groupedImages = [
+            'good' => $goodImages, // Изображения товара
+            'variations' => [] // Изображения вариаций
+        ];
+        
+        foreach ($variationImages as $image) {
+            if (!isset($groupedImages['variations'][$image->variation_id])) {
+                $groupedImages['variations'][$image->variation_id] = [];
+            }
+            $groupedImages['variations'][$image->variation_id][] = $image;
+        }
+        
+        return response()->json([
+            'success' => true,
+            'data' => $groupedImages
         ]);
     }
 
@@ -43,7 +107,7 @@ class ShopGoodImagesController extends Controller
         $good = ShopGood::findOrFail($goodId);
 
         $validator = Validator::make($request->all(), [
-            'image' => 'required|image|mimes:jpeg,png,jpg,gif,webp|max:10240', // 10MB
+            'image' => 'required|image|mimes:jpeg,png,jpg,gif,webp|max:51200', // 50MB
             'variation_id' => 'nullable|exists:shop_good_variations,id',
             'alt_text' => 'nullable|string|max:255',
             'is_main' => 'boolean',
@@ -63,27 +127,50 @@ class ShopGoodImagesController extends Controller
             $path = $image->store("images/shop/goods/{$goodId}", 'public');
 
             $imageData = [
-                'good_id' => $goodId,
                 'file_path' => $path,
                 'alt_text' => $request->get('alt_text'),
                 'is_main' => $request->boolean('is_main', false),
                 'sort_order' => $request->get('sort_order', 0)
             ];
 
+            // Отладочная информация
+            \Log::info('Image upload debug', [
+                'good_id' => $goodId,
+                'variation_id' => $request->get('variation_id'),
+                'has_variation_id' => $request->filled('variation_id'),
+                'all_request_data' => $request->all()
+            ]);
+
             if ($request->filled('variation_id')) {
+                // Для вариаций: good_id = null, variation_id = ID вариации
                 $variation = ShopGoodVariation::where('good_id', $goodId)
                     ->findOrFail($request->get('variation_id'));
                 $imageData['variation_id'] = $variation->id;
+                $imageData['good_id'] = null; // Для вариаций good_id = null
+                \Log::info('Creating variation image', $imageData);
+            } else {
+                // Для товаров: good_id = ID товара, variation_id = null
+                $imageData['good_id'] = $goodId;
+                $imageData['variation_id'] = null;
+                \Log::info('Creating good image', $imageData);
             }
 
             $goodImage = ShopGoodImage::create($imageData);
 
             // Если это главное изображение, снимаем флаг с других
             if ($goodImage->is_main) {
-                ShopGoodImage::where('good_id', $goodId)
-                    ->where('id', '!=', $goodImage->id)
-                    ->where('variation_id', $goodImage->variation_id)
-                    ->update(['is_main' => false]);
+                if ($goodImage->variation_id) {
+                    // Для вариаций: снимаем флаг с других изображений этой вариации
+                    ShopGoodImage::where('variation_id', $goodImage->variation_id)
+                        ->where('id', '!=', $goodImage->id)
+                        ->update(['is_main' => false]);
+                } else {
+                    // Для товаров: снимаем флаг с других изображений этого товара
+                    ShopGoodImage::where('good_id', $goodId)
+                        ->where('id', '!=', $goodImage->id)
+                        ->whereNull('variation_id')
+                        ->update(['is_main' => false]);
+                }
             }
 
             return response()->json([
@@ -105,7 +192,8 @@ class ShopGoodImagesController extends Controller
      */
     public function update(Request $request, $goodId, $imageId): JsonResponse
     {
-        $image = ShopGoodImage::where('good_id', $goodId)->findOrFail($imageId);
+        // Ищем изображение по ID (может быть как товар, так и вариация)
+        $image = ShopGoodImage::findOrFail($imageId);
 
         $validator = Validator::make($request->all(), [
             'alt_text' => 'nullable|string|max:255',
@@ -125,10 +213,18 @@ class ShopGoodImagesController extends Controller
 
         // Если это главное изображение, снимаем флаг с других
         if ($image->is_main) {
-            ShopGoodImage::where('good_id', $goodId)
-                ->where('id', '!=', $image->id)
-                ->where('variation_id', $image->variation_id)
-                ->update(['is_main' => false]);
+            if ($image->variation_id) {
+                // Для вариаций: снимаем флаг с других изображений этой вариации
+                ShopGoodImage::where('variation_id', $image->variation_id)
+                    ->where('id', '!=', $image->id)
+                    ->update(['is_main' => false]);
+            } else {
+                // Для товаров: снимаем флаг с других изображений этого товара
+                ShopGoodImage::where('good_id', $goodId)
+                    ->where('id', '!=', $image->id)
+                    ->whereNull('variation_id')
+                    ->update(['is_main' => false]);
+            }
         }
 
         return response()->json([
@@ -143,7 +239,8 @@ class ShopGoodImagesController extends Controller
      */
     public function destroy($goodId, $imageId): JsonResponse
     {
-        $image = ShopGoodImage::where('good_id', $goodId)->findOrFail($imageId);
+        // Ищем изображение по ID (может быть как товар, так и вариация)
+        $image = ShopGoodImage::findOrFail($imageId);
 
         try {
             // Удаляем файл
@@ -171,13 +268,22 @@ class ShopGoodImagesController extends Controller
      */
     public function setMain($goodId, $imageId): JsonResponse
     {
-        $image = ShopGoodImage::where('good_id', $goodId)->findOrFail($imageId);
+        // Ищем изображение по ID (может быть как товар, так и вариация)
+        $image = ShopGoodImage::findOrFail($imageId);
 
         // Снимаем флаг с других изображений
-        ShopGoodImage::where('good_id', $goodId)
-            ->where('id', '!=', $image->id)
-            ->where('variation_id', $image->variation_id)
-            ->update(['is_main' => false]);
+        if ($image->variation_id) {
+            // Для вариаций: снимаем флаг с других изображений этой вариации
+            ShopGoodImage::where('variation_id', $image->variation_id)
+                ->where('id', '!=', $image->id)
+                ->update(['is_main' => false]);
+        } else {
+            // Для товаров: снимаем флаг с других изображений этого товара
+            ShopGoodImage::where('good_id', $goodId)
+                ->where('id', '!=', $image->id)
+                ->whereNull('variation_id')
+                ->update(['is_main' => false]);
+        }
 
         // Устанавливаем флаг для выбранного изображения
         $image->update(['is_main' => true]);
@@ -189,14 +295,14 @@ class ShopGoodImagesController extends Controller
     }
 
     /**
-     * Изменить порядок изображений
+     * Изменить порядок изображений товара
      */
     public function reorder(Request $request, $goodId): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'images' => 'required|array',
-            'images.*.id' => 'required|exists:shop_good_images,id',
-            'images.*.sort_order' => 'required|integer'
+            'order' => 'required|array',
+            'order.*.id' => 'required|exists:shop_good_images,id',
+            'order.*.sort_order' => 'required|integer'
         ]);
 
         if ($validator->fails()) {
@@ -207,8 +313,10 @@ class ShopGoodImagesController extends Controller
             ], 422);
         }
 
-        foreach ($request->get('images') as $imageData) {
+        // Для товаров: good_id = ID товара, variation_id = null
+        foreach ($request->get('order') as $imageData) {
             ShopGoodImage::where('good_id', $goodId)
+                ->whereNull('variation_id')
                 ->where('id', $imageData['id'])
                 ->update(['sort_order' => $imageData['sort_order']]);
         }
@@ -216,6 +324,39 @@ class ShopGoodImagesController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Порядок изображений обновлен'
+        ]);
+    }
+
+    /**
+     * Изменить порядок изображений вариации
+     */
+    public function reorderVariation(Request $request, $variationId): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'order' => 'required|array',
+            'order.*.id' => 'required|exists:shop_good_images,id',
+            'order.*.sort_order' => 'required|integer'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        // Для вариаций: good_id = null, variation_id = ID вариации
+        foreach ($request->get('order') as $imageData) {
+            ShopGoodImage::whereNull('good_id')
+                ->where('variation_id', $variationId)
+                ->where('id', $imageData['id'])
+                ->update(['sort_order' => $imageData['sort_order']]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Порядок изображений вариации обновлен'
         ]);
     }
 

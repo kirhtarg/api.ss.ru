@@ -613,6 +613,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 // Видео товаров
                 Route::prefix('{goodId}/videos')->group(function () {
                     Route::get('/', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'index']);
+                    Route::get('/all', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'getAllWithVariations']);
                     Route::post('/', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'store']);
                     Route::put('/{videoId}', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'update']);
                     Route::delete('/{videoId}', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'destroy']);
@@ -623,6 +624,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 // Изображения товаров
                 Route::prefix('{goodId}/images')->group(function () {
                     Route::get('/', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'index']);
+                    Route::get('/all', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'getAllWithVariations']);
                     Route::post('/', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'store']);
                     Route::put('/{imageId}', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'update']);
                     Route::delete('/{imageId}', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'destroy']);
@@ -643,6 +645,11 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::put('/{videoId}/main', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'setMain']);
                     Route::post('/reorder', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'reorder']);
                 });
+            });
+            
+            // Изображения вариаций
+            Route::prefix('variations/{variationId}/images')->group(function () {
+                Route::post('/reorder', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'reorderVariation']);
             });
             
             // Свойства товаров

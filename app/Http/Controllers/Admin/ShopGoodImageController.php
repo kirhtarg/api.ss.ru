@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\ShopGood;
 use App\Models\ShopGoodImage;
+use App\Models\ShopGoodVariation;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Storage;
@@ -44,10 +45,11 @@ class ShopGoodImageController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'images' => 'required|array|max:10',
-            'images.*' => 'required|image|mimes:jpeg,png,jpg,gif,webp|max:10240', // 10MB max
+            'images.*' => 'required|image|mimes:jpeg,png,jpg,gif,webp|max:51200', // 50MB max
             'upload_type' => 'required|in:original,system_crop,system_fit,custom_fit',
             'custom_width' => 'required_if:upload_type,custom_fit|integer|min:1|max:4000',
-            'custom_height' => 'required_if:upload_type,custom_fit|integer|min:1|max:4000'
+            'custom_height' => 'required_if:upload_type,custom_fit|integer|min:1|max:4000',
+            'variation_id' => 'nullable|exists:shop_good_variations,id'
         ]);
 
         if ($validator->fails()) {
@@ -91,17 +93,45 @@ class ShopGoodImageController extends Controller
                 // Сохраняем файл
                 Storage::disk('public')->put($path, $processedImage);
 
-                // Получаем следующий порядок сортировки
-                $nextSortOrder = $good->images()->max('sort_order') + 1;
-
-                // Создаем запись в базе данных
-                $image = ShopGoodImage::create([
-                    'good_id' => $good->id,
+                // Определяем параметры для создания изображения
+                $imageData = [
                     'file_path' => $path,
                     'alt_text' => $file->getClientOriginalName(),
-                    'is_main' => $good->images()->count() === 0, // Первое изображение становится главным
-                    'sort_order' => $nextSortOrder
-                ]);
+                    'sort_order' => 0
+                ];
+
+                if ($request->filled('variation_id')) {
+                    // Для вариаций: good_id = null, variation_id = ID вариации
+                    $variation = ShopGoodVariation::where('good_id', $good->id)
+                        ->findOrFail($request->get('variation_id'));
+                    $imageData['variation_id'] = $variation->id;
+                    $imageData['good_id'] = null;
+                    
+                    // Получаем следующий порядок сортировки для вариации
+                    $nextSortOrder = ShopGoodImage::where('variation_id', $variation->id)
+                        ->whereNull('good_id')
+                        ->max('sort_order') + 1;
+                    $imageData['sort_order'] = $nextSortOrder;
+                    
+                    // Первое изображение вариации становится главным
+                    $imageData['is_main'] = ShopGoodImage::where('variation_id', $variation->id)
+                        ->whereNull('good_id')
+                        ->count() === 0;
+                } else {
+                    // Для товаров: good_id = ID товара, variation_id = null
+                    $imageData['good_id'] = $good->id;
+                    $imageData['variation_id'] = null;
+                    
+                    // Получаем следующий порядок сортировки для товара
+                    $nextSortOrder = $good->images()->max('sort_order') + 1;
+                    $imageData['sort_order'] = $nextSortOrder;
+                    
+                    // Первое изображение товара становится главным
+                    $imageData['is_main'] = $good->images()->count() === 0;
+                }
+
+                // Создаем запись в базе данных
+                $image = ShopGoodImage::create($imageData);
 
                 $uploadedImages[] = $image;
             }
@@ -131,8 +161,19 @@ class ShopGoodImageController extends Controller
         try {
             DB::beginTransaction();
 
-            // Сбрасываем все изображения товара
-            $good->images()->update(['is_main' => false]);
+            // Определяем, с какими изображениями работать
+            if ($image->variation_id) {
+                // Для вариаций: сбрасываем флаг с других изображений этой вариации
+                ShopGoodImage::where('variation_id', $image->variation_id)
+                    ->where('id', '!=', $image->id)
+                    ->update(['is_main' => false]);
+            } else {
+                // Для товаров: сбрасываем флаг с других изображений этого товара
+                ShopGoodImage::where('good_id', $good->id)
+                    ->whereNull('variation_id')
+                    ->where('id', '!=', $image->id)
+                    ->update(['is_main' => false]);
+            }
 
             // Устанавливаем выбранное как главное
             $image->update(['is_main' => true]);
