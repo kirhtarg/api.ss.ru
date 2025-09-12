@@ -18,6 +18,7 @@ class ShopGoodVariation extends Model
         'sku',
         'price',
         'sale_price',
+        'stock_quantity',
         'weight',
         'length',
         'height',
@@ -29,6 +30,7 @@ class ShopGoodVariation extends Model
     protected $casts = [
         'price' => 'decimal:2',
         'sale_price' => 'decimal:2',
+        'stock_quantity' => 'integer',
         'weight' => 'decimal:2',
         'length' => 'decimal:2',
         'height' => 'decimal:2',

@@ -214,6 +214,7 @@ class ShopGoodVariationsController extends Controller
             'sku' => 'nullable|string|max:255',
             'price' => 'required|numeric|min:0',
             'sale_price' => 'nullable|numeric|min:0',
+            'stock_quantity' => 'nullable|integer|min:0',
             'weight' => 'nullable|numeric|min:0',
             'depth' => 'nullable|numeric|min:0',
             'height' => 'nullable|numeric|min:0',
@@ -230,7 +231,7 @@ class ShopGoodVariationsController extends Controller
         }
 
         $variation->update($request->only([
-            'name', 'sku', 'price', 'sale_price', 'weight', 
+            'name', 'sku', 'price', 'sale_price', 'stock_quantity', 'weight', 
             'depth', 'height', 'width', 'is_active'
         ]));
 
