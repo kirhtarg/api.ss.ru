@@ -110,7 +110,7 @@ class ShopGood extends Model
      */
     public function variations(): HasMany
     {
-        return $this->hasMany(ShopGoodVariation::class, 'good_id');
+        return $this->hasMany(ShopGoodVariation::class, 'good_id')->ordered();
     }
 
     /**
@@ -128,6 +128,7 @@ class ShopGood extends Model
     {
         return $this->hasMany(ShopGoodVideo::class, 'good_id');
     }
+
 
     /**
      * Остатки товара

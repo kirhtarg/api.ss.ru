@@ -601,8 +601,13 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::get('/attributes', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'attributes']);
                     Route::get('/{variationId}', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'show']);
                     Route::post('/', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'store']);
+                    Route::post('/bulk', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'storeBulk']);
+                    Route::post('/check-duplicate', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'checkDuplicate']);
+                    Route::post('/add-property', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'addProperty']);
+                    Route::post('/remove-property', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'removeProperty']);
                     Route::put('/{variationId}', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'update']);
                     Route::delete('/{variationId}', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'destroy']);
+                    Route::post('/reorder', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'reorder']);
                 });
                 
                 // Видео товаров
@@ -647,6 +652,14 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('/{property}/values', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'getValues']);
                 Route::put('/{property}', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'update']);
                 Route::delete('/{property}', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'destroy']);
+                
+                // Значения свойств
+                Route::prefix('{propertyId}/values')->group(function () {
+                    Route::get('/', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'index']);
+                    Route::post('/', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'store']);
+                    Route::put('/{valueId}', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'update']);
+                    Route::delete('/{valueId}', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'destroy']);
+                });
             });
             
             // Бренды

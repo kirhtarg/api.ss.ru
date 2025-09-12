@@ -14,21 +14,35 @@ class ShopGoodProperty extends Model
 
     protected $fillable = [
         'good_id',
+        'variation_id',
         'property_id',
         'value'
     ];
 
     protected $casts = [
         'good_id' => 'integer',
+        'variation_id' => 'integer',
         'property_id' => 'integer'
     ];
 
+    protected $nullable = [
+        'good_id'
+    ];
+
     /**
-     * Товар
+     * Товар (может быть null для вариаций)
      */
     public function good(): BelongsTo
     {
         return $this->belongsTo(ShopGood::class, 'good_id');
+    }
+
+    /**
+     * Вариация товара
+     */
+    public function variation(): BelongsTo
+    {
+        return $this->belongsTo(ShopGoodVariation::class, 'variation_id');
     }
 
     /**

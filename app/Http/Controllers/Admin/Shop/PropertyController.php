@@ -114,7 +114,7 @@ class PropertyController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $values
+                'values' => $values
             ]);
         } catch (\Exception $e) {
             return response()->json([

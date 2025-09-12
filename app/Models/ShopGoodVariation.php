@@ -15,28 +15,26 @@ class ShopGoodVariation extends Model
     protected $fillable = [
         'good_id',
         'name',
-        'description',
-        'short_description',
+        'sku',
         'price',
         'sale_price',
-        'stock_quantity',
-        'width',
-        'height',
-        'depth',
         'weight',
-        'sku',
-        'is_active'
+        'length',
+        'height',
+        'width',
+        'is_active',
+        'sort_order'
     ];
 
     protected $casts = [
         'price' => 'decimal:2',
         'sale_price' => 'decimal:2',
-        'stock_quantity' => 'integer',
-        'width' => 'decimal:2',
-        'height' => 'decimal:2',
-        'depth' => 'decimal:2',
         'weight' => 'decimal:2',
-        'is_active' => 'boolean'
+        'length' => 'decimal:2',
+        'height' => 'decimal:2',
+        'width' => 'decimal:2',
+        'is_active' => 'boolean',
+        'sort_order' => 'integer'
     ];
 
     /**
@@ -48,47 +46,44 @@ class ShopGoodVariation extends Model
     }
 
     /**
-     * Значения атрибутов вариации
+     * Свойства вариации
      */
-    public function attributeValues(): BelongsToMany
+    public function properties(): HasMany
     {
-        return $this->belongsToMany(
-            ShopVariationAttributeValue::class,
-            'shop_variation_attributes_values'
-        );
+        return $this->hasMany(ShopGoodProperty::class, 'variation_id');
     }
 
     /**
-     * Изображения вариации
+     * Изображения вариации (временно отключено)
      */
-    public function images(): HasMany
-    {
-        return $this->hasMany(ShopGoodImage::class, 'variation_id');
-    }
+    // public function images(): HasMany
+    // {
+    //     return $this->hasMany(ShopGoodImage::class, 'variation_id');
+    // }
 
     /**
-     * Видео вариации
+     * Видео вариации (временно отключено)
      */
-    public function videos(): HasMany
-    {
-        return $this->hasMany(ShopGoodVideo::class, 'variation_id');
-    }
+    // public function videos(): HasMany
+    // {
+    //     return $this->hasMany(ShopGoodVideo::class, 'variation_id');
+    // }
 
     /**
-     * Остатки вариации
+     * Остатки вариации (временно отключено)
      */
-    public function stock(): HasMany
-    {
-        return $this->hasMany(ShopStock::class, 'variation_id');
-    }
+    // public function stock(): HasMany
+    // {
+    //     return $this->hasMany(ShopStock::class, 'variation_id');
+    // }
 
     /**
-     * Цены вариации
+     * Цены вариации (временно отключено)
      */
-    public function prices(): HasMany
-    {
-        return $this->hasMany(ShopGoodPrice::class, 'variation_id');
-    }
+    // public function prices(): HasMany
+    // {
+    //     return $this->hasMany(ShopGoodPrice::class, 'variation_id');
+    // }
 
     /**
      * Scope для активных вариаций
@@ -152,8 +147,8 @@ class ShopGoodVariation extends Model
      */
     public function getAttributesStringAttribute()
     {
-        return $this->attributeValues->map(function ($value) {
-            return $value->attribute->name . ': ' . $value->value;
+        return $this->properties->map(function ($property) {
+            return $property->property->name . ': ' . $property->value;
         })->join(', ');
     }
 }

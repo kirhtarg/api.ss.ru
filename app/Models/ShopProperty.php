@@ -14,6 +14,7 @@ class ShopProperty extends Model
     protected $fillable = [
         'name',
         'slug',
+        'property_type',
         'sort_order'
     ];
 
@@ -46,6 +47,16 @@ class ShopProperty extends Model
         return $this->belongsToMany(ShopGood::class, 'shop_good_properties', 'property_id', 'good_id')
             ->withPivot('value')
             ->withTimestamps();
+    }
+
+    /**
+     * Значения свойства (для типа select)
+     */
+    public function values()
+    {
+        return $this->hasMany(\App\Models\Shop\PropertyValue::class, 'property_id')
+            ->where('is_active', true)
+            ->orderBy('sort_order');
     }
 
     /**
