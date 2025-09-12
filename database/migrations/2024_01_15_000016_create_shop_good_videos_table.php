@@ -16,7 +16,7 @@ return new class extends Migration
             $table->foreignId('good_id')->constrained('shop_goods')->onDelete('cascade');
             $table->foreignId('variation_id')->nullable()->constrained('shop_good_variations')->onDelete('cascade');
             $table->string('video_path')->nullable(); // Для загруженных видео
-            $table->string('video_url')->nullable(); // Для внешних видео (YouTube, Vimeo)
+            $table->string('external_url')->nullable(); // Для внешних видео (YouTube, Vimeo)
             $table->string('title')->nullable();
             $table->text('description')->nullable();
             $table->integer('duration')->nullable(); // Длительность в секундах

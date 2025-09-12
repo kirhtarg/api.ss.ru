@@ -15,17 +15,18 @@ class ShopGoodVideo extends Model
         'variation_id',
         'video_path',
         'external_url',
-        'file_path',
         'title',
-        'description',
-        'duration',
-        'thumbnail',
-        'sort_order'
+        'thumbnail'
     ];
 
     protected $casts = [
-        'duration' => 'integer',
-        'sort_order' => 'integer'
+        // Базовые поля для кастинга
+    ];
+
+    protected $appends = [
+        'url',
+        'embed_url',
+        'is_external'
     ];
 
     /**
@@ -49,7 +50,7 @@ class ShopGoodVideo extends Model
      */
     public function scopeOrdered($query)
     {
-        return $query->orderBy('sort_order')->orderBy('id');
+        return $query->orderBy('id');
     }
 
 
@@ -63,11 +64,15 @@ class ShopGoodVideo extends Model
         }
         
         if ($this->video_path) {
-            return asset('storage/' . $this->video_path);
-        }
-        
-        if ($this->file_path) {
-            return asset('storage/' . $this->file_path);
+            // Динамически определяем домен и добавляем /storage
+            $baseUrl = config('app.url');
+            
+            // Если это локальная разработка, используем localhost:8000
+            if (str_contains($baseUrl, 'localhost') || str_contains($baseUrl, '127.0.0.1')) {
+                $baseUrl = 'http://localhost:8000';
+            }
+            
+            return rtrim($baseUrl, '/') . '/storage/' . $this->video_path;
         }
         
         return null;
@@ -90,6 +95,45 @@ class ShopGoodVideo extends Model
      */
     public function getIsExternalAttribute()
     {
-        return !empty($this->video_url);
+        return !empty($this->external_url);
+    }
+
+    /**
+     * Получить embed URL для внешних видео
+     */
+    public function getEmbedUrlAttribute()
+    {
+        if (!$this->external_url) {
+            return null;
+        }
+
+        // YouTube
+        if (preg_match('/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]+)/', $this->external_url, $matches)) {
+            return 'https://www.youtube.com/embed/' . $matches[1] . '?autoplay=0';
+        }
+
+        // Vimeo
+        if (preg_match('/vimeo\.com\/(\d+)/', $this->external_url, $matches)) {
+            return 'https://player.vimeo.com/video/' . $matches[1] . '?autoplay=0';
+        }
+
+        // VK
+        if (preg_match('/vk\.com\/video(-?\d+_\d+)/', $this->external_url, $matches)) {
+            return 'https://vk.com/video_ext.php?oid=' . $matches[1] . '&autoplay=0';
+        }
+
+        // VK Video (vkvideo.ru)
+        if (preg_match('/vkvideo\.ru\/(video|clip)(-?\d+)_(\d+)/', $this->external_url, $matches)) {
+            $oid = $matches[2]; // -178294909
+            $id = $matches[3];  // 456240059
+            return "https://vkvideo.ru/video_ext.php?oid={$oid}&id={$id}&hd=2&autoplay=0";
+        }
+
+        // Rutube
+        if (preg_match('/rutube\.ru\/video\/([a-zA-Z0-9]+)/', $this->external_url, $matches)) {
+            return 'https://rutube.ru/play/embed/' . $matches[1] . '?autoplay=0';
+        }
+
+        return $this->external_url;
     }
 }

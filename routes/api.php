@@ -146,6 +146,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/user', [AuthController::class, 'user']);
     Route::get('/auth/check', [AuthController::class, 'check']);
+    
+    // Загрузка изображений для rich editor
+    Route::post('/admin/upload/good-text-image', [\App\Http\Controllers\Admin\UploadController::class, 'uploadGoodTextImage']);
 
     // Временный тестовый маршрут для Google Sheets (без авторизации)
     Route::get('/test-google-sheets/{spreadsheetId}', function ($spreadsheetId) {
@@ -602,6 +605,16 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::delete('/{variationId}', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'destroy']);
                 });
                 
+                // Видео товаров
+                Route::prefix('{goodId}/videos')->group(function () {
+                    Route::get('/', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'index']);
+                    Route::post('/', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'store']);
+                    Route::put('/{videoId}', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'update']);
+                    Route::delete('/{videoId}', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'destroy']);
+                    Route::post('/{videoId}/set-main', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'setMain']);
+                    Route::post('/reorder', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'reorder']);
+                });
+                
                 // Изображения товаров
                 Route::prefix('{goodId}/images')->group(function () {
                     Route::get('/', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'index']);
@@ -627,6 +640,14 @@ Route::middleware('auth:sanctum')->group(function () {
                 });
             });
             
+            // Свойства товаров
+            Route::prefix('properties')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'index']);
+                Route::post('/', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'store']);
+                Route::get('/{property}/values', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'getValues']);
+                Route::put('/{property}', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'update']);
+                Route::delete('/{property}', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'destroy']);
+            });
             
             // Бренды
             Route::prefix('brands')->group(function () {
@@ -650,12 +671,11 @@ Route::middleware('auth:sanctum')->group(function () {
             
             // Свойства товаров
             Route::prefix('properties')->group(function () {
-                Route::get('/', [\App\Http\Controllers\Admin\ShopPropertiesController::class, 'index']);
-                Route::get('/active', [\App\Http\Controllers\Admin\ShopPropertiesController::class, 'active']);
-                Route::get('/{id}', [\App\Http\Controllers\Admin\ShopPropertiesController::class, 'show']);
-                Route::post('/', [\App\Http\Controllers\Admin\ShopPropertiesController::class, 'store']);
-                Route::put('/{id}', [\App\Http\Controllers\Admin\ShopPropertiesController::class, 'update']);
-                Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopPropertiesController::class, 'destroy']);
+                Route::get('/', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'index']);
+                Route::post('/', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'store']);
+                Route::get('/{property}/values', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'getValues']);
+                Route::put('/{property}', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'update']);
+                Route::delete('/{property}', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'destroy']);
             });
             
             // Заказы

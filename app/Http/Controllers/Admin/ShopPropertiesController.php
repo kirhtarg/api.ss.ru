@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\ShopProperty;
+use App\Models\Shop\Property;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
@@ -15,7 +15,9 @@ class ShopPropertiesController extends Controller
     public function list()
     {
         try {
-            $properties = ShopProperty::ordered()->get();
+            $properties = Property::with('values')
+                ->orderBy('name')
+                ->get();
             
             return response()->json([
                 'success' => true,
@@ -23,8 +25,15 @@ class ShopPropertiesController extends Controller
                     return [
                         'id' => $property->id,
                         'name' => $property->name,
-                        'slug' => $property->slug,
-                        'sort_order' => $property->sort_order
+                        'property_type' => $property->property_type,
+                        'description' => $property->description,
+                        'values' => $property->values->map(function($value) {
+                            return [
+                                'id' => $value->id,
+                                'value' => $value->value,
+                                'color' => $value->color
+                            ];
+                        })
                     ];
                 })
             ]);
