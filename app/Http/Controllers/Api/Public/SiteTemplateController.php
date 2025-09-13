@@ -43,6 +43,39 @@ class SiteTemplateController extends Controller
     }
 
     /**
+     * Получить активный шаблон главной страницы
+     */
+    public function getActiveMain(): JsonResponse
+    {
+        try {
+            $template = SiteTemplate::getActiveMain();
+            
+            if (!$template) {
+                // Если нет активного шаблона главной страницы, возвращаем дефолтный
+                $template = SiteTemplate::getDefault();
+            }
+            
+            if (!$template) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Шаблон главной страницы не найден'
+                ], 404);
+            }
+            
+            return response()->json([
+                'success' => true,
+                'data' => $template->getTemplateData()
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения шаблона главной страницы: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Получить данные меню
      */
     public function getMenu(): JsonResponse

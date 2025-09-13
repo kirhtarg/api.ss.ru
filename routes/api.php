@@ -113,6 +113,11 @@ Route::middleware(['cors'])->group(function () {
     });
     Route::get('/public/site/template/active', [App\Http\Controllers\Api\Public\SiteTemplateController::class, 'getActive']);
 
+    Route::options('/public/site/template/active-main', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/site/template/active-main', [App\Http\Controllers\Api\Public\SiteTemplateController::class, 'getActiveMain']);
+
     Route::options('/public/site/menu', function () {
         return response()->json([], 200);
     });

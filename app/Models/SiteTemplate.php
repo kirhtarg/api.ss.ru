@@ -17,12 +17,14 @@ class SiteTemplate extends Model
         'menu_template_id',
         'auth_template_id',
         'is_active',
+        'is_active_main',
         'settings',
         'sort_order',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
+        'is_active_main' => 'boolean',
         'settings' => 'array',
     ];
 
@@ -64,6 +66,14 @@ class SiteTemplate extends Model
     public static function getDefault()
     {
         return static::where('folder_name', 'default')->with(['menu'])->first();
+    }
+
+    /**
+     * Получить активный шаблон главной страницы
+     */
+    public static function getActiveMain()
+    {
+        return static::where('is_active_main', true)->with(['menu'])->first();
     }
 
     /**
