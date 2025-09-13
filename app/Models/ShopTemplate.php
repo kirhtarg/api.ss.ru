@@ -4,9 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class SiteTemplate extends Model
+class ShopTemplate extends Model
 {
     use HasFactory;
 
@@ -14,8 +13,6 @@ class SiteTemplate extends Model
         'name',
         'description',
         'folder_name',
-        'menu_template_id',
-        'auth_template_id',
         'is_active',
         'settings',
         'sort_order',
@@ -27,15 +24,7 @@ class SiteTemplate extends Model
     ];
 
     /**
-     * Связь с меню
-     */
-    public function menu(): BelongsTo
-    {
-        return $this->belongsTo(SiteMenu::class, 'menu_template_id');
-    }
-
-    /**
-     * Получить активный шаблон сайта
+     * Получить активные шаблоны магазина
      */
     public function scopeActive($query)
     {
@@ -43,7 +32,7 @@ class SiteTemplate extends Model
     }
 
     /**
-     * Получить шаблоны сайта отсортированные по порядку
+     * Получить шаблоны магазина отсортированные по порядку
      */
     public function scopeOrdered($query)
     {
@@ -51,19 +40,19 @@ class SiteTemplate extends Model
     }
 
     /**
-     * Получить активный шаблон сайта
+     * Получить активный шаблон магазина
      */
     public static function getActive()
     {
-        return static::active()->with(['menu'])->first();
+        return static::active()->first();
     }
 
     /**
-     * Получить дефолтный шаблон сайта
+     * Получить дефолтный шаблон магазина
      */
     public static function getDefault()
     {
-        return static::where('folder_name', 'default')->with(['menu'])->first();
+        return static::where('folder_name', 'default')->first();
     }
 
     /**

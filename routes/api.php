@@ -117,6 +117,69 @@ Route::middleware(['cors'])->group(function () {
         return response()->json([], 200);
     });
     Route::get('/public/site/menu', [App\Http\Controllers\Api\Public\SiteMenuController::class, 'getMenu']);
+
+    // Публичные маршруты для шаблонов магазина
+    Route::options('/public/shop/template/active', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/template/active', [App\Http\Controllers\Api\Public\ShopTemplateController::class, 'getActive']);
+
+    // Публичные маршруты для товаров магазина
+    Route::options('/public/shop/goods', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/goods', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'index']);
+    
+    Route::options('/public/shop/goods/{id}', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/goods/{id}', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'show']);
+
+    // Публичные маршруты для категорий магазина
+    Route::options('/public/shop/categories', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/categories', [App\Http\Controllers\Api\Public\ShopCategoriesController::class, 'index']);
+    
+    Route::options('/public/shop/categories/{id}', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/categories/{id}', [App\Http\Controllers\Api\Public\ShopCategoriesController::class, 'show']);
+
+    // Публичные маршруты для брендов магазина
+    Route::options('/public/shop/brands', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/brands', [App\Http\Controllers\Api\Public\ShopBrandsController::class, 'index']);
+    
+    Route::options('/public/shop/brands/{id}', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/brands/{id}', [App\Http\Controllers\Api\Public\ShopBrandsController::class, 'show']);
+
+    // Тестовый endpoint для проверки товаров
+    Route::get('/public/shop/goods-debug', function () {
+        try {
+            $count = \App\Models\ShopGood::count();
+            $activeCount = \App\Models\ShopGood::where('is_active', true)->count();
+            $inStockCount = \App\Models\ShopGood::where('stock_quantity', '>', 0)->count();
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'total_goods' => $count,
+                    'active_goods' => $activeCount,
+                    'in_stock_goods' => $inStockCount,
+                    'message' => 'Товары найдены'
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка: ' . $e->getMessage()
+            ], 500);
+        }
+    });
 });
 
 // Временный отладочный endpoint для проверки всех настроек
@@ -1559,6 +1622,16 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::delete('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'destroy']);
                 Route::put('/{siteTemplate}/activate', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'activate']);
 
+            });
+
+            // Шаблоны магазина
+            Route::prefix('shop-templates')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Admin\ShopTemplateController::class, 'index']);
+                Route::post('/', [\App\Http\Controllers\Admin\ShopTemplateController::class, 'store']);
+                Route::get('/{shopTemplate}', [\App\Http\Controllers\Admin\ShopTemplateController::class, 'show']);
+                Route::put('/{shopTemplate}', [\App\Http\Controllers\Admin\ShopTemplateController::class, 'update']);
+                Route::delete('/{shopTemplate}', [\App\Http\Controllers\Admin\ShopTemplateController::class, 'destroy']);
+                Route::put('/{shopTemplate}/activate', [\App\Http\Controllers\Admin\ShopTemplateController::class, 'activate']);
             });
 
             // Меню сайта
