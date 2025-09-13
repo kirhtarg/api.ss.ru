@@ -41,10 +41,24 @@ class ShopGoodsController extends Controller
                 });
             }
 
+            // Фильтр по множественным категориям
+            if ($request->has('categories') && is_array($request->get('categories'))) {
+                $query->whereHas('categories', function ($q) use ($request) {
+                    $q->whereIn('shop_categories.id', $request->get('categories'));
+                });
+            }
+
             // Фильтр по бренду
             if ($request->filled('brand_id')) {
                 $query->whereHas('brands', function ($q) use ($request) {
                     $q->where('shop_brands.id', $request->get('brand_id'));
+                });
+            }
+
+            // Фильтр по множественным брендам
+            if ($request->has('brands') && is_array($request->get('brands'))) {
+                $query->whereHas('brands', function ($q) use ($request) {
+                    $q->whereIn('shop_brands.id', $request->get('brands'));
                 });
             }
 
@@ -184,6 +198,8 @@ class ShopGoodsController extends Controller
             'characteristics' => $characteristics,
             'in_stock' => $good->stock_quantity > 0,
             'stock_quantity' => $good->stock_quantity,
+            'category_id' => $good->categories->first() ? $good->categories->first()->id : null,
+            'brand_id' => $good->brands->first() ? $good->brands->first()->id : null,
             'category' => $good->categories->first() ? [
                 'id' => $good->categories->first()->id,
                 'name' => $good->categories->first()->name,
