@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopGood;
+use App\Models\ShopCategory;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -246,5 +247,78 @@ class ShopGoodsController extends Controller
 
         // Формируем URL относительно storage
         return url('storage/' . $filePath);
+    }
+
+    /**
+     * Получить товар по slug
+     */
+    public function getGoodBySlug(string $slug): JsonResponse
+    {
+        try {
+            $good = ShopGood::with([
+                'categories:id,name,slug',
+                'brands:id,name,slug',
+                'tags:id,name,color',
+                'images:id,good_id,file_path,alt_text,is_main,sort_order',
+                'variations:id,good_id,name,price,sale_price,stock_quantity,is_active'
+            ])
+            ->where('slug', $slug)
+            ->where('is_active', true)
+            ->first();
+
+            if (!$good) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Товар не найден'
+                ], 404);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $this->formatGoodForFrontend($good)
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при получении товара: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить категорию по slug
+     */
+    public function getCategoryBySlug(string $slug): JsonResponse
+    {
+        try {
+            $category = ShopCategory::where('slug', $slug)
+                ->where('is_active', true)
+                ->first();
+
+            if (!$category) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Категория не найдена'
+                ], 404);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'id' => $category->id,
+                    'name' => $category->name,
+                    'slug' => $category->slug,
+                    'description' => $category->description,
+                    'meta_title' => $category->meta_title,
+                    'meta_description' => $category->meta_description,
+                    'image' => $category->image ? $this->getImageUrl($category->image) : null,
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при получении категории: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }

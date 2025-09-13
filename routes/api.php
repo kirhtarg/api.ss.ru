@@ -149,6 +149,11 @@ Route::middleware(['cors'])->group(function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/goods/{id}', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'show']);
+    
+    Route::options('/public/shop/goods/slug/{slug}', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/goods/slug/{slug}', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getGoodBySlug']);
 
     // Публичные маршруты для категорий магазина
     Route::options('/public/shop/categories', function () {
@@ -160,6 +165,11 @@ Route::middleware(['cors'])->group(function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/categories/{id}', [App\Http\Controllers\Api\Public\ShopCategoriesController::class, 'show']);
+    
+    Route::options('/public/shop/categories/slug/{slug}', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/categories/slug/{slug}', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getCategoryBySlug']);
 
     // Публичные маршруты для брендов магазина
     Route::options('/public/shop/brands', function () {

@@ -64,7 +64,7 @@ class ShopTemplate extends Model
      */
     public static function getActivePage()
     {
-        return static::where('is_active_page', true)->first();
+        return static::where('is_active', true)->first();
     }
 
     /**
