@@ -20,7 +20,6 @@ class ShopGoodsController extends Controller
                 'categories:id,name,slug',
                 'brands:id,name,slug',
                 'tags:id,name,color',
-                'images:id,good_id,file_path,alt_text,is_main,sort_order',
                 'variations:id,good_id,name,price,sale_price,stock_quantity,is_active'
             ])
             ->where('is_active', true); // Только активные товары
@@ -129,7 +128,6 @@ class ShopGoodsController extends Controller
                 'categories:id,name,slug',
                 'brands:id,name,slug',
                 'tags:id,name,color',
-                'images:id,good_id,file_path,alt_text,is_main,sort_order',
                 'variations:id,good_id,name,price,sale_price,stock_quantity,is_active',
                 'properties:id,name,slug'
             ])
@@ -165,10 +163,6 @@ class ShopGoodsController extends Controller
      */
     private function formatGoodForFrontend($good)
     {
-        // Получаем главное изображение
-        $mainImage = $good->images->where('is_main', true)->first() 
-                    ?? $good->images->sortBy('sort_order')->first();
-
         // Формируем характеристики
         $characteristics = [];
         if ($good->relationLoaded('properties')) {
@@ -190,10 +184,8 @@ class ShopGoodsController extends Controller
             'price' => (float) $good->price,
             'old_price' => $good->sale_price ? (float) $good->sale_price : null,
             'discount_percent' => $good->discount_percent,
-            'image_url' => $mainImage ? $this->getImageUrl($mainImage->file_path) : null,
-            'images' => $good->images->map(function ($image) {
-                return $this->getImageUrl($image->file_path);
-            })->toArray(),
+            'image_url' => null, // Будет загружено через пакетный API
+            'images' => [], // Будет загружено через пакетный API
             'rating' => $good->rating ? (float) $good->rating : null,
             'reviews_count' => $good->reviews_count ?? 0,
             'characteristics' => $characteristics,
@@ -259,7 +251,6 @@ class ShopGoodsController extends Controller
                 'categories:id,name,slug',
                 'brands:id,name,slug',
                 'tags:id,name,color',
-                'images:id,good_id,file_path,alt_text,is_main,sort_order',
                 'variations:id,good_id,name,price,sale_price,stock_quantity,is_active'
             ])
             ->where('slug', $slug)

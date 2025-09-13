@@ -182,6 +182,17 @@ Route::middleware(['cors'])->group(function () {
     });
     Route::get('/public/shop/brands/{id}', [App\Http\Controllers\Api\Public\ShopBrandsController::class, 'show']);
 
+    // Публичные маршруты для изображений магазина
+    Route::options('/public/shop/images/batch', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/public/shop/images/batch', [App\Http\Controllers\Api\Public\ShopImageController::class, 'getBatchImages']);
+    
+    Route::options('/public/shop/images/categories', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/public/shop/images/categories', [App\Http\Controllers\Api\Public\ShopImageController::class, 'getCategoryImages']);
+
     // Тестовый endpoint для проверки товаров
     Route::get('/public/shop/goods-debug', function () {
         try {
