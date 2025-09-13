@@ -14,12 +14,16 @@ class ShopTemplate extends Model
         'description',
         'folder_name',
         'is_active',
+        'is_active_card',
+        'is_active_page',
         'settings',
         'sort_order',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
+        'is_active_card' => 'boolean',
+        'is_active_page' => 'boolean',
         'settings' => 'array',
     ];
 
@@ -45,6 +49,22 @@ class ShopTemplate extends Model
     public static function getActive()
     {
         return static::active()->first();
+    }
+
+    /**
+     * Получить активный шаблон для карточек товаров
+     */
+    public static function getActiveCard()
+    {
+        return static::where('is_active_card', true)->first();
+    }
+
+    /**
+     * Получить активный шаблон для страниц товаров
+     */
+    public static function getActivePage()
+    {
+        return static::where('is_active_page', true)->first();
     }
 
     /**

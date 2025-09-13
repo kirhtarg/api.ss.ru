@@ -124,6 +124,16 @@ Route::middleware(['cors'])->group(function () {
     });
     Route::get('/public/shop/template/active', [App\Http\Controllers\Api\Public\ShopTemplateController::class, 'getActive']);
 
+    Route::options('/public/shop/template/active-card', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/template/active-card', [App\Http\Controllers\Api\Public\ShopTemplateController::class, 'getActiveCard']);
+
+    Route::options('/public/shop/template/active-page', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/template/active-page', [App\Http\Controllers\Api\Public\ShopTemplateController::class, 'getActivePage']);
+
     // Публичные маршруты для товаров магазина
     Route::options('/public/shop/goods', function () {
         return response()->json([], 200);

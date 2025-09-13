@@ -42,6 +42,72 @@ class ShopTemplateController extends Controller
     }
 
     /**
+     * Получить активный шаблон для карточек товаров
+     */
+    public function getActiveCard(): JsonResponse
+    {
+        try {
+            $template = ShopTemplate::getActiveCard();
+            
+            if (!$template) {
+                // Если нет активного шаблона для карточек, возвращаем дефолтный
+                $template = ShopTemplate::getDefault();
+            }
+            
+            if (!$template) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Шаблон для карточек товаров не найден'
+                ], 404);
+            }
+            
+            return response()->json([
+                'success' => true,
+                'data' => $template->getTemplateData()
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения шаблона для карточек: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить активный шаблон для страниц товаров
+     */
+    public function getActivePage(): JsonResponse
+    {
+        try {
+            $template = ShopTemplate::getActivePage();
+            
+            if (!$template) {
+                // Если нет активного шаблона для страниц, возвращаем дефолтный
+                $template = ShopTemplate::getDefault();
+            }
+            
+            if (!$template) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Шаблон для страниц товаров не найден'
+                ], 404);
+            }
+            
+            return response()->json([
+                'success' => true,
+                'data' => $template->getTemplateData()
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения шаблона для страниц: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Получить все доступные шаблоны магазина (для админки)
      */
     public function getAll(): JsonResponse
