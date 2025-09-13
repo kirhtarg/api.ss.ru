@@ -68,6 +68,14 @@ class ShopTemplate extends Model
     }
 
     /**
+     * Получить активный шаблон для страниц брендов
+     */
+    public static function getActiveBrands()
+    {
+        return static::where('is_active', true)->first();
+    }
+
+    /**
      * Получить дефолтный шаблон магазина
      */
     public static function getDefault()

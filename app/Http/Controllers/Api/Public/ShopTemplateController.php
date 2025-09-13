@@ -108,6 +108,39 @@ class ShopTemplateController extends Controller
     }
 
     /**
+     * Получить активный шаблон для страниц брендов
+     */
+    public function getActiveBrands(): JsonResponse
+    {
+        try {
+            $template = ShopTemplate::getActiveBrands();
+            
+            if (!$template) {
+                // Если нет активного шаблона для брендов, возвращаем дефолтный
+                $template = ShopTemplate::getDefault();
+            }
+            
+            if (!$template) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Шаблон для страниц брендов не найден'
+                ], 404);
+            }
+            
+            return response()->json([
+                'success' => true,
+                'data' => $template->getTemplateData()
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения шаблона для брендов: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Получить все доступные шаблоны магазина (для админки)
      */
     public function getAll(): JsonResponse

@@ -139,6 +139,11 @@ Route::middleware(['cors'])->group(function () {
     });
     Route::get('/public/shop/template/active-page', [App\Http\Controllers\Api\Public\ShopTemplateController::class, 'getActivePage']);
 
+    Route::options('/public/shop/template/active-brands', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/template/active-brands', [App\Http\Controllers\Api\Public\ShopTemplateController::class, 'getActiveBrands']);
+
     // Публичные маршруты для товаров магазина
     Route::options('/public/shop/goods', function () {
         return response()->json([], 200);
@@ -181,6 +186,12 @@ Route::middleware(['cors'])->group(function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/brands/{id}', [App\Http\Controllers\Api\Public\ShopBrandsController::class, 'show']);
+    
+    // Маршрут для получения бренда по slug
+    Route::options('/public/shop/brands/slug/{slug}', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/brands/slug/{slug}', [App\Http\Controllers\Api\Public\ShopBrandsController::class, 'getBySlug']);
 
     // Публичные маршруты для изображений магазина
     Route::options('/public/shop/images/batch', function () {
@@ -192,6 +203,29 @@ Route::middleware(['cors'])->group(function () {
         return response()->json([], 200);
     });
     Route::post('/public/shop/images/categories', [App\Http\Controllers\Api\Public\ShopImageController::class, 'getCategoryImages']);
+
+    // Тестовый endpoint для проверки брендов
+    Route::get('/public/shop/brands-debug', function () {
+        try {
+            $brandCount = \App\Models\ShopBrand::count();
+            $activeBrandCount = \App\Models\ShopBrand::where('is_active', true)->count();
+            $brands = \App\Models\ShopBrand::where('is_active', true)->select('id', 'name', 'slug', 'logo')->get();
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'total_brands' => $brandCount,
+                    'active_brands' => $activeBrandCount,
+                    'brands' => $brands
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка: ' . $e->getMessage()
+            ], 500);
+        }
+    });
 
     // Тестовый endpoint для проверки товаров
     Route::get('/public/shop/goods-debug', function () {

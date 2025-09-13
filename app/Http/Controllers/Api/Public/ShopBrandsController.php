@@ -10,42 +10,71 @@ use Illuminate\Http\Request;
 class ShopBrandsController extends Controller
 {
     /**
-     * Получить список активных брендов для публичного API
+     * Получить список брендов для публичного API
      */
     public function index(Request $request): JsonResponse
     {
         try {
             $query = ShopBrand::where('is_active', true)
-                ->orderBy('name', 'asc');
+                ->select('id', 'name', 'slug', 'description', 'logo')
+                ->orderBy('name');
 
             // Поиск
             if ($request->filled('search')) {
                 $search = $request->get('search');
-                $query->where('name', 'like', "%{$search}%");
+                $query->where(function ($q) use ($search) {
+                    $q->where('name', 'like', "%{$search}%")
+                      ->orWhere('description', 'like', "%{$search}%");
+                });
             }
 
-            $brands = $query->get();
+            // Пагинация
+            $perPage = min($request->get('limit', 20), 100);
+            $brands = $query->paginate($perPage);
+
+            // Форматируем данные для фронтенда
+            $formattedBrands = $brands->map(function ($brand) {
+                return [
+                    'id' => $brand->id,
+                    'name' => $brand->name,
+                    'slug' => $brand->slug,
+                    'description' => $brand->description,
+                    'image_url' => $brand->logo ? $this->getImageUrl($brand->logo) : null,
+                    'products_count' => $this->getProductsCount($brand->id)
+                ];
+            });
 
             return response()->json([
                 'success' => true,
-                'data' => $brands
+                'data' => $formattedBrands->toArray(),
+                'pagination' => [
+                    'current_page' => $brands->currentPage(),
+                    'last_page' => $brands->lastPage(),
+                    'per_page' => $brands->perPage(),
+                    'total' => $brands->total(),
+                    'from' => $brands->firstItem(),
+                    'to' => $brands->lastItem()
+                ]
             ]);
+
         } catch (\Exception $e) {
+            \Log::error('Ошибка загрузки брендов: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении брендов: ' . $e->getMessage()
+                'message' => 'Ошибка загрузки брендов: ' . $e->getMessage()
             ], 500);
         }
     }
 
     /**
-     * Получить конкретный бренд по ID
+     * Получить бренд по slug
      */
-    public function show($id): JsonResponse
+    public function getBySlug(string $slug): JsonResponse
     {
         try {
-            $brand = ShopBrand::where('id', $id)
-                ->where('is_active', true)
+            $brand = ShopBrand::where('is_active', true)
+                ->where('slug', $slug)
+                ->select('id', 'name', 'slug', 'description', 'logo')
                 ->first();
 
             if (!$brand) {
@@ -55,15 +84,58 @@ class ShopBrandsController extends Controller
                 ], 404);
             }
 
+            $formattedBrand = [
+                'id' => $brand->id,
+                'name' => $brand->name,
+                'slug' => $brand->slug,
+                'description' => $brand->description,
+                'image_url' => $brand->logo ? $this->getImageUrl($brand->logo) : null,
+                'products_count' => $this->getProductsCount($brand->id)
+            ];
+
             return response()->json([
                 'success' => true,
-                'data' => $brand
+                'data' => $formattedBrand
             ]);
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении бренда: ' . $e->getMessage()
-            ], 500);
+                'message' => 'Бренд не найден'
+            ], 404);
+        }
+    }
+
+    /**
+     * Получить полный URL изображения
+     */
+    private function getImageUrl($filePath)
+    {
+        if (!$filePath) {
+            return null;
+        }
+
+        // Если это уже полный URL, возвращаем как есть
+        if (str_starts_with($filePath, 'http')) {
+            return $filePath;
+        }
+
+        // Формируем URL относительно storage
+        return url('storage/' . $filePath);
+    }
+
+    /**
+     * Получить количество товаров бренда
+     */
+    private function getProductsCount($brandId)
+    {
+        try {
+            return \App\Models\ShopGood::whereHas('brands', function ($query) use ($brandId) {
+                $query->where('shop_brands.id', $brandId);
+            })->where('is_active', true)->count();
+        } catch (\Exception $e) {
+            // Если есть ошибка с таблицей связей, возвращаем 0
+            return 0;
         }
     }
 }
