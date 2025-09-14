@@ -14,7 +14,7 @@ return new class extends Migration
         if (Schema::hasTable('shop_properties')) {
             if (!Schema::hasColumn('shop_properties', 'description')) {
                 Schema::table('shop_properties', function (Blueprint $table) {
-                    $table->text('description')->nullable()->after('property_type')
+                    $table->text('description')->nullable()->after('name')
                           ->comment('Описание свойства');
                 });
             }
