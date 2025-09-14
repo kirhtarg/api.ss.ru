@@ -28,8 +28,11 @@ class UploadController extends Controller
             
             // Create directory if it doesn't exist
             $directory = storage_path('app/public/images/good_texts');
-            if (!file_exists($directory)) {
-                mkdir($directory, 0755, true);
+            if (!\App\Helpers\StorageHelper::createDirectory($directory)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не удалось создать директорию для изображения'
+                ], 500);
             }
             
             // Process and optimize image

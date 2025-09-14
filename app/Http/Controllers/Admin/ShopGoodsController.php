@@ -632,8 +632,11 @@ class ShopGoodsController extends Controller
             
             // Создаем директорию если не существует
             $directory = dirname($storageFullPath);
-            if (!file_exists($directory)) {
-                mkdir($directory, 0755, true);
+            if (!\App\Helpers\StorageHelper::createDirectory($directory)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не удалось создать директорию для изображения'
+                ], 500);
             }
 
             // Скачиваем изображение
@@ -820,8 +823,11 @@ class ShopGoodsController extends Controller
             
             // Создаем директорию если не существует
             $directory = dirname($storageFullPath);
-            if (!file_exists($directory)) {
-                mkdir($directory, 0755, true);
+            if (!\App\Helpers\StorageHelper::createDirectory($directory)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не удалось создать директорию для изображения'
+                ], 500);
             }
 
             // Скачиваем изображение
