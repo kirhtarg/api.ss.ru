@@ -758,6 +758,7 @@ class ShopGoodsController extends Controller
 
             // Обрабатываем изображения последовательно (для стабильности)
             foreach ($imageUrls as $index => $imageUrl) {
+                \Log::info("🔄 Обрабатываем изображение {$index}", ['url' => $imageUrl]);
                 $response = $this->downloadSingleImage(
                     $imageUrl,
                     $storagePath,
@@ -771,11 +772,16 @@ class ShopGoodsController extends Controller
 
                 if ($response['success']) {
                     $results[$response['originalUrl']] = $response['path'];
+                    \Log::info("✅ Изображение {$index} загружено успешно", ['url' => $response['originalUrl']]);
                 } else {
                     $errors[] = [
                         'url' => $response['originalUrl'],
                         'error' => $response['error']
                     ];
+                    \Log::error("❌ Ошибка загрузки изображения {$index}", [
+                        'url' => $response['originalUrl'],
+                        'error' => $response['error']
+                    ]);
                 }
             }
 
@@ -783,7 +789,8 @@ class ShopGoodsController extends Controller
                 'total' => count($imageUrls),
                 'successful' => count($results),
                 'failed' => count($errors),
-                'results' => $results
+                'results' => $results,
+                'errors' => $errors
             ]);
 
             return response()->json([
@@ -853,10 +860,12 @@ class ShopGoodsController extends Controller
             // Создаем директорию если не существует
             $directory = dirname($storageFullPath);
             if (!\App\Helpers\StorageHelper::createDirectory($directory)) {
-                return response()->json([
+                \Log::error("❌ Не удалось создать директорию: {$directory}");
+                return [
                     'success' => false,
-                    'message' => 'Не удалось создать директорию для изображения'
-                ], 500);
+                    'originalUrl' => $imageUrl,
+                    'error' => 'Не удалось создать директорию для изображения'
+                ];
             }
 
             // Скачиваем изображение
