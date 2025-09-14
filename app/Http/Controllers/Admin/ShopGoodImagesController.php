@@ -387,6 +387,13 @@ class ShopGoodImagesController extends Controller
             $images = $request->input('images');
             $results = [];
             $errors = [];
+            
+            // Логируем входящие данные
+            Log::info('ShopGoodImagesController::createFromImportBatch - Получены данные', [
+                'images_count' => count($images),
+                'first_image_sample' => $images[0] ?? null,
+                'request_size' => strlen(json_encode($request->all()))
+            ]);
 
             // Группируем изображения по товарам для оптимизации
             $imagesByGood = [];
@@ -408,6 +415,14 @@ class ShopGoodImagesController extends Controller
                         $result = $this->processSingleImage($good, $imageData);
                         $results[] = $result;
                     } catch (\Exception $e) {
+                        Log::error('Ошибка создания изображения', [
+                            'index' => $imageData['_index'],
+                            'good_id' => $goodId,
+                            'file_path' => $imageData['file_path'],
+                            'error' => $e->getMessage(),
+                            'trace' => $e->getTraceAsString()
+                        ]);
+                        
                         $errors[] = [
                             'index' => $imageData['_index'],
                             'good_id' => $goodId,
@@ -417,6 +432,20 @@ class ShopGoodImagesController extends Controller
                     }
                 }
             }
+
+            // Логируем итоговые результаты
+            Log::info('ShopGoodImagesController::createFromImportBatch - Завершено', [
+                'total_images' => count($images),
+                'successful' => count($results),
+                'failed' => count($errors),
+                'errors_summary' => array_map(function($error) {
+                    return [
+                        'good_id' => $error['good_id'],
+                        'file_path' => $error['file_path'],
+                        'error' => $error['error']
+                    ];
+                }, $errors)
+            ]);
 
             return response()->json([
                 'success' => true,
@@ -498,6 +527,15 @@ class ShopGoodImagesController extends Controller
         ];
 
         $goodImage = ShopGoodImage::create($imageRecord);
+        
+        // Логируем успешное создание
+        Log::info('ShopGoodImage создано успешно', [
+            'image_id' => $goodImage->id,
+            'good_id' => $goodId,
+            'file_path' => $filePath,
+            'is_main' => $isMain,
+            'sort_order' => $sortOrder
+        ]);
 
         // Если это главное изображение, снимаем флаг с других
         if ($goodImage->is_main) {

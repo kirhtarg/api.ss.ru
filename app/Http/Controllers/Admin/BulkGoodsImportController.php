@@ -434,17 +434,26 @@ class BulkGoodsImportController extends Controller
                 $categoryIds[] = (int)$category;
             } else {
                 // Это название категории
-                $existingCategory = ShopCategory::where('name', $category)->first();
+                $categorySlug = Str::slug($category);
+                $existingCategory = ShopCategory::where('name', $category)
+                    ->orWhere('slug', $categorySlug)
+                    ->first();
                 
                 if ($existingCategory) {
                     $categoryIds[] = $existingCategory->id;
                 } elseif ($autoCreate) {
-                    $newCategory = ShopCategory::create([
-                        'name' => $category,
-                        'slug' => Str::slug($category),
-                        'is_active' => true
-                    ]);
-                    $categoryIds[] = $newCategory->id;
+                    // Дополнительная проверка на случай, если slug уже существует
+                    $existingCategoryBySlug = ShopCategory::where('slug', $categorySlug)->first();
+                    if ($existingCategoryBySlug) {
+                        $categoryIds[] = $existingCategoryBySlug->id;
+                    } else {
+                        $newCategory = ShopCategory::create([
+                            'name' => $category,
+                            'slug' => $categorySlug,
+                            'is_active' => true
+                        ]);
+                        $categoryIds[] = $newCategory->id;
+                    }
                 }
             }
         }
@@ -630,28 +639,45 @@ class BulkGoodsImportController extends Controller
      */
     private function processCategoriesBatch($allCategories, $autoCreate)
     {
-        // Загружаем существующие категории
-        $existingCategories = ShopCategory::whereIn('name', $allCategories->toArray())
-            ->get()
-            ->keyBy(function($item) {
-                return strtolower($item->name);
-            });
+        // Загружаем существующие категории по имени и slug
+        $existingCategories = ShopCategory::where(function($query) use ($allCategories) {
+            $query->whereIn('name', $allCategories->toArray())
+                  ->orWhereIn('slug', $allCategories->map(function($name) {
+                      return Str::slug($name);
+                  })->toArray());
+        })->get();
 
-        $categoryMap = $existingCategories->mapWithKeys(function($item) {
-            return [strtolower($item->name) => $item->id];
-        });
+        $categoryMap = collect();
+        
+        // Создаем карту по имени и slug
+        foreach ($existingCategories as $category) {
+            $categoryMap[strtolower($category->name)] = $category->id;
+            $categoryMap[strtolower($category->slug)] = $category->id;
+        }
 
         // Создаем недостающие категории
         $createdCategories = [];
         if ($autoCreate) {
             $categoriesToCreate = $allCategories->filter(function($name) use ($categoryMap) {
-                return !$categoryMap->has(strtolower($name));
+                $nameLower = strtolower($name);
+                $slugLower = strtolower(Str::slug($name));
+                return !$categoryMap->has($nameLower) && !$categoryMap->has($slugLower);
             });
 
             foreach ($categoriesToCreate as $categoryName) {
+                $categorySlug = Str::slug($categoryName);
+                
+                // Дополнительная проверка на случай, если slug уже существует
+                $existingCategoryBySlug = ShopCategory::where('slug', $categorySlug)->first();
+                if ($existingCategoryBySlug) {
+                    $categoryMap[strtolower($categoryName)] = $existingCategoryBySlug->id;
+                    \Log::info('Found existing category by slug during batch', ['category_name' => $categoryName, 'slug' => $categorySlug, 'category_id' => $existingCategoryBySlug->id]);
+                    continue;
+                }
+
                 $category = ShopCategory::create([
                     'name' => $categoryName,
-                    'slug' => Str::slug($categoryName),
+                    'slug' => $categorySlug,
                     'is_active' => true
                 ]);
 

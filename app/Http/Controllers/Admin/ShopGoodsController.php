@@ -685,7 +685,7 @@ class ShopGoodsController extends Controller
     public function downloadImagesBatch(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'imageUrls' => 'required|array|min:1|max:50', // Максимум 50 изображений за раз
+            'imageUrls' => 'required|array|min:1|max:500', // Максимум 500 изображений за раз
             'imageUrls.*' => 'required|url',
             'storagePath' => 'required|string',
             'optimize' => 'boolean',
