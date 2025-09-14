@@ -1018,19 +1018,33 @@ class ShopGoodsController extends Controller
      */
     private function downloadImageWithCurl($imageUrl)
     {
+        // Сначала пробуем cURL с агрессивными настройками SSL
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $imageUrl);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, 30);
         curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+        
+        // Агрессивные настройки SSL для обхода проблем с DH ключом
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
         curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+        curl_setopt($ch, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+        curl_setopt($ch, CURLOPT_SSL_CIPHER_LIST, 'DEFAULT@SECLEVEL=0');
+        curl_setopt($ch, CURLOPT_SSL_OPTIONS, CURLSSLOPT_ALLOW_BEAST | CURLSSLOPT_NO_REVOKE);
+        
+        // Дополнительные настройки для обхода проблем с SSL
+        curl_setopt($ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+        curl_setopt($ch, CURLOPT_TCP_KEEPALIVE, 1);
+        curl_setopt($ch, CURLOPT_TCP_KEEPIDLE, 10);
+        curl_setopt($ch, CURLOPT_TCP_KEEPINTVL, 1);
+        
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             'Accept: image/*,*/*;q=0.8',
             'Accept-Language: en-US,en;q=0.5',
             'Accept-Encoding: gzip, deflate',
             'Connection: keep-alive',
+            'Cache-Control: no-cache',
         ]);
         
         $imageData = curl_exec($ch);
@@ -1038,12 +1052,83 @@ class ShopGoodsController extends Controller
         $error = curl_error($ch);
         curl_close($ch);
         
+        // Если cURL не сработал из-за SSL проблем, пробуем wget
+        if ($imageData === false || $httpCode !== 200) {
+            \Log::info("🔄 cURL не сработал, пробуем wget", [
+                'url' => $imageUrl,
+                'curl_error' => $error,
+                'http_code' => $httpCode
+            ]);
+            
+            return $this->downloadImageWithWget($imageUrl);
+        }
+        
         return [
             'data' => $imageData,
             'http_code' => $httpCode,
             'error' => $error,
             'success' => $imageData !== false && $httpCode === 200
         ];
+    }
+
+    /**
+     * Fallback метод для скачивания изображений через wget
+     */
+    private function downloadImageWithWget($imageUrl)
+    {
+        $tempFile = tempnam(sys_get_temp_dir(), 'image_download_');
+        
+        try {
+            // Используем wget с отключенной проверкой SSL
+            $wgetCommand = "wget --no-check-certificate --timeout=30 --tries=1 -O '{$tempFile}' " . escapeshellarg($imageUrl) . " 2>&1";
+            $output = shell_exec($wgetCommand);
+            
+            if (file_exists($tempFile) && filesize($tempFile) > 0) {
+                $imageData = file_get_contents($tempFile);
+                unlink($tempFile);
+                
+                \Log::info("✅ wget успешно скачал изображение", [
+                    'url' => $imageUrl,
+                    'size' => strlen($imageData)
+                ]);
+                
+                return [
+                    'data' => $imageData,
+                    'http_code' => 200,
+                    'error' => null,
+                    'success' => true
+                ];
+            } else {
+                unlink($tempFile);
+                \Log::error("❌ wget не смог скачать изображение", [
+                    'url' => $imageUrl,
+                    'output' => $output
+                ]);
+                
+                return [
+                    'data' => false,
+                    'http_code' => 0,
+                    'error' => 'wget failed: ' . $output,
+                    'success' => false
+                ];
+            }
+        } catch (\Exception $e) {
+            if (file_exists($tempFile)) {
+                unlink($tempFile);
+            }
+            
+            \Log::error("❌ Ошибка при использовании wget", [
+                'url' => $imageUrl,
+                'error' => $e->getMessage()
+            ]);
+            
+            return [
+                'data' => false,
+                'http_code' => 0,
+                'error' => 'wget exception: ' . $e->getMessage(),
+                'success' => false
+            ];
+        }
     }
 
     /**
