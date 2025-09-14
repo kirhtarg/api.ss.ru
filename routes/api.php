@@ -159,6 +159,11 @@ Route::middleware(['cors'])->group(function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/goods/slug/{slug}', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getGoodBySlug']);
+    
+    Route::options('/public/shop/goods/{id}/images', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/goods/{id}/images', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getGoodImages']);
 
     // Публичные маршруты для категорий магазина
     Route::options('/public/shop/categories', function () {

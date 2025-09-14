@@ -191,6 +191,8 @@ class ShopGoodsController extends Controller
             'characteristics' => $characteristics,
             'in_stock' => $good->stock_quantity > 0,
             'stock_quantity' => $good->stock_quantity,
+            'is_new' => (bool) $good->is_new,
+            'is_sale' => (bool) $good->is_sale,
             'category_id' => $good->categories->first() ? $good->categories->first()->id : null,
             'brand_id' => $good->brands->first() ? $good->brands->first()->id : null,
             'category' => $good->categories->first() ? [
@@ -237,8 +239,8 @@ class ShopGoodsController extends Controller
             return $filePath;
         }
 
-        // Формируем URL относительно storage
-        return url('storage/' . $filePath);
+        // Возвращаем только путь к файлу, без домена
+        return '/storage/' . ltrim($filePath, '/');
     }
 
     /**
@@ -272,6 +274,50 @@ class ShopGoodsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка при получении товара: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить изображения товара
+     */
+    public function getGoodImages(int $goodId): JsonResponse
+    {
+        try {
+            $good = ShopGood::where('id', $goodId)
+                ->where('is_active', true)
+                ->first();
+
+            if (!$good) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Товар не найден'
+                ], 404);
+            }
+
+            $images = $good->images()
+                ->orderBy('sort_order')
+                ->orderBy('id')
+                ->get()
+                ->map(function ($image) {
+                    return [
+                        'id' => $image->id,
+                        'file_path' => $image->file_path,
+                        'alt_text' => $image->alt_text,
+                        'is_main' => $image->is_main,
+                        'sort_order' => $image->sort_order,
+                        'url' => $this->getImageUrl($image->file_path)
+                    ];
+                });
+
+            return response()->json([
+                'success' => true,
+                'data' => $images
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при получении изображений: ' . $e->getMessage()
             ], 500);
         }
     }
