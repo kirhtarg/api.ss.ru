@@ -11,10 +11,21 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('shop_good_variations', function (Blueprint $table) {
-            $table->integer('sort_order')->default(0)->after('is_active');
-            $table->index(['good_id', 'sort_order']);
-        });
+        if (Schema::hasTable('shop_good_variations')) {
+            // Проверяем, существует ли уже поле sort_order
+            if (!Schema::hasColumn('shop_good_variations', 'sort_order')) {
+                Schema::table('shop_good_variations', function (Blueprint $table) {
+                    $table->integer('sort_order')->default(0)->after('is_active');
+                });
+            }
+            
+            // Проверяем, существует ли уже индекс
+            if (!Schema::hasIndex('shop_good_variations', ['good_id', 'sort_order'])) {
+                Schema::table('shop_good_variations', function (Blueprint $table) {
+                    $table->index(['good_id', 'sort_order']);
+                });
+            }
+        }
     }
 
     /**
@@ -22,9 +33,20 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('shop_good_variations', function (Blueprint $table) {
-            $table->dropIndex(['good_id', 'sort_order']);
-            $table->dropColumn('sort_order');
-        });
+        if (Schema::hasTable('shop_good_variations')) {
+            // Удаляем индекс, если он существует
+            if (Schema::hasIndex('shop_good_variations', ['good_id', 'sort_order'])) {
+                Schema::table('shop_good_variations', function (Blueprint $table) {
+                    $table->dropIndex(['good_id', 'sort_order']);
+                });
+            }
+            
+            // Удаляем колонку, если она существует
+            if (Schema::hasColumn('shop_good_variations', 'sort_order')) {
+                Schema::table('shop_good_variations', function (Blueprint $table) {
+                    $table->dropColumn('sort_order');
+                });
+            }
+        }
     }
 };
