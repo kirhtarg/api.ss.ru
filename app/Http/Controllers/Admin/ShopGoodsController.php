@@ -592,6 +592,16 @@ class ShopGoodsController extends Controller
             $width = $request->input('width');
             $height = $request->input('height');
 
+            \Log::info('🖼️ downloadImage вызван', [
+                'imageUrl' => $imageUrl,
+                'storagePath' => $storagePath,
+                'optimize' => $optimize,
+                'naming' => $naming,
+                'resize' => $resize,
+                'width' => $width,
+                'height' => $height
+            ]);
+
             // Валидация URL
             if (!filter_var($imageUrl, FILTER_VALIDATE_URL)) {
                 return response()->json([
@@ -640,13 +650,16 @@ class ShopGoodsController extends Controller
             }
 
             // Скачиваем изображение
+            \Log::info('📥 Начинаем скачивание изображения', ['url' => $imageUrl]);
             $imageData = file_get_contents($imageUrl);
             if ($imageData === false) {
+                \Log::error('❌ Не удалось скачать изображение', ['url' => $imageUrl]);
                 return response()->json([
                     'success' => false,
                     'message' => 'Не удалось скачать изображение'
                 ], 400);
             }
+            \Log::info('✅ Изображение скачано', ['url' => $imageUrl, 'size' => strlen($imageData)]);
 
             // Проверка размера файла (максимум 10MB)
             if (strlen($imageData) > 10 * 1024 * 1024) {
@@ -657,12 +670,28 @@ class ShopGoodsController extends Controller
             }
 
             // Сохраняем файл
-            file_put_contents($storageFullPath, $imageData);
+            \Log::info('💾 Сохраняем файл', ['path' => $storageFullPath]);
+            $saveResult = file_put_contents($storageFullPath, $imageData);
+            if ($saveResult === false) {
+                \Log::error('❌ Не удалось сохранить файл', ['path' => $storageFullPath]);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не удалось сохранить файл'
+                ], 500);
+            }
+            \Log::info('✅ Файл сохранен', ['path' => $storageFullPath, 'bytes' => $saveResult]);
 
             // Обработка изображения
             if ($optimize || $resize !== 'no_change') {
+                \Log::info('🔄 Обрабатываем изображение', ['resize' => $resize, 'width' => $width, 'height' => $height]);
                 $this->processImage($storageFullPath, $resize, $width, $height);
             }
+
+            \Log::info('🎉 Изображение успешно загружено', [
+                'originalUrl' => $imageUrl,
+                'path' => $fullPath,
+                'size' => strlen($imageData)
+            ]);
 
             return response()->json([
                 'success' => true,
@@ -965,8 +994,10 @@ class ShopGoodsController extends Controller
     private function processImage($filePath, $resize, $width, $height)
     {
         try {
+            \Log::info('🖼️ Обрабатываем изображение', ['file' => $filePath, 'resize' => $resize]);
             $imageInfo = getimagesize($filePath);
             if (!$imageInfo) {
+                \Log::error('❌ Не удалось получить информацию об изображении', ['file' => $filePath]);
                 return;
             }
 
