@@ -23,6 +23,7 @@ class SiteInfoController extends Controller
             // Получаем все настройки с группой general, site, auth и shop без кэширования
             $settings = Setting::select('key', 'value', 'type', 'group')
                 ->whereIn('group', ['general', 'site', 'auth', 'shop'])
+                ->orWhere('key', 'site_google_font') // Включаем параметр Google Fonts из любой группы
                 ->get();
 
             $siteInfo = [];
