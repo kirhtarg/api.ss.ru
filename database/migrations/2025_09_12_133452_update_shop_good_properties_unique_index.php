@@ -11,13 +11,22 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('shop_good_properties', function (Blueprint $table) {
-            // Удаляем старый уникальный индекс
-            $table->dropUnique(['good_id', 'property_id']);
+        if (Schema::hasTable('shop_good_properties')) {
+            // Проверяем и удаляем старый уникальный индекс, если он существует
+            if (Schema::hasIndex('shop_good_properties', 'shop_good_props_unique')) {
+                Schema::table('shop_good_properties', function (Blueprint $table) {
+                    $table->dropUnique('shop_good_props_unique');
+                });
+            }
             
-            // Добавляем новый уникальный индекс с учетом variation_id
-            $table->unique(['good_id', 'variation_id', 'property_id'], 'shop_good_properties_good_variation_property_unique');
-        });
+            // Проверяем, существует ли уже новый индекс
+            if (!Schema::hasIndex('shop_good_properties', 'shop_good_properties_good_variation_property_unique')) {
+                Schema::table('shop_good_properties', function (Blueprint $table) {
+                    // Добавляем новый уникальный индекс с учетом variation_id
+                    $table->unique(['good_id', 'variation_id', 'property_id'], 'shop_good_properties_good_variation_property_unique');
+                });
+            }
+        }
     }
 
     /**
@@ -25,12 +34,20 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('shop_good_properties', function (Blueprint $table) {
-            // Удаляем новый уникальный индекс
-            $table->dropUnique('shop_good_properties_good_variation_property_unique');
+        if (Schema::hasTable('shop_good_properties')) {
+            // Удаляем новый уникальный индекс, если он существует
+            if (Schema::hasIndex('shop_good_properties', 'shop_good_properties_good_variation_property_unique')) {
+                Schema::table('shop_good_properties', function (Blueprint $table) {
+                    $table->dropUnique('shop_good_properties_good_variation_property_unique');
+                });
+            }
             
-            // Восстанавливаем старый уникальный индекс
-            $table->unique(['good_id', 'property_id']);
-        });
+            // Восстанавливаем старый уникальный индекс, если его нет
+            if (!Schema::hasIndex('shop_good_properties', 'shop_good_props_unique')) {
+                Schema::table('shop_good_properties', function (Blueprint $table) {
+                    $table->unique(['good_id', 'property_id'], 'shop_good_props_unique');
+                });
+            }
+        }
     }
 };
