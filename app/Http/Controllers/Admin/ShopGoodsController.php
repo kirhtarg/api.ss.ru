@@ -650,7 +650,6 @@ class ShopGoodsController extends Controller
             }
 
             // Скачиваем изображение с помощью cURL для обхода SSL проблем
-            \Log::info('📥 Начинаем скачивание изображения', ['url' => $imageUrl]);
             
             $downloadResult = $this->downloadImageWithCurl($imageUrl);
             
@@ -691,11 +690,10 @@ class ShopGoodsController extends Controller
 
             // Обработка изображения
             if ($optimize || $resize !== 'no_change') {
-                \Log::info('🔄 Обрабатываем изображение', ['resize' => $resize, 'width' => $width, 'height' => $height]);
                 $this->processImage($storageFullPath, $resize, $width, $height);
             }
 
-            \Log::info('🎉 Изображение успешно загружено', [
+            \Log::info('Изображение успешно загружено', [
                 'originalUrl' => $imageUrl,
                 'path' => $fullPath,
                 'size' => strlen($imageData)
@@ -763,10 +761,10 @@ class ShopGoodsController extends Controller
 
             $results = [];
             $errors = [];
+            $skipped = [];
 
             // Обрабатываем изображения последовательно (для стабильности)
             foreach ($imageUrls as $index => $imageUrl) {
-                \Log::info("🔄 Обрабатываем изображение {$index}", ['url' => $imageUrl]);
                 $response = $this->downloadSingleImage(
                     $imageUrl,
                     $storagePath,
@@ -780,7 +778,13 @@ class ShopGoodsController extends Controller
 
                 if ($response['success']) {
                     $results[$response['originalUrl']] = $response['path'];
-                    \Log::info("✅ Изображение {$index} загружено успешно", ['url' => $response['originalUrl']]);
+                    
+                    if (isset($response['skipped']) && $response['skipped']) {
+                        $skipped[] = $response['originalUrl'];
+                        \Log::info("Изображение {$index} пропущено (уже существует)", ['url' => $response['originalUrl']]);
+                    } else {
+                        \Log::info("Изображение {$index} загружено успешно", ['url' => $response['originalUrl']]);
+                    }
                 } else {
                     $errors[] = [
                         'url' => $response['originalUrl'],
@@ -793,11 +797,13 @@ class ShopGoodsController extends Controller
                 }
             }
 
-            \Log::info("📦 downloadImagesBatch завершен", [
+            \Log::info("downloadImagesBatch завершен", [
                 'total' => count($imageUrls),
                 'successful' => count($results),
+                'skipped' => count($skipped),
                 'failed' => count($errors),
                 'results' => $results,
+                'skipped_urls' => $skipped,
                 'errors' => $errors
             ]);
 
@@ -806,8 +812,10 @@ class ShopGoodsController extends Controller
                 'data' => [
                     'paths' => $results,
                     'errors' => $errors,
+                    'skipped' => $skipped,
                     'total' => count($imageUrls),
                     'successful' => count($results),
+                    'skipped_count' => count($skipped),
                     'failed' => count($errors)
                 ]
             ]);
@@ -826,7 +834,6 @@ class ShopGoodsController extends Controller
     private function downloadSingleImage($imageUrl, $storagePath, $optimize, $naming, $resize, $width, $height, $index)
     {
         try {
-            \Log::info("📥 Загружаем изображение {$index}: {$imageUrl}");
 
             // Валидация URL
             if (!filter_var($imageUrl, FILTER_VALIDATE_URL)) {
@@ -864,6 +871,22 @@ class ShopGoodsController extends Controller
             // Полный путь для сохранения
             $fullPath = $storagePath . '/' . $fileName;
             $storageFullPath = storage_path('app/public' . $fullPath);
+            
+            // Проверяем, существует ли файл уже
+            if (file_exists($storageFullPath)) {
+                \Log::info("Файл уже существует, пропускаем загрузку", [
+                    'url' => $imageUrl,
+                    'path' => $fullPath,
+                    'size' => filesize($storageFullPath)
+                ]);
+                
+                return [
+                    'success' => true,
+                    'originalUrl' => $imageUrl,
+                    'path' => $fullPath,
+                    'skipped' => true // Флаг, что файл был пропущен
+                ];
+            }
             
             // Создаем директорию если не существует
             $directory = dirname($storageFullPath);
@@ -911,7 +934,7 @@ class ShopGoodsController extends Controller
                 $this->processImage($storageFullPath, $resize, $width, $height);
             }
 
-            \Log::info("✅ Изображение успешно загружено", [
+            \Log::info("Изображение успешно загружено", [
                 'originalUrl' => $imageUrl,
                 'path' => $fullPath,
                 'size' => strlen($imageData)
@@ -1054,7 +1077,7 @@ class ShopGoodsController extends Controller
         
         // Если cURL не сработал из-за SSL проблем, пробуем wget
         if ($imageData === false || $httpCode !== 200) {
-            \Log::info("🔄 cURL не сработал, пробуем wget", [
+            \Log::info("cURL не сработал, пробуем wget", [
                 'url' => $imageUrl,
                 'curl_error' => $error,
                 'http_code' => $httpCode
