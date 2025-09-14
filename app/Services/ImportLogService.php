@@ -10,11 +10,11 @@ class ImportLogService
     
     public function __construct()
     {
-        $this->logDir = public_path('logs');
+        $this->logDir = storage_path('app/public/import-logs');
         
         // Создаем директорию если не существует
-        if (!File::exists($this->logDir)) {
-            File::makeDirectory($this->logDir, 0755, true);
+        if (!\App\Helpers\StorageHelper::createDirectory($this->logDir)) {
+            \Log::error("Failed to create import logs directory: {$this->logDir}");
         }
     }
     
@@ -36,8 +36,18 @@ class ImportLogService
      */
     public function clearLog($type)
     {
-        $logPath = $this->getLogPath($type);
-        File::put($logPath, '');
+        try {
+            $logPath = $this->getLogPath($type);
+            
+            // Убеждаемся, что директория существует
+            if (!File::exists($this->logDir)) {
+                \App\Helpers\StorageHelper::createDirectory($this->logDir);
+            }
+            
+            File::put($logPath, '');
+        } catch (\Exception $e) {
+            \Log::error("Failed to clear import log {$type}: " . $e->getMessage());
+        }
     }
     
     /**
@@ -105,12 +115,20 @@ class ImportLogService
      */
     private function writeLog($type, $message)
     {
-        $logPath = $this->getLogPath($type);
-        $timestamp = now()->format('Y-m-d H:i:s');
-        $logEntry = "[{$timestamp}] {$message}" . PHP_EOL;
-        
-        
-        File::append($logPath, $logEntry);
+        try {
+            $logPath = $this->getLogPath($type);
+            $timestamp = now()->format('Y-m-d H:i:s');
+            $logEntry = "[{$timestamp}] {$message}" . PHP_EOL;
+            
+            // Убеждаемся, что директория существует
+            if (!File::exists($this->logDir)) {
+                \App\Helpers\StorageHelper::createDirectory($this->logDir);
+            }
+            
+            File::append($logPath, $logEntry);
+        } catch (\Exception $e) {
+            \Log::error("Failed to write to import log: " . $e->getMessage());
+        }
     }
     
     /**
@@ -193,18 +211,36 @@ class ImportLogService
         $stats = [];
         $logTypes = ['import-load', 'import-skip', 'import-update', 'import-error'];
         
-        foreach ($logTypes as $type) {
-            $logPath = $this->getLogPath($type);
+        try {
+            // Убеждаемся, что директория существует
+            if (!File::exists($this->logDir)) {
+                \App\Helpers\StorageHelper::createDirectory($this->logDir);
+            }
             
-            if (File::exists($logPath)) {
-                $content = File::get($logPath);
-                $lines = array_filter(explode("\n", trim($content)));
-                $stats[$type] = [
-                    'count' => count($lines),
-                    'lastModified' => File::lastModified($logPath),
-                    'size' => File::size($logPath)
-                ];
-            } else {
+            foreach ($logTypes as $type) {
+                $logPath = $this->getLogPath($type);
+                
+                if (File::exists($logPath)) {
+                    $content = File::get($logPath);
+                    $lines = array_filter(explode("\n", trim($content)));
+                    $stats[$type] = [
+                        'count' => count($lines),
+                        'lastModified' => File::lastModified($logPath),
+                        'size' => File::size($logPath)
+                    ];
+                } else {
+                    $stats[$type] = [
+                        'count' => 0,
+                        'lastModified' => null,
+                        'size' => 0
+                    ];
+                }
+            }
+        } catch (\Exception $e) {
+            \Log::error("Failed to get log stats: " . $e->getMessage());
+            
+            // Возвращаем пустую статистику в случае ошибки
+            foreach ($logTypes as $type) {
                 $stats[$type] = [
                     'count' => 0,
                     'lastModified' => null,
