@@ -649,16 +649,24 @@ class ShopGoodsController extends Controller
                 ], 500);
             }
 
-            // Скачиваем изображение
+            // Скачиваем изображение с помощью cURL для обхода SSL проблем
             \Log::info('📥 Начинаем скачивание изображения', ['url' => $imageUrl]);
-            $imageData = file_get_contents($imageUrl);
-            if ($imageData === false) {
-                \Log::error('❌ Не удалось скачать изображение', ['url' => $imageUrl]);
+            
+            $downloadResult = $this->downloadImageWithCurl($imageUrl);
+            
+            if (!$downloadResult['success']) {
+                \Log::error('❌ Не удалось скачать изображение', [
+                    'url' => $imageUrl,
+                    'http_code' => $downloadResult['http_code'],
+                    'curl_error' => $downloadResult['error']
+                ]);
                 return response()->json([
                     'success' => false,
-                    'message' => 'Не удалось скачать изображение'
+                    'message' => 'Не удалось скачать изображение: ' . ($downloadResult['error'] ?: "HTTP {$downloadResult['http_code']}")
                 ], 400);
             }
+            
+            $imageData = $downloadResult['data'];
             \Log::info('✅ Изображение скачано', ['url' => $imageUrl, 'size' => strlen($imageData)]);
 
             // Проверка размера файла (максимум 10MB)
@@ -868,15 +876,23 @@ class ShopGoodsController extends Controller
                 ];
             }
 
-            // Скачиваем изображение
-            $imageData = file_get_contents($imageUrl);
-            if ($imageData === false) {
+            // Скачиваем изображение с помощью cURL для обхода SSL проблем
+            $downloadResult = $this->downloadImageWithCurl($imageUrl);
+            
+            if (!$downloadResult['success']) {
+                \Log::error("❌ Не удалось скачать изображение", [
+                    'url' => $imageUrl,
+                    'http_code' => $downloadResult['http_code'],
+                    'curl_error' => $downloadResult['error']
+                ]);
                 return [
                     'success' => false,
                     'originalUrl' => $imageUrl,
-                    'error' => 'Не удалось скачать изображение'
+                    'error' => 'Не удалось скачать изображение: ' . ($downloadResult['error'] ?: "HTTP {$downloadResult['http_code']}")
                 ];
             }
+            
+            $imageData = $downloadResult['data'];
 
             // Проверка размера файла (максимум 10MB)
             if (strlen($imageData) > 10 * 1024 * 1024) {
@@ -995,6 +1011,39 @@ class ShopGoodsController extends Controller
         } catch (\Exception $e) {
             // Ошибка оптимизации не критична, продолжаем выполнение
         }
+    }
+
+    /**
+     * Скачивание изображения с помощью cURL (обход SSL проблем)
+     */
+    private function downloadImageWithCurl($imageUrl)
+    {
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $imageUrl);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+        curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Accept: image/*,*/*;q=0.8',
+            'Accept-Language: en-US,en;q=0.5',
+            'Accept-Encoding: gzip, deflate',
+            'Connection: keep-alive',
+        ]);
+        
+        $imageData = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $error = curl_error($ch);
+        curl_close($ch);
+        
+        return [
+            'data' => $imageData,
+            'http_code' => $httpCode,
+            'error' => $error,
+            'success' => $imageData !== false && $httpCode === 200
+        ];
     }
 
     /**
