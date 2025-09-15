@@ -387,6 +387,7 @@ class ShopGoodImagesController extends Controller
             $images = $request->input('images');
             $results = [];
             $errors = [];
+            $skipped = [];
             
             // Логируем входящие данные
             Log::info('ShopGoodImagesController::createFromImportBatch - Получены данные', [
@@ -413,7 +414,12 @@ class ShopGoodImagesController extends Controller
                 foreach ($goodImages as $imageData) {
                     try {
                         $result = $this->processSingleImage($good, $imageData);
-                        $results[] = $result;
+                        
+                        if ($result['status'] === 'skipped') {
+                            $skipped[] = $result;
+                        } else {
+                            $results[] = $result;
+                        }
                     } catch (\Exception $e) {
                         Log::error('Ошибка создания изображения', [
                             'index' => $imageData['_index'],
@@ -437,6 +443,7 @@ class ShopGoodImagesController extends Controller
             Log::info('ShopGoodImagesController::createFromImportBatch - Завершено', [
                 'total_images' => count($images),
                 'successful' => count($results),
+                'skipped' => count($skipped),
                 'failed' => count($errors),
                 'errors_summary' => array_map(function($error) {
                     return [
@@ -451,9 +458,11 @@ class ShopGoodImagesController extends Controller
                 'success' => true,
                 'data' => [
                     'created' => $results,
+                    'skipped' => $skipped,
                     'errors' => $errors,
                     'total' => count($images),
                     'successful' => count($results),
+                    'skipped_count' => count($skipped),
                     'failed' => count($errors)
                 ]
             ]);
@@ -481,6 +490,21 @@ class ShopGoodImagesController extends Controller
         // Проверяем существование файла
         if (!Storage::disk('public')->exists($filePath)) {
             throw new \Exception('Файл изображения не найден: ' . $filePath);
+        }
+
+        // Проверяем, существует ли уже связь между товаром и изображением
+        $existingImage = ShopGoodImage::where('good_id', $goodId)
+            ->where('file_path', $filePath)
+            ->first();
+            
+        if ($existingImage) {
+            return [
+                'good_id' => $goodId,
+                'file_path' => $filePath,
+                'image_id' => $existingImage->id,
+                'status' => 'skipped',
+                'message' => 'Связь товар-изображение уже существует'
+            ];
         }
 
         // Обрабатываем действие с изображениями
