@@ -172,6 +172,7 @@ class BulkGoodsImportController extends Controller
         $autoCreateBrands = $request->input('auto_create_brands', false);
         $processCategoriesAndBrands = $request->input('process_categories_and_brands', false);
         
+        
         // Получаем информацию о батче
         $batchNumber = $request->input('batch_number', 1);
         $totalBatches = $request->input('total_batches', 1);
@@ -189,8 +190,12 @@ class BulkGoodsImportController extends Controller
         ];
 
         // Пакетная обработка категорий и брендов
-        if ($processCategoriesAndBrands) {
-            \Log::info('Starting batch processing', ['goods_count' => count($goods)]);
+        if ($processCategoriesAndBrands && ($autoCreateCategories || $autoCreateBrands)) {
+            \Log::info('Starting batch processing', [
+                'goods_count' => count($goods),
+                'autoCreateCategories' => $autoCreateCategories,
+                'autoCreateBrands' => $autoCreateBrands
+            ]);
             $this->processCategoriesAndBrandsBatch($goods, $autoCreateCategories, $autoCreateBrands);
             \Log::info('Batch processing completed', ['first_good' => $goods[0] ?? null]);
             

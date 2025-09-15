@@ -278,6 +278,14 @@ Route::get('/public/debug/settings', function () {
 });
 
 
+// Публичные маршруты
+Route::get('/contacts/main-address', [\App\Http\Controllers\ContactController::class, 'getMainAddress']);
+Route::get('/contacts/main-phone', [\App\Http\Controllers\ContactController::class, 'getMainPhone']);
+Route::get('/contacts/main-contact-phones', [\App\Http\Controllers\ContactController::class, 'getMainContactPhones']);
+
+// Сообщения с сайта (публичные)
+Route::post('/site-messages', [\App\Http\Controllers\SiteMessageController::class, 'store']);
+
 // Защищенные маршруты (требуют авторизации) - используют только token authentication
 Route::middleware('auth:sanctum')->group(function () {
     // Авторизация
@@ -287,6 +295,26 @@ Route::middleware('auth:sanctum')->group(function () {
     
     // Загрузка изображений для rich editor
     Route::post('/admin/upload/good-text-image', [\App\Http\Controllers\Admin\UploadController::class, 'uploadGoodTextImage']);
+
+    // Контакты (доступны админам и пользователям с ролью site)
+    Route::middleware(['auth:sanctum', 'role:admin,site'])->prefix('contacts')->group(function () {
+        Route::get('/', [\App\Http\Controllers\ContactController::class, 'index']);
+        Route::get('/{id}', [\App\Http\Controllers\ContactController::class, 'show']);
+        Route::post('/', [\App\Http\Controllers\ContactController::class, 'store']);
+        Route::put('/{id}', [\App\Http\Controllers\ContactController::class, 'update']);
+        Route::delete('/{id}', [\App\Http\Controllers\ContactController::class, 'destroy']);
+        Route::get('/social-types/list', [\App\Http\Controllers\ContactController::class, 'getSocialTypes']);
+    });
+
+    // Сообщения с сайта (доступны админам)
+    Route::middleware(['auth:sanctum', 'role:admin'])->prefix('site-messages')->group(function () {
+        Route::get('/', [\App\Http\Controllers\SiteMessageController::class, 'index']);
+        Route::get('/{id}', [\App\Http\Controllers\SiteMessageController::class, 'show']);
+        Route::put('/{id}', [\App\Http\Controllers\SiteMessageController::class, 'update']);
+        Route::delete('/{id}', [\App\Http\Controllers\SiteMessageController::class, 'destroy']);
+        Route::post('/{id}/mark-processed', [\App\Http\Controllers\SiteMessageController::class, 'markAsProcessed']);
+        Route::get('/stats/overview', [\App\Http\Controllers\SiteMessageController::class, 'stats']);
+    });
 
     // Временный тестовый маршрут для Google Sheets (без авторизации)
     Route::get('/test-google-sheets/{spreadsheetId}', function ($spreadsheetId) {

@@ -61,3 +61,4 @@ if (file_exists($tempFile) && filesize($tempFile) > 0) {
 }
 
 echo "\n✅ Тестирование завершено\n";
+

@@ -68,3 +68,4 @@ class StorageHelper
         return $fullPath;
     }
 }
+

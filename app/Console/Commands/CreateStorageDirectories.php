@@ -67,3 +67,4 @@ class CreateStorageDirectories extends Command
         return Command::SUCCESS;
     }
 }
+

@@ -49,6 +49,7 @@ class SiteMenuItemController extends Controller
                 'sort_order' => 'integer|min:0',
                 'is_active' => 'boolean',
                 'target' => 'string|in:_self,_blank,_parent,_top',
+                'icon' => 'nullable|string|max:255',
                 'attributes' => 'nullable|array',
             ]);
 
@@ -113,6 +114,7 @@ class SiteMenuItemController extends Controller
                 'sort_order' => 'integer|min:0',
                 'is_active' => 'boolean',
                 'target' => 'string|in:_self,_blank,_parent,_top',
+                'icon' => 'nullable|string|max:255',
                 'attributes' => 'nullable|array',
             ]);
 

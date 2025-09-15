@@ -19,6 +19,7 @@ class SiteMenuItem extends Model
         'sort_order',
         'is_active',
         'target',
+        'icon',
         'attributes',
     ];
 
@@ -101,6 +102,7 @@ class SiteMenuItem extends Model
             'title' => $this->title,
             'url' => $this->url,
             'target' => $this->target,
+            'icon' => $this->icon,
             'attributes' => $this->attributes,
             'children' => $this->children->map(function ($child) {
                 return $child->getMenuData();

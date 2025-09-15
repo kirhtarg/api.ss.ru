@@ -42,3 +42,4 @@ if ($response->successful()) {
 } else {
     echo "\n❌ Ошибка загрузки изображения\n";
 }
+

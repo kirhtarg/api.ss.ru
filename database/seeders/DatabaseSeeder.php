@@ -25,6 +25,9 @@ class DatabaseSeeder extends Seeder
             SiteTemplateSeeder::class,
             SiteMenuSeeder::class,
             SiteMenuItemSeeder::class,
+            
+            // Контакты
+            SocialTypeSeeder::class,
         ]);
     }
 }
