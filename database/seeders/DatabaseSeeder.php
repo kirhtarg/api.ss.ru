@@ -16,6 +16,7 @@ class DatabaseSeeder extends Seeder
             RoleSeeder::class,
             UserSeeder::class,
             SettingSeeder::class,
+            UserRoleSeeder::class,
             
             // Админка
             AdminPageSeeder::class,
@@ -28,6 +29,9 @@ class DatabaseSeeder extends Seeder
             
             // Контакты
             SocialTypeSeeder::class,
+            ContactSeeder::class,
+            ContactPhoneSeeder::class,
+            ContactAddressSeeder::class,
         ]);
     }
 }

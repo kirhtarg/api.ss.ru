@@ -11,8 +11,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('site_menu_items', function (Blueprint $table) {
-            $table->string('icon')->nullable()->after('target');
+        Schema::table('users', function (Blueprint $table) {
+            $table->string('phone', 100)->nullable()->after('updated_at');
+            $table->string('phone_verified_at', 100)->nullable()->after('phone');
         });
     }
 
@@ -21,8 +22,8 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('site_menu_items', function (Blueprint $table) {
-            $table->dropColumn('icon');
+        Schema::table('users', function (Blueprint $table) {
+            $table->dropColumn(['phone', 'phone_verified_at']);
         });
     }
 };

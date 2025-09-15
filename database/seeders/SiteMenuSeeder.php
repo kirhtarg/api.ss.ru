@@ -12,18 +12,25 @@ class SiteMenuSeeder extends Seeder
      */
     public function run(): void
     {
-        DB::table('site_menus')->insert([
+        $menus = [
             [
                 'id' => 1,
                 'name' => 'Основное меню',
                 'description' => 'Главное меню сайта',
                 'is_active' => 1,
+                'created_at' => '2025-09-03 13:40:15',
+                'updated_at' => '2025-09-03 15:28:29',
                 'template_name' => null,
                 'settings' => null,
                 'sort_order' => 0,
-                'created_at' => '2025-09-03 13:40:15',
-                'updated_at' => '2025-09-03 15:28:29',
             ],
-        ]);
+        ];
+
+        foreach ($menus as $menu) {
+            DB::table('site_menus')->updateOrInsert(
+                ['id' => $menu['id']],
+                $menu
+            );
+        }
     }
 }

@@ -41,16 +41,16 @@ class AdminPageSeeder extends Seeder
             ],
             [
                 'id' => 3,
-                'name' => 'Settings2',
-                'slug' => 'settings2',
-                'title' => 'Администратор2',
-                'description' => 'typcn:shopping-cart',
-                'icon' => '',
+                'name' => 'Site',
+                'slug' => 'site',
+                'title' => 'Сайт',
+                'description' => 'Администрирование основного сайта',
+                'icon' => 'fluent-mdl2:website',
                 'component' => 'Settings',
                 'order' => 2,
-                'is_active' => 0,
+                'is_active' => 1,
                 'created_at' => '2025-08-30 18:43:13',
-                'updated_at' => '2025-09-03 10:45:34',
+                'updated_at' => '2025-09-15 03:08:28',
             ],
         ];
 
@@ -58,18 +58,6 @@ class AdminPageSeeder extends Seeder
             DB::table('admin_pages')->updateOrInsert(
                 ['id' => $page['id']],
                 $page
-            );
-        }
-
-        // Создаем связи страниц с ролями
-        $pageRoles = [
-            ['admin_page_id' => 2, 'role_id' => 3], // manager имеет доступ к shop
-        ];
-
-        foreach ($pageRoles as $pageRole) {
-            DB::table('admin_page_role')->updateOrInsert(
-                ['admin_page_id' => $pageRole['admin_page_id'], 'role_id' => $pageRole['role_id']],
-                $pageRole
             );
         }
     }
