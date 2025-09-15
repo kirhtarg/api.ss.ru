@@ -43,6 +43,9 @@ class CustomCors
         // Устанавливаем CORS заголовки
         if ($origin && $isAllowed) {
             $response->headers->set('Access-Control-Allow-Origin', $origin);
+        } elseif ($origin) {
+            // Временное решение - разрешаем все домены (только для отладки!)
+            $response->headers->set('Access-Control-Allow-Origin', $origin);
         }
 
         $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
