@@ -141,6 +141,39 @@ class ShopTemplateController extends Controller
     }
 
     /**
+     * Получить активный шаблон для страниц категорий
+     */
+    public function getActiveCategories(): JsonResponse
+    {
+        try {
+            $template = ShopTemplate::getActiveCategories();
+            
+            if (!$template) {
+                // Если нет активного шаблона для категорий, возвращаем дефолтный
+                $template = ShopTemplate::getDefault();
+            }
+            
+            if (!$template) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Шаблон для страниц категорий не найден'
+                ], 404);
+            }
+            
+            return response()->json([
+                'success' => true,
+                'data' => $template->getTemplateData()
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения шаблона для категорий: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Получить все доступные шаблоны магазина (для админки)
      */
     public function getAll(): JsonResponse

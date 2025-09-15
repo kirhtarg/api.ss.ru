@@ -76,6 +76,14 @@ class ShopTemplate extends Model
     }
 
     /**
+     * Получить активный шаблон для страниц категорий
+     */
+    public static function getActiveCategories()
+    {
+        return static::where('is_active', true)->first();
+    }
+
+    /**
      * Получить дефолтный шаблон магазина
      */
     public static function getDefault()
