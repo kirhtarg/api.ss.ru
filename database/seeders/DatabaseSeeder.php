@@ -27,6 +27,9 @@ class DatabaseSeeder extends Seeder
             SiteMenuSeeder::class,
             SiteMenuItemSeeder::class,
             
+            // Магазин
+            ShopTemplateSeeder::class,
+            
             // Контакты
             SocialTypeSeeder::class,
             ContactSeeder::class,
