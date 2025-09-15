@@ -198,6 +198,12 @@ Route::middleware(['cors'])->group(function () {
     });
     Route::get('/public/shop/brands/slug/{slug}', [App\Http\Controllers\Api\Public\ShopBrandsController::class, 'getBySlug']);
 
+    // Публичный маршрут для поиска
+    Route::options('/public/search', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/search', [App\Http\Controllers\Public\SearchController::class, 'search']);
+
     // Публичные маршруты для изображений магазина
     Route::options('/public/shop/images/batch', function () {
         return response()->json([], 200);
