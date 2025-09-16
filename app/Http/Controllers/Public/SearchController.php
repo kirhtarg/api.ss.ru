@@ -16,7 +16,7 @@ class SearchController extends Controller
         $query = $request->get('q', '');
         $limit = min($request->get('limit', 10), 50); // Максимум 50 результатов
 
-        \Log::info('Search request', ['query' => $query, 'limit' => $limit]);
+        Log::info('Search request', ['query' => $query, 'limit' => $limit]);
 
         if (strlen($query) < 3) {
             return response()->json([
@@ -36,7 +36,7 @@ class SearchController extends Controller
             $categories = $this->searchCategories($query, $limit);
             $brands = $this->searchBrands($query, $limit);
             
-            \Log::info('Search results', [
+            Log::info('Search results', [
                 'products_count' => count($products),
                 'categories_count' => count($categories),
                 'brands_count' => count($brands)
@@ -57,25 +57,24 @@ class SearchController extends Controller
         try {
             $products = DB::table('shop_goods')
                 ->where('is_active', true)
-                ->where(function ($q) use ($query) {
-                    $q->where('name', 'LIKE', "%{$query}%")
-                      ->orWhere('description', 'LIKE', "%{$query}%")
-                      ->orWhere('short_description', 'LIKE', "%{$query}%")
-                      ->orWhere('sku', 'LIKE', "%{$query}%")
-                      ->orWhere('meta_title', 'LIKE', "%{$query}%")
-                      ->orWhere('meta_description', 'LIKE', "%{$query}%");
-                })
+                ->where('name', 'LIKE', "%{$query}%")
                 ->select('id', 'name', 'price', 'sale_price', 'sku', 'slug', 'description')
                 ->limit($limit)
                 ->get()
                 ->map(function ($product) {
+                    // Получаем первое изображение для каждого товара
+                    $firstImage = DB::table('shop_good_images')
+                        ->where('good_id', $product->id)
+                        ->orderBy('id')
+                        ->first();
+                    
                     return [
                         'id' => $product->id,
                         'name' => $product->name,
                         'price' => $product->sale_price ? $product->sale_price : $product->price,
                         'original_price' => $product->sale_price ? $product->price : null,
                         'sku' => $product->sku,
-                        'image' => null, // В таблице shop_goods нет поля image
+                        'image' => $firstImage ? Storage::url($firstImage->file_path) : null,
                         'slug' => $product->slug,
                         'description' => $product->description
                     ];
@@ -83,7 +82,7 @@ class SearchController extends Controller
 
             return $products->toArray();
         } catch (\Exception $e) {
-            \Log::error('Search products error: ' . $e->getMessage());
+            Log::error('Search products error: ' . $e->getMessage());
             return [];
         }
     }
@@ -112,7 +111,7 @@ class SearchController extends Controller
 
             return $categories->toArray();
         } catch (\Exception $e) {
-            \Log::error('Search categories error: ' . $e->getMessage());
+            Log::error('Search categories error: ' . $e->getMessage());
             return [];
         }
     }
@@ -141,7 +140,7 @@ class SearchController extends Controller
 
             return $brands->toArray();
         } catch (\Exception $e) {
-            \Log::error('Search brands error: ' . $e->getMessage());
+            Log::error('Search brands error: ' . $e->getMessage());
             return [];
         }
     }

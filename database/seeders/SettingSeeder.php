@@ -322,3 +322,5 @@ class SettingSeeder extends Seeder
         }
     }
 }
+
+

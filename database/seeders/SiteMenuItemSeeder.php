@@ -79,3 +79,5 @@ class SiteMenuItemSeeder extends Seeder
         }
     }
 }
+
+

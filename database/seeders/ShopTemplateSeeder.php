@@ -49,3 +49,5 @@ class ShopTemplateSeeder extends Seeder
         }
     }
 }
+
+

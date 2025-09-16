@@ -50,3 +50,5 @@ class ContactPhoneSeeder extends Seeder
         }
     }
 }
+
+

@@ -231,3 +231,5 @@ class AdminMenuItemSeeder extends Seeder
         }
     }
 }
+
+
