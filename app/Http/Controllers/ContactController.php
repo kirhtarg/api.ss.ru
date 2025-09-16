@@ -397,4 +397,64 @@ class ContactController extends Controller
             ]
         ]);
     }
+
+    /**
+     * Получить все данные контактов для хедера одним запросом
+     */
+    public function getHeaderData(): JsonResponse
+    {
+        $mainContact = Contact::getMainContact();
+        
+        if (!$mainContact) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Контакты не найдены'
+            ], 404);
+        }
+
+        // Получаем основной адрес
+        $mainAddress = $mainContact->mainAddress();
+        $addressData = null;
+        if ($mainAddress) {
+            $addressData = [
+                'id' => $mainAddress->id,
+                'address_full' => $mainAddress->address_full,
+                'address_short' => $mainAddress->address_short,
+                'is_main' => $mainAddress->is_main
+            ];
+        }
+
+        // Получаем основной телефон
+        $mainPhone = $mainContact->mainPhone();
+        $phoneData = null;
+        if ($mainPhone) {
+            $phoneData = [
+                'id' => $mainPhone->id,
+                'phone_name' => $mainPhone->phone_name,
+                'phone_number' => $mainPhone->phone_number,
+                'is_main' => $mainPhone->is_main
+            ];
+        }
+
+        // Получаем все телефоны
+        $phones = $mainContact->phones()->orderBy('is_main', 'desc')->get();
+        $phonesData = $phones->map(function ($phone) {
+            return [
+                'id' => $phone->id,
+                'phone_name' => $phone->phone_name,
+                'phone_number' => $phone->phone_number,
+                'is_main' => $phone->is_main
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'contact_name' => $mainContact->name,
+                'address' => $addressData,
+                'main_phone' => $phoneData,
+                'phones' => $phonesData
+            ]
+        ]);
+    }
 }

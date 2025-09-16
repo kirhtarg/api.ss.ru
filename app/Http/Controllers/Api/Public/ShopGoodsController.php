@@ -87,8 +87,9 @@ class ShopGoodsController extends Controller
             }
 
             // Пагинация
-            $perPage = $request->get('limit', 12);
+            $perPage = $request->get('limit', 10);
             $page = $request->get('page', 1);
+            
             
             $goods = $query->paginate($perPage, ['*'], 'page', $page);
 
@@ -97,6 +98,7 @@ class ShopGoodsController extends Controller
                 return $this->formatGoodForFrontend($good);
             });
 
+            
             return response()->json([
                 'success' => true,
                 'data' => $formattedGoods,
@@ -129,7 +131,8 @@ class ShopGoodsController extends Controller
                 'brands:id,name,slug',
                 'tags:id,name,color',
                 'variations:id,good_id,name,price,sale_price,stock_quantity,is_active',
-                'properties:id,name,slug'
+                'properties:id,name,slug',
+                'images:id,good_id,file_path,alt_text,is_main,sort_order'
             ])
             ->where('is_active', true)
             ->where(function ($query) use ($id) {
@@ -184,8 +187,15 @@ class ShopGoodsController extends Controller
             'price' => (float) $good->price,
             'old_price' => $good->sale_price ? (float) $good->sale_price : null,
             'discount_percent' => $good->discount_percent,
-            'image_url' => null, // Будет загружено через пакетный API
-            'images' => [], // Будет загружено через пакетный API
+            'image_url' => $this->getImageUrl($good->image_path),
+            'images' => $good->images()->orderBy('sort_order')->get()->map(function ($image) {
+                return [
+                    'id' => $image->id,
+                    'url' => $this->getImageUrl($image->file_path),
+                    'alt_text' => $image->alt_text,
+                    'is_main' => $image->is_main
+                ];
+            })->toArray(),
             'rating' => $good->rating ? (float) $good->rating : null,
             'reviews_count' => $good->reviews_count ?? 0,
             'characteristics' => $characteristics,
@@ -253,7 +263,8 @@ class ShopGoodsController extends Controller
                 'categories:id,name,slug',
                 'brands:id,name,slug',
                 'tags:id,name,color',
-                'variations:id,good_id,name,price,sale_price,stock_quantity,is_active'
+                'variations:id,good_id,name,price,sale_price,stock_quantity,is_active',
+                'images:id,good_id,file_path,alt_text,is_main,sort_order'
             ])
             ->where('slug', $slug)
             ->where('is_active', true)
@@ -355,6 +366,56 @@ class ShopGoodsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка при получении категории: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Пакетная загрузка товаров
+     */
+    public function getBatch(Request $request): JsonResponse
+    {
+        try {
+            $request->validate([
+                'ids' => 'required|array',
+                'ids.*' => 'integer|min:1'
+            ]);
+
+            $ids = $request->get('ids');
+            
+            // Ограничиваем количество товаров в одном запросе
+            if (count($ids) > 20) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Максимум 20 товаров за один запрос'
+                ], 400);
+            }
+
+            $goods = ShopGood::with([
+                'categories:id,name,slug',
+                'brands:id,name,slug',
+                'tags:id,name,color',
+                'variations:id,good_id,name,price,sale_price,stock_quantity,is_active',
+                'properties:id,name,slug',
+                'images:id,good_id,file_path,alt_text,is_main,sort_order'
+            ])
+            ->where('is_active', true)
+            ->whereIn('id', $ids)
+            ->get();
+
+            $formattedGoods = $goods->map(function ($good) {
+                return $this->formatGoodForFrontend($good);
+            })->keyBy('id');
+
+            return response()->json([
+                'success' => true,
+                'data' => $formattedGoods
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при пакетной загрузке товаров: ' . $e->getMessage()
             ], 500);
         }
     }

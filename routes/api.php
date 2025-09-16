@@ -169,6 +169,12 @@ Route::middleware(['cors'])->group(function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/goods/{id}/images', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getGoodImages']);
+    
+    // Пакетная загрузка товаров
+    Route::options('/public/shop/goods/batch', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/public/shop/goods/batch', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getBatch']);
 
     // Публичные маршруты для категорий магазина
     Route::options('/public/shop/categories', function () {
@@ -293,6 +299,7 @@ Route::get('/public/debug/settings', function () {
 Route::get('/contacts/main-address', [\App\Http\Controllers\ContactController::class, 'getMainAddress']);
 Route::get('/contacts/main-phone', [\App\Http\Controllers\ContactController::class, 'getMainPhone']);
 Route::get('/contacts/main-contact-phones', [\App\Http\Controllers\ContactController::class, 'getMainContactPhones']);
+Route::get('/contacts/header-data', [\App\Http\Controllers\ContactController::class, 'getHeaderData']);
 
 // Сообщения с сайта (публичные)
 Route::post('/site-messages', [\App\Http\Controllers\SiteMessageController::class, 'store']);
