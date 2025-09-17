@@ -5,11 +5,32 @@ namespace App\Http\Controllers\Api\Public;
 use App\Http\Controllers\Controller;
 use App\Models\ShopGood;
 use App\Models\ShopCategory;
+use App\Models\ShopFavorite;
+use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 
 class ShopGoodsController extends Controller
 {
+    /**
+     * Получить пользователя из токена Authorization
+     */
+    private function getUserFromToken(Request $request): ?User
+    {
+        $token = $request->bearerToken();
+        if (!$token) {
+            return null;
+        }
+
+        // Ищем пользователя по токену в таблице personal_access_tokens
+        $personalAccessToken = \Laravel\Sanctum\PersonalAccessToken::findToken($token);
+        if (!$personalAccessToken) {
+            return null;
+        }
+
+        return $personalAccessToken->tokenable;
+    }
     /**
      * Получить список товаров для публичного API
      */
@@ -93,9 +114,21 @@ class ShopGoodsController extends Controller
             
             $goods = $query->paginate($perPage, ['*'], 'page', $page);
 
+            // Получаем ID избранных товаров для текущего пользователя (если авторизован)
+            $favoriteGoodIds = [];
+            $user = $this->getUserFromToken($request);
+            if ($user) {
+                $favoriteGoodIds = ShopFavorite::where('user_id', $user->id)
+                    ->whereIn('good_id', $goods->pluck('id'))
+                    ->pluck('good_id')
+                    ->toArray();
+            }
+
             // Форматируем данные для фронтенда
-            $formattedGoods = $goods->map(function ($good) {
-                return $this->formatGoodForFrontend($good);
+            $formattedGoods = $goods->map(function ($good) use ($favoriteGoodIds) {
+                $formattedGood = $this->formatGoodForFrontend($good);
+                $formattedGood['is_favorite'] = in_array($good->id, $favoriteGoodIds);
+                return $formattedGood;
             });
 
             
@@ -148,9 +181,21 @@ class ShopGoodsController extends Controller
                 ], 404);
             }
 
+            // Проверяем, находится ли товар в избранном
+            $isFavorite = false;
+            $user = $this->getUserFromToken($request);
+            if ($user) {
+                $isFavorite = ShopFavorite::where('user_id', $user->id)
+                    ->where('good_id', $good->id)
+                    ->exists();
+            }
+
+            $formattedGood = $this->formatGoodForFrontend($good);
+            $formattedGood['is_favorite'] = $isFavorite;
+
             return response()->json([
                 'success' => true,
-                'data' => $this->formatGoodForFrontend($good)
+                'data' => $formattedGood
             ]);
 
         } catch (\Exception $e) {
@@ -277,9 +322,21 @@ class ShopGoodsController extends Controller
                 ], 404);
             }
 
+            // Проверяем, находится ли товар в избранном
+            $isFavorite = false;
+            $user = $this->getUserFromToken($request);
+            if ($user) {
+                $isFavorite = ShopFavorite::where('user_id', $user->id)
+                    ->where('good_id', $good->id)
+                    ->exists();
+            }
+
+            $formattedGood = $this->formatGoodForFrontend($good);
+            $formattedGood['is_favorite'] = $isFavorite;
+
             return response()->json([
                 'success' => true,
-                'data' => $this->formatGoodForFrontend($good)
+                'data' => $formattedGood
             ]);
         } catch (\Exception $e) {
             return response()->json([
@@ -376,13 +433,6 @@ class ShopGoodsController extends Controller
     public function getBatch(Request $request): JsonResponse
     {
         try {
-            // Логируем запрос для отладки
-            \Log::info('Batch request received', [
-                'method' => $request->method(),
-                'headers' => $request->headers->all(),
-                'data' => $request->all()
-            ]);
-
             $request->validate([
                 'ids' => 'required|array',
                 'ids.*' => 'integer|min:1'
@@ -410,8 +460,22 @@ class ShopGoodsController extends Controller
             ->whereIn('id', $ids)
             ->get();
 
-            $formattedGoods = $goods->map(function ($good) {
-                return $this->formatGoodForFrontend($good);
+            // Получаем ID избранных товаров для текущего пользователя (если авторизован)
+            $favoriteGoodIds = [];
+            $user = $this->getUserFromToken($request);
+            if ($user) {
+                $favoriteGoodIds = ShopFavorite::where('user_id', $user->id)
+                    ->whereIn('good_id', $goods->pluck('id'))
+                    ->pluck('good_id')
+                    ->toArray();
+            }
+
+            $formattedGoods = $goods->map(function ($good) use ($favoriteGoodIds) {
+                $formattedGood = $this->formatGoodForFrontend($good);
+                $formattedGood['is_favorite'] = in_array($good->id, $favoriteGoodIds);
+                
+                
+                return $formattedGood;
             })->keyBy('id');
 
             return response()->json([

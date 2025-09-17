@@ -418,10 +418,14 @@ class ContactController extends Controller
         if ($mainAddress) {
             $addressData = [
                 'id' => $mainAddress->id,
-                'address_full' => $mainAddress->address_full,
+                'address' => $mainAddress->address,
                 'address_short' => $mainAddress->address_short,
-                'is_main' => $mainAddress->is_main
+                'latitude' => $mainAddress->latitude,
+                'longitude' => $mainAddress->longitude,
+                'is_main' => $mainAddress->is_main,
+                'contact_name' => $mainContact->name
             ];
+            
         }
 
         // Получаем основной телефон

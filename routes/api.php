@@ -321,6 +321,15 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', [AuthController::class, 'user']);
     Route::get('/auth/check', [AuthController::class, 'check']);
     
+    // Избранное
+    Route::prefix('shop/favorites')->group(function () {
+        Route::post('/add', [\App\Http\Controllers\ShopFavoriteController::class, 'add']);
+        Route::post('/remove', [\App\Http\Controllers\ShopFavoriteController::class, 'remove']);
+        Route::post('/toggle', [\App\Http\Controllers\ShopFavoriteController::class, 'toggle']);
+        Route::get('/check', [\App\Http\Controllers\ShopFavoriteController::class, 'check']);
+        Route::get('/', [\App\Http\Controllers\ShopFavoriteController::class, 'index']);
+    });
+    
     // Загрузка изображений для rich editor
     Route::post('/admin/upload/good-text-image', [\App\Http\Controllers\Admin\UploadController::class, 'uploadGoodTextImage']);
 
