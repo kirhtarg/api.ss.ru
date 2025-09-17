@@ -50,8 +50,7 @@ class ShopGoodsController extends Controller
                 $search = $request->get('search');
                 $query->where(function ($q) use ($search) {
                     $q->where('name', 'like', "%{$search}%")
-                      ->orWhere('description', 'like', "%{$search}%")
-                      ->orWhere('short_description', 'like', "%{$search}%");
+                      ->orWhere('sku', 'like', "%{$search}%");
                 });
             }
 
@@ -227,6 +226,7 @@ class ShopGoodsController extends Controller
             'id' => $good->id,
             'name' => $good->name,
             'slug' => $good->slug,
+            'sku' => $good->sku,
             'description' => $good->description,
             'short_description' => $good->short_description,
             'price' => (float) $good->price,

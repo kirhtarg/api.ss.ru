@@ -53,3 +53,4 @@ class ShopTemplateSeeder extends Seeder
 
 
 
+

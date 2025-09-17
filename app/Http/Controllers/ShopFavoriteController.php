@@ -232,8 +232,19 @@ class ShopFavoriteController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
+            \Log::info('ShopFavoriteController::index - Начало запроса', [
+                'request_data' => $request->all(),
+                'headers' => $request->headers->all()
+            ]);
+            
             $user = Auth::user();
+            \Log::info('ShopFavoriteController::index - Пользователь', [
+                'user_id' => $user ? $user->id : null,
+                'user_email' => $user ? $user->email : null
+            ]);
+            
             if (!$user) {
+                \Log::warning('ShopFavoriteController::index - Пользователь не авторизован');
                 return response()->json([
                     'success' => false,
                     'message' => 'Необходима авторизация'
@@ -243,6 +254,11 @@ class ShopFavoriteController extends Controller
             // Получаем параметры пагинации
             $perPage = $request->get('limit', 10);
             $page = $request->get('page', 1);
+            
+            \Log::info('ShopFavoriteController::index - Параметры пагинации', [
+                'per_page' => $perPage,
+                'page' => $page
+            ]);
 
             // Получаем избранные товары с пагинацией
             $favorites = ShopFavorite::where('user_id', $user->id)
@@ -257,6 +273,26 @@ class ShopFavoriteController extends Controller
                     ])->where('is_active', true);
                 }])
                 ->paginate($perPage, ['*'], 'page', $page);
+                
+            \Log::info('ShopFavoriteController::index - Результат запроса', [
+                'total_favorites' => $favorites->total(),
+                'current_page' => $favorites->currentPage(),
+                'last_page' => $favorites->lastPage(),
+                'per_page' => $favorites->perPage(),
+                'items_count' => $favorites->count()
+            ]);
+            
+            // Логируем данные первого товара для отладки
+            if ($favorites->count() > 0) {
+                $firstGood = $favorites->first()->good;
+                \Log::info('ShopFavoriteController::index - Первый товар', [
+                    'id' => $firstGood->id,
+                    'name' => $firstGood->name,
+                    'image_url' => $firstGood->image_url,
+                    'images_count' => $firstGood->images ? $firstGood->images->count() : 0,
+                    'first_image' => $firstGood->images && $firstGood->images->count() > 0 ? $firstGood->images->first()->file_path : null
+                ]);
+            }
 
             // Форматируем данные для фронтенда
             $formattedGoods = $favorites->map(function ($favorite) {
@@ -279,11 +315,12 @@ class ShopFavoriteController extends Controller
                     'stock_quantity' => $good->stock_quantity,
                     'is_active' => $good->is_active,
                     'is_favorite' => true, // Всегда true для избранных товаров
-                    'image_url' => $good->image_url,
+                    'image' => $good->image_url ? (str_starts_with($good->image_url, 'http') ? $good->image_url : url('storage/' . $good->image_url)) : null, // Основное изображение для совместимости с фронтендом
+                    'image_url' => $good->image_url ? (str_starts_with($good->image_url, 'http') ? $good->image_url : url('storage/' . $good->image_url)) : null,
                     'images' => $good->images ? $good->images->map(function ($img) {
                         return [
                             'id' => $img->id,
-                            'url' => $img->file_path ? (str_starts_with($img->file_path, 'http') ? $img->file_path : url($img->file_path)) : null,
+                            'url' => $img->file_path ? (str_starts_with($img->file_path, 'http') ? $img->file_path : url('storage/' . $img->file_path)) : null,
                             'alt_text' => $img->alt_text,
                             'is_main' => $img->is_main,
                             'sort_order' => $img->sort_order
@@ -332,7 +369,7 @@ class ShopFavoriteController extends Controller
                 ];
             })->filter();
 
-            return response()->json([
+            $response = [
                 'success' => true,
                 'data' => $formattedGoods,
                 'pagination' => [
@@ -343,9 +380,35 @@ class ShopFavoriteController extends Controller
                     'from' => $favorites->firstItem(),
                     'to' => $favorites->lastItem()
                 ]
+            ];
+            
+            // Логируем финальные данные первого товара
+            if (count($formattedGoods) > 0) {
+                $firstFormattedGood = $formattedGoods->first();
+                \Log::info('ShopFavoriteController::index - Первый отформатированный товар', [
+                    'id' => $firstFormattedGood['id'],
+                    'name' => $firstFormattedGood['name'],
+                    'image' => $firstFormattedGood['image'],
+                    'image_url' => $firstFormattedGood['image_url'],
+                    'images_count' => count($firstFormattedGood['images']),
+                    'first_image_url' => count($firstFormattedGood['images']) > 0 ? $firstFormattedGood['images'][0]['url'] : null
+                ]);
+            }
+            
+            \Log::info('ShopFavoriteController::index - Ответ', [
+                'success' => $response['success'],
+                'data_count' => count($response['data']),
+                'pagination' => $response['pagination']
             ]);
+            
+            return response()->json($response);
 
         } catch (\Exception $e) {
+            \Log::error('ShopFavoriteController::index - Ошибка', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка при получении избранного',
