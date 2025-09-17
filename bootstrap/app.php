@@ -30,6 +30,9 @@ return Application::configure(basePath: dirname(__DIR__))
             'throttle:api',
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ]);
+        
+        // Добавляем CORS middleware глобально для всех запросов
+        $middleware->append(\App\Http\Middleware\CustomCors::class);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

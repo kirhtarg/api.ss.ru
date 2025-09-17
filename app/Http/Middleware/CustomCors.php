@@ -15,6 +15,17 @@ class CustomCors
      */
     public function handle(Request $request, Closure $next): Response
     {
+        // Обрабатываем preflight запросы сразу
+        if ($request->isMethod('OPTIONS')) {
+            $origin = $request->header('Origin');
+            return response('', 200)
+                ->header('Access-Control-Allow-Origin', $origin ?: '*')
+                ->header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+                ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN')
+                ->header('Access-Control-Allow-Credentials', 'true')
+                ->header('Access-Control-Max-Age', '86400');
+        }
+
         $response = $next($request);
 
         // Получаем разрешенные домены из конфигурации
@@ -52,11 +63,6 @@ class CustomCors
         $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN');
         $response->headers->set('Access-Control-Allow-Credentials', 'true');
         $response->headers->set('Access-Control-Max-Age', '86400');
-
-        // Обрабатываем preflight запросы
-        if ($request->isMethod('OPTIONS')) {
-            $response->setStatusCode(200);
-        }
 
         return $response;
     }
