@@ -376,6 +376,13 @@ class ShopGoodsController extends Controller
     public function getBatch(Request $request): JsonResponse
     {
         try {
+            // Логируем запрос для отладки
+            \Log::info('Batch request received', [
+                'method' => $request->method(),
+                'headers' => $request->headers->all(),
+                'data' => $request->all()
+            ]);
+
             $request->validate([
                 'ids' => 'required|array',
                 'ids.*' => 'integer|min:1'

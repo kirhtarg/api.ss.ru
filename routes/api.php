@@ -2324,6 +2324,19 @@ Route::get('/test-cors', function () {
     ]);
 });
 
+// Тестовый маршрут для проверки POST запросов
+Route::options('/test-post', function () {
+    return response()->json([], 200);
+});
+Route::post('/test-post', function () {
+    return response()->json([
+        'message' => 'POST запрос работает!',
+        'origin' => request()->header('Origin'),
+        'method' => request()->method(),
+        'data' => request()->all()
+    ]);
+});
+
 // Диагностический маршрут для проверки API
 Route::get('/debug/api', function () {
     return response()->json([
