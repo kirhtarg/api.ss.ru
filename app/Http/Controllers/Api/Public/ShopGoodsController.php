@@ -289,8 +289,16 @@ class ShopGoodsController extends Controller
             return null;
         }
 
+        // Убираем возможные префиксы API сервера
+        $cleanPath = $filePath;
+        
+        // Если в пути есть полный URL, извлекаем только относительный путь
+        if (preg_match('/https?:\/\/[^\/]+(.*)/', $filePath, $matches)) {
+            $cleanPath = $matches[1];
+        }
+        
         // Если это уже полный URL, проверяем домен
-        if (str_starts_with($filePath, 'http')) {
+        if (str_starts_with($cleanPath, 'http')) {
             // Заменяем старый домен на новый фронтенд домен
             $frontendUrl = config('app.frontend_url', 'https://admin.skateandsnow.ru');
             $oldDomains = [
@@ -300,17 +308,17 @@ class ShopGoodsController extends Controller
             ];
             
             foreach ($oldDomains as $oldDomain) {
-                if (str_starts_with($filePath, $oldDomain)) {
-                    return str_replace($oldDomain, $frontendUrl, $filePath);
+                if (str_starts_with($cleanPath, $oldDomain)) {
+                    return str_replace($oldDomain, $frontendUrl, $cleanPath);
                 }
             }
             
             // Если это другой домен, возвращаем как есть
-            return $filePath;
+            return $cleanPath;
         }
 
         // Убираем лишний префикс images/ если он уже есть
-        $cleanPath = ltrim($filePath, '/');
+        $cleanPath = ltrim($cleanPath, '/');
         if (str_starts_with($cleanPath, 'images/')) {
             // Возвращаем полный URL с фронтенда
             $frontendUrl = config('app.frontend_url', 'https://admin.skateandsnow.ru');
