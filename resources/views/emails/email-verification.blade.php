@@ -171,7 +171,14 @@
         <!-- Header -->
         <div class="header">
             @if(isset($siteInfo['site_logo']) && $siteInfo['site_logo'])
-                <img src="{{ config('app.url') }}/storage/{{ $siteInfo['site_logo'] }}" alt="Логотип" class="logo">
+                @php
+                    $logoUrl = $siteInfo['site_logo'];
+                    // Если это не полный URL, добавляем префикс
+                    if (!str_starts_with($logoUrl, 'http')) {
+                        $logoUrl = config('app.url') . '/storage/' . $logoUrl;
+                    }
+                @endphp
+                <img src="{{ $logoUrl }}" alt="Логотип" class="logo">
             @endif
             
             <h1 class="site-name">
