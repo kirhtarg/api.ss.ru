@@ -150,7 +150,19 @@ class User extends Authenticatable
         
         // Если есть локальный файл аватара, используем его
         if ($this->avatar) {
-            return asset('storage/' . $this->avatar);
+            // Если это уже полный URL, возвращаем как есть
+            if (str_starts_with($this->avatar, 'http')) {
+                return $this->avatar;
+            }
+            
+            // Убираем лишний префикс images/ если он уже есть
+            $cleanPath = ltrim($this->avatar, '/');
+            if (str_starts_with($cleanPath, 'images/')) {
+                return '/' . $cleanPath;
+            }
+            
+            // Возвращаем путь к файлу в папке public/images/
+            return '/images/' . $cleanPath;
         }
         
         return null;

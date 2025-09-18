@@ -128,7 +128,7 @@ class ShopGoodsController extends Controller
             'tags:id,name,color,slug',
             'properties:id,name,slug',
             'images:id,good_id,variation_id,file_path,alt_text,is_main,sort_order',
-            'videos:id,good_id,variation_id,video_path,external_url,file_path,title,sort_order',
+            'videos:id,good_id,variation_id,video_path,external_url,title,sort_order',
             'variations:id,good_id,name,description,price,sale_price,stock_quantity,sku,is_active',
             'variations.properties:id,good_id,variation_id,property_id,value',
             'variations.properties.property:id,name',
@@ -592,15 +592,6 @@ class ShopGoodsController extends Controller
             $width = $request->input('width');
             $height = $request->input('height');
 
-            \Log::info('🖼️ downloadImage вызван', [
-                'imageUrl' => $imageUrl,
-                'storagePath' => $storagePath,
-                'optimize' => $optimize,
-                'naming' => $naming,
-                'resize' => $resize,
-                'width' => $width,
-                'height' => $height
-            ]);
 
             // Валидация URL
             if (!filter_var($imageUrl, FILTER_VALIDATE_URL)) {
@@ -654,11 +645,6 @@ class ShopGoodsController extends Controller
             $downloadResult = $this->downloadImageWithCurl($imageUrl);
             
             if (!$downloadResult['success']) {
-                \Log::error('❌ Не удалось скачать изображение', [
-                    'url' => $imageUrl,
-                    'http_code' => $downloadResult['http_code'],
-                    'curl_error' => $downloadResult['error']
-                ]);
                 return response()->json([
                     'success' => false,
                     'message' => 'Не удалось скачать изображение: ' . ($downloadResult['error'] ?: "HTTP {$downloadResult['http_code']}")
@@ -666,38 +652,29 @@ class ShopGoodsController extends Controller
             }
             
             $imageData = $downloadResult['data'];
-            \Log::info('✅ Изображение скачано', ['url' => $imageUrl, 'size' => strlen($imageData)]);
 
-            // Проверка размера файла (максимум 10MB)
-            if (strlen($imageData) > 10 * 1024 * 1024) {
+            // Проверка размера файла (максимум 30MB)
+            if (strlen($imageData) > 30 * 1024 * 1024) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Файл слишком большой (максимум 10MB)'
+                    'message' => 'Файл слишком большой (максимум 30MB)'
                 ], 400);
             }
 
             // Сохраняем файл
-            \Log::info('💾 Сохраняем файл', ['path' => $storageFullPath]);
             $saveResult = file_put_contents($storageFullPath, $imageData);
             if ($saveResult === false) {
-                \Log::error('❌ Не удалось сохранить файл', ['path' => $storageFullPath]);
                 return response()->json([
                     'success' => false,
                     'message' => 'Не удалось сохранить файл'
                 ], 500);
             }
-            \Log::info('✅ Файл сохранен', ['path' => $storageFullPath, 'bytes' => $saveResult]);
 
             // Обработка изображения
             if ($optimize || $resize !== 'no_change') {
                 $this->processImage($storageFullPath, $resize, $width, $height);
             }
 
-            \Log::info('Изображение успешно загружено', [
-                'originalUrl' => $imageUrl,
-                'path' => $fullPath,
-                'size' => strlen($imageData)
-            ]);
 
             return response()->json([
                 'success' => true,
@@ -716,6 +693,7 @@ class ShopGoodsController extends Controller
             ], 500);
         }
     }
+
 
     /**
      * Пакетная загрузка изображений
@@ -750,14 +728,6 @@ class ShopGoodsController extends Controller
             $width = $request->input('width');
             $height = $request->input('height');
 
-            \Log::info('🖼️ downloadImagesBatch вызван', [
-                'imageUrls_count' => count($imageUrls),
-                'storagePath' => $storagePath,
-                'optimize' => $optimize,
-                'naming' => $naming,
-                'resize' => $resize,
-                'first_url' => $imageUrls[0] ?? null
-            ]);
 
             $results = [];
             $errors = [];
@@ -781,31 +751,16 @@ class ShopGoodsController extends Controller
                     
                     if (isset($response['skipped']) && $response['skipped']) {
                         $skipped[] = $response['originalUrl'];
-                        \Log::info("Изображение {$index} пропущено (уже существует)", ['url' => $response['originalUrl']]);
                     } else {
-                        \Log::info("Изображение {$index} загружено успешно", ['url' => $response['originalUrl']]);
                     }
                 } else {
                     $errors[] = [
                         'url' => $response['originalUrl'],
                         'error' => $response['error']
                     ];
-                    \Log::error("❌ Ошибка загрузки изображения {$index}", [
-                        'url' => $response['originalUrl'],
-                        'error' => $response['error']
-                    ]);
                 }
             }
 
-            \Log::info("downloadImagesBatch завершен", [
-                'total' => count($imageUrls),
-                'successful' => count($results),
-                'skipped' => count($skipped),
-                'failed' => count($errors),
-                'results' => $results,
-                'skipped_urls' => $skipped,
-                'errors' => $errors
-            ]);
 
             return response()->json([
                 'success' => true,
@@ -829,6 +784,71 @@ class ShopGoodsController extends Controller
     }
 
     /**
+     * Сохранение изображения на фронтенд
+     */
+    public function saveImageToFrontend(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'image' => 'required|file|image|max:30720', // Максимум 30MB
+            'path' => 'required|string',
+            'resize' => 'string|in:no_change,crop_proportional,fit_with_white,fit_system,custom',
+            'width' => 'nullable|integer|min:1',
+            'height' => 'nullable|integer|min:1'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $image = $request->file('image');
+            $path = $request->input('path');
+            $resize = $request->input('resize', 'no_change');
+            $width = $request->input('width');
+            $height = $request->input('height');
+
+            // Путь для сохранения на фронтенд
+            $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+            $fullPath = $frontendPublicPath . $path;
+            $dir = dirname($fullPath);
+
+            // Создаем директорию если не существует
+            if (!is_dir($dir)) {
+                mkdir($dir, 0755, true);
+            }
+
+            // Сохраняем файл
+            $image->move($dir, basename($path));
+
+            // Обработка изображения если нужно
+            if ($resize !== 'no_change' && $width && $height) {
+                $this->resizeImageFile($fullPath, $width, $height, $resize);
+            }
+
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'path' => $path,
+                    'size' => filesize($fullPath)
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка сохранения изображения: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+
+    /**
      * Загрузка одного изображения (вспомогательный метод для пакетной загрузки)
      */
     private function downloadSingleImage($imageUrl, $storagePath, $optimize, $naming, $resize, $width, $height, $index)
@@ -837,7 +857,6 @@ class ShopGoodsController extends Controller
 
             // Валидация URL
             if (!filter_var($imageUrl, FILTER_VALIDATE_URL)) {
-                \Log::error("❌ Неверный формат URL: {$imageUrl}");
                 return [
                     'success' => false,
                     'originalUrl' => $imageUrl,
@@ -868,17 +887,13 @@ class ShopGoodsController extends Controller
                 $fileName = $hash . '.' . $extension;
             }
             
-            // Полный путь для сохранения
+            // Полный путь для сохранения на фронтенд
             $fullPath = $storagePath . '/' . $fileName;
-            $storageFullPath = storage_path('app/public' . $fullPath);
+            $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+            $storageFullPath = $frontendPublicPath . $fullPath;
             
             // Проверяем, существует ли файл уже
             if (file_exists($storageFullPath)) {
-                \Log::info("Файл уже существует, пропускаем загрузку", [
-                    'url' => $imageUrl,
-                    'path' => $fullPath,
-                    'size' => filesize($storageFullPath)
-                ]);
                 
                 return [
                     'success' => true,
@@ -891,7 +906,6 @@ class ShopGoodsController extends Controller
             // Создаем директорию если не существует
             $directory = dirname($storageFullPath);
             if (!\App\Helpers\StorageHelper::createDirectory($directory)) {
-                \Log::error("❌ Не удалось создать директорию: {$directory}");
                 return [
                     'success' => false,
                     'originalUrl' => $imageUrl,
@@ -903,11 +917,6 @@ class ShopGoodsController extends Controller
             $downloadResult = $this->downloadImageWithCurl($imageUrl);
             
             if (!$downloadResult['success']) {
-                \Log::error("❌ Не удалось скачать изображение", [
-                    'url' => $imageUrl,
-                    'http_code' => $downloadResult['http_code'],
-                    'curl_error' => $downloadResult['error']
-                ]);
                 return [
                     'success' => false,
                     'originalUrl' => $imageUrl,
@@ -917,12 +926,12 @@ class ShopGoodsController extends Controller
             
             $imageData = $downloadResult['data'];
 
-            // Проверка размера файла (максимум 10MB)
-            if (strlen($imageData) > 10 * 1024 * 1024) {
+            // Проверка размера файла (максимум 30MB)
+            if (strlen($imageData) > 30 * 1024 * 1024) {
                 return [
                     'success' => false,
                     'originalUrl' => $imageUrl,
-                    'error' => 'Файл слишком большой (максимум 10MB)'
+                    'error' => 'Файл слишком большой (максимум 30MB)'
                 ];
             }
 
@@ -934,11 +943,6 @@ class ShopGoodsController extends Controller
                 $this->processImage($storageFullPath, $resize, $width, $height);
             }
 
-            \Log::info("Изображение успешно загружено", [
-                'originalUrl' => $imageUrl,
-                'path' => $fullPath,
-                'size' => strlen($imageData)
-            ]);
 
             return [
                 'success' => true,
@@ -947,11 +951,6 @@ class ShopGoodsController extends Controller
             ];
 
         } catch (\Exception $e) {
-            \Log::error("❌ Ошибка загрузки изображения", [
-                'url' => $imageUrl,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
             
             return [
                 'success' => false,
@@ -1077,11 +1076,6 @@ class ShopGoodsController extends Controller
         
         // Если cURL не сработал из-за SSL проблем, пробуем wget
         if ($imageData === false || $httpCode !== 200) {
-            \Log::info("cURL не сработал, пробуем wget", [
-                'url' => $imageUrl,
-                'curl_error' => $error,
-                'http_code' => $httpCode
-            ]);
             
             return $this->downloadImageWithWget($imageUrl);
         }
@@ -1110,10 +1104,6 @@ class ShopGoodsController extends Controller
                 $imageData = file_get_contents($tempFile);
                 unlink($tempFile);
                 
-                \Log::info("✅ wget успешно скачал изображение", [
-                    'url' => $imageUrl,
-                    'size' => strlen($imageData)
-                ]);
                 
                 return [
                     'data' => $imageData,
@@ -1123,10 +1113,6 @@ class ShopGoodsController extends Controller
                 ];
             } else {
                 unlink($tempFile);
-                \Log::error("❌ wget не смог скачать изображение", [
-                    'url' => $imageUrl,
-                    'output' => $output
-                ]);
                 
                 return [
                     'data' => false,
@@ -1140,10 +1126,6 @@ class ShopGoodsController extends Controller
                 unlink($tempFile);
             }
             
-            \Log::error("❌ Ошибка при использовании wget", [
-                'url' => $imageUrl,
-                'error' => $e->getMessage()
-            ]);
             
             return [
                 'data' => false,
@@ -1160,10 +1142,8 @@ class ShopGoodsController extends Controller
     private function processImage($filePath, $resize, $width, $height)
     {
         try {
-            \Log::info('🖼️ Обрабатываем изображение', ['file' => $filePath, 'resize' => $resize]);
             $imageInfo = getimagesize($filePath);
             if (!$imageInfo) {
-                \Log::error('❌ Не удалось получить информацию об изображении', ['file' => $filePath]);
                 return;
             }
 
@@ -1456,5 +1436,98 @@ class ShopGoodsController extends Controller
             'ip_address' => request()->ip(),
             'user_agent' => request()->userAgent()
         ]);
+    }
+
+    /**
+     * Изменение размера изображения
+     */
+    private function resizeImageFile($imagePath, $width, $height, $resizeType)
+    {
+        try {
+            if (!file_exists($imagePath)) {
+                return false;
+            }
+
+            $imageInfo = getimagesize($imagePath);
+            if (!$imageInfo) {
+                return false;
+            }
+
+            $originalWidth = $imageInfo[0];
+            $originalHeight = $imageInfo[1];
+            $mimeType = $imageInfo['mime'];
+
+            // Создаем ресурс изображения в зависимости от типа
+            switch ($mimeType) {
+                case 'image/jpeg':
+                    $sourceImage = imagecreatefromjpeg($imagePath);
+                    break;
+                case 'image/png':
+                    $sourceImage = imagecreatefrompng($imagePath);
+                    break;
+                case 'image/gif':
+                    $sourceImage = imagecreatefromgif($imagePath);
+                    break;
+                case 'image/webp':
+                    $sourceImage = imagecreatefromwebp($imagePath);
+                    break;
+                default:
+                    return false;
+            }
+
+            if (!$sourceImage) {
+                return false;
+            }
+
+            $newImage = null;
+
+            // Применяем нужный тип изменения размера
+            switch ($resizeType) {
+                case 'crop_proportional':
+                    $newImage = $this->cropProportional($sourceImage, $originalWidth, $originalHeight, $width, $height);
+                    break;
+                case 'fit_with_white':
+                    $newImage = $this->fitWithWhiteBackground($sourceImage, $originalWidth, $originalHeight, $width, $height);
+                    break;
+                case 'fit_system':
+                    $newImage = $this->fitSystemSize($sourceImage, $originalWidth, $originalHeight, $width, $height);
+                    break;
+                default:
+                    $newImage = $sourceImage;
+            }
+
+            if (!$newImage) {
+                imagedestroy($sourceImage);
+                return false;
+            }
+
+            // Сохраняем изображение
+            $result = false;
+            switch ($mimeType) {
+                case 'image/jpeg':
+                    $result = imagejpeg($newImage, $imagePath, 90);
+                    break;
+                case 'image/png':
+                    $result = imagepng($newImage, $imagePath, 9);
+                    break;
+                case 'image/gif':
+                    $result = imagegif($newImage, $imagePath);
+                    break;
+                case 'image/webp':
+                    $result = imagewebp($newImage, $imagePath, 90);
+                    break;
+            }
+
+            // Освобождаем память
+            imagedestroy($sourceImage);
+            if ($newImage !== $sourceImage) {
+                imagedestroy($newImage);
+            }
+
+            return $result;
+
+        } catch (\Exception $e) {
+            return false;
+        }
     }
 }

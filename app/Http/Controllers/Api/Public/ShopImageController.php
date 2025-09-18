@@ -183,7 +183,13 @@ class ShopImageController extends Controller
             return $filePath;
         }
 
-        // Формируем URL относительно storage
-        return url('storage/' . $filePath);
+        // Убираем лишний префикс images/ если он уже есть
+        $cleanPath = ltrim($filePath, '/');
+        if (str_starts_with($cleanPath, 'images/')) {
+            return '/' . $cleanPath;
+        }
+
+        // Возвращаем путь к файлу в папке public/images/
+        return '/images/' . $cleanPath;
     }
 }

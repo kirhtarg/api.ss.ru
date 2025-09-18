@@ -150,7 +150,23 @@ class ShopGoodVideosController extends Controller
             // Загрузка файла видео
             if ($request->hasFile('video')) {
                 $video = $request->file('video');
-                $videoData['video_path'] = $video->store('videos/goods', 'public');
+                $filename = uniqid() . '.' . $video->getClientOriginalExtension();
+                $path = 'videos/goods/' . $goodId . '/' . $filename;
+                
+                // Путь к папке public фронтенда
+                $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+                $fullPath = $frontendPublicPath . '/' . $path;
+                $dir = dirname($fullPath);
+
+                // Создаем директорию, если её нет
+                if (!is_dir($dir)) {
+                    mkdir($dir, 0755, true);
+                }
+
+                // Сохраняем файл на фронтенд
+                $video->move($dir, $filename);
+                
+                $videoData['video_path'] = $path;
             }
 
             // URL видео
@@ -162,7 +178,23 @@ class ShopGoodVideosController extends Controller
             // Загрузка превью
             if ($request->hasFile('thumbnail')) {
                 $thumbnail = $request->file('thumbnail');
-                $videoData['thumbnail'] = $thumbnail->store('shop/videos/thumbnails', 'public');
+                $filename = uniqid() . '.' . $thumbnail->getClientOriginalExtension();
+                $path = 'images/shop/videos/thumbnails/' . $goodId . '/' . $filename;
+                
+                // Путь к папке public фронтенда
+                $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+                $fullPath = $frontendPublicPath . '/' . $path;
+                $dir = dirname($fullPath);
+
+                // Создаем директорию, если её нет
+                if (!is_dir($dir)) {
+                    mkdir($dir, 0755, true);
+                }
+
+                // Сохраняем файл на фронтенд
+                $thumbnail->move($dir, $filename);
+                
+                $videoData['thumbnail'] = $path;
             }
 
             // Устанавливаем sort_order (следующий номер после последнего видео)
@@ -274,13 +306,21 @@ class ShopGoodVideosController extends Controller
         }
 
         try {
-            // Удаляем файлы
-            if ($video->video_path && Storage::disk('public')->exists($video->video_path)) {
-                Storage::disk('public')->delete($video->video_path);
+            // Удаляем файлы с фронтенда
+            $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+            
+            if ($video->video_path) {
+                $videoPath = $frontendPublicPath . '/' . $video->video_path;
+                if (file_exists($videoPath)) {
+                    unlink($videoPath);
+                }
             }
 
-            if ($video->thumbnail && Storage::disk('public')->exists($video->thumbnail)) {
-                Storage::disk('public')->delete($video->thumbnail);
+            if ($video->thumbnail) {
+                $thumbnailPath = $frontendPublicPath . '/' . $video->thumbnail;
+                if (file_exists($thumbnailPath)) {
+                    unlink($thumbnailPath);
+                }
             }
 
             $video->delete();

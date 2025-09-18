@@ -61,6 +61,22 @@ class ShopGoodImage extends Model
      */
     public function getUrlAttribute()
     {
-        return asset('storage/' . $this->file_path);
+        if (!$this->file_path) {
+            return null;
+        }
+
+        // Если это уже полный URL, возвращаем как есть
+        if (str_starts_with($this->file_path, 'http')) {
+            return $this->file_path;
+        }
+
+        // Убираем лишний префикс images/ если он уже есть
+        $cleanPath = ltrim($this->file_path, '/');
+        if (str_starts_with($cleanPath, 'images/')) {
+            return '/' . $cleanPath;
+        }
+
+        // Возвращаем путь к файлу в папке public/images/
+        return '/images/' . $cleanPath;
     }
 }

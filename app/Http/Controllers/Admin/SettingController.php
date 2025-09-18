@@ -257,30 +257,35 @@ class SettingController extends Controller
             // Создаем уникальное имя файла
             $filename = 'setting_' . $setting->id . '_' . time() . '.' . $file->getClientOriginalExtension();
 
-            // Путь для сохранения
+            // Путь для сохранения на фронтенде
             $path = 'images/settings/' . $filename;
+            
+            // Путь к папке public фронтенда
+            $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+            $fullPath = $frontendPublicPath . '/' . $path;
+            $dir = dirname($fullPath);
 
             // Создаем директорию, если её нет
-            if (!Storage::disk('public')->exists('images/settings')) {
-                Storage::disk('public')->makeDirectory('images/settings');
+            if (!is_dir($dir)) {
+                mkdir($dir, 0755, true);
             }
 
-            // Сохраняем файл
-            Storage::disk('public')->putFileAs('images/settings', $file, $filename);
+            // Сохраняем файл на фронтенд
+            $file->move($dir, $filename);
 
-            // Удаляем старое изображение, если оно есть
+            // Удаляем старое изображение с фронтенда, если оно есть
             if ($setting->value && $setting->value !== 'default-image.png') {
-                if (Storage::disk('public')->exists($setting->value)) {
-                    Storage::disk('public')->delete($setting->value);
+                $oldFilePath = $frontendPublicPath . '/' . $setting->value;
+                if (file_exists($oldFilePath)) {
+                    unlink($oldFilePath);
                 }
             }
 
             // Получаем размеры изображения
-            $imagePath = storage_path('app/public/' . $path);
             $imageDimensions = null;
 
-            if (file_exists($imagePath)) {
-                $imageInfo = getimagesize($imagePath);
+            if (file_exists($fullPath)) {
+                $imageInfo = getimagesize($fullPath);
                 if ($imageInfo) {
                     $imageDimensions = [
                         'width' => $imageInfo[0],
@@ -296,7 +301,7 @@ class SettingController extends Controller
             if ($requestedWidth && $requestedHeight) {
                 try {
                     // Изменяем размер изображения
-                    $this->resizeImageFile($imagePath, $requestedWidth, $requestedHeight);
+                    $this->resizeImageFile($fullPath, $requestedWidth, $requestedHeight);
 
                     $imageDimensions = [
                         'width' => $requestedWidth,
@@ -306,8 +311,8 @@ class SettingController extends Controller
                     // Если изменение размера не удалось, используем оригинальные размеры
                     Log::warning('Не удалось изменить размер изображения: ' . $e->getMessage());
 
-                    if (file_exists($imagePath)) {
-                        $imageInfo = getimagesize($imagePath);
+                    if (file_exists($fullPath)) {
+                        $imageInfo = getimagesize($fullPath);
                         if ($imageInfo) {
                             $imageDimensions = [
                                 'width' => $imageInfo[0],
@@ -338,7 +343,7 @@ class SettingController extends Controller
                 'data' => [
                     'id' => $setting->id,
                     'value' => $path,
-                    'image_url' => URL::asset('storage/' . $path),
+                    'image_url' => $this->getImageUrl($path),
                     'image_width' => $imageDimensions['width'] ?? null,
                     'image_height' => $imageDimensions['height'] ?? null,
                     'requested_width' => $requestedWidth,
@@ -464,10 +469,12 @@ class SettingController extends Controller
                 ], 422);
             }
 
-            // Удаляем файл изображения, если он существует
+            // Удаляем файл изображения с фронтенда, если он существует
             if ($setting->value && $setting->value !== 'default-image.png') {
-                if (Storage::disk('public')->exists($setting->value)) {
-                    Storage::disk('public')->delete($setting->value);
+                $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+                $filePath = $frontendPublicPath . '/' . $setting->value;
+                if (file_exists($filePath)) {
+                    unlink($filePath);
                 }
             }
 
@@ -535,8 +542,9 @@ class SettingController extends Controller
             $width = $request->input('width');
             $height = $request->input('height');
 
-            // Получаем полный путь к изображению
-            $imagePath = storage_path('app/public/' . $setting->value);
+            // Получаем полный путь к изображению на фронтенде
+            $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+            $imagePath = $frontendPublicPath . '/' . $setting->value;
 
             if (!file_exists($imagePath)) {
                 return response()->json([
@@ -562,7 +570,7 @@ class SettingController extends Controller
                     'value' => $setting->value,
                     'image_width' => $width,
                     'image_height' => $height,
-                    'image_url' => URL::asset('storage/' . $setting->value)
+                    'image_url' => $this->getImageUrl($setting->value)
                 ]
             ]);
 
@@ -572,5 +580,29 @@ class SettingController extends Controller
                 'message' => 'Ошибка изменения размера изображения: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Получить полный URL изображения
+     */
+    private function getImageUrl($filePath)
+    {
+        if (!$filePath) {
+            return null;
+        }
+
+        // Если это уже полный URL, возвращаем как есть
+        if (str_starts_with($filePath, 'http')) {
+            return $filePath;
+        }
+
+        // Убираем лишний префикс images/ если он уже есть
+        $cleanPath = ltrim($filePath, '/');
+        if (str_starts_with($cleanPath, 'images/')) {
+            return '/' . $cleanPath;
+        }
+
+        // Возвращаем путь к файлу в папке public/images/
+        return '/images/' . $cleanPath;
     }
 }

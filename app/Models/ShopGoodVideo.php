@@ -65,15 +65,19 @@ class ShopGoodVideo extends Model
         }
         
         if ($this->video_path) {
-            // Динамически определяем домен и добавляем /storage
-            $baseUrl = config('app.url');
-            
-            // Если это локальная разработка, используем localhost:8000
-            if (str_contains($baseUrl, 'localhost') || str_contains($baseUrl, '127.0.0.1')) {
-                $baseUrl = 'http://localhost:8000';
+            // Если это уже полный URL, возвращаем как есть
+            if (str_starts_with($this->video_path, 'http')) {
+                return $this->video_path;
             }
             
-            return rtrim($baseUrl, '/') . '/storage/' . $this->video_path;
+            // Убираем лишний префикс videos/ если он уже есть
+            $cleanPath = ltrim($this->video_path, '/');
+            if (str_starts_with($cleanPath, 'videos/')) {
+                return '/' . $cleanPath;
+            }
+            
+            // Возвращаем путь к файлу в папке public/videos/
+            return '/videos/' . $cleanPath;
         }
         
         return null;
@@ -85,7 +89,19 @@ class ShopGoodVideo extends Model
     public function getThumbnailUrlAttribute()
     {
         if ($this->thumbnail) {
-            return asset('storage/' . $this->thumbnail);
+            // Если это уже полный URL, возвращаем как есть
+            if (str_starts_with($this->thumbnail, 'http')) {
+                return $this->thumbnail;
+            }
+            
+            // Убираем лишний префикс images/ если он уже есть
+            $cleanPath = ltrim($this->thumbnail, '/');
+            if (str_starts_with($cleanPath, 'images/')) {
+                return '/' . $cleanPath;
+            }
+            
+            // Возвращаем путь к файлу в папке public/images/
+            return '/images/' . $cleanPath;
         }
         
         return null;

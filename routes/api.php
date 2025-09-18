@@ -797,6 +797,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 // Скачивание изображений для импорта
                 Route::post('/download-image', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'downloadImage']);
                 Route::post('/download-images-batch', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'downloadImagesBatch']);
+                Route::post('/save-image-to-frontend', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'saveImageToFrontend']);
                 
                 // Вариации товаров
                 Route::prefix('{goodId}/variations')->group(function () {

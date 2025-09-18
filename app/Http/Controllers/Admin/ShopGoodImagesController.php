@@ -124,7 +124,23 @@ class ShopGoodImagesController extends Controller
 
         try {
             $image = $request->file('image');
-            $path = $image->store("images/shop/goods/{$goodId}", 'public');
+            
+            // Создаем уникальное имя файла
+            $filename = uniqid() . '.' . $image->getClientOriginalExtension();
+            $path = "images/shop/goods/{$goodId}/{$filename}";
+            
+            // Путь к папке public фронтенда
+            $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+            $fullPath = $frontendPublicPath . '/' . $path;
+            $dir = dirname($fullPath);
+
+            // Создаем директорию, если её нет
+            if (!is_dir($dir)) {
+                mkdir($dir, 0755, true);
+            }
+
+            // Сохраняем файл на фронтенд
+            $image->move($dir, $filename);
 
             $imageData = [
                 'file_path' => $path,
@@ -243,9 +259,11 @@ class ShopGoodImagesController extends Controller
         $image = ShopGoodImage::findOrFail($imageId);
 
         try {
-            // Удаляем файл
-            if (Storage::disk('public')->exists($image->file_path)) {
-                Storage::disk('public')->delete($image->file_path);
+            // Удаляем файл с фронтенда
+            $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+            $filePath = $frontendPublicPath . '/' . $image->file_path;
+            if (file_exists($filePath)) {
+                unlink($filePath);
             }
 
             $image->delete();
@@ -487,8 +505,10 @@ class ShopGoodImagesController extends Controller
         $sortOrder = $imageData['sort_order'] ?? 0;
         $goodId = $good->id;
 
-        // Проверяем существование файла
-        if (!Storage::disk('public')->exists($filePath)) {
+        // Проверяем существование файла на фронтенде
+        $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+        $fullFilePath = $frontendPublicPath . '/' . $filePath;
+        if (!file_exists($fullFilePath)) {
             throw new \Exception('Файл изображения не найден: ' . $filePath);
         }
 

@@ -74,7 +74,7 @@ class SearchController extends Controller
                         'price' => $product->sale_price ? $product->sale_price : $product->price,
                         'original_price' => $product->sale_price ? $product->price : null,
                         'sku' => $product->sku,
-                        'image' => $firstImage ? Storage::url($firstImage->file_path) : null,
+                        'image' => $firstImage ? $this->getImageUrl($firstImage->file_path) : null,
                         'slug' => $product->slug,
                         'description' => $product->description
                     ];
@@ -104,7 +104,7 @@ class SearchController extends Controller
                         'id' => $category->id,
                         'name' => $category->name,
                         'description' => $category->description,
-                        'image' => $category->image ? Storage::url($category->image) : null,
+                        'image' => $category->image ? $this->getImageUrl($category->image) : null,
                         'slug' => $category->slug
                     ];
                 });
@@ -133,7 +133,7 @@ class SearchController extends Controller
                         'id' => $brand->id,
                         'name' => $brand->name,
                         'description' => $brand->description,
-                        'logo' => $brand->logo ? Storage::url($brand->logo) : null,
+                        'logo' => $brand->logo ? $this->getImageUrl($brand->logo) : null,
                         'slug' => $brand->slug
                     ];
                 });
@@ -143,5 +143,29 @@ class SearchController extends Controller
             Log::error('Search brands error: ' . $e->getMessage());
             return [];
         }
+    }
+
+    /**
+     * Получить полный URL изображения
+     */
+    private function getImageUrl($filePath)
+    {
+        if (!$filePath) {
+            return null;
+        }
+
+        // Если это уже полный URL, возвращаем как есть
+        if (str_starts_with($filePath, 'http')) {
+            return $filePath;
+        }
+
+        // Убираем лишний префикс images/ если он уже есть
+        $cleanPath = ltrim($filePath, '/');
+        if (str_starts_with($cleanPath, 'images/')) {
+            return '/' . $cleanPath;
+        }
+
+        // Возвращаем путь к файлу в папке public/images/
+        return '/images/' . $cleanPath;
     }
 }

@@ -315,12 +315,12 @@ class ShopFavoriteController extends Controller
                     'stock_quantity' => $good->stock_quantity,
                     'is_active' => $good->is_active,
                     'is_favorite' => true, // Всегда true для избранных товаров
-                    'image' => $good->image_url ? (str_starts_with($good->image_url, 'http') ? $good->image_url : url('storage/' . $good->image_url)) : null, // Основное изображение для совместимости с фронтендом
-                    'image_url' => $good->image_url ? (str_starts_with($good->image_url, 'http') ? $good->image_url : url('storage/' . $good->image_url)) : null,
+                    'image' => $this->getImageUrl($good->image_url), // Основное изображение для совместимости с фронтендом
+                    'image_url' => $this->getImageUrl($good->image_url),
                     'images' => $good->images ? $good->images->map(function ($img) {
                         return [
                             'id' => $img->id,
-                            'url' => $img->file_path ? (str_starts_with($img->file_path, 'http') ? $img->file_path : url('storage/' . $img->file_path)) : null,
+                            'url' => $this->getImageUrl($img->file_path),
                             'alt_text' => $img->alt_text,
                             'is_main' => $img->is_main,
                             'sort_order' => $img->sort_order
@@ -415,5 +415,29 @@ class ShopFavoriteController extends Controller
                 'error' => $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Получить полный URL изображения
+     */
+    private function getImageUrl($filePath)
+    {
+        if (!$filePath) {
+            return null;
+        }
+
+        // Если это уже полный URL, возвращаем как есть
+        if (str_starts_with($filePath, 'http')) {
+            return $filePath;
+        }
+
+        // Убираем лишний префикс images/ если он уже есть
+        $cleanPath = ltrim($filePath, '/');
+        if (str_starts_with($cleanPath, 'images/')) {
+            return '/' . $cleanPath;
+        }
+
+        // Возвращаем путь к файлу в папке public/images/
+        return '/images/' . $cleanPath;
     }
 }
