@@ -172,8 +172,23 @@ class SiteInfoController extends Controller
             return null;
         }
 
-        // Если это уже полный URL, возвращаем как есть
+        // Если это уже полный URL, проверяем домен
         if (str_starts_with($filePath, 'http')) {
+            // Заменяем старый домен на новый фронтенд домен
+            $frontendUrl = config('app.frontend_url', 'https://admin.skateandsnow.ru');
+            $oldDomains = [
+                'https://ss75.kirhtarg.ru',
+                'https://api.ss.ru',
+                'https://ss75-api.kirhtarg.ru'
+            ];
+            
+            foreach ($oldDomains as $oldDomain) {
+                if (str_starts_with($filePath, $oldDomain)) {
+                    return str_replace($oldDomain, $frontendUrl, $filePath);
+                }
+            }
+            
+            // Если это другой домен, возвращаем как есть
             return $filePath;
         }
 
