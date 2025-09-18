@@ -10,6 +10,7 @@ class Setting extends Model
         'key',
         'name',
         'value',
+        'default_value',
         'type',
         'group',
         'description',
@@ -29,6 +30,9 @@ class Setting extends Model
             $this->attributes['value'] = is_numeric($value) ? $value : null;
         } elseif ($this->type === 'boolean') {
             $this->attributes['value'] = filter_var($value, FILTER_VALIDATE_BOOLEAN) ? '1' : '0';
+        } elseif ($this->type === 'json') {
+            // Для JSON типа сохраняем как JSON строку
+            $this->attributes['value'] = is_string($value) ? $value : json_encode($value);
         } else {
             $this->attributes['value'] = $value;
         }
@@ -41,6 +45,10 @@ class Setting extends Model
             return is_numeric($value) ? (float) $value : null;
         } elseif ($this->type === 'boolean') {
             return filter_var($value, FILTER_VALIDATE_BOOLEAN);
+        } elseif ($this->type === 'json') {
+            // Для JSON типа пытаемся декодировать, если не получается - возвращаем как есть
+            $decoded = json_decode($value, true);
+            return $decoded !== null ? $decoded : $value;
         }
         return $value;
     }

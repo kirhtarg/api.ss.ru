@@ -163,8 +163,11 @@ class ShopGoodsController extends Controller
                 'brands:id,name,slug',
                 'tags:id,name,color',
                 'variations:id,good_id,name,price,sale_price,stock_quantity,is_active',
+                'variations.properties:id,variation_id,property_id,value',
+                'variations.properties.property:id,name,slug',
                 'properties:id,name,slug',
-                'images:id,good_id,file_path,alt_text,is_main,sort_order'
+                'images:id,good_id,file_path,alt_text,is_main,sort_order',
+                'videos:id,good_id,video_path,external_url,title,thumbnail,sort_order'
             ])
             ->where('is_active', true)
             ->where(function ($query) use ($id) {
@@ -191,6 +194,48 @@ class ShopGoodsController extends Controller
 
             $formattedGood = $this->formatGoodForFrontend($good);
             $formattedGood['is_favorite'] = $isFavorite;
+
+            // Если передан параметр variation_id, загружаем медиа только для этой вариации
+            if ($request->filled('variation_id')) {
+                $variationId = $request->get('variation_id');
+                
+                // Загружаем изображения для вариации (good_id = null, variation_id = ID вариации)
+                $variationImages = \App\Models\ShopGoodImage::whereNull('good_id')
+                    ->where('variation_id', $variationId)
+                    ->orderBy('sort_order')
+                    ->get()
+                    ->map(function ($image) {
+                        return [
+                            'id' => $image->id,
+                            'url' => $this->getImageUrl($image->file_path),
+                            'alt_text' => $image->alt_text,
+                            'is_main' => $image->is_main
+                        ];
+                    })->toArray();
+
+                // Загружаем видео для вариации (good_id = null, variation_id = ID вариации)
+                $variationVideos = \App\Models\ShopGoodVideo::whereNull('good_id')
+                    ->where('variation_id', $variationId)
+                    ->orderBy('sort_order')
+                    ->get()
+                    ->map(function ($video) {
+                        return [
+                            'id' => $video->id,
+                            'video_path' => $video->video_path,
+                            'external_url' => $video->external_url,
+                            'title' => $video->title,
+                            'thumbnail' => $video->thumbnail,
+                            'url' => $video->url,
+                            'embed_url' => $video->embed_url,
+                            'is_external' => $video->is_external
+                        ];
+                    })->toArray();
+
+
+                // Заменяем медиа товара на медиа вариации
+                $formattedGood['images'] = $variationImages;
+                $formattedGood['videos'] = $variationVideos;
+            }
 
             return response()->json([
                 'success' => true,
@@ -222,6 +267,16 @@ class ShopGoodsController extends Controller
             })->toArray();
         }
 
+        // Получаем значения свойств только из активных вариаций товара
+        $activeVariationIds = $good->variations->where('is_active', true)->pluck('id');
+        $allPropertyValues = \App\Models\ShopGoodProperty::whereIn('variation_id', $activeVariationIds)
+            ->with('property')
+            ->get()
+            ->groupBy('property.name')
+            ->map(function ($properties, $propertyName) {
+                return $properties->pluck('value')->unique()->values()->toArray();
+            });
+
         return [
             'id' => $good->id,
             'name' => $good->name,
@@ -239,6 +294,18 @@ class ShopGoodsController extends Controller
                     'url' => $this->getImageUrl($image->file_path),
                     'alt_text' => $image->alt_text,
                     'is_main' => $image->is_main
+                ];
+            })->toArray(),
+            'videos' => $good->videos()->orderBy('sort_order')->get()->map(function ($video) {
+                return [
+                    'id' => $video->id,
+                    'video_path' => $video->video_path,
+                    'external_url' => $video->external_url,
+                    'title' => $video->title,
+                    'thumbnail' => $video->thumbnail,
+                    'url' => $video->url,
+                    'embed_url' => $video->embed_url,
+                    'is_external' => $video->is_external
                 ];
             })->toArray(),
             'rating' => $good->rating ? (float) $good->rating : null,
@@ -274,9 +341,22 @@ class ShopGoodsController extends Controller
                     'price' => (float) $variation->price,
                     'sale_price' => $variation->sale_price ? (float) $variation->sale_price : null,
                     'stock_quantity' => $variation->stock_quantity,
-                    'is_active' => $variation->is_active
+                    'is_active' => $variation->is_active,
+                    'properties' => $variation->properties->map(function ($property) {
+                        return [
+                            'property_id' => $property->property_id,
+                            'property_name' => $property->property->name ?? '',
+                            'property_value' => $property->value,
+                            'property' => [
+                                'id' => $property->property->id ?? null,
+                                'name' => $property->property->name ?? '',
+                                'slug' => $property->property->slug ?? ''
+                            ]
+                        ];
+                    })->toArray()
                 ];
-            })->toArray()
+            })->toArray(),
+            'all_property_values' => $allPropertyValues->toArray()
         ];
     }
 
@@ -341,7 +421,8 @@ class ShopGoodsController extends Controller
                 'brands:id,name,slug',
                 'tags:id,name,color',
                 'variations:id,good_id,name,price,sale_price,stock_quantity,is_active',
-                'images:id,good_id,file_path,alt_text,is_main,sort_order'
+                'images:id,good_id,file_path,alt_text,is_main,sort_order',
+                'videos:id,good_id,video_path,external_url,title,thumbnail,sort_order'
             ])
             ->where('slug', $slug)
             ->where('is_active', true)
@@ -486,7 +567,8 @@ class ShopGoodsController extends Controller
                 'tags:id,name,color',
                 'variations:id,good_id,name,price,sale_price,stock_quantity,is_active',
                 'properties:id,name,slug',
-                'images:id,good_id,file_path,alt_text,is_main,sort_order'
+                'images:id,good_id,file_path,alt_text,is_main,sort_order',
+                'videos:id,good_id,video_path,external_url,title,thumbnail,sort_order'
             ])
             ->where('is_active', true)
             ->whereIn('id', $ids)

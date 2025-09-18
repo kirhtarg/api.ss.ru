@@ -56,6 +56,7 @@ class SettingController extends Controller
                 'group' => 'nullable|string|max:255',
                 'description' => 'nullable|string|max:1000',
                 'value' => 'nullable|string',
+                'default_value' => 'nullable|string',
                 'image_width' => 'nullable|integer|min:1',
                 'image_height' => 'nullable|integer|min:1'
             ]);
@@ -75,6 +76,7 @@ class SettingController extends Controller
                 'group' => $request->group ?: 'general',
                 'description' => $request->description,
                 'value' => $request->value,
+                'default_value' => $request->default_value,
                 'image_width' => $request->image_width,
                 'image_height' => $request->image_height
             ]);
@@ -140,6 +142,11 @@ class SettingController extends Controller
             if ($request->has('value')) {
                 $validationRules['value'] = 'nullable';
                 $updateData['value'] = $request->value;
+            }
+
+            if ($request->has('default_value')) {
+                $validationRules['default_value'] = 'nullable|string';
+                $updateData['default_value'] = $request->default_value;
             }
 
             if ($request->has('image_width')) {
