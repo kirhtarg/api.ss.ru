@@ -265,13 +265,27 @@ class SettingController extends Controller
             $fullPath = $frontendPublicPath . '/' . $path;
             $dir = dirname($fullPath);
 
+            Log::info('SettingController::uploadImage: frontendPublicPath = ' . $frontendPublicPath);
+            Log::info('SettingController::uploadImage: fullPath = ' . $fullPath);
+            Log::info('SettingController::uploadImage: dir = ' . $dir);
+
             // Создаем директорию, если её нет
             if (!is_dir($dir)) {
+                Log::info('SettingController::uploadImage: Creating directory: ' . $dir);
                 mkdir($dir, 0755, true);
             }
 
             // Сохраняем файл на фронтенд
+            Log::info('SettingController::uploadImage: Moving file to: ' . $fullPath);
             $file->move($dir, $filename);
+            
+            // Проверяем, что файл действительно создался
+            if (file_exists($fullPath)) {
+                Log::info('SettingController::uploadImage: File successfully saved: ' . $fullPath);
+                Log::info('SettingController::uploadImage: File size: ' . filesize($fullPath) . ' bytes');
+            } else {
+                Log::error('SettingController::uploadImage: File was not saved: ' . $fullPath);
+            }
 
             // Удаляем старое изображение с фронтенда, если оно есть
             if ($setting->value && $setting->value !== 'default-image.png') {
