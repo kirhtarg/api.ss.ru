@@ -155,7 +155,7 @@ class ShopGoodsController extends Controller
     /**
      * Получить товар по ID или slug для публичного API
      */
-    public function show($id): JsonResponse
+    public function show(Request $request, $id): JsonResponse
     {
         try {
             $good = ShopGood::with([
@@ -297,17 +297,20 @@ class ShopGoodsController extends Controller
         // Убираем лишний префикс images/ если он уже есть
         $cleanPath = ltrim($filePath, '/');
         if (str_starts_with($cleanPath, 'images/')) {
-            return '/' . $cleanPath;
+            // Возвращаем полный URL с фронтенда
+            $frontendUrl = config('app.frontend_url', 'https://admin.skateandsnow.ru');
+            return $frontendUrl . '/' . $cleanPath;
         }
 
-        // Возвращаем путь к файлу в папке public/images/
-        return '/images/' . $cleanPath;
+        // Возвращаем полный URL к файлу в папке public/images/ на фронтенде
+        $frontendUrl = config('app.frontend_url', 'https://admin.skateandsnow.ru');
+        return $frontendUrl . '/images/' . $cleanPath;
     }
 
     /**
      * Получить товар по slug
      */
-    public function getGoodBySlug(string $slug): JsonResponse
+    public function getGoodBySlug(Request $request, string $slug): JsonResponse
     {
         try {
             $good = ShopGood::with([
