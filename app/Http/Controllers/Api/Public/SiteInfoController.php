@@ -30,7 +30,9 @@ class SiteInfoController extends Controller
             foreach ($settings as $setting) {
                 // Обрабатываем URL изображений для логотипов
                 if (in_array($setting->key, ['site_logo', 'site_logo_negative']) && $setting->value) {
+                    Log::info('SiteInfoController::index: Processing ' . $setting->key . ' = ' . $setting->value);
                     $siteInfo[$setting->key] = $this->getImageUrl($setting->value);
+                    Log::info('SiteInfoController::index: Processed ' . $setting->key . ' = ' . $siteInfo[$setting->key]);
                 } else {
                     $siteInfo[$setting->key] = $setting->value;
                 }
@@ -80,7 +82,9 @@ class SiteInfoController extends Controller
                 foreach ($settings as $setting) {
                     // Обрабатываем URL изображений для логотипов
                     if (in_array($setting->key, ['site_logo', 'site_logo_negative']) && $setting->value) {
+                        Log::info('SiteInfoController::settings: Processing ' . $setting->key . ' = ' . $setting->value);
                         $publicSettings[$setting->key] = $this->getImageUrl($setting->value);
+                        Log::info('SiteInfoController::settings: Processed ' . $setting->key . ' = ' . $publicSettings[$setting->key]);
                     } else {
                         $publicSettings[$setting->key] = $setting->value;
                     }
@@ -137,7 +141,9 @@ class SiteInfoController extends Controller
                 foreach ($settings as $setting) {
                     // Обрабатываем URL изображений для логотипов и meta изображений
                     if (in_array($setting->key, ['site_logo', 'site_logo_negative', 'meta_image']) && $setting->value) {
+                        Log::info('SiteInfoController::seo: Processing ' . $setting->key . ' = ' . $setting->value);
                         $seoSettings[$setting->key] = $this->getImageUrl($setting->value);
+                        Log::info('SiteInfoController::seo: Processed ' . $setting->key . ' = ' . $seoSettings[$setting->key]);
                     } else {
                         $seoSettings[$setting->key] = $setting->value;
                     }
@@ -169,8 +175,13 @@ class SiteInfoController extends Controller
     private function getImageUrl($filePath)
     {
         if (!$filePath) {
+            Log::info('getImageUrl: filePath is null or empty');
             return null;
         }
+
+        Log::info('getImageUrl: Original filePath = ' . $filePath);
+        Log::info('getImageUrl: config app.url = ' . config('app.url'));
+        Log::info('getImageUrl: config app.frontend_url = ' . config('app.frontend_url'));
 
         // Убираем возможные префиксы API сервера
         $cleanPath = $filePath;
@@ -178,10 +189,13 @@ class SiteInfoController extends Controller
         // Если в пути есть полный URL, извлекаем только относительный путь
         if (preg_match('/https?:\/\/[^\/]+(.*)/', $filePath, $matches)) {
             $cleanPath = $matches[1];
+            Log::info('getImageUrl: Extracted relative path from full URL = ' . $cleanPath);
         }
         
         // Если это уже полный URL, проверяем домен
         if (str_starts_with($cleanPath, 'http')) {
+            Log::info('getImageUrl: cleanPath is full URL = ' . $cleanPath);
+            
             // Заменяем старый домен на новый фронтенд домен
             $frontendUrl = config('app.frontend_url', 'https://admin.skateandsnow.ru');
             $oldDomains = [
@@ -192,24 +206,33 @@ class SiteInfoController extends Controller
             
             foreach ($oldDomains as $oldDomain) {
                 if (str_starts_with($cleanPath, $oldDomain)) {
-                    return str_replace($oldDomain, $frontendUrl, $cleanPath);
+                    $result = str_replace($oldDomain, $frontendUrl, $cleanPath);
+                    Log::info('getImageUrl: Replaced domain ' . $oldDomain . ' with ' . $frontendUrl . ' = ' . $result);
+                    return $result;
                 }
             }
             
             // Если это другой домен, возвращаем как есть
+            Log::info('getImageUrl: Unknown domain, returning as is = ' . $cleanPath);
             return $cleanPath;
         }
 
         // Убираем лишний префикс images/ если он уже есть
         $cleanPath = ltrim($cleanPath, '/');
+        Log::info('getImageUrl: Cleaned path = ' . $cleanPath);
+        
         if (str_starts_with($cleanPath, 'images/')) {
             // Возвращаем полный URL с фронтенда
             $frontendUrl = config('app.frontend_url', 'https://admin.skateandsnow.ru');
-            return $frontendUrl . '/' . $cleanPath;
+            $result = $frontendUrl . '/' . $cleanPath;
+            Log::info('getImageUrl: Final result for images/ path = ' . $result);
+            return $result;
         }
 
         // Возвращаем полный URL к файлу в папке public/images/ на фронтенде
         $frontendUrl = config('app.frontend_url', 'https://admin.skateandsnow.ru');
-        return $frontendUrl . '/images/' . $cleanPath;
+        $result = $frontendUrl . '/images/' . $cleanPath;
+        Log::info('getImageUrl: Final result for regular path = ' . $result);
+        return $result;
     }
 }
