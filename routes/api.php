@@ -2007,7 +2007,7 @@ Route::middleware('auth:sanctum')->group(function () {
                         'id' => $user->id,
                         'name' => $user->name,
                         'email' => $user->email,
-                        'avatar_url' => $user->avatar_url,
+                        'avatar_url' => $user->avatar ? '/' . $user->avatar : null,
                         'role' => $user->roles->first()?->name ?? 'user', // Основная роль для совместимости
                         'roles' => $user->roles->map(function($role) {
                             return [
@@ -2061,7 +2061,7 @@ Route::middleware('auth:sanctum')->group(function () {
                         'id' => $user->id,
                         'name' => $user->name,
                         'email' => $user->email,
-                        'avatar_url' => $user->avatar_url,
+                        'avatar_url' => $user->avatar ? '/' . $user->avatar : null,
                         'role' => $user->roles->first()?->name ?? 'user', // Основная роль для совместимости
                         'roles' => $user->roles->map(function($role) {
                             return [
@@ -2148,21 +2148,25 @@ Route::middleware('auth:sanctum')->group(function () {
                     // Создаем уникальное имя файла
                     $filename = 'avatar_' . $user->id . '_' . time() . '.' . $file->getClientOriginalExtension();
 
-                    // Путь для сохранения
+                    // Путь для сохранения на фронтенде
                     $path = 'images/users/' . $filename;
+                    $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+                    $fullPath = $frontendPublicPath . '/' . $path;
+                    $dir = dirname($fullPath);
 
                     // Создаем директорию, если её нет
-                    if (!\Illuminate\Support\Facades\Storage::disk('public')->exists('images/users')) {
-                        \Illuminate\Support\Facades\Storage::disk('public')->makeDirectory('images/users');
+                    if (!is_dir($dir)) {
+                        mkdir($dir, 0755, true);
                     }
 
-                    // Сохраняем файл
-                    \Illuminate\Support\Facades\Storage::disk('public')->putFileAs('images/users', $file, $filename);
+                    // Сохраняем файл на фронтенде
+                    $file->move($dir, $filename);
 
                     // Удаляем старый аватар, если он есть
                     if ($user->avatar && $user->avatar !== 'default-avatar.png') {
-                        if (\Illuminate\Support\Facades\Storage::disk('public')->exists($user->avatar)) {
-                            \Illuminate\Support\Facades\Storage::disk('public')->delete($user->avatar);
+                        $oldPath = $frontendPublicPath . '/' . $user->avatar;
+                        if (file_exists($oldPath)) {
+                            unlink($oldPath);
                         }
                     }
 
@@ -2174,7 +2178,7 @@ Route::middleware('auth:sanctum')->group(function () {
                         'success' => true,
                         'message' => 'Аватар успешно загружен',
                         'data' => [
-                            'avatar' => Storage::url($user->avatar)
+                            'avatar' => '/' . $path
                         ]
                     ]);
                 } catch (\Exception $e) {
@@ -2197,9 +2201,11 @@ Route::middleware('auth:sanctum')->group(function () {
                         ], 404);
                     }
 
-                    // Удаляем файл аватара
-                    if (\Illuminate\Support\Facades\Storage::disk('public')->exists($user->avatar)) {
-                        \Illuminate\Support\Facades\Storage::disk('public')->delete($user->avatar);
+                    // Удаляем файл аватара с фронтенда
+                    $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+                    $filePath = $frontendPublicPath . '/' . $user->avatar;
+                    if (file_exists($filePath)) {
+                        unlink($filePath);
                     }
 
                     // Очищаем поле аватара в базе данных
