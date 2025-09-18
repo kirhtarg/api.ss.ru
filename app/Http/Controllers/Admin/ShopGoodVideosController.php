@@ -158,13 +158,31 @@ class ShopGoodVideosController extends Controller
                 $fullPath = $frontendPublicPath . '/' . $path;
                 $dir = dirname($fullPath);
 
+                Log::info('Video upload debug:', [
+                    'filename' => $filename,
+                    'path' => $path,
+                    'frontendPublicPath' => $frontendPublicPath,
+                    'fullPath' => $fullPath,
+                    'dir' => $dir
+                ]);
+
                 // Создаем директорию, если её нет
                 if (!is_dir($dir)) {
-                    mkdir($dir, 0755, true);
+                    Log::info('Creating directory: ' . $dir);
+                    $mkdirResult = mkdir($dir, 0755, true);
+                    Log::info('mkdir result: ' . ($mkdirResult ? 'success' : 'failed'));
                 }
 
-                // Сохраняем файл на фронтенд
-                $video->move($dir, $filename);
+                Log::info('Moving file to: ' . $fullPath);
+                $moveResult = $video->move($dir, $filename);
+                Log::info('File move result: ' . ($moveResult ? 'success' : 'failed'));
+                
+                if (file_exists($fullPath)) {
+                    Log::info('File successfully saved: ' . $fullPath);
+                    Log::info('File size: ' . filesize($fullPath) . ' bytes');
+                } else {
+                    Log::error('File was not saved: ' . $fullPath);
+                }
                 
                 $videoData['video_path'] = $path;
             }
@@ -186,13 +204,30 @@ class ShopGoodVideosController extends Controller
                 $fullPath = $frontendPublicPath . '/' . $path;
                 $dir = dirname($fullPath);
 
+                Log::info('Thumbnail upload debug:', [
+                    'filename' => $filename,
+                    'path' => $path,
+                    'fullPath' => $fullPath,
+                    'dir' => $dir
+                ]);
+
                 // Создаем директорию, если её нет
                 if (!is_dir($dir)) {
-                    mkdir($dir, 0755, true);
+                    Log::info('Creating thumbnail directory: ' . $dir);
+                    $mkdirResult = mkdir($dir, 0755, true);
+                    Log::info('Thumbnail mkdir result: ' . ($mkdirResult ? 'success' : 'failed'));
                 }
 
-                // Сохраняем файл на фронтенд
-                $thumbnail->move($dir, $filename);
+                Log::info('Moving thumbnail to: ' . $fullPath);
+                $moveResult = $thumbnail->move($dir, $filename);
+                Log::info('Thumbnail move result: ' . ($moveResult ? 'success' : 'failed'));
+                
+                if (file_exists($fullPath)) {
+                    Log::info('Thumbnail successfully saved: ' . $fullPath);
+                    Log::info('Thumbnail size: ' . filesize($fullPath) . ' bytes');
+                } else {
+                    Log::error('Thumbnail was not saved: ' . $fullPath);
+                }
                 
                 $videoData['thumbnail'] = $path;
             }
