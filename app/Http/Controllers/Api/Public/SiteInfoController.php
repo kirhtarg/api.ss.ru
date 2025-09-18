@@ -28,7 +28,12 @@ class SiteInfoController extends Controller
 
             $siteInfo = [];
             foreach ($settings as $setting) {
-                $siteInfo[$setting->key] = $setting->value;
+                // Обрабатываем URL изображений для логотипов
+                if (in_array($setting->key, ['site_logo', 'site_logo_negative']) && $setting->value) {
+                    $siteInfo[$setting->key] = $this->getImageUrl($setting->value);
+                } else {
+                    $siteInfo[$setting->key] = $setting->value;
+                }
             }
 
             return response()->json([
@@ -73,7 +78,12 @@ class SiteInfoController extends Controller
 
                 $publicSettings = [];
                 foreach ($settings as $setting) {
-                    $publicSettings[$setting->key] = $setting->value;
+                    // Обрабатываем URL изображений для логотипов
+                    if (in_array($setting->key, ['site_logo', 'site_logo_negative']) && $setting->value) {
+                        $publicSettings[$setting->key] = $this->getImageUrl($setting->value);
+                    } else {
+                        $publicSettings[$setting->key] = $setting->value;
+                    }
                 }
 
                 return $publicSettings;
@@ -125,7 +135,12 @@ class SiteInfoController extends Controller
 
                 $seoSettings = [];
                 foreach ($settings as $setting) {
-                    $seoSettings[$setting->key] = $setting->value;
+                    // Обрабатываем URL изображений для логотипов и meta изображений
+                    if (in_array($setting->key, ['site_logo', 'site_logo_negative', 'meta_image']) && $setting->value) {
+                        $seoSettings[$setting->key] = $this->getImageUrl($setting->value);
+                    } else {
+                        $seoSettings[$setting->key] = $setting->value;
+                    }
                 }
 
                 return $seoSettings;
@@ -146,5 +161,32 @@ class SiteInfoController extends Controller
                 'data' => []
             ], 500);
         }
+    }
+
+    /**
+     * Получить полный URL изображения
+     */
+    private function getImageUrl($filePath)
+    {
+        if (!$filePath) {
+            return null;
+        }
+
+        // Если это уже полный URL, возвращаем как есть
+        if (str_starts_with($filePath, 'http')) {
+            return $filePath;
+        }
+
+        // Убираем лишний префикс images/ если он уже есть
+        $cleanPath = ltrim($filePath, '/');
+        if (str_starts_with($cleanPath, 'images/')) {
+            // Возвращаем полный URL с фронтенда
+            $frontendUrl = config('app.frontend_url', 'https://admin.skateandsnow.ru');
+            return $frontendUrl . '/' . $cleanPath;
+        }
+
+        // Возвращаем полный URL к файлу в папке public/images/ на фронтенде
+        $frontendUrl = config('app.frontend_url', 'https://admin.skateandsnow.ru');
+        return $frontendUrl . '/images/' . $cleanPath;
     }
 }
