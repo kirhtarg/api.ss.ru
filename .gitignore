@@ -13,10 +13,10 @@
 /.zed
 /auth.json
 /node_modules
-/public/build
-/public/hot
-/public/storage
-/public/sliders
+public/build
+public/hot
+public/storage
+public/sliders
 /storage/*.key
 /storage/pail
 /storage/app
