@@ -28,8 +28,8 @@ class SiteInfoController extends Controller
 
             $siteInfo = [];
             foreach ($settings as $setting) {
-                // Обрабатываем URL изображений для логотипов
-                if (in_array($setting->key, ['site_logo', 'site_logo_negative']) && $setting->value) {
+                // Обрабатываем URL изображений для логотипов и favicon
+                if (in_array($setting->key, ['site_logo', 'site_logo_negative', 'site_favicon']) && $setting->value) {
                     Log::info('SiteInfoController::index: Processing ' . $setting->key . ' = ' . $setting->value);
                     $siteInfo[$setting->key] = $this->getImageUrl($setting->value);
                     Log::info('SiteInfoController::index: Processed ' . $setting->key . ' = ' . $siteInfo[$setting->key]);
@@ -130,6 +130,7 @@ class SiteInfoController extends Controller
                         'site_name',
                         'site_description', 
                         'site_logo',
+                        'site_favicon',
                         'meta_title',
                         'meta_description',
                         'meta_image',
@@ -139,8 +140,8 @@ class SiteInfoController extends Controller
 
                 $seoSettings = [];
                 foreach ($settings as $setting) {
-                    // Обрабатываем URL изображений для логотипов и meta изображений
-                    if (in_array($setting->key, ['site_logo', 'site_logo_negative', 'meta_image']) && $setting->value) {
+                    // Обрабатываем URL изображений для логотипов, favicon и meta изображений
+                    if (in_array($setting->key, ['site_logo', 'site_logo_negative', 'site_favicon', 'meta_image']) && $setting->value) {
                         Log::info('SiteInfoController::seo: Processing ' . $setting->key . ' = ' . $setting->value);
                         $seoSettings[$setting->key] = $this->getImageUrl($setting->value);
                         Log::info('SiteInfoController::seo: Processed ' . $setting->key . ' = ' . $seoSettings[$setting->key]);

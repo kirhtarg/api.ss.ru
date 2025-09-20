@@ -277,6 +277,9 @@ class ShopGoodsController extends Controller
                 return $properties->pluck('value')->unique()->values()->toArray();
             });
 
+        // Подсчитываем общий остаток с учетом вариаций
+        $totalStockQuantity = $this->calculateTotalStockQuantity($good);
+
         return [
             'id' => $good->id,
             'name' => $good->name,
@@ -311,8 +314,8 @@ class ShopGoodsController extends Controller
             'rating' => $good->rating ? (float) $good->rating : null,
             'reviews_count' => $good->reviews_count ?? 0,
             'characteristics' => $characteristics,
-            'in_stock' => $good->stock_quantity > 0,
-            'stock_quantity' => $good->stock_quantity,
+            'in_stock' => $totalStockQuantity > 0,
+            'stock_quantity' => $totalStockQuantity, // Используем общий остаток
             'is_new' => (bool) $good->is_new,
             'is_sale' => (bool) $good->is_sale,
             'category_id' => $good->categories->first() ? $good->categories->first()->id : null,
@@ -335,6 +338,38 @@ class ShopGoodsController extends Controller
                 ];
             })->toArray(),
             'variations' => $good->variations->map(function ($variation) {
+                // Загружаем изображения для вариации
+                $variationImages = \App\Models\ShopGoodImage::whereNull('good_id')
+                    ->where('variation_id', $variation->id)
+                    ->orderBy('sort_order')
+                    ->get()
+                    ->map(function ($image) {
+                        return [
+                            'id' => $image->id,
+                            'url' => $this->getImageUrl($image->file_path),
+                            'alt_text' => $image->alt_text,
+                            'is_main' => $image->is_main
+                        ];
+                    })->toArray();
+
+                // Загружаем видео для вариации
+                $variationVideos = \App\Models\ShopGoodVideo::whereNull('good_id')
+                    ->where('variation_id', $variation->id)
+                    ->orderBy('sort_order')
+                    ->get()
+                    ->map(function ($video) {
+                        return [
+                            'id' => $video->id,
+                            'video_path' => $video->video_path,
+                            'external_url' => $video->external_url,
+                            'title' => $video->title,
+                            'thumbnail' => $video->thumbnail,
+                            'url' => $video->url,
+                            'embed_url' => $video->embed_url,
+                            'is_external' => $video->is_external
+                        ];
+                    })->toArray();
+
                 return [
                     'id' => $variation->id,
                     'name' => $variation->name,
@@ -342,6 +377,8 @@ class ShopGoodsController extends Controller
                     'sale_price' => $variation->sale_price ? (float) $variation->sale_price : null,
                     'stock_quantity' => $variation->stock_quantity,
                     'is_active' => $variation->is_active,
+                    'images' => $variationImages,
+                    'videos' => $variationVideos,
                     'properties' => $variation->properties->map(function ($property) {
                         return [
                             'property_id' => $property->property_id,
@@ -358,6 +395,22 @@ class ShopGoodsController extends Controller
             })->toArray(),
             'all_property_values' => $allPropertyValues->toArray()
         ];
+    }
+
+    /**
+     * Подсчитать общий остаток товара с учетом вариаций
+     */
+    private function calculateTotalStockQuantity($good): int
+    {
+        // Если у товара есть вариации, суммируем остатки всех активных вариаций
+        if ($good->variations && $good->variations->count() > 0) {
+            return $good->variations
+                ->where('is_active', true)
+                ->sum('stock_quantity');
+        }
+        
+        // Если вариаций нет, возвращаем остаток самого товара
+        return $good->stock_quantity ?? 0;
     }
 
     /**
@@ -566,6 +619,8 @@ class ShopGoodsController extends Controller
                 'brands:id,name,slug',
                 'tags:id,name,color',
                 'variations:id,good_id,name,price,sale_price,stock_quantity,is_active',
+                'variations.properties:id,variation_id,property_id,value',
+                'variations.properties.property:id,name,slug',
                 'properties:id,name,slug',
                 'images:id,good_id,file_path,alt_text,is_main,sort_order',
                 'videos:id,good_id,video_path,external_url,title,thumbnail,sort_order'

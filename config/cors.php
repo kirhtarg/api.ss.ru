@@ -38,7 +38,8 @@ return [
         'Accept',
         'Origin',
         'X-CSRF-TOKEN',
-        'X-XSRF-TOKEN'
+        'X-XSRF-TOKEN',
+        'X-Session-ID'
     ],
 
     'exposed_headers' => [

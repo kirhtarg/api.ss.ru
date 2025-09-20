@@ -207,6 +207,24 @@ Route::middleware(['cors'])->group(function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/brands', [App\Http\Controllers\Api\Public\ShopBrandsController::class, 'index']);
+
+    // Публичные маршруты для корзины
+    Route::options('/public/shop/cart', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/cart', [App\Http\Controllers\Api\Public\CartController::class, 'getCart']);
+    Route::post('/public/shop/cart/add', [App\Http\Controllers\Api\Public\CartController::class, 'addToCart']);
+    Route::put('/public/shop/cart/update', [App\Http\Controllers\Api\Public\CartController::class, 'updateCartItem']);
+    Route::delete('/public/shop/cart/remove', [App\Http\Controllers\Api\Public\CartController::class, 'removeFromCart']);
+    Route::delete('/public/shop/cart/clear', [App\Http\Controllers\Api\Public\CartController::class, 'clearCart']);
+    Route::post('/public/shop/cart/create-order', [App\Http\Controllers\Api\Public\CartController::class, 'createOrder']);
+    
+    // Маршруты для предзаказов
+    Route::options('/public/shop/preorders', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/preorders', [App\Http\Controllers\Api\Public\CartController::class, 'getPreorders']);
+    Route::post('/public/shop/preorders/add', [App\Http\Controllers\Api\Public\CartController::class, 'addToPreorder']);
     
     Route::options('/public/shop/brands/{id}', function () {
         return response()->json([], 200);
@@ -282,6 +300,17 @@ Route::middleware(['cors'])->group(function () {
             ], 500);
         }
     });
+
+    // Публичные маршруты для слайдеров
+    Route::options('/public/sliders', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/sliders', [App\Http\Controllers\Api\Public\SliderController::class, 'index']);
+    
+    Route::options('/public/sliders/{id}', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/sliders/{id}', [App\Http\Controllers\Api\Public\SliderController::class, 'show']);
 });
 
 // Временный отладочный endpoint для проверки всех настроек
@@ -1715,6 +1744,20 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::put('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'update']);
                     Route::delete('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'destroy']);
                     Route::put('/{siteTemplate}/activate', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'activate']);
+                });
+            });
+
+            // Слайдеры (доступны админам и пользователям с ролью site)
+            Route::middleware(['auth:sanctum', 'role:admin,site'])->prefix('site')->group(function () {
+                Route::prefix('sliders')->group(function () {
+                    Route::get('/', [\App\Http\Controllers\Api\Admin\SliderController::class, 'index']);
+                    Route::post('/', [\App\Http\Controllers\Api\Admin\SliderController::class, 'store']);
+                    Route::get('/{id}', [\App\Http\Controllers\Api\Admin\SliderController::class, 'show']);
+                    Route::put('/{id}', [\App\Http\Controllers\Api\Admin\SliderController::class, 'update']);
+                    Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\SliderController::class, 'destroy']);
+                    Route::post('/{sliderId}/images', [\App\Http\Controllers\Api\Admin\SliderController::class, 'uploadImage']);
+                    Route::put('/{sliderId}/images/{imageId}', [\App\Http\Controllers\Api\Admin\SliderController::class, 'updateImage']);
+                    Route::delete('/{sliderId}/images/{imageId}', [\App\Http\Controllers\Api\Admin\SliderController::class, 'deleteImage']);
                 });
             });
         });
