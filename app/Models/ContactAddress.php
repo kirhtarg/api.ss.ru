@@ -17,6 +17,7 @@ class ContactAddress extends Model
         'longitude',
         'latitude',
         'howtogo',
+        'work_mode',
         'is_main',
     ];
 

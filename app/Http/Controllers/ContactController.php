@@ -69,6 +69,10 @@ class ContactController extends Controller
                 'name' => $request->name,
                 'short_name' => $request->short_name,
                 'is_main' => $request->is_main ?? false,
+                'legal_name' => $request->legal_name ?? null,
+                'inn' => $request->inn ?? null,
+                'ogrnip' => $request->ogrnip ?? null,
+                'legal_address' => $request->legal_address ?? null,
             ]);
 
             // Добавляем телефоны
@@ -107,6 +111,7 @@ class ContactController extends Controller
                         'longitude' => $addressData['longitude'] ?? null,
                         'latitude' => $addressData['latitude'] ?? null,
                         'howtogo' => $addressData['howtogo'] ?? null,
+                        'work_mode' => $addressData['work_mode'] ?? null,
                         'is_main' => $addressData['is_main'] ?? false,
                     ]);
                 }
@@ -171,6 +176,10 @@ class ContactController extends Controller
                 'name' => $request->name,
                 'short_name' => $request->short_name,
                 'is_main' => $request->is_main ?? false,
+                'legal_name' => $request->legal_name ?? null,
+                'inn' => $request->inn ?? null,
+                'ogrnip' => $request->ogrnip ?? null,
+                'legal_address' => $request->legal_address ?? null,
             ]);
 
             // Обновляем телефоны
@@ -211,6 +220,7 @@ class ContactController extends Controller
                         'longitude' => $addressData['longitude'] ?? null,
                         'latitude' => $addressData['latitude'] ?? null,
                         'howtogo' => $addressData['howtogo'] ?? null,
+                        'work_mode' => $addressData['work_mode'] ?? null,
                         'is_main' => $addressData['is_main'] ?? false,
                     ]);
                 }
@@ -422,6 +432,8 @@ class ContactController extends Controller
                 'address_short' => $mainAddress->address_short,
                 'latitude' => $mainAddress->latitude,
                 'longitude' => $mainAddress->longitude,
+                'howtogo' => $mainAddress->howtogo,
+                'work_mode' => $mainAddress->work_mode,
                 'is_main' => $mainAddress->is_main,
                 'contact_name' => $mainContact->name
             ];
@@ -457,7 +469,11 @@ class ContactController extends Controller
                 'contact_name' => $mainContact->name,
                 'address' => $addressData,
                 'main_phone' => $phoneData,
-                'phones' => $phonesData
+                'phones' => $phonesData,
+                'legal_name' => $mainContact->legal_name,
+                'inn' => $mainContact->inn,
+                'ogrnip' => $mainContact->ogrnip,
+                'legal_address' => $mainContact->legal_address
             ]
         ]);
     }

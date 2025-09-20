@@ -343,6 +343,10 @@ Route::get('/contacts/header-data', [\App\Http\Controllers\ContactController::cl
 // Сообщения с сайта (публичные)
 Route::post('/site-messages', [\App\Http\Controllers\SiteMessageController::class, 'store']);
 
+// Подписка на новости (публичные)
+Route::post('/site-newsletter', [\App\Http\Controllers\SiteNewsletterController::class, 'subscribe']);
+Route::post('/site-newsletter/unsubscribe', [\App\Http\Controllers\SiteNewsletterController::class, 'unsubscribe']);
+
 // Защищенные маршруты (требуют авторизации) - используют только token authentication
 Route::middleware('auth:sanctum')->group(function () {
     // Авторизация
@@ -380,6 +384,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('/{id}', [\App\Http\Controllers\SiteMessageController::class, 'destroy']);
         Route::post('/{id}/mark-processed', [\App\Http\Controllers\SiteMessageController::class, 'markAsProcessed']);
         Route::get('/stats/overview', [\App\Http\Controllers\SiteMessageController::class, 'stats']);
+    });
+
+    // Подписчики на новости (доступны админам)
+    Route::middleware(['auth:sanctum', 'role:admin'])->prefix('site-newsletter')->group(function () {
+        Route::get('/', [\App\Http\Controllers\SiteNewsletterController::class, 'index']);
     });
 
     // Временный тестовый маршрут для Google Sheets (без авторизации)

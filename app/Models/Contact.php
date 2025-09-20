@@ -14,6 +14,10 @@ class Contact extends Model
         'name',
         'short_name',
         'is_main',
+        'legal_name',
+        'inn',
+        'ogrnip',
+        'legal_address',
     ];
 
     protected $casts = [

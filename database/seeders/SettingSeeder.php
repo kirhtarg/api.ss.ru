@@ -353,6 +353,32 @@ class SettingSeeder extends Seeder
                 'created_at' => '2025-09-15 17:24:08',
                 'updated_at' => '2025-09-15 17:25:41',
             ],
+            [
+                'id' => 29,
+                'key' => 'site_slide_height',
+                'name' => 'Высота банера по умолчанию',
+                'value' => 600,
+                'type' => 'number',
+                'group' => 'site',
+                'description' => null,
+                'image_width' => null,
+                'image_height' => null,
+                'created_at' => '2025-09-15 17:24:08',
+                'updated_at' => '2025-09-15 17:25:41',
+            ],
+            [
+                'id' => 30,
+                'key' => 'site_slide_width',
+                'name' => 'Ширина банера по умолчанию',
+                'value' => 800,
+                'type' => 'number',
+                'group' => 'site',
+                'description' => null,
+                'image_width' => null,
+                'image_height' => null,
+                'created_at' => '2025-09-15 17:24:08',
+                'updated_at' => '2025-09-15 17:25:41',
+            ],
         ];
 
         foreach ($settings as $setting) {
