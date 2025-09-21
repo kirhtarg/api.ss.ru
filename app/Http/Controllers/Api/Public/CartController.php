@@ -768,6 +768,9 @@ class CartController extends Controller
                 ], 404);
             }
 
+            // Инициализируем переменную вариации
+            $variation = null;
+            
             // Если указана вариация, проверяем её
             if ($variationId) {
                 $variation = ShopGoodVariation::where('id', $variationId)

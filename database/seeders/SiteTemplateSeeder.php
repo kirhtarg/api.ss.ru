@@ -62,3 +62,4 @@ class SiteTemplateSeeder extends Seeder
 
 
 
+
