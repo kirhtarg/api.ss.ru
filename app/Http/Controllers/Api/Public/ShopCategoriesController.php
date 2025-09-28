@@ -30,7 +30,6 @@ class ShopCategoriesController extends Controller
             // Фильтр по бренду - показываем только категории, у которых есть товары данного бренда
             if ($request->filled('brand_id')) {
                 $brandId = $request->get('brand_id');
-                \Log::info('Filtering categories by brand_id: ' . $brandId);
                 
                 // Сначала проверим, есть ли товары у этого бренда
                 $brandGoodsCount = \DB::table('shop_goods')
@@ -39,7 +38,6 @@ class ShopCategoriesController extends Controller
                     ->where('shop_goods.is_active', true)
                     ->count();
                 
-                \Log::info('Brand goods count: ' . $brandGoodsCount);
                 
                 // Проверим, в каких категориях есть товары этого бренда
                 $brandCategoriesCount = \DB::table('shop_categories')
@@ -52,7 +50,6 @@ class ShopCategoriesController extends Controller
                     ->distinct('shop_categories.id')
                     ->count();
                 
-                \Log::info('Brand categories count: ' . $brandCategoriesCount);
                 
                 $query->whereHas('goods', function ($q) use ($brandId) {
                     $q->whereHas('brands', function ($brandQuery) use ($brandId) {
@@ -69,21 +66,6 @@ class ShopCategoriesController extends Controller
 
             $categories = $query->get();
 
-            // Отладочная информация
-            \Log::info('Categories loaded:', [
-                'total_categories' => $categories->count(),
-                'categories_with_children' => $categories->filter(function($cat) {
-                    return $cat->children && $cat->children->count() > 0;
-                })->count(),
-                'categories_details' => $categories->map(function($cat) {
-                    return [
-                        'id' => $cat->id,
-                        'name' => $cat->name,
-                        'parent_id' => $cat->parent_id,
-                        'children_count' => $cat->children ? $cat->children->count() : 0
-                    ];
-                })->toArray()
-            ]);
 
             // Проверяем все категории в базе
             $allCategoriesCount = ShopCategory::where('is_active', true)->count();
@@ -93,16 +75,7 @@ class ShopCategoriesController extends Controller
                           ->orWhere('parent_id', 0);
                 })->count();
             
-            \Log::info('Database categories count:', [
-                'all_active_categories' => $allCategoriesCount,
-                'main_categories' => $mainCategoriesCount,
-                'loaded_categories' => $categories->count()
-            ]);
 
-            // Проверяем, что категории загружены
-            if ($categories->isEmpty()) {
-                \Log::warning('No categories found!');
-            }
 
             // Вычисляем количество товаров для каждой категории и подкатегории
             foreach ($categories as $category) {
@@ -123,16 +96,6 @@ class ShopCategoriesController extends Controller
                 }
             }
 
-            \Log::info('Final categories response:', [
-                'categories_count' => $categories->count(),
-                'categories_data' => $categories->map(function($cat) {
-                    return [
-                        'id' => $cat->id,
-                        'name' => $cat->name,
-                        'parent_id' => $cat->parent_id
-                    ];
-                })->toArray()
-            ]);
 
             return response()->json([
                 'success' => true,

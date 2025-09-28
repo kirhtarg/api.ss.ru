@@ -112,4 +112,8 @@ return [
         'from' => env('NOTIFYLK_FROM', 'NotifyDEMO'),
     ],
 
+    'dadata' => [
+        'api_key' => env('DADATA_API_KEY'),
+    ],
+
 ];

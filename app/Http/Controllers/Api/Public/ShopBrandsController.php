@@ -22,13 +22,11 @@ class ShopBrandsController extends Controller
             // Фильтр по категории - показываем только бренды, у которых есть товары в данной категории
             if ($request->filled('category_id')) {
                 $categoryId = $request->get('category_id');
-                \Log::info('Filtering brands by category_id: ' . $categoryId);
                 
                 // Проверяем, есть ли товары в категории
                 $goodsInCategory = \App\Models\ShopGood::whereHas('categories', function ($q) use ($categoryId) {
                     $q->where('shop_categories.id', $categoryId);
                 })->where('is_active', true)->count();
-                \Log::info('Goods in category ' . $categoryId . ': ' . $goodsInCategory);
                 
                 // Проверяем, есть ли бренды у товаров в категории
                 $brandsInCategory = \App\Models\ShopBrand::whereHas('goods', function ($q) use ($categoryId) {
@@ -36,7 +34,6 @@ class ShopBrandsController extends Controller
                         $catQuery->where('shop_categories.id', $categoryId);
                     })->where('is_active', true);
                 })->count();
-                \Log::info('Brands in category ' . $categoryId . ': ' . $brandsInCategory);
                 
                 $query->whereHas('goods', function ($q) use ($categoryId) {
                     $q->whereHas('categories', function ($catQuery) use ($categoryId) {
@@ -58,7 +55,6 @@ class ShopBrandsController extends Controller
             $perPage = min($request->get('limit', 20), 100);
             $brands = $query->get(); // Временно используем get() вместо paginate()
             
-            \Log::info('Total brands found: ' . $brands->count());
 
             // Форматируем данные для фронтенда
             $formattedBrands = $brands->map(function ($brand) {
@@ -86,7 +82,6 @@ class ShopBrandsController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('Ошибка загрузки брендов: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка загрузки брендов: ' . $e->getMessage()

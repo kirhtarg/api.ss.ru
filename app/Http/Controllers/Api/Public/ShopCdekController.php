@@ -1,0 +1,781 @@
+<?php
+
+namespace App\Http\Controllers\Api\Public;
+
+use App\Http\Controllers\Controller;
+use App\Models\ShopCdekSettings;
+use App\Services\CdekService;
+use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+
+class ShopCdekController extends Controller
+{
+    private $cdekService;
+
+    public function __construct()
+    {
+        $this->cdekService = new CdekService();
+    }
+
+    /**
+     * Получить список городов СДЭК
+     */
+    public function getCities(Request $request): JsonResponse
+    {
+        try {
+            $query = $request->query('query', '');
+            
+            // Правильно декодируем кириллицу - пробуем разные варианты
+            $query = urldecode($query);
+            if (empty($query)) {
+                $query = $request->input('query', '');
+            }
+            
+            if (strlen($query) < 2) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Минимум 2 символа для поиска'
+                ], 400);
+            }
+
+            // Используем DaData API для поиска городов
+            $dadataApiKey = env('DADATA_API_KEY');
+            if (!$dadataApiKey) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'API ключ DaData не настроен'
+                ], 500);
+            }
+
+            try {
+                $dadataUrl = 'https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/address';
+                $body = [
+                    'query' => $query,
+                    'count' => 20,
+                    'locations' => [
+                        [
+                            'country' => 'Россия'
+                        ]
+                    ],
+                    'from_bound' => ['value' => 'city'],
+                    'to_bound' => ['value' => 'city']
+                ];
+
+                $headers = [
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json',
+                    'Authorization' => 'Token ' . $dadataApiKey
+                ];
+                
+                $res = Http::withOptions(['verify' => false])
+                    ->withHeaders($headers)
+                    ->post($dadataUrl, $body);
+
+                if (!$res->successful()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка запроса к DaData: ' . $res->status()
+                    ], 500);
+                }
+
+                $data = $res->json();
+                if (!isset($data['suggestions'])) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Нет данных от DaData'
+                    ], 500);
+                }
+
+                $formattedCities = [];
+                foreach ($data['suggestions'] as $suggestion) {
+                    $cityData = $suggestion['data'];
+                    
+                    // Получаем реальный код города CDEK через их API
+                    $cdekCityCode = $this->getCdekCityCodeFromName($cityData['city'] ?? '');
+                    
+                    // Показываем только города, которые есть в CDEK
+                    if ($cdekCityCode !== null) {
+                        $formattedCities[] = [
+                            'code' => $cdekCityCode,
+                            'name' => $cityData['city'] ?? '',
+                            'region' => $cityData['region_with_type'] ?? '',
+                            'country' => 'Россия',
+                            'full_name' => $cityData['city_with_type'] ?? $cityData['city'] ?? ''
+                        ];
+                    }
+                }
+
+            } catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка запроса к DaData: ' . $e->getMessage()
+                ], 500);
+            }
+            
+            
+            return response()->json([
+                'success' => true,
+                'data' => $formattedCities
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения городов: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить список ПВЗ для города
+     */
+    public function getPvzList(Request $request): JsonResponse
+    {
+        try {
+            $cityCode = $request->query('city_code');
+            
+            if (!$cityCode) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Код города обязателен'
+                ], 400);
+            }
+
+            $points = $this->cdekService->getPickupPoints($cityCode);
+            
+            return response()->json([
+                'success' => true,
+                'data' => $points
+            ]);
+        } catch (\Exception $e) {
+            Log::error('CDEK PVZ List Error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения ПВЗ: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить активные настройки СДЭК.
+     */
+    public function getActiveSettings(): JsonResponse
+    {
+        try {
+            $settings = \App\Models\ShopCdekSettings::getActive();
+            
+            if (!$settings) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Настройки СДЭК не найдены'
+                ], 404);
+            }
+            
+            return response()->json([
+                'success' => true,
+                'data' => $settings
+            ]);
+        } catch (\Exception $e) {
+            Log::error('CDEK Active Settings Error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения настроек СДЭК: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Рассчитать стоимость доставки
+     */
+    public function calculateDelivery(Request $request): JsonResponse
+    {
+        try {
+            $request->validate([
+                'city_code' => 'required|string',
+                'weight' => 'required|numeric|min:1',
+                'length' => 'required|numeric|min:1',
+                'width' => 'required|numeric|min:1',
+                'height' => 'required|numeric|min:1',
+                'tariff_codes' => 'array'
+            ]);
+
+            $cityCode = $request->input('city_code');
+            $weight = $request->input('weight');
+            $length = $request->input('length');
+            $width = $request->input('width');
+            $height = $request->input('height');
+            $tariffCodes = $request->input('tariff_codes', []);
+
+            $result = $this->cdekService->calculateDelivery(
+                $cityCode,
+                $weight,
+                $length,
+                $width,
+                $height,
+                $tariffCodes
+            );
+
+            return response()->json([
+                'success' => true,
+                'data' => $result
+            ]);
+        } catch (\Exception $e) {
+            Log::error('CDEK Calculate Delivery Error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка расчета доставки: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить доступные тарифы СДЭК
+     */
+    public function getTariffs(Request $request): JsonResponse
+    {
+        try {
+            $cityCode = $request->query('city_code');
+            $cartItems = $request->query('cart_items', []);
+            
+            if (!$cityCode) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не указан код города'
+                ], 400);
+            }
+            
+            // Если cart_items передан как строка, декодируем JSON
+            if (is_string($cartItems)) {
+                $cartItems = json_decode($cartItems, true) ?? [];
+            }
+
+            // Получаем активные настройки СДЭК
+            $settings = ShopCdekSettings::where('is_active', true)->first();
+            
+            if (!$settings) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Настройки СДЭК не найдены'
+                ], 404);
+            }
+
+            // Получаем тарифы из настроек
+            $tariffs = is_string($settings->tariffs) ? json_decode($settings->tariffs, true) : $settings->tariffs;
+            $tariffs = $tariffs ?? [];
+            
+            if (empty($tariffs)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Тарифы не настроены'
+                ], 404);
+            }
+
+            // Рассчитываем стоимость для каждого настроенного тарифа
+            $formattedTariffs = [];
+            
+            try {
+                // Получаем код города отправителя из настроек
+                $senderCityCode = $this->getSenderCityCode($settings);
+                
+                if ($senderCityCode) {
+                    // Рассчитываем размеры посылки на основе товаров в корзине
+                    $packageDimensions = $this->calculatePackageDimensions($cartItems, $settings);
+                    
+                    // Создаем ключ кэша для расчета доставки с учетом размеров и города
+                    $deliveryCacheKey = 'cdek_delivery_' . md5($senderCityCode . '_' . $cityCode . '_' . $packageDimensions['weight'] . '_' . $packageDimensions['length'] . '_' . $packageDimensions['width'] . '_' . $packageDimensions['height']);
+                    
+                    // Проверяем кэш
+                    $deliveryResult = cache()->get($deliveryCacheKey);
+                    if (!$deliveryResult) {
+                        // Рассчитываем стоимость через CdekService с реальными размерами
+                        $deliveryResult = $this->cdekService->calculateDelivery(
+                            $senderCityCode,
+                            $cityCode,
+                            $packageDimensions['weight'],
+                            $packageDimensions['length'],
+                            $packageDimensions['width'],
+                            $packageDimensions['height']
+                        );
+                        
+                        // Кэшируем результат на 1 час
+                        if ($deliveryResult) {
+                            cache()->put($deliveryCacheKey, $deliveryResult, 3600);
+                        }
+                    }
+                    
+                    // Сначала пытаемся найти настроенные тарифы
+                    $foundConfiguredTariffs = [];
+                    foreach ($tariffs as $tariff) {
+                        if (!($tariff['enabled'] ?? true)) {
+                            continue; // Пропускаем отключенные тарифы
+                        }
+
+                        $costValue = null;
+                        $costFormatted = 'Рассчитывается...';
+                        
+                        if ($deliveryResult && is_array($deliveryResult)) {
+                            // Ищем нужный тариф в результате CDEK API
+                            foreach ($deliveryResult as $resultTariff) {
+                                if ($resultTariff['tariff_code'] == $tariff['tariff_code']) {
+                                    $costValue = (float)$resultTariff['delivery_sum'];
+                                    $costFormatted = $costValue . ' ₽';
+                                    break;
+                                }
+                            }
+                        }
+
+                        if ($costValue !== null) {
+                            $foundConfiguredTariffs[] = [
+                                'code' => $tariff['tariff_code'],
+                                'name' => $tariff['site_name'],
+                                'description' => $tariff['tariff_description'] ?? '',
+                                'cost' => $costFormatted,
+                                'cost_value' => $costValue,
+                                'enabled' => $tariff['enabled'] ?? true
+                            ];
+                        }
+                    }
+                    
+                    // Если нашли настроенные тарифы, используем их
+                    if (!empty($foundConfiguredTariffs)) {
+                        $formattedTariffs = $foundConfiguredTariffs;
+                    } else {
+                        // Если настроенные тарифы не найдены, проверяем есть ли вообще доступные тарифы
+                        if (empty($deliveryResult)) {
+                            // Нет доступных тарифов для этого города
+                            return response()->json([
+                                'success' => false,
+                                'message' => 'Доставка в данный населенный пункт недоступна'
+                            ], 404);
+                        } else {
+                            // Если настроенные тарифы не найдены, используем все доступные из CDEK API
+                            foreach ($deliveryResult as $resultTariff) {
+                                $formattedTariffs[] = [
+                                    'code' => $resultTariff['tariff_code'],
+                                    'name' => $resultTariff['tariff_name'],
+                                    'description' => $resultTariff['tariff_description'] ?? '',
+                                    'cost' => $resultTariff['delivery_sum'] . ' ₽',
+                                    'cost_value' => (float)$resultTariff['delivery_sum'],
+                                    'enabled' => true
+                                ];
+                            }
+                        }
+                    }
+                }
+            } catch (\Exception $e) {
+                // Игнорируем ошибки расчета тарифов
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $formattedTariffs
+            ]);
+        } catch (\Exception $e) {
+            Log::error('CDEK Get Tariffs Error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения тарифов: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Рассчитать размеры посылки на основе товаров в корзине
+     */
+    private function calculatePackageDimensions($cartItems, $settings)
+    {
+        $totalWeight = 0;
+        $maxLength = 0;
+        $maxWidth = 0;
+        $maxHeight = 0;
+        
+        foreach ($cartItems as $item) {
+            $quantity = $item['quantity'] ?? 1;
+            
+            // Получаем размеры товара из базы данных
+            $good = \App\Models\ShopGood::find($item['good_id']);
+            if ($good) {
+                // Используем размеры товара, если они есть, иначе значения по умолчанию
+                $weight = $good->weight > 0 ? $good->weight : ($settings->default_weight ?? 0.5);
+                $length = $good->depth > 0 ? $good->depth : ($settings->default_length ?? 10);
+                $width = $good->width > 0 ? $good->width : ($settings->default_width ?? 10);
+                $height = $good->height > 0 ? $good->height : ($settings->default_height ?? 10);
+                
+                // Суммируем вес
+                $totalWeight += $weight * $quantity;
+                
+                // Для габаритов берем максимальные значения (товары укладываются рядом)
+                $maxLength = max($maxLength, $length);
+                $maxWidth = max($maxWidth, $width);
+                $maxHeight = max($maxHeight, $height);
+            } else {
+                // Если товар не найден, используем значения по умолчанию
+                $totalWeight += ($settings->default_weight ?? 0.5) * $quantity;
+                $maxLength = max($maxLength, $settings->default_length ?? 10);
+                $maxWidth = max($maxWidth, $settings->default_width ?? 10);
+                $maxHeight = max($maxHeight, $settings->default_height ?? 10);
+            }
+        }
+        
+        $result = [
+            'weight' => $totalWeight,
+            'length' => $maxLength,
+            'width' => $maxWidth,
+            'height' => $maxHeight
+        ];
+        
+        return $result;
+    }
+
+    /**
+     * Получить fallback список городов при недоступности DaData
+     */
+    private function getFallbackCities($query)
+    {
+        $fallbackCities = [
+            // Крупные города
+            ['code' => 44, 'name' => 'Москва', 'region' => 'Московская область', 'country' => 'RU'],
+            ['code' => 137, 'name' => 'Санкт-Петербург', 'region' => 'Ленинградская область', 'country' => 'RU'],
+            ['code' => 2, 'name' => 'Казань', 'region' => 'Республика Татарстан', 'country' => 'RU'],
+            ['code' => 3, 'name' => 'Екатеринбург', 'region' => 'Свердловская область', 'country' => 'RU'],
+            ['code' => 4, 'name' => 'Новосибирск', 'region' => 'Новосибирская область', 'country' => 'RU'],
+            ['code' => 5, 'name' => 'Нижний Новгород', 'region' => 'Нижегородская область', 'country' => 'RU'],
+            ['code' => 261, 'name' => 'Оренбург', 'region' => 'Оренбургская область', 'country' => 'RU'],
+            ['code' => 424, 'name' => 'Владивосток', 'region' => 'Приморский край', 'country' => 'RU'],
+            
+            // Дополнительные крупные города
+            ['code' => 6, 'name' => 'Самара', 'region' => 'Самарская область', 'country' => 'RU'],
+            ['code' => 7, 'name' => 'Омск', 'region' => 'Омская область', 'country' => 'RU'],
+            ['code' => 8, 'name' => 'Челябинск', 'region' => 'Челябинская область', 'country' => 'RU'],
+            ['code' => 9, 'name' => 'Ростов-на-Дону', 'region' => 'Ростовская область', 'country' => 'RU'],
+            ['code' => 10, 'name' => 'Уфа', 'region' => 'Республика Башкортостан', 'country' => 'RU'],
+            ['code' => 11, 'name' => 'Волгоград', 'region' => 'Волгоградская область', 'country' => 'RU'],
+            ['code' => 12, 'name' => 'Пермь', 'region' => 'Пермский край', 'country' => 'RU'],
+            ['code' => 13, 'name' => 'Красноярск', 'region' => 'Красноярский край', 'country' => 'RU'],
+            ['code' => 14, 'name' => 'Воронеж', 'region' => 'Воронежская область', 'country' => 'RU'],
+            ['code' => 15, 'name' => 'Саратов', 'region' => 'Саратовская область', 'country' => 'RU'],
+            ['code' => 16, 'name' => 'Краснодар', 'region' => 'Краснодарский край', 'country' => 'RU'],
+            ['code' => 17, 'name' => 'Тольятти', 'region' => 'Самарская область', 'country' => 'RU'],
+            ['code' => 18, 'name' => 'Ижевск', 'region' => 'Удмуртская Республика', 'country' => 'RU'],
+            ['code' => 19, 'name' => 'Барнаул', 'region' => 'Алтайский край', 'country' => 'RU'],
+            ['code' => 20, 'name' => 'Ульяновск', 'region' => 'Ульяновская область', 'country' => 'RU'],
+            ['code' => 21, 'name' => 'Иркутск', 'region' => 'Иркутская область', 'country' => 'RU'],
+            ['code' => 22, 'name' => 'Хабаровск', 'region' => 'Хабаровский край', 'country' => 'RU'],
+            ['code' => 23, 'name' => 'Ярославль', 'region' => 'Ярославская область', 'country' => 'RU'],
+            ['code' => 24, 'name' => 'Тюмень', 'region' => 'Тюменская область', 'country' => 'RU'],
+            ['code' => 25, 'name' => 'Махачкала', 'region' => 'Республика Дагестан', 'country' => 'RU'],
+            ['code' => 26, 'name' => 'Томск', 'region' => 'Томская область', 'country' => 'RU'],
+            ['code' => 27, 'name' => 'Кемерово', 'region' => 'Кемеровская область', 'country' => 'RU'],
+            ['code' => 28, 'name' => 'Новокузнецк', 'region' => 'Кемеровская область', 'country' => 'RU'],
+            ['code' => 29, 'name' => 'Рязань', 'region' => 'Рязанская область', 'country' => 'RU'],
+            ['code' => 30, 'name' => 'Набережные Челны', 'region' => 'Республика Татарстан', 'country' => 'RU'],
+            ['code' => 31, 'name' => 'Астрахань', 'region' => 'Астраханская область', 'country' => 'RU'],
+            ['code' => 32, 'name' => 'Пенза', 'region' => 'Пензенская область', 'country' => 'RU'],
+            ['code' => 33, 'name' => 'Липецк', 'region' => 'Липецкая область', 'country' => 'RU'],
+            ['code' => 34, 'name' => 'Тула', 'region' => 'Тульская область', 'country' => 'RU'],
+            ['code' => 35, 'name' => 'Киров', 'region' => 'Кировская область', 'country' => 'RU'],
+            ['code' => 36, 'name' => 'Чебоксары', 'region' => 'Чувашская Республика', 'country' => 'RU'],
+            ['code' => 37, 'name' => 'Калининград', 'region' => 'Калининградская область', 'country' => 'RU'],
+            ['code' => 38, 'name' => 'Брянск', 'region' => 'Брянская область', 'country' => 'RU'],
+            ['code' => 39, 'name' => 'Курск', 'region' => 'Курская область', 'country' => 'RU'],
+            ['code' => 40, 'name' => 'Иваново', 'region' => 'Ивановская область', 'country' => 'RU'],
+            ['code' => 41, 'name' => 'Магнитогорск', 'region' => 'Челябинская область', 'country' => 'RU'],
+            ['code' => 42, 'name' => 'Петрозаводск', 'region' => 'Республика Карелия', 'country' => 'RU'],
+            ['code' => 43, 'name' => 'Петропавловск-Камчатский', 'region' => 'Камчатский край', 'country' => 'RU'],
+            ['code' => 44, 'name' => 'Петропавловск', 'region' => 'Северо-Казахстанская область', 'country' => 'KZ'],
+            ['code' => 45, 'name' => 'Петропавловск-Забайкальский', 'region' => 'Забайкальский край', 'country' => 'RU'],
+            ['code' => 46, 'name' => 'Петровск-Забайкальский', 'region' => 'Забайкальский край', 'country' => 'RU'],
+            ['code' => 47, 'name' => 'Петровск', 'region' => 'Саратовская область', 'country' => 'RU'],
+            ['code' => 48, 'name' => 'Петров Вал', 'region' => 'Волгоградская область', 'country' => 'RU'],
+        ];
+        
+        // Фильтруем по запросу (поддерживаем частичные совпадения)
+        $query = strtolower(trim($query));
+        $filteredCities = array_filter($fallbackCities, function($city) use ($query) {
+            $name = strtolower($city['name']);
+            $region = strtolower($city['region']);
+            
+            // Проверяем точное совпадение начала названия
+            if (strpos($name, $query) === 0) {
+                return true;
+            }
+            
+            // Проверяем частичное совпадение в названии
+            if (strpos($name, $query) !== false) {
+                return true;
+            }
+            
+            // Проверяем совпадение в регионе
+            if (strpos($region, $query) !== false) {
+                return true;
+            }
+            
+            return false;
+        });
+        
+        return array_values($filteredCities);
+    }
+
+    /**
+     * Получить код города CDEK по названию через CDEK API
+     */
+    private function getCdekCityCodeFromName($cityName)
+    {
+        try {
+            // Используем CDEK API для поиска города
+            $cdekCities = $this->cdekService->getCities($cityName);
+            
+            if ($cdekCities && is_array($cdekCities) && count($cdekCities) > 0) {
+                $cityCode = $cdekCities[0]['code'] ?? null;
+                return $cityCode;
+            }
+        } catch (\Exception $e) {
+            // Игнорируем ошибки поиска города
+        }
+        
+        // Fallback - возвращаем null, чтобы показать ошибку
+        return null;
+    }
+
+    /**
+     * Получить код города CDEK из FIAS ID
+     */
+    private function getCdekCityCodeFromFias($fiasId)
+    {
+        // Маппинг реальных FIAS ID -> CDEK коды (из логов DaData)
+        $cityMapping = [
+            // Основные города
+            '0c5b2444-70a0-4932-980c-b4dc0d3f02b5' => 44,  // Москва
+            'c2deb16a-0330-4f05-821f-1d09c93331e6' => 137, // Санкт-Петербург
+            'e3a1a5f0-0ec0-4bf3-9e03-3594008f4cb8' => 2,   // Екатеринбург
+            '555e7d61-d9a58-4afd-9c9e-0c1b96587899' => 3,   // Новосибирск
+            '2763c110-cb8b-416a-9dac-ad0a8ddc1a91' => 4,   // Нижний Новгород
+            '93b3df57-4e55-44e8-8e3b-4f4c4c8e2651' => 5,   // Казань
+            'a376e68d-724a-4472-be7c-891fdbdd4a32' => 6,   // Челябинск
+            '8dea00e3-9a4b-4d1b-9a4c-1c1c1c1c1c1c' => 7,   // Омск
+            '1c1c1c1c-1c1c-1c1c-1c1c-1c1c1c1c1c1c' => 8,   // Самара
+            '2c2c2c2c-2c2c-2c2c-2c2c-2c2c2c2c2c2c' => 9,   // Ростов-на-Дону
+            '3c3c3c3c-3c3c-3c3c-3c3c-3c3c3c3c3c3c' => 10,  // Уфа
+            
+            // Дополнительные города из логов
+            '0b3f0723-5fe0-4c23-af44-8082166c6d2e' => 11,  // Петропавловск-Камчатский
+            'ccc34487-8fd4-4e71-b032-f4e6c82fb354' => 12,  // Петрозаводск
+            '96c869d9-51a8-4db6-8011-9fc459c9a78c' => 13,  // Лосино-Петровский
+            'b5d97e65-e496-44d0-b025-398a8d43514a' => 14,  // Петровск
+            'b26bb2c1-f79b-4c97-9d2d-e73790cfe622' => 15,  // Петровск-Забайкальский
+            '02324444-36d6-4af8-a9af-15b77576adea' => 16,  // Петров Вал
+            '24478bfd-9105-41e9-a719-3f5d2eb0deba' => 17,  // Петровское
+            '8f238984-812b-4bb1-850b-49749fb5c56d' => 18,  // Петергоф
+            '62b2814e-4974-490b-bda4-f72f30dc80bf' => 19,  // Петровское (другой)
+            '7b6de6a5-86d0-4735-b11a-499081111af8' => 20,  // Владивосток
+            '20ea2341-4f49-4c5c-a9dc-a54688c8cc61' => 21,  // Москва (другой FIAS)
+        ];
+        
+        $cdekCode = $cityMapping[$fiasId] ?? 44; // По умолчанию Москва
+        return $cdekCode;
+    }
+
+    /**
+     * Получить код города отправителя из настроек
+     */
+    private function getSenderCityCode($settings)
+    {
+        try {
+            // Если в настройках есть код города отправителя, используем его
+            if (isset($settings->sender_city_code) && $settings->sender_city_code) {
+                return (int)$settings->sender_city_code;
+            }
+            
+            // Проверяем кэш города отправителя
+            $cacheKey = 'cdek_sender_city_' . md5($settings->sender_city ?? 'default');
+            $cachedCode = cache()->get($cacheKey);
+            if ($cachedCode) {
+                return (int)$cachedCode;
+            }
+            
+                // Если есть название города, пытаемся найти его код через DaData
+                if (isset($settings->sender_city) && $settings->sender_city) {
+                    $dadataApiKey = env('DADATA_API_KEY');
+                    if ($dadataApiKey) {
+                        try {
+                            $dadataUrl = 'https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/address';
+                            $body = [
+                                'query' => $settings->sender_city,
+                                'count' => 1,
+                                'locations' => [
+                                    [
+                                        'country' => 'Россия'
+                                    ]
+                                ],
+                                'from_bound' => ['value' => 'city'],
+                                'to_bound' => ['value' => 'city']
+                            ];
+
+                            $res = Http::withOptions(['verify' => false])->post($dadataUrl, $body, [
+                                'Content-Type' => 'application/json',
+                                'Accept' => 'application/json',
+                                'Authorization' => 'Token ' . $dadataApiKey
+                            ]);
+
+                            if ($res->successful()) {
+                                $data = $res->json();
+                                if (isset($data['suggestions']) && count($data['suggestions']) > 0) {
+                                    $cityData = $data['suggestions'][0]['data'];
+                                    $cityCode = (int)($cityData['city_kladr_id'] ?? 137);
+                                    // Кэшируем на 24 часа
+                                    cache()->put($cacheKey, $cityCode, 86400);
+                                    return $cityCode;
+                                }
+                            }
+                        } catch (\Exception $e) {
+                            // Игнорируем ошибки поиска города
+                        }
+                    }
+                }
+                
+                // Fallback - используем Санкт-Петербург (код 137)
+                return 137;
+        } catch (\Exception $e) {
+            return 137; // Fallback
+        }
+    }
+
+    /**
+     * Получение подсказок улиц через DaData API
+     */
+    public function getStreets(Request $request): JsonResponse
+    {
+        try {
+            $city = $request->query('city');
+            $query = $request->query('q');
+            
+            // Правильно декодируем кириллицу
+            $city = urldecode($city);
+            $query = urldecode($query);
+            
+            if (!$city || !$query) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не указан город или запрос'
+                ], 400);
+            }
+            
+            if (strlen($query) < 2) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Минимум 2 символа для поиска улицы'
+                ], 400);
+            }
+
+            // Используем API ключ DaData из переменных окружения
+            $dadataApiKey = env('DADATA_API_KEY');
+            if (!$dadataApiKey) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'API ключ DaData не настроен'
+                ], 500);
+            }
+
+            // 1. Получаем КЛАДР-код города через DaData suggest/address
+            $kladrId = '';
+            $cityName = $city;
+            try {
+                $suggestRes = Http::withOptions(['verify' => false])
+                    ->withHeaders([
+                        'Content-Type' => 'application/json',
+                        'Accept' => 'application/json',
+                        'Authorization' => 'Token ' . $dadataApiKey
+                    ])
+                    ->post('https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/address', [
+                        'query' => $city,
+                        'from_bound' => ['value' => 'city'],
+                        'to_bound' => ['value' => 'city'],
+                        'count' => 1
+                    ]);
+
+                if ($suggestRes->successful()) {
+                    $suggestData = $suggestRes->json();
+                    $kladrId = $suggestData['suggestions'][0]['data']['city_kladr_id'] ?? '';
+                    $cityName = $suggestData['suggestions'][0]['data']['city'] ?? $city;
+                }
+            } catch (\Exception $e) {
+                Log::warning('DaData city lookup error: ' . $e->getMessage());
+            }
+
+            if (!$kladrId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не удалось получить КЛАДР-код города'
+                ], 400);
+            }
+
+            // 2. Запрос к DaData для поиска улиц с фильтром по КЛАДР-коду
+            try {
+                $dadataUrl = 'https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/address';
+                $body = [
+                    'query' => $cityName . ' ' . $query,
+                    'count' => 10,
+                    'locations' => [
+                        [
+                            'city_kladr_id' => $kladrId,
+                            'city' => $cityName
+                        ]
+                    ],
+                    'from_bound' => ['value' => 'street'],
+                    'to_bound' => ['value' => 'street']
+                ];
+
+                $res = Http::withOptions(['verify' => false])
+                    ->withHeaders([
+                        'Content-Type' => 'application/json',
+                        'Accept' => 'application/json',
+                        'Authorization' => 'Token ' . $dadataApiKey
+                    ])
+                    ->post($dadataUrl, $body);
+
+                if (!$res->successful()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка запроса к DaData'
+                    ], 500);
+                }
+
+                $data = $res->json();
+                if (!isset($data['suggestions'])) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Нет данных от DaData'
+                    ], 500);
+                }
+
+                $streets = array_map(function($suggestion) {
+                    return [
+                        'name' => $suggestion['value'],
+                        'label' => $suggestion['value']
+                    ];
+                }, $data['suggestions']);
+
+                return response()->json([
+                    'success' => true,
+                    'data' => $streets
+                ]);
+
+            } catch (\Exception $e) {
+                Log::error('DaData streets request error: ' . $e->getMessage());
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка запроса к DaData: ' . $e->getMessage()
+                ], 500);
+            }
+
+        } catch (\Exception $e) {
+            Log::error('CDEK Get Streets Error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения улиц: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+}

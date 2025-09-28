@@ -16,64 +16,128 @@ class CdekController extends Controller
         $this->cdekService = $cdekService;
     }
 
-    public function searchCities(Request $request): JsonResponse
+    /**
+     * Получить города СДЭК
+     */
+    public function getCities(Request $request): JsonResponse
     {
-        try {
-            $query = $request->get('q', '');
-            if (strlen($query) < 2) {
-                return response()->json(['success' => true, 'data' => []]);
-            }
-
-            $cities = $this->cdekService->searchCities($query);
-            return response()->json(['success' => true, 'data' => $cities]);
-        } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        $query = $request->get('query', '');
+        
+        $cities = $this->cdekService->getCities($query);
+        
+        if ($cities) {
+            return response()->json([
+                'success' => true,
+                'data' => $cities
+            ]);
         }
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Не удалось получить список городов'
+        ], 500);
     }
 
-    public function searchStreets(Request $request): JsonResponse
+    /**
+     * Получить пункты выдачи в городе
+     */
+    public function getPickupPoints(Request $request): JsonResponse
     {
-        try {
-            $cityCode = $request->get('city_code');
-            $query = $request->get('q', '');
-            
-            if (!$cityCode || strlen($query) < 2) {
-                return response()->json(['success' => true, 'data' => []]);
-            }
-
-            $streets = $this->cdekService->searchStreets($cityCode, $query);
-            return response()->json(['success' => true, 'data' => $streets]);
-        } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        $cityCode = $request->get('city_code');
+        
+        if (!$cityCode) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Не указан код города'
+            ], 400);
         }
+
+        $points = $this->cdekService->getPickupPoints($cityCode);
+        
+        if ($points) {
+            return response()->json([
+                'success' => true,
+                'data' => $points
+            ]);
+        }
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Не удалось получить пункты выдачи'
+        ], 500);
     }
 
+    /**
+     * Рассчитать стоимость доставки
+     */
     public function calculateDelivery(Request $request): JsonResponse
     {
-        try {
-            $from = $request->get('from');
-            $to = $request->get('to');
-            $packages = $request->get('packages', []);
+        $request->validate([
+            'from_city_code' => 'required|string',
+            'to_city_code' => 'required|string',
+            'weight' => 'nullable|numeric|min:0.1',
+            'length' => 'nullable|numeric|min:1',
+            'width' => 'nullable|numeric|min:1',
+            'height' => 'nullable|numeric|min:1'
+        ]);
 
-            $result = $this->cdekService->calculateDelivery($from, $to, $packages);
-            return response()->json(['success' => true, 'data' => $result]);
-        } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        $deliveryOptions = $this->cdekService->calculateDelivery(
+            $request->from_city_code,
+            $request->to_city_code,
+            $request->weight,
+            $request->length,
+            $request->width,
+            $request->height
+        );
+
+        if ($deliveryOptions) {
+            return response()->json([
+                'success' => true,
+                'data' => $deliveryOptions
+            ]);
         }
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Не удалось рассчитать стоимость доставки'
+        ], 500);
     }
 
-    public function getPvzList(Request $request): JsonResponse
+    /**
+     * Получить минимальную стоимость доставки
+     */
+    public function getMinDeliveryCost(Request $request): JsonResponse
     {
-        try {
-            $cityCode = $request->get('city_code');
-            if (!$cityCode) {
-                return response()->json(['success' => false, 'message' => 'City code required'], 400);
-            }
+        $request->validate([
+            'from_city_code' => 'required|string',
+            'to_city_code' => 'required|string',
+            'weight' => 'nullable|numeric|min:0.1',
+            'length' => 'nullable|numeric|min:1',
+            'width' => 'nullable|numeric|min:1',
+            'height' => 'nullable|numeric|min:1'
+        ]);
 
-            $pvzList = $this->cdekService->getPvzList($cityCode);
-            return response()->json(['success' => true, 'data' => $pvzList]);
-        } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
+        $minCost = $this->cdekService->getMinDeliveryCost(
+            $request->from_city_code,
+            $request->to_city_code,
+            $request->weight,
+            $request->length,
+            $request->width,
+            $request->height
+        );
+
+        if ($minCost !== null) {
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'min_cost' => $minCost
+                ]
+            ]);
         }
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Не удалось рассчитать минимальную стоимость доставки'
+        ], 500);
     }
 }

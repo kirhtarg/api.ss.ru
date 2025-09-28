@@ -17,11 +17,6 @@ class ShopGoodsController extends Controller
     {
         try {
             // Временное логирование для диагностики
-            Log::info('ShopGoodsController::index - New request:', [
-                'url' => $request->fullUrl(),
-                'params' => $request->all(),
-                'user_agent' => $request->userAgent()
-            ]);
             
             $query = ShopGood::with([
                 'variations' => function($query) {
@@ -172,10 +167,6 @@ class ShopGoodsController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            Log::error('ShopGoodsController: Error getting goods list', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
 
             return response()->json([
                 'success' => false,
@@ -296,10 +287,6 @@ class ShopGoodsController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            Log::error('ShopGoodsController: Error getting goods details', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
 
             return response()->json([
                 'success' => false,
@@ -322,10 +309,6 @@ class ShopGoodsController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            Log::error('ShopGoodsController: Error getting main blocks', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
 
             return response()->json([
                 'success' => false,
@@ -420,10 +403,6 @@ class ShopGoodsController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            Log::error('ShopGoodsController: Error getting good', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
 
             return response()->json([
                 'success' => false,
@@ -477,10 +456,6 @@ class ShopGoodsController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            Log::error('ShopGoodsController: Error getting good by slug', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
 
             return response()->json([
                 'success' => false,
@@ -517,10 +492,6 @@ class ShopGoodsController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            Log::error('ShopGoodsController: Error getting good images', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
 
             return response()->json([
                 'success' => false,
@@ -597,10 +568,6 @@ class ShopGoodsController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            Log::error('ShopGoodsController: Error getting goods batch', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
 
             return response()->json([
                 'success' => false,
@@ -623,10 +590,6 @@ class ShopGoodsController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            Log::error('ShopGoodsController: Error getting category by slug', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
 
             return response()->json([
                 'success' => false,

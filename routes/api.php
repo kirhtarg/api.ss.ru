@@ -270,6 +270,37 @@ Route::get('/test/oauth', function () {
     });
     Route::get('/public/cdek/pvz', [App\Http\Controllers\Api\Public\CdekController::class, 'getPvzList']);
     
+    // Новые маршруты СДЭК для магазина
+    Route::options('/public/shop/cdek/cities', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/cdek/cities', [App\Http\Controllers\Api\Public\ShopCdekController::class, 'getCities']);
+    
+    Route::options('/public/shop/cdek/settings/active', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/cdek/settings/active', [App\Http\Controllers\Api\Public\ShopCdekController::class, 'getActiveSettings']);
+    
+    Route::options('/public/shop/cdek/pvz-list', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/cdek/pvz-list', [App\Http\Controllers\Api\Public\ShopCdekController::class, 'getPvzList']);
+    
+    Route::options('/public/shop/cdek/calculate-delivery', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/public/shop/cdek/calculate-delivery', [App\Http\Controllers\Api\Public\ShopCdekController::class, 'calculateDelivery']);
+    
+    Route::options('/public/shop/cdek/tariffs', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/cdek/tariffs', [App\Http\Controllers\Api\Public\ShopCdekController::class, 'getTariffs']);
+    
+    Route::options('/public/shop/cdek/streets', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/cdek/streets', [App\Http\Controllers\Api\Public\ShopCdekController::class, 'getStreets']);
+    
     // Тест-Банк интеграция
     Route::options('/public/testbank/payment', function () {
         return response()->json([], 200);
@@ -290,6 +321,12 @@ Route::get('/test/oauth', function () {
     
     // Информация о товарах (публичная)
     Route::post('/public/shop/goods/details', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getGoodsDetails']);
+    
+    // Создание заказов (публичное)
+    Route::options('/public/shop/orders', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/public/shop/orders', [App\Http\Controllers\Api\Public\ShopOrdersController::class, 'store']);
     
     // Заказы пользователей (требует авторизации)
     Route::middleware('auth:sanctum')->group(function () {
@@ -2627,4 +2664,27 @@ Route::middleware(['auth:sanctum', 'role:admin'])->get('/test-admin-role', funct
             'message' => 'Ошибка проверки роли: ' . $e->getMessage()
         ], 500);
     }
+});
+
+// Тестовый маршрут
+Route::get('/test', [\App\Http\Controllers\Api\Admin\TestController::class, 'test']);
+
+// СДЭК настройки (для админов и пользователей с ролью shop)
+Route::middleware(['auth:sanctum'])->prefix('admin/shop/cdek')->group(function () {
+    Route::get('/settings', 'App\Http\Controllers\Api\Admin\ShopCdekSettingsController@index');
+    Route::get('/settings/active', 'App\Http\Controllers\Api\Admin\ShopCdekSettingsController@getActive');
+    Route::post('/settings', 'App\Http\Controllers\Api\Admin\ShopCdekSettingsController@store');
+    Route::put('/settings/{id}', 'App\Http\Controllers\Api\Admin\ShopCdekSettingsController@update');
+    Route::delete('/settings/{id}', 'App\Http\Controllers\Api\Admin\ShopCdekSettingsController@destroy');
+    Route::post('/settings/{id}/activate', 'App\Http\Controllers\Api\Admin\ShopCdekSettingsController@activate');
+    Route::post('/validate-keys', 'App\Http\Controllers\Api\Admin\ShopCdekSettingsController@validateKeys');
+    Route::get('/available-tariffs', 'App\Http\Controllers\Api\Admin\ShopCdekSettingsController@getAvailableTariffs');
+});
+
+// СДЭК API (публичные маршруты)
+Route::prefix('cdek')->group(function () {
+    Route::get('/cities', [\App\Http\Controllers\Api\Public\CdekController::class, 'getCities']);
+    Route::get('/pickup-points', [\App\Http\Controllers\Api\Public\CdekController::class, 'getPickupPoints']);
+    Route::post('/calculate', [\App\Http\Controllers\Api\Public\CdekController::class, 'calculateDelivery']);
+    Route::post('/min-cost', [\App\Http\Controllers\Api\Public\CdekController::class, 'getMinDeliveryCost']);
 });
