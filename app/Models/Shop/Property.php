@@ -71,4 +71,12 @@ class Property extends Model
             default => 'Строка'
         };
     }
+
+    /**
+     * Связь с товарами через промежуточную таблицу
+     */
+    public function goodProperties(): HasMany
+    {
+        return $this->hasMany(ShopGoodProperty::class, 'property_id');
+    }
 }

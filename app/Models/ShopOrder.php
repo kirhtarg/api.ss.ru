@@ -70,6 +70,14 @@ class ShopOrder extends Model
     }
 
     /**
+     * Accessor для получения названия статуса
+     */
+    public function getStatusNameAttribute()
+    {
+        return $this->status ? $this->status->name : 'Неизвестно';
+    }
+
+    /**
      * Генерация номера заказа
      */
     public static function generateOrderNumber(): string

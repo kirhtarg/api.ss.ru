@@ -4,176 +4,379 @@ namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopGood;
-use App\Models\ShopCategory;
-use App\Models\ShopFavorite;
-use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 
 class ShopGoodsController extends Controller
 {
     /**
-     * Получить пользователя из токена Authorization
-     */
-    private function getUserFromToken(Request $request): ?User
-    {
-        $token = $request->bearerToken();
-        if (!$token) {
-            return null;
-        }
-
-        // Ищем пользователя по токену в таблице personal_access_tokens
-        $personalAccessToken = \Laravel\Sanctum\PersonalAccessToken::findToken($token);
-        if (!$personalAccessToken) {
-            return null;
-        }
-
-        return $personalAccessToken->tokenable;
-    }
-    /**
-     * Получить список товаров для публичного API
+     * Получить список товаров
      */
     public function index(Request $request): JsonResponse
     {
         try {
+            // Временное логирование для диагностики
+            Log::info('ShopGoodsController::index - New request:', [
+                'url' => $request->fullUrl(),
+                'params' => $request->all(),
+                'user_agent' => $request->userAgent()
+            ]);
+            
             $query = ShopGood::with([
-                'categories:id,name,slug',
-                'brands:id,name,slug',
-                'tags:id,name,color',
-                'variations:id,good_id,name,price,sale_price,stock_quantity,is_active'
+                'variations' => function($query) {
+                    $query->where('is_active', true)->with(['properties' => function($q) {
+                        $q->with('property');
+                    }]);
+                },
+                'images' => function($query) {
+                    $query->whereNull('variation_id')->orderBy('sort_order');
+                },
+                'videos' => function($query) {
+                    $query->whereNull('variation_id')->orderBy('sort_order');
+                },
+                'properties' => function($query) {
+                    $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug', 'shop_good_properties.value');
+                },
+                'categories' => function($query) {
+                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug');
+                },
+                'brands' => function($query) {
+                    $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug');
+                }
             ])
-            ->where('is_active', true); // Только активные товары
+            ->where('is_active', true);
 
-            // Поиск
-            if ($request->filled('search')) {
-                $search = $request->get('search');
-                $query->where(function ($q) use ($search) {
-                    $q->where('name', 'like', "%{$search}%")
-                      ->orWhere('sku', 'like', "%{$search}%");
+            // Фильтрация по категории
+            if ($request->has('category_id')) {
+                $query->whereHas('categories', function($q) use ($request) {
+                    $q->where('shop_categories.id', $request->input('category_id'));
                 });
             }
 
-            // Фильтр по категории
-            if ($request->filled('category_id')) {
-                $query->whereHas('categories', function ($q) use ($request) {
-                    $q->where('shop_categories.id', $request->get('category_id'));
+                // Фильтрация по множественным категориям
+                if ($request->has('categories')) {
+                    $categoryIds = $request->input('categories');
+                    if (is_array($categoryIds) && !empty($categoryIds)) {
+                        $query->whereHas('categories', function($q) use ($categoryIds) {
+                            $q->whereIn('shop_categories.id', $categoryIds);
+                        });
+                    }
+                }
+                
+                // Фильтрация по множественным категориям (альтернативный формат categories[])
+                if ($request->has('categories[]')) {
+                    $categoryIds = $request->input('categories[]');
+                    if (is_array($categoryIds) && !empty($categoryIds)) {
+                        $query->whereHas('categories', function($q) use ($categoryIds) {
+                            $q->whereIn('shop_categories.id', $categoryIds);
+                        });
+                    }
+                }
+
+            // Фильтрация по бренду
+            if ($request->has('brand_id')) {
+                $query->whereHas('brands', function($q) use ($request) {
+                    $q->where('shop_brands.id', $request->input('brand_id'));
                 });
             }
 
-            // Фильтр по множественным категориям
-            if ($request->has('categories') && is_array($request->get('categories'))) {
-                $query->whereHas('categories', function ($q) use ($request) {
-                    $q->whereIn('shop_categories.id', $request->get('categories'));
-                });
+                // Фильтрация по множественным брендам
+                if ($request->has('brands')) {
+                    $brandIds = $request->input('brands');
+                    if (is_array($brandIds) && !empty($brandIds)) {
+                        $query->whereHas('brands', function($q) use ($brandIds) {
+                            $q->whereIn('shop_brands.id', $brandIds);
+                        });
+                    }
+                }
+                
+                // Фильтрация по множественным брендам (альтернативный формат brands[])
+                if ($request->has('brands[]')) {
+                    $brandIds = $request->input('brands[]');
+                    if (is_array($brandIds) && !empty($brandIds)) {
+                        $query->whereHas('brands', function($q) use ($brandIds) {
+                            $q->whereIn('shop_brands.id', $brandIds);
+                        });
+                    }
+                }
+
+            // Поиск по названию
+            if ($request->has('search')) {
+                $search = $request->input('search');
+                $query->where('name', 'like', "%{$search}%");
             }
 
-            // Фильтр по бренду
-            if ($request->filled('brand_id')) {
-                $query->whereHas('brands', function ($q) use ($request) {
-                    $q->where('shop_brands.id', $request->get('brand_id'));
-                });
+            // Фильтрация по цене
+            if ($request->has('min_price')) {
+                $query->where('price', '>=', $request->input('min_price'));
+            }
+            if ($request->has('max_price')) {
+                $query->where('price', '<=', $request->input('max_price'));
             }
 
-            // Фильтр по множественным брендам
-            if ($request->has('brands') && is_array($request->get('brands'))) {
-                $query->whereHas('brands', function ($q) use ($request) {
-                    $q->whereIn('shop_brands.id', $request->get('brands'));
-                });
-            }
-
-            // Фильтр по цене
-            if ($request->filled('min_price')) {
-                $query->where('price', '>=', $request->get('min_price'));
-            }
-            if ($request->filled('max_price')) {
-                $query->where('price', '<=', $request->get('max_price'));
-            }
-
-            // Фильтр по рейтингу
-            if ($request->filled('min_rating')) {
-                $query->where('rating', '>=', $request->get('min_rating'));
+            // Фильтрация по свойствам
+            if ($request->has('properties')) {
+                $properties = $request->input('properties');
+                if (is_array($properties) && !empty($properties)) {
+                    foreach ($properties as $propertyId => $values) {
+                        if (is_array($values) && !empty($values)) {
+                            $query->whereHas('properties', function($q) use ($propertyId, $values) {
+                                $q->where('shop_properties.id', $propertyId)
+                                  ->whereIn('shop_good_properties.value', $values);
+                            });
+                        }
+                    }
+                }
             }
 
             // Сортировка
-            $sortBy = $request->get('sort_by', 'sort_order');
-            $sortOrder = $request->get('sort_order', 'asc');
-            
-            $allowedSortFields = ['name', 'price', 'rating', 'created_at', 'sort_order'];
-            if (in_array($sortBy, $allowedSortFields)) {
+            $sortBy = $request->input('sort_by', 'created_at');
+            $sortOrder = $request->input('sort_order', 'desc');
                 $query->orderBy($sortBy, $sortOrder);
-            } else {
-                $query->orderBy('sort_order', 'asc');
-            }
 
             // Пагинация
-            $perPage = $request->get('limit', 10);
-            $page = $request->get('page', 1);
+            $perPage = $request->input('limit', 20);
+            $goods = $query->paginate($perPage);
             
-            
-            $goods = $query->paginate($perPage, ['*'], 'page', $page);
-
-            // Получаем ID избранных товаров для текущего пользователя (если авторизован)
-            $favoriteGoodIds = [];
-            $user = $this->getUserFromToken($request);
-            if ($user) {
-                $favoriteGoodIds = ShopFavorite::where('user_id', $user->id)
-                    ->whereIn('good_id', $goods->pluck('id'))
-                    ->pluck('good_id')
-                    ->toArray();
-            }
-
-            // Форматируем данные для фронтенда
-            $formattedGoods = $goods->map(function ($good) use ($favoriteGoodIds) {
-                $formattedGood = $this->formatGoodForFrontend($good);
-                $formattedGood['is_favorite'] = in_array($good->id, $favoriteGoodIds);
-                return $formattedGood;
+            // Добавляем image_url для обратной совместимости
+            $goods->getCollection()->transform(function ($good) {
+                if ($good->images && $good->images->count() > 0) {
+                    // Ищем главное изображение
+                    $mainImage = $good->images->where('is_main', true)->first();
+                    if (!$mainImage) {
+                        // Если главного нет, берем первое
+                        $mainImage = $good->images->first();
+                    }
+                    if ($mainImage) {
+                        // Добавляем ведущий слэш если его нет
+                        $imagePath = $mainImage->file_path;
+                        if ($imagePath && !str_starts_with($imagePath, '/')) {
+                            $imagePath = '/' . $imagePath;
+                        }
+                        $good->image_url = $imagePath;
+                    }
+                }
+                return $good;
             });
-
             
             return response()->json([
                 'success' => true,
-                'data' => $formattedGoods,
-                'pagination' => [
-                    'current_page' => $goods->currentPage(),
-                    'last_page' => $goods->lastPage(),
-                    'per_page' => $goods->perPage(),
-                    'total' => $goods->total(),
-                    'from' => $goods->firstItem(),
-                    'to' => $goods->lastItem()
+                'data' => $goods->items(),
+                    'pagination' => [
+                        'current_page' => $goods->currentPage(),
+                        'last_page' => $goods->lastPage(),
+                        'per_page' => $goods->perPage(),
+                    'total' => $goods->total()
                 ]
             ]);
 
         } catch (\Exception $e) {
+            Log::error('ShopGoodsController: Error getting goods list', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения товаров: ' . $e->getMessage()
+                'message' => 'Ошибка получения списка товаров'
             ], 500);
         }
     }
 
     /**
-     * Получить товар по ID или slug для публичного API
+     * Получить детальную информацию о товарах по их ID
+     */
+    public function getGoodsDetails(Request $request): JsonResponse
+    {
+        try {
+            $goodIds = $request->input('good_ids', []);
+            $variationIds = $request->input('variation_ids', []);
+
+            if (empty($goodIds)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не указаны ID товаров'
+                ], 400);
+            }
+
+            // Загружаем товары с вариациями, изображениями, видео и свойствами
+            $goods = ShopGood::with([
+                'variations' => function($query) {
+                    $query->where('is_active', true)->with(['properties' => function($q) {
+                        $q->with('property');
+                    }]);
+                },
+                'images' => function($query) {
+                    $query->whereNull('variation_id')->orderBy('sort_order');
+                },
+                'videos' => function($query) {
+                    $query->whereNull('variation_id')->orderBy('sort_order');
+                },
+                'properties' => function($query) {
+                    $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug', 'shop_good_properties.value');
+                },
+                'categories' => function($query) {
+                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug');
+                },
+                'brands' => function($query) {
+                    $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug');
+                }
+            ])
+            ->whereIn('id', $goodIds)
+            ->where('is_active', true)
+            ->get();
+
+            $result = [];
+
+            foreach ($goods as $good) {
+                // Получаем главное изображение из связанной таблицы
+                $mainImage = null;
+                if ($good->images && $good->images->count() > 0) {
+                    $mainImg = $good->images->where('is_main', true)->first();
+                    if (!$mainImg) {
+                        $mainImg = $good->images->first();
+                    }
+                    if ($mainImg) {
+                        $mainImage = $mainImg->file_path;
+                    }
+                }
+
+                $goodData = [
+                    'id' => $good->id,
+                    'name' => $good->name,
+                    'sku' => $good->sku,
+                    'slug' => $good->slug,
+                    'price' => $good->price,
+                    'sale_price' => $good->sale_price,
+                    'old_price' => $good->old_price,
+                    'image_url' => $mainImage ?: $good->image_url,
+                    'images' => $good->images ? $good->images->toArray() : [],
+                    'videos' => $good->videos ? $good->videos->toArray() : [],
+                    'properties' => $good->properties ? $good->properties->toArray() : [],
+                    'categories' => $good->categories ? $good->categories->toArray() : [],
+                    'brands' => $good->brands ? $good->brands->toArray() : [],
+                    'variations' => []
+                ];
+
+                // Добавляем вариации
+                foreach ($good->variations as $variation) {
+                    $variationProperties = [];
+                    if ($variation->properties) {
+                        foreach ($variation->properties as $property) {
+                            
+                            $variationProperties[] = [
+                                'id' => $property->property_id,
+                                'name' => $property->property->name ?? 'Unknown',
+                                'slug' => $property->property->slug ?? '',
+                                'value' => $property->value
+                            ];
+                        }
+                    }
+                    
+                    $goodData['variations'][] = [
+                        'id' => $variation->id,
+                        'name' => $variation->name,
+                        'sku' => $variation->sku,
+                        'price' => $variation->price,
+                        'sale_price' => $variation->sale_price,
+                        'old_price' => $variation->old_price,
+                        'final_price' => $variation->final_price,
+                        'properties' => $variationProperties,
+                        'is_active' => $variation->is_active
+                    ];
+                }
+
+                $result[] = $goodData;
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $result
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('ShopGoodsController: Error getting goods details', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения информации о товарах'
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить главные блоки товаров
+     */
+    public function getMainBlocks(Request $request): JsonResponse
+    {
+        try {
+            // Здесь можно реализовать логику для получения главных блоков товаров
+            // Пока возвращаем пустой массив
+            return response()->json([
+                'success' => true,
+                'data' => []
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('ShopGoodsController: Error getting main blocks', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения главных блоков'
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить товар по ID
      */
     public function show(Request $request, $id): JsonResponse
     {
         try {
+            $variationId = $request->input('variation_id');
+            $variationId = $variationId ? (int)$variationId : null;
+            
+            
+            
             $good = ShopGood::with([
-                'categories:id,name,slug',
-                'brands:id,name,slug',
-                'tags:id,name,color',
-                'variations:id,good_id,name,price,sale_price,stock_quantity,is_active',
-                'variations.properties:id,variation_id,property_id,value',
-                'variations.properties.property:id,name,slug',
-                'properties:id,name,slug',
-                'images:id,good_id,file_path,alt_text,is_main,sort_order',
-                'videos:id,good_id,video_path,external_url,title,thumbnail,sort_order'
+                'variations' => function($query) {
+                    $query->where('is_active', true)->with([
+                        'properties' => function($q) {
+                            $q->with('property');
+                        },
+                        'images' => function($q) {
+                            $q->orderBy('sort_order');
+                        },
+                        'videos' => function($q) {
+                            $q->orderBy('sort_order');
+                        }
+                    ]);
+                },
+                'images' => function($query) {
+                    $query->orderBy('sort_order');
+                },
+                'videos' => function($query) {
+                    $query->orderBy('sort_order');
+                },
+                'properties' => function($query) {
+                    $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug', 'shop_good_properties.value');
+                },
+                'categories' => function($query) {
+                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug');
+                },
+                'brands' => function($query) {
+                    $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug');
+                }
             ])
+            ->where('id', $id)
             ->where('is_active', true)
-            ->where(function ($query) use ($id) {
-                $query->where('id', $id)
-                      ->orWhere('slug', $id);
-            })
             ->first();
 
             if (!$good) {
@@ -183,299 +386,79 @@ class ShopGoodsController extends Controller
                 ], 404);
             }
 
-            // Проверяем, находится ли товар в избранном
-            $isFavorite = false;
-            $user = $this->getUserFromToken($request);
-            if ($user) {
-                $isFavorite = ShopFavorite::where('user_id', $user->id)
-                    ->where('good_id', $good->id)
-                    ->exists();
-            }
-
-            $formattedGood = $this->formatGoodForFrontend($good);
-            $formattedGood['is_favorite'] = $isFavorite;
-
-            // Если передан параметр variation_id, загружаем медиа только для этой вариации
-            if ($request->filled('variation_id')) {
-                $variationId = $request->get('variation_id');
+            // Если передан variation_id, используем медиа вариации
+            if ($variationId) {
+                // Находим вариацию
+                $variation = $good->variations->where('id', $variationId)->first();
                 
-                // Загружаем изображения для вариации (good_id = null, variation_id = ID вариации)
-                $variationImages = \App\Models\ShopGoodImage::whereNull('good_id')
-                    ->where('variation_id', $variationId)
-                    ->orderBy('sort_order')
-                    ->get()
-                    ->map(function ($image) {
-                        return [
-                            'id' => $image->id,
-                            'url' => $this->getImageUrl($image->file_path),
-                            'alt_text' => $image->alt_text,
-                            'is_main' => $image->is_main
-                        ];
-                    })->toArray();
-
-                // Загружаем видео для вариации (good_id = null, variation_id = ID вариации)
-                $variationVideos = \App\Models\ShopGoodVideo::whereNull('good_id')
-                    ->where('variation_id', $variationId)
-                    ->orderBy('sort_order')
-                    ->get()
-                    ->map(function ($video) {
-                        return [
-                            'id' => $video->id,
-                            'video_path' => $video->video_path,
-                            'external_url' => $video->external_url,
-                            'title' => $video->title,
-                            'thumbnail' => $video->thumbnail,
-                            'url' => $video->url,
-                            'embed_url' => $video->embed_url,
-                            'is_external' => $video->is_external
-                        ];
-                    })->toArray();
-
-
-                // Заменяем медиа товара на медиа вариации
-                $formattedGood['images'] = $variationImages;
-                $formattedGood['videos'] = $variationVideos;
+                if ($variation) {
+                    // Заменяем основные медиа товара на медиа вариации
+                    if ($variation->images && $variation->images->count() > 0) {
+                        $good->setRelation('images', $variation->images);
+                    } else {
+                        // Если у вариации нет изображений, не показываем изображения вообще
+                        $good->setRelation('images', collect([]));
+                    }
+                    
+                    if ($variation->videos && $variation->videos->count() > 0) {
+                        $good->setRelation('videos', $variation->videos);
+                    } else {
+                        // Если у вариации нет видео, не показываем видео вообще
+                        $good->setRelation('videos', collect([]));
+                    }
+                } else {
+                    // Если вариация не найдена, используем медиа основного товара
+                    $good->setRelation('images', $good->images->whereNull('variation_id'));
+                    $good->setRelation('videos', $good->videos->whereNull('variation_id'));
+                }
             }
+
 
             return response()->json([
                 'success' => true,
-                'data' => $formattedGood
+                'data' => $good
             ]);
 
         } catch (\Exception $e) {
+            Log::error('ShopGoodsController: Error getting good', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
             return response()->json([
                 'success' => false,
-                'message' => 'Товар не найден'
-            ], 404);
+                'message' => 'Ошибка получения товара'
+            ], 500);
         }
-    }
-
-    /**
-     * Форматировать товар для фронтенда
-     */
-    private function formatGoodForFrontend($good)
-    {
-        // Формируем характеристики
-        $characteristics = [];
-        if ($good->relationLoaded('properties')) {
-            $characteristics = $good->properties->map(function ($property) {
-                return [
-                    'id' => $property->id,
-                    'name' => $property->name,
-                    'value' => $property->pivot->value ?? ''
-                ];
-            })->toArray();
-        }
-
-        // Получаем значения свойств только из активных вариаций товара
-        $activeVariationIds = $good->variations->where('is_active', true)->pluck('id');
-        $allPropertyValues = \App\Models\ShopGoodProperty::whereIn('variation_id', $activeVariationIds)
-            ->with('property')
-            ->get()
-            ->groupBy('property.name')
-            ->map(function ($properties, $propertyName) {
-                return $properties->pluck('value')->unique()->values()->toArray();
-            });
-
-        // Подсчитываем общий остаток с учетом вариаций
-        $totalStockQuantity = $this->calculateTotalStockQuantity($good);
-
-        return [
-            'id' => $good->id,
-            'name' => $good->name,
-            'slug' => $good->slug,
-            'sku' => $good->sku,
-            'description' => $good->description,
-            'short_description' => $good->short_description,
-            'price' => (float) $good->price,
-            'old_price' => $good->sale_price ? (float) $good->sale_price : null,
-            'discount_percent' => $good->discount_percent,
-            'image_url' => $this->getImageUrl($good->image_path),
-            'images' => $good->images()->orderBy('sort_order')->get()->map(function ($image) {
-                return [
-                    'id' => $image->id,
-                    'url' => $this->getImageUrl($image->file_path),
-                    'alt_text' => $image->alt_text,
-                    'is_main' => $image->is_main
-                ];
-            })->toArray(),
-            'videos' => $good->videos()->orderBy('sort_order')->get()->map(function ($video) {
-                return [
-                    'id' => $video->id,
-                    'video_path' => $video->video_path,
-                    'external_url' => $video->external_url,
-                    'title' => $video->title,
-                    'thumbnail' => $video->thumbnail,
-                    'url' => $video->url,
-                    'embed_url' => $video->embed_url,
-                    'is_external' => $video->is_external
-                ];
-            })->toArray(),
-            'rating' => $good->rating ? (float) $good->rating : null,
-            'reviews_count' => $good->reviews_count ?? 0,
-            'characteristics' => $characteristics,
-            'in_stock' => $totalStockQuantity > 0,
-            'stock_quantity' => $totalStockQuantity, // Используем общий остаток
-            'is_new' => (bool) $good->is_new,
-            'is_sale' => (bool) $good->is_sale,
-            'category_id' => $good->categories->first() ? $good->categories->first()->id : null,
-            'brand_id' => $good->brands->first() ? $good->brands->first()->id : null,
-            'category' => $good->categories->first() ? [
-                'id' => $good->categories->first()->id,
-                'name' => $good->categories->first()->name,
-                'slug' => $good->categories->first()->slug
-            ] : null,
-            'brand' => $good->brands->first() ? [
-                'id' => $good->brands->first()->id,
-                'name' => $good->brands->first()->name,
-                'slug' => $good->brands->first()->slug
-            ] : null,
-            'tags' => $good->tags->map(function ($tag) {
-                return [
-                    'id' => $tag->id,
-                    'name' => $tag->name,
-                    'color' => $tag->color
-                ];
-            })->toArray(),
-            'variations' => $good->variations->map(function ($variation) {
-                // Загружаем изображения для вариации
-                $variationImages = \App\Models\ShopGoodImage::whereNull('good_id')
-                    ->where('variation_id', $variation->id)
-                    ->orderBy('sort_order')
-                    ->get()
-                    ->map(function ($image) {
-                        return [
-                            'id' => $image->id,
-                            'url' => $this->getImageUrl($image->file_path),
-                            'alt_text' => $image->alt_text,
-                            'is_main' => $image->is_main
-                        ];
-                    })->toArray();
-
-                // Загружаем видео для вариации
-                $variationVideos = \App\Models\ShopGoodVideo::whereNull('good_id')
-                    ->where('variation_id', $variation->id)
-                    ->orderBy('sort_order')
-                    ->get()
-                    ->map(function ($video) {
-                        return [
-                            'id' => $video->id,
-                            'video_path' => $video->video_path,
-                            'external_url' => $video->external_url,
-                            'title' => $video->title,
-                            'thumbnail' => $video->thumbnail,
-                            'url' => $video->url,
-                            'embed_url' => $video->embed_url,
-                            'is_external' => $video->is_external
-                        ];
-                    })->toArray();
-
-                return [
-                    'id' => $variation->id,
-                    'name' => $variation->name,
-                    'price' => (float) $variation->price,
-                    'sale_price' => $variation->sale_price ? (float) $variation->sale_price : null,
-                    'stock_quantity' => $variation->stock_quantity,
-                    'is_active' => $variation->is_active,
-                    'images' => $variationImages,
-                    'videos' => $variationVideos,
-                    'properties' => $variation->properties->map(function ($property) {
-                        return [
-                            'property_id' => $property->property_id,
-                            'property_name' => $property->property->name ?? '',
-                            'property_value' => $property->value,
-                            'property' => [
-                                'id' => $property->property->id ?? null,
-                                'name' => $property->property->name ?? '',
-                                'slug' => $property->property->slug ?? ''
-                            ]
-                        ];
-                    })->toArray()
-                ];
-            })->toArray(),
-            'all_property_values' => $allPropertyValues->toArray()
-        ];
-    }
-
-    /**
-     * Подсчитать общий остаток товара с учетом вариаций
-     */
-    private function calculateTotalStockQuantity($good): int
-    {
-        // Если у товара есть вариации, суммируем остатки всех активных вариаций
-        if ($good->variations && $good->variations->count() > 0) {
-            return $good->variations
-                ->where('is_active', true)
-                ->sum('stock_quantity');
-        }
-        
-        // Если вариаций нет, возвращаем остаток самого товара
-        return $good->stock_quantity ?? 0;
-    }
-
-    /**
-     * Получить полный URL изображения
-     */
-    private function getImageUrl($filePath)
-    {
-        if (!$filePath) {
-            return null;
-        }
-
-        // Убираем возможные префиксы API сервера
-        $cleanPath = $filePath;
-        
-        // Если в пути есть полный URL, извлекаем только относительный путь
-        if (preg_match('/https?:\/\/[^\/]+(.*)/', $filePath, $matches)) {
-            $cleanPath = $matches[1];
-        }
-        
-        // Если это уже полный URL, проверяем домен
-        if (str_starts_with($cleanPath, 'http')) {
-            // Заменяем старый домен на новый фронтенд домен
-            $frontendUrl = config('app.frontend_url', 'https://admin.skateandsnow.ru');
-            $oldDomains = [
-                'https://ss75.kirhtarg.ru',
-                'https://api.ss.ru',
-                'https://ss75-api.kirhtarg.ru'
-            ];
-            
-            foreach ($oldDomains as $oldDomain) {
-                if (str_starts_with($cleanPath, $oldDomain)) {
-                    return str_replace($oldDomain, $frontendUrl, $cleanPath);
-                }
-            }
-            
-            // Если это другой домен, возвращаем как есть
-            return $cleanPath;
-        }
-
-        // Убираем лишний префикс images/ если он уже есть
-        $cleanPath = ltrim($cleanPath, '/');
-        if (str_starts_with($cleanPath, 'images/')) {
-            // Возвращаем полный URL с фронтенда
-            $frontendUrl = config('app.frontend_url', 'https://admin.skateandsnow.ru');
-            return $frontendUrl . '/' . $cleanPath;
-        }
-
-        // Возвращаем полный URL к файлу в папке public/images/ на фронтенде
-        $frontendUrl = config('app.frontend_url', 'https://admin.skateandsnow.ru');
-        return $frontendUrl . '/images/' . $cleanPath;
     }
 
     /**
      * Получить товар по slug
      */
-    public function getGoodBySlug(Request $request, string $slug): JsonResponse
+    public function getGoodBySlug($slug): JsonResponse
     {
         try {
             $good = ShopGood::with([
-                'categories:id,name,slug',
-                'brands:id,name,slug',
-                'tags:id,name,color',
-                'variations:id,good_id,name,price,sale_price,stock_quantity,is_active',
-                'images:id,good_id,file_path,alt_text,is_main,sort_order',
-                'videos:id,good_id,video_path,external_url,title,thumbnail,sort_order'
+                'variations' => function($query) {
+                    $query->where('is_active', true)->with(['properties' => function($q) {
+                        $q->with('property');
+                    }]);
+                },
+                'images' => function($query) {
+                    $query->whereNull('variation_id')->orderBy('sort_order');
+                },
+                'videos' => function($query) {
+                    $query->whereNull('variation_id')->orderBy('sort_order');
+                },
+                'properties' => function($query) {
+                    $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug', 'shop_good_properties.value');
+                },
+                'categories' => function($query) {
+                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug');
+                },
+                'brands' => function($query) {
+                    $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug');
+                }
             ])
             ->where('slug', $slug)
             ->where('is_active', true)
@@ -488,26 +471,20 @@ class ShopGoodsController extends Controller
                 ], 404);
             }
 
-            // Проверяем, находится ли товар в избранном
-            $isFavorite = false;
-            $user = $this->getUserFromToken($request);
-            if ($user) {
-                $isFavorite = ShopFavorite::where('user_id', $user->id)
-                    ->where('good_id', $good->id)
-                    ->exists();
-            }
-
-            $formattedGood = $this->formatGoodForFrontend($good);
-            $formattedGood['is_favorite'] = $isFavorite;
-
             return response()->json([
                 'success' => true,
-                'data' => $formattedGood
+                'data' => $good
             ]);
+
         } catch (\Exception $e) {
+            Log::error('ShopGoodsController: Error getting good by slug', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении товара: ' . $e->getMessage()
+                'message' => 'Ошибка получения товара'
             ], 500);
         }
     }
@@ -515,10 +492,13 @@ class ShopGoodsController extends Controller
     /**
      * Получить изображения товара
      */
-    public function getGoodImages(int $goodId): JsonResponse
+    public function getGoodImages($id): JsonResponse
     {
         try {
-            $good = ShopGood::where('id', $goodId)
+            $good = ShopGood::with(['images' => function($query) {
+                $query->whereNull('variation_id')->orderBy('sort_order');
+            }])
+            ->where('id', $id)
                 ->where('is_active', true)
                 ->first();
 
@@ -529,29 +509,102 @@ class ShopGoodsController extends Controller
                 ], 404);
             }
 
-            $images = $good->images()
-                ->orderBy('sort_order')
-                ->orderBy('id')
-                ->get()
-                ->map(function ($image) {
-                    return [
-                        'id' => $image->id,
-                        'file_path' => $image->file_path,
-                        'alt_text' => $image->alt_text,
-                        'is_main' => $image->is_main,
-                        'sort_order' => $image->sort_order,
-                        'url' => $this->getImageUrl($image->file_path)
-                    ];
-                });
+            $images = $good->images ? $good->images->toArray() : [];
 
             return response()->json([
                 'success' => true,
                 'data' => $images
             ]);
+
         } catch (\Exception $e) {
+            Log::error('ShopGoodsController: Error getting good images', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении изображений: ' . $e->getMessage()
+                'message' => 'Ошибка получения изображений товара'
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить товары пакетом
+     */
+    public function getBatch(Request $request): JsonResponse
+    {
+        try {
+            $goodIds = $request->input('good_ids', []);
+            
+            if (empty($goodIds)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не указаны ID товаров'
+                ], 400);
+            }
+
+            $goods = ShopGood::with([
+                'variations' => function($query) {
+                    $query->where('is_active', true)->with(['properties' => function($q) {
+                        $q->with('property');
+                    }]);
+                },
+                'images' => function($query) {
+                    $query->whereNull('variation_id')->orderBy('sort_order');
+                },
+                'videos' => function($query) {
+                    $query->whereNull('variation_id')->orderBy('sort_order');
+                },
+                'properties' => function($query) {
+                    $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug', 'shop_good_properties.value');
+                },
+                'categories' => function($query) {
+                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug');
+                },
+                'brands' => function($query) {
+                    $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug');
+                }
+            ])
+            ->whereIn('id', $goodIds)
+            ->where('is_active', true)
+            ->get();
+
+            // Добавляем image_url для обратной совместимости
+            $goods->transform(function ($good) {
+                if ($good->images && $good->images->count() > 0) {
+                    // Ищем главное изображение
+                    $mainImage = $good->images->where('is_main', true)->first();
+                    if (!$mainImage) {
+                        // Если главного нет, берем первое
+                        $mainImage = $good->images->first();
+                    }
+                    if ($mainImage) {
+                        // Добавляем ведущий слэш если его нет
+                        $imagePath = $mainImage->file_path;
+                        if ($imagePath && !str_starts_with($imagePath, '/')) {
+                            $imagePath = '/' . $imagePath;
+                        }
+                        $good->image_url = $imagePath;
+                    }
+                }
+                return $good;
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => $goods
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('ShopGoodsController: Error getting goods batch', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения товаров'
             ], 500);
         }
     }
@@ -559,103 +612,25 @@ class ShopGoodsController extends Controller
     /**
      * Получить категорию по slug
      */
-    public function getCategoryBySlug(string $slug): JsonResponse
+    public function getCategoryBySlug($slug): JsonResponse
     {
         try {
-            $category = ShopCategory::where('slug', $slug)
-                ->where('is_active', true)
-                ->first();
-
-            if (!$category) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Категория не найдена'
-                ], 404);
-            }
-
+            // Здесь нужно будет добавить модель Category, если её нет
+            // Пока возвращаем заглушку
             return response()->json([
                 'success' => true,
-                'data' => [
-                    'id' => $category->id,
-                    'name' => $category->name,
-                    'slug' => $category->slug,
-                    'description' => $category->description,
-                    'meta_title' => $category->meta_title,
-                    'meta_description' => $category->meta_description,
-                    'image' => $category->image ? $this->getImageUrl($category->image) : null,
-                ]
-            ]);
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при получении категории: ' . $e->getMessage()
-            ], 500);
-        }
-    }
-
-    /**
-     * Пакетная загрузка товаров
-     */
-    public function getBatch(Request $request): JsonResponse
-    {
-        try {
-            $request->validate([
-                'ids' => 'required|array',
-                'ids.*' => 'integer|min:1'
-            ]);
-
-            $ids = $request->get('ids');
-            
-            // Ограничиваем количество товаров в одном запросе
-            if (count($ids) > 20) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Максимум 20 товаров за один запрос'
-                ], 400);
-            }
-
-            $goods = ShopGood::with([
-                'categories:id,name,slug',
-                'brands:id,name,slug',
-                'tags:id,name,color',
-                'variations:id,good_id,name,price,sale_price,stock_quantity,is_active',
-                'variations.properties:id,variation_id,property_id,value',
-                'variations.properties.property:id,name,slug',
-                'properties:id,name,slug',
-                'images:id,good_id,file_path,alt_text,is_main,sort_order',
-                'videos:id,good_id,video_path,external_url,title,thumbnail,sort_order'
-            ])
-            ->where('is_active', true)
-            ->whereIn('id', $ids)
-            ->get();
-
-            // Получаем ID избранных товаров для текущего пользователя (если авторизован)
-            $favoriteGoodIds = [];
-            $user = $this->getUserFromToken($request);
-            if ($user) {
-                $favoriteGoodIds = ShopFavorite::where('user_id', $user->id)
-                    ->whereIn('good_id', $goods->pluck('id'))
-                    ->pluck('good_id')
-                    ->toArray();
-            }
-
-            $formattedGoods = $goods->map(function ($good) use ($favoriteGoodIds) {
-                $formattedGood = $this->formatGoodForFrontend($good);
-                $formattedGood['is_favorite'] = in_array($good->id, $favoriteGoodIds);
-                
-                
-                return $formattedGood;
-            })->keyBy('id');
-
-            return response()->json([
-                'success' => true,
-                'data' => $formattedGoods
+                'data' => null
             ]);
 
         } catch (\Exception $e) {
+            Log::error('ShopGoodsController: Error getting category by slug', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при пакетной загрузке товаров: ' . $e->getMessage()
+                'message' => 'Ошибка получения категории'
             ], 500);
         }
     }

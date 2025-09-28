@@ -100,8 +100,9 @@ Route::get('/test/oauth', function () {
     ]);
 });
 
-// Публичные маршруты для получения информации о сайте (с CORS middleware)
-Route::middleware(['cors'])->group(function () {
+
+    // Публичные маршруты для получения информации о сайте (с CORS middleware)
+    Route::middleware(['cors'])->group(function () {
     Route::options('/public/site-info', function () {
         return response()->json([], 200);
     });
@@ -165,6 +166,12 @@ Route::middleware(['cors'])->group(function () {
     });
     Route::get('/public/shop/goods', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'index']);
     
+    // Оптимизированный endpoint для получения всех типов товаров для главной страницы
+    Route::options('/public/shop/goods/main-blocks', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/goods/main-blocks', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getMainBlocks']);
+    
     Route::options('/public/shop/goods/{id}', function () {
         return response()->json([], 200);
     });
@@ -192,15 +199,27 @@ Route::middleware(['cors'])->group(function () {
     });
     Route::get('/public/shop/categories', [App\Http\Controllers\Api\Public\ShopCategoriesController::class, 'index']);
     
+    // Маршрут для получения главных категорий (должен быть ПЕРЕД маршрутом с {id})
+    Route::options('/public/shop/categories/main', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/categories/main', [App\Http\Controllers\Api\Public\ShopCategoryController::class, 'getMainCategories']);
+    
     Route::options('/public/shop/categories/{id}', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/categories/{id}', [App\Http\Controllers\Api\Public\ShopCategoriesController::class, 'show']);
     
+    Route::options('/public/shop/categories/{id}/children', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/categories/{id}/children', [App\Http\Controllers\Api\Public\ShopCategoriesController::class, 'getChildren']);
+    
     Route::options('/public/shop/categories/slug/{slug}', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/categories/slug/{slug}', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getCategoryBySlug']);
+    Route::get('/public/shop/categories/slug/{slug}/with-relations', [App\Http\Controllers\Api\Public\ShopCategoriesController::class, 'getCategoryBySlugWithRelations']);
 
     // Публичные маршруты для брендов магазина
     Route::options('/public/shop/brands', function () {
@@ -219,6 +238,71 @@ Route::middleware(['cors'])->group(function () {
     Route::delete('/public/shop/cart/clear', [App\Http\Controllers\Api\Public\CartController::class, 'clearCart']);
     Route::post('/public/shop/cart/create-order', [App\Http\Controllers\Api\Public\CartController::class, 'createOrder']);
     
+    // Публичные маршруты для способов доставки и оплаты
+    Route::options('/public/shop/delivery-methods', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/delivery-methods', [App\Http\Controllers\Api\Public\ShopDeliveryController::class, 'index']);
+    
+    Route::options('/public/shop/payment-methods', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/payment-methods', [App\Http\Controllers\Api\Public\ShopPaymentController::class, 'index']);
+    
+    // СДЭК интеграция
+    Route::options('/public/cdek/cities', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/cdek/cities', [App\Http\Controllers\Api\Public\CdekController::class, 'searchCities']);
+    
+    Route::options('/public/cdek/streets', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/cdek/streets', [App\Http\Controllers\Api\Public\CdekController::class, 'searchStreets']);
+    
+    Route::options('/public/cdek/calculate', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/public/cdek/calculate', [App\Http\Controllers\Api\Public\CdekController::class, 'calculateDelivery']);
+    
+    Route::options('/public/cdek/pvz', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/cdek/pvz', [App\Http\Controllers\Api\Public\CdekController::class, 'getPvzList']);
+    
+    // Тест-Банк интеграция
+    Route::options('/public/testbank/payment', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/public/testbank/payment', [App\Http\Controllers\Api\Public\TestBankController::class, 'createPayment']);
+    
+    Route::options('/public/testbank/status', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/testbank/status', [App\Http\Controllers\Api\Public\TestBankController::class, 'getPaymentStatus']);
+    
+    // Webhook для Тест-Банк
+    Route::post('/webhooks/testbank', [App\Http\Controllers\Api\Public\TestBankController::class, 'webhook']);
+    
+    // Настройки бонусов (публичные - видны всем)
+    Route::get('/public/shop/bonus-settings', [App\Http\Controllers\Api\Public\ShopBonusSettingsController::class, 'getActive']);
+    Route::post('/public/shop/bonus-settings/calculate', [App\Http\Controllers\Api\Public\ShopBonusSettingsController::class, 'calculateBonus']);
+    
+    // Информация о товарах (публичная)
+    Route::post('/public/shop/goods/details', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getGoodsDetails']);
+    
+    // Заказы пользователей (требует авторизации)
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::get('/public/shop/orders', [App\Http\Controllers\Api\Public\UserOrdersController::class, 'index']);
+        Route::get('/public/shop/orders/{id}', [App\Http\Controllers\Api\Public\UserOrdersController::class, 'show']);
+        Route::post('/public/shop/orders/{id}/cancel', [App\Http\Controllers\Api\Public\UserOrdersController::class, 'cancel']);
+        
+        // Бонусы пользователя
+        Route::get('/public/shop/user-bonuses', [App\Http\Controllers\Api\Public\UserBonusController::class, 'index']);
+        Route::post('/public/shop/user-bonuses', [App\Http\Controllers\Api\Public\UserBonusController::class, 'store']);
+        Route::get('/public/shop/user-bonuses/transactions', [App\Http\Controllers\Api\Public\UserBonusController::class, 'transactions']);
+    });
+    
     // Маршруты для предзаказов
     Route::options('/public/shop/preorders', function () {
         return response()->json([], 200);
@@ -236,6 +320,17 @@ Route::middleware(['cors'])->group(function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/brands/slug/{slug}', [App\Http\Controllers\Api\Public\ShopBrandsController::class, 'getBySlug']);
+
+    // Публичные маршруты для свойств товаров
+    Route::options('/public/shop/properties', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/properties', [App\Http\Controllers\Api\Public\ShopPropertiesController::class, 'index']);
+    
+    Route::options('/public/shop/properties/{property}/values', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/properties/{property}/values', [App\Http\Controllers\Api\Public\ShopPropertiesController::class, 'getValues']);
 
     // Публичный маршрут для поиска
     Route::options('/public/search', function () {
@@ -1846,6 +1941,48 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::put('/{siteMenuItem}', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'update']);
                 Route::delete('/{siteMenuItem}', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'destroy']);
                 Route::post('/order', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'updateOrder']);
+            });
+
+            // Управление способами доставки
+            Route::prefix('delivery-methods')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'index']);
+                Route::get('/{id}', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'show']);
+                Route::post('/', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'store']);
+                Route::put('/{id}', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'update']);
+                Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'destroy']);
+                Route::post('/reorder', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'reorder']);
+            });
+
+            // Управление способами оплаты
+            Route::prefix('payment-methods')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'index']);
+                Route::get('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'show']);
+                Route::post('/', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'store']);
+                Route::put('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'update']);
+                Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'destroy']);
+                Route::post('/reorder', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'reorder']);
+            });
+
+            // Управление уведомлениями Telegram
+            Route::prefix('telegram-notifications')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Api\Admin\TelegramNotificationController::class, 'index']);
+                Route::get('/{id}', [\App\Http\Controllers\Api\Admin\TelegramNotificationController::class, 'show']);
+                Route::post('/send-test', [\App\Http\Controllers\Api\Admin\TelegramNotificationController::class, 'sendTest']);
+                Route::post('/{id}/retry', [\App\Http\Controllers\Api\Admin\TelegramNotificationController::class, 'retry']);
+                Route::post('/process-pending', [\App\Http\Controllers\Api\Admin\TelegramNotificationController::class, 'processPending']);
+                Route::get('/stats/overview', [\App\Http\Controllers\Api\Admin\TelegramNotificationController::class, 'stats']);
+                Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\TelegramNotificationController::class, 'destroy']);
+            });
+
+            // Управление настройками бонусов
+            Route::prefix('bonus-settings')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'index']);
+                Route::get('/active', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'getActive']);
+                Route::get('/{id}', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'show']);
+                Route::post('/', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'store']);
+                Route::put('/{id}', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'update']);
+                Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'destroy']);
+                Route::post('/{id}/toggle-active', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'toggleActive']);
             });
         });
 

@@ -56,20 +56,20 @@ class ShopGoodVariation extends Model
     }
 
     /**
-     * Изображения вариации (временно отключено)
+     * Изображения вариации
      */
-    // public function images(): HasMany
-    // {
-    //     return $this->hasMany(ShopGoodImage::class, 'variation_id');
-    // }
+    public function images(): HasMany
+    {
+        return $this->hasMany(ShopGoodImage::class, 'variation_id');
+    }
 
     /**
-     * Видео вариации (временно отключено)
+     * Видео вариации
      */
-    // public function videos(): HasMany
-    // {
-    //     return $this->hasMany(ShopGoodVideo::class, 'variation_id');
-    // }
+    public function videos(): HasMany
+    {
+        return $this->hasMany(ShopGoodVideo::class, 'variation_id');
+    }
 
     /**
      * Остатки вариации (временно отключено)

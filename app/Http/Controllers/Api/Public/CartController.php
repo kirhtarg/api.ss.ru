@@ -11,6 +11,7 @@ use App\Models\ShopCartItem;
 use App\Models\ShopPreorder;
 use App\Models\User;
 use App\Models\Setting;
+use App\Services\TelegramService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -434,10 +435,22 @@ class CartController extends Controller
                 ], 400);
             }
 
+            // Получаем статус "Обрабатывается" по умолчанию
+            $pendingStatus = \App\Models\ShopOrderStatus::where('name', 'Обрабатывается')->first();
+            if (!$pendingStatus) {
+                // Если статус не найден, создаем его
+                $pendingStatus = \App\Models\ShopOrderStatus::create([
+                    'name' => 'Обрабатывается',
+                    'color' => 'yellow',
+                    'is_active' => true,
+                    'sort_order' => 10,
+                ]);
+            }
+
             // Создаем заказ
             $order = ShopOrder::create([
                 'user_id' => $user ? $user->id : null,
-                'status_id' => 1, // pending
+                'status_id' => $pendingStatus->id,
                 'customer_name' => $request->get('customer_name'),
                 'customer_email' => $request->get('customer_email'),
                 'customer_phone' => $request->get('customer_phone'),
@@ -464,6 +477,35 @@ class CartController extends Controller
             }
             
             $query->delete();
+
+            // Отправляем уведомления в Telegram
+            try {
+                $telegramService = app(TelegramService::class);
+                
+                // Уведомление администратору
+                $telegramService->notifyAdminNewOrder($order);
+                
+                // Уведомление клиенту (если указан chat_id)
+                $customerChatId = $request->get('telegram_chat_id');
+                if ($customerChatId) {
+                    $customerMessage = "✅ <b>Заказ #{$order->order_number} принят</b>\n\n";
+                    $customerMessage .= "Спасибо за ваш заказ! Мы получили вашу заявку и в ближайшее время свяжемся с вами для подтверждения.\n\n";
+                    $customerMessage .= "💰 <b>Сумма заказа:</b> " . number_format($order->total_amount, 0, ',', ' ') . " ₽\n";
+                    $customerMessage .= "📦 <b>Товаров:</b> {$order->total_quantity} шт.\n\n";
+                    $customerMessage .= "📞 <b>Наш телефон:</b> +7 (999) 123-45-67\n";
+                    $customerMessage .= "📧 <b>Email:</b> info@skateandsnow.ru";
+                    
+                    $telegramService->notifyCustomer(
+                        $customerChatId,
+                        'order_created',
+                        $order->id,
+                        $customerMessage
+                    );
+                }
+            } catch (\Exception $e) {
+                // Логируем ошибку, но не прерываем создание заказа
+                \Log::error('Telegram notification error: ' . $e->getMessage());
+            }
 
             return response()->json([
                 'success' => true,

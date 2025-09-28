@@ -65,7 +65,7 @@ class ShopBrand extends Model
      */
     public function goods(): BelongsToMany
     {
-        return $this->belongsToMany(ShopGood::class, 'shop_good_brands');
+        return $this->belongsToMany(ShopGood::class, 'shop_good_brands', 'brand_id', 'good_id');
     }
 
     /**

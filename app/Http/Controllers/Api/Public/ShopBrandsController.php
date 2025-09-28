@@ -19,6 +19,32 @@ class ShopBrandsController extends Controller
                 ->select('id', 'name', 'slug', 'description', 'logo')
                 ->orderBy('name');
 
+            // Фильтр по категории - показываем только бренды, у которых есть товары в данной категории
+            if ($request->filled('category_id')) {
+                $categoryId = $request->get('category_id');
+                \Log::info('Filtering brands by category_id: ' . $categoryId);
+                
+                // Проверяем, есть ли товары в категории
+                $goodsInCategory = \App\Models\ShopGood::whereHas('categories', function ($q) use ($categoryId) {
+                    $q->where('shop_categories.id', $categoryId);
+                })->where('is_active', true)->count();
+                \Log::info('Goods in category ' . $categoryId . ': ' . $goodsInCategory);
+                
+                // Проверяем, есть ли бренды у товаров в категории
+                $brandsInCategory = \App\Models\ShopBrand::whereHas('goods', function ($q) use ($categoryId) {
+                    $q->whereHas('categories', function ($catQuery) use ($categoryId) {
+                        $catQuery->where('shop_categories.id', $categoryId);
+                    })->where('is_active', true);
+                })->count();
+                \Log::info('Brands in category ' . $categoryId . ': ' . $brandsInCategory);
+                
+                $query->whereHas('goods', function ($q) use ($categoryId) {
+                    $q->whereHas('categories', function ($catQuery) use ($categoryId) {
+                        $catQuery->where('shop_categories.id', $categoryId);
+                    })->where('is_active', true);
+                });
+            }
+
             // Поиск
             if ($request->filled('search')) {
                 $search = $request->get('search');
@@ -28,9 +54,11 @@ class ShopBrandsController extends Controller
                 });
             }
 
-            // Пагинация
+            // Пагинация (временно отключена для отладки)
             $perPage = min($request->get('limit', 20), 100);
-            $brands = $query->paginate($perPage);
+            $brands = $query->get(); // Временно используем get() вместо paginate()
+            
+            \Log::info('Total brands found: ' . $brands->count());
 
             // Форматируем данные для фронтенда
             $formattedBrands = $brands->map(function ($brand) {
@@ -48,12 +76,12 @@ class ShopBrandsController extends Controller
                 'success' => true,
                 'data' => $formattedBrands->toArray(),
                 'pagination' => [
-                    'current_page' => $brands->currentPage(),
-                    'last_page' => $brands->lastPage(),
-                    'per_page' => $brands->perPage(),
-                    'total' => $brands->total(),
-                    'from' => $brands->firstItem(),
-                    'to' => $brands->lastItem()
+                    'current_page' => 1,
+                    'last_page' => 1,
+                    'per_page' => $brands->count(),
+                    'total' => $brands->count(),
+                    'from' => 1,
+                    'to' => $brands->count()
                 ]
             ]);
 

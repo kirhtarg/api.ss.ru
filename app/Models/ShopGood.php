@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Str;
+use App\Models\Shop\Property as ShopProperty;
 
 class ShopGood extends Model
 {
@@ -325,6 +326,14 @@ class ShopGood extends Model
         
         return implode('', $dimensions) ?: null;
     }
+
+    /**
+     * Характеристики товара
+     */
+    // public function characteristics(): HasMany
+    // {
+    //     return $this->hasMany(ShopGoodCharacteristic::class, 'good_id');
+    // }
 
     /**
      * Получить главное изображение или первое доступное

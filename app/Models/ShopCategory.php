@@ -19,12 +19,14 @@ class ShopCategory extends Model
         'icon',
         'slug',
         'is_active',
+        'is_main',
         'sort_order',
         'parent_id'
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
+        'is_main' => 'boolean',
         'sort_order' => 'integer',
         'parent_id' => 'integer'
     ];
@@ -46,16 +48,22 @@ class ShopCategory extends Model
         return $this->hasMany(ShopCategory::class, 'parent_id');
     }
 
-    // Отношение к товарам (будет добавлено позже)
-    // public function products()
-    // {
-    //     return $this->hasMany(ShopProduct::class);
-    // }
+    // Отношение к товарам через промежуточную таблицу
+    public function goods()
+    {
+        return $this->belongsToMany(\App\Models\ShopGood::class, 'shop_good_categories', 'category_id', 'good_id');
+    }
 
     // Scope для активных категорий
     public function scopeActive($query)
     {
         return $query->where('is_active', true);
+    }
+
+    // Scope для главных категорий
+    public function scopeMain($query)
+    {
+        return $query->where('is_main', true);
     }
 
     // Scope для сортировки
