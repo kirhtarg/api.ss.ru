@@ -301,15 +301,45 @@ class ShopGoodsController extends Controller
     public function getMainBlocks(Request $request): JsonResponse
     {
         try {
-            // Здесь можно реализовать логику для получения главных блоков товаров
-            // Пока возвращаем пустой массив
+            $limit = $request->get('limit', 10);
+            
+            // Получаем хиты продаж (featured)
+            $featured = ShopGood::with(['images', 'variations', 'categories', 'brands'])
+                ->where('is_featured', 1)
+                ->where('is_active', 1)
+                ->orderBy('created_at', 'desc')
+                ->limit($limit)
+                ->get();
+
+            // Получаем товары со скидками (sale)
+            $sale = ShopGood::with(['images', 'variations', 'categories', 'brands'])
+                ->where('is_sale', 1)
+                ->where('is_active', 1)
+                ->whereNotNull('sale_price')
+                ->where('sale_price', '>', 0)
+                ->orderBy('created_at', 'desc')
+                ->limit($limit)
+                ->get();
+
+            // Получаем новинки (new)
+            $new = ShopGood::with(['images', 'variations', 'categories', 'brands'])
+                ->where('is_new', 1)
+                ->where('is_active', 1)
+                ->orderBy('created_at', 'desc')
+                ->limit($limit)
+                ->get();
+
             return response()->json([
                 'success' => true,
-                'data' => []
+                'data' => [
+                    'featured' => $featured,
+                    'sale' => $sale,
+                    'new' => $new
+                ]
             ]);
 
         } catch (\Exception $e) {
-
+            \Log::error('Ошибка получения главных блоков: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка получения главных блоков'
