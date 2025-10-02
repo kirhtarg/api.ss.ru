@@ -4,12 +4,37 @@ namespace App\Http\Controllers;
 
 use App\Models\ShopFavorite;
 use App\Models\ShopGood;
+use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
 class ShopFavoriteController extends Controller
 {
+    /**
+     * Получить пользователя по токену из заголовка
+     */
+    private function getUserFromToken(Request $request)
+    {
+        $token = $request->bearerToken();
+        
+        if (!$token) {
+            return null;
+        }
+
+        // Сначала попробуем найти по personal_access_tokens (Sanctum)
+        $personalAccessToken = \Laravel\Sanctum\PersonalAccessToken::findToken($token);
+        if ($personalAccessToken) {
+            return $personalAccessToken->tokenable;
+        }
+
+        // Если не найден, попробуем найти по remember_token
+        $user = User::where('remember_token', $token)->first();
+        if ($user) {
+            return $user;
+        }
+        return null;
+    }
     /**
      * Добавить товар в избранное
      */
@@ -20,7 +45,7 @@ class ShopFavoriteController extends Controller
                 'good_id' => 'required|integer|exists:shop_goods,id'
             ]);
 
-            $user = Auth::user();
+            $user = $this->getUserFromToken($request);
             if (!$user) {
                 return response()->json([
                     'success' => false,
@@ -78,7 +103,7 @@ class ShopFavoriteController extends Controller
                 'good_id' => 'required|integer|exists:shop_goods,id'
             ]);
 
-            $user = Auth::user();
+            $user = $this->getUserFromToken($request);
             if (!$user) {
                 return response()->json([
                     'success' => false,
@@ -130,7 +155,7 @@ class ShopFavoriteController extends Controller
                 'good_id' => 'required|integer|exists:shop_goods,id'
             ]);
 
-            $user = Auth::user();
+            $user = $this->getUserFromToken($request);
             if (!$user) {
                 return response()->json([
                     'success' => false,
@@ -191,7 +216,7 @@ class ShopFavoriteController extends Controller
                 'good_id' => 'required|integer|exists:shop_goods,id'
             ]);
 
-            $user = Auth::user();
+            $user = $this->getUserFromToken($request);
             if (!$user) {
                 return response()->json([
                     'success' => true,

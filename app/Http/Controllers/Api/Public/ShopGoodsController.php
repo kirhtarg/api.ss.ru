@@ -11,6 +11,37 @@ use Illuminate\Support\Facades\Log;
 class ShopGoodsController extends Controller
 {
     /**
+     * Переключить избранное для товара
+     */
+    public function toggleFavorite(Request $request): JsonResponse
+    {
+        try {
+            $goodId = $request->input('good_id');
+            
+            if (!$goodId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'ID товара не указан'
+                ], 400);
+            }
+
+            // Здесь должна быть логика переключения избранного
+            // Пока возвращаем заглушку
+            return response()->json([
+                'success' => true,
+                'is_favorite' => true,
+                'message' => 'Товар добавлен в избранное'
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка сервера: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Получить список товаров
      */
     public function index(Request $request): JsonResponse
@@ -498,9 +529,34 @@ class ShopGoodsController extends Controller
                 ], 404);
             }
 
+            // Проверяем, находится ли товар в избранном у текущего пользователя
+            $isFavorite = false;
+            $token = request()->bearerToken();
+            
+            if ($token) {
+                // Ищем пользователя по токену
+                $user = \App\Models\User::where('remember_token', $token)->first();
+                if (!$user) {
+                    $personalAccessToken = \Laravel\Sanctum\PersonalAccessToken::findToken($token);
+                    if ($personalAccessToken) {
+                        $user = $personalAccessToken->tokenable;
+                    }
+                }
+                
+                if ($user) {
+                    $isFavorite = \App\Models\ShopFavorite::where('user_id', $user->id)
+                        ->where('good_id', $good->id)
+                        ->exists();
+                }
+            }
+
+            // Добавляем поле is_favorite к товару
+            $goodData = $good->toArray();
+            $goodData['is_favorite'] = $isFavorite;
+
             return response()->json([
                 'success' => true,
-                'data' => $good
+                'data' => $goodData
             ]);
 
         } catch (\Exception $e) {
@@ -718,10 +774,14 @@ class ShopGoodsController extends Controller
         }
     }
 
+    // DEPRECATED: These methods are no longer used - replaced by getVariationsMedia
+    // public function getVariationsImages(Request $request): JsonResponse { ... }
+    // public function getVariationsVideos(Request $request): JsonResponse { ... }
+
     /**
-     * Получить изображения для нескольких вариаций одним запросом
+     * Получить все медиа (изображения + видео) для нескольких вариаций одним запросом
      */
-    public function getVariationsImages(Request $request): JsonResponse
+    public function getVariationsMedia(Request $request): JsonResponse
     {
         try {
             $variationIds = $request->input('variation_ids', []);
@@ -733,9 +793,14 @@ class ShopGoodsController extends Controller
                 ], 400);
             }
 
-            $variations = \App\Models\ShopGoodVariation::with(['images' => function($query) {
-                $query->orderBy('sort_order');
-            }])
+            $variations = \App\Models\ShopGoodVariation::with([
+                'images' => function($query) {
+                    $query->orderBy('sort_order');
+                },
+                'videos' => function($query) {
+                    $query->orderBy('sort_order');
+                }
+            ])
             ->whereIn('id', $variationIds)
             ->where('is_active', true)
             ->get();
@@ -744,7 +809,12 @@ class ShopGoodsController extends Controller
             
             foreach ($variations as $variation) {
                 $images = $variation->images ? $variation->images->toArray() : [];
-                $result[$variation->id] = $images;
+                $videos = $variation->videos ? $variation->videos->toArray() : [];
+                
+                $result[$variation->id] = [
+                    'images' => $images,
+                    'videos' => $videos
+                ];
             }
 
             return response()->json([
@@ -753,10 +823,10 @@ class ShopGoodsController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Error getting variations images: ' . $e->getMessage());
+            Log::error('Error getting variations media: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения изображений вариаций'
+                'message' => 'Ошибка получения медиа вариаций'
             ], 500);
         }
     }

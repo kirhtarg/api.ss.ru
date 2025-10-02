@@ -198,17 +198,18 @@ Route::get('/test/oauth', function () {
     });
     Route::get('/public/shop/goods/variations/{variationId}/videos', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getVariationVideos']);
     
-    // Массовая загрузка изображений вариаций
-    Route::options('/public/shop/goods/variations/images', function () {
+    // Массовая загрузка всех медиа вариаций (изображения + видео) - единый endpoint
+    Route::options('/public/shop/goods/variations/media', function () {
         return response()->json([], 200);
     });
-    Route::post('/public/shop/goods/variations/images', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getVariationsImages']);
+    Route::post('/public/shop/goods/variations/media', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getVariationsMedia']);
     
     // Пакетная загрузка товаров
     Route::options('/public/shop/goods/batch', function () {
         return response()->json([], 200);
     });
     Route::post('/public/shop/goods/batch', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getBatch']);
+    
 
     // Публичные маршруты для категорий магазина
     Route::options('/public/shop/categories', function () {
@@ -503,13 +504,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', [AuthController::class, 'user']);
     Route::get('/auth/check', [AuthController::class, 'check']);
     
-    // Избранное
+    // Избранное - простой функционал
     Route::prefix('shop/favorites')->group(function () {
-        Route::post('/add', [\App\Http\Controllers\ShopFavoriteController::class, 'add']);
-        Route::post('/remove', [\App\Http\Controllers\ShopFavoriteController::class, 'remove']);
-        Route::post('/toggle', [\App\Http\Controllers\ShopFavoriteController::class, 'toggle']);
-        Route::get('/check', [\App\Http\Controllers\ShopFavoriteController::class, 'check']);
-        Route::get('/', [\App\Http\Controllers\ShopFavoriteController::class, 'index']);
+        Route::post('/toggle', [\App\Http\Controllers\FavoritesController::class, 'toggle']);
+        Route::get('/check', [\App\Http\Controllers\FavoritesController::class, 'check']);
+        Route::get('/', [\App\Http\Controllers\FavoritesController::class, 'index']);
     });
     
     // Загрузка изображений для rich editor
