@@ -187,6 +187,23 @@ Route::get('/test/oauth', function () {
     });
     Route::get('/public/shop/goods/{id}/images', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getGoodImages']);
     
+    // Публичные маршруты для медиа вариаций
+    Route::options('/public/shop/goods/variations/{variationId}/images', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/goods/variations/{variationId}/images', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getVariationImages']);
+    
+    Route::options('/public/shop/goods/variations/{variationId}/videos', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/goods/variations/{variationId}/videos', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getVariationVideos']);
+    
+    // Массовая загрузка изображений вариаций
+    Route::options('/public/shop/goods/variations/images', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/public/shop/goods/variations/images', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getVariationsImages']);
+    
     // Пакетная загрузка товаров
     Route::options('/public/shop/goods/batch', function () {
         return response()->json([], 200);

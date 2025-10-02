@@ -52,6 +52,12 @@ class ShopGoodsController extends Controller
                 // Фильтрация по множественным категориям
                 if ($request->has('categories')) {
                     $categoryIds = $request->input('categories');
+                    
+                    // Если передан строкой через запятую, преобразуем в массив
+                    if (is_string($categoryIds)) {
+                        $categoryIds = array_filter(explode(',', $categoryIds));
+                    }
+                    
                     if (is_array($categoryIds) && !empty($categoryIds)) {
                         $query->whereHas('categories', function($q) use ($categoryIds) {
                             $q->whereIn('shop_categories.id', $categoryIds);
@@ -125,10 +131,22 @@ class ShopGoodsController extends Controller
                 }
             }
 
+            // Исключение товара по ID
+            if ($request->has('exclude_id')) {
+                $excludeId = $request->input('exclude_id');
+                if ($excludeId) {
+                    $query->where('id', '!=', $excludeId);
+                }
+            }
+
             // Сортировка
-            $sortBy = $request->input('sort_by', 'created_at');
-            $sortOrder = $request->input('sort_order', 'desc');
+            if ($request->has('random') && $request->input('random')) {
+                $query->inRandomOrder();
+            } else {
+                $sortBy = $request->input('sort_by', 'created_at');
+                $sortOrder = $request->input('sort_order', 'desc');
                 $query->orderBy($sortBy, $sortOrder);
+            }
 
             // Пагинация
             $perPage = $request->input('limit', 20);
@@ -624,6 +642,121 @@ class ShopGoodsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка получения категории'
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить изображения вариации
+     */
+    public function getVariationImages($variationId): JsonResponse
+    {
+        try {
+            $variation = \App\Models\ShopGoodVariation::with(['images' => function($query) {
+                $query->orderBy('sort_order');
+            }])
+            ->where('id', $variationId)
+            ->where('is_active', true)
+            ->first();
+
+            if (!$variation) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Вариация не найдена'
+                ], 404);
+            }
+
+            $images = $variation->images ? $variation->images->toArray() : [];
+
+            return response()->json([
+                'success' => true,
+                'data' => $images
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error getting variation images: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения изображений вариации'
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить видео вариации
+     */
+    public function getVariationVideos($variationId): JsonResponse
+    {
+        try {
+            $variation = \App\Models\ShopGoodVariation::with(['videos' => function($query) {
+                $query->orderBy('sort_order');
+            }])
+            ->where('id', $variationId)
+            ->where('is_active', true)
+            ->first();
+
+            if (!$variation) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Вариация не найдена'
+                ], 404);
+            }
+
+            $videos = $variation->videos ? $variation->videos->toArray() : [];
+
+            return response()->json([
+                'success' => true,
+                'data' => $videos
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error getting variation videos: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения видео вариации'
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить изображения для нескольких вариаций одним запросом
+     */
+    public function getVariationsImages(Request $request): JsonResponse
+    {
+        try {
+            $variationIds = $request->input('variation_ids', []);
+            
+            if (empty($variationIds) || !is_array($variationIds)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не указаны ID вариаций'
+                ], 400);
+            }
+
+            $variations = \App\Models\ShopGoodVariation::with(['images' => function($query) {
+                $query->orderBy('sort_order');
+            }])
+            ->whereIn('id', $variationIds)
+            ->where('is_active', true)
+            ->get();
+
+            $result = [];
+            
+            foreach ($variations as $variation) {
+                $images = $variation->images ? $variation->images->toArray() : [];
+                $result[$variation->id] = $images;
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $result
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error getting variations images: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения изображений вариаций'
             ], 500);
         }
     }
