@@ -183,8 +183,23 @@ class ShopGoodsController extends Controller
             $perPage = $request->input('limit', 20);
             $goods = $query->paginate($perPage);
             
-            // Добавляем image_url для обратной совместимости
-            $goods->getCollection()->transform(function ($good) {
+            // Получаем информацию о пользователе для проверки избранного
+            $token = request()->bearerToken();
+            $user = null;
+            
+            if ($token) {
+                // Ищем пользователя по токену
+                $user = \App\Models\User::where('remember_token', $token)->first();
+                if (!$user) {
+                    $personalAccessToken = \Laravel\Sanctum\PersonalAccessToken::findToken($token);
+                    if ($personalAccessToken) {
+                        $user = $personalAccessToken->tokenable;
+                    }
+                }
+            }
+            
+            // Добавляем image_url и is_favorite для обратной совместимости
+            $goods->getCollection()->transform(function ($good) use ($user) {
                 if ($good->images && $good->images->count() > 0) {
                     // Ищем главное изображение
                     $mainImage = $good->images->where('is_main', true)->first();
@@ -201,6 +216,16 @@ class ShopGoodsController extends Controller
                         $good->image_url = $imagePath;
                     }
                 }
+                
+                // Проверяем, находится ли товар в избранном у текущего пользователя
+                $isFavorite = false;
+                if ($user) {
+                    $isFavorite = \App\Models\ShopFavorite::where('user_id', $user->id)
+                        ->where('good_id', $good->id)
+                        ->exists();
+                }
+                $good->is_favorite = $isFavorite;
+                
                 return $good;
             });
             
@@ -269,6 +294,22 @@ class ShopGoodsController extends Controller
 
             $result = [];
 
+            // Получаем информацию о пользователе для проверки избранного
+            $isFavorite = false;
+            $token = request()->bearerToken();
+            $user = null;
+            
+            if ($token) {
+                // Ищем пользователя по токену
+                $user = \App\Models\User::where('remember_token', $token)->first();
+                if (!$user) {
+                    $personalAccessToken = \Laravel\Sanctum\PersonalAccessToken::findToken($token);
+                    if ($personalAccessToken) {
+                        $user = $personalAccessToken->tokenable;
+                    }
+                }
+            }
+
             foreach ($goods as $good) {
                 // Получаем главное изображение из связанной таблицы
                 $mainImage = null;
@@ -280,6 +321,14 @@ class ShopGoodsController extends Controller
                     if ($mainImg) {
                         $mainImage = $mainImg->file_path;
                     }
+                }
+
+                // Проверяем, находится ли товар в избранном у текущего пользователя
+                $isFavorite = false;
+                if ($user) {
+                    $isFavorite = \App\Models\ShopFavorite::where('user_id', $user->id)
+                        ->where('good_id', $good->id)
+                        ->exists();
                 }
 
                 $goodData = [
@@ -296,7 +345,8 @@ class ShopGoodsController extends Controller
                     'properties' => $good->properties ? $good->properties->toArray() : [],
                     'categories' => $good->categories ? $good->categories->toArray() : [],
                     'brands' => $good->brands ? $good->brands->toArray() : [],
-                    'variations' => []
+                    'variations' => [],
+                    'is_favorite' => $isFavorite
                 ];
 
                 // Добавляем вариации
