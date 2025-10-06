@@ -461,6 +461,27 @@ Route::get('/test/oauth', function () {
         return response()->json([], 200);
     });
     Route::get('/public/sliders/{id}', [App\Http\Controllers\Api\Public\SliderController::class, 'show']);
+
+    // Публичные маршруты для согласий на куки
+    Route::options('/public/cookie-consent/check', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/cookie-consent/check', [App\Http\Controllers\Api\Public\CookieConsentController::class, 'checkConsent']);
+    
+    Route::options('/public/cookie-consent/save', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/public/cookie-consent/save', [App\Http\Controllers\Api\Public\CookieConsentController::class, 'saveConsent']);
+    
+    Route::options('/public/cookie-consent/revoke', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/public/cookie-consent/revoke', [App\Http\Controllers\Api\Public\CookieConsentController::class, 'revokeConsent']);
+    
+    Route::options('/public/cookie-consent/info', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/cookie-consent/info', [App\Http\Controllers\Api\Public\CookieConsentController::class, 'getCookieInfo']);
 });
 
 // Временный отладочный endpoint для проверки всех настроек
