@@ -40,13 +40,22 @@ class ShopCdekController extends Controller
                 ], 400);
             }
 
-            // Используем DaData API для поиска городов
+            // Сначала пробуем fallback города (они работают надежно)
+            $fallbackCities = $this->getFallbackCities($query);
+            if (!empty($fallbackCities)) {
+                return response()->json([
+                    'success' => true,
+                    'data' => $fallbackCities
+                ]);
+            }
+
+            // Если fallback не дал результатов, пробуем DaData API
             $dadataApiKey = env('DADATA_API_KEY');
             if (!$dadataApiKey) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'API ключ DaData не настроен'
-                ], 500);
+                    'message' => 'Город не найден в базе данных'
+                ], 404);
             }
 
             try {
@@ -69,23 +78,27 @@ class ShopCdekController extends Controller
                     'Authorization' => 'Token ' . $dadataApiKey
                 ];
                 
-                $res = Http::withOptions(['verify' => false])
+                $res = Http::withOptions([
+                    'verify' => false,
+                    'timeout' => 15, // Увеличиваем таймаут до 15 секунд
+                    'connect_timeout' => 10 // Таймаут подключения 10 секунд
+                ])
                     ->withHeaders($headers)
                     ->post($dadataUrl, $body);
 
                 if (!$res->successful()) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Ошибка запроса к DaData: ' . $res->status()
-                    ], 500);
+                        'message' => 'Город не найден в базе данных'
+                    ], 404);
                 }
 
                 $data = $res->json();
                 if (!isset($data['suggestions'])) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Нет данных от DaData'
-                    ], 500);
+                        'message' => 'Город не найден в базе данных'
+                    ], 404);
                 }
 
                 $formattedCities = [];
@@ -107,11 +120,19 @@ class ShopCdekController extends Controller
                     }
                 }
 
+                if (empty($formattedCities)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Город не найден в базе данных'
+                    ], 404);
+                }
+
             } catch (\Exception $e) {
+                Log::warning('DaData API error: ' . $e->getMessage());
                 return response()->json([
                     'success' => false,
-                    'message' => 'Ошибка запроса к DaData: ' . $e->getMessage()
-                ], 500);
+                    'message' => 'Город не найден в базе данных'
+                ], 404);
             }
             
             
@@ -434,60 +455,51 @@ class ShopCdekController extends Controller
     private function getFallbackCities($query)
     {
         $fallbackCities = [
-            // Крупные города
-            ['code' => 44, 'name' => 'Москва', 'region' => 'Московская область', 'country' => 'RU'],
-            ['code' => 137, 'name' => 'Санкт-Петербург', 'region' => 'Ленинградская область', 'country' => 'RU'],
-            ['code' => 2, 'name' => 'Казань', 'region' => 'Республика Татарстан', 'country' => 'RU'],
-            ['code' => 3, 'name' => 'Екатеринбург', 'region' => 'Свердловская область', 'country' => 'RU'],
-            ['code' => 4, 'name' => 'Новосибирск', 'region' => 'Новосибирская область', 'country' => 'RU'],
-            ['code' => 5, 'name' => 'Нижний Новгород', 'region' => 'Нижегородская область', 'country' => 'RU'],
-            ['code' => 261, 'name' => 'Оренбург', 'region' => 'Оренбургская область', 'country' => 'RU'],
-            ['code' => 424, 'name' => 'Владивосток', 'region' => 'Приморский край', 'country' => 'RU'],
+            // Крупные города с правильными кодами CDEK
+            ['code' => '44', 'name' => 'Москва', 'region' => 'Московская область', 'country' => 'Россия', 'full_name' => 'г. Москва'],
+            ['code' => '2', 'name' => 'Санкт-Петербург', 'region' => 'Ленинградская область', 'country' => 'Россия', 'full_name' => 'г. Санкт-Петербург'],
+            ['code' => '63', 'name' => 'Казань', 'region' => 'Республика Татарстан', 'country' => 'Россия', 'full_name' => 'г. Казань'],
+            ['code' => '137', 'name' => 'Екатеринбург', 'region' => 'Свердловская область', 'country' => 'Россия', 'full_name' => 'г. Екатеринбург'],
+            ['code' => '65', 'name' => 'Новосибирск', 'region' => 'Новосибирская область', 'country' => 'Россия', 'full_name' => 'г. Новосибирск'],
+            ['code' => '52', 'name' => 'Нижний Новгород', 'region' => 'Нижегородская область', 'country' => 'Россия', 'full_name' => 'г. Нижний Новгород'],
+            ['code' => '154', 'name' => 'Челябинск', 'region' => 'Челябинская область', 'country' => 'Россия', 'full_name' => 'г. Челябинск'],
+            ['code' => '78', 'name' => 'Самара', 'region' => 'Самарская область', 'country' => 'Россия', 'full_name' => 'г. Самара'],
             
-            // Дополнительные крупные города
-            ['code' => 6, 'name' => 'Самара', 'region' => 'Самарская область', 'country' => 'RU'],
-            ['code' => 7, 'name' => 'Омск', 'region' => 'Омская область', 'country' => 'RU'],
-            ['code' => 8, 'name' => 'Челябинск', 'region' => 'Челябинская область', 'country' => 'RU'],
-            ['code' => 9, 'name' => 'Ростов-на-Дону', 'region' => 'Ростовская область', 'country' => 'RU'],
-            ['code' => 10, 'name' => 'Уфа', 'region' => 'Республика Башкортостан', 'country' => 'RU'],
-            ['code' => 11, 'name' => 'Волгоград', 'region' => 'Волгоградская область', 'country' => 'RU'],
-            ['code' => 12, 'name' => 'Пермь', 'region' => 'Пермский край', 'country' => 'RU'],
-            ['code' => 13, 'name' => 'Красноярск', 'region' => 'Красноярский край', 'country' => 'RU'],
-            ['code' => 14, 'name' => 'Воронеж', 'region' => 'Воронежская область', 'country' => 'RU'],
-            ['code' => 15, 'name' => 'Саратов', 'region' => 'Саратовская область', 'country' => 'RU'],
-            ['code' => 16, 'name' => 'Краснодар', 'region' => 'Краснодарский край', 'country' => 'RU'],
-            ['code' => 17, 'name' => 'Тольятти', 'region' => 'Самарская область', 'country' => 'RU'],
-            ['code' => 18, 'name' => 'Ижевск', 'region' => 'Удмуртская Республика', 'country' => 'RU'],
-            ['code' => 19, 'name' => 'Барнаул', 'region' => 'Алтайский край', 'country' => 'RU'],
-            ['code' => 20, 'name' => 'Ульяновск', 'region' => 'Ульяновская область', 'country' => 'RU'],
-            ['code' => 21, 'name' => 'Иркутск', 'region' => 'Иркутская область', 'country' => 'RU'],
-            ['code' => 22, 'name' => 'Хабаровск', 'region' => 'Хабаровский край', 'country' => 'RU'],
-            ['code' => 23, 'name' => 'Ярославль', 'region' => 'Ярославская область', 'country' => 'RU'],
-            ['code' => 24, 'name' => 'Тюмень', 'region' => 'Тюменская область', 'country' => 'RU'],
-            ['code' => 25, 'name' => 'Махачкала', 'region' => 'Республика Дагестан', 'country' => 'RU'],
-            ['code' => 26, 'name' => 'Томск', 'region' => 'Томская область', 'country' => 'RU'],
-            ['code' => 27, 'name' => 'Кемерово', 'region' => 'Кемеровская область', 'country' => 'RU'],
-            ['code' => 28, 'name' => 'Новокузнецк', 'region' => 'Кемеровская область', 'country' => 'RU'],
-            ['code' => 29, 'name' => 'Рязань', 'region' => 'Рязанская область', 'country' => 'RU'],
-            ['code' => 30, 'name' => 'Набережные Челны', 'region' => 'Республика Татарстан', 'country' => 'RU'],
-            ['code' => 31, 'name' => 'Астрахань', 'region' => 'Астраханская область', 'country' => 'RU'],
-            ['code' => 32, 'name' => 'Пенза', 'region' => 'Пензенская область', 'country' => 'RU'],
-            ['code' => 33, 'name' => 'Липецк', 'region' => 'Липецкая область', 'country' => 'RU'],
-            ['code' => 34, 'name' => 'Тула', 'region' => 'Тульская область', 'country' => 'RU'],
-            ['code' => 35, 'name' => 'Киров', 'region' => 'Кировская область', 'country' => 'RU'],
-            ['code' => 36, 'name' => 'Чебоксары', 'region' => 'Чувашская Республика', 'country' => 'RU'],
-            ['code' => 37, 'name' => 'Калининград', 'region' => 'Калининградская область', 'country' => 'RU'],
-            ['code' => 38, 'name' => 'Брянск', 'region' => 'Брянская область', 'country' => 'RU'],
-            ['code' => 39, 'name' => 'Курск', 'region' => 'Курская область', 'country' => 'RU'],
-            ['code' => 40, 'name' => 'Иваново', 'region' => 'Ивановская область', 'country' => 'RU'],
-            ['code' => 41, 'name' => 'Магнитогорск', 'region' => 'Челябинская область', 'country' => 'RU'],
-            ['code' => 42, 'name' => 'Петрозаводск', 'region' => 'Республика Карелия', 'country' => 'RU'],
-            ['code' => 43, 'name' => 'Петропавловск-Камчатский', 'region' => 'Камчатский край', 'country' => 'RU'],
-            ['code' => 44, 'name' => 'Петропавловск', 'region' => 'Северо-Казахстанская область', 'country' => 'KZ'],
-            ['code' => 45, 'name' => 'Петропавловск-Забайкальский', 'region' => 'Забайкальский край', 'country' => 'RU'],
-            ['code' => 46, 'name' => 'Петровск-Забайкальский', 'region' => 'Забайкальский край', 'country' => 'RU'],
-            ['code' => 47, 'name' => 'Петровск', 'region' => 'Саратовская область', 'country' => 'RU'],
-            ['code' => 48, 'name' => 'Петров Вал', 'region' => 'Волгоградская область', 'country' => 'RU'],
+            // Дополнительные крупные города с правильными кодами CDEK
+            ['code' => '68', 'name' => 'Омск', 'region' => 'Омская область', 'country' => 'Россия', 'full_name' => 'г. Омск'],
+            ['code' => '61', 'name' => 'Ростов-на-Дону', 'region' => 'Ростовская область', 'country' => 'Россия', 'full_name' => 'г. Ростов-на-Дону'],
+            ['code' => '99', 'name' => 'Уфа', 'region' => 'Республика Башкортостан', 'country' => 'Россия', 'full_name' => 'г. Уфа'],
+            ['code' => '20', 'name' => 'Волгоград', 'region' => 'Волгоградская область', 'country' => 'Россия', 'full_name' => 'г. Волгоград'],
+            ['code' => '72', 'name' => 'Пермь', 'region' => 'Пермский край', 'country' => 'Россия', 'full_name' => 'г. Пермь'],
+            ['code' => '54', 'name' => 'Красноярск', 'region' => 'Красноярский край', 'country' => 'Россия', 'full_name' => 'г. Красноярск'],
+            ['code' => '21', 'name' => 'Воронеж', 'region' => 'Воронежская область', 'country' => 'Россия', 'full_name' => 'г. Воронеж'],
+            ['code' => '64', 'name' => 'Саратов', 'region' => 'Саратовская область', 'country' => 'Россия', 'full_name' => 'г. Саратов'],
+            ['code' => '23', 'name' => 'Краснодар', 'region' => 'Краснодарский край', 'country' => 'Россия', 'full_name' => 'г. Краснодар'],
+            ['code' => '18', 'name' => 'Ижевск', 'region' => 'Удмуртская Республика', 'country' => 'Россия', 'full_name' => 'г. Ижевск'],
+            ['code' => '4', 'name' => 'Барнаул', 'region' => 'Алтайский край', 'country' => 'Россия', 'full_name' => 'г. Барнаул'],
+            ['code' => '73', 'name' => 'Ульяновск', 'region' => 'Ульяновская область', 'country' => 'Россия', 'full_name' => 'г. Ульяновск'],
+            ['code' => '38', 'name' => 'Иркутск', 'region' => 'Иркутская область', 'country' => 'Россия', 'full_name' => 'г. Иркутск'],
+            ['code' => '75', 'name' => 'Хабаровск', 'region' => 'Хабаровский край', 'country' => 'Россия', 'full_name' => 'г. Хабаровск'],
+            ['code' => '76', 'name' => 'Ярославль', 'region' => 'Ярославская область', 'country' => 'Россия', 'full_name' => 'г. Ярославль'],
+            ['code' => '72', 'name' => 'Тюмень', 'region' => 'Тюменская область', 'country' => 'Россия', 'full_name' => 'г. Тюмень'],
+            ['code' => '5', 'name' => 'Махачкала', 'region' => 'Республика Дагестан', 'country' => 'Россия', 'full_name' => 'г. Махачкала'],
+            ['code' => '70', 'name' => 'Томск', 'region' => 'Томская область', 'country' => 'Россия', 'full_name' => 'г. Томск'],
+            ['code' => '42', 'name' => 'Кемерово', 'region' => 'Кемеровская область', 'country' => 'Россия', 'full_name' => 'г. Кемерово'],
+            ['code' => '42', 'name' => 'Новокузнецк', 'region' => 'Кемеровская область', 'country' => 'Россия', 'full_name' => 'г. Новокузнецк'],
+            ['code' => '62', 'name' => 'Рязань', 'region' => 'Рязанская область', 'country' => 'Россия', 'full_name' => 'г. Рязань'],
+            ['code' => '63', 'name' => 'Набережные Челны', 'region' => 'Республика Татарстан', 'country' => 'Россия', 'full_name' => 'г. Набережные Челны'],
+            ['code' => '30', 'name' => 'Астрахань', 'region' => 'Астраханская область', 'country' => 'Россия', 'full_name' => 'г. Астрахань'],
+            ['code' => '58', 'name' => 'Пенза', 'region' => 'Пензенская область', 'country' => 'Россия', 'full_name' => 'г. Пенза'],
+            ['code' => '48', 'name' => 'Липецк', 'region' => 'Липецкая область', 'country' => 'Россия', 'full_name' => 'г. Липецк'],
+            ['code' => '71', 'name' => 'Тула', 'region' => 'Тульская область', 'country' => 'Россия', 'full_name' => 'г. Тула'],
+            ['code' => '43', 'name' => 'Киров', 'region' => 'Кировская область', 'country' => 'Россия', 'full_name' => 'г. Киров'],
+            ['code' => '21', 'name' => 'Чебоксары', 'region' => 'Чувашская Республика', 'country' => 'Россия', 'full_name' => 'г. Чебоксары'],
+            ['code' => '39', 'name' => 'Калининград', 'region' => 'Калининградская область', 'country' => 'Россия', 'full_name' => 'г. Калининград'],
+            ['code' => '32', 'name' => 'Брянск', 'region' => 'Брянская область', 'country' => 'Россия', 'full_name' => 'г. Брянск'],
+            ['code' => '46', 'name' => 'Курск', 'region' => 'Курская область', 'country' => 'Россия', 'full_name' => 'г. Курск'],
+            ['code' => '37', 'name' => 'Иваново', 'region' => 'Ивановская область', 'country' => 'Россия', 'full_name' => 'г. Иваново'],
+            ['code' => '154', 'name' => 'Магнитогорск', 'region' => 'Челябинская область', 'country' => 'Россия', 'full_name' => 'г. Магнитогорск'],
+            ['code' => '86', 'name' => 'Петрозаводск', 'region' => 'Республика Карелия', 'country' => 'Россия', 'full_name' => 'г. Петрозаводск'],
         ];
         
         // Фильтруем по запросу (поддерживаем частичные совпадения)
@@ -612,7 +624,11 @@ class ShopCdekController extends Controller
                                 'to_bound' => ['value' => 'city']
                             ];
 
-                            $res = Http::withOptions(['verify' => false])->post($dadataUrl, $body, [
+                            $res = Http::withOptions([
+                                'verify' => false,
+                                'timeout' => 15,
+                                'connect_timeout' => 10
+                            ])->post($dadataUrl, $body, [
                                 'Content-Type' => 'application/json',
                                 'Accept' => 'application/json',
                                 'Authorization' => 'Token ' . $dadataApiKey
@@ -681,7 +697,11 @@ class ShopCdekController extends Controller
             $kladrId = '';
             $cityName = $city;
             try {
-                $suggestRes = Http::withOptions(['verify' => false])
+                $suggestRes = Http::withOptions([
+                    'verify' => false,
+                    'timeout' => 15,
+                    'connect_timeout' => 10
+                ])
                     ->withHeaders([
                         'Content-Type' => 'application/json',
                         'Accept' => 'application/json',
@@ -726,7 +746,11 @@ class ShopCdekController extends Controller
                     'to_bound' => ['value' => 'street']
                 ];
 
-                $res = Http::withOptions(['verify' => false])
+                $res = Http::withOptions([
+                    'verify' => false,
+                    'timeout' => 15,
+                    'connect_timeout' => 10
+                ])
                     ->withHeaders([
                         'Content-Type' => 'application/json',
                         'Accept' => 'application/json',

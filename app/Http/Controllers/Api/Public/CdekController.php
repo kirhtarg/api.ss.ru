@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Services\CdekService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Log;
 
 class CdekController extends Controller
 {
@@ -72,35 +73,106 @@ class CdekController extends Controller
      */
     public function calculateDelivery(Request $request): JsonResponse
     {
-        $request->validate([
-            'from_city_code' => 'required|string',
-            'to_city_code' => 'required|string',
-            'weight' => 'nullable|numeric|min:0.1',
-            'length' => 'nullable|numeric|min:1',
-            'width' => 'nullable|numeric|min:1',
-            'height' => 'nullable|numeric|min:1'
-        ]);
+        try {
+            // Поддерживаем две структуры данных
+            if ($request->has('from') && $request->has('to') && $request->has('packages')) {
+                // Новая структура: { from: {code, address}, to: {code, address}, packages: [{weight, length, width, height}] }
+                $from = $request->input('from');
+                $to = $request->input('to');
+                $packages = $request->input('packages', []);
+                
+                if (empty($packages)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Не указаны параметры посылки'
+                    ], 400);
+                }
+                
+                $package = $packages[0]; // Берем первую посылку
+                
+                $fromCityCode = (int) $from['code'];
+                $toCityCode = (int) $to['code'];
+                $weight = $package['weight'] / 1000; // Конвертируем граммы в кг
+                $length = $package['length'];
+                $width = $package['width'];
+                $height = $package['height'];
+                
+                Log::info('CDEK Calculate Request (new format):', [
+                    'from' => $from,
+                    'to' => $to,
+                    'packages' => $packages,
+                    'converted' => [
+                        'from_city_code' => $fromCityCode,
+                        'to_city_code' => $toCityCode,
+                        'weight' => $weight,
+                        'length' => $length,
+                        'width' => $width,
+                        'height' => $height
+                    ]
+                ]);
+                
+            } else {
+                // Старая структура: { from_city_code, to_city_code, weight, length, width, height }
+                $request->validate([
+                    'from_city_code' => 'required|integer',
+                    'to_city_code' => 'required|integer',
+                    'weight' => 'nullable|numeric|min:0.1',
+                    'length' => 'nullable|numeric|min:1',
+                    'width' => 'nullable|numeric|min:1',
+                    'height' => 'nullable|numeric|min:1'
+                ]);
 
-        $deliveryOptions = $this->cdekService->calculateDelivery(
-            $request->from_city_code,
-            $request->to_city_code,
-            $request->weight,
-            $request->length,
-            $request->width,
-            $request->height
-        );
+                $fromCityCode = $request->from_city_code;
+                $toCityCode = $request->to_city_code;
+                $weight = $request->weight;
+                $length = $request->length;
+                $width = $request->width;
+                $height = $request->height;
+                
+                Log::info('CDEK Calculate Request (old format):', [
+                    'from_city_code' => $fromCityCode,
+                    'to_city_code' => $toCityCode,
+                    'weight' => $weight,
+                    'length' => $length,
+                    'width' => $width,
+                    'height' => $height
+                ]);
+            }
 
-        if ($deliveryOptions) {
+            $deliveryOptions = $this->cdekService->calculateDelivery(
+                $fromCityCode,
+                $toCityCode,
+                $weight,
+                $length,
+                $width,
+                $height
+            );
+
+            if ($deliveryOptions) {
+                return response()->json([
+                    'success' => true,
+                    'data' => $deliveryOptions
+                ]);
+            }
+
             return response()->json([
-                'success' => true,
-                'data' => $deliveryOptions
-            ]);
+                'success' => false,
+                'message' => 'Не удалось рассчитать стоимость доставки'
+            ], 500);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            Log::error('CDEK Calculate Validation Error:', $e->errors());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации данных',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('CDEK Calculate Error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка расчета доставки: ' . $e->getMessage()
+            ], 500);
         }
-
-        return response()->json([
-            'success' => false,
-            'message' => 'Не удалось рассчитать стоимость доставки'
-        ], 500);
     }
 
     /**
@@ -108,22 +180,55 @@ class CdekController extends Controller
      */
     public function getMinDeliveryCost(Request $request): JsonResponse
     {
-        $request->validate([
-            'from_city_code' => 'required|string',
-            'to_city_code' => 'required|string',
-            'weight' => 'nullable|numeric|min:0.1',
-            'length' => 'nullable|numeric|min:1',
-            'width' => 'nullable|numeric|min:1',
-            'height' => 'nullable|numeric|min:1'
-        ]);
+        // Поддерживаем две структуры данных
+        if ($request->has('from') && $request->has('to') && $request->has('packages')) {
+            // Новая структура: { from: {code, address}, to: {code, address}, packages: [{weight, length, width, height}] }
+            $from = $request->input('from');
+            $to = $request->input('to');
+            $packages = $request->input('packages', []);
+            
+            if (empty($packages)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не указаны параметры посылки'
+                ], 400);
+            }
+            
+            $package = $packages[0]; // Берем первую посылку
+            
+            $fromCityCode = (int) $from['code'];
+            $toCityCode = (int) $to['code'];
+            $weight = $package['weight'] / 1000; // Конвертируем граммы в кг
+            $length = $package['length'];
+            $width = $package['width'];
+            $height = $package['height'];
+            
+        } else {
+            // Старая структура: { from_city_code, to_city_code, weight, length, width, height }
+            $request->validate([
+                'from_city_code' => 'required|integer',
+                'to_city_code' => 'required|integer',
+                'weight' => 'nullable|numeric|min:0.1',
+                'length' => 'nullable|numeric|min:1',
+                'width' => 'nullable|numeric|min:1',
+                'height' => 'nullable|numeric|min:1'
+            ]);
+
+            $fromCityCode = $request->from_city_code;
+            $toCityCode = $request->to_city_code;
+            $weight = $request->weight;
+            $length = $request->length;
+            $width = $request->width;
+            $height = $request->height;
+        }
 
         $minCost = $this->cdekService->getMinDeliveryCost(
-            $request->from_city_code,
-            $request->to_city_code,
-            $request->weight,
-            $request->length,
-            $request->width,
-            $request->height
+            $fromCityCode,
+            $toCityCode,
+            $weight,
+            $length,
+            $width,
+            $height
         );
 
         if ($minCost !== null) {

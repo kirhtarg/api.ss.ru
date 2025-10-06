@@ -2704,3 +2704,22 @@ Route::prefix('cdek')->group(function () {
     Route::post('/calculate', [\App\Http\Controllers\Api\Public\CdekController::class, 'calculateDelivery']);
     Route::post('/min-cost', [\App\Http\Controllers\Api\Public\CdekController::class, 'getMinDeliveryCost']);
 });
+
+// Пользовательские маршруты (требуют авторизации)
+Route::middleware('auth:sanctum')->group(function () {
+    // Маршруты профиля пользователя
+    Route::prefix('user')->group(function () {
+        Route::get('/profile', [\App\Http\Controllers\Api\Public\UserProfileController::class, 'getProfile']);
+        Route::put('/profile', [\App\Http\Controllers\Api\Public\UserProfileController::class, 'updateProfile']);
+        Route::post('/change-password', [\App\Http\Controllers\Api\Public\UserProfileController::class, 'changePassword']);
+        Route::delete('/avatar', [\App\Http\Controllers\Api\Public\UserProfileController::class, 'deleteAvatar']);
+        Route::get('/statistics', [\App\Http\Controllers\Api\Public\UserProfileController::class, 'getStatistics']);
+    });
+    
+    // Маршруты загрузки аватаров
+    Route::prefix('upload')->group(function () {
+        Route::post('/avatar', [\App\Http\Controllers\Api\Public\AvatarUploadController::class, 'uploadAvatar']);
+        Route::delete('/avatar', [\App\Http\Controllers\Api\Public\AvatarUploadController::class, 'deleteAvatar']);
+        Route::get('/file-info', [\App\Http\Controllers\Api\Public\AvatarUploadController::class, 'getFileInfo']);
+    });
+});

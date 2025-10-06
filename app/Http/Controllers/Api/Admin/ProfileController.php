@@ -32,9 +32,15 @@ class ProfileController extends Controller
             $profileData = [
                 'id' => $user->id,
                 'name' => $user->name,
+                'first_name' => $user->first_name,
+                'last_name' => $user->last_name,
+                'full_name' => $this->getFullName($user),
                 'email' => $user->email,
+                'phone' => $user->phone,
+                'birthday' => $user->birthday?->format('Y-m-d'),
+                'avatar_url' => $user->avatar_url,
+                'is_active' => $user->is_active,
                 'role' => $roles[0] ?? 'admin', // Берем первую роль
-                'avatar' => $user->avatar ? Storage::url($user->avatar) : null, // Возвращаем avatar (полный URL)
                 'created_at' => $user->created_at,
                 'updated_at' => $user->updated_at
             ];
@@ -50,5 +56,20 @@ class ProfileController extends Controller
                 'message' => 'Ошибка получения профиля: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Получить полное имя пользователя
+     */
+    private function getFullName($user): string
+    {
+        $firstName = $user->first_name ?? '';
+        $lastName = $user->last_name ?? '';
+        
+        if ($firstName && $lastName) {
+            return trim($firstName . ' ' . $lastName);
+        }
+        
+        return $firstName ?: $user->name ?: 'Пользователь';
     }
 }
