@@ -27,7 +27,10 @@ class ShopImportExportController extends Controller
                 'categories:id,name',
                 'brands:id,name',
                 'tags:id,name',
-                'properties:id,name'
+                'properties' => function($query) {
+                    $query->select('shop_properties.id', 'shop_properties.name')
+                          ->withPivot('shop_property_value_id');
+                }
             ]);
 
             // Применяем фильтры если есть
@@ -229,7 +232,13 @@ class ShopImportExportController extends Controller
                 $good->brands->pluck('name')->join(';'),
                 $good->tags->pluck('name')->join(';'),
                 $good->properties->map(function($property) {
-                    return $property->name . ':' . $property->pivot->value;
+                    $value = '';
+                    if ($property->pivot->shop_property_value_id) {
+                        // Получаем значение через связь PropertyValue
+                        $propertyValue = \App\Models\Shop\PropertyValue::find($property->pivot->shop_property_value_id);
+                        $value = $propertyValue ? $propertyValue->value : '';
+                    }
+                    return $property->name . ':' . $value;
                 })->join(';'),
                 $good->created_at,
                 $good->updated_at

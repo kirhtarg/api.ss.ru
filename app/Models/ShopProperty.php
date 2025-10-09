@@ -45,7 +45,7 @@ class ShopProperty extends Model
     public function goods(): BelongsToMany
     {
         return $this->belongsToMany(ShopGood::class, 'shop_good_properties', 'property_id', 'good_id')
-            ->withPivot('value')
+            ->withPivot('shop_property_value_id')
             ->withTimestamps();
     }
 

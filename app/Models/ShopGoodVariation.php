@@ -47,13 +47,8 @@ class ShopGoodVariation extends Model
         return $this->belongsTo(ShopGood::class, 'good_id');
     }
 
-    /**
-     * Свойства вариации
-     */
-    public function properties(): HasMany
-    {
-        return $this->hasMany(ShopGoodProperty::class, 'variation_id');
-    }
+    // Связи со старыми свойствами удалены; вариационные атрибуты берутся из таблиц
+    // shop_variation_attributes_values -> shop_variation_attribute_values -> shop_variation_attributes
 
     /**
      * Изображения вариации
@@ -149,8 +144,21 @@ class ShopGoodVariation extends Model
      */
     public function getAttributesStringAttribute()
     {
-        return $this->properties->map(function ($property) {
-            return $property->property->name . ': ' . $property->value;
+        // Собираем строку атрибутов вариации из новой схемы
+        $rows = \Illuminate\Support\Facades\DB::table('shop_variation_attributes_values as vav')
+            ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+            ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+            ->where('vav.variation_id', $this->id)
+            ->select('a.name as attribute_name', 'av.value as value_value')
+            ->orderBy('a.name')
+            ->get();
+
+        if ($rows->isEmpty()) {
+            return '';
+        }
+
+        return $rows->map(function ($r) {
+            return ($r->attribute_name ?? 'Attribute') . ': ' . ($r->value_value ?? '');
         })->join(', ');
     }
 }

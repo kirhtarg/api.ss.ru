@@ -24,7 +24,35 @@ class ShopPropertyValuesController extends Controller
 
         return response()->json([
             'success' => true,
-            'values' => $values
+            'data' => $values->pluck('value')->toArray(),
+            'values' => $values->toArray()
+        ]);
+    }
+
+    /**
+     * Проверить существование значения свойства
+     */
+    public function check(Request $request, $propertyId): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'value' => 'required|string|max:255'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $exists = ShopPropertyValue::where('property_id', $propertyId)
+            ->where('value', $request->get('value'))
+            ->exists();
+
+        return response()->json([
+            'success' => true,
+            'exists' => $exists
         ]);
     }
 
@@ -61,7 +89,8 @@ class ShopPropertyValuesController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Значение свойства успешно создано',
-            'data' => $value
+            'data' => $value,
+            'value' => $value->value // Добавляем значение для совместимости с фронтендом
         ], 201);
     }
 

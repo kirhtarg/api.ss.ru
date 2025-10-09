@@ -15,7 +15,7 @@ class ShopGoodProperty extends Model
     protected $fillable = [
         'good_id',
         'property_id',
-        'value'
+        'shop_property_value_id'
     ];
 
     /**
@@ -32,5 +32,21 @@ class ShopGoodProperty extends Model
     public function property(): BelongsTo
     {
         return $this->belongsTo(Property::class, 'property_id');
+    }
+
+    /**
+     * Связь со значением свойства из справочника
+     */
+    public function propertyValue(): BelongsTo
+    {
+        return $this->belongsTo(PropertyValue::class, 'shop_property_value_id');
+    }
+
+    /**
+     * Получить значение свойства
+     */
+    public function getValueAttribute()
+    {
+        return $this->propertyValue ? $this->propertyValue->value : null;
     }
 }

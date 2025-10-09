@@ -40,4 +40,12 @@ class PropertyValue extends Model
     {
         return $this->color ? '#' . ltrim($this->color, '#') : null;
     }
+
+    /**
+     * Scope для сортировки
+     */
+    public function scopeOrdered($query)
+    {
+        return $query->orderBy('sort_order')->orderBy('value');
+    }
 }

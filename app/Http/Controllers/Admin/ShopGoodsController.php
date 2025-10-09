@@ -13,6 +13,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Log;
 
 class ShopGoodsController extends Controller
 {
@@ -29,6 +31,16 @@ class ShopGoodsController extends Controller
             'images:id,good_id,file_path,alt_text,is_main,sort_order',
             'variations:id,good_id,name,price,sale_price,stock_quantity,is_active'
         ])->withCount('variations');
+
+        // Загружаем pivot данные для свойств (поддерживаем разные схемы: value или shop_property_value_id)
+        $hasValueCol = Schema::hasColumn('shop_good_properties', 'value');
+        $query->with(['properties' => function($query) use ($hasValueCol) {
+            if ($hasValueCol) {
+                $query->withPivot('shop_property_value_id', 'value');
+            } else {
+                $query->withPivot('shop_property_value_id');
+            }
+        }]);
 
         // Поиск
         if ($request->filled('search')) {
@@ -130,13 +142,29 @@ class ShopGoodsController extends Controller
             'images:id,good_id,variation_id,file_path,alt_text,is_main,sort_order',
             'videos:id,good_id,variation_id,video_path,external_url,title,sort_order',
             'variations:id,good_id,name,description,price,sale_price,stock_quantity,sku,is_active',
-            'variations.properties:id,good_id,variation_id,property_id,value',
-            'variations.properties.property:id,name',
             'stock:id,good_id,warehouse_id,quantity,reserved_quantity,min_quantity',
             'stock.warehouse:id,name',
             'prices:id,good_id,price_type_id,price,sale_price',
             'prices.priceType:id,name,multiplier'
         ])->findOrFail($id);
+
+        // Загружаем дополнительные данные для свойств товара
+        $hasValueCol = Schema::hasColumn('shop_good_properties', 'value');
+        $good->load(['properties' => function($query) use ($hasValueCol) {
+            if ($hasValueCol) {
+                $query->withPivot('shop_property_value_id', 'value');
+            } else {
+                $query->withPivot('shop_property_value_id');
+            }
+        }]);
+
+        // Загружаем значения свойств отдельно, если используем справочник
+        foreach ($good->properties as $property) {
+            if (isset($property->pivot) && $property->pivot->shop_property_value_id) {
+                $propertyValue = \App\Models\Shop\PropertyValue::find($property->pivot->shop_property_value_id);
+                $property->property_value = $propertyValue;
+            }
+        }
 
         return response()->json([
             'success' => true,
@@ -176,8 +204,9 @@ class ShopGoodsController extends Controller
             'tag_ids' => 'array',
             'tag_ids.*' => 'exists:shop_tags,id',
             'properties' => 'array',
-            'properties.*.property_id' => 'exists:shop_properties,id',
-            'properties.*.value' => 'required|string'
+            'properties.*.property_id' => 'required|exists:shop_properties,id',
+            'properties.*.value' => 'nullable|string|max:255',
+            'properties.*.shop_property_value_id' => 'nullable|exists:shop_property_values,id'
         ]);
 
         if ($validator->fails()) {
@@ -216,9 +245,35 @@ class ShopGoodsController extends Controller
             // Привязка свойств
             if ($request->filled('properties')) {
                 foreach ($request->get('properties') as $property) {
-                    $good->properties()->attach($property['property_id'], [
-                        'value' => $property['value']
-                    ]);
+                    // Проверяем обязательные поля
+                    if (empty($property['property_id'])) {
+                        continue;
+                    }
+                    
+                    $propertyValueId = null;
+                    
+                    // Если есть shop_property_value_id, используем его
+                    if (!empty($property['shop_property_value_id'])) {
+                        $propertyValueId = $property['shop_property_value_id'];
+                    }
+                    // Если есть value, ищем или создаем запись в shop_property_values
+                    elseif (!empty($property['value'])) {
+                        $propertyValue = \App\Models\Shop\PropertyValue::firstOrCreate([
+                            'property_id' => $property['property_id'],
+                            'value' => trim($property['value'])
+                        ], [
+                            'is_active' => true,
+                            'sort_order' => 0
+                        ]);
+                        $propertyValueId = $propertyValue->id;
+                    }
+                    
+                    // Привязываем свойство только если есть propertyValueId
+                    if ($propertyValueId) {
+                        $good->properties()->attach($property['property_id'], [
+                            'shop_property_value_id' => $propertyValueId
+                        ]);
+                    }
                 }
             }
 
@@ -248,6 +303,10 @@ class ShopGoodsController extends Controller
      */
     public function update(Request $request, $id): JsonResponse
     {
+        Log::info('Update request received for good ID: ' . $id);
+        Log::info('Request data:', $request->all());
+        Log::info('Properties in request:', $request->get('properties', []));
+        
         $good = ShopGood::findOrFail($id);
         $oldValues = $good->toArray();
 
@@ -278,8 +337,9 @@ class ShopGoodsController extends Controller
             'tag_ids' => 'array',
             'tag_ids.*' => 'exists:shop_tags,id',
             'properties' => 'array',
-            'properties.*.property_id' => 'exists:shop_properties,id',
-            'properties.*.value' => 'required|string'
+            'properties.*.property_id' => 'required|exists:shop_properties,id',
+            'properties.*.value' => 'nullable|string|max:255',
+            'properties.*.shop_property_value_id' => 'nullable|exists:shop_property_values,id'
         ]);
 
         if ($validator->fails()) {
@@ -315,14 +375,109 @@ class ShopGoodsController extends Controller
                 $good->tags()->sync($request->get('tag_ids', []));
             }
 
-            // Обновление свойств
+            // Обновление свойств (поддержка двух схем: колонка value либо shop_property_value_id)
+            $lastSyncData = [];
             if ($request->has('properties')) {
-                $good->properties()->detach();
-                foreach ($request->get('properties', []) as $property) {
-                    $good->properties()->attach($property['property_id'], [
-                        'value' => $property['value']
-                    ]);
+                $incoming = $request->get('properties', []);
+                Log::info('Properties data received (count): ' . count($incoming));
+
+                $hasValueCol = Schema::hasColumn('shop_good_properties', 'value');
+                $hasShopValueIdCol = Schema::hasColumn('shop_good_properties', 'shop_property_value_id');
+                $hasVariationIdCol = Schema::hasColumn('shop_good_properties', 'variation_id');
+                Log::info('shop_good_properties schema:', [
+                    'has_value' => $hasValueCol,
+                    'has_shop_property_value_id' => $hasShopValueIdCol,
+                    'has_variation_id' => $hasVariationIdCol,
+                ]);
+
+                // Очистим существующие свойства товара (только базовые, если есть колонка variation_id)
+                $deleteQuery = DB::table('shop_good_properties')->where('good_id', $good->id);
+                if ($hasVariationIdCol) {
+                    $deleteQuery->whereNull('variation_id');
                 }
+                $deleted = $deleteQuery->delete();
+                Log::info('Deleted base properties for good', ['good_id' => $good->id, 'deleted' => $deleted]);
+
+                foreach ($incoming as $property) {
+                    if (empty($property['property_id'])) {
+                        Log::warning('Skipping property without property_id:', $property);
+                        continue;
+                    }
+
+                    $propertyId = (int) $property['property_id'];
+
+                    // Режим через справочник значений
+                    if ($hasShopValueIdCol) {
+                        $propertyValueId = null;
+                        if (!empty($property['shop_property_value_id'])) {
+                            $propertyValueId = (int) $property['shop_property_value_id'];
+                        } elseif (!empty($property['value'])) {
+                            $pv = \App\Models\Shop\PropertyValue::firstOrCreate([
+                                'property_id' => $propertyId,
+                                'value' => trim($property['value'])
+                            ], [
+                                'is_active' => true,
+                                'sort_order' => 0
+                            ]);
+                            $propertyValueId = (int) $pv->id;
+                        }
+
+                        if ($propertyValueId) {
+                            DB::table('shop_good_properties')->updateOrInsert(
+                                ['good_id' => $good->id, 'property_id' => $propertyId],
+                                [
+                                    'shop_property_value_id' => $propertyValueId,
+                                    'updated_at' => now(),
+                                    'created_at' => now(),
+                                ]
+                            );
+                            Log::info('Upsert property (ref mode)', [
+                                'good_id' => $good->id,
+                                'property_id' => $propertyId,
+                                'shop_property_value_id' => $propertyValueId
+                            ]);
+                            $lastSyncData[$propertyId] = ['shop_property_value_id' => $propertyValueId];
+                        } else {
+                            Log::warning('Skipping property without resolvable value/id (ref mode)', $property);
+                        }
+                    }
+                    // Режим хранения прямого текста значения
+                    elseif ($hasValueCol) {
+                        $textValue = null;
+                        if (!empty($property['value'])) {
+                            $textValue = trim($property['value']);
+                        } elseif (!empty($property['shop_property_value_id'])) {
+                            $found = \App\Models\Shop\PropertyValue::find((int) $property['shop_property_value_id']);
+                            $textValue = $found ? $found->value : null;
+                        }
+
+                        if ($textValue !== null && $textValue !== '') {
+                            DB::table('shop_good_properties')->updateOrInsert(
+                                ['good_id' => $good->id, 'property_id' => $propertyId],
+                                [
+                                    'value' => $textValue,
+                                    'updated_at' => now(),
+                                    'created_at' => now(),
+                                ]
+                            );
+                            Log::info('Upsert property (text mode)', [
+                                'good_id' => $good->id,
+                                'property_id' => $propertyId,
+                                'value' => $textValue
+                            ]);
+                            $lastSyncData[$propertyId] = ['value' => $textValue];
+                        } else {
+                            Log::warning('Skipping property without resolvable text value (text mode)', $property);
+                        }
+                    } else {
+                        Log::error('shop_good_properties has neither value nor shop_property_value_id column.');
+                    }
+                }
+                Log::info('Final properties sync summary', [
+                    'good_id' => $good->id,
+                    'count' => count($lastSyncData),
+                    'data' => $lastSyncData
+                ]);
             }
 
             // Аудит
@@ -330,10 +485,19 @@ class ShopGoodsController extends Controller
 
             DB::commit();
 
+            // Подтверждаем результат: возвращаем свойства с pivot
+            $good->load(['properties' => function($q){
+                $q->withPivot('shop_property_value_id');
+            }]);
+
             return response()->json([
                 'success' => true,
                 'message' => 'Товар успешно обновлен',
-                'data' => $good->load(['categories', 'brands', 'tags', 'properties'])
+                'data' => $good->load(['categories', 'brands', 'tags', 'properties']),
+                'debug' => [
+                    'attached_count' => isset($lastSyncData) ? count($lastSyncData) : 0,
+                    'attached' => $lastSyncData,
+                ]
             ]);
 
         } catch (\Exception $e) {
@@ -342,6 +506,120 @@ class ShopGoodsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка обновления товара: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Обновить характеристики товара отдельным эндпоинтом
+     */
+    public function updateProperties(Request $request, $id): JsonResponse
+    {
+        $good = ShopGood::findOrFail($id);
+
+        $validator = Validator::make($request->all(), [
+            'properties' => 'required|array',
+            'properties.*.property_id' => 'required|exists:shop_properties,id',
+            'properties.*.value' => 'nullable|string|max:255',
+            'properties.*.shop_property_value_id' => 'nullable|exists:shop_property_values,id'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $incoming = $request->get('properties', []);
+            Log::info('updateProperties: received', ['good_id' => $good->id, 'count' => count($incoming)]);
+
+            $hasValueCol = Schema::hasColumn('shop_good_properties', 'value');
+            $hasShopValueIdCol = Schema::hasColumn('shop_good_properties', 'shop_property_value_id');
+            $hasVariationIdCol = Schema::hasColumn('shop_good_properties', 'variation_id');
+
+            // Очистим только базовые свойства
+            $deleteQuery = DB::table('shop_good_properties')->where('good_id', $good->id);
+            if ($hasVariationIdCol) {
+                $deleteQuery->whereNull('variation_id');
+            }
+            $deleted = $deleteQuery->delete();
+            Log::info('updateProperties: deleted previous', ['good_id' => $good->id, 'deleted' => $deleted]);
+
+            $lastSyncData = [];
+            foreach ($incoming as $property) {
+                if (empty($property['property_id'])) {
+                    continue;
+                }
+                $propertyId = (int) $property['property_id'];
+
+                if ($hasShopValueIdCol) {
+                    $propertyValueId = null;
+                    if (!empty($property['shop_property_value_id'])) {
+                        $propertyValueId = (int) $property['shop_property_value_id'];
+                    } elseif (!empty($property['value'])) {
+                        $pv = \App\Models\Shop\PropertyValue::firstOrCreate([
+                            'property_id' => $propertyId,
+                            'value' => trim($property['value'])
+                        ], [
+                            'is_active' => true,
+                            'sort_order' => 0
+                        ]);
+                        $propertyValueId = (int) $pv->id;
+                    }
+                    if ($propertyValueId) {
+                        DB::table('shop_good_properties')->updateOrInsert(
+                            ['good_id' => $good->id, 'property_id' => $propertyId],
+                            [
+                                'shop_property_value_id' => $propertyValueId,
+                                'updated_at' => now(),
+                                'created_at' => now(),
+                            ]
+                        );
+                        $lastSyncData[$propertyId] = ['shop_property_value_id' => $propertyValueId];
+                    }
+                } elseif ($hasValueCol) {
+                    $textValue = null;
+                    if (!empty($property['value'])) {
+                        $textValue = trim($property['value']);
+                    } elseif (!empty($property['shop_property_value_id'])) {
+                        $found = \App\Models\Shop\PropertyValue::find((int) $property['shop_property_value_id']);
+                        $textValue = $found ? $found->value : null;
+                    }
+                    if ($textValue !== null && $textValue !== '') {
+                        DB::table('shop_good_properties')->updateOrInsert(
+                            ['good_id' => $good->id, 'property_id' => $propertyId],
+                            [
+                                'value' => $textValue,
+                                'updated_at' => now(),
+                                'created_at' => now(),
+                            ]
+                        );
+                        $lastSyncData[$propertyId] = ['value' => $textValue];
+                    }
+                }
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Свойства обновлены',
+                'data' => [
+                    'attached' => $lastSyncData,
+                    'count' => count($lastSyncData)
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка обновления свойств: ' . $e->getMessage()
             ], 500);
         }
     }

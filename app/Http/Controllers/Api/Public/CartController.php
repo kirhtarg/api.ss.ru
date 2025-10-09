@@ -114,7 +114,6 @@ class CartController extends Controller
                 $variation = ShopGoodVariation::where('id', $variationId)
                     ->where('good_id', $goodId)
                     ->where('is_active', true)
-                    ->with('properties.property')
                     ->first();
 
                 if (!$variation) {
@@ -579,8 +578,8 @@ class CartController extends Controller
     {
         $query = ShopCartItem::active()->with([
             'good:id,slug',
-            'variation:id,name',
-            'variation.properties.property'
+            // Загружаем только саму вариацию; атрибуты подтянем отдельно при форматировании, если нужно
+            'variation:id,name,sku'
         ]);
         
         if ($user) {
@@ -621,51 +620,24 @@ class CartController extends Controller
         
         try {
         
-        // Если есть properties в структуре данных (из shop_good_properties)
-        if ($variation->properties && $variation->properties->count() > 0) {
-            return $variation->properties->map(function ($prop) {
-                $propName = '';
-                if ($prop->relationLoaded('property') && $prop->property) {
-                    $propName = $prop->property->name;
-                } else {
-                    $propName = $prop->property_name ?? '';
-                }
-                $propValue = $prop->property_value ?? $prop->value;
-                
-                // Проверяем, является ли это цветовым кодом
-                $isColorCode = function ($value) {
-                    $trimmedValue = trim($value);
-                    $rgbPattern = '/^rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*(,\s*[\d.]+)?\s*\)$/i';
-                    $hexPattern = '/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/i';
-                    return preg_match($rgbPattern, $trimmedValue) || preg_match($hexPattern, $trimmedValue);
-                };
-                
-                // Проверяем, является ли свойство цветовым
-                $isColorProperty = function ($name) {
-                    $colorKeywords = ['цвет', 'color', 'краска', 'окраска', 'оттенок'];
-                    foreach ($colorKeywords as $keyword) {
-                        if (stripos($name, $keyword) !== false) {
-                            return true;
-                        }
-                    }
-                    return false;
-                };
-                
-                if ($isColorProperty($propName) && $isColorCode($propValue)) {
-                    return $propName . ': ' . $propValue;
-                } else {
-                    return $propName . ': ' . $propValue;
-                }
+        // Новая схема: формируем строку из атрибутов вариации
+        $rows = \Illuminate\Support\Facades\DB::table('shop_variation_attributes_values as vav')
+            ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+            ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+            ->where('vav.variation_id', $variation->id)
+            ->select('a.name as attribute_name', 'av.value as value_value')
+            ->orderBy('a.name')
+            ->get();
+
+        if ($rows->count() > 0) {
+            return $rows->map(function ($row) {
+                $propName = $row->attribute_name ?? '';
+                $propValue = $row->value_value ?? '';
+                return $propName . ': ' . $propValue;
             })->join(', ');
         }
-        
-        // Если properties нет, но есть name с параметрами (fallback)
-        if ($variation->name && is_string($variation->name)) {
-            // Парсим строку вида "размер: XL, цвет: красный"
-            $nameParts = array_map('trim', explode(',', $variation->name));
-            return implode(', ', $nameParts);
-        }
-        
+
+        // Если нет атрибутов, возвращаем название вариации или пустую строку
         return $variation->name ?? '';
         
         } catch (\Exception $e) {

@@ -8,6 +8,7 @@ use App\Models\ShopGood;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class ShopPropertiesController extends Controller
 {
@@ -35,28 +36,37 @@ class ShopPropertiesController extends Controller
                 ->whereHas('goodProperties', function ($query) use ($goodsIds) {
                     $query->whereIn('good_id', $goodsIds);
                 })
-                ->with(['goodProperties' => function ($query) use ($goodsIds) {
-                    $query->whereIn('good_id', $goodsIds);
-                }])
                 ->orderBy('sort_order')
                 ->orderBy('name')
                 ->get()
-                ->map(function ($property) {
-                    // Получаем уникальные значения для этого свойства
-                    $values = $property->goodProperties
-                        ->pluck('value')
-                        ->unique()
-                        ->values()
+                ->map(function ($property) use ($goodsIds) {
+                    // Получаем уникальные значения для этого свойства из связанной таблицы shop_property_values
+                    $values = DB::table('shop_good_properties')
+                        ->join('shop_property_values', 'shop_property_values.id', '=', 'shop_good_properties.shop_property_value_id')
+                        ->where('shop_good_properties.property_id', $property->id)
+                        ->whereIn('shop_good_properties.good_id', $goodsIds)
+                        ->whereNotNull('shop_good_properties.shop_property_value_id')
+                        ->whereNotNull('shop_property_values.value')
+                        ->where('shop_property_values.value', '<>', '')
+                        ->distinct()
+                        ->orderBy('shop_property_values.value')
+                        ->pluck('shop_property_values.value')
                         ->toArray();
-                    
+
                     return [
                         'id' => $property->id,
                         'name' => $property->name,
                         'slug' => $property->slug,
                         'property_type' => $property->property_type,
-                        'values' => $values
+                        'values' => $values,
+                        'count' => count($values) // Добавляем счетчик значений
                     ];
-                });
+                })
+                ->filter(function ($property) {
+                    // Фильтруем только те свойства, у которых есть значения (count > 0)
+                    return $property['count'] > 0;
+                })
+                ->values(); // Сбрасываем ключи массива
             
             return response()->json([
                 'success' => true,
@@ -90,14 +100,17 @@ class ShopPropertiesController extends Controller
                 ]);
             }
             
-            // Получаем уникальные значения для этого свойства
+            // Получаем уникальные значения для этого свойства из связанной таблицы shop_property_values
             $values = DB::table('shop_good_properties')
-                ->where('property_id', $property->id)
-                ->whereIn('good_id', $goodsIds)
-                ->select('value')
+                ->join('shop_property_values', 'shop_property_values.id', '=', 'shop_good_properties.shop_property_value_id')
+                ->where('shop_good_properties.property_id', $property->id)
+                ->whereIn('shop_good_properties.good_id', $goodsIds)
+                ->whereNotNull('shop_good_properties.shop_property_value_id')
+                ->whereNotNull('shop_property_values.value')
+                ->where('shop_property_values.value', '<>', '')
                 ->distinct()
-                ->orderBy('value')
-                ->pluck('value')
+                ->orderBy('shop_property_values.value')
+                ->pluck('shop_property_values.value')
                 ->toArray();
             
             return response()->json([
@@ -133,7 +146,7 @@ class ShopPropertiesController extends Controller
         // Фильтр по одной категории (для совместимости)
         if ($request->filled('category_id')) {
             $categoryId = $request->get('category_id');
-            \Log::info('Filtering properties by category_id: ' . $categoryId);
+            Log::info('Filtering properties by category_id: ' . $categoryId);
             $query->whereHas('categories', function ($q) use ($categoryId) {
                 $q->where('shop_categories.id', $categoryId);
             });
@@ -152,7 +165,7 @@ class ShopPropertiesController extends Controller
         // Фильтр по одному бренду (для совместимости)
         if ($request->filled('brand_id')) {
             $brandId = $request->get('brand_id');
-            \Log::info('Filtering properties by brand_id: ' . $brandId);
+            Log::info('Filtering properties by brand_id: ' . $brandId);
             $query->whereHas('brands', function ($q) use ($brandId) {
                 $q->where('shop_brands.id', $brandId);
             });

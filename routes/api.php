@@ -3,6 +3,7 @@
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Log;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Admin\ShopGoodImageController;
 
@@ -340,6 +341,9 @@ Route::get('/test/oauth', function () {
     // Информация о товарах (публичная)
     Route::post('/public/shop/goods/details', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getGoodsDetails']);
     
+    // Значения характеристик товаров (публичные)
+    Route::get('/public/shop/property-values', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getPropertyValues']);
+    
     // Создание заказов (публичное)
     Route::options('/public/shop/orders', function () {
         return response()->json([], 200);
@@ -602,7 +606,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 }
             }
             
-            \Log::info('Loading Google Sheets', [
+            Log::info('Loading Google Sheets', [
                 'original_id' => $request->input('spreadsheetId'),
                 'extracted_id' => $spreadsheetId
             ]);
@@ -626,7 +630,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     ];
                     
                     foreach ($csvUrls as $csvUrl) {
-                        \Log::info("Trying CSV export gid={$gid}", ['url' => $csvUrl]);
+                        Log::info("Trying CSV export gid={$gid}", ['url' => $csvUrl]);
                         
                         $response = \Illuminate\Support\Facades\Http::timeout(30)
                             ->withHeaders([
@@ -639,7 +643,7 @@ Route::middleware('auth:sanctum')->group(function () {
                             ])
                             ->get($csvUrl);
                         
-                        \Log::info("CSV response for gid={$gid}", [
+                        Log::info("CSV response for gid={$gid}", [
                             'url' => $csvUrl,
                             'status' => $response->status(),
                             'successful' => $response->successful(),
@@ -651,7 +655,7 @@ Route::middleware('auth:sanctum')->group(function () {
                             $csvText = $response->body();
                             $lines = array_filter(explode("\n", $csvText), 'trim');
 
-                            \Log::info("CSV data for gid={$gid}", [
+                            Log::info("CSV data for gid={$gid}", [
                                 'lines_count' => count($lines),
                                 'first_line' => $lines[0] ?? 'empty',
                                 'sample_data' => array_slice($lines, 0, 3)
@@ -661,7 +665,7 @@ Route::middleware('auth:sanctum')->group(function () {
                                 $headers = str_getcsv($lines[0]);
                                 $data = array_map('str_getcsv', array_slice($lines, 1));
 
-                                \Log::info("Parsed data for gid={$gid}", [
+                                Log::info("Parsed data for gid={$gid}", [
                                     'headers_count' => count($headers),
                                     'data_rows' => count($data),
                                     'headers' => $headers,
@@ -676,16 +680,16 @@ Route::middleware('auth:sanctum')->group(function () {
                                         'headers' => $headers,
                                         'data' => $data,
                                     ];
-                                    \Log::info("Sheet gid={$gid} added successfully");
+                                    Log::info("Sheet gid={$gid} added successfully");
                                     break 2; // Выходим из обоих циклов, если нашли данные
                                 } else {
-                                    \Log::info("Sheet gid={$gid} is empty or invalid");
+                                    Log::info("Sheet gid={$gid} is empty or invalid");
                                 }
                             } else {
-                                \Log::info("Sheet gid={$gid} has no lines");
+                                Log::info("Sheet gid={$gid} has no lines");
                             }
                         } else {
-                            \Log::warning("Sheet gid={$gid} failed to load", [
+                            Log::warning("Sheet gid={$gid} failed to load", [
                                 'url' => $csvUrl,
                                 'status' => $response->status(),
                                 'body' => substr($response->body(), 0, 500) // Первые 500 символов
@@ -693,23 +697,23 @@ Route::middleware('auth:sanctum')->group(function () {
                         }
                     }
                 } catch (\Exception $e) {
-                    \Log::debug("Google Sheets gid {$gid} error: " . $e->getMessage());
+                    Log::debug("Google Sheets gid {$gid} error: " . $e->getMessage());
                     continue;
                 }
             }
             
             // Подход 2: Если CSV не работает, пробуем HTML export
             if (empty($sheets)) {
-                \Log::info("CSV export failed, trying HTML export");
+                Log::info("CSV export failed, trying HTML export");
                 
                 try {
                     $htmlUrl = "https://docs.google.com/spreadsheets/d/{$spreadsheetId}/export?format=html&gid=0";
-                    \Log::info("Trying HTML export", ['url' => $htmlUrl]);
+                    Log::info("Trying HTML export", ['url' => $htmlUrl]);
                     
                     $response = \Illuminate\Support\Facades\Http::timeout(30)->get($htmlUrl);
                     
                     if ($response->successful()) {
-                        \Log::info("HTML export successful", [
+                        Log::info("HTML export successful", [
                             'status' => $response->status(),
                             'body_length' => strlen($response->body())
                         ]);
@@ -718,7 +722,7 @@ Route::middleware('auth:sanctum')->group(function () {
                         $html = $response->body();
                         if (preg_match('/<table[^>]*>(.*?)<\/table>/s', $html, $matches)) {
                             $tableHtml = $matches[1];
-                            \Log::info("Found HTML table", ['table_length' => strlen($tableHtml)]);
+                            Log::info("Found HTML table", ['table_length' => strlen($tableHtml)]);
                             
                             // Простой парсинг HTML таблицы
                             if (preg_match_all('/<tr[^>]*>(.*?)<\/tr>/s', $tableHtml, $rows)) {
@@ -743,7 +747,7 @@ Route::middleware('auth:sanctum')->group(function () {
                                         'headers' => $headers,
                                         'data' => $rows,
                                     ];
-                                    \Log::info("HTML sheet added successfully", [
+                                    Log::info("HTML sheet added successfully", [
                                         'headers_count' => count($headers),
                                         'rows_count' => count($rows)
                                     ]);
@@ -752,12 +756,12 @@ Route::middleware('auth:sanctum')->group(function () {
                         }
                     }
                 } catch (\Exception $e) {
-                    \Log::error("HTML export failed: " . $e->getMessage());
+                    Log::error("HTML export failed: " . $e->getMessage());
                 }
             }
 
             if (empty($sheets)) {
-                \Log::warning('No sheets found in Google Sheets', [
+                Log::warning('No sheets found in Google Sheets', [
                     'spreadsheetId' => $spreadsheetId,
                     'tried_gids' => $gidsToTry,
                     'total_attempts' => count($gidsToTry)
@@ -776,7 +780,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 ], 404);
             }
 
-            \Log::info('Google Sheets loaded successfully', [
+            Log::info('Google Sheets loaded successfully', [
                 'spreadsheetId' => $spreadsheetId,
                 'sheetsCount' => count($sheets)
             ]);
@@ -789,7 +793,7 @@ Route::middleware('auth:sanctum')->group(function () {
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('Ошибка загрузки Google Sheets: ' . $e->getMessage());
+            Log::error('Ошибка загрузки Google Sheets: ' . $e->getMessage());
             
             return response()->json([
                 'success' => false,
@@ -978,6 +982,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'show']);
                 Route::post('/', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'store']);
                 Route::put('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'update']);
+                Route::put('/{id}/properties', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'updateProperties']);
                 Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'destroy']);
                 Route::post('/bulk-update', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'bulkUpdate']);
                 Route::post('/check-duplicates', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'checkDuplicates']);
@@ -1009,7 +1014,13 @@ Route::middleware('auth:sanctum')->group(function () {
                 // Вариации товаров
                 Route::prefix('{goodId}/variations')->group(function () {
                     Route::get('/', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'index']);
-                    Route::get('/attributes', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'attributes']);
+                    // Новая схема атрибутов вариаций
+                    Route::get('/attributes', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'listAttributes']);
+                    Route::get('/attributes/{attributeId}/values', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'getAttributeValues']);
+                    Route::post('/attributes', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'createAttribute']);
+                    Route::post('/attributes/{attributeId}/values', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'createAttributeValue']);
+                    Route::put('/attributes/{attributeId}', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'updateAttribute']);
+                    Route::delete('/attributes/{attributeId}', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'deleteAttribute']);
                     Route::get('/{variationId}', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'show']);
                     Route::post('/', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'store']);
                     Route::post('/bulk', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'storeBulk']);
@@ -1067,7 +1078,6 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::prefix('properties')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'index']);
                 Route::post('/', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'store']);
-                Route::get('/{property}/values', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'getValues']);
                 Route::put('/{property}', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'update']);
                 Route::delete('/{property}', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'destroy']);
                 
@@ -1075,6 +1085,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::prefix('{propertyId}/values')->group(function () {
                     Route::get('/', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'index']);
                     Route::post('/', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'store']);
+                    Route::post('/check', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'check']);
                     Route::put('/{valueId}', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'update']);
                     Route::delete('/{valueId}', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'destroy']);
                 });
@@ -1100,14 +1111,6 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopTagsController::class, 'destroy']);
             });
             
-            // Свойства товаров
-            Route::prefix('properties')->group(function () {
-                Route::get('/', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'index']);
-                Route::post('/', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'store']);
-                Route::get('/{property}/values', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'getValues']);
-                Route::put('/{property}', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'update']);
-                Route::delete('/{property}', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'destroy']);
-            });
             
             // Заказы
             Route::prefix('orders')->group(function () {

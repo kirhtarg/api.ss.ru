@@ -51,9 +51,7 @@ class ShopGoodsController extends Controller
             
             $query = ShopGood::with([
                 'variations' => function($query) {
-                    $query->where('is_active', true)->with(['properties' => function($q) {
-                        $q->with('property');
-                    }]);
+                    $query->where('is_active', true);
                 },
                 'images' => function($query) {
                     $query->whereNull('variation_id')->orderBy('sort_order');
@@ -62,7 +60,15 @@ class ShopGoodsController extends Controller
                     $query->whereNull('variation_id')->orderBy('sort_order');
                 },
                 'properties' => function($query) {
-                    $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug', 'shop_good_properties.value');
+                    // Поддержка обеих схем pivot: shop_property_value_id и/или value
+                    $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug')
+                        ->withPivot((function () {
+                            $fields = ['shop_property_value_id'];
+                            if (\Illuminate\Support\Facades\Schema::hasColumn('shop_good_properties', 'value')) {
+                                $fields[] = 'value';
+                            }
+                            return $fields;
+                        })());
                 },
                 'categories' => function($query) {
                     $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug');
@@ -155,7 +161,9 @@ class ShopGoodsController extends Controller
                         if (is_array($values) && !empty($values)) {
                             $query->whereHas('properties', function($q) use ($propertyId, $values) {
                                 $q->where('shop_properties.id', $propertyId)
-                                  ->whereIn('shop_good_properties.value', $values);
+                                  ->whereHas('values', function($pv) use ($values) {
+                                      $pv->whereIn('value', $values);
+                                  });
                             });
                         }
                     }
@@ -198,7 +206,7 @@ class ShopGoodsController extends Controller
                 }
             }
             
-            // Добавляем image_url и is_favorite для обратной совместимости
+            // Добавляем image_url, is_favorite и обрабатываем характеристики для обратной совместимости
             $goods->getCollection()->transform(function ($good) use ($user) {
                 if ($good->images && $good->images->count() > 0) {
                     // Ищем главное изображение
@@ -216,6 +224,7 @@ class ShopGoodsController extends Controller
                         $good->image_url = $imagePath;
                     }
                 }
+                
                 
                 // Проверяем, находится ли товар в избранном у текущего пользователя
                 $isFavorite = false;
@@ -250,6 +259,51 @@ class ShopGoodsController extends Controller
     }
 
     /**
+     * Получить значения характеристик по их ID
+     */
+    public function getPropertyValues(Request $request): JsonResponse
+    {
+        try {
+            $ids = $request->input('ids', '');
+            
+            if (empty($ids)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не указаны ID значений характеристик'
+                ], 400);
+            }
+            
+            // Преобразуем строку в массив
+            $idsArray = is_string($ids) ? explode(',', $ids) : $ids;
+            $idsArray = array_filter(array_map('intval', $idsArray));
+            
+            if (empty($idsArray)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Некорректные ID значений характеристик'
+                ], 400);
+            }
+            
+            // Получаем значения характеристик
+            $propertyValues = \App\Models\Shop\PropertyValue::whereIn('id', $idsArray)
+                ->where('is_active', true)
+                ->get(['id', 'value'])
+                ->toArray();
+            
+            return response()->json([
+                'success' => true,
+                'data' => $propertyValues
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения значений характеристик'
+            ], 500);
+        }
+    }
+
+    /**
      * Получить детальную информацию о товарах по их ID
      */
     public function getGoodsDetails(Request $request): JsonResponse
@@ -268,9 +322,7 @@ class ShopGoodsController extends Controller
             // Загружаем товары с вариациями, изображениями, видео и свойствами
             $goods = ShopGood::with([
                 'variations' => function($query) {
-                    $query->where('is_active', true)->with(['properties' => function($q) {
-                        $q->with('property');
-                    }]);
+                    $query->where('is_active', true);
                 },
                 'images' => function($query) {
                     $query->whereNull('variation_id')->orderBy('sort_order');
@@ -279,7 +331,14 @@ class ShopGoodsController extends Controller
                     $query->whereNull('variation_id')->orderBy('sort_order');
                 },
                 'properties' => function($query) {
-                    $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug', 'shop_good_properties.value');
+                    $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug')
+                        ->withPivot((function () {
+                            $fields = ['shop_property_value_id'];
+                            if (\Illuminate\Support\Facades\Schema::hasColumn('shop_good_properties', 'value')) {
+                                $fields[] = 'value';
+                            }
+                            return $fields;
+                        })());
                 },
                 'categories' => function($query) {
                     $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug');
@@ -349,19 +408,28 @@ class ShopGoodsController extends Controller
                     'is_favorite' => $isFavorite
                 ];
 
-                // Добавляем вариации
+                // Добавляем вариации с атрибутами
                 foreach ($good->variations as $variation) {
-                    $variationProperties = [];
-                    if ($variation->properties) {
-                        foreach ($variation->properties as $property) {
-                            
-                            $variationProperties[] = [
-                                'id' => $property->property_id,
-                                'name' => $property->property->name ?? 'Unknown',
-                                'slug' => $property->property->slug ?? '',
-                                'value' => $property->value
-                            ];
-                        }
+                    // Загружаем атрибуты вариации из новой схемы
+                    $variationAttributes = [];
+                    $variationIds = [$variation->id];
+                    
+                    $attributeRows = \Illuminate\Support\Facades\DB::table('shop_variation_attributes_values as vav')
+                        ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                        ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                        ->whereIn('vav.variation_id', $variationIds)
+                        ->select(
+                            'a.id as attribute_id', 'a.name as attribute_name',
+                            'av.id as value_id', 'av.value as value_value'
+                        )
+                        ->get();
+                    
+                    foreach ($attributeRows as $row) {
+                        $variationAttributes[] = [
+                            'id' => $row->attribute_id,
+                            'name' => $row->attribute_name,
+                            'value' => $row->value_value
+                        ];
                     }
                     
                     $goodData['variations'][] = [
@@ -372,7 +440,7 @@ class ShopGoodsController extends Controller
                         'sale_price' => $variation->sale_price,
                         'old_price' => $variation->old_price,
                         'final_price' => $variation->final_price,
-                        'properties' => $variationProperties,
+                        'attributes' => $variationAttributes,
                         'is_active' => $variation->is_active
                     ];
                 }
@@ -438,7 +506,7 @@ class ShopGoodsController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('Ошибка получения главных блоков: ' . $e->getMessage());
+            
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка получения главных блоков'
@@ -460,9 +528,6 @@ class ShopGoodsController extends Controller
             $good = ShopGood::with([
                 'variations' => function($query) {
                     $query->where('is_active', true)->with([
-                        'properties' => function($q) {
-                            $q->with('property');
-                        },
                         'images' => function($q) {
                             $q->orderBy('sort_order');
                         },
@@ -478,7 +543,14 @@ class ShopGoodsController extends Controller
                     $query->orderBy('sort_order');
                 },
                 'properties' => function($query) {
-                    $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug', 'shop_good_properties.value');
+                    $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug')
+                        ->withPivot((function () {
+                            $fields = ['shop_property_value_id'];
+                            if (\Illuminate\Support\Facades\Schema::hasColumn('shop_good_properties', 'value')) {
+                                $fields[] = 'value';
+                            }
+                            return $fields;
+                        })());
                 },
                 'categories' => function($query) {
                     $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug');
@@ -548,9 +620,7 @@ class ShopGoodsController extends Controller
         try {
             $good = ShopGood::with([
                 'variations' => function($query) {
-                    $query->where('is_active', true)->with(['properties' => function($q) {
-                        $q->with('property');
-                    }]);
+                    $query->where('is_active', true);
                 },
                 'images' => function($query) {
                     $query->whereNull('variation_id')->orderBy('sort_order');
@@ -559,7 +629,14 @@ class ShopGoodsController extends Controller
                     $query->whereNull('variation_id')->orderBy('sort_order');
                 },
                 'properties' => function($query) {
-                    $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug', 'shop_good_properties.value');
+                    $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug')
+                        ->withPivot((function () {
+                            $fields = ['shop_property_value_id'];
+                            if (\Illuminate\Support\Facades\Schema::hasColumn('shop_good_properties', 'value')) {
+                                $fields[] = 'value';
+                            }
+                            return $fields;
+                        })());
                 },
                 'categories' => function($query) {
                     $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug');
@@ -600,9 +677,42 @@ class ShopGoodsController extends Controller
                 }
             }
 
-            // Добавляем поле is_favorite к товару
+            // Добавляем поле is_favorite к товару и нормализуем свойства
             $goodData = $good->toArray();
             $goodData['is_favorite'] = $isFavorite;
+            
+            // Нормализуем свойства до {id, name, value}
+            if (isset($goodData['properties'])) {
+                $goodData['properties'] = collect($goodData['properties'])->toArray();
+            }
+
+            // Добавляем атрибуты к вариациям
+            if (isset($goodData['variations'])) {
+                foreach ($goodData['variations'] as &$variation) {
+                    $variationAttributes = [];
+                    $variationIds = [$variation['id']];
+                    
+                    $attributeRows = \Illuminate\Support\Facades\DB::table('shop_variation_attributes_values as vav')
+                        ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                        ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                        ->whereIn('vav.variation_id', $variationIds)
+                        ->select(
+                            'a.id as attribute_id', 'a.name as attribute_name',
+                            'av.id as value_id', 'av.value as value_value'
+                        )
+                        ->get();
+                    
+                    foreach ($attributeRows as $row) {
+                        $variationAttributes[] = [
+                            'id' => $row->attribute_id,
+                            'name' => $row->attribute_name,
+                            'value' => $row->value_value
+                        ];
+                    }
+                    
+                    $variation['attributes'] = $variationAttributes;
+                }
+            }
 
             return response()->json([
                 'success' => true,
@@ -671,9 +781,7 @@ class ShopGoodsController extends Controller
 
             $goods = ShopGood::with([
                 'variations' => function($query) {
-                    $query->where('is_active', true)->with(['properties' => function($q) {
-                        $q->with('property');
-                    }]);
+                    $query->where('is_active', true);
                 },
                 'images' => function($query) {
                     $query->whereNull('variation_id')->orderBy('sort_order');
@@ -682,7 +790,7 @@ class ShopGoodsController extends Controller
                     $query->whereNull('variation_id')->orderBy('sort_order');
                 },
                 'properties' => function($query) {
-                    $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug', 'shop_good_properties.value');
+                    $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug', 'shop_good_properties.shop_property_value_id');
                 },
                 'categories' => function($query) {
                     $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug');

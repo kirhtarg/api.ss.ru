@@ -79,4 +79,12 @@ class Property extends Model
     {
         return $this->hasMany(ShopGoodProperty::class, 'property_id');
     }
+
+    /**
+     * Получить PropertyValue по ID из pivot
+     */
+    public function getPropertyValueById($id)
+    {
+        return $this->values()->find($id);
+    }
 }

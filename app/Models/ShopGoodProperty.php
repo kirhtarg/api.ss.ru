@@ -16,17 +16,19 @@ class ShopGoodProperty extends Model
         'good_id',
         'variation_id',
         'property_id',
-        'value'
+        'shop_property_value_id'
     ];
 
     protected $casts = [
         'good_id' => 'integer',
         'variation_id' => 'integer',
-        'property_id' => 'integer'
+        'property_id' => 'integer',
+        'shop_property_value_id' => 'integer'
     ];
 
     protected $nullable = [
-        'good_id'
+        'good_id',
+        'shop_property_value_id'
     ];
 
     /**
@@ -51,5 +53,21 @@ class ShopGoodProperty extends Model
     public function property(): BelongsTo
     {
         return $this->belongsTo(ShopProperty::class, 'property_id');
+    }
+
+    /**
+     * Значение свойства из справочника
+     */
+    public function propertyValue(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\Shop\PropertyValue::class, 'shop_property_value_id');
+    }
+
+    /**
+     * Получить значение свойства
+     */
+    public function getValueAttribute()
+    {
+        return $this->propertyValue ? $this->propertyValue->value : null;
     }
 }
