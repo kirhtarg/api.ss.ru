@@ -257,6 +257,22 @@ Route::get('/test/oauth', function () {
     Route::delete('/public/shop/cart/clear', [App\Http\Controllers\Api\Public\CartController::class, 'clearCart']);
     Route::post('/public/shop/cart/create-order', [App\Http\Controllers\Api\Public\CartController::class, 'createOrder']);
     
+    // Публичные маршруты для промокодов
+    Route::options('/public/shop/promocodes/apply', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/public/shop/promocodes/apply', [App\Http\Controllers\PromocodeController::class, 'apply']);
+    
+    Route::options('/public/shop/promocodes/remove', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/public/shop/promocodes/remove', [App\Http\Controllers\PromocodeController::class, 'remove']);
+    
+    Route::options('/public/shop/promocodes/check', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/public/shop/promocodes/check', [App\Http\Controllers\PromocodeController::class, 'check']);
+    
     // Публичные маршруты для способов доставки и оплаты
     Route::options('/public/shop/delivery-methods', function () {
         return response()->json([], 200);
@@ -337,6 +353,9 @@ Route::get('/test/oauth', function () {
     // Настройки бонусов (публичные - видны всем)
     Route::get('/public/shop/bonus-settings', [App\Http\Controllers\Api\Public\ShopBonusSettingsController::class, 'getActive']);
     Route::post('/public/shop/bonus-settings/calculate', [App\Http\Controllers\Api\Public\ShopBonusSettingsController::class, 'calculateBonus']);
+    
+    // Настройки магазина (публичные - видны всем)
+    Route::get('/public/shop/settings', [App\Http\Controllers\ShopSettingsController::class, 'getShopSettings']);
     
     // Информация о товарах (публичная)
     Route::post('/public/shop/goods/details', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getGoodsDetails']);
@@ -972,7 +991,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
 
         // Shop management (для пользователей с доступом к shop)
-        Route::middleware('shop.access')->prefix('shop')->group(function () {
+        Route::middleware(['auth:sanctum', 'role:admin,manager'])->prefix('shop')->group(function () {
             // Товары
             Route::prefix('goods')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'index']);
@@ -1121,6 +1140,24 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'destroy']);
                 Route::put('/{id}/status', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateStatus']);
                 Route::post('/export', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'export']);
+            });
+            
+            // Промокоды
+            Route::prefix('promocodes')->group(function () {
+                Route::get('/test', function () {
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'API работает',
+                        'count' => \App\Models\Promocode::count()
+                    ]);
+                });
+                Route::get('/', [\App\Http\Controllers\Admin\PromocodeController::class, 'index']);
+                Route::get('/select-data', [\App\Http\Controllers\Admin\PromocodeController::class, 'getSelectData']);
+                Route::get('/{id}/stats', [\App\Http\Controllers\Admin\PromocodeController::class, 'stats']);
+                Route::get('/{id}', [\App\Http\Controllers\Admin\PromocodeController::class, 'show']);
+                Route::post('/', [\App\Http\Controllers\Admin\PromocodeController::class, 'store']);
+                Route::put('/{id}', [\App\Http\Controllers\Admin\PromocodeController::class, 'update']);
+                Route::delete('/{id}', [\App\Http\Controllers\Admin\PromocodeController::class, 'destroy']);
             });
         });
 
