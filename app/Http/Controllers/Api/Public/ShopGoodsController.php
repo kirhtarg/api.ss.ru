@@ -322,7 +322,14 @@ class ShopGoodsController extends Controller
             // Загружаем товары с вариациями, изображениями, видео и свойствами
             $goods = ShopGood::with([
                 'variations' => function($query) {
-                    $query->where('is_active', true);
+                    $query->where('is_active', true)->with([
+                        'images' => function($q) {
+                            $q->orderBy('sort_order');
+                        },
+                        'videos' => function($q) {
+                            $q->orderBy('sort_order');
+                        }
+                    ]);
                 },
                 'images' => function($query) {
                     $query->whereNull('variation_id')->orderBy('sort_order');
@@ -441,7 +448,9 @@ class ShopGoodsController extends Controller
                         'old_price' => $variation->old_price,
                         'final_price' => $variation->final_price,
                         'attributes' => $variationAttributes,
-                        'is_active' => $variation->is_active
+                        'is_active' => $variation->is_active,
+                        'images' => $variation->images ? $variation->images->toArray() : [],
+                        'videos' => $variation->videos ? $variation->videos->toArray() : []
                     ];
                 }
 

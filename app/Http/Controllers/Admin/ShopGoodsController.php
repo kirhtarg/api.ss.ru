@@ -23,7 +23,12 @@ class ShopGoodsController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = ShopGood::with([
+        $query = ShopGood::select([
+            'id', 'name', 'slug', 'sku', 'description', 'short_description', 
+            'price', 'sale_price', 'stock_quantity', 'rating', 'reviews_count',
+            'is_active', 'is_featured', 'is_new', 'is_sale', 'sort_order', 
+            'created_at', 'updated_at'
+        ])->with([
             'categories:id,name',
             'brands:id,name',
             'tags:id,name,color',
