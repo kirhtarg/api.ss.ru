@@ -233,7 +233,6 @@ class ShopGoodVariationsController extends Controller
 
         $attribute = \Illuminate\Support\Facades\DB::table('shop_variation_attributes')->where('id', (int)$attributeId)->first();
         if (!$attribute) {
-            \Log::warning('Attribute not found', ['attribute_id' => $attributeId]);
             return response()->json(['success' => false, 'message' => 'Атрибут не найден'], 404);
         }
 
@@ -242,10 +241,6 @@ class ShopGoodVariationsController extends Controller
             ->where('value', $value)
             ->exists();
         if ($exists) {
-            \Log::warning('Value already exists', [
-                'attribute_id' => $attributeId,
-                'value' => $value
-            ]);
             return response()->json(['success' => false, 'message' => 'Такое значение уже существует'], 422);
         }
 
@@ -254,12 +249,6 @@ class ShopGoodVariationsController extends Controller
             'value' => $value,
             'created_at' => now(),
             'updated_at' => now(),
-        ]);
-
-        \Log::info('Value created successfully', [
-            'id' => $id,
-            'attribute_id' => $attributeId,
-            'value' => $value
         ]);
 
         return response()->json([
