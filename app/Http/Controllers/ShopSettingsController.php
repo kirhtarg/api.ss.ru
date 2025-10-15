@@ -19,6 +19,15 @@ class ShopSettingsController extends Controller
                 ->pluck('value', 'key')
                 ->toArray();
 
+            // Добавляем параметр bonuses_at_reg из глобальных настроек
+            $bonusesAtReg = DB::table('settings')
+                ->where('key', 'bonuses_at_reg')
+                ->value('value');
+            
+            if ($bonusesAtReg !== null) {
+                $settings['bonuses_at_reg'] = $bonusesAtReg;
+            }
+
             return response()->json([
                 'success' => true,
                 'data' => $settings

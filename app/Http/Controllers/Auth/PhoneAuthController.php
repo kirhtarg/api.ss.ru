@@ -164,7 +164,7 @@ class PhoneAuthController extends Controller
                 $userRole = \App\Models\Role::where('name', 'user')->first();
                 if ($userRole) {
                     $user->roles()->attach($userRole->id, [
-                        'email_verified_at' => now(),
+                        'is_active' => true,
                         'assigned_at' => now()
                     ]);
                 }

@@ -31,7 +31,8 @@ Route::match(['OPTIONS'], '/{any}', function () {
 
 // Публичные маршруты для авторизации (без Sanctum stateful middleware)
 Route::post('/login', [AuthController::class, 'login'])->name('login');
-Route::post('/register', [AuthController::class, 'register']);
+Route::post('/register', [AuthController::class, 'registerWithToken']); // Старая регистрация с токенами
+Route::post('/register-with-code', [AuthController::class, 'register']); // Новая регистрация с кодами
 Route::post('/verify-email', [AuthController::class, 'verifyEmail']);
 Route::post('/resend-verification', [AuthController::class, 'resendVerificationEmail']);
 Route::post('/check-email', [AuthController::class, 'checkEmail']);
@@ -1653,17 +1654,20 @@ Route::middleware('auth:sanctum')->group(function () {
                     if ($request->has('role') && !empty($request->role)) {
                         // Если передана одна роль
                         $user->roles()->attach(
-                            \App\Models\Role::where('name', $request->role)->first()->id
+                            \App\Models\Role::where('name', $request->role)->first()->id,
+                            ['is_active' => true, 'assigned_at' => now()]
                         );
                     } elseif ($request->has('roles') && !empty($request->roles)) {
                         // Если передан массив ролей
-                        $user->roles()->attach(
-                            \App\Models\Role::whereIn('name', $request->roles)->pluck('id')
-                        );
+                        $roleIds = \App\Models\Role::whereIn('name', $request->roles)->pluck('id');
+                        foreach ($roleIds as $roleId) {
+                            $user->roles()->attach($roleId, ['is_active' => true, 'assigned_at' => now()]);
+                        }
                     } else {
                         // По умолчанию привязываем роль 'user'
                         $user->roles()->attach(
-                            \App\Models\Role::where('name', 'user')->first()->id
+                            \App\Models\Role::where('name', 'user')->first()->id,
+                            ['is_active' => true, 'assigned_at' => now()]
                         );
                     }
 

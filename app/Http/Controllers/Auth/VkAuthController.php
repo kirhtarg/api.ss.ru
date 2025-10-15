@@ -218,7 +218,10 @@ class VkAuthController extends Controller
                     // Привязываем роль 'user' по умолчанию
                     $userRole = Role::where('name', 'user')->first();
                     if ($userRole) {
-                        $user->roles()->attach($userRole->id);
+                        $user->roles()->attach($userRole->id, [
+                            'is_active' => true,
+                            'assigned_at' => now()
+                        ]);
                     }
                 }
             }
@@ -685,7 +688,10 @@ class VkAuthController extends Controller
                     // Привязываем роль 'user' по умолчанию
                     $userRole = Role::where('name', 'user')->first();
                     if ($userRole) {
-                        $user->roles()->attach($userRole->id);
+                        $user->roles()->attach($userRole->id, [
+                            'is_active' => true,
+                            'assigned_at' => now()
+                        ]);
                     }
                 }
             }
