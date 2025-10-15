@@ -8,6 +8,7 @@ use App\Models\SliderImage;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Log;
 
 class SliderController extends Controller
 {
@@ -49,7 +50,7 @@ class SliderController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
-            'transition_type' => 'required|in:fade,slide,slide_left,slide_right,zoom',
+            'transition_type' => 'required|in:fade,slide,zoom',
             'control_type' => 'required|in:auto,manual',
             'auto_interval' => 'required|integer|min:1000',
             'transition_duration' => 'required|integer|min:100|max:5000',
@@ -68,7 +69,11 @@ class SliderController extends Controller
         }
 
         try {
+            Log::info('Создание слайдера', ['data' => $request->all()]);
+            
             $slider = Slider::create($request->all());
+            
+            Log::info('Слайдер успешно создан', ['id' => $slider->id]);
 
             return response()->json([
                 'success' => true,
@@ -76,6 +81,12 @@ class SliderController extends Controller
                 'data' => $slider
             ]);
         } catch (\Exception $e) {
+            Log::error('Ошибка создания слайдера', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'data' => $request->all()
+            ]);
+            
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка создания слайдера: ' . $e->getMessage()
@@ -118,7 +129,7 @@ class SliderController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'name' => 'sometimes|string|max:255',
-            'transition_type' => 'sometimes|in:fade,slide,slide_left,slide_right,zoom',
+            'transition_type' => 'sometimes|in:fade,slide,zoom',
             'control_type' => 'sometimes|in:auto,manual',
             'auto_interval' => 'sometimes|integer|min:1000',
             'transition_duration' => 'sometimes|integer|min:100|max:5000',
@@ -239,9 +250,24 @@ class SliderController extends Controller
             // Копируем файл на фронтенд
             $frontendPath = base_path('../admin.skateandsnow.ru/public/sliders/');
             if (!is_dir($frontendPath)) {
-                mkdir($frontendPath, 0755, true);
+                if (!mkdir($frontendPath, 0755, true)) {
+                    Log::warning('Не удалось создать директорию для фронтенда', ['path' => $frontendPath]);
+                }
             }
-            copy(public_path('sliders/' . $filename), $frontendPath . $filename);
+            
+            $sourceFile = public_path('sliders/' . $filename);
+            $targetFile = $frontendPath . $filename;
+            
+            if (file_exists($sourceFile)) {
+                if (!copy($sourceFile, $targetFile)) {
+                    Log::warning('Не удалось скопировать файл на фронтенд', [
+                        'source' => $sourceFile,
+                        'target' => $targetFile
+                    ]);
+                }
+            } else {
+                Log::error('Исходный файл не найден', ['file' => $sourceFile]);
+            }
             
             // Создаем запись в базе данных
             $sliderImage = SliderImage::create([
@@ -301,6 +327,9 @@ class SliderController extends Controller
                 $sourceImage = imagecreatefromgif($image->getPathname());
                 break;
             case 'webp':
+                if (!function_exists('imagecreatefromwebp')) {
+                    throw new \Exception('WebP не поддерживается на этом сервере');
+                }
                 $sourceImage = imagecreatefromwebp($image->getPathname());
                 break;
             default:
@@ -372,7 +401,13 @@ class SliderController extends Controller
                 imagegif($newImage, $outputPath);
                 break;
             case 'webp':
-                imagewebp($newImage, $outputPath, 90);
+                if (!function_exists('imagewebp')) {
+                    // Если WebP не поддерживается, сохраняем как JPEG
+                    $outputPath = str_replace('.webp', '.jpg', $outputPath);
+                    imagejpeg($newImage, $outputPath, 90);
+                } else {
+                    imagewebp($newImage, $outputPath, 90);
+                }
                 break;
         }
         

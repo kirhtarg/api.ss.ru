@@ -91,6 +91,83 @@ class AuthController extends Controller
     }
 
     /**
+     * Регистрация пользователя с автоматической генерацией логина и пароля (для формы "Присоединяйтесь к нам!")
+     */
+    public function registerWithCode(Request $request): JsonResponse
+    {
+        try {
+            $request->validate([
+                'name' => 'required|string|max:255',
+                'email' => 'required|string|email|max:255|unique:users',
+            ]);
+
+            // Генерируем логин и пароль
+            $login = $this->generateLogin($request->name, $request->email);
+            $password = $this->generatePassword();
+            
+            // НЕ создаем пользователя сразу - сохраняем данные во временном хранилище
+            $tempUserData = [
+                'name' => $request->name,
+                'email' => $request->email,
+                'login' => $login,
+                'password' => Hash::make($password),
+                'original_password' => $password, // Сохраняем оригинальный пароль для письма
+                'created_at' => now(),
+            ];
+
+            // Генерируем 4-значный код для подтверждения email
+            $verificationCode = str_pad(random_int(1000, 9999), 4, '0', STR_PAD_LEFT);
+            
+            // Сохраняем данные пользователя и код в кеше
+            \Illuminate\Support\Facades\Cache::put(
+                'temp_user_data_' . $request->email,
+                $tempUserData,
+                now()->addMinutes(15) // Данные действительны 15 минут
+            );
+            
+            \Illuminate\Support\Facades\Cache::put(
+                'email_verification_code_' . $request->email,
+                $verificationCode,
+                now()->addMinutes(15) // Код действителен 15 минут
+            );
+
+            // Создаем временный объект пользователя для отправки email
+            $tempUser = new User($tempUserData);
+
+            // Отправляем email с кодом подтверждения
+            try {
+                $this->sendVerificationCodeEmail($tempUser, $verificationCode);
+            } catch (\Exception $e) {
+                // Логируем ошибку, но не прерываем регистрацию
+                Log::error('Email sending failed: ' . $e->getMessage());
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Регистрация успешна! Проверьте email для подтверждения аккаунта.',
+                'user' => [
+                    'name' => $tempUserData['name'],
+                    'email' => $tempUserData['email'],
+                    'email_verified_at' => null,
+                ]
+            ], 201);
+
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка регистрации',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Регистрация пользователя с токенами (для обычной регистрации)
      */
     public function registerWithToken(Request $request): JsonResponse
@@ -380,6 +457,16 @@ class AuthController extends Controller
             // Начисляем приветственные бонусы
             $this->awardWelcomeBonuses($user);
 
+            // Если есть логин и пароль в временных данных, отправляем письмо с учетными данными
+            if (isset($tempUserData['login'])) {
+                try {
+                    $originalPassword = $tempUserData['original_password'] ?? $tempUserData['password'];
+                    $this->sendCredentialsEmail($user, $tempUserData['login'], $originalPassword);
+                } catch (\Exception $e) {
+                    Log::error('Credentials email sending failed: ' . $e->getMessage());
+                }
+            }
+
             // Создаем токен для пользователя
             $token = $user->createToken('auth-token')->plainTextToken;
 
@@ -585,5 +672,71 @@ class AuthController extends Controller
         }
 
         return array_unique($permissions);
+    }
+
+    /**
+     * Генерировать логин на основе имени и email
+     */
+    private function generateLogin(string $name, string $email): string
+    {
+        // Берем часть email до @ и добавляем случайные цифры
+        $emailPart = explode('@', $email)[0];
+        $namePart = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $name));
+        
+        // Ограничиваем длину
+        $namePart = substr($namePart, 0, 8);
+        $emailPart = substr($emailPart, 0, 6);
+        
+        // Добавляем случайные цифры
+        $randomNumbers = random_int(100, 999);
+        
+        return $namePart . $emailPart . $randomNumbers;
+    }
+
+    /**
+     * Генерировать пароль
+     */
+    private function generatePassword(): string
+    {
+        // Генерируем пароль из 8 символов: буквы (верхний и нижний регистр) + цифры
+        $uppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        $lowercase = 'abcdefghijklmnopqrstuvwxyz';
+        $numbers = '0123456789';
+        
+        $password = '';
+        
+        // Добавляем минимум по одному символу каждого типа
+        $password .= $uppercase[random_int(0, strlen($uppercase) - 1)];
+        $password .= $lowercase[random_int(0, strlen($lowercase) - 1)];
+        $password .= $numbers[random_int(0, strlen($numbers) - 1)];
+        
+        // Заполняем остальные 5 символов случайно
+        $allChars = $uppercase . $lowercase . $numbers;
+        for ($i = 0; $i < 5; $i++) {
+            $password .= $allChars[random_int(0, strlen($allChars) - 1)];
+        }
+        
+        // Перемешиваем символы
+        return str_shuffle($password);
+    }
+
+    /**
+     * Отправить email с учетными данными
+     */
+    private function sendCredentialsEmail(User $user, string $login, string $password): void
+    {
+        // Получаем информацию о сайте
+        $siteInfo = SiteInfoService::getSiteInfoForEmail();
+        
+        // Отправляем письмо с учетными данными
+        Mail::send('emails.credentials', [
+            'user' => $user,
+            'login' => $login,
+            'password' => $password,
+            'siteInfo' => $siteInfo
+        ], function ($message) use ($user, $siteInfo) {
+            $message->to($user->email, $user->name)
+                    ->subject('Ваши учетные данные - ' . ($siteInfo['site_name'] ?? 'Skate & Snow'));
+        });
     }
 }

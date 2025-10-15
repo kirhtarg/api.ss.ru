@@ -32,7 +32,7 @@ Route::match(['OPTIONS'], '/{any}', function () {
 // Публичные маршруты для авторизации (без Sanctum stateful middleware)
 Route::post('/login', [AuthController::class, 'login'])->name('login');
 Route::post('/register', [AuthController::class, 'registerWithToken']); // Старая регистрация с токенами
-Route::post('/register-with-code', [AuthController::class, 'register']); // Новая регистрация с кодами
+Route::post('/register-with-code', [AuthController::class, 'registerWithCode']); // Новая регистрация с кодами
 Route::post('/verify-email', [AuthController::class, 'verifyEmail']);
 Route::post('/resend-verification', [AuthController::class, 'resendVerificationEmail']);
 Route::post('/check-email', [AuthController::class, 'checkEmail']);
