@@ -3,6 +3,7 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
@@ -27,10 +28,23 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('site_templates', function (Blueprint $table) {
-            // Удаляем новое поле
-            $table->dropForeign(['menu_id']);
-            $table->dropColumn('menu_id');
-        });
+        if (Schema::hasTable('site_templates') && Schema::hasColumn('site_templates', 'menu_id')) {
+            // Сначала удаляем внешний ключ с правильным именем
+            try {
+                DB::statement('ALTER TABLE site_templates DROP FOREIGN KEY site_templates_menu_id_foreign');
+            } catch (\Exception $e) {
+                // Пробуем альтернативные имена
+                try {
+                    DB::statement('ALTER TABLE site_templates DROP FOREIGN KEY site_template_menu_id_foreign');
+                } catch (\Exception $e2) {
+                    // Игнорируем ошибку, если внешний ключ не существует
+                }
+            }
+            
+            // Затем удаляем колонку
+            Schema::table('site_templates', function (Blueprint $table) {
+                $table->dropColumn('menu_id');
+            });
+        }
     }
 };

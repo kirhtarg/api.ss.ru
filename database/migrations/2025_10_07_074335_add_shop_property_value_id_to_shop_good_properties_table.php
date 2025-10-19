@@ -3,6 +3,7 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
@@ -31,13 +32,23 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('shop_good_properties', function (Blueprint $table) {
-            // Удаляем внешний ключ и индекс
-            $table->dropForeign(['shop_property_value_id']);
-            $table->dropIndex(['shop_property_value_id']);
+        if (Schema::hasTable('shop_good_properties') && Schema::hasColumn('shop_good_properties', 'shop_property_value_id')) {
+            // Сначала удаляем внешний ключ с правильным именем
+            try {
+                DB::statement('ALTER TABLE shop_good_properties DROP FOREIGN KEY shop_good_properties_shop_property_value_id_foreign');
+            } catch (\Exception $e) {
+                // Пробуем альтернативные имена
+                try {
+                    DB::statement('ALTER TABLE shop_good_properties DROP FOREIGN KEY shop_good_property_shop_property_value_id_foreign');
+                } catch (\Exception $e2) {
+                    // Игнорируем ошибку, если внешний ключ не существует
+                }
+            }
             
-            // Удаляем колонку
-            $table->dropColumn('shop_property_value_id');
-        });
+            // Затем удаляем колонку
+            Schema::table('shop_good_properties', function (Blueprint $table) {
+                $table->dropColumn('shop_property_value_id');
+            });
+        }
     }
 };
