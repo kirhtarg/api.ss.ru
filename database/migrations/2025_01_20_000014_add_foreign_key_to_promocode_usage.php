@@ -3,6 +3,7 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
@@ -11,9 +12,20 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('promocode_usage', function (Blueprint $table) {
-            $table->foreign('order_id')->references('id')->on('shop_orders')->onDelete('set null');
-        });
+        // Проверяем, существует ли уже внешний ключ
+        $exists = DB::select("
+            SELECT COUNT(*) as count 
+            FROM information_schema.KEY_COLUMN_USAGE 
+            WHERE TABLE_SCHEMA = DATABASE() 
+            AND TABLE_NAME = 'promocode_usage' 
+            AND CONSTRAINT_NAME = 'promocode_usage_order_id_foreign'
+        ");
+
+        if ($exists[0]->count == 0) {
+            Schema::table('promocode_usage', function (Blueprint $table) {
+                $table->foreign('order_id')->references('id')->on('shop_orders')->onDelete('set null');
+            });
+        }
     }
 
     /**
@@ -21,8 +33,12 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('promocode_usage', function (Blueprint $table) {
-            $table->dropForeign(['order_id']);
-        });
+        try {
+            Schema::table('promocode_usage', function (Blueprint $table) {
+                $table->dropForeign(['order_id']);
+            });
+        } catch (Exception $e) {
+            // Игнорируем ошибку, если ключ не существует
+        }
     }
 };
