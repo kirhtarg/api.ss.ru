@@ -20,7 +20,6 @@ class DatabaseSeeder extends Seeder
             
             // Админка
             AdminPageSeeder::class, // Сначала создаем страницы
-            AdminMenuSeeder::class,
             AdminMenuItemSeeder::class, // Потом пункты меню
             
             // Сайт
