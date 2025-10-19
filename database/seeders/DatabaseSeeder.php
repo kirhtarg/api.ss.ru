@@ -19,7 +19,7 @@ class DatabaseSeeder extends Seeder
             UserRoleSeeder::class,
             
             // Админка
-            AdminPageSeeder::class,
+            AdminMenuSeeder::class, // Исправлено: AdminPageSeeder -> AdminMenuSeeder
             AdminMenuItemSeeder::class,
             
             // Сайт
@@ -29,6 +29,13 @@ class DatabaseSeeder extends Seeder
             
             // Магазин
             ShopTemplateSeeder::class,
+            ShopOrderStatusSeeder::class,
+            ShopDeliveryMethodSeeder::class,
+            ShopPaymentMethodSeeder::class,
+            ShopBonusSettingsSeeder::class,
+            
+            // Слайдеры
+            SliderSeeder::class,
             
             // Контакты
             SocialTypeSeeder::class,
