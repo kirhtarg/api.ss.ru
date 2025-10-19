@@ -27,7 +27,12 @@ return new class extends Migration
         Schema::table('shop_stocks', function (Blueprint $table) {
             // Удаляем поле warehouse_id при откате
             if (Schema::hasColumn('shop_stocks', 'warehouse_id')) {
-                $table->dropForeign(['warehouse_id']);
+                // Проверяем, существует ли внешний ключ перед удалением
+                try {
+                    $table->dropForeign(['warehouse_id']);
+                } catch (\Exception $e) {
+                    // Игнорируем ошибку, если внешний ключ не существует
+                }
                 $table->dropColumn('warehouse_id');
             }
         });
