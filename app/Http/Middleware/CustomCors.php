@@ -57,12 +57,24 @@ class CustomCors
         } elseif ($origin) {
             // Временное решение - разрешаем все домены (только для отладки!)
             $response->headers->set('Access-Control-Allow-Origin', $origin);
+        } else {
+            // Если нет Origin, разрешаем все домены для отладки
+            $response->headers->set('Access-Control-Allow-Origin', '*');
         }
 
         $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
         $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN');
         $response->headers->set('Access-Control-Allow-Credentials', 'true');
         $response->headers->set('Access-Control-Max-Age', '86400');
+
+        // Принудительно добавляем CORS заголовки к ошибкам
+        if ($response->getStatusCode() >= 400) {
+            $response->headers->set('Access-Control-Allow-Origin', '*');
+            $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+            $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN');
+            $response->headers->set('Access-Control-Allow-Credentials', 'true');
+            $response->headers->set('Access-Control-Max-Age', '86400');
+        }
 
         return $response;
     }

@@ -6,6 +6,11 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Admin\ShopGoodImageController;
+use App\Http\Controllers\Api\Public\ContactController;
+use App\Http\Controllers\Api\Public\SiteInfoController;
+use App\Http\Controllers\Api\Public\SiteTemplateController;
+use App\Http\Controllers\Api\Public\ShopTemplateController;
+use App\Http\Controllers\Api\Public\SiteMenuController;
 
 
 /*
@@ -29,6 +34,12 @@ Route::match(['OPTIONS'], '/{any}', function () {
         ->header('Access-Control-Max-Age', '86400');
 })->where('any', '.*');
 
+// Маршрут для получения данных контактов для заголовка
+Route::get('/public/contacts/header-data', [\App\Http\Controllers\Api\Public\ContactController::class, 'headerData']);
+
+
+
+
 // Публичные маршруты для авторизации (без Sanctum stateful middleware)
 Route::post('/login', [AuthController::class, 'login'])->name('login');
 Route::post('/register', [AuthController::class, 'registerWithToken']); // Старая регистрация с токенами
@@ -41,6 +52,7 @@ Route::post('/check-email', [AuthController::class, 'checkEmail']);
 Route::post('/phone/send-code', [\App\Http\Controllers\Auth\PhoneAuthController::class, 'sendPhoneCode']);
 Route::post('/phone/verify-code', [\App\Http\Controllers\Auth\PhoneAuthController::class, 'verifyPhoneCode']);
 Route::post('/phone/check-status', [\App\Http\Controllers\Auth\PhoneAuthController::class, 'checkCodeStatus']);
+
 
 // Свойства товаров для импорта (временно без middleware для тестирования)
 Route::get('/admin/shop/goods/properties', [\App\Http\Controllers\Admin\ShopPropertiesController::class, 'list']);
@@ -108,7 +120,7 @@ Route::get('/test/oauth', function () {
     Route::options('/public/site-info', function () {
         return response()->json([], 200);
     });
-    Route::get('/public/site-info', [App\Http\Controllers\Api\Public\SiteInfoController::class, 'index']);
+    Route::get('/public/site-info', [SiteInfoController::class, 'index']);
 
     Route::options('/public/settings', function () {
         return response()->json([], 200);
@@ -124,7 +136,7 @@ Route::get('/test/oauth', function () {
     Route::options('/public/site/template/active', function () {
         return response()->json([], 200);
     });
-    Route::get('/public/site/template/active', [App\Http\Controllers\Api\Public\SiteTemplateController::class, 'getActive']);
+    Route::get('/public/site/template/active', [SiteTemplateController::class, 'getActive']);
 
     Route::options('/public/site/template/active-main', function () {
         return response()->json([], 200);
@@ -134,7 +146,7 @@ Route::get('/test/oauth', function () {
     Route::options('/public/site/menu', function () {
         return response()->json([], 200);
     });
-    Route::get('/public/site/menu', [App\Http\Controllers\Api\Public\SiteMenuController::class, 'getMenu']);
+    Route::get('/public/site/menu', [SiteMenuController::class, 'getMenu']);
 
     // Публичные маршруты для шаблонов магазина
     Route::options('/public/shop/template/active', function () {
@@ -145,7 +157,7 @@ Route::get('/test/oauth', function () {
     Route::options('/public/shop/template/active-card', function () {
         return response()->json([], 200);
     });
-    Route::get('/public/shop/template/active-card', [App\Http\Controllers\Api\Public\ShopTemplateController::class, 'getActiveCard']);
+    Route::get('/public/shop/template/active-card', [ShopTemplateController::class, 'getActiveCard']);
 
     Route::options('/public/shop/template/active-page', function () {
         return response()->json([], 200);
@@ -380,6 +392,33 @@ Route::get('/test/oauth', function () {
         Route::get('/public/shop/user-bonuses', [App\Http\Controllers\Api\Public\UserBonusController::class, 'index']);
         Route::post('/public/shop/user-bonuses', [App\Http\Controllers\Api\Public\UserBonusController::class, 'store']);
         Route::get('/public/shop/user-bonuses/transactions', [App\Http\Controllers\Api\Public\UserBonusController::class, 'transactions']);
+        Route::post('/public/user/deduct-bonuses', [App\Http\Controllers\Api\Public\UserBonusController::class, 'deductBonuses']);
+        
+        // CORS для списания бонусов
+        Route::options('/public/user/deduct-bonuses', function () {
+            return response('', 200)
+                ->header('Access-Control-Allow-Origin', '*')
+                ->header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+                ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN')
+                ->header('Access-Control-Allow-Credentials', 'true')
+                ->header('Access-Control-Max-Age', '86400');
+        });
+        
+        // Адреса пользователя
+        Route::get('/public/shop/user-addresses', [App\Http\Controllers\Api\Public\UserAddressController::class, 'index']);
+        Route::post('/public/shop/user-addresses', [App\Http\Controllers\Api\Public\UserAddressController::class, 'store']);
+        Route::put('/public/shop/user-addresses/{id}', [App\Http\Controllers\Api\Public\UserAddressController::class, 'update']);
+        Route::delete('/public/shop/user-addresses/{id}', [App\Http\Controllers\Api\Public\UserAddressController::class, 'destroy']);
+        
+        // CORS для адресов пользователя
+        Route::options('/public/shop/user-addresses', function () {
+            return response('', 200)
+                ->header('Access-Control-Allow-Origin', '*')
+                ->header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+                ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN')
+                ->header('Access-Control-Allow-Credentials', 'true')
+                ->header('Access-Control-Max-Age', '86400');
+        });
     });
     
     // Маршруты для предзаказов
@@ -526,6 +565,11 @@ Route::get('/public/debug/settings', function () {
             'message' => 'Ошибка: ' . $e->getMessage()
         ], 500);
     }
+
+    // Маршрут для получения данных контактов для заголовка
+    Route::options('/public/contacts/header-data', function () {
+        return response()->json([], 200);
+    });
 });
 
 
@@ -533,7 +577,6 @@ Route::get('/public/debug/settings', function () {
 Route::get('/contacts/main-address', [\App\Http\Controllers\ContactController::class, 'getMainAddress']);
 Route::get('/contacts/main-phone', [\App\Http\Controllers\ContactController::class, 'getMainPhone']);
 Route::get('/contacts/main-contact-phones', [\App\Http\Controllers\ContactController::class, 'getMainContactPhones']);
-Route::get('/contacts/header-data', [\App\Http\Controllers\ContactController::class, 'getHeaderData']);
 
 // Сообщения с сайта (публичные)
 Route::post('/site-messages', [\App\Http\Controllers\SiteMessageController::class, 'store']);
@@ -554,6 +597,16 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/toggle', [\App\Http\Controllers\FavoritesController::class, 'toggle']);
         Route::get('/check', [\App\Http\Controllers\FavoritesController::class, 'check']);
         Route::get('/', [\App\Http\Controllers\FavoritesController::class, 'index']);
+    });
+    
+    // Сравнение товаров - простой функционал
+    Route::prefix('shop/comparison')->group(function () {
+        Route::get('/', [\App\Http\Controllers\Api\Public\ComparisonController::class, 'index']);
+        Route::post('/add', [\App\Http\Controllers\Api\Public\ComparisonController::class, 'add']);
+        Route::delete('/remove/{id}', [\App\Http\Controllers\Api\Public\ComparisonController::class, 'remove']);
+        Route::delete('/clear', [\App\Http\Controllers\Api\Public\ComparisonController::class, 'clear']);
+        Route::get('/check', [\App\Http\Controllers\Api\Public\ComparisonController::class, 'check']);
+        Route::post('/check-multiple', [\App\Http\Controllers\Api\Public\ComparisonController::class, 'checkMultiple']);
     });
     
     // Загрузка изображений для rich editor

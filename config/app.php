@@ -135,16 +135,5 @@ return [
         'store' => env('APP_MAINTENANCE_STORE', 'database'),
     ],
 
-    /*
-    |--------------------------------------------------------------------------
-    | Frontend URL
-    |--------------------------------------------------------------------------
-    |
-    | This URL is used to generate URLs for frontend assets like images.
-    | Set this to your frontend application URL.
-    |
-    */
-
-    'frontend_url' => env('FRONTEND_URL', 'http://localhost:3000'),
 
 ];

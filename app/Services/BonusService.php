@@ -7,6 +7,7 @@ use App\Models\UserBonus;
 use App\Models\UserBonusTransaction;
 use App\Models\ShopOrder;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Log;
 
 class BonusService
 {
@@ -15,18 +16,11 @@ class BonusService
      */
     public function getBonusBalance(User $user): float
     {
-        \Log::info('BonusService: Getting bonus balance for user', ['user_id' => $user->id]);
         
         try {
             $userBonus = UserBonus::firstOrCreate(['user_id' => $user->id]);
-            \Log::info('BonusService: UserBonus record found/created', ['user_bonus_id' => $userBonus->id, 'points' => $userBonus->points]);
             return $userBonus->points;
         } catch (\Exception $e) {
-            \Log::error('BonusService: Error getting bonus balance', [
-                'user_id' => $user->id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
             throw $e;
         }
     }
@@ -247,5 +241,55 @@ class BonusService
         $minOrderAmount = 1000; // Минимальная сумма заказа для использования бонусов
         
         return $availablePoints > 0 && $orderAmount >= $minOrderAmount;
+    }
+
+    /**
+     * Списывает бонусы с баланса пользователя
+     */
+    public function deductBonuses(int $userId, float $points): array
+    {
+        try {
+            
+            $userBonus = UserBonus::where('user_id', $userId)->first();
+            
+            if (!$userBonus) {
+                return [
+                    'success' => false,
+                    'message' => 'У пользователя нет бонусного счета'
+                ];
+            }
+
+            if ($userBonus->points < $points) {
+                return [
+                    'success' => false,
+                    'message' => 'Недостаточно бонусов на счету'
+                ];
+            }
+
+            // Списываем бонусы
+            $userBonus->decrement('points', $points);
+            
+            // Создаем запись о транзакции
+            UserBonusTransaction::create([
+                'user_id' => $userId,
+                'type' => 'deduction',
+                'points' => -$points,
+                'description' => 'Списание бонусов за заказ',
+                'order_id' => null
+            ]);
+
+
+            return [
+                'success' => true,
+                'remaining_points' => $userBonus->fresh()->points
+            ];
+
+        } catch (\Exception $e) {
+            
+            return [
+                'success' => false,
+                'message' => 'Ошибка при списании бонусов: ' . $e->getMessage()
+            ];
+        }
     }
 }

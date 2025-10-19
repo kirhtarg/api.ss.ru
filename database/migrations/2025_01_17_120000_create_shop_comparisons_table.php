@@ -11,13 +11,13 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('shop_favorites', function (Blueprint $table) {
+        Schema::create('shop_comparisons', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->constrained('users')->onDelete('cascade');
             $table->foreignId('good_id')->constrained('shop_goods')->onDelete('cascade');
             $table->timestamps();
             
-            // Уникальный индекс для предотвращения дублирования
+            // Уникальная комбинация пользователь + товар
             $table->unique(['user_id', 'good_id']);
         });
     }
@@ -27,6 +27,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('shop_favorites');
+        Schema::dropIfExists('shop_comparisons');
     }
 };

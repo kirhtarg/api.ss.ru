@@ -8,10 +8,14 @@ use App\Models\ShopGoodVariation;
 use App\Models\ShopOrder;
 use App\Models\ShopOrderStatus;
 use App\Models\ShopCartItem;
+use Illuminate\Support\Facades\Log;
 use App\Models\ShopPreorder;
 use App\Models\User;
 use App\Models\Setting;
 use App\Services\TelegramService;
+use App\Mail\OrderInvoiceMail;
+use App\Models\Contact;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -195,9 +199,13 @@ class CartController extends Controller
             $user = $this->getUserFromToken($request);
             $sessionId = $this->getSessionId($request);
 
-            // Определяем цену
-            $price = $variationId ? $variation->final_price : $good->final_price;
-            $total = $price * $quantity;
+            // Определяем цены - сохраняем и акционную, и обычную
+            $regularPrice = $variationId ? $variation->price : $good->price;
+            $salePrice = $variationId ? $variation->sale_price : $good->sale_price;
+            
+            // Финальная цена для расчета - акционная если есть, иначе обычная
+            $finalPrice = ($salePrice && $salePrice > 0) ? $salePrice : $regularPrice;
+            $total = $finalPrice * $quantity;
 
             // Ищем существующий элемент корзины
             $existingItem = $this->findCartItem($user, $sessionId, $goodId, $variationId);
@@ -205,7 +213,9 @@ class CartController extends Controller
             if ($existingItem) {
                 // Обновляем количество существующего товара
                 $existingItem->quantity += $quantity;
-                $existingItem->total = $existingItem->price * $existingItem->quantity;
+                $existingItem->price = $regularPrice; // Сохраняем обычную цену
+                $existingItem->sale_price = $salePrice; // Сохраняем акционную цену
+                $existingItem->total = $finalPrice * $existingItem->quantity; // Используем финальную цену для total
                 // Обновляем variation_name с параметрами
                 if ($variationId) {
                     $existingItem->variation_name = $this->formatVariationProperties($variation);
@@ -219,8 +229,9 @@ class CartController extends Controller
                     'good_id' => $goodId,
                     'variation_id' => $variationId,
                     'quantity' => $quantity,
-                    'price' => $price,
-                    'total' => $total,
+                    'price' => $regularPrice, // Сохраняем обычную цену
+                    'sale_price' => $salePrice, // Сохраняем акционную цену
+                    'total' => $total, // Используем финальную цену для total
                     'good_name' => $good->name,
                     'variation_name' => $variationId ? $this->formatVariationProperties($variation) : null,
                     'good_sku' => $variationId ? $variation->sku : $good->sku,
@@ -402,18 +413,36 @@ class CartController extends Controller
      */
     public function createOrder(Request $request): JsonResponse
     {
+        \Log::info('=== НАЧАЛО СОЗДАНИЯ ЗАКАЗА ===');
+        \Log::info('Request data:', $request->all());
+        
         try {
             $validator = Validator::make($request->all(), [
                 'customer_name' => 'required|string|max:255',
                 'customer_email' => 'required|email|max:255',
-                'customer_phone' => 'required|string|max:20',
+                'customer_phone' => 'nullable|string|max:20',
+                'customer_id' => 'nullable|integer',
                 'payment_method' => 'required|string|max:100',
                 'shipping_method' => 'required|string|max:100',
                 'shipping_address' => 'nullable|string',
-                'notes' => 'nullable|string'
+                'notes' => 'nullable|string',
+                'subtotal' => 'nullable|numeric',
+                'total_amount' => 'nullable|numeric',
+                'delivery_cost' => 'nullable|numeric',
+                'sale_discount_amount' => 'nullable|numeric',
+                'registered_user_discount_amount' => 'nullable|numeric',
+                'promo_code_discount_amount' => 'nullable|numeric',
+                'total_discount_amount' => 'nullable|numeric',
+                'promo_code' => 'nullable|string|max:50',
+                'promo_code_id' => 'nullable|integer',
+                'use_bonus_points' => 'nullable|boolean',
+                'bonus_points_to_use' => 'nullable|integer|min:0',
+                'order_bonus_points' => 'nullable|integer|min:0',
+                'items' => 'required|array'
             ]);
 
             if ($validator->fails()) {
+                \Log::error('Ошибка валидации заказа:', $validator->errors()->toArray());
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
@@ -423,6 +452,9 @@ class CartController extends Controller
 
             $user = $this->getUserFromToken($request);
             $sessionId = $this->getSessionId($request);
+            
+            \Log::info('Пользователь из токена:', ['user' => $user ? $user->toArray() : null]);
+            \Log::info('Session ID:', ['session_id' => $sessionId]);
 
             $cartItems = $this->getCartItems($user, $sessionId);
             $cart = $this->formatCartData($cartItems);
@@ -435,36 +467,102 @@ class CartController extends Controller
             }
 
             // Получаем статус "Обрабатывается" по умолчанию
-            $pendingStatus = \App\Models\ShopOrderStatus::where('name', 'Обрабатывается')->first();
+            $pendingStatus = \App\Models\ShopOrderStatus::where('name', 'pending')->orWhere('display_name', 'Обрабатывается')->first();
             if (!$pendingStatus) {
-                // Если статус не найден, создаем его
-                $pendingStatus = \App\Models\ShopOrderStatus::create([
-                    'name' => 'Обрабатывается',
-                    'color' => 'yellow',
-                    'is_active' => true,
-                    'sort_order' => 10,
-                ]);
+                // Если статус не найден, используем ID 1 по умолчанию
+                $pendingStatus = (object)['id' => 1];
+                \Log::warning('Статус заказа не найден, используется ID 1 по умолчанию');
             }
 
+            // Получаем ID пользователя из запроса или из токена
+            $customerIdFromRequest = $request->get('customer_id');
+            $customerIdFromToken = $user ? $user->id : null;
+            
+            // Приоритет: сначала из запроса, потом из токена
+            $customerId = null;
+            if ($customerIdFromRequest) {
+                $customerId = is_numeric($customerIdFromRequest) ? (int)$customerIdFromRequest : null;
+            } elseif ($customerIdFromToken) {
+                $customerId = $customerIdFromToken;
+            }
+            
+            // Логируем для отладки
+            \Log::info('=== СОЗДАНИЕ ЗАКАЗА ===');
+            \Log::info('customer_id из запроса:', ['customer_id' => $customerIdFromRequest, 'type' => gettype($customerIdFromRequest)]);
+            \Log::info('user из токена:', ['user_id' => $customerIdFromToken, 'type' => gettype($customerIdFromToken)]);
+            \Log::info('final customer_id:', ['customer_id' => $customerId, 'type' => gettype($customerId)]);
+            \Log::info('total_discount_amount:', ['amount' => $request->get('total_discount_amount')]);
+            \Log::info('bonus_points_to_use:', ['points' => $request->get('bonus_points_to_use')]);
+            
+            // Генерируем уникальный номер заказа
+            $orderNumber = $this->generateUniqueOrderNumber();
+            
             // Создаем заказ
             $order = ShopOrder::create([
-                'user_id' => $user ? $user->id : null,
+                'order_number' => $orderNumber,
+                'user_id' => $customerId,
                 'status_id' => $pendingStatus->id,
                 'customer_name' => $request->get('customer_name'),
                 'customer_email' => $request->get('customer_email'),
                 'customer_phone' => $request->get('customer_phone'),
-                'items' => array_values($cart['items']),
-                'subtotal' => $cart['subtotal'],
-                'discount_amount' => 0, // Пока без скидок
-                'total_amount' => $cart['total_amount'],
+                'items' => $request->get('items', array_values($cart['items'])),
+                'subtotal' => $request->get('subtotal', $cart['subtotal']),
+                'discount_amount' => $request->get('total_discount_amount', 0),
+                'sale_discount_amount' => $request->get('sale_discount_amount', 0),
+                'registered_user_discount_amount' => $request->get('registered_user_discount_amount', 0),
+                'promo_code_discount_amount' => $request->get('promo_code_discount_amount', 0),
+                'total_discount_amount' => $request->get('total_discount_amount', 0),
+                'promo_code' => $request->get('promo_code'),
+                'promo_code_id' => $request->get('promo_code_id'),
+                'use_bonus_points' => $request->get('use_bonus_points', false),
+                'bonus_points_to_use' => $request->get('bonus_points_to_use', 0),
+                'order_bonus_points' => $request->get('order_bonus_points', 0),
+                'delivery_cost' => $request->get('delivery_cost', 0),
+                'total_amount' => $request->get('total_amount', $cart['total_amount']),
                 'total_quantity' => $cart['total_quantity'],
                 'payment_method' => $request->get('payment_method'),
                 'shipping_method' => $request->get('shipping_method'),
                 'shipping_address' => $request->get('shipping_address'),
                 'notes' => $request->get('notes'),
                 'ip_address' => $request->ip(),
-                'user_agent' => $request->userAgent()
+                'user_agent' => $request->userAgent(),
+                'metadata' => [
+                    // Дополнительные метаданные, если нужны
+                ]
             ]);
+
+            // Списываем бонусы с баланса пользователя, если они используются
+            if ($customerId && $request->get('use_bonus_points') && $request->get('bonus_points_to_use', 0) > 0) {
+                try {
+                    $bonusPointsToUse = $request->get('bonus_points_to_use', 0);
+                    
+                    // Получаем пользователя
+                    $customer = User::find($customerId);
+                    if ($customer) {
+                        // Проверяем, что у пользователя достаточно бонусов
+                        if ($customer->bonus_points >= $bonusPointsToUse) {
+                            // Списываем бонусы
+                            $customer->bonus_points -= $bonusPointsToUse;
+                            $customer->save();
+                            
+                            \Log::info('Бонусы списаны с баланса пользователя', [
+                                'user_id' => $customerId,
+                                'bonus_points_used' => $bonusPointsToUse,
+                                'remaining_bonus_points' => $customer->bonus_points
+                            ]);
+                        } else {
+                            \Log::warning('Недостаточно бонусов для списания', [
+                                'user_id' => $customerId,
+                                'requested_bonus_points' => $bonusPointsToUse,
+                                'available_bonus_points' => $customer->bonus_points
+                            ]);
+                        }
+                    }
+                } catch (\Exception $e) {
+                    \Log::error('Ошибка списания бонусов: ' . $e->getMessage());
+                    // Не прерываем создание заказа из-за ошибки списания бонусов
+                }
+            }
 
             // Очищаем корзину после создания заказа
             $query = ShopCartItem::active();
@@ -506,6 +604,28 @@ class CartController extends Controller
                 \Log::error('Telegram notification error: ' . $e->getMessage());
             }
 
+            // Отправляем email с накладной
+            try {
+                $contacts = $this->getShopContacts();
+                $siteInfo = \App\Services\SiteInfoService::getSiteInfoForEmail();
+                
+                // Обогащаем данные товаров названиями
+                $enrichedOrder = $this->enrichOrderItems($order);
+                
+                // Отладочная информация о товарах в заказе
+                \Log::info('Order items for email:', [
+                    'order_id' => $order->id,
+                    'items' => $enrichedOrder->items,
+                    'items_count' => is_array($enrichedOrder->items) ? count($enrichedOrder->items) : 'not array'
+                ]);
+                
+                Mail::to($order->customer_email)->send(new OrderInvoiceMail($enrichedOrder, $contacts, $siteInfo));
+                \Log::info('Invoice email sent to: ' . $order->customer_email);
+            } catch (\Exception $e) {
+                // Логируем ошибку, но не прерываем создание заказа
+                \Log::error('Email notification error: ' . $e->getMessage());
+            }
+
             return response()->json([
                 'success' => true,
                 'message' => 'Заказ создан успешно',
@@ -516,6 +636,10 @@ class CartController extends Controller
             ]);
 
         } catch (\Exception $e) {
+            \Log::error('Ошибка создания заказа: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+                'request_data' => $request->all()
+            ]);
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка создания заказа: ' . $e->getMessage()
@@ -667,11 +791,16 @@ class CartController extends Controller
                 $variationName = $item->variation_name;
             }
             
+            // Используем цены из корзины (уже сохранены при добавлении)
+            $regularPrice = $item->price;
+            $salePrice = $item->sale_price;
+            
             $items[$cartKey] = [
                 'good_id' => $item->good_id,
                 'variation_id' => $item->variation_id,
                 'quantity' => $item->quantity,
-                'price' => $item->price,
+                'price' => $regularPrice, // Обычная цена
+                'sale_price' => $salePrice, // Акционная цена
                 'total' => $item->total,
                 'good_name' => $item->good_name,
                 'variation_name' => $variationName,
@@ -884,5 +1013,127 @@ class CartController extends Controller
                 'message' => 'Ошибка получения предзаказов: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Получить контакты магазина для email
+     */
+    private function getShopContacts()
+    {
+        try {
+            $contact = Contact::with(['addresses', 'phones', 'socials'])
+                ->where('is_main', 1)
+                ->first();
+            
+            if (!$contact) {
+                return null;
+            }
+            
+            // Получаем основные данные
+            $mainAddress = $contact->mainAddress();
+            $mainPhone = $contact->mainPhone();
+            
+            // Формируем данные для накладной
+            return [
+                'name' => $contact->name,
+                'short_name' => $contact->short_name,
+                'legal_name' => $contact->legal_name,
+                'inn' => $contact->inn,
+                'ogrn' => $contact->ogrnip, // Используем ogrnip как ogrn
+                'kpp' => null, // KPP не хранится в таблице
+                'address' => $mainAddress ? $mainAddress->address : null,
+                'phone' => $mainPhone ? $mainPhone->phone : null,
+                'email' => null, // Email не хранится в таблице contacts
+                'legal_address' => $contact->legal_address,
+            ];
+            
+        } catch (\Exception $e) {
+            \Log::error('Ошибка получения контактов для email: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Генерирует уникальный номер заказа
+     */
+    private function generateUniqueOrderNumber()
+    {
+        $date = date('Ymd');
+        $prefix = 'ORD-' . $date . '-';
+        
+        // Получаем максимальный номер заказа за сегодня
+        $maxOrder = ShopOrder::where('order_number', 'like', $prefix . '%')
+            ->orderBy('order_number', 'desc')
+            ->first();
+        
+        if ($maxOrder) {
+            // Извлекаем номер из последнего заказа
+            $lastNumber = (int) substr($maxOrder->order_number, -3);
+            $newNumber = $lastNumber + 1;
+        } else {
+            // Если заказов за сегодня нет, начинаем с 001
+            $newNumber = 1;
+        }
+        
+        // Форматируем номер с ведущими нулями
+        $orderNumber = $prefix . str_pad($newNumber, 3, '0', STR_PAD_LEFT);
+        
+        // Проверяем уникальность (на случай race condition)
+        while (ShopOrder::where('order_number', $orderNumber)->exists()) {
+            $newNumber++;
+            $orderNumber = $prefix . str_pad($newNumber, 3, '0', STR_PAD_LEFT);
+        }
+        
+        return $orderNumber;
+    }
+
+    /**
+     * Обогащает данные заказа названиями товаров
+     */
+    private function enrichOrderItems($order)
+    {
+        if (!$order->items || !is_array($order->items)) {
+            return $order;
+        }
+
+        $enrichedItems = [];
+        foreach ($order->items as $item) {
+            $enrichedItem = $item;
+            
+            // Получаем название товара по good_id
+            if (isset($item['good_id'])) {
+                try {
+                    $good = ShopGood::find($item['good_id']);
+                    if ($good) {
+                        $enrichedItem['name'] = $good->name;
+                        $enrichedItem['good_name'] = $good->name;
+                        
+                        // Если есть вариация, получаем её название
+                        if (isset($item['variation_id']) && $item['variation_id']) {
+                            $variation = ShopGoodVariation::find($item['variation_id']);
+                            if ($variation && $variation->name) {
+                                $enrichedItem['name'] = $good->name . ' (' . $variation->name . ')';
+                                $enrichedItem['good_name'] = $good->name . ' (' . $variation->name . ')';
+                            }
+                        }
+                    }
+                } catch (\Exception $e) {
+                    \Log::error('Error enriching item: ' . $e->getMessage());
+                }
+            }
+            
+            // Пересчитываем сумму товара
+            $quantity = $item['quantity'] ?? 1;
+            $price = $item['price'] ?? 0;
+            $enrichedItem['total'] = $price * $quantity;
+            
+            $enrichedItems[] = $enrichedItem;
+        }
+        
+        // Создаем копию заказа с обогащенными данными
+        $enrichedOrder = clone $order;
+        $enrichedOrder->items = $enrichedItems;
+        
+        return $enrichedOrder;
     }
 }

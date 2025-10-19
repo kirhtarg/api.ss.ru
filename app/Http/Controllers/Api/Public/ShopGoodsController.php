@@ -25,15 +25,54 @@ class ShopGoodsController extends Controller
                 ], 400);
             }
 
-            // Здесь должна быть логика переключения избранного
-            // Пока возвращаем заглушку
-            return response()->json([
-                'success' => true,
-                'is_favorite' => true,
-                'message' => 'Товар добавлен в избранное'
-            ]);
+            // Получаем пользователя из токена
+            $user = auth('sanctum')->user();
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Пользователь не авторизован'
+                ], 401);
+            }
+
+            // Проверяем, существует ли товар
+            $good = \App\Models\ShopGood::find($goodId);
+            if (!$good) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Товар не найден'
+                ], 404);
+            }
+
+            // Проверяем, есть ли уже товар в избранном
+            $existingFavorite = \App\Models\ShopFavorite::where('user_id', $user->id)
+                ->where('good_id', $goodId)
+                ->first();
+
+            if ($existingFavorite) {
+                // Удаляем из избранного
+                $existingFavorite->delete();
+                return response()->json([
+                    'success' => true,
+                    'is_favorite' => false,
+                    'good_name' => $good->name,
+                    'message' => 'Товар удален из избранного'
+                ]);
+            } else {
+                // Добавляем в избранное
+                \App\Models\ShopFavorite::create([
+                    'user_id' => $user->id,
+                    'good_id' => $goodId
+                ]);
+                return response()->json([
+                    'success' => true,
+                    'is_favorite' => true,
+                    'good_name' => $good->name,
+                    'message' => 'Товар добавлен в избранное'
+                ]);
+            }
             
         } catch (\Exception $e) {
+            Log::error('Ошибка переключения избранного: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка сервера: ' . $e->getMessage()
@@ -397,6 +436,7 @@ class ShopGoodsController extends Controller
                         ->exists();
                 }
 
+
                 $goodData = [
                     'id' => $good->id,
                     'name' => $good->name,
@@ -606,10 +646,38 @@ class ShopGoodsController extends Controller
                 }
             }
 
+            // Добавляем атрибуты к вариациям
+            $goodData = $good->toArray();
+            if (isset($goodData['variations'])) {
+                foreach ($goodData['variations'] as &$variation) {
+                    $variationAttributes = [];
+                    $variationIds = [$variation['id']];
+                    
+                    $attributeRows = \Illuminate\Support\Facades\DB::table('shop_variation_attributes_values as vav')
+                        ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                        ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                        ->whereIn('vav.variation_id', $variationIds)
+                        ->select(
+                            'a.id as attribute_id', 'a.name as attribute_name',
+                            'av.id as value_id', 'av.value as value_value'
+                        )
+                        ->get();
+                    
+                    foreach ($attributeRows as $row) {
+                        $variationAttributes[] = [
+                            'id' => $row->attribute_id,
+                            'name' => $row->attribute_name,
+                            'value' => $row->value_value
+                        ];
+                    }
+                    
+                    $variation['attributes'] = $variationAttributes;
+                }
+            }
 
             return response()->json([
                 'success' => true,
-                'data' => $good
+                'data' => $goodData
             ]);
 
         } catch (\Exception $e) {

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 // Intervention Image больше не используется - используем встроенные функции PHP
 
@@ -19,30 +20,30 @@ class AvatarUploadController extends Controller
         try {
             // Проверяем, что файл существует и читается
             if (!file_exists($filePath)) {
-                \Log::error("File does not exist: {$filePath}");
+                Log::error("File does not exist: {$filePath}");
                 return false;
             }
             
             if (!is_readable($filePath)) {
-                \Log::error("File is not readable: {$filePath}");
+                Log::error("File is not readable: {$filePath}");
                 return false;
             }
             
             // Дополнительная проверка - файл должен быть больше 0 байт
             if (filesize($filePath) === 0) {
-                \Log::error("File is empty: {$filePath}");
+                Log::error("File is empty: {$filePath}");
                 return false;
             }
             
             $fileSize = filesize($filePath);
-            \Log::info("File size before optimization: {$fileSize} bytes");
+            Log::info("File size before optimization: {$fileSize} bytes");
             
             // Проверяем MIME тип файла
             $mimeType = mime_content_type($filePath);
-            \Log::info("File MIME type: {$mimeType}");
+            Log::info("File MIME type: {$mimeType}");
             
             if (!in_array($mimeType, ['image/jpeg', 'image/png', 'image/gif', 'image/webp'])) {
-                \Log::error("Unsupported MIME type: {$mimeType}");
+                Log::error("Unsupported MIME type: {$mimeType}");
                 return false;
             }
             
@@ -56,7 +57,7 @@ class AvatarUploadController extends Controller
             $originalHeight = $imageInfo[1];
             $imageType = $imageInfo[2];
             
-            \Log::info("Original image size: {$originalWidth}x{$originalHeight}, type: {$imageType}");
+            Log::info("Original image size: {$originalWidth}x{$originalHeight}, type: {$imageType}");
             
             // Загружаем изображение в зависимости от типа
             $sourceImage = null;
@@ -86,7 +87,7 @@ class AvatarUploadController extends Controller
             $newWidth = (int) round($originalWidth * $ratio);
             $newHeight = (int) round($originalHeight * $ratio);
             
-            \Log::info("Calculated new size: {$newWidth}x{$newHeight}");
+            Log::info("Calculated new size: {$newWidth}x{$newHeight}");
             
             // Создаем новое изображение нужного размера
             $resizedImage = imagecreatetruecolor($newWidth, $newHeight);
@@ -133,14 +134,14 @@ class AvatarUploadController extends Controller
                 throw new \Exception('Не удалось сохранить оптимизированное изображение');
             }
             
-            \Log::info("Image optimized and saved to: {$outputPath}");
-            \Log::info("Final file size: " . filesize($outputPath) . " bytes");
+            Log::info("Image optimized and saved to: {$outputPath}");
+            Log::info("Final file size: " . filesize($outputPath) . " bytes");
             
             return true;
             
         } catch (\Exception $e) {
-            \Log::error('Ошибка оптимизации изображения: ' . $e->getMessage());
-            \Log::error('Stack trace: ' . $e->getTraceAsString());
+            Log::error('Ошибка оптимизации изображения: ' . $e->getMessage());
+            Log::error('Stack trace: ' . $e->getTraceAsString());
             return false;
         }
     }
@@ -152,7 +153,7 @@ class AvatarUploadController extends Controller
     {
         try {
             // Отладочная информация
-            \Log::info('AvatarUploadController::uploadAvatar called', [
+            Log::info('AvatarUploadController::uploadAvatar called', [
                 'user_id' => $request->user()?->id,
                 'has_file' => $request->hasFile('avatar'),
                 'method' => $request->method(),
@@ -162,7 +163,7 @@ class AvatarUploadController extends Controller
             
             // Проверяем авторизацию
             if (!$request->user()) {
-                \Log::warning('Unauthorized access to uploadAvatar');
+                Log::warning('Unauthorized access to uploadAvatar');
                 return response()->json([
                     'success' => false,
                     'message' => 'Пользователь не авторизован'
@@ -192,17 +193,17 @@ class AvatarUploadController extends Controller
             $filename = 'user_' . $userId . '.jpg';
             
             // Путь к папке на фронтенде из переменной окружения
-            $frontendPath = dirname(base_path()) . '/' . env('FRONTEND_PATH', 'admin.skateandsnow.ru') . '/public/images/users/';
+            $frontendPath = dirname(base_path()) . '/' . ltrim(env('FRONTEND_PATH', 'admin.skateandsnow.ru'), './') . '/public/images/users/';
             
-            \Log::info('Frontend path: ' . $frontendPath);
-            \Log::info('Frontend path exists: ' . (file_exists($frontendPath) ? 'yes' : 'no'));
+            Log::info('Frontend path: ' . $frontendPath);
+            Log::info('Frontend path exists: ' . (file_exists($frontendPath) ? 'yes' : 'no'));
             
             // Создаем папку если не существует
             if (!file_exists($frontendPath)) {
                 if (!mkdir($frontendPath, 0755, true)) {
                     throw new \Exception('Не удалось создать папку для аватаров');
                 }
-                \Log::info('Created frontend directory: ' . $frontendPath);
+                Log::info('Created frontend directory: ' . $frontendPath);
             }
             
             // Удаляем старый аватар пользователя, если он есть
@@ -213,19 +214,19 @@ class AvatarUploadController extends Controller
             
             if (file_exists($oldAvatarPath)) {
                 unlink($oldAvatarPath);
-                \Log::info('Deleted old avatar: ' . $oldAvatarPath);
+                Log::info('Deleted old avatar: ' . $oldAvatarPath);
             }
             if (file_exists($oldAvatarPathPng)) {
                 unlink($oldAvatarPathPng);
-                \Log::info('Deleted old avatar: ' . $oldAvatarPathPng);
+                Log::info('Deleted old avatar: ' . $oldAvatarPathPng);
             }
             if (file_exists($oldAvatarPathGif)) {
                 unlink($oldAvatarPathGif);
-                \Log::info('Deleted old avatar: ' . $oldAvatarPathGif);
+                Log::info('Deleted old avatar: ' . $oldAvatarPathGif);
             }
             if (file_exists($oldAvatarPathWebp)) {
                 unlink($oldAvatarPathWebp);
-                \Log::info('Deleted old avatar: ' . $oldAvatarPathWebp);
+                Log::info('Deleted old avatar: ' . $oldAvatarPathWebp);
             }
             
             // Полный путь к файлу
@@ -246,17 +247,17 @@ class AvatarUploadController extends Controller
                 throw new \Exception('Не удалось сохранить временный файл');
             }
             
-            \Log::info('Temporary file saved to: ' . $tempFullPath);
-            \Log::info('Temporary file exists: ' . (file_exists($tempFullPath) ? 'yes' : 'no'));
-            \Log::info('Temporary file size: ' . (file_exists($tempFullPath) ? filesize($tempFullPath) : 'N/A') . ' bytes');
+            Log::info('Temporary file saved to: ' . $tempFullPath);
+            Log::info('Temporary file exists: ' . (file_exists($tempFullPath) ? 'yes' : 'no'));
+            Log::info('Temporary file size: ' . (file_exists($tempFullPath) ? filesize($tempFullPath) : 'N/A') . ' bytes');
             
             // Оптимизируем изображение
             if (!$this->optimizeImage($tempFullPath, $fullPath, 500, 500, 85)) {
-                \Log::warning('Image optimization failed, copying file without optimization');
+                Log::warning('Image optimization failed, copying file without optimization');
                 
                 // Fallback: просто копируем файл без оптимизации
                 if (!copy($tempFullPath, $fullPath)) {
-                    \Log::error('Failed to copy file from: ' . $tempFullPath . ' to: ' . $fullPath);
+                    Log::error('Failed to copy file from: ' . $tempFullPath . ' to: ' . $fullPath);
                     // Удаляем временный файл
                     if (file_exists($tempFullPath)) {
                         unlink($tempFullPath);
@@ -264,23 +265,23 @@ class AvatarUploadController extends Controller
                     throw new \Exception('Не удалось сохранить файл аватара');
                 }
                 
-                \Log::info('File copied without optimization to: ' . $fullPath);
+                Log::info('File copied without optimization to: ' . $fullPath);
             }
             
             // Удаляем временный файл только после успешного сохранения
             if (file_exists($tempFullPath)) {
                 unlink($tempFullPath);
-                \Log::info('Temporary file deleted: ' . $tempFullPath);
+                Log::info('Temporary file deleted: ' . $tempFullPath);
             }
             
             // Проверяем, что файл действительно сохранился
             if (!file_exists($fullPath)) {
-                \Log::error('Optimized file not saved to: ' . $fullPath);
+                Log::error('Optimized file not saved to: ' . $fullPath);
                 throw new \Exception('Оптимизированный файл не был сохранен');
             }
             
-            \Log::info('Optimized file saved successfully to: ' . $fullPath);
-            \Log::info('Final file size: ' . filesize($fullPath) . ' bytes');
+            Log::info('Optimized file saved successfully to: ' . $fullPath);
+            Log::info('Final file size: ' . filesize($fullPath) . ' bytes');
             
             // Путь для базы данных (относительно фронтенда)
             $dbPath = '/images/users/' . $filename;
@@ -289,6 +290,15 @@ class AvatarUploadController extends Controller
             $optimizedFileSize = filesize($fullPath);
             $compressionRatio = round((1 - $optimizedFileSize / $fileSize) * 100, 2);
             
+            // Обновляем avatar в базе данных
+            $user = $request->user();
+            $user->update(['avatar' => $dbPath]);
+            Log::info('Updated avatar in database: ' . $dbPath);
+            
+            // Проверяем, что поле действительно обновилось
+            $user->refresh();
+            Log::info('User avatar after update: ' . $user->avatar);
+
             // Возвращаем успешный ответ
             return response()->json([
                 'success' => true,
@@ -313,7 +323,7 @@ class AvatarUploadController extends Controller
             ], 422);
 
         } catch (\Exception $e) {
-            \Log::error('Ошибка загрузки аватара: ' . $e->getMessage());
+            Log::error('Ошибка загрузки аватара: ' . $e->getMessage());
             
             return response()->json([
                 'success' => false,
@@ -324,7 +334,68 @@ class AvatarUploadController extends Controller
     }
 
     /**
-     * Удалить файл аватара
+     * Удалить файл аватара по ID пользователя
+     */
+    public function deleteAvatarByUserId(Request $request): JsonResponse
+    {
+        try {
+            // Проверяем авторизацию
+            if (!$request->user()) {
+                Log::warning('Unauthorized access to deleteAvatarByUserId');
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Пользователь не авторизован'
+                ], 401);
+            }
+
+            $userId = $request->user()->id;
+            
+            // Получаем пользователя из базы данных
+            $user = $request->user();
+
+            // Путь к папке на фронтенде
+            $frontendPath = dirname(base_path()) . '/' . ltrim(env('FRONTEND_PATH', 'admin.skateandsnow.ru'), './') . '/public/images/users/';
+            
+            // Всегда используем стандартное имя файла user_{id}.jpg
+            // Не проверяем БД - просто удаляем файл, если он есть
+            $filename = 'user_' . $userId . '.jpg';
+            $fullPath = $frontendPath . $filename;
+            
+            
+            // Проверяем существование файла
+            if (file_exists($fullPath)) {
+                // Удаляем файл
+                if (unlink($fullPath)) {
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Аватар успешно удален с диска'
+                    ], 200);
+                } else {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Не удалось удалить файл аватара'
+                    ], 500);
+                }
+            } else {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Файл аватара не найден (уже удален)'
+                ], 200);
+            }
+
+        } catch (\Exception $e) {
+            Log::error('Ошибка удаления аватара по ID пользователя: ' . $e->getMessage());
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка удаления файла',
+                'error' => config('app.debug') ? $e->getMessage() : 'Внутренняя ошибка сервера'
+            ], 500);
+        }
+    }
+
+    /**
+     * Удалить файл аватара (старый метод для совместимости)
      */
     public function deleteAvatar(Request $request): JsonResponse
     {
@@ -358,7 +429,7 @@ class AvatarUploadController extends Controller
             }
 
         } catch (\Exception $e) {
-            \Log::error('Ошибка удаления аватара: ' . $e->getMessage());
+            Log::error('Ошибка удаления аватара: ' . $e->getMessage());
             
             return response()->json([
                 'success' => false,
@@ -393,11 +464,12 @@ class AvatarUploadController extends Controller
                 ], 404);
             }
 
+            $fullPath = Storage::disk('public')->path($filePath);
             $fileInfo = [
                 'path' => '/storage/' . $filePath,
                 'size' => Storage::disk('public')->size($filePath),
                 'last_modified' => Storage::disk('public')->lastModified($filePath),
-                'mime_type' => Storage::disk('public')->mimeType($filePath),
+                'mime_type' => mime_content_type($fullPath),
             ];
 
             return response()->json([
@@ -406,7 +478,7 @@ class AvatarUploadController extends Controller
             ], 200);
 
         } catch (\Exception $e) {
-            \Log::error('Ошибка получения информации о файле: ' . $e->getMessage());
+            Log::error('Ошибка получения информации о файле: ' . $e->getMessage());
             
             return response()->json([
                 'success' => false,

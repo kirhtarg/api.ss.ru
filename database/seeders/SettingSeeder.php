@@ -446,6 +446,34 @@ class SettingSeeder extends Seeder
                 'created_at' => '2025-09-15 17:24:08',
                 'updated_at' => '2025-09-15 17:25:41',
             ],
+
+            
+            [
+                'id' => 36,
+                'key' => 'shop_show_q_card',
+                'name' => 'Показывать остатки в карточке',
+                'value' => '1',
+                'type' => 'boolean',
+                'group' => 'shop',
+                'description' => 'Показывать остатки в карточке товара при наведении в выпадающем блоке',
+                'image_width' => null,
+                'image_height' => null,
+                'created_at' => '2025-09-15 17:24:08',
+                'updated_at' => '2025-09-15 17:25:41',
+            ],
+            [
+                'id' => 37,
+                'key' => 'shop_var_show_main',
+                'name' => 'Показать главный товар при вариациях',
+                'value' => '1',
+                'type' => 'boolean',
+                'group' => 'shop',
+                'description' => 'Показывать главный товар при вариациях в карточке товара и на странице товара (иначе - вариация с мин.ценой)',
+                'image_width' => null,
+                'image_height' => null,
+                'created_at' => '2025-09-15 17:24:08',
+                'updated_at' => '2025-09-15 17:25:41',
+            ],
         ];
 
         foreach ($settings as $setting) {

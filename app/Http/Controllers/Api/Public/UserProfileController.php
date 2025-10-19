@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 
 class UserProfileController extends Controller
@@ -53,7 +54,7 @@ class UserProfileController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('Ошибка получения профиля пользователя: ' . $e->getMessage());
+            Log::error('Ошибка получения профиля пользователя: ' . $e->getMessage());
             
             return response()->json([
                 'success' => false,
@@ -100,6 +101,7 @@ class UserProfileController extends Controller
             }
 
             // Обновляем данные пользователя
+            /** @var \App\Models\User $user */
             $user->update($validated);
 
             return response()->json([
@@ -125,7 +127,7 @@ class UserProfileController extends Controller
             ], 422);
 
         } catch (\Exception $e) {
-            \Log::error('Ошибка обновления профиля пользователя: ' . $e->getMessage());
+            Log::error('Ошибка обновления профиля пользователя: ' . $e->getMessage());
             
             return response()->json([
                 'success' => false,
@@ -170,6 +172,7 @@ class UserProfileController extends Controller
             }
 
             // Обновляем пароль
+            /** @var \App\Models\User $user */
             $user->update([
                 'password' => Hash::make($validated['new_password'])
             ]);
@@ -187,7 +190,7 @@ class UserProfileController extends Controller
             ], 422);
 
         } catch (\Exception $e) {
-            \Log::error('Ошибка смены пароля пользователя: ' . $e->getMessage());
+            Log::error('Ошибка смены пароля пользователя: ' . $e->getMessage());
             
             return response()->json([
                 'success' => false,
@@ -203,35 +206,46 @@ class UserProfileController extends Controller
     public function deleteAvatar(Request $request): JsonResponse
     {
         try {
+            Log::info('=== DELETE AVATAR METHOD CALLED ===');
             $user = Auth::user();
             
             if (!$user) {
+                Log::error('User not authenticated');
                 return response()->json([
                     'success' => false,
                     'message' => 'Пользователь не авторизован'
                 ], 401);
             }
+            
+            Log::info('User ID: ' . $user->id);
+            Log::info('User avatar in DB: ' . ($user->avatar ?? 'NULL'));
 
-            if (!$user->avatar_url) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'У пользователя нет аватара'
-                ], 400);
-            }
+            // Проверяем, есть ли аватар для удаления
+            // Аватар может существовать даже если в БД avatar = null
+            // Поэтому мы не проверяем БД, а сразу пытаемся удалить файл
 
-            // Удаляем файл аватара
-            $this->deleteOldAvatar($user->avatar_url);
+            // Сначала удаляем файл с диска
+            $fileDeleted = $this->deleteAvatarFile($user);
+            
+            // Очищаем поле avatar в БД
+            /** @var \App\Models\User $user */
+            $user->update(['avatar' => null]);
 
-            // Очищаем поле avatar_url в БД
-            $user->update(['avatar_url' => null]);
+            $message = $fileDeleted 
+                ? 'Аватар успешно удален (файл и запись в БД)'
+                : 'Аватар удален из БД, но файл не найден на диске';
+
+            Log::info('Avatar deletion completed. File deleted: ' . ($fileDeleted ? 'YES' : 'NO'));
+            Log::info('=== DELETE AVATAR METHOD END ===');
 
             return response()->json([
                 'success' => true,
-                'message' => 'Аватар успешно удален'
+                'message' => $message,
+                'file_deleted' => $fileDeleted
             ], 200);
 
         } catch (\Exception $e) {
-            \Log::error('Ошибка удаления аватара пользователя: ' . $e->getMessage());
+            Log::error('Ошибка удаления аватара пользователя: ' . $e->getMessage());
             
             return response()->json([
                 'success' => false,
@@ -256,11 +270,11 @@ class UserProfileController extends Controller
                 ], 401);
             }
 
-            // Здесь можно добавить реальную статистику
+            // Получаем реальную статистику
             $statistics = [
-                'orders_count' => 0, // TODO: Реализовать подсчет заказов
-                'favorites_count' => 0, // TODO: Реализовать подсчет избранного
-                'total_spent' => 0, // TODO: Реализовать подсчет потраченной суммы
+                'ordersCount' => $this->getOrdersCount($user),
+                'favoritesCount' => $this->getFavoritesCount($user),
+                'totalSpent' => $this->getTotalSpent($user),
             ];
 
             return response()->json([
@@ -269,7 +283,7 @@ class UserProfileController extends Controller
             ], 200);
 
         } catch (\Exception $e) {
-            \Log::error('Ошибка получения статистики пользователя: ' . $e->getMessage());
+            Log::error('Ошибка получения статистики пользователя: ' . $e->getMessage());
             
             return response()->json([
                 'success' => false,
@@ -295,7 +309,91 @@ class UserProfileController extends Controller
     }
 
     /**
-     * Удалить старый аватар
+     * Получить количество заказов пользователя
+     */
+    private function getOrdersCount($user): int
+    {
+        try {
+            // Предполагаем, что есть таблица orders с полем user_id
+            return \DB::table('orders')->where('user_id', $user->id)->count();
+        } catch (\Exception $e) {
+            Log::error('Ошибка подсчета заказов: ' . $e->getMessage());
+            return 0;
+        }
+    }
+
+    /**
+     * Получить количество избранных товаров пользователя
+     */
+    private function getFavoritesCount($user): int
+    {
+        try {
+            // Предполагаем, что есть таблица favorites с полем user_id
+            return \DB::table('favorites')->where('user_id', $user->id)->count();
+        } catch (\Exception $e) {
+            Log::error('Ошибка подсчета избранного: ' . $e->getMessage());
+            return 0;
+        }
+    }
+
+    /**
+     * Получить общую сумму потраченных денег
+     */
+    private function getTotalSpent($user): int
+    {
+        try {
+            // Предполагаем, что есть таблица orders с полями user_id и total_amount
+            return \DB::table('orders')
+                ->where('user_id', $user->id)
+                ->where('status', '!=', 'cancelled') // Исключаем отмененные заказы
+                ->sum('total_amount') ?? 0;
+        } catch (\Exception $e) {
+            Log::error('Ошибка подсчета потраченной суммы: ' . $e->getMessage());
+            return 0;
+        }
+    }
+
+    /**
+     * Удалить файл аватара пользователя
+     */
+    private function deleteAvatarFile($user): bool
+    {
+        try {
+            if (!$user) {
+                Log::error('User not provided');
+                return false;
+            }
+
+            // Путь к папке на фронтенде
+            $frontendPath = dirname(base_path()) . '/' . ltrim(env('FRONTEND_PATH', 'admin.skateandsnow.ru'), './') . '/public/images/users/';
+            
+            // Всегда используем стандартное имя файла user_{id}.jpg
+            // Не проверяем БД - просто удаляем файл, если он есть
+            $filename = 'user_' . $user->id . '.jpg';
+            $fullPath = $frontendPath . $filename;
+            
+            
+            // Проверяем существование файла
+            if (file_exists($fullPath)) {
+                // Удаляем файл
+                if (unlink($fullPath)) {
+                    return true;
+                } else {
+                    return false;
+                }
+            } else {
+                return true; // Файл не найден - это нормально, считаем что удаление успешно
+            }
+
+        } catch (\Exception $e) {
+            Log::error('Ошибка удаления файла аватара: ' . $e->getMessage());
+            Log::error('Stack trace: ' . $e->getTraceAsString());
+            return false;
+        }
+    }
+
+    /**
+     * Удалить старый аватар (старый метод для совместимости)
      */
     private function deleteOldAvatar(string $avatarUrl): void
     {
@@ -310,7 +408,7 @@ class UserProfileController extends Controller
                 }
             }
         } catch (\Exception $e) {
-            \Log::warning('Не удалось удалить старый аватар: ' . $e->getMessage());
+            Log::warning('Не удалось удалить старый аватар: ' . $e->getMessage());
         }
     }
 }

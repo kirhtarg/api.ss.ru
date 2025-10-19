@@ -343,4 +343,42 @@ class ShopCategoriesController extends Controller
         $frontendUrl = config('app.frontend_url', 'https://admin.skateandsnow.ru');
         return $frontendUrl . '/images/' . $cleanPath;
     }
+
+    /**
+     * Получить главные категории (без родительских)
+     */
+    public function main(): JsonResponse
+    {
+        try {
+            $categories = ShopCategory::where('is_active', true)
+                ->whereNull('parent_id')
+                ->orderBy('sort_order', 'asc')
+                ->orderBy('name', 'asc')
+                ->get();
+
+            $categories = $categories->map(function ($category) {
+                return [
+                    'id' => $category->id,
+                    'name' => $category->name,
+                    'slug' => $category->slug,
+                    'description' => $category->description,
+                    'image' => $category->image ? $this->getImageUrl($category->image) : null,
+                    'sort_order' => $category->sort_order,
+                    'is_active' => $category->is_active,
+                    'children_count' => $category->children()->where('is_active', true)->count()
+                ];
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => $categories
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при получении главных категорий: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }

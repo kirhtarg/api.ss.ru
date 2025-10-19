@@ -24,7 +24,10 @@ class UserOrdersController extends Controller
 
             // Фильтр по статусу
             if ($request->has('status') && $request->input('status')) {
-                $query->where('status_id', $request->input('status'));
+                $statusName = $request->input('status');
+                $query->whereHas('status', function ($q) use ($statusName) {
+                    $q->where('name', $statusName);
+                });
             }
 
             // Поиск по номеру заказа

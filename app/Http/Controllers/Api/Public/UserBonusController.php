@@ -7,6 +7,7 @@ use App\Services\BonusService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 
 class UserBonusController extends Controller
 {
@@ -28,11 +29,9 @@ class UserBonusController extends Controller
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
             }
 
-            \Log::info('UserBonusController: Getting bonus balance for user', ['user_id' => $user->id]);
             
             $balance = $this->bonusService->getBonusBalance($user);
 
-            \Log::info('UserBonusController: Balance retrieved', ['balance' => $balance]);
 
             return response()->json([
                 'success' => true,
@@ -43,10 +42,6 @@ class UserBonusController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('UserBonusController: Error getting bonus balance', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
             
             return response()->json([
                 'success' => false,
@@ -126,15 +121,85 @@ class UserBonusController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('UserBonusController: Error creating test data', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
             
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка создания тестовых данных: ' . $e->getMessage()
             ], 500);
+        }
+    }
+
+    /**
+     * Добавляет CORS заголовки к ответу
+     */
+    private function addCorsHeaders($response)
+    {
+        return $response
+            ->header('Access-Control-Allow-Origin', '*')
+            ->header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+            ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN')
+            ->header('Access-Control-Allow-Credentials', 'true');
+    }
+
+    /**
+     * Списывает бонусы с баланса пользователя
+     */
+    public function deductBonuses(Request $request): JsonResponse
+    {
+        try {
+            // Отладочная информация
+            $authHeader = $request->header('Authorization');
+            $token = $request->bearerToken();
+            
+            $user = Auth::user();
+            if (!$user) {
+                // Попробуем авторизовать пользователя вручную
+                if ($token) {
+                    $user = \Laravel\Sanctum\PersonalAccessToken::findToken($token)?->tokenable;
+                }
+                
+                if (!$user) {
+                    return $this->addCorsHeaders(response()->json([
+                        'success' => false,
+                        'message' => 'Пользователь не авторизован',
+                        'debug' => [
+                            'auth_header' => $authHeader,
+                            'bearer_token' => $token ? 'present' : 'missing',
+                            'user_id' => $user ? $user->id : 'null'
+                        ]
+                    ], 401));
+                }
+            }
+
+            $points = $request->input('points');
+            if (!$points || $points <= 0) {
+                return $this->addCorsHeaders(response()->json([
+                    'success' => false,
+                    'message' => 'Некорректное количество бонусов'
+                ], 400));
+            }
+
+            // Используем BonusService для списания бонусов
+            $result = $this->bonusService->deductBonuses($user->id, $points);
+            
+            if ($result['success']) {
+                return $this->addCorsHeaders(response()->json([
+                    'success' => true,
+                    'message' => 'Бонусы успешно списаны',
+                    'remaining_points' => $result['remaining_points']
+                ]));
+            } else {
+                return $this->addCorsHeaders(response()->json([
+                    'success' => false,
+                    'message' => $result['message']
+                ], 400));
+            }
+
+        } catch (\Exception $e) {
+            return $this->addCorsHeaders(response()->json([
+                'success' => false,
+                'message' => 'Ошибка при списании бонусов: ' . $e->getMessage()
+            ], 500));
         }
     }
 }

@@ -17,6 +17,7 @@ class ShopCartItem extends Model
         'variation_id',
         'quantity',
         'price',
+        'sale_price',
         'total',
         'good_name',
         'variation_name',
@@ -26,6 +27,7 @@ class ShopCartItem extends Model
 
     protected $casts = [
         'price' => 'decimal:2',
+        'sale_price' => 'decimal:2',
         'total' => 'decimal:2',
         'quantity' => 'integer'
     ];
@@ -91,7 +93,9 @@ class ShopCartItem extends Model
      */
     public function recalculateTotal()
     {
-        $this->total = $this->price * $this->quantity;
+        // Используем акционную цену если есть, иначе обычную
+        $finalPrice = ($this->sale_price && $this->sale_price > 0) ? $this->sale_price : $this->price;
+        $this->total = $finalPrice * $this->quantity;
         $this->save();
     }
 

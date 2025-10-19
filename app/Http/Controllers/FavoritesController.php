@@ -6,7 +6,6 @@ use Illuminate\Http\Request;
 use App\Models\ShopFavorite;
 use App\Models\User;
 use Laravel\Sanctum\PersonalAccessToken;
-use Illuminate\Support\Facades\Log;
 
 class FavoritesController extends Controller
 {
@@ -50,6 +49,15 @@ class FavoritesController extends Controller
 
         $goodId = $request->good_id;
 
+        // Получаем информацию о товаре
+        $good = \App\Models\ShopGood::find($goodId);
+        if (!$good) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Товар не найден'
+            ], 404);
+        }
+
         // Проверяем, есть ли уже в избранном
         $existing = ShopFavorite::where('user_id', $user->id)
             ->where('good_id', $goodId)
@@ -73,7 +81,8 @@ class FavoritesController extends Controller
         return response()->json([
             'success' => true,
             'is_favorite' => $isFavorite,
-            'message' => $message
+            'message' => $message,
+            'good_name' => $good->name
         ]);
     }
 

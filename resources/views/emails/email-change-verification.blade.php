@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Код подтверждения смены email</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f4f4f4;
+        }
+        .container {
+            background-color: #ffffff;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .logo {
+            font-size: 24px;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        .code-container {
+            background-color: #f8f9fa;
+            border: 2px dashed #dee2e6;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            margin: 20px 0;
+        }
+        .verification-code {
+            font-size: 32px;
+            font-weight: bold;
+            color: #007bff;
+            letter-spacing: 5px;
+            margin: 10px 0;
+        }
+        .message {
+            text-align: center;
+            margin: 20px 0;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #dee2e6;
+            color: #6c757d;
+            font-size: 14px;
+        }
+        .warning {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .email-info {
+            background-color: #e7f3ff;
+            border: 1px solid #b3d9ff;
+            color: #004085;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">{{ $siteInfo['site_name'] ?? 'Skate & Snow' }}</div>
+            <p>Подтверждение смены email</p>
+        </div>
+
+        <div class="message">
+            <h2>Здравствуйте, {{ $user->name }}!</h2>
+            <p>Для подтверждения смены email на <strong>{{ $newEmail }}</strong> введите следующий код:</p>
+        </div>
+
+        <div class="code-container">
+            <p><strong>Ваш код подтверждения:</strong></p>
+            <div class="verification-code">{{ $code }}</div>
+        </div>
+
+        <div class="email-info">
+            <strong>📧 Информация:</strong> Ваш email будет изменен с <strong>{{ $user->email }}</strong> на <strong>{{ $newEmail }}</strong> после ввода кода.
+        </div>
+
+        <div class="warning">
+            <strong>⚠️ Важно:</strong> Этот код действителен в течение 15 минут. Не передавайте его третьим лицам.
+        </div>
+
+        <div class="message">
+            <p>Если вы не запрашивали смену email, просто проигнорируйте это письмо.</p>
+        </div>
+
+        <div class="footer">
+            <p>С уважением,<br>Команда {{ $siteInfo['site_name'] ?? 'Skate & Snow' }}</p>
+            <p>Это письмо отправлено автоматически, пожалуйста, не отвечайте на него.</p>
+        </div>
+    </div>
+</body>
+</html>

@@ -11,28 +11,19 @@ class ShopOrderStatus extends Model
 
     protected $fillable = [
         'name',
+        'display_name',
         'color',
         'is_active',
-        'sort_order'
+        'sort_order',
+        'description'
     ];
 
     protected $casts = [
-        'is_active' => 'boolean',
+        'is_active' => 'boolean'
     ];
 
-    /**
-     * Scope для активных статусов
-     */
-    public function scopeActive($query)
+    public function orders()
     {
-        return $query->where('is_active', true);
-    }
-
-    /**
-     * Scope для сортировки
-     */
-    public function scopeOrdered($query)
-    {
-        return $query->orderBy('sort_order')->orderBy('name');
+        return $this->hasMany(ShopOrder::class, 'status_id');
     }
 }
