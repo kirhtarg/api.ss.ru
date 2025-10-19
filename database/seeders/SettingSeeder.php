@@ -477,9 +477,13 @@ class SettingSeeder extends Seeder
         ];
 
         foreach ($settings as $setting) {
+            // Удаляем id из массива, чтобы избежать конфликтов
+            $settingData = $setting;
+            unset($settingData['id']);
+            
             DB::table('settings')->updateOrInsert(
-                ['id' => $setting['id']],
-                $setting
+                ['key' => $setting['key']],
+                $settingData
             );
         }
     }

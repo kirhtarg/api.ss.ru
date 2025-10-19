@@ -15,7 +15,7 @@ class DatabaseSeeder extends Seeder
             // Основные данные системы
             RoleSeeder::class,
             UserSeeder::class,
-            SettingSeeder::class,
+            SettingSeederSafe::class, // Используем безопасный сидер
             UserRoleSeeder::class,
             
             // Админка

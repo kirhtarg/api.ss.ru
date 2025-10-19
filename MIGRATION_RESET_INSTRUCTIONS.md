@@ -50,7 +50,11 @@ php artisan migrate --force
 
 ### Шаг 8: Запустите сидеры (если нужно)
 ```bash
+# Обычный запуск сидеров
 php artisan db:seed --force
+
+# Или если есть проблемы с дублированием, запустите только безопасные сидеры
+php artisan db:seed --class=SettingSeederSafe --force
 ```
 
 ### Шаг 9: Очистите кэш после миграций
