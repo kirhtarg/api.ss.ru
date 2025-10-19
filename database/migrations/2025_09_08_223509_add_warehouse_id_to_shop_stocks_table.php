@@ -3,6 +3,7 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
@@ -24,17 +25,22 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('shop_stocks', function (Blueprint $table) {
-            // Удаляем поле warehouse_id при откате
+        // Проверяем, существует ли таблица shop_stocks
+        if (Schema::hasTable('shop_stocks')) {
+            // Проверяем, существует ли колонка warehouse_id
             if (Schema::hasColumn('shop_stocks', 'warehouse_id')) {
-                // Проверяем, существует ли внешний ключ перед удалением
+                // Сначала пытаемся удалить внешний ключ через SQL
                 try {
-                    $table->dropForeign(['warehouse_id']);
+                    DB::statement('ALTER TABLE shop_stocks DROP FOREIGN KEY shop_stocks_warehouse_id_foreign');
                 } catch (\Exception $e) {
                     // Игнорируем ошибку, если внешний ключ не существует
                 }
-                $table->dropColumn('warehouse_id');
+                
+                // Затем удаляем колонку
+                Schema::table('shop_stocks', function (Blueprint $table) {
+                    $table->dropColumn('warehouse_id');
+                });
             }
-        });
+        }
     }
 };
