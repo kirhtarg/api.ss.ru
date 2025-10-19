@@ -11,9 +11,15 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('settings', function (Blueprint $table) {
-            $table->text('default_value')->nullable()->after('value')->comment('Значение по умолчанию для настройки');
-        });
+        // Проверяем, существует ли таблица settings
+        if (Schema::hasTable('settings')) {
+            Schema::table('settings', function (Blueprint $table) {
+                // Проверяем, существует ли колонка default_value
+                if (!Schema::hasColumn('settings', 'default_value')) {
+                    $table->text('default_value')->nullable()->after('value')->comment('Значение по умолчанию для настройки');
+                }
+            });
+        }
     }
 
     /**
@@ -21,9 +27,15 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('settings', function (Blueprint $table) {
-            $table->dropColumn('default_value');
-        });
+        // Проверяем, существует ли таблица settings
+        if (Schema::hasTable('settings')) {
+            Schema::table('settings', function (Blueprint $table) {
+                // Проверяем, существует ли колонка default_value
+                if (Schema::hasColumn('settings', 'default_value')) {
+                    $table->dropColumn('default_value');
+                }
+            });
+        }
     }
 };
 
