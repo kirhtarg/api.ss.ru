@@ -12,13 +12,18 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('users', function (Blueprint $table) {
-            $table->string('google_id')->nullable()->unique()->after('email');
+            // Добавляем google_id только если колонка не существует
+            if (!Schema::hasColumn('users', 'google_id')) {
+                $table->string('google_id')->nullable()->unique()->after('email');
+            }
             
-            // Добавляем avatar_url только если колонка avatar существует
-            if (Schema::hasColumn('users', 'avatar')) {
-                $table->string('avatar_url')->nullable()->after('avatar');
-            } else {
-                $table->string('avatar_url')->nullable();
+            // Добавляем avatar_url только если колонка не существует
+            if (!Schema::hasColumn('users', 'avatar_url')) {
+                if (Schema::hasColumn('users', 'avatar')) {
+                    $table->string('avatar_url')->nullable()->after('avatar');
+                } else {
+                    $table->string('avatar_url')->nullable();
+                }
             }
         });
     }
