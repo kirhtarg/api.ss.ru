@@ -1,0 +1,112 @@
+# Инструкции по сбросу и запуску миграций
+
+## Проблема
+Миграции выполняются в неправильном порядке, что приводит к ошибкам типа "Table doesn't exist".
+
+## Решение
+Полный сброс миграций и запуск с нуля с исправленными файлами.
+
+## Пошаговые инструкции для сервера
+
+### Шаг 1: Подключитесь к серверу
+```bash
+ssh your_user@your_server
+```
+
+### Шаг 2: Перейдите в директорию проекта
+```bash
+cd /var/www/api.ss.ru
+```
+
+### Шаг 3: Создайте резервную копию базы данных (РЕКОМЕНДУЕТСЯ)
+```bash
+# Создайте резервную копию на случай проблем
+mysqldump -u your_username -p skateandsnow > backup_$(date +%Y%m%d_%H%M%S).sql
+```
+
+### Шаг 4: Очистите кэш Laravel
+```bash
+php artisan config:clear
+php artisan cache:clear
+php artisan route:clear
+php artisan view:clear
+```
+
+### Шаг 5: Проверьте текущий статус миграций
+```bash
+php artisan migrate:status
+```
+
+### Шаг 6: Полный сброс миграций
+```bash
+# ВНИМАНИЕ: Это удалит ВСЕ данные из базы данных!
+php artisan migrate:reset --force
+```
+
+### Шаг 7: Запустите миграции с нуля
+```bash
+php artisan migrate --force
+```
+
+### Шаг 8: Запустите сидеры (если нужно)
+```bash
+php artisan db:seed --force
+```
+
+### Шаг 9: Очистите кэш после миграций
+```bash
+php artisan config:clear
+php artisan cache:clear
+```
+
+### Шаг 10: Проверьте финальный статус
+```bash
+php artisan migrate:status
+```
+
+## Альтернативный способ - использование скрипта
+
+Если хотите автоматизировать процесс, используйте созданный скрипт:
+
+```bash
+# Сделайте скрипт исполняемым
+chmod +x reset_migrations.sh
+
+# Запустите скрипт
+./reset_migrations.sh
+```
+
+## Что было исправлено
+
+1. **Все миграции изменения таблиц** теперь содержат проверки существования таблиц и колонок
+2. **Порядок миграций** исправлен - сначала создаются таблицы, потом изменяются
+3. **Добавлены безопасные проверки** во всех проблемных миграциях
+
+## Проверка после выполнения
+
+После выполнения всех шагов проверьте:
+
+1. **Статус миграций**: `php artisan migrate:status`
+2. **Доступность сайта**: откройте ваш сайт в браузере
+3. **Логи ошибок**: `tail -f /var/log/nginx/error.log`
+
+## В случае проблем
+
+Если что-то пошло не так:
+
+1. **Восстановите из резервной копии**:
+   ```bash
+   mysql -u your_username -p skateandsnow < backup_YYYYMMDD_HHMMSS.sql
+   ```
+
+2. **Проверьте логи**:
+   ```bash
+   tail -f /var/log/nginx/error.log
+   tail -f storage/logs/laravel.log
+   ```
+
+3. **Проверьте права доступа**:
+   ```bash
+   chown -R www-data:www-data storage bootstrap/cache
+   chmod -R 775 storage bootstrap/cache
+   ```

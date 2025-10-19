@@ -11,9 +11,15 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('shop_user_addresses', function (Blueprint $table) {
-            $table->string('postal_code')->nullable()->after('city'); // Почтовый индекс
-        });
+        // Проверяем, существует ли таблица shop_user_addresses
+        if (Schema::hasTable('shop_user_addresses')) {
+            Schema::table('shop_user_addresses', function (Blueprint $table) {
+                // Проверяем, существует ли колонка postal_code
+                if (!Schema::hasColumn('shop_user_addresses', 'postal_code')) {
+                    $table->string('postal_code')->nullable()->after('city'); // Почтовый индекс
+                }
+            });
+        }
     }
 
     /**
@@ -21,8 +27,14 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('shop_user_addresses', function (Blueprint $table) {
-            $table->dropColumn('postal_code');
-        });
+        // Проверяем, существует ли таблица shop_user_addresses
+        if (Schema::hasTable('shop_user_addresses')) {
+            Schema::table('shop_user_addresses', function (Blueprint $table) {
+                // Проверяем, существует ли колонка postal_code
+                if (Schema::hasColumn('shop_user_addresses', 'postal_code')) {
+                    $table->dropColumn('postal_code');
+                }
+            });
+        }
     }
 };
