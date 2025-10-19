@@ -11,11 +11,17 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('shop_good_properties', function (Blueprint $table) {
-            $table->unsignedBigInteger('variation_id')->nullable()->after('good_id');
-            $table->foreign('variation_id')->references('id')->on('shop_good_variations')->onDelete('cascade');
-            $table->index(['variation_id', 'property_id']);
-        });
+        // Проверяем, существуют ли необходимые таблицы
+        if (Schema::hasTable('shop_good_properties') && Schema::hasTable('shop_good_variations')) {
+            Schema::table('shop_good_properties', function (Blueprint $table) {
+                // Проверяем, существует ли колонка variation_id
+                if (!Schema::hasColumn('shop_good_properties', 'variation_id')) {
+                    $table->unsignedBigInteger('variation_id')->nullable()->after('good_id');
+                    $table->foreign('variation_id')->references('id')->on('shop_good_variations')->onDelete('cascade');
+                    $table->index(['variation_id', 'property_id']);
+                }
+            });
+        }
     }
 
     /**
@@ -23,10 +29,16 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('shop_good_properties', function (Blueprint $table) {
-            $table->dropForeign(['variation_id']);
-            $table->dropIndex(['variation_id', 'property_id']);
-            $table->dropColumn('variation_id');
-        });
+        // Проверяем, существуют ли необходимые таблицы
+        if (Schema::hasTable('shop_good_properties')) {
+            Schema::table('shop_good_properties', function (Blueprint $table) {
+                // Проверяем, существует ли колонка variation_id
+                if (Schema::hasColumn('shop_good_properties', 'variation_id')) {
+                    $table->dropForeign(['variation_id']);
+                    $table->dropIndex(['variation_id', 'property_id']);
+                    $table->dropColumn('variation_id');
+                }
+            });
+        }
     }
 };

@@ -12,7 +12,19 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('users', function (Blueprint $table) {
-            $table->string('yandex_id')->nullable()->unique()->after('vk_id');
+            // Проверяем, существует ли колонка yandex_id
+            if (!Schema::hasColumn('users', 'yandex_id')) {
+                // Если vk_id существует, добавляем yandex_id после него
+                if (Schema::hasColumn('users', 'vk_id')) {
+                    $table->string('yandex_id')->nullable()->unique()->after('vk_id');
+                } else if (Schema::hasColumn('users', 'google_id')) {
+                    // Если vk_id нет, но есть google_id, добавляем после него
+                    $table->string('yandex_id')->nullable()->unique()->after('google_id');
+                } else {
+                    // Иначе добавляем после email
+                    $table->string('yandex_id')->nullable()->unique()->after('email');
+                }
+            }
         });
     }
 

@@ -12,7 +12,16 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('users', function (Blueprint $table) {
-            $table->string('vk_id')->nullable()->unique()->after('google_id');
+            // Проверяем, существует ли колонка vk_id
+            if (!Schema::hasColumn('users', 'vk_id')) {
+                // Если google_id существует, добавляем vk_id после него
+                if (Schema::hasColumn('users', 'google_id')) {
+                    $table->string('vk_id')->nullable()->unique()->after('google_id');
+                } else {
+                    // Иначе добавляем после email
+                    $table->string('vk_id')->nullable()->unique()->after('email');
+                }
+            }
         });
     }
 
