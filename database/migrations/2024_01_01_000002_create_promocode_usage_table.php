@@ -16,7 +16,7 @@ return new class extends Migration
             $table->foreignId('promocode_id')->constrained()->onDelete('cascade');
             $table->foreignId('user_id')->nullable()->constrained()->onDelete('cascade'); // null для неавторизованных
             $table->string('session_id')->nullable(); // Для неавторизованных пользователей
-            $table->foreignId('order_id')->nullable()->constrained('shop_orders')->onDelete('set null');
+            $table->unsignedBigInteger('order_id')->nullable(); // Временно без внешнего ключа
             $table->decimal('discount_amount', 10, 2);
             $table->json('applied_to')->nullable(); // JSON с информацией о том, к чему применен промокод
             $table->timestamp('used_at');
