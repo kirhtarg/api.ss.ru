@@ -24,13 +24,12 @@ return [
         'http://localhost:3001',
         'http://127.0.0.1:3000',
         'http://127.0.0.1:3001',
+        'https://skateandsnow-test.ru',
+        'https://admin.skateandsnow-test.ru',
+        'https://api.skateandsnow-test.ru',
     ], explode(',', env('CORS_ALLOWED_ORIGINS', '')))),
 
-    'allowed_origins_patterns' => array_filter(array_merge([
-        '/^localhost:\d+$/',
-        '/^127\.0\.0\.1:\d+$/',
-        '/^.*\.skateandsnow-test\.ru$/',
-    ], explode(',', env('CORS_ALLOWED_PATTERNS', '')))),
+    'allowed_origins_patterns' => [],
 
     'allowed_headers' => [
         'Content-Type',
