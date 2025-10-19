@@ -16,6 +16,7 @@ class AdminPageSeeder extends Seeder
             [
                 'id' => 1,
                 'name' => 'Настройки',
+                'title' => 'Настройки системы',
                 'slug' => 'settings',
                 'description' => 'Редактирование значений переменных системы',
                 'is_active' => true,
@@ -25,6 +26,7 @@ class AdminPageSeeder extends Seeder
             [
                 'id' => 2,
                 'name' => 'Магазин',
+                'title' => 'Управление магазином',
                 'slug' => 'shop',
                 'description' => 'Администрирование товаров магазина',
                 'is_active' => true,
@@ -34,6 +36,7 @@ class AdminPageSeeder extends Seeder
             [
                 'id' => 3,
                 'name' => 'Настройки сайта',
+                'title' => 'Настройки сайта',
                 'slug' => 'site-settings',
                 'description' => 'Настройки основного сайта',
                 'is_active' => true,
