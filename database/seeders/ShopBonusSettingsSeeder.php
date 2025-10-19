@@ -3,7 +3,7 @@
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
-use App\Models\ShopBonusSettings;
+use Illuminate\Support\Facades\DB;
 
 class ShopBonusSettingsSeeder extends Seeder
 {
@@ -14,6 +14,7 @@ class ShopBonusSettingsSeeder extends Seeder
     {
         $settings = [
             [
+                'id' => 1,
                 'name' => 'Основная бонусная система',
                 'regular_price_percentage' => 5.00,
                 'sale_price_percentage' => 2.50,
@@ -23,12 +24,15 @@ class ShopBonusSettingsSeeder extends Seeder
                 'min_bonus_amount' => 1,
                 'max_bonus_amount' => null,
                 'bonus_expiry_days' => 365,
-                'metadata' => [
+                'metadata' => json_encode([
                     'description' => 'Стандартная система начисления и списания бонусов',
                     'created_by' => 'system'
-                ]
+                ]),
+                'created_at' => now(),
+                'updated_at' => now(),
             ],
             [
+                'id' => 2,
                 'name' => 'Премиум бонусная система',
                 'regular_price_percentage' => 7.50,
                 'sale_price_percentage' => 4.00,
@@ -38,16 +42,18 @@ class ShopBonusSettingsSeeder extends Seeder
                 'min_bonus_amount' => 10,
                 'max_bonus_amount' => 5000,
                 'bonus_expiry_days' => 730,
-                'metadata' => [
+                'metadata' => json_encode([
                     'description' => 'Премиум система с увеличенными процентами',
                     'created_by' => 'system'
-                ]
+                ]),
+                'created_at' => now(),
+                'updated_at' => now(),
             ]
         ];
 
         foreach ($settings as $setting) {
-            ShopBonusSettings::firstOrCreate(
-                ['name' => $setting['name']],
+            DB::table('shop_bonus_settings')->updateOrInsert(
+                ['id' => $setting['id']],
                 $setting
             );
         }

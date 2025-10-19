@@ -4,8 +4,7 @@ namespace Database\Seeders;
 
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
-use App\Models\Slider;
-use App\Models\SliderImage;
+use Illuminate\Support\Facades\DB;
 
 class SliderSeeder extends Seeder
 {
@@ -115,13 +114,27 @@ class SliderSeeder extends Seeder
             $images = $sliderData['images'];
             unset($sliderData['images']);
             
-            $slider = Slider::create($sliderData);
+            // Добавляем ID и временные метки
+            $sliderData['id'] = $sliderData['sort_order'];
+            $sliderData['created_at'] = now();
+            $sliderData['updated_at'] = now();
             
+            // Создаем слайдер
+            DB::table('sliders')->updateOrInsert(
+                ['id' => $sliderData['id']],
+                $sliderData
+            );
+            
+            // Создаем изображения для слайдера
             foreach ($images as $imageData) {
-                SliderImage::create([
-                    'slider_id' => $slider->id,
-                    ...$imageData
-                ]);
+                $imageData['slider_id'] = $sliderData['id'];
+                $imageData['created_at'] = now();
+                $imageData['updated_at'] = now();
+                
+                DB::table('slider_images')->updateOrInsert(
+                    ['slider_id' => $imageData['slider_id'], 'sort_order' => $imageData['sort_order']],
+                    $imageData
+                );
             }
         }
     }
