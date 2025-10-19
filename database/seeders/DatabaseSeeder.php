@@ -19,8 +19,9 @@ class DatabaseSeeder extends Seeder
             UserRoleSeeder::class,
             
             // Админка
-            AdminMenuSeeder::class, // Исправлено: AdminPageSeeder -> AdminMenuSeeder
-            AdminMenuItemSeeder::class,
+            AdminPageSeeder::class, // Сначала создаем страницы
+            AdminMenuSeeder::class,
+            AdminMenuItemSeeder::class, // Потом пункты меню
             
             // Сайт
             SiteTemplateSeeder::class,
