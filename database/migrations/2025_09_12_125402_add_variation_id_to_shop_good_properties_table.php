@@ -3,6 +3,7 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
@@ -34,7 +35,18 @@ return new class extends Migration
             Schema::table('shop_good_properties', function (Blueprint $table) {
                 // Проверяем, существует ли колонка variation_id
                 if (Schema::hasColumn('shop_good_properties', 'variation_id')) {
-                    // Просто удаляем колонку - MySQL автоматически удалит внешний ключ и индексы
+                    // Сначала удаляем внешний ключ
+                    try {
+                        DB::statement('ALTER TABLE shop_good_properties DROP FOREIGN KEY shop_good_properties_variation_id_foreign');
+                    } catch (\Exception $e) {
+                        // Пробуем альтернативные имена
+                        try {
+                            DB::statement('ALTER TABLE shop_good_properties DROP FOREIGN KEY shop_good_property_variation_id_foreign');
+                        } catch (\Exception $e2) {
+                            // Игнорируем ошибку, если внешний ключ не существует
+                        }
+                    }
+                    // Затем удаляем колонку
                     $table->dropColumn('variation_id');
                 }
             });

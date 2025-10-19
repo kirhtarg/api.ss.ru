@@ -25,9 +25,20 @@ return new class extends Migration
      */
     public function down(): void
     {
-        // Просто удаляем колонку без попытки удалить внешний ключ
-        // MySQL автоматически удалит связанный внешний ключ
         if (Schema::hasTable('shop_stocks') && Schema::hasColumn('shop_stocks', 'warehouse_id')) {
+            // Сначала удаляем внешний ключ с правильным именем
+            try {
+                DB::statement('ALTER TABLE shop_stocks DROP FOREIGN KEY shop_stock_warehouse_id_foreign');
+            } catch (\Exception $e) {
+                // Пробуем альтернативное имя
+                try {
+                    DB::statement('ALTER TABLE shop_stocks DROP FOREIGN KEY shop_stocks_warehouse_id_foreign');
+                } catch (\Exception $e2) {
+                    // Игнорируем ошибку, если внешний ключ не существует
+                }
+            }
+            
+            // Затем удаляем колонку
             Schema::table('shop_stocks', function (Blueprint $table) {
                 $table->dropColumn('warehouse_id');
             });
