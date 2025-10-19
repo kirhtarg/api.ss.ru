@@ -11,13 +11,7 @@ return new class extends Migration
         if (Schema::hasTable('shop_good_properties')) {
             Schema::table('shop_good_properties', function (Blueprint $table) {
                 if (Schema::hasColumn('shop_good_properties', 'variation_id')) {
-                    // Сначала удаляем внешний ключ, если он существует
-                    try {
-                        $table->dropForeign(['variation_id']);
-                    } catch (\Exception $e) {
-                        // Игнорируем ошибку, если внешний ключ не существует
-                    }
-                    // Затем удаляем колонку
+                    // Просто удаляем колонку - MySQL автоматически удалит внешний ключ
                     $table->dropColumn('variation_id');
                 }
             });
@@ -30,11 +24,9 @@ return new class extends Migration
             Schema::table('shop_good_properties', function (Blueprint $table) {
                 if (!Schema::hasColumn('shop_good_properties', 'variation_id')) {
                     $table->unsignedBigInteger('variation_id')->nullable()->index();
-                    // Восстанавливаем внешний ключ только если таблица shop_good_variations существует
-                    try {
+                    // Создаем внешний ключ только если таблица существует
+                    if (Schema::hasTable('shop_good_variations')) {
                         $table->foreign('variation_id')->references('id')->on('shop_good_variations')->onDelete('cascade');
-                    } catch (\Exception $e) {
-                        // Игнорируем ошибку, если не удается создать внешний ключ
                     }
                 }
             });

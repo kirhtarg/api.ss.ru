@@ -25,22 +25,12 @@ return new class extends Migration
      */
     public function down(): void
     {
-        // Проверяем, существует ли таблица shop_stocks
-        if (Schema::hasTable('shop_stocks')) {
-            // Проверяем, существует ли колонка warehouse_id
-            if (Schema::hasColumn('shop_stocks', 'warehouse_id')) {
-                // Сначала пытаемся удалить внешний ключ через SQL
-                try {
-                    DB::statement('ALTER TABLE shop_stocks DROP FOREIGN KEY shop_stocks_warehouse_id_foreign');
-                } catch (\Exception $e) {
-                    // Игнорируем ошибку, если внешний ключ не существует
-                }
-                
-                // Затем удаляем колонку
-                Schema::table('shop_stocks', function (Blueprint $table) {
-                    $table->dropColumn('warehouse_id');
-                });
-            }
+        // Просто удаляем колонку без попытки удалить внешний ключ
+        // MySQL автоматически удалит связанный внешний ключ
+        if (Schema::hasTable('shop_stocks') && Schema::hasColumn('shop_stocks', 'warehouse_id')) {
+            Schema::table('shop_stocks', function (Blueprint $table) {
+                $table->dropColumn('warehouse_id');
+            });
         }
     }
 };

@@ -34,8 +34,7 @@ return new class extends Migration
             Schema::table('shop_good_properties', function (Blueprint $table) {
                 // Проверяем, существует ли колонка variation_id
                 if (Schema::hasColumn('shop_good_properties', 'variation_id')) {
-                    $table->dropForeign(['variation_id']);
-                    $table->dropIndex(['variation_id', 'property_id']);
+                    // Просто удаляем колонку - MySQL автоматически удалит внешний ключ и индексы
                     $table->dropColumn('variation_id');
                 }
             });
