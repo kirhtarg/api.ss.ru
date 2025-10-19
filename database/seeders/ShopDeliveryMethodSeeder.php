@@ -3,7 +3,7 @@
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
-use App\Models\ShopDeliveryMethod;
+use Illuminate\Support\Facades\DB;
 
 class ShopDeliveryMethodSeeder extends Seeder
 {
@@ -14,67 +14,82 @@ class ShopDeliveryMethodSeeder extends Seeder
     {
         $deliveryMethods = [
             [
+                'id' => 1,
                 'name' => 'Самовывоз',
                 'type' => 'pickup',
                 'is_active' => true,
                 'cost' => 0,
                 'free_from' => null,
                 'description' => 'Самовывоз из нашего магазина',
-                'settings' => [
+                'settings' => json_encode([
                     'address' => 'Адрес магазина',
                     'working_hours' => 'Пн-Пт: 10:00-20:00, Сб-Вс: 10:00-18:00',
                     'phone' => '+7 (999) 123-45-67'
-                ],
+                ]),
                 'sort_order' => 1,
-                'is_default' => true
+                'is_default' => true,
+                'created_at' => now(),
+                'updated_at' => now(),
             ],
             [
+                'id' => 2,
                 'name' => 'Курьерская доставка',
                 'type' => 'courier',
                 'is_active' => true,
                 'cost' => 300,
                 'free_from' => 3000,
                 'description' => 'Доставка курьером по городу',
-                'settings' => [
+                'settings' => json_encode([
                     'delivery_time' => '1-2 дня',
                     'working_hours' => 'Пн-Пт: 9:00-18:00'
-                ],
+                ]),
                 'sort_order' => 2,
-                'is_default' => false
+                'is_default' => false,
+                'created_at' => now(),
+                'updated_at' => now(),
             ],
             [
+                'id' => 3,
                 'name' => 'СДЭК',
                 'type' => 'cdek',
                 'is_active' => true,
                 'cost' => 250,
                 'free_from' => 2500,
                 'description' => 'Доставка через службу СДЭК',
-                'settings' => [
+                'settings' => json_encode([
                     'api_key' => '',
                     'sender_city_id' => '',
                     'delivery_time' => '2-5 дней'
-                ],
+                ]),
                 'sort_order' => 3,
-                'is_default' => false
+                'is_default' => false,
+                'created_at' => now(),
+                'updated_at' => now(),
             ],
             [
+                'id' => 4,
                 'name' => 'Почта России',
                 'type' => 'post',
                 'is_active' => true,
                 'cost' => 200,
                 'free_from' => 2000,
                 'description' => 'Доставка через Почту России',
-                'settings' => [
+                'settings' => json_encode([
                     'delivery_time' => '5-14 дней',
                     'tracking' => true
-                ],
+                ]),
                 'sort_order' => 4,
-                'is_default' => false
+                'is_default' => false,
+                'created_at' => now(),
+                'updated_at' => now(),
             ]
         ];
 
         foreach ($deliveryMethods as $method) {
-            ShopDeliveryMethod::create($method);
+            DB::table('shop_delivery_methods')->updateOrInsert(
+                ['id' => $method['id']],
+                $method
+            );
         }
     }
 }

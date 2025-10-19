@@ -12,8 +12,8 @@ class SettingSeederSafe extends Seeder
      */
     public function run(): void
     {
-        // Очищаем таблицу settings перед заполнением
-        DB::table('settings')->truncate();
+        // Удаляем все записи из таблицы settings
+        DB::table('settings')->delete();
         
         // Сбрасываем автоинкремент
         DB::statement('ALTER TABLE settings AUTO_INCREMENT = 1');
