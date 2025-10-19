@@ -11,9 +11,15 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('sliders', function (Blueprint $table) {
-            $table->boolean('show_text_block')->default(true)->after('text_position');
-        });
+        // Проверяем, существует ли таблица sliders
+        if (Schema::hasTable('sliders')) {
+            Schema::table('sliders', function (Blueprint $table) {
+                // Проверяем, существует ли колонка show_text_block
+                if (!Schema::hasColumn('sliders', 'show_text_block')) {
+                    $table->boolean('show_text_block')->default(true)->after('text_position');
+                }
+            });
+        }
     }
 
     /**
@@ -21,8 +27,14 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('sliders', function (Blueprint $table) {
-            $table->dropColumn('show_text_block');
-        });
+        // Проверяем, существует ли таблица sliders
+        if (Schema::hasTable('sliders')) {
+            Schema::table('sliders', function (Blueprint $table) {
+                // Проверяем, существует ли колонка show_text_block
+                if (Schema::hasColumn('sliders', 'show_text_block')) {
+                    $table->dropColumn('show_text_block');
+                }
+            });
+        }
     }
 };
