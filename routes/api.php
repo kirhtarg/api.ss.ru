@@ -349,6 +349,22 @@ Route::get('/test/oauth', function () {
     });
     Route::get('/public/shop/cdek/streets', [App\Http\Controllers\Api\Public\ShopCdekController::class, 'getStreets']);
     
+Route::options('/public/shop/cdek/houses', function () {
+    return response()->json([], 200);
+});
+Route::get('/public/shop/cdek/houses', [App\Http\Controllers\Api\Public\ShopCdekController::class, 'getHouses']);
+
+Route::options('/public/shop/cdek/get-postal-code', function () {
+    return response()->json([], 200);
+});
+Route::post('/public/shop/cdek/get-postal-code', [App\Http\Controllers\Api\Public\ShopCdekController::class, 'getPostalCode']);
+
+// Order details API
+Route::options('/public/order/details', function () {
+    return response()->json([], 200);
+});
+Route::get('/public/order/details', [App\Http\Controllers\Api\OrderController::class, 'getOrderDetails']);
+    
     // Тест-Банк интеграция
     Route::options('/public/testbank/payment', function () {
         return response()->json([], 200);
@@ -2821,6 +2837,14 @@ Route::prefix('cdek')->group(function () {
     Route::get('/pickup-points', [\App\Http\Controllers\Api\Public\CdekController::class, 'getPickupPoints']);
     Route::post('/calculate', [\App\Http\Controllers\Api\Public\CdekController::class, 'calculateDelivery']);
     Route::post('/min-cost', [\App\Http\Controllers\Api\Public\CdekController::class, 'getMinDeliveryCost']);
+});
+
+// СДЭК API для создания заказов (требует авторизации)
+Route::middleware(['auth:sanctum'])->prefix('sdek')->group(function () {
+    Route::post('/create-order', [\App\Http\Controllers\SdekOrderController::class, 'createOrder']);
+    Route::get('/order-status/{orderUuid}', [\App\Http\Controllers\SdekOrderController::class, 'getOrderStatus']);
+    Route::post('/cancel-order/{orderUuid}', [\App\Http\Controllers\SdekOrderController::class, 'cancelOrder']);
+    Route::post('/insurance-info', [\App\Http\Controllers\SdekOrderController::class, 'getInsuranceInfo']);
 });
 
 // Пользовательские маршруты (требуют авторизации)

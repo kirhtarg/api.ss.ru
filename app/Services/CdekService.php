@@ -438,4 +438,389 @@ class CdekService
         // Если города не найдены в карте расстояний, используем базовый множитель
         return 1.0;
     }
+
+    /**
+     * Создать заказ в СДЭК
+     */
+    public function createOrder($orderData)
+    {
+        try {
+            if (!$this->settings) {
+                Log::error('CdekService: No active CDEK settings found');
+                return [
+                    'success' => false,
+                    'message' => 'Настройки СДЭК не найдены'
+                ];
+            }
+
+            $token = $this->getAccessToken();
+            if (!$token) {
+                Log::error('CdekService: Failed to get access token for order creation');
+                return [
+                    'success' => false,
+                    'message' => 'Не удалось получить токен доступа СДЭК'
+                ];
+            }
+
+            // Формируем данные для создания заказа согласно API СДЭК
+            Log::info('CdekService: Creating order with data:', $orderData);
+            
+            // Определяем, нужен ли наложенный платеж
+            $isCashOnDelivery = isset($orderData['payment_method']) && 
+                (stripos($orderData['payment_method'], 'получении') !== false || 
+                 stripos($orderData['payment_method'], 'наложенный') !== false);
+            
+            Log::info('CdekService: Payment method analysis', [
+                'payment_method' => $orderData['payment_method'] ?? 'not_set',
+                'is_cash_on_delivery' => $isCashOnDelivery,
+                'total_amount' => $orderData['total_amount'] ?? 0,
+                'subtotal' => $orderData['subtotal'] ?? 0,
+                'delivery_cost' => ($orderData['total_amount'] ?? 0) - ($orderData['subtotal'] ?? 0),
+                'packages_cost_sum' => array_sum(array_column($orderData['packages'] ?? [], 'cost'))
+            ]);
+            
+            $sdekOrderData = [
+                'number' => $orderData['order_number'] ?? 'ORDER_' . time(),
+                'tariff_code' => $orderData['tariff_code'],
+                'comment' => ($orderData['comment'] ?? '') . ($isCashOnDelivery ? ' (Наложенный платеж: ' . (($orderData['subtotal'] ?? 0) - ($orderData['delivery_cost'] ?? 0)) . ' руб.)' : ''),
+                // developer_key - необязательный параметр, используется для идентификации разработчика
+                'developer_key' => $this->settings->developer_key ?? '',
+                'sender' => [
+                    'name' => $this->settings->sender_name ?? '',
+                    'company' => $this->settings->sender_company ?? '',
+                    'email' => $this->settings->sender_email ?? '',
+                    'phones' => [
+                        [
+                            'number' => $this->settings->sender_phone ?? ''
+                        ]
+                    ]
+                ],
+                'recipient' => [
+                    'name' => $orderData['customer_name'],
+                    'company' => $orderData['customer_company'] ?? '',
+                    'email' => $orderData['customer_email'],
+                    'phones' => [
+                        [
+                            'number' => $orderData['customer_phone']
+                        ]
+                    ]
+                ],
+                'from_location' => [
+                    'address' => $this->getSenderAddress(),
+                    'code' => $this->getSenderCityCode()
+                ],
+                'packages' => array_map(function($package) use ($orderData) {
+                        // Определяем, нужен ли наложенный платеж
+                        $isCashOnDelivery = isset($orderData['payment_method']) && 
+                            (stripos($orderData['payment_method'], 'получении') !== false || 
+                             stripos($orderData['payment_method'], 'наложенный') !== false);
+                        
+                        // Стоимость товара для наложенного платежа
+                        $itemCost = $isCashOnDelivery ? ($package['cost'] ?? 0) : 0;
+                        $paymentValue = $isCashOnDelivery ? ($package['cost'] ?? 0) : 0;
+                        
+                        return [
+                            'number' => $package['number'] ?? 'PKG_' . time(),
+                            'weight' => $package['weight'] ?? 1000,
+                            'length' => $package['length'] ?? 10,
+                            'width' => $package['width'] ?? 10,
+                            'height' => $package['height'] ?? 10,
+                            'comment' => $package['comment'] ?? '',
+                            'items' => isset($package['items']) ? array_map(function($item) use ($isCashOnDelivery) {
+                                return [
+                                    'name' => $item['name'] ?? 'Товар',
+                                    'ware_key' => $item['ware_key'] ?? 'ITEM_' . time(),
+                                    'payment' => [
+                                        'value' => $isCashOnDelivery ? ($item['cost'] ?? 0) : 0
+                                    ],
+                                    'cost' => $isCashOnDelivery ? ($item['cost'] ?? 0) : 0,
+                                    'weight' => $item['weight'] ?? 1000,
+                                    'amount' => $item['amount'] ?? 1
+                                ];
+                            }, $package['items']) : [
+                                [
+                                    'name' => $package['comment'] ?? 'Товар',
+                                    'ware_key' => $package['number'] ?? 'ITEM_' . time(),
+                                    'payment' => [
+                                        'value' => $paymentValue
+                                    ],
+                                    'cost' => $itemCost,
+                                    'weight' => $package['weight'] ?? 1000,
+                                    'amount' => 1
+                                ]
+                            ]
+                        ];
+                    }, $orderData['packages'] ?? []),
+                'services' => $orderData['services'] ?? []
+            ];
+
+            // Если выбран ПВЗ, добавляем delivery_point и убираем to_location
+            if (isset($orderData['pvz_code']) && $orderData['pvz_code']) {
+                $sdekOrderData['delivery_point'] = $orderData['pvz_code'];
+                // Убираем to_location при использовании ПВЗ
+                unset($sdekOrderData['to_location']);
+            } else {
+                // Если не ПВЗ, добавляем to_location с адресом
+                $sdekOrderData['to_location'] = [
+                    'address' => $orderData['delivery_address'],
+                    'code' => $orderData['city_code']
+                ];
+            }
+
+
+
+            Log::info('CdekService: Sending order data to CDEK API:', $sdekOrderData);
+            
+            $response = Http::withOptions([
+                'verify' => $this->sslVerify,
+                'timeout' => $this->timeout,
+            ])->withHeaders([
+                'Authorization' => 'Bearer ' . $token,
+                'Content-Type' => 'application/json'
+            ])->post($this->apiUrl . '/orders', $sdekOrderData);
+
+            Log::info('CdekService: Order creation response status: ' . $response->status());
+            Log::info('CdekService: Order creation response body: ' . $response->body());
+
+            if ($response->successful()) {
+                $data = $response->json();
+                
+                // Проверяем статус заказа через 5 секунд
+                $additionalServices = [];
+                if (isset($data['entity']['uuid'])) {
+                    sleep(5); // Ждем 5 секунд
+                    $statusResult = $this->getOrderStatus($data['entity']['uuid']);
+                    if ($statusResult['success']) {
+                        Log::info('CdekService: Order status after 5 seconds:', $statusResult['data']);
+                        
+                        // Извлекаем информацию о дополнительных услугах
+                        if (isset($statusResult['data']['services'])) {
+                            Log::info('CdekService: Found services in order status:', $statusResult['data']['services']);
+                            foreach ($statusResult['data']['services'] as $service) {
+                                Log::info('CdekService: Processing service:', $service);
+                                if ($service['code'] === 'INSURANCE') {
+                                    $additionalServices[] = [
+                                        'name' => 'Страховка за объявленную стоимость',
+                                        'cost' => $service['total_sum'],
+                                        'description' => 'Дополнительный сбор за объявленную стоимость ' . $service['parameter'] . ' руб.'
+                                    ];
+                                    Log::info('CdekService: Added insurance service to additional_services');
+                                }
+                            }
+                        } else {
+                            Log::info('CdekService: No services found in order status');
+                        }
+                    } else {
+                        Log::error('CdekService: Failed to get order status:', $statusResult);
+                    }
+                }
+                
+                return [
+                    'success' => true,
+                    'data' => $data,
+                    'additional_services' => $additionalServices,
+                    'message' => 'Заказ в СДЭК успешно создан'
+                ];
+            } else {
+                $errorData = $response->json();
+                Log::error('CdekService: Order creation failed: ' . json_encode($errorData));
+                
+                return [
+                    'success' => false,
+                    'error' => $errorData,
+                    'message' => $errorData['message'] ?? 'Ошибка при создании заказа в СДЭК'
+                ];
+            }
+
+        } catch (\Exception $e) {
+            Log::error('CdekService: Exception during order creation: ' . $e->getMessage());
+            Log::error('CdekService: Exception stack: ' . $e->getTraceAsString());
+            
+            return [
+                'success' => false,
+                'error' => $e->getMessage(),
+                'message' => 'Ошибка при создании заказа в СДЭК: ' . $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Получить статус заказа в СДЭК
+     */
+    public function getOrderStatus($orderUuid)
+    {
+        try {
+            if (!$this->settings) {
+                return [
+                    'success' => false,
+                    'message' => 'Настройки СДЭК не найдены'
+                ];
+            }
+
+            $token = $this->getAccessToken();
+            if (!$token) {
+                return [
+                    'success' => false,
+                    'message' => 'Не удалось получить токен доступа СДЭК'
+                ];
+            }
+
+            $response = Http::withOptions([
+                'verify' => $this->sslVerify,
+                'timeout' => $this->timeout,
+            ])->withHeaders([
+                'Authorization' => 'Bearer ' . $token
+            ])->get($this->apiUrl . '/orders/' . $orderUuid);
+
+            if ($response->successful()) {
+                return [
+                    'success' => true,
+                    'data' => $response->json()
+                ];
+            } else {
+                return [
+                    'success' => false,
+                    'message' => 'Ошибка при получении статуса заказа'
+                ];
+            }
+
+        } catch (\Exception $e) {
+            Log::error('CdekService: Error getting order status: ' . $e->getMessage());
+            return [
+                'success' => false,
+                'message' => 'Ошибка при получении статуса заказа: ' . $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Получить информацию о страховке для тарифа
+     */
+    public function getInsuranceInfo($tariffCode, $totalAmount)
+    {
+        try {
+            if (!$this->settings) {
+                return [
+                    'success' => false,
+                    'message' => 'Настройки СДЭК не найдены'
+                ];
+            }
+
+            // Для наложенного платежа СДЭК автоматически добавляет страховку
+            // Рассчитываем примерную стоимость страховки (обычно 0.75% от суммы)
+            $insuranceRate = 0.0075; // 0.75%
+            $insuranceCost = $totalAmount * $insuranceRate;
+            
+            // Минимальная стоимость страховки обычно 50 рублей
+            $minInsuranceCost = 50;
+            $finalInsuranceCost = max(round($insuranceCost), $minInsuranceCost);
+            
+            return [
+                'success' => true,
+                'insurance_info' => [
+                    'name' => 'Страховка за объявленную стоимость',
+                    'cost' => $finalInsuranceCost,
+                    'description' => 'Дополнительный сбор за объявленную стоимость ' . number_format($totalAmount, 0, ',', ' ') . ' руб.'
+                ]
+            ];
+
+        } catch (\Exception $e) {
+            Log::error('CdekService: Error getting insurance info: ' . $e->getMessage());
+            return [
+                'success' => false,
+                'message' => 'Ошибка при получении информации о страховке: ' . $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Отменить заказ в СДЭК
+     */
+    public function cancelOrder($orderUuid)
+    {
+        try {
+            if (!$this->settings) {
+                return [
+                    'success' => false,
+                    'message' => 'Настройки СДЭК не найдены'
+                ];
+            }
+
+            $token = $this->getAccessToken();
+            if (!$token) {
+                return [
+                    'success' => false,
+                    'message' => 'Не удалось получить токен доступа СДЭК'
+                ];
+            }
+
+            $response = Http::withOptions([
+                'verify' => $this->sslVerify,
+                'timeout' => $this->timeout,
+            ])->withHeaders([
+                'Authorization' => 'Bearer ' . $token
+            ])->post($this->apiUrl . '/orders/' . $orderUuid . '/cancel');
+
+            if ($response->successful()) {
+                return [
+                    'success' => true,
+                    'data' => $response->json(),
+                    'message' => 'Заказ в СДЭК успешно отменен'
+                ];
+            } else {
+                return [
+                    'success' => false,
+                    'message' => 'Ошибка при отмене заказа'
+                ];
+            }
+
+        } catch (\Exception $e) {
+            Log::error('CdekService: Error canceling order: ' . $e->getMessage());
+            return [
+                'success' => false,
+                'message' => 'Ошибка при отмене заказа: ' . $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Получить полный адрес отправителя
+     */
+    private function getSenderAddress()
+    {
+        if (!$this->settings) {
+            return '';
+        }
+
+        $addressParts = [];
+        
+        if ($this->settings->sender_city) {
+            $addressParts[] = $this->settings->sender_city;
+        }
+        
+        if ($this->settings->sender_street) {
+            $street = $this->settings->sender_street;
+            if ($this->settings->sender_house) {
+                $street .= ', д. ' . $this->settings->sender_house;
+            }
+            if ($this->settings->sender_flat) {
+                $street .= ', кв. ' . $this->settings->sender_flat;
+            }
+            $addressParts[] = $street;
+        }
+        
+        if ($this->settings->sender_postal_code) {
+            $addressParts[] = $this->settings->sender_postal_code;
+        }
+        
+        return implode(', ', $addressParts);
+    }
+
+    /**
+     * Получить код города отправителя
+     */
+    private function getSenderCityCode()
+    {
+        return $this->settings->sender_city_code ?? '';
+    }
 }

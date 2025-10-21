@@ -259,6 +259,7 @@ class ShopCdekController extends Controller
             $cityCode = $request->query('city_code');
             $cartItems = $request->query('cart_items', []);
             
+            
             if (!$cityCode) {
                 return response()->json([
                     'success' => false,
@@ -298,6 +299,7 @@ class ShopCdekController extends Controller
             try {
                 // Получаем код города отправителя из настроек
                 $senderCityCode = $this->getSenderCityCode($settings);
+                
                 
                 if ($senderCityCode) {
                     // Рассчитываем размеры посылки на основе товаров в корзине
@@ -364,11 +366,29 @@ class ShopCdekController extends Controller
                     } else {
                         // Если настроенные тарифы не найдены, проверяем есть ли вообще доступные тарифы
                         if (empty($deliveryResult)) {
-                            // Нет доступных тарифов для этого города
-                            return response()->json([
-                                'success' => false,
-                                'message' => 'Доставка в данный населенный пункт недоступна'
-                            ], 404);
+                            // Если API СДЭК не работает, используем fallback данные из настроек
+                            
+                            foreach ($tariffs as $tariff) {
+                                if (!($tariff['enabled'] ?? true)) {
+                                    continue; // Пропускаем отключенные тарифы
+                                }
+                                
+                                $formattedTariffs[] = [
+                                    'code' => $tariff['tariff_code'],
+                                    'name' => $tariff['site_name'],
+                                    'description' => $tariff['tariff_description'] ?? '',
+                                    'cost' => ($tariff['delivery_sum'] ?? 300) . ' ₽',
+                                    'cost_value' => (float)($tariff['delivery_sum'] ?? 300),
+                                    'enabled' => $tariff['enabled'] ?? true
+                                ];
+                            }
+                            
+                            if (empty($formattedTariffs)) {
+                                return response()->json([
+                                    'success' => false,
+                                    'message' => 'Доставка в данный населенный пункт недоступна'
+                                ], 404);
+                            }
                         } else {
                             // Если настроенные тарифы не найдены, используем все доступные из CDEK API
                             foreach ($deliveryResult as $resultTariff) {
@@ -658,6 +678,263 @@ class ShopCdekController extends Controller
     }
 
     /**
+     * Получение подсказок домов через DaData API
+     */
+    public function getHouses(Request $request): JsonResponse
+    {
+        try {
+            $city = $request->query('city');
+            $street = $request->query('street');
+            $query = $request->query('q');
+            
+            // Правильно декодируем кириллицу
+            $city = urldecode($city);
+            $street = urldecode($street);
+            $query = urldecode($query);
+            
+            if (!$city || !$street || !$query) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не указан город, улица или запрос'
+                ], 400);
+            }
+            
+            if (strlen($query) < 1) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Минимум 1 символ для поиска дома'
+                ], 400);
+            }
+
+            // Используем API ключ DaData из переменных окружения
+            $dadataApiKey = env('DADATA_API_KEY');
+            if (!$dadataApiKey) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'API ключ DaData не настроен'
+                ], 500);
+            }
+
+            // 1. Получаем КЛАДР-код города через DaData suggest/address
+            $kladrId = '';
+            $cityName = $city;
+            try {
+                $suggestRes = Http::withOptions([
+                    'verify' => false,
+                    'timeout' => 15,
+                    'connect_timeout' => 10
+                ])
+                    ->withHeaders([
+                        'Content-Type' => 'application/json',
+                        'Accept' => 'application/json',
+                        'Authorization' => 'Token ' . $dadataApiKey
+                    ])
+                    ->post('https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/address', [
+                        'query' => $city,
+                        'from_bound' => ['value' => 'city'],
+                        'to_bound' => ['value' => 'city'],
+                        'count' => 1
+                    ]);
+
+                if ($suggestRes->successful()) {
+                    $suggestData = $suggestRes->json();
+                    $kladrId = $suggestData['suggestions'][0]['data']['city_kladr_id'] ?? '';
+                    $cityName = $suggestData['suggestions'][0]['data']['city'] ?? $city;
+                }
+            } catch (\Exception $e) {
+                Log::warning('DaData city lookup error: ' . $e->getMessage());
+            }
+
+            if (!$kladrId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не удалось получить КЛАДР-код города'
+                ], 400);
+            }
+
+            // 2. Запрос к DaData для поиска домов с фильтром по городу и улице
+            try {
+                $dadataUrl = 'https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/address';
+                $body = [
+                    'query' => $cityName . ', ' . $street . ', ' . $query,
+                    'count' => 10,
+                    'locations' => [
+                        [
+                            'city_kladr_id' => $kladrId,
+                            'city' => $cityName
+                        ]
+                    ],
+                    'from_bound' => ['value' => 'house'],
+                    'to_bound' => ['value' => 'house']
+                ];
+
+                $res = Http::withOptions([
+                    'verify' => false,
+                    'timeout' => 15,
+                    'connect_timeout' => 10
+                ])
+                    ->withHeaders([
+                        'Content-Type' => 'application/json',
+                        'Accept' => 'application/json',
+                        'Authorization' => 'Token ' . $dadataApiKey
+                    ])
+                    ->post($dadataUrl, $body);
+
+                if (!$res->successful()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка запроса к DaData'
+                    ], 500);
+                }
+
+                $data = $res->json();
+                if (!isset($data['suggestions'])) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Нет данных от DaData'
+                    ], 500);
+                }
+
+                $houses = array_map(function($suggestion) {
+                    $houseData = $suggestion['data'];
+                    $houseNumber = $houseData['house'] ?? '';
+                    
+                    return [
+                        'number' => $houseNumber,
+                        'label' => $houseNumber
+                    ];
+                }, $data['suggestions']);
+
+                // Фильтруем пустые номера домов
+                $houses = array_filter($houses, function($house) {
+                    return !empty($house['number']);
+                });
+
+                return response()->json([
+                    'success' => true,
+                    'data' => array_values($houses)
+                ]);
+
+            } catch (\Exception $e) {
+                Log::error('DaData houses request error: ' . $e->getMessage());
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка запроса к DaData: ' . $e->getMessage()
+                ], 500);
+            }
+
+        } catch (\Exception $e) {
+            Log::error('CDEK Get Houses Error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения домов: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function getPostalCode(Request $request): JsonResponse
+    {
+        try {
+            $city = $request->input('city');
+            $street = $request->input('street');
+            $house = $request->input('house');
+            $flat = $request->input('flat', '');
+            
+            if (!$city || !$street || !$house) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не указан город, улица или дом'
+                ], 400);
+            }
+
+            // Используем API ключ DaData из переменных окружения
+            $dadataApiKey = env('DADATA_API_KEY');
+            if (!$dadataApiKey) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'API ключ DaData не настроен'
+                ], 500);
+            }
+
+            // Формируем полный адрес для поиска
+            $fullAddress = $city . ', ' . $street . ', ' . $house;
+            if ($flat) {
+                $fullAddress .= ', ' . $flat;
+            }
+
+            try {
+                $response = Http::withOptions([
+                    'verify' => false,
+                    'timeout' => 15,
+                    'connect_timeout' => 10
+                ])
+                    ->withHeaders([
+                        'Content-Type' => 'application/json',
+                        'Accept' => 'application/json',
+                        'Authorization' => 'Token ' . $dadataApiKey
+                    ])
+                    ->post('https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/address', [
+                        'query' => $fullAddress,
+                        'count' => 1,
+                        'from_bound' => ['value' => 'house'],
+                        'to_bound' => ['value' => 'house']
+                    ]);
+
+                if (!$response->successful()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка запроса к DaData'
+                    ], 500);
+                }
+
+                $data = $response->json();
+                if (!isset($data['suggestions']) || empty($data['suggestions'])) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Адрес не найден'
+                    ], 404);
+                }
+
+                $addressData = $data['suggestions'][0]['data'];
+                $postalCode = $addressData['postal_code'] ?? '';
+
+                if (!$postalCode) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Почтовый индекс не найден для данного адреса'
+                    ], 404);
+                }
+
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'postal_code' => $postalCode,
+                        'full_address' => $data['suggestions'][0]['value'],
+                        'city' => $addressData['city'] ?? $city,
+                        'street' => $addressData['street_with_type'] ?? $street,
+                        'house' => $addressData['house'] ?? $house,
+                        'flat' => $addressData['flat'] ?? $flat
+                    ]
+                ]);
+
+            } catch (\Exception $e) {
+                Log::error('DaData postal code request error: ' . $e->getMessage());
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка запроса к DaData: ' . $e->getMessage()
+                ], 500);
+            }
+
+        } catch (\Exception $e) {
+            Log::error('CDEK Get Postal Code Error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения почтового индекса: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Получение подсказок улиц через DaData API
      */
     public function getStreets(Request $request): JsonResponse
@@ -774,9 +1051,15 @@ class ShopCdekController extends Controller
                 }
 
                 $streets = array_map(function($suggestion) {
+                    $streetData = $suggestion['data'];
+                    $streetName = $streetData['street_with_type'] ?? $streetData['street'] ?? $suggestion['value'];
+                    
+                    // Убираем префикс "ул." если есть
+                    $streetName = preg_replace('/^ул\.\s*/', '', $streetName);
+                    
                     return [
-                        'name' => $suggestion['value'],
-                        'label' => $suggestion['value']
+                        'name' => $streetName,
+                        'label' => $streetName
                     ];
                 }, $data['suggestions']);
 
