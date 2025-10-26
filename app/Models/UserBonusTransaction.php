@@ -86,9 +86,9 @@ class UserBonusTransaction extends Model
     }
 
     /**
-     * Scope для истекших бонусов
+     * Scope для истекших бонусов по дате
      */
-    public function scopeExpired($query)
+    public function scopeExpiredByDate($query)
     {
         return $query->where('expires_at', '<', now());
     }

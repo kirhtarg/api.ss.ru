@@ -360,4 +360,163 @@ class CategoryController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Импорт категорий из файла
+     */
+    public function import(Request $request): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'categories' => 'required|array',
+                'categories.*.name' => 'required|string|max:255',
+                'categories.*.slug' => 'required|string|max:255',
+                'categories.*.description' => 'nullable|string',
+                'categories.*.parent' => 'nullable|string',
+                'categories.*.image_url' => 'nullable|url'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $categoriesData = $request->input('categories');
+            $created = 0;
+            $updated = 0;
+            $errors = [];
+
+            // Получаем путь к фронтенду
+            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+            $imagesPath = $frontendPath . '/public/images/categories';
+
+            foreach ($categoriesData as $index => $categoryData) {
+                try {
+                    // Проверяем, существует ли категория с таким именем
+                    $existingCategory = ShopCategory::where('name', $categoryData['name'])->first();
+
+                    // Ищем родительскую категорию по имени
+                    $parentId = null;
+                    if (!empty($categoryData['parent'])) {
+                        $parentCategory = ShopCategory::where('name', $categoryData['parent'])->first();
+                        if ($parentCategory) {
+                            $parentId = $parentCategory->id;
+                        }
+                    }
+
+                    // Подготавливаем данные
+                    $data = [
+                        'name' => $categoryData['name'],
+                        'slug' => $categoryData['slug'],
+                        'description' => $categoryData['description'] ?? null,
+                        'parent_id' => $parentId,
+                        'is_active' => true
+                    ];
+
+                    if ($existingCategory) {
+                        // Обновляем существующую категорию
+                        $existingCategory->slug = $categoryData['slug'];
+                        $existingCategory->description = $categoryData['description'] ?? $existingCategory->description;
+                        $existingCategory->parent_id = $parentId ?? $existingCategory->parent_id;
+
+                        // Загружаем изображение, если есть ссылка
+                        if (!empty($categoryData['image_url'])) {
+                            try {
+                                $imageData = file_get_contents($categoryData['image_url']);
+                                if ($imageData !== false) {
+                                    // Создаем директорию, если её нет
+                                    if (!is_dir($imagesPath)) {
+                                        mkdir($imagesPath, 0755, true);
+                                    }
+
+                                    // Определяем расширение
+                                    $extension = 'png';
+                                    $imageInfo = @getimagesizefromstring($imageData);
+                                    if ($imageInfo !== false) {
+                                        $mimeType = $imageInfo['mime'];
+                                        if ($mimeType === 'image/jpeg') $extension = 'jpg';
+                                        elseif ($mimeType === 'image/gif') $extension = 'gif';
+                                        elseif ($mimeType === 'image/webp') $extension = 'webp';
+                                    }
+
+                                    // Сохраняем изображение
+                                    $fileName = 'category_' . $existingCategory->id . '.' . $extension;
+                                    $filePath = $imagesPath . '/' . $fileName;
+                                    file_put_contents($filePath, $imageData);
+
+                                    // Обновляем путь к изображению
+                                    $existingCategory->image = 'images/categories/' . $fileName;
+                                }
+                            } catch (\Exception $e) {
+                                $errors[] = "Категория \"{$categoryData['name']}\": ошибка загрузки изображения - {$e->getMessage()}";
+                            }
+                        }
+
+                        $existingCategory->save();
+                        $updated++;
+                    } else {
+                        // Создаем новую категорию
+                        $newCategory = ShopCategory::create($data);
+
+                        // Загружаем изображение, если есть ссылка
+                        if (!empty($categoryData['image_url'])) {
+                            try {
+                                $imageData = file_get_contents($categoryData['image_url']);
+                                if ($imageData !== false) {
+                                    // Создаем директорию, если её нет
+                                    if (!is_dir($imagesPath)) {
+                                        mkdir($imagesPath, 0755, true);
+                                    }
+
+                                    // Определяем расширение
+                                    $extension = 'png';
+                                    $imageInfo = @getimagesizefromstring($imageData);
+                                    if ($imageInfo !== false) {
+                                        $mimeType = $imageInfo['mime'];
+                                        if ($mimeType === 'image/jpeg') $extension = 'jpg';
+                                        elseif ($mimeType === 'image/gif') $extension = 'gif';
+                                        elseif ($mimeType === 'image/webp') $extension = 'webp';
+                                    }
+
+                                    // Сохраняем изображение
+                                    $fileName = 'category_' . $newCategory->id . '.' . $extension;
+                                    $filePath = $imagesPath . '/' . $fileName;
+                                    file_put_contents($filePath, $imageData);
+
+                                    // Обновляем путь к изображению
+                                    $newCategory->image = 'images/categories/' . $fileName;
+                                    $newCategory->save();
+                                }
+                            } catch (\Exception $e) {
+                                $errors[] = "Категория \"{$categoryData['name']}\": ошибка загрузки изображения - {$e->getMessage()}";
+                            }
+                        }
+
+                        $created++;
+                    }
+                } catch (\Exception $e) {
+                    $errors[] = "Строка " . ($index + 1) . " (\"{$categoryData['name']}\"): {$e->getMessage()}";
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Импорт завершен',
+                'data' => [
+                    'created' => $created,
+                    'updated' => $updated,
+                    'errors' => $errors,
+                    'total' => count($categoriesData)
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при импорте категорий: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }

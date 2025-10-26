@@ -84,6 +84,73 @@ class ShopPaymentMethodSeeder extends Seeder
                 'can_disable_default' => true,
                 'created_at' => now(),
                 'updated_at' => now(),
+            ],
+            [
+                'id' => 5,
+                'name' => 'Ю-Касса',
+                'type' => 'yookassa',
+                'is_active' => true,
+                'description' => 'Оплата через Ю-Касса (карты, ЮMoney, СБП)',
+                'settings' => json_encode([
+                    'shop_id' => '123456', // Тестовый ID магазина
+                    'secret_key' => 'test_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', // Тестовый секретный ключ
+                    'mode' => 'test',
+                    'currency' => 'RUB',
+                    'return_url' => 'http://localhost:3000/checkout?payment=return',
+                    'additional_settings' => '{"auto_capture": true}',
+                    'description' => 'Безопасная оплата через Ю-Касса'
+                ]),
+                'sort_order' => 5,
+                'is_default' => false,
+                'can_disable_default' => true,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'id' => 6,
+                'name' => 'Яндекс Пэй',
+                'type' => 'yandex_pay',
+                'is_active' => false,
+                'description' => 'Оплата через Яндекс Пэй (карты, Яндекс.Деньги, СБП)',
+                'settings' => json_encode([
+                    'merchant_id' => '12345678', // Тестовый Merchant ID
+                    'secret_key' => 'test_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', // Тестовый секретный ключ
+                    'mode' => 'test',
+                    'currency' => 'RUB',
+                    'return_url' => 'https://your-site.com/checkout?payment=return',
+                    'webhook_url' => 'https://your-site.com/api/webhooks/yandex-pay',
+                    'additional_settings' => '{"auto_capture": true, "save_payment_method": false, "split_enabled": false}',
+                    'description' => 'Безопасная оплата через Яндекс Пэй'
+                ]),
+                'sort_order' => 6,
+                'is_default' => false,
+                'can_disable_default' => true,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'id' => 7,
+                'name' => 'Яндекс Сплит',
+                'type' => 'yandex_split',
+                'is_active' => false,
+                'description' => 'Рассрочка через Яндекс Сплит',
+                'settings' => json_encode([
+                    'merchant_id' => '12345678', // Тестовый Merchant ID
+                    'secret_key' => 'test_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', // Тестовый секретный ключ
+                    'mode' => 'test',
+                    'currency' => 'RUB',
+                    'return_url' => 'https://your-site.com/checkout?payment=return',
+                    'webhook_url' => 'https://your-site.com/api/webhooks/yandex-split',
+                    'split_min_amount' => '1000.00',
+                    'split_max_amount' => '50000.00',
+                    'split_settings' => '{"enabled": true, "installments_count": 4, "first_payment_percent": 25}',
+                    'description' => 'Рассрочка без переплат через Яндекс Сплит'
+                ]),
+                'sort_order' => 7,
+                'is_default' => false,
+                'can_disable_default' => true,
+                'created_at' => now(),
+                'updated_at' => now(),
             ]
         ];
 

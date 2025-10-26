@@ -474,6 +474,20 @@ class SettingSeeder extends Seeder
                 'created_at' => '2025-09-15 17:24:08',
                 'updated_at' => '2025-09-15 17:25:41',
             ],
+            [
+                'id' => 38,
+                'key' => 'shop_remote_q',
+                'name' => 'Остатки на удаленном складе',
+                'value' => '1',
+                'type' => 'json',
+                'group' => 'shop',
+                'description' => 'Параметр работы с остатками на удаленном складе',
+                'default_value' => '{"1": "Не показывать количество остатка на УС", "2": "Показывать остаток только наличие", "3": "Показывать точное количество остатка"}',
+                'image_width' => null,
+                'image_height' => null,
+                'created_at' => '2025-09-25 17:24:08',
+                'updated_at' => '2025-09-25 17:25:41',
+            ],
         ];
 
         foreach ($settings as $setting) {

@@ -19,6 +19,7 @@ class ShopGoodVariation extends Model
         'price',
         'sale_price',
         'stock_quantity',
+        'remote_stock_quantity',
         'weight',
         'length',
         'height',

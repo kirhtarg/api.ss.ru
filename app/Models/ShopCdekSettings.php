@@ -24,6 +24,8 @@ class ShopCdekSettings extends Model
         'sender_flat',
         'sender_postal_code',
         'sender_country_code',
+        'sender_city_code',
+        'developer_key',
         'default_weight',
         'default_length',
         'default_width',
