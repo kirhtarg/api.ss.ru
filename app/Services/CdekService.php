@@ -463,7 +463,6 @@ class CdekService
             }
 
             // Формируем данные для создания заказа согласно API СДЭК
-            Log::info('CdekService: Creating order with data:', $orderData);
             
             // Определяем, нужен ли наложенный платеж
             $isCashOnDelivery = isset($orderData['payment_method']) && 
@@ -569,7 +568,6 @@ class CdekService
 
 
 
-            Log::info('CdekService: Sending order data to CDEK API:', $sdekOrderData);
             
             $response = Http::withOptions([
                 'verify' => $this->sslVerify,
@@ -579,8 +577,6 @@ class CdekService
                 'Content-Type' => 'application/json'
             ])->post($this->apiUrl . '/orders', $sdekOrderData);
 
-            Log::info('CdekService: Order creation response status: ' . $response->status());
-            Log::info('CdekService: Order creation response body: ' . $response->body());
 
             if ($response->successful()) {
                 $data = $response->json();
@@ -591,7 +587,6 @@ class CdekService
                     sleep(5); // Ждем 5 секунд
                     $statusResult = $this->getOrderStatus($data['entity']['uuid']);
                     if ($statusResult['success']) {
-                        Log::info('CdekService: Order status after 5 seconds:', $statusResult['data']);
                         
                         // Извлекаем информацию о дополнительных услугах
                         if (isset($statusResult['data']['services'])) {
@@ -608,7 +603,6 @@ class CdekService
                                 }
                             }
                         } else {
-                            Log::info('CdekService: No services found in order status');
                         }
                     } else {
                         Log::error('CdekService: Failed to get order status:', $statusResult);

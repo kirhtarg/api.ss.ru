@@ -46,9 +46,15 @@ class ShopPaymentController extends Controller
             $perPage = $request->get('per_page', 15);
             $paymentMethods = $query->paginate($perPage);
 
+            // Add image_url to each payment method
+            $items = $paymentMethods->items();
+            foreach ($items as $method) {
+                $method->image_url = $method->image_url;
+            }
+
             return response()->json([
                 'success' => true,
-                'data' => $paymentMethods->items(),
+                'data' => $items,
                 'pagination' => [
                     'current_page' => $paymentMethods->currentPage(),
                     'last_page' => $paymentMethods->lastPage(),
@@ -105,6 +111,30 @@ class ShopPaymentController extends Controller
                 'can_disable_default' => 'boolean'
             ]);
 
+            // Дополнительная валидация для Яндекс Пэй
+            if ($request->get('type') === 'yandex_pay' || $request->get('type') === 'yandex_split') {
+                $yandexValidator = Validator::make($request->get('settings', []), [
+                    'merchant_id' => 'required|string|max:255',
+                    'secret_key' => 'required|string|max:255',
+                    'mode' => 'required|string|in:test,live',
+                    'currency' => 'required|string|in:RUB,USD,EUR',
+                    'return_url' => 'nullable|url',
+                    'webhook_url' => 'nullable|url',
+                    'additional_settings' => 'nullable|string',
+                    'split_min_amount' => 'nullable|numeric|min:0',
+                    'split_max_amount' => 'nullable|numeric|min:0|gte:split_min_amount',
+                    'split_settings' => 'nullable|string'
+                ]);
+
+                if ($yandexValidator->fails()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка валидации настроек Яндекс Пэй',
+                        'errors' => $yandexValidator->errors()
+                    ], 422);
+                }
+            }
+
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
@@ -153,6 +183,30 @@ class ShopPaymentController extends Controller
                 'is_default' => 'boolean',
                 'can_disable_default' => 'boolean'
             ]);
+
+            // Дополнительная валидация для Яндекс Пэй
+            if ($request->get('type') === 'yandex_pay' || $request->get('type') === 'yandex_split') {
+                $yandexValidator = Validator::make($request->get('settings', []), [
+                    'merchant_id' => 'required|string|max:255',
+                    'secret_key' => 'required|string|max:255',
+                    'mode' => 'required|string|in:test,live',
+                    'currency' => 'required|string|in:RUB,USD,EUR',
+                    'return_url' => 'nullable|url',
+                    'webhook_url' => 'nullable|url',
+                    'additional_settings' => 'nullable|string',
+                    'split_min_amount' => 'nullable|numeric|min:0',
+                    'split_max_amount' => 'nullable|numeric|min:0|gte:split_min_amount',
+                    'split_settings' => 'nullable|string'
+                ]);
+
+                if ($yandexValidator->fails()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка валидации настроек Яндекс Пэй',
+                        'errors' => $yandexValidator->errors()
+                    ], 422);
+                }
+            }
 
             if ($validator->fails()) {
                 return response()->json([

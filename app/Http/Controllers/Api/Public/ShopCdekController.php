@@ -40,16 +40,7 @@ class ShopCdekController extends Controller
                 ], 400);
             }
 
-            // Сначала пробуем fallback города (они работают надежно)
-            $fallbackCities = $this->getFallbackCities($query);
-            if (!empty($fallbackCities)) {
-                return response()->json([
-                    'success' => true,
-                    'data' => $fallbackCities
-                ]);
-            }
-
-            // Если fallback не дал результатов, пробуем DaData API
+            // Используем DaData API для поиска городов
             $dadataApiKey = env('DADATA_API_KEY');
             if (!$dadataApiKey) {
                 return response()->json([
@@ -527,6 +518,7 @@ class ShopCdekController extends Controller
         $filteredCities = array_filter($fallbackCities, function($city) use ($query) {
             $name = strtolower($city['name']);
             $region = strtolower($city['region']);
+            $fullName = strtolower($city['full_name'] ?? '');
             
             // Проверяем точное совпадение начала названия
             if (strpos($name, $query) === 0) {
@@ -535,6 +527,11 @@ class ShopCdekController extends Controller
             
             // Проверяем частичное совпадение в названии
             if (strpos($name, $query) !== false) {
+                return true;
+            }
+            
+            // Проверяем совпадение в полном названии (включая "г.")
+            if (strpos($fullName, $query) !== false) {
                 return true;
             }
             

@@ -15,6 +15,8 @@ class ShopOrder extends Model
         'order_number',
         'user_id',
         'status_id',
+        'payment_status_id',
+        'delivery_status_id',
         'customer_name',
         'customer_email',
         'customer_phone',
@@ -34,6 +36,8 @@ class ShopOrder extends Model
         'total_amount',
         'total_quantity',
         'payment_method',
+        'payment_method_id',
+        'yandex_pay_order_id',
         'shipping_method',
         'shipping_address',
         'notes',
@@ -56,6 +60,8 @@ class ShopOrder extends Model
         'use_bonus_points' => 'boolean',
         'bonus_points_to_use' => 'integer',
         'order_bonus_points' => 'integer',
+        'payment_status_id' => 'integer',
+        'delivery_status_id' => 'integer',
         'metadata' => 'array'
     ];
 
@@ -68,6 +74,16 @@ class ShopOrder extends Model
     public function status()
     {
         return $this->belongsTo(ShopOrderStatus::class, 'status_id');
+    }
+
+    public function paymentStatus()
+    {
+        return $this->belongsTo(ShopPaymentStatus::class, 'payment_status_id');
+    }
+
+    public function deliveryStatus()
+    {
+        return $this->belongsTo(ShopDeliveryStatus::class, 'delivery_status_id');
     }
 
     public function getItemsWithDetails()

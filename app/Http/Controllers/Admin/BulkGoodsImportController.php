@@ -109,7 +109,7 @@ class BulkGoodsImportController extends Controller
             'process_categories_and_brands' => $request->input('process_categories_and_brands'),
         ], [
             'goods' => 'required|array',
-            'goods.*.sku' => 'required|string|min:1',
+            'goods.*.sku' => 'nullable|string',
             'goods.*.name' => 'required|string|min:1',
             'duplicate_action' => 'required|in:skip,update',
             'auto_create_categories' => 'boolean',

@@ -57,16 +57,41 @@ class SearchController extends Controller
         try {
             $products = DB::table('shop_goods')
                 ->where('is_active', true)
-                ->where('name', 'LIKE', "%{$query}%")
+                ->where(function ($q) use ($query) {
+                    $q->where('name', 'LIKE', "%{$query}%")
+                      ->orWhere('sku', 'LIKE', "%{$query}%")
+                      ->orWhereExists(function ($subQuery) use ($query) {
+                          $subQuery->select(DB::raw(1))
+                                   ->from('shop_good_variations')
+                                   ->whereColumn('shop_good_variations.good_id', 'shop_goods.id')
+                                   ->where('shop_good_variations.is_active', true)
+                                   ->where('shop_good_variations.sku', 'LIKE', "%{$query}%");
+                      });
+                })
                 ->select('id', 'name', 'price', 'sale_price', 'sku', 'slug', 'description')
                 ->limit($limit)
                 ->get()
-                ->map(function ($product) {
+                ->map(function ($product) use ($query) {
                     // Получаем первое изображение для каждого товара
                     $firstImage = DB::table('shop_good_images')
                         ->where('good_id', $product->id)
                         ->orderBy('id')
                         ->first();
+                    
+                    // Проверяем, был ли поиск по артикулу вариации
+                    $foundVariationId = null;
+                    if ($product->sku !== $query) {
+                        // Если поиск не по основному артикулу, ищем в вариациях
+                        $variation = DB::table('shop_good_variations')
+                            ->where('good_id', $product->id)
+                            ->where('is_active', true)
+                            ->where('sku', 'LIKE', "%{$query}%")
+                            ->first();
+                        
+                        if ($variation) {
+                            $foundVariationId = $variation->id;
+                        }
+                    }
                     
                     return [
                         'id' => $product->id,
@@ -76,7 +101,8 @@ class SearchController extends Controller
                         'sku' => $product->sku,
                         'image' => $firstImage ? $this->getImageUrl($firstImage->file_path) : null,
                         'slug' => $product->slug,
-                        'description' => $product->description
+                        'description' => $product->description,
+                        'found_variation_id' => $foundVariationId
                     ];
                 });
 

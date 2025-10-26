@@ -9,6 +9,8 @@ use App\Models\ShopOrder;
 use App\Models\ShopOrderStatus;
 use App\Models\ShopCartItem;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use App\Models\ShopPreorder;
 use App\Models\User;
 use App\Models\Setting;
@@ -48,6 +50,51 @@ class CartController extends Controller
     {
         $setting = Setting::where('key', 'shop_show_good_mode')->first();
         return $setting ? (int)$setting->value : 2; // По умолчанию режим 2
+    }
+
+    /**
+     * Получить настройку режима учета удаленного склада
+     */
+    private function getShopRemoteQ(): int
+    {
+        $setting = Setting::where('key', 'shop_remote_q')->first();
+        return $setting ? (int)$setting->value : 1; // По умолчанию режим 1
+    }
+
+    /**
+     * Парсить строку удаленного остатка в число
+     */
+    private function parseRemoteStock(string $remoteStockStr): int
+    {
+        return (int)preg_replace('/\D/', '', $remoteStockStr) ?: 0;
+    }
+
+    /**
+     * Получить максимальное количество для обновления корзины
+     */
+    private function getMaxQuantityForUpdate(int $localStock, int $remoteStock, int $shopRemoteQ, int $showGoodMode): int
+    {
+        // Если режим 3 (всегда доступен), нет ограничений
+        if ($showGoodMode === 3) return 99;
+        
+        // shop_remote_q = 1: не учитывать удаленный склад (текущее поведение)
+        if ($shopRemoteQ === 1) {
+            return $localStock > 0 ? $localStock : 99;
+        }
+        
+        // shop_remote_q = 2: не ограничивать количество
+        if ($shopRemoteQ === 2) {
+            return 99;
+        }
+        
+        // shop_remote_q = 3: складывать остатки и ограничивать по сумме
+        if ($shopRemoteQ === 3) {
+            $totalStock = $localStock + $remoteStock;
+            return $totalStock > 0 ? $totalStock : 0;
+        }
+        
+        // Fallback для других значений
+        return $localStock > 0 ? $localStock : 99;
     }
 
     /**
@@ -142,7 +189,7 @@ class CartController extends Controller
                 } elseif ($showGoodMode === 3) {
                     // Режим 3: игнорируем остатки - разрешаем добавление
                 } elseif ($showGoodMode === 4) {
-                    // Режим 4: предзаказ - проверяем авторизацию
+                    // Режим 4: предзаказ - проверяем авторизацию и ограничиваем количество остатками
                     $user = $this->getUserFromToken($request);
                     if (!$user) {
                         return response()->json([
@@ -150,6 +197,15 @@ class CartController extends Controller
                             'message' => 'Для предзаказа необходимо авторизоваться',
                             'requires_auth' => true
                         ], 401);
+                    }
+                    // Ограничиваем количество остатками
+                    if ($stockQuantity < $quantity) {
+                        Log::info('Mode 4 addToCart variation: limiting quantity to stock', [
+                            'stock_quantity' => $stockQuantity,
+                            'requested_quantity' => $quantity,
+                            'adjusted_quantity' => $stockQuantity
+                        ]);
+                        $quantity = $stockQuantity;
                     }
                 } else {
                     // Обычная проверка остатков
@@ -176,7 +232,7 @@ class CartController extends Controller
                 } elseif ($showGoodMode === 3) {
                     // Режим 3: игнорируем остатки - разрешаем добавление
                 } elseif ($showGoodMode === 4) {
-                    // Режим 4: предзаказ - проверяем авторизацию
+                    // Режим 4: предзаказ - проверяем авторизацию и ограничиваем количество остатками
                     $user = $this->getUserFromToken($request);
                     if (!$user) {
                         return response()->json([
@@ -184,6 +240,15 @@ class CartController extends Controller
                             'message' => 'Для предзаказа необходимо авторизоваться',
                             'requires_auth' => true
                         ], 401);
+                    }
+                    // Ограничиваем количество остатками
+                    if ($stockQuantity < $quantity) {
+                        Log::info('Mode 4 addToCart main: limiting quantity to stock', [
+                            'stock_quantity' => $stockQuantity,
+                            'requested_quantity' => $quantity,
+                            'adjusted_quantity' => $stockQuantity
+                        ]);
+                        $quantity = $stockQuantity;
                     }
                 } else {
                     // Обычная проверка остатков
@@ -220,6 +285,9 @@ class CartController extends Controller
                 if ($variationId) {
                     $existingItem->variation_name = $this->formatVariationProperties($variation);
                 }
+                // Обновляем поля остатков
+                $existingItem->stock_quantity = $variationId ? $variation->stock_quantity : $good->stock_quantity;
+                $existingItem->remote_stock_quantity = $variationId ? $variation->remote_stock_quantity : $good->remote_stock_quantity;
                 $existingItem->save();
             } else {
                 // Создаем новый элемент корзины
@@ -235,7 +303,9 @@ class CartController extends Controller
                     'good_name' => $good->name,
                     'variation_name' => $variationId ? $this->formatVariationProperties($variation) : null,
                     'good_sku' => $variationId ? $variation->sku : $good->sku,
-                    'good_image' => $this->getGoodImage($good, $variationId)
+                    'good_image' => $this->getGoodImage($good, $variationId),
+                    'stock_quantity' => $variationId ? $variation->stock_quantity : $good->stock_quantity,
+                    'remote_stock_quantity' => $variationId ? $variation->remote_stock_quantity : $good->remote_stock_quantity
                 ]);
             }
 
@@ -263,6 +333,7 @@ class CartController extends Controller
     public function updateCartItem(Request $request): JsonResponse
     {
         try {
+            
             $validator = Validator::make($request->all(), [
                 'good_id' => 'required|integer',
                 'variation_id' => 'nullable|integer',
@@ -270,6 +341,7 @@ class CartController extends Controller
             ]);
 
             if ($validator->fails()) {
+                Log::error('Validation failed:', $validator->errors()->toArray());
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
@@ -297,7 +369,70 @@ class CartController extends Controller
                 // Удаляем товар из корзины
                 $cartItem->delete();
             } else {
+                // Проверяем остатки перед обновлением количества
+                $good = ShopGood::find($goodId);
+                if (!$good) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Товар не найден'
+                    ], 404);
+                }
+
+                // Получаем режим показа товаров при нулевых остатках
+                $showGoodMode = $this->getShopShowGoodMode();
+
+                // Получаем параметр shop_remote_q
+                $shopRemoteQ = $this->getShopRemoteQ();
+
+                // Получаем остатки в зависимости от режима shop_remote_q
+                if ($variationId) {
+                    $variation = ShopGoodVariation::find($variationId);
+                    if (!$variation) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Вариация не найдена'
+                        ], 404);
+                    }
+                    $localStock = $variation->stock_quantity ?? 0;
+                    $remoteStock = $this->parseRemoteStock($variation->remote_stock_quantity ?? '');
+                } else {
+                    $localStock = $good->stock_quantity ?? 0;
+                    $remoteStock = $this->parseRemoteStock($good->remote_stock_quantity ?? '');
+                }
+
+                // Определяем максимальное количество в зависимости от shop_remote_q
+                $maxQuantity = $this->getMaxQuantityForUpdate($localStock, $remoteStock, $shopRemoteQ, $showGoodMode);
+
+                // Проверяем остатки в зависимости от режима
+                if ($showGoodMode === 1 && $maxQuantity <= 0) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Товар недоступен для заказа'
+                    ], 400);
+                } elseif ($showGoodMode === 2 && $maxQuantity <= 0) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Товар временно отсутствует на складе'
+                    ], 400);
+                } elseif ($showGoodMode === 3) {
+                    // Режим 3: игнорируем остатки - разрешаем обновление
+                } elseif ($showGoodMode === 4) {
+                    // Режим 4: предзаказ - ограничиваем количество в корзине остатками
+                    if ($maxQuantity < $quantity) {
+                        $quantity = $maxQuantity; // Устанавливаем максимальное количество
+                    }
+                } else {
+                    // Обычная проверка остатков
+                    if ($maxQuantity < $quantity) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Недостаточно товара на складе. Доступно: ' . $maxQuantity . ' шт.'
+                        ], 400);
+                    }
+                }
+
                 // Обновляем количество
+                
                 $cartItem->quantity = $quantity;
                 $cartItem->total = $cartItem->price * $quantity;
                 $cartItem->save();
@@ -314,6 +449,12 @@ class CartController extends Controller
             ]);
 
         } catch (\Exception $e) {
+            Log::error('Error in updateCartItem:', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ]);
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка обновления корзины: ' . $e->getMessage()
@@ -413,8 +554,8 @@ class CartController extends Controller
      */
     public function createOrder(Request $request): JsonResponse
     {
-        \Log::info('=== НАЧАЛО СОЗДАНИЯ ЗАКАЗА ===');
-        \Log::info('Request data:', $request->all());
+        Log::info('=== НАЧАЛО СОЗДАНИЯ ЗАКАЗА ===');
+        Log::info('Request data:', $request->all());
         
         try {
             $validator = Validator::make($request->all(), [
@@ -442,7 +583,7 @@ class CartController extends Controller
             ]);
 
             if ($validator->fails()) {
-                \Log::error('Ошибка валидации заказа:', $validator->errors()->toArray());
+                Log::error('Ошибка валидации заказа:', $validator->errors()->toArray());
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
@@ -452,9 +593,6 @@ class CartController extends Controller
 
             $user = $this->getUserFromToken($request);
             $sessionId = $this->getSessionId($request);
-            
-            \Log::info('Пользователь из токена:', ['user' => $user ? $user->toArray() : null]);
-            \Log::info('Session ID:', ['session_id' => $sessionId]);
 
             $cartItems = $this->getCartItems($user, $sessionId);
             $cart = $this->formatCartData($cartItems);
@@ -471,7 +609,7 @@ class CartController extends Controller
             if (!$pendingStatus) {
                 // Если статус не найден, используем ID 1 по умолчанию
                 $pendingStatus = (object)['id' => 1];
-                \Log::warning('Статус заказа не найден, используется ID 1 по умолчанию');
+                Log::warning('Статус заказа не найден, используется ID 1 по умолчанию');
             }
 
             // Получаем ID пользователя из запроса или из токена
@@ -487,21 +625,43 @@ class CartController extends Controller
             }
             
             // Логируем для отладки
-            \Log::info('=== СОЗДАНИЕ ЗАКАЗА ===');
-            \Log::info('customer_id из запроса:', ['customer_id' => $customerIdFromRequest, 'type' => gettype($customerIdFromRequest)]);
-            \Log::info('user из токена:', ['user_id' => $customerIdFromToken, 'type' => gettype($customerIdFromToken)]);
-            \Log::info('final customer_id:', ['customer_id' => $customerId, 'type' => gettype($customerId)]);
-            \Log::info('total_discount_amount:', ['amount' => $request->get('total_discount_amount')]);
-            \Log::info('bonus_points_to_use:', ['points' => $request->get('bonus_points_to_use')]);
+            Log::info('=== СОЗДАНИЕ ЗАКАЗА ===');
+            Log::info('customer_id из запроса:', ['customer_id' => $customerIdFromRequest, 'type' => gettype($customerIdFromRequest)]);
+            Log::info('user из токена:', ['user_id' => $customerIdFromToken, 'type' => gettype($customerIdFromToken)]);
+            Log::info('final customer_id:', ['customer_id' => $customerId, 'type' => gettype($customerId)]);
+            Log::info('total_discount_amount:', ['amount' => $request->get('total_discount_amount')]);
+            Log::info('bonus_points_to_use:', ['points' => $request->get('bonus_points_to_use')]);
             
             // Генерируем уникальный номер заказа
             $orderNumber = $this->generateUniqueOrderNumber();
             
+            // Определяем статусы для оплаты при получении
+            $paymentMethod = $request->get('payment_method');
+            $shippingMethod = $request->get('shipping_method');
+            
+            // Для оплаты при получении: payment_status_id = 1, delivery_status_id зависит от типа доставки
+            $paymentStatusId = 1; // Ожидает оплаты
+            $deliveryStatusId = 1; // Создан (по умолчанию)
+            
+            // Если самовывоз - delivery_status_id = 5
+            if (stripos($shippingMethod, 'самовывоз') !== false) {
+                $deliveryStatusId = 5;
+            }
+            
+            Log::info('Статусы заказа для оплаты при получении', [
+                'payment_method' => $paymentMethod,
+                'shipping_method' => $shippingMethod,
+                'payment_status_id' => $paymentStatusId,
+                'delivery_status_id' => $deliveryStatusId
+            ]);
+
             // Создаем заказ
             $order = ShopOrder::create([
                 'order_number' => $orderNumber,
                 'user_id' => $customerId,
                 'status_id' => $pendingStatus->id,
+                'payment_status_id' => $paymentStatusId,
+                'delivery_status_id' => $deliveryStatusId,
                 'customer_name' => $request->get('customer_name'),
                 'customer_email' => $request->get('customer_email'),
                 'customer_phone' => $request->get('customer_phone'),
@@ -545,13 +705,13 @@ class CartController extends Controller
                             $customer->bonus_points -= $bonusPointsToUse;
                             $customer->save();
                             
-                            \Log::info('Бонусы списаны с баланса пользователя', [
+                            Log::info('Бонусы списаны с баланса пользователя', [
                                 'user_id' => $customerId,
                                 'bonus_points_used' => $bonusPointsToUse,
                                 'remaining_bonus_points' => $customer->bonus_points
                             ]);
                         } else {
-                            \Log::warning('Недостаточно бонусов для списания', [
+                            Log::warning('Недостаточно бонусов для списания', [
                                 'user_id' => $customerId,
                                 'requested_bonus_points' => $bonusPointsToUse,
                                 'available_bonus_points' => $customer->bonus_points
@@ -559,10 +719,13 @@ class CartController extends Controller
                         }
                     }
                 } catch (\Exception $e) {
-                    \Log::error('Ошибка списания бонусов: ' . $e->getMessage());
+                    Log::error('Ошибка списания бонусов: ' . $e->getMessage());
                     // Не прерываем создание заказа из-за ошибки списания бонусов
                 }
             }
+
+            // Обновляем остатки товаров для оплаты при получении
+            $this->updateStockQuantitiesForOrder($order);
 
             // Очищаем корзину после создания заказа
             $query = ShopCartItem::active();
@@ -601,7 +764,7 @@ class CartController extends Controller
                 }
             } catch (\Exception $e) {
                 // Логируем ошибку, но не прерываем создание заказа
-                \Log::error('Telegram notification error: ' . $e->getMessage());
+                Log::error('Telegram notification error: ' . $e->getMessage());
             }
 
             // Отправляем email с накладной
@@ -613,17 +776,17 @@ class CartController extends Controller
                 $enrichedOrder = $this->enrichOrderItems($order);
                 
                 // Отладочная информация о товарах в заказе
-                \Log::info('Order items for email:', [
+                Log::info('Order items for email:', [
                     'order_id' => $order->id,
                     'items' => $enrichedOrder->items,
                     'items_count' => is_array($enrichedOrder->items) ? count($enrichedOrder->items) : 'not array'
                 ]);
                 
                 Mail::to($order->customer_email)->send(new OrderInvoiceMail($enrichedOrder, $contacts, $siteInfo));
-                \Log::info('Invoice email sent to: ' . $order->customer_email);
+                Log::info('Invoice email sent to: ' . $order->customer_email);
             } catch (\Exception $e) {
                 // Логируем ошибку, но не прерываем создание заказа
-                \Log::error('Email notification error: ' . $e->getMessage());
+                Log::error('Email notification error: ' . $e->getMessage());
             }
 
             return response()->json([
@@ -636,7 +799,7 @@ class CartController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('Ошибка создания заказа: ' . $e->getMessage(), [
+            Log::error('Ошибка создания заказа: ' . $e->getMessage(), [
                 'trace' => $e->getTraceAsString(),
                 'request_data' => $request->all()
             ]);
@@ -701,9 +864,9 @@ class CartController extends Controller
     private function getCartItems(?User $user, string $sessionId)
     {
         $query = ShopCartItem::active()->with([
-            'good:id,slug',
+            'good:id,slug,stock_quantity,remote_stock_quantity',
             // Загружаем только саму вариацию; атрибуты подтянем отдельно при форматировании, если нужно
-            'variation:id,name,sku'
+            'variation:id,name,sku,stock_quantity,remote_stock_quantity'
         ]);
         
         if ($user) {
@@ -745,7 +908,7 @@ class CartController extends Controller
         try {
         
         // Новая схема: формируем строку из атрибутов вариации
-        $rows = \Illuminate\Support\Facades\DB::table('shop_variation_attributes_values as vav')
+        $rows = DB::table('shop_variation_attributes_values as vav')
             ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
             ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
             ->where('vav.variation_id', $variation->id)
@@ -795,6 +958,17 @@ class CartController extends Controller
             $regularPrice = $item->price;
             $salePrice = $item->sale_price;
             
+            // Получаем остатки товара
+            $stockQuantity = 0;
+            $remoteStockQuantity = '';
+            if ($item->variation_id && $item->relationLoaded('variation') && $item->variation) {
+                $stockQuantity = $item->variation->stock_quantity ?? 0;
+                $remoteStockQuantity = $item->variation->remote_stock_quantity ?? '';
+            } elseif ($item->relationLoaded('good') && $item->good) {
+                $stockQuantity = $item->good->stock_quantity ?? 0;
+                $remoteStockQuantity = $item->good->remote_stock_quantity ?? '';
+            }
+            
             $items[$cartKey] = [
                 'good_id' => $item->good_id,
                 'variation_id' => $item->variation_id,
@@ -806,7 +980,9 @@ class CartController extends Controller
                 'variation_name' => $variationName,
                 'good_sku' => $item->good_sku,
                 'good_image' => $item->good_image,
-                'good_slug' => $item->good ? $item->good->slug : ''
+                'good_slug' => $item->good ? $item->good->slug : '',
+                'stock_quantity' => $stockQuantity,
+                'remote_stock_quantity' => $remoteStockQuantity
             ];
             
             $subtotal += $item->total;
@@ -1048,7 +1224,7 @@ class CartController extends Controller
             ];
             
         } catch (\Exception $e) {
-            \Log::error('Ошибка получения контактов для email: ' . $e->getMessage());
+            Log::error('Ошибка получения контактов для email: ' . $e->getMessage());
             return null;
         }
     }
@@ -1061,27 +1237,22 @@ class CartController extends Controller
         $date = date('Ymd');
         $prefix = 'ORD-' . $date . '-';
         
-        // Получаем максимальный номер заказа за сегодня
-        $maxOrder = ShopOrder::where('order_number', 'like', $prefix . '%')
-            ->orderBy('order_number', 'desc')
-            ->first();
+        // Получаем следующий ID заказа из таблицы shop_orders
+        $nextOrderId = ShopOrder::max('id') + 1;
         
-        if ($maxOrder) {
-            // Извлекаем номер из последнего заказа
-            $lastNumber = (int) substr($maxOrder->order_number, -3);
-            $newNumber = $lastNumber + 1;
-        } else {
-            // Если заказов за сегодня нет, начинаем с 001
-            $newNumber = 1;
+        // Если заказов еще нет, начинаем с 1
+        if (!$nextOrderId) {
+            $nextOrderId = 1;
         }
         
-        // Форматируем номер с ведущими нулями
-        $orderNumber = $prefix . str_pad($newNumber, 3, '0', STR_PAD_LEFT);
+        // Форматируем номер с ID заказа
+        $orderNumber = $prefix . str_pad($nextOrderId, 4, '0', STR_PAD_LEFT);
         
         // Проверяем уникальность (на случай race condition)
+        $counter = 1;
         while (ShopOrder::where('order_number', $orderNumber)->exists()) {
-            $newNumber++;
-            $orderNumber = $prefix . str_pad($newNumber, 3, '0', STR_PAD_LEFT);
+            $orderNumber = $prefix . str_pad($nextOrderId + $counter, 4, '0', STR_PAD_LEFT);
+            $counter++;
         }
         
         return $orderNumber;
@@ -1118,7 +1289,7 @@ class CartController extends Controller
                         }
                     }
                 } catch (\Exception $e) {
-                    \Log::error('Error enriching item: ' . $e->getMessage());
+                    Log::error('Error enriching item: ' . $e->getMessage());
                 }
             }
             
@@ -1135,5 +1306,155 @@ class CartController extends Controller
         $enrichedOrder->items = $enrichedItems;
         
         return $enrichedOrder;
+    }
+
+    /**
+     * Обновление остатков товаров для заказа с оплатой при получении
+     */
+    private function updateStockQuantitiesForOrder(ShopOrder $order): void
+    {
+        try {
+            Log::info('Обновление остатков товаров для заказа с оплатой при получении', [
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+                'payment_method' => $order->payment_method
+            ]);
+
+            if (!$order->items) {
+                Log::warning('У заказа нет товаров для обновления остатков', [
+                    'order_id' => $order->id
+                ]);
+                return;
+            }
+
+            $items = is_string($order->items) ? json_decode($order->items, true) : $order->items;
+            
+            if (!is_array($items)) {
+                Log::warning('Товары заказа не являются массивом', [
+                    'order_id' => $order->id,
+                    'items' => $order->items
+                ]);
+                return;
+            }
+
+            foreach ($items as $item) {
+                $goodId = $item['good_id'] ?? null;
+                $quantity = $item['quantity'] ?? 0;
+                $variationId = $item['variation_id'] ?? null;
+
+                if (!$goodId || $quantity <= 0) {
+                    Log::warning('Пропускаем товар с некорректными данными', [
+                        'good_id' => $goodId,
+                        'quantity' => $quantity,
+                        'variation_id' => $variationId
+                    ]);
+                    continue;
+                }
+
+                // Обновляем остаток основного товара
+                $this->updateGoodStockForOrder($goodId, $quantity, $order->id);
+
+                // Если есть вариация, обновляем её остаток
+                if ($variationId) {
+                    $this->updateVariationStockForOrder($variationId, $quantity, $order->id);
+                }
+            }
+
+            Log::info('Остатки товаров успешно обновлены для заказа с оплатой при получении', [
+                'order_id' => $order->id
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Ошибка при обновлении остатков товаров для заказа с оплатой при получении: ' . $e->getMessage(), [
+                'order_id' => $order->id,
+                'error' => $e->getTraceAsString()
+            ]);
+        }
+    }
+
+    /**
+     * Обновление остатка основного товара для заказа с оплатой при получении
+     */
+    private function updateGoodStockForOrder(int $goodId, int $quantity, int $orderId): void
+    {
+        try {
+            $good = ShopGood::find($goodId);
+            
+            if (!$good) {
+                Log::warning('Товар не найден для обновления остатка', [
+                    'good_id' => $goodId,
+                    'order_id' => $orderId
+                ]);
+                return;
+            }
+
+            $currentStock = $good->stock_quantity ?? 0;
+            $newStock = max(0, $currentStock - $quantity); // Не уходим в минус
+
+            $good->update(['stock_quantity' => $newStock]);
+
+            Log::info('Остаток товара обновлен для заказа с оплатой при получении', [
+                'good_id' => $goodId,
+                'good_name' => $good->name,
+                'old_stock' => $currentStock,
+                'quantity_ordered' => $quantity,
+                'new_stock' => $newStock,
+                'order_id' => $orderId
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Ошибка при обновлении остатка товара для заказа с оплатой при получении: ' . $e->getMessage(), [
+                'good_id' => $goodId,
+                'order_id' => $orderId
+            ]);
+        }
+    }
+
+    /**
+     * Обновление остатка вариации товара для заказа с оплатой при получении
+     */
+    private function updateVariationStockForOrder(int $variationId, int $quantity, int $orderId): void
+    {
+        try {
+            // Проверяем, есть ли таблица вариаций и поле stock_quantity
+            if (!Schema::hasTable('shop_good_variations') || !Schema::hasColumn('shop_good_variations', 'stock_quantity')) {
+                Log::info('Таблица вариаций или поле stock_quantity не найдены, пропускаем обновление вариации', [
+                    'variation_id' => $variationId,
+                    'order_id' => $orderId
+                ]);
+                return;
+            }
+
+            $variation = DB::table('shop_good_variations')->find($variationId);
+            
+            if (!$variation) {
+                Log::warning('Вариация товара не найдена для обновления остатка', [
+                    'variation_id' => $variationId,
+                    'order_id' => $orderId
+                ]);
+                return;
+            }
+
+            $currentStock = $variation->stock_quantity ?? 0;
+            $newStock = max(0, $currentStock - $quantity); // Не уходим в минус
+
+            DB::table('shop_good_variations')
+                ->where('id', $variationId)
+                ->update(['stock_quantity' => $newStock]);
+
+            Log::info('Остаток вариации товара обновлен для заказа с оплатой при получении', [
+                'variation_id' => $variationId,
+                'old_stock' => $currentStock,
+                'quantity_ordered' => $quantity,
+                'new_stock' => $newStock,
+                'order_id' => $orderId
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Ошибка при обновлении остатка вариации товара для заказа с оплатой при получении: ' . $e->getMessage(), [
+                'variation_id' => $variationId,
+                'order_id' => $orderId
+            ]);
+        }
     }
 }

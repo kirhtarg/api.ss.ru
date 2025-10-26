@@ -56,7 +56,9 @@ class ShopPaymentMethod extends Model
      */
     public function getApiSettings()
     {
-        return $this->settings ?? [];
+        $settings = $this->settings ?? [];
+        \Log::info('ShopPaymentMethod getApiSettings for ' . $this->name . ':', $settings);
+        return $settings;
     }
 
     /**
@@ -76,5 +78,23 @@ class ShopPaymentMethod extends Model
         return static::where('id', '!=', $this->id)
             ->where('is_active', true)
             ->exists();
+    }
+
+    /**
+     * Get the image URL for this payment method
+     */
+    public function getImageUrlAttribute()
+    {
+        $imagePath = '/images/payment/payment_' . $this->id . '.jpg';
+        
+        // Check if image exists in frontend public folder
+        $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+        $fullPath = base_path($frontendPath . '/public' . $imagePath);
+        
+        if (file_exists($fullPath)) {
+            return $imagePath;
+        }
+        
+        return null;
     }
 }

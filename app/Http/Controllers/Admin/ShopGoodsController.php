@@ -185,7 +185,7 @@ class ShopGoodsController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'slug' => 'nullable|string|max:255|unique:shop_goods,slug',
-            'sku' => 'required|string|max:255|unique:shop_goods,sku',
+            'sku' => 'nullable|string|max:255|unique:shop_goods,sku',
             'description' => 'nullable|string',
             'short_description' => 'nullable|string',
             'price' => 'required|numeric|min:0',
@@ -318,7 +318,7 @@ class ShopGoodsController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'slug' => ['nullable', 'string', 'max:255', Rule::unique('shop_goods', 'slug')->ignore($id)],
-            'sku' => ['required', 'string', 'max:255', Rule::unique('shop_goods', 'sku')->ignore($id)],
+            'sku' => ['nullable', 'string', 'max:255', Rule::unique('shop_goods', 'sku')->ignore($id)],
             'description' => 'nullable|string',
             'short_description' => 'nullable|string',
             'price' => 'required|numeric|min:0',
@@ -912,7 +912,22 @@ class ShopGoodsController extends Controller
             
             // Полный путь для сохранения
             $fullPath = $storagePath . '/' . $fileName;
-            $storageFullPath = storage_path('app/public' . $fullPath);
+            // Получаем путь к фронтенду из переменной окружения FRONTEND_PATH
+            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+            $frontendPublicPath = base_path($frontendPath . '/public');
+            $storageFullPath = $frontendPublicPath . $fullPath;
+            
+            // Проверяем, существует ли файл уже
+            if (file_exists($storageFullPath)) {
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'path' => $fullPath,
+                        'originalUrl' => $imageUrl,
+                        'skipped' => true
+                    ]
+                ]);
+            }
             
             // Создаем директорию если не существует
             $directory = dirname($storageFullPath);
@@ -1095,7 +1110,9 @@ class ShopGoodsController extends Controller
             $height = $request->input('height');
 
             // Путь для сохранения на фронтенд
-            $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+            // Получаем путь к фронтенду из переменной окружения FRONTEND_PATH
+            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+            $frontendPublicPath = base_path($frontendPath . '/public');
             $fullPath = $frontendPublicPath . $path;
             $dir = dirname($fullPath);
 
@@ -1172,7 +1189,9 @@ class ShopGoodsController extends Controller
             
             // Полный путь для сохранения на фронтенд
             $fullPath = $storagePath . '/' . $fileName;
-            $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+            // Получаем путь к фронтенду из переменной окружения FRONTEND_PATH
+            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+            $frontendPublicPath = base_path($frontendPath . '/public');
             $storageFullPath = $frontendPublicPath . $fullPath;
             
             // Проверяем, существует ли файл уже

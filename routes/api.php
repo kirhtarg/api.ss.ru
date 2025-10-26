@@ -297,6 +297,47 @@ Route::get('/test/oauth', function () {
     });
     Route::get('/public/shop/payment-methods', [App\Http\Controllers\Api\Public\ShopPaymentController::class, 'index']);
     
+    // Создание платежей
+    Route::options('/public/shop/payment/create', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/public/shop/payment/create', [App\Http\Controllers\Api\Public\ShopPaymentController::class, 'createPayment']);
+    
+    // Webhook для Ю-Касса
+    Route::post('/webhooks/yookassa', [App\Http\Controllers\Api\Public\ShopPaymentController::class, 'yookassaWebhook']);
+    
+    // Яндекс Пэй маршруты
+    Route::options('/yandex-pay/orders', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/yandex-pay/orders', [App\Http\Controllers\Api\YandexPayController::class, 'createOrder']);
+    
+    Route::options('/yandex-pay/orders/{orderId}', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/yandex-pay/orders/{orderId}', [App\Http\Controllers\Api\YandexPayController::class, 'getOrderStatus']);
+    Route::post('/yandex-pay/orders/{orderId}/cancel', [App\Http\Controllers\Api\YandexPayController::class, 'cancelOrder']);
+    Route::post('/yandex-pay/orders/{orderId}/refund', [App\Http\Controllers\Api\YandexPayController::class, 'refundOrder']);
+    
+    // Webhook для Яндекс Пэй
+    Route::post('/webhooks/yandex-pay', [App\Http\Controllers\Api\YandexPayController::class, 'handleWebhook']);
+    Route::post('/webhooks/yandex-split', [App\Http\Controllers\Api\YandexPayController::class, 'handleWebhook']);
+    
+    // Проверка статуса платежа
+    Route::options('/public/shop/payment/check-status', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/public/shop/payment/check-status', [App\Http\Controllers\Api\Public\ShopPaymentController::class, 'checkPaymentStatus']);
+    
+    // Обновление статуса заказа
+    Route::options('/public/shop/payment/update-order-status', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/public/shop/payment/update-order-status', [App\Http\Controllers\Api\Public\ShopPaymentController::class, 'updateOrderStatus']);
+    
+    // Обработка возврата с Ю-Касса
+    Route::get('/public/shop/payment/return', [App\Http\Controllers\Api\Public\ShopPaymentController::class, 'handlePaymentReturn']);
+    
     // СДЭК интеграция
     Route::options('/public/cdek/cities', function () {
         return response()->json([], 200);
@@ -1018,6 +1059,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/temp/image', [\App\Http\Controllers\ImageUploadController::class, 'uploadTempImage']);
             Route::post('/upload-image', [\App\Http\Controllers\CategoryController::class, 'uploadImage']);
             Route::post('/sort-alphabetically', [\App\Http\Controllers\CategoryController::class, 'sortAlphabetically']);
+            Route::post('/import', [\App\Http\Controllers\CategoryController::class, 'import']);
             
             // Изменить порядок категорий
             Route::post('/order', function (Request $request) {
@@ -2148,6 +2190,10 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::put('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'update']);
                 Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'destroy']);
                 Route::post('/reorder', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'reorder']);
+                
+                // Изображения способов оплаты
+                Route::post('/upload-image', [\App\Http\Controllers\Api\Admin\PaymentMethodImageController::class, 'upload']);
+                Route::post('/remove-image', [\App\Http\Controllers\Api\Admin\PaymentMethodImageController::class, 'remove']);
             });
 
             // Управление уведомлениями Telegram
