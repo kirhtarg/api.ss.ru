@@ -76,23 +76,23 @@ class CartController extends Controller
     {
         // Если режим 3 (всегда доступен), нет ограничений
         if ($showGoodMode === 3) return 99;
-        
+
         // shop_remote_q = 1: не учитывать удаленный склад (текущее поведение)
         if ($shopRemoteQ === 1) {
             return $localStock > 0 ? $localStock : 99;
         }
-        
+
         // shop_remote_q = 2: не ограничивать количество
         if ($shopRemoteQ === 2) {
             return 99;
         }
-        
+
         // shop_remote_q = 3: складывать остатки и ограничивать по сумме
         if ($shopRemoteQ === 3) {
             $totalStock = $localStock + $remoteStock;
             return $totalStock > 0 ? $totalStock : 0;
         }
-        
+
         // Fallback для других значений
         return $localStock > 0 ? $localStock : 99;
     }
@@ -105,7 +105,7 @@ class CartController extends Controller
         try {
             $user = $this->getUserFromToken($request);
             $sessionId = $this->getSessionId($request);
-            
+
             $cartItems = $this->getCartItems($user, $sessionId);
             $cart = $this->formatCartData($cartItems);
 
@@ -267,7 +267,7 @@ class CartController extends Controller
             // Определяем цены - сохраняем и акционную, и обычную
             $regularPrice = $variationId ? $variation->price : $good->price;
             $salePrice = $variationId ? $variation->sale_price : $good->sale_price;
-            
+
             // Финальная цена для расчета - акционная если есть, иначе обычная
             $finalPrice = ($salePrice && $salePrice > 0) ? $salePrice : $regularPrice;
             $total = $finalPrice * $quantity;
@@ -333,7 +333,7 @@ class CartController extends Controller
     public function updateCartItem(Request $request): JsonResponse
     {
         try {
-            
+
             $validator = Validator::make($request->all(), [
                 'good_id' => 'required|integer',
                 'variation_id' => 'nullable|integer',
@@ -432,7 +432,7 @@ class CartController extends Controller
                 }
 
                 // Обновляем количество
-                
+
                 $cartItem->quantity = $quantity;
                 $cartItem->total = $cartItem->price * $quantity;
                 $cartItem->save();
@@ -526,13 +526,13 @@ class CartController extends Controller
             $sessionId = $this->getSessionId($request);
 
             $query = ShopCartItem::active();
-            
+
             if ($user) {
                 $query->forUser($user->id);
             } else {
                 $query->forSession($sessionId);
             }
-            
+
             $query->delete();
 
             return response()->json([
@@ -556,7 +556,7 @@ class CartController extends Controller
     {
         Log::info('=== НАЧАЛО СОЗДАНИЯ ЗАКАЗА ===');
         Log::info('Request data:', $request->all());
-        
+
         try {
             $validator = Validator::make($request->all(), [
                 'customer_name' => 'required|string|max:255',
@@ -615,7 +615,7 @@ class CartController extends Controller
             // Получаем ID пользователя из запроса или из токена
             $customerIdFromRequest = $request->get('customer_id');
             $customerIdFromToken = $user ? $user->id : null;
-            
+
             // Приоритет: сначала из запроса, потом из токена
             $customerId = null;
             if ($customerIdFromRequest) {
@@ -623,7 +623,7 @@ class CartController extends Controller
             } elseif ($customerIdFromToken) {
                 $customerId = $customerIdFromToken;
             }
-            
+
             // Логируем для отладки
             Log::info('=== СОЗДАНИЕ ЗАКАЗА ===');
             Log::info('customer_id из запроса:', ['customer_id' => $customerIdFromRequest, 'type' => gettype($customerIdFromRequest)]);
@@ -631,23 +631,23 @@ class CartController extends Controller
             Log::info('final customer_id:', ['customer_id' => $customerId, 'type' => gettype($customerId)]);
             Log::info('total_discount_amount:', ['amount' => $request->get('total_discount_amount')]);
             Log::info('bonus_points_to_use:', ['points' => $request->get('bonus_points_to_use')]);
-            
+
             // Генерируем уникальный номер заказа
             $orderNumber = $this->generateUniqueOrderNumber();
-            
+
             // Определяем статусы для оплаты при получении
             $paymentMethod = $request->get('payment_method');
             $shippingMethod = $request->get('shipping_method');
-            
+
             // Для оплаты при получении: payment_status_id = 1, delivery_status_id зависит от типа доставки
             $paymentStatusId = 1; // Ожидает оплаты
             $deliveryStatusId = 1; // Создан (по умолчанию)
-            
+
             // Если самовывоз - delivery_status_id = 5
             if (stripos($shippingMethod, 'самовывоз') !== false) {
                 $deliveryStatusId = 5;
             }
-            
+
             Log::info('Статусы заказа для оплаты при получении', [
                 'payment_method' => $paymentMethod,
                 'shipping_method' => $shippingMethod,
@@ -695,7 +695,7 @@ class CartController extends Controller
             if ($customerId && $request->get('use_bonus_points') && $request->get('bonus_points_to_use', 0) > 0) {
                 try {
                     $bonusPointsToUse = $request->get('bonus_points_to_use', 0);
-                    
+
                     // Получаем пользователя
                     $customer = User::find($customerId);
                     if ($customer) {
@@ -704,7 +704,7 @@ class CartController extends Controller
                             // Списываем бонусы
                             $customer->bonus_points -= $bonusPointsToUse;
                             $customer->save();
-                            
+
                             Log::info('Бонусы списаны с баланса пользователя', [
                                 'user_id' => $customerId,
                                 'bonus_points_used' => $bonusPointsToUse,
@@ -729,22 +729,22 @@ class CartController extends Controller
 
             // Очищаем корзину после создания заказа
             $query = ShopCartItem::active();
-            
+
             if ($user) {
                 $query->forUser($user->id);
             } else {
                 $query->forSession($sessionId);
             }
-            
+
             $query->delete();
 
             // Отправляем уведомления в Telegram
             try {
                 $telegramService = app(TelegramService::class);
-                
+
                 // Уведомление администратору
                 $telegramService->notifyAdminNewOrder($order);
-                
+
                 // Уведомление клиенту (если указан chat_id)
                 $customerChatId = $request->get('telegram_chat_id');
                 if ($customerChatId) {
@@ -754,7 +754,7 @@ class CartController extends Controller
                     $customerMessage .= "📦 <b>Товаров:</b> {$order->total_quantity} шт.\n\n";
                     $customerMessage .= "📞 <b>Наш телефон:</b> +7 (999) 123-45-67\n";
                     $customerMessage .= "📧 <b>Email:</b> info@skateandsnow.ru";
-                    
+
                     $telegramService->notifyCustomer(
                         $customerChatId,
                         'order_created',
@@ -771,17 +771,17 @@ class CartController extends Controller
             try {
                 $contacts = $this->getShopContacts();
                 $siteInfo = \App\Services\SiteInfoService::getSiteInfoForEmail();
-                
+
                 // Обогащаем данные товаров названиями
                 $enrichedOrder = $this->enrichOrderItems($order);
-                
+
                 // Отладочная информация о товарах в заказе
                 Log::info('Order items for email:', [
                     'order_id' => $order->id,
                     'items' => $enrichedOrder->items,
                     'items_count' => is_array($enrichedOrder->items) ? count($enrichedOrder->items) : 'not array'
                 ]);
-                
+
                 Mail::to($order->customer_email)->send(new OrderInvoiceMail($enrichedOrder, $contacts, $siteInfo));
                 Log::info('Invoice email sent to: ' . $order->customer_email);
             } catch (\Exception $e) {
@@ -849,12 +849,12 @@ class CartController extends Controller
     private function getSessionId(Request $request): string
     {
         $sessionId = $request->header('X-Session-ID');
-        
+
         if (!$sessionId) {
             // Генерируем новый ID сессии
             $sessionId = 'cart_' . uniqid() . '_' . time();
         }
-        
+
         return $sessionId;
     }
 
@@ -868,13 +868,13 @@ class CartController extends Controller
             // Загружаем только саму вариацию; атрибуты подтянем отдельно при форматировании, если нужно
             'variation:id,name,sku,stock_quantity,remote_stock_quantity'
         ]);
-        
+
         if ($user) {
             $query->forUser($user->id);
         } else {
             $query->forSession($sessionId);
         }
-        
+
         return $query->ordered()->get();
     }
 
@@ -884,13 +884,13 @@ class CartController extends Controller
     private function findCartItem(?User $user, string $sessionId, int $goodId, ?int $variationId)
     {
         $query = ShopCartItem::active();
-        
+
         if ($user) {
             $query->forUser($user->id);
         } else {
             $query->forSession($sessionId);
         }
-        
+
         return $query->where('good_id', $goodId)
                     ->where('variation_id', $variationId)
                     ->first();
@@ -904,9 +904,9 @@ class CartController extends Controller
         if (!$variation) {
             return '';
         }
-        
+
         try {
-        
+
         // Новая схема: формируем строку из атрибутов вариации
         $rows = DB::table('shop_variation_attributes_values as vav')
             ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
@@ -926,7 +926,7 @@ class CartController extends Controller
 
         // Если нет атрибутов, возвращаем название вариации или пустую строку
         return $variation->name ?? '';
-        
+
         } catch (\Exception $e) {
             // В случае ошибки возвращаем название вариации или пустую строку
             return $variation->name ?? '';
@@ -944,7 +944,7 @@ class CartController extends Controller
 
         foreach ($cartItems as $item) {
             $cartKey = $item->good_id . '_' . ($item->variation_id ?? 'main');
-            
+
             // Формируем variation_name с параметрами
             $variationName = '';
             if ($item->variation_id && $item->relationLoaded('variation') && $item->variation) {
@@ -953,11 +953,11 @@ class CartController extends Controller
                 // Fallback для старых элементов корзины
                 $variationName = $item->variation_name;
             }
-            
+
             // Используем цены из корзины (уже сохранены при добавлении)
             $regularPrice = $item->price;
             $salePrice = $item->sale_price;
-            
+
             // Получаем остатки товара
             $stockQuantity = 0;
             $remoteStockQuantity = '';
@@ -968,7 +968,7 @@ class CartController extends Controller
                 $stockQuantity = $item->good->stock_quantity ?? 0;
                 $remoteStockQuantity = $item->good->remote_stock_quantity ?? '';
             }
-            
+
             $items[$cartKey] = [
                 'good_id' => $item->good_id,
                 'variation_id' => $item->variation_id,
@@ -984,7 +984,7 @@ class CartController extends Controller
                 'stock_quantity' => $stockQuantity,
                 'remote_stock_quantity' => $remoteStockQuantity
             ];
-            
+
             $subtotal += $item->total;
             $totalQuantity += $item->quantity;
         }
@@ -998,7 +998,7 @@ class CartController extends Controller
     }
 
     /**
-     * Получить полный URL изображения
+     * Получить путь к изображению (относительный, без домена)
      */
     private function getImageUrl($filePath): ?string
     {
@@ -1006,45 +1006,21 @@ class CartController extends Controller
             return null;
         }
 
-        // Убираем возможные префиксы API сервера
-        $cleanPath = $filePath;
-        
         // Если в пути есть полный URL, извлекаем только относительный путь
         if (preg_match('/https?:\/\/[^\/]+(.*)/', $filePath, $matches)) {
-            $cleanPath = $matches[1];
-        }
-        
-        // Если это уже полный URL, проверяем домен
-        if (str_starts_with($cleanPath, 'http')) {
-            // Заменяем старый домен на новый фронтенд домен
-            $frontendUrl = config('app.frontend_url', 'https://admin.skateandsnow.ru');
-            $oldDomains = [
-                'https://ss75.kirhtarg.ru',
-                'https://api.ss.ru',
-                'https://ss75-api.kirhtarg.ru'
-            ];
-            
-            foreach ($oldDomains as $oldDomain) {
-                if (str_starts_with($cleanPath, $oldDomain)) {
-                    return str_replace($oldDomain, $frontendUrl, $cleanPath);
-                }
-            }
-            
-            // Если это другой домен, возвращаем как есть
-            return $cleanPath;
+            $filePath = $matches[1];
         }
 
-        // Убираем лишний префикс images/ если он уже есть
-        $cleanPath = ltrim($cleanPath, '/');
-        if (str_starts_with($cleanPath, 'images/')) {
-            // Возвращаем полный URL с фронтенда
-            $frontendUrl = config('app.frontend_url', 'https://admin.skateandsnow.ru');
-            return $frontendUrl . '/' . $cleanPath;
+        // Убираем лишний слэш в начале
+        $filePath = ltrim($filePath, '/');
+
+        // Если путь начинается с images/, возвращаем с ведущим слэшем
+        if (str_starts_with($filePath, 'images/')) {
+            return '/' . $filePath;
         }
 
-        // Возвращаем полный URL к файлу в папке public/images/ на фронтенде
-        $frontendUrl = config('app.frontend_url', 'https://admin.skateandsnow.ru');
-        return $frontendUrl . '/images/' . $cleanPath;
+        // Возвращаем относительный путь к файлу в папке public/images/
+        return '/images/' . $filePath;
     }
 
     /**
@@ -1089,7 +1065,7 @@ class CartController extends Controller
 
             // Инициализируем переменную вариации
             $variation = null;
-            
+
             // Если указана вариация, проверяем её
             if ($variationId) {
                 $variation = ShopGoodVariation::where('id', $variationId)
@@ -1200,15 +1176,15 @@ class CartController extends Controller
             $contact = Contact::with(['addresses', 'phones', 'socials'])
                 ->where('is_main', 1)
                 ->first();
-            
+
             if (!$contact) {
                 return null;
             }
-            
+
             // Получаем основные данные
             $mainAddress = $contact->mainAddress();
             $mainPhone = $contact->mainPhone();
-            
+
             // Формируем данные для накладной
             return [
                 'name' => $contact->name,
@@ -1222,7 +1198,7 @@ class CartController extends Controller
                 'email' => null, // Email не хранится в таблице contacts
                 'legal_address' => $contact->legal_address,
             ];
-            
+
         } catch (\Exception $e) {
             Log::error('Ошибка получения контактов для email: ' . $e->getMessage());
             return null;
@@ -1236,25 +1212,25 @@ class CartController extends Controller
     {
         $date = date('Ymd');
         $prefix = 'ORD-' . $date . '-';
-        
+
         // Получаем следующий ID заказа из таблицы shop_orders
         $nextOrderId = ShopOrder::max('id') + 1;
-        
+
         // Если заказов еще нет, начинаем с 1
         if (!$nextOrderId) {
             $nextOrderId = 1;
         }
-        
+
         // Форматируем номер с ID заказа
         $orderNumber = $prefix . str_pad($nextOrderId, 4, '0', STR_PAD_LEFT);
-        
+
         // Проверяем уникальность (на случай race condition)
         $counter = 1;
         while (ShopOrder::where('order_number', $orderNumber)->exists()) {
             $orderNumber = $prefix . str_pad($nextOrderId + $counter, 4, '0', STR_PAD_LEFT);
             $counter++;
         }
-        
+
         return $orderNumber;
     }
 
@@ -1270,7 +1246,7 @@ class CartController extends Controller
         $enrichedItems = [];
         foreach ($order->items as $item) {
             $enrichedItem = $item;
-            
+
             // Получаем название товара по good_id
             if (isset($item['good_id'])) {
                 try {
@@ -1278,7 +1254,7 @@ class CartController extends Controller
                     if ($good) {
                         $enrichedItem['name'] = $good->name;
                         $enrichedItem['good_name'] = $good->name;
-                        
+
                         // Если есть вариация, получаем её название
                         if (isset($item['variation_id']) && $item['variation_id']) {
                             $variation = ShopGoodVariation::find($item['variation_id']);
@@ -1292,19 +1268,19 @@ class CartController extends Controller
                     Log::error('Error enriching item: ' . $e->getMessage());
                 }
             }
-            
+
             // Пересчитываем сумму товара
             $quantity = $item['quantity'] ?? 1;
             $price = $item['price'] ?? 0;
             $enrichedItem['total'] = $price * $quantity;
-            
+
             $enrichedItems[] = $enrichedItem;
         }
-        
+
         // Создаем копию заказа с обогащенными данными
         $enrichedOrder = clone $order;
         $enrichedOrder->items = $enrichedItems;
-        
+
         return $enrichedOrder;
     }
 
@@ -1328,7 +1304,7 @@ class CartController extends Controller
             }
 
             $items = is_string($order->items) ? json_decode($order->items, true) : $order->items;
-            
+
             if (!is_array($items)) {
                 Log::warning('Товары заказа не являются массивом', [
                     'order_id' => $order->id,
@@ -1379,7 +1355,7 @@ class CartController extends Controller
     {
         try {
             $good = ShopGood::find($goodId);
-            
+
             if (!$good) {
                 Log::warning('Товар не найден для обновления остатка', [
                     'good_id' => $goodId,
@@ -1426,7 +1402,7 @@ class CartController extends Controller
             }
 
             $variation = DB::table('shop_good_variations')->find($variationId);
-            
+
             if (!$variation) {
                 Log::warning('Вариация товара не найдена для обновления остатка', [
                     'variation_id' => $variationId,

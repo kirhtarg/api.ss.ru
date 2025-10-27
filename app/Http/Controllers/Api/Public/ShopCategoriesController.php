@@ -30,15 +30,15 @@ class ShopCategoriesController extends Controller
             // Фильтр по бренду - показываем только категории, у которых есть товары данного бренда
             if ($request->filled('brand_id')) {
                 $brandId = $request->get('brand_id');
-                
+
                 // Сначала проверим, есть ли товары у этого бренда
                 $brandGoodsCount = \DB::table('shop_goods')
                     ->join('shop_good_brands', 'shop_goods.id', '=', 'shop_good_brands.good_id')
                     ->where('shop_good_brands.brand_id', $brandId)
                     ->where('shop_goods.is_active', true)
                     ->count();
-                
-                
+
+
                 // Проверим, в каких категориях есть товары этого бренда
                 $brandCategoriesCount = \DB::table('shop_categories')
                     ->join('shop_good_categories', 'shop_categories.id', '=', 'shop_good_categories.category_id')
@@ -49,8 +49,8 @@ class ShopCategoriesController extends Controller
                     ->where('shop_categories.is_active', true)
                     ->distinct('shop_categories.id')
                     ->count();
-                
-                
+
+
                 $query->whereHas('goods', function ($q) use ($brandId) {
                     $q->whereHas('brands', function ($brandQuery) use ($brandId) {
                         $brandQuery->where('shop_brands.id', $brandId);
@@ -74,7 +74,7 @@ class ShopCategoriesController extends Controller
                     $query->whereNull('parent_id')
                           ->orWhere('parent_id', 0);
                 })->count();
-            
+
 
 
             // Вычисляем количество товаров для каждой категории и подкатегории
@@ -295,7 +295,7 @@ class ShopCategoriesController extends Controller
     }
 
     /**
-     * Получить URL изображения
+     * Получить путь к изображению (относительный, без домена)
      */
     private function getImageUrl($filePath)
     {
@@ -303,45 +303,21 @@ class ShopCategoriesController extends Controller
             return null;
         }
 
-        // Убираем возможные префиксы API сервера
-        $cleanPath = $filePath;
-        
         // Если в пути есть полный URL, извлекаем только относительный путь
         if (preg_match('/https?:\/\/[^\/]+(.*)/', $filePath, $matches)) {
-            $cleanPath = $matches[1];
-        }
-        
-        // Если это уже полный URL, проверяем домен
-        if (str_starts_with($cleanPath, 'http')) {
-            // Заменяем старый домен на новый фронтенд домен
-            $frontendUrl = config('app.frontend_url', 'https://admin.skateandsnow.ru');
-            $oldDomains = [
-                'https://ss75.kirhtarg.ru',
-                'https://api.ss.ru',
-                'https://ss75-api.kirhtarg.ru'
-            ];
-            
-            foreach ($oldDomains as $oldDomain) {
-                if (str_starts_with($cleanPath, $oldDomain)) {
-                    return str_replace($oldDomain, $frontendUrl, $cleanPath);
-                }
-            }
-            
-            // Если это другой домен, возвращаем как есть
-            return $cleanPath;
+            $filePath = $matches[1];
         }
 
-        // Убираем лишний префикс images/ если он уже есть
-        $cleanPath = ltrim($cleanPath, '/');
-        if (str_starts_with($cleanPath, 'images/')) {
-            // Возвращаем полный URL с фронтенда
-            $frontendUrl = config('app.frontend_url', 'https://admin.skateandsnow.ru');
-            return $frontendUrl . '/' . $cleanPath;
+        // Убираем лишний слэш в начале
+        $filePath = ltrim($filePath, '/');
+
+        // Если путь начинается с images/, возвращаем с ведущим слэшем
+        if (str_starts_with($filePath, 'images/')) {
+            return '/' . $filePath;
         }
 
-        // Возвращаем полный URL к файлу в папке public/images/ на фронтенде
-        $frontendUrl = config('app.frontend_url', 'https://admin.skateandsnow.ru');
-        return $frontendUrl . '/images/' . $cleanPath;
+        // Возвращаем относительный путь к файлу в папке public/images/
+        return '/images/' . $filePath;
     }
 
     /**
