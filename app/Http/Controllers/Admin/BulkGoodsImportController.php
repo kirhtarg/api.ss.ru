@@ -18,46 +18,46 @@ use Illuminate\Support\Str;
 class BulkGoodsImportController extends Controller
 {
     private $importLogService;
-    
+
     public function __construct(ImportLogService $importLogService)
     {
         $this->importLogService = $importLogService;
     }
-    
+
     public function bulkImport(Request $request)
     {
         // Получаем информацию о батче для очистки логов
         $isFirstBatch = $request->input('is_first_batch', false);
-        
+
         // Очищаем логи только для первого батча
         if ($isFirstBatch) {
             $this->importLogService->clearAllLogs();
         }
-        
+
         // Получаем данные товаров
         $allGoods = $request->input('goods', []);
-        
+
         // Фильтруем пустые строки - оставляем только товары с заполненными SKU и названием
         $goods = [];
         $skippedRows = [];
-        
+
         foreach ($allGoods as $index => $good) {
             $sku = isset($good['sku']) ? trim((string) $good['sku']) : '';
             $name = isset($good['name']) ? trim((string) $good['name']) : '';
-            
+
             // Получаем информацию о листе
             $sheet = $good['_sheet'] ?? 'неизвестно';
-            
+
             // Создаем уникальный идентификатор для товара
             $itemId = $sheet . '_' . $index . '_' . substr(md5($sku . $name), 0, 8);
-            
+
             // Пропускаем только полностью пустые строки (где И SKU И название пустые)
             if (empty($sku) && empty($name)) {
                 $reason = 'Пустая строка';
-                
+
                 // Логируем пропущенную строку с уникальным ID
                 \Log::info("Пропущенная строка {$itemId}: SKU='{$sku}', Name='{$name}', Reason={$reason}");
-                
+
                 $skippedRows[] = [
                     'count' => $index + 1,
                     'sku' => $sku,
@@ -65,17 +65,17 @@ class BulkGoodsImportController extends Controller
                     'sheet' => $sheet,
                     'reason' => $reason
                 ];
-                
+
                 continue;
             }
-            
-            // Если отсутствует SKU или название, но не оба - это ошибка валидации
-            if (empty($sku) || empty($name)) {
-                $reason = 'Отсутствует ' . (empty($sku) ? 'SKU' : 'название');
-                
+
+            // SKU необязателен, но название обязательно
+            if (empty($name)) {
+                $reason = 'Отсутствует название';
+
                 // Логируем ошибку валидации с уникальным ID
                 \Log::info("Ошибка валидации {$itemId}: SKU='{$sku}', Name='{$name}', Reason={$reason}");
-                
+
                 $skippedRows[] = [
                     'count' => $index + 1,
                     'sku' => $sku,
@@ -85,21 +85,22 @@ class BulkGoodsImportController extends Controller
                 ];
                 continue;
             }
-            
+
             // Нормализуем данные для непустых товаров
+            // SKU может быть пустым
             $good['sku'] = $sku;
             $good['name'] = $name;
             $goods[] = $good;
-            
+
             // Логируем валидный товар с уникальным ID
             \Log::info("Валидный товар {$itemId}: SKU='{$sku}', Name='{$name}', Лист='{$sheet}'");
         }
-        
+
         // Логируем пропущенные строки
         if (!empty($skippedRows)) {
             $this->importLogService->logSkippedBatch($skippedRows);
         }
-        
+
         // Валидируем только непустые товары
         $validator = Validator::make([
             'goods' => $goods,
@@ -109,7 +110,7 @@ class BulkGoodsImportController extends Controller
             'process_categories_and_brands' => $request->input('process_categories_and_brands'),
         ], [
             'goods' => 'required|array',
-            'goods.*.sku' => 'nullable|string',
+            'goods.*.sku' => 'nullable|string|max:255',
             'goods.*.name' => 'required|string|min:1',
             'duplicate_action' => 'required|in:skip,update',
             'auto_create_categories' => 'boolean',
@@ -143,23 +144,23 @@ class BulkGoodsImportController extends Controller
             foreach ($errors->all() as $error) {
                 $errorMessages[] = $error;
             }
-            
+
             // Логируем первые несколько товаров для диагностики
             $firstGoods = array_slice($goods, 0, 3);
             \Log::info('Validation failed - sample goods data:', [
                 'first_goods' => $firstGoods,
                 'validation_errors' => $errors->toArray()
             ]);
-            
+
             $this->importLogService->logGeneralError('Ошибка валидации: ' . implode('; ', $errorMessages));
-            
+
             // Логируем ошибки валидации файлов отдельно
             foreach ($errorMessages as $error) {
                 if (strpos($error, 'goods') !== false || strpos($error, 'file') !== false || strpos($error, 'required') !== false) {
                     $this->importLogService->logFileLoadingError($error);
                 }
             }
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
@@ -171,12 +172,11 @@ class BulkGoodsImportController extends Controller
         $autoCreateCategories = $request->input('auto_create_categories', false);
         $autoCreateBrands = $request->input('auto_create_brands', false);
         $processCategoriesAndBrands = $request->input('process_categories_and_brands', false);
-        
-        
+
+
         // Получаем информацию о батче
         $batchNumber = $request->input('batch_number', 1);
         $totalBatches = $request->input('total_batches', 1);
-        
 
         $results = [
             'imported' => 0,
@@ -198,7 +198,7 @@ class BulkGoodsImportController extends Controller
             ]);
             $this->processCategoriesAndBrandsBatch($goods, $autoCreateCategories, $autoCreateBrands);
             \Log::info('Batch processing completed', ['first_good' => $goods[0] ?? null]);
-            
+
             // Собираем информацию о новых категориях и брендах
             $this->collectNewCategoriesAndBrands($goods, $results);
         }
@@ -211,31 +211,62 @@ class BulkGoodsImportController extends Controller
             $updateItems = [];
             $skipItems = [];
             $errorItems = [];
-            
+
             foreach ($goods as $index => $goodData) {
                 $count = $index + 1;
                 $sku = $goodData['sku'] ?? 'неизвестно';
                 $name = $goodData['name'] ?? 'неизвестно';
-                
+
                 try {
                     // Пустые строки уже отфильтрованы на этапе валидации
                     // Здесь обрабатываем только валидные товары
-                    
-                    $existingGood = ShopGood::where('sku', $sku)->first();
+
+                    // Определяем поле для поиска совпадений
+                    $duplicateFields = $request->input('duplicate_fields', ['sku']);
+                    $existingGood = null;
+
+                    // Ищем товар по указанным полям
+                    foreach ($duplicateFields as $field) {
+                        if ($field === 'sku') {
+                            // Если SKU пустой, ищем товары с NULL в поле SKU
+                            if (!empty($sku)) {
+                                $existingGood = ShopGood::where('sku', $sku)->first();
+                            } else {
+                                // Ищем товары с пустым SKU
+                                $existingGood = ShopGood::whereNull('sku')->where('name', $name)->first();
+                            }
+                        } elseif ($field === 'name') {
+                            $existingGood = ShopGood::where('name', $name)->first();
+                        }
+
+                        if ($existingGood) {
+                            break; // Найден товар, прекращаем поиск
+                        }
+                    }
 
                     if ($existingGood) {
                         // Товар существует
                         if ($duplicateAction === 'update') {
                             $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands);
                             $results['updated']++;
-                            $results['goodIds'][$sku] = $existingGood->id;
-                            
+
+                            // Сохраняем ID товара
+                            // Если SKU не пустой, сохраняем по SKU
+                            if (!empty($sku)) {
+                                $results['goodIds'][$sku] = $existingGood->id;
+                            }
+
+                            // Также добавляем ID по _row для связи с изображениями
+                            if (isset($goodData['_row'])) {
+                                $results['goodIds'][$goodData['_row']] = $existingGood->id;
+                            }
+
                             // Добавляем в группу для обновления
                             $sheet = $goodData['_sheet'] ?? 'неизвестно';
                             $updateItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet];
                         } else {
                             $results['skipped']++;
-                            
+
                             // Добавляем в группу для пропуска
                             $sheet = $goodData['_sheet'] ?? 'неизвестно';
                             $skipItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'reason' => 'Дубликат (настройка: пропустить)'];
@@ -244,8 +275,18 @@ class BulkGoodsImportController extends Controller
                         // Создаем новый товар
                         $newGood = $this->createGood($goodData, $autoCreateCategories, $autoCreateBrands);
                         $results['imported']++;
-                        $results['goodIds'][$sku] = $newGood->id;
-                        
+
+                        // Сохраняем ID товара
+                        // Если SKU не пустой, сохраняем по SKU
+                        if (!empty($sku)) {
+                            $results['goodIds'][$sku] = $newGood->id;
+                        }
+
+                        // Также добавляем ID по _row для связи с изображениями
+                        if (isset($goodData['_row'])) {
+                            $results['goodIds'][$goodData['_row']] = $newGood->id;
+                        }
+
                         // Добавляем в группу для загрузки
                         $sheet = $goodData['_sheet'] ?? 'неизвестно';
                         $loadItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet];
@@ -257,7 +298,7 @@ class BulkGoodsImportController extends Controller
                         'sku' => $sku,
                         'error' => $e->getMessage()
                     ];
-                    
+
                     // Добавляем в группу для ошибок
                     $sheet = $goodData['_sheet'] ?? 'неизвестно';
                     $errorItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'error' => $e->getMessage()];
@@ -265,9 +306,9 @@ class BulkGoodsImportController extends Controller
             }
 
             DB::commit();
-            
+
             // Пакетное логирование после успешного коммита
-            
+
             if (!empty($loadItems)) {
                 $this->importLogService->logLoadedBatch($loadItems);
             }
@@ -289,19 +330,19 @@ class BulkGoodsImportController extends Controller
 
         } catch (\Exception $e) {
             DB::rollBack();
-            
+
             // Логируем общую ошибку
             $this->importLogService->logGeneralError('Общая ошибка импорта: ' . $e->getMessage());
-            
+
             // Логируем ошибки загрузки файлов отдельно
             $errorMessage = $e->getMessage();
-            if (strpos($errorMessage, 'file') !== false || 
-                strpos($errorMessage, 'upload') !== false || 
+            if (strpos($errorMessage, 'file') !== false ||
+                strpos($errorMessage, 'upload') !== false ||
                 strpos($errorMessage, 'parse') !== false ||
                 strpos($errorMessage, 'read') !== false) {
                 $this->importLogService->logFileLoadingError($errorMessage);
             }
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка при импорте: ' . $e->getMessage(),
@@ -309,16 +350,17 @@ class BulkGoodsImportController extends Controller
             ], 500);
         }
     }
-    
+
 
     private function createGood($goodData, $autoCreateCategories, $autoCreateBrands)
     {
         $good = new ShopGood();
-        $good->sku = $goodData['sku'];
+        // Если SKU пустой, устанавливаем null вместо пустой строки
+        $good->sku = !empty($goodData['sku']) ? $goodData['sku'] : null;
         $good->name = $goodData['name'];
         $good->slug = $this->generateSlug($goodData['name'], $goodData['sku']);
         $good->description = $goodData['description'] ?? null;
-        
+
         // Применяем модификацию цены
         $priceModification = $goodData['price_modification'] ?? null;
         $good->price = $this->applyPriceModification($goodData['price'] ?? 0, $priceModification['regular'] ?? null);
@@ -376,7 +418,7 @@ class BulkGoodsImportController extends Controller
         $existingGood->name = $goodData['name'];
         $existingGood->slug = $this->generateSlug($goodData['name'], $goodData['sku']);
         $existingGood->description = $goodData['description'] ?? $existingGood->description;
-        
+
         // Применяем модификацию цены
         $priceModification = $goodData['price_modification'] ?? null;
         $existingGood->price = $this->applyPriceModification($goodData['price'] ?? $existingGood->price, $priceModification['regular'] ?? null);
@@ -443,7 +485,7 @@ class BulkGoodsImportController extends Controller
                 $existingCategory = ShopCategory::where('name', $category)
                     ->orWhere('slug', $categorySlug)
                     ->first();
-                
+
                 if ($existingCategory) {
                     $categoryIds[] = $existingCategory->id;
                 } elseif ($autoCreate) {
@@ -483,7 +525,7 @@ class BulkGoodsImportController extends Controller
                 $existingBrand = ShopBrand::where('name', $brand)
                     ->orWhere('slug', $brandSlug)
                     ->first();
-                
+
                 if ($existingBrand) {
                     $brandIds[] = $existingBrand->id;
                     \Log::info('Found existing brand', ['brand_name' => $brand, 'brand_id' => $existingBrand->id]);
@@ -653,7 +695,7 @@ class BulkGoodsImportController extends Controller
         })->get();
 
         $categoryMap = collect();
-        
+
         // Создаем карту по имени и slug
         foreach ($existingCategories as $category) {
             $categoryMap[strtolower($category->name)] = $category->id;
@@ -671,7 +713,7 @@ class BulkGoodsImportController extends Controller
 
             foreach ($categoriesToCreate as $categoryName) {
                 $categorySlug = Str::slug($categoryName);
-                
+
                 // Дополнительная проверка на случай, если slug уже существует
                 $existingCategoryBySlug = ShopCategory::where('slug', $categorySlug)->first();
                 if ($existingCategoryBySlug) {
@@ -712,7 +754,7 @@ class BulkGoodsImportController extends Controller
         })->get();
 
         $brandMap = collect();
-        
+
         // Создаем карту по имени и slug
         foreach ($existingBrands as $brand) {
             $brandMap[strtolower($brand->name)] = $brand->id;
@@ -732,7 +774,7 @@ class BulkGoodsImportController extends Controller
 
             foreach ($brandsToCreate as $brandName) {
                 $brandSlug = Str::slug($brandName);
-                
+
                 // Дополнительная проверка на случай, если slug уже существует
                 $existingBrandBySlug = ShopBrand::where('slug', $brandSlug)->first();
                 if ($existingBrandBySlug) {
@@ -770,7 +812,7 @@ class BulkGoodsImportController extends Controller
     {
         $categoryMap = cache('category_map_' . auth()->id(), collect());
         $brandMap = cache('brand_map_' . auth()->id(), collect());
-        
+
         \Log::info('Applying category and brand IDs', [
             'category_map_size' => $categoryMap->count(),
             'brand_map_size' => $brandMap->count(),
@@ -874,7 +916,7 @@ class BulkGoodsImportController extends Controller
                 }
             }
         }
-        
+
         \Log::info('Finished applying category and brand IDs', [
             'first_good_after' => $goods[0] ?? null
         ]);
@@ -918,7 +960,7 @@ class BulkGoodsImportController extends Controller
 
         foreach ($goods as $index => $goodData) {
             \Log::info("Processing good {$index}", ['good_data' => $goodData]);
-            
+
             // Собираем только те категории, которые были созданы в этом сеансе
             if (isset($goodData['categories']) && is_array($goodData['categories'])) {
                 foreach ($goodData['categories'] as $categoryId) {
@@ -927,7 +969,7 @@ class BulkGoodsImportController extends Controller
                         $categoryName = $categoryMap->search(function($item, $key) use ($categoryId) {
                             return $item == $categoryId;
                         });
-                        
+
                         if ($categoryName && !in_array($categoryName, $newCategories)) {
                             $newCategories[] = $categoryName;
                             \Log::info("Added new category: {$categoryName} (ID: {$categoryId})");
@@ -935,12 +977,12 @@ class BulkGoodsImportController extends Controller
                     }
                 }
             }
-            
+
             if (isset($goodData['category']) && is_numeric($goodData['category']) && in_array($goodData['category'], $createdCategories)) {
                 $categoryName = $categoryMap->search(function($item, $key) use ($goodData) {
                     return $item == $goodData['category'];
                 });
-                
+
                 if ($categoryName && !in_array($categoryName, $newCategories)) {
                     $newCategories[] = $categoryName;
                     \Log::info("Added new category: {$categoryName} (ID: {$goodData['category']})");
@@ -955,7 +997,7 @@ class BulkGoodsImportController extends Controller
                         $brandName = $brandMap->search(function($item, $key) use ($brandId) {
                             return $item == $brandId;
                         });
-                        
+
                         if ($brandName && !in_array($brandName, $newBrands)) {
                             $newBrands[] = $brandName;
                             \Log::info("Added new brand: {$brandName} (ID: {$brandId})");
@@ -963,12 +1005,12 @@ class BulkGoodsImportController extends Controller
                     }
                 }
             }
-            
+
             if (isset($goodData['brand']) && is_numeric($goodData['brand']) && in_array($goodData['brand'], $createdBrands)) {
                 $brandName = $brandMap->search(function($item, $key) use ($goodData) {
                     return $item == $goodData['brand'];
                 });
-                
+
                 if ($brandName && !in_array($brandName, $newBrands)) {
                     $newBrands[] = $brandName;
                     \Log::info("Added new brand: {$brandName} (ID: {$goodData['brand']})");
@@ -1066,7 +1108,7 @@ class BulkGoodsImportController extends Controller
 
         // Подготавливаем данные для синхронизации
         $propertiesToSync = [];
-        
+
         foreach ($properties as $propertyId => $value) {
             if (is_numeric($propertyId) && !empty($value)) {
                 $propertiesToSync[$propertyId] = ['value' => $value];
@@ -1078,7 +1120,7 @@ class BulkGoodsImportController extends Controller
                 'good_id' => $good->id,
                 'properties_to_sync' => $propertiesToSync
             ]);
-            
+
             $good->properties()->sync($propertiesToSync);
         }
     }

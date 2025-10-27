@@ -16,7 +16,7 @@ return new class extends Migration
             // Ключи СДЭК
             $table->string('client_id')->comment('Client ID СДЭК');
             $table->string('client_secret')->comment('Client Secret СДЭК');
-            
+
             // Адрес отправителя
             $table->string('sender_company')->nullable()->comment('Компания отправителя');
             $table->string('sender_name')->nullable()->comment('Контактное лицо');
@@ -30,16 +30,18 @@ return new class extends Migration
             $table->string('sender_flat')->nullable()->comment('Квартира/офис отправителя');
             $table->string('sender_postal_code')->nullable()->comment('Почтовый индекс');
             $table->string('sender_country_code')->default('RU')->comment('Код страны');
-            
+            $table->string('sender_city_code')->nullable()->comment('Код города отправителя');
+            $table->string('developer_key')->nullable()->comment('Ключ разработчика');
+
             // Настройки по умолчанию для расчета
             $table->decimal('default_weight', 8, 2)->default(0.5)->comment('Вес по умолчанию (кг)');
             $table->decimal('default_length', 8, 2)->default(10)->comment('Длина по умолчанию (см)');
             $table->decimal('default_width', 8, 2)->default(10)->comment('Ширина по умолчанию (см)');
             $table->decimal('default_height', 8, 2)->default(10)->comment('Высота по умолчанию (см)');
-            
+
             // Тарифы с названиями для сайта
             $table->json('tariffs')->nullable()->comment('Тарифы СДЭК с названиями для сайта');
-            
+
             $table->boolean('is_active')->default(false)->comment('Активна ли настройка');
             $table->timestamps();
         });
