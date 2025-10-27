@@ -24,6 +24,21 @@ use App\Http\Controllers\Api\Public\SiteMenuController;
 |
 */
 
+// DEBUG: Тестовый роут для проверки PHP настроек
+Route::get('/debug/php-info', function () {
+    return response()->json([
+        'php_version' => phpversion(),
+        'settings' => [
+            'post_max_size' => ini_get('post_max_size'),
+            'upload_max_filesize' => ini_get('upload_max_filesize'),
+            'max_input_vars' => ini_get('max_input_vars'),
+            'memory_limit' => ini_get('memory_limit'),
+            'max_execution_time' => ini_get('max_execution_time'),
+        ],
+        'server' => $_SERVER['SERVER_SOFTWARE'] ?? 'Unknown',
+    ]);
+});
+
 // Обработка OPTIONS запросов для CORS - должна быть первой
 Route::match(['OPTIONS'], '/{any}', function (Request $request) {
     $origin = $request->header('Origin');
