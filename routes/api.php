@@ -2745,11 +2745,16 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/update', [\App\Http\Controllers\Admin\ImportLogController::class, 'logUpdate']);
             Route::post('/skip', [\App\Http\Controllers\Admin\ImportLogController::class, 'logSkip']);
             Route::post('/error', [\App\Http\Controllers\Admin\ImportLogController::class, 'logError']);
-            // Пакетные запросы
+
+            // Пакетные запросы (поддержка обоих форматов: /batch и -batch)
             Route::post('/load/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logLoadBatch']);
+            Route::post('/load-batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logLoadBatch']);
             Route::post('/update/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logUpdateBatch']);
+            Route::post('/update-batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logUpdateBatch']);
             Route::post('/skip/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logSkipBatch']);
+            Route::post('/skip-batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logSkipBatch']);
             Route::post('/error/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logErrorBatch']);
+            Route::post('/error-batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logErrorBatch']);
         });
 
         // Тестовый endpoint для проверки шаблонов импорта
