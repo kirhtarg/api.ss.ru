@@ -18,19 +18,19 @@ return Application::configure(basePath: dirname(__DIR__))
             'shop.access' => \App\Http\Middleware\CheckShopAccess::class,
             'cors' => \App\Http\Middleware\CustomCors::class,
         ]);
-        
+
         // Настраиваем web middleware с CSRF
         $middleware->web([
             \App\Http\Middleware\VerifyCsrfToken::class,
         ]);
-        
+
         // Настраиваем API middleware - только token-based аутентификация
         $middleware->api([
             \App\Http\Middleware\CustomCors::class,
             'throttle:api',
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ]);
-        
+
         // Добавляем CORS middleware глобально для всех запросов
         $middleware->append(\App\Http\Middleware\CustomCors::class);
     })
@@ -42,14 +42,29 @@ return Application::configure(basePath: dirname(__DIR__))
                     'message' => 'Внутренняя ошибка сервера',
                     'error' => $e->getMessage()
                 ], 500);
-                
+
+                // Получаем Origin и проверяем разрешенные домены
+                $origin = $request->header('Origin');
+                $allowedOrigins = [
+                    'https://skateandsnow-test.ru',
+                    'https://admin.skateandsnow-test.ru',
+                    'https://api.skateandsnow-test.ru',
+                    'https://skateandsnow.ru',
+                    'https://admin.skateandsnow.ru',
+                    'https://api.skateandsnow.ru',
+                    'http://localhost:3000',
+                    'http://localhost:3001',
+                ];
+
+                $allowOrigin = in_array($origin, $allowedOrigins) ? $origin : '*';
+
                 // Добавляем CORS заголовки
-                $response->headers->set('Access-Control-Allow-Origin', '*');
-                $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-                $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN');
+                $response->headers->set('Access-Control-Allow-Origin', $allowOrigin);
+                $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+                $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN, X-Session-ID');
                 $response->headers->set('Access-Control-Allow-Credentials', 'true');
                 $response->headers->set('Access-Control-Max-Age', '86400');
-                
+
                 return $response;
             }
         });

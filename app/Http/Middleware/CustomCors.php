@@ -18,10 +18,23 @@ class CustomCors
         // Обрабатываем preflight запросы сразу
         if ($request->isMethod('OPTIONS')) {
             $origin = $request->header('Origin');
+            $allowedOrigins = [
+                'https://skateandsnow-test.ru',
+                'https://admin.skateandsnow-test.ru',
+                'https://api.skateandsnow-test.ru',
+                'https://skateandsnow.ru',
+                'https://admin.skateandsnow.ru',
+                'https://api.skateandsnow.ru',
+                'http://localhost:3000',
+                'http://localhost:3001',
+            ];
+
+            $allowOrigin = in_array($origin, $allowedOrigins) ? $origin : '*';
+
             return response('', 200)
-                ->header('Access-Control-Allow-Origin', $origin ?: '*')
-                ->header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-                ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN')
+                ->header('Access-Control-Allow-Origin', $allowOrigin)
+                ->header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS')
+                ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN, X-Session-ID')
                 ->header('Access-Control-Allow-Credentials', 'true')
                 ->header('Access-Control-Max-Age', '86400');
         }
@@ -36,9 +49,21 @@ class CustomCors
         $origin = $request->header('Origin');
         $isAllowed = false;
 
+        // Список разрешенных доменов
+        $hardCodedAllowedOrigins = [
+            'https://skateandsnow-test.ru',
+            'https://admin.skateandsnow-test.ru',
+            'https://api.skateandsnow-test.ru',
+            'https://skateandsnow.ru',
+            'https://admin.skateandsnow.ru',
+            'https://api.skateandsnow.ru',
+            'http://localhost:3000',
+            'http://localhost:3001',
+        ];
+
         if ($origin) {
-            // Проверяем точные совпадения
-            if (in_array($origin, $allowedOrigins)) {
+            // Проверяем точные совпадения (и в конфиге, и в hardcoded списке)
+            if (in_array($origin, $allowedOrigins) || in_array($origin, $hardCodedAllowedOrigins)) {
                 $isAllowed = true;
             } else {
                 // Проверяем паттерны
@@ -55,23 +80,28 @@ class CustomCors
         if ($origin && $isAllowed) {
             $response->headers->set('Access-Control-Allow-Origin', $origin);
         } elseif ($origin) {
-            // Временное решение - разрешаем все домены (только для отладки!)
+            // Разрешаем origin для отладки
             $response->headers->set('Access-Control-Allow-Origin', $origin);
         } else {
-            // Если нет Origin, разрешаем все домены для отладки
+            // Если нет Origin, разрешаем все домены
             $response->headers->set('Access-Control-Allow-Origin', '*');
         }
 
-        $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-        $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN');
+        $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+        $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN, X-Session-ID');
         $response->headers->set('Access-Control-Allow-Credentials', 'true');
         $response->headers->set('Access-Control-Max-Age', '86400');
 
         // Принудительно добавляем CORS заголовки к ошибкам
         if ($response->getStatusCode() >= 400) {
-            $response->headers->set('Access-Control-Allow-Origin', '*');
-            $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-            $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN');
+            $errorOrigin = $request->header('Origin');
+            if ($errorOrigin && in_array($errorOrigin, $hardCodedAllowedOrigins)) {
+                $response->headers->set('Access-Control-Allow-Origin', $errorOrigin);
+            } else {
+                $response->headers->set('Access-Control-Allow-Origin', '*');
+            }
+            $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+            $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN, X-Session-ID');
             $response->headers->set('Access-Control-Allow-Credentials', 'true');
             $response->headers->set('Access-Control-Max-Age', '86400');
         }

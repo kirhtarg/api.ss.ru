@@ -25,11 +25,25 @@ use App\Http\Controllers\Api\Public\SiteMenuController;
 */
 
 // Обработка OPTIONS запросов для CORS - должна быть первой
-Route::match(['OPTIONS'], '/{any}', function () {
+Route::match(['OPTIONS'], '/{any}', function (Request $request) {
+    $origin = $request->header('Origin');
+    $allowedOrigins = [
+        'https://skateandsnow-test.ru',
+        'https://admin.skateandsnow-test.ru',
+        'https://api.skateandsnow-test.ru',
+        'https://skateandsnow.ru',
+        'https://admin.skateandsnow.ru',
+        'https://api.skateandsnow.ru',
+        'http://localhost:3000',
+        'http://localhost:3001',
+    ];
+
+    $allowOrigin = in_array($origin, $allowedOrigins) ? $origin : '*';
+
     return response('', 200)
-        ->header('Access-Control-Allow-Origin', '*')
-        ->header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-        ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN')
+        ->header('Access-Control-Allow-Origin', $allowOrigin)
+        ->header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS')
+        ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN, X-Session-ID')
         ->header('Access-Control-Allow-Credentials', 'true')
         ->header('Access-Control-Max-Age', '86400');
 })->where('any', '.*');
@@ -85,7 +99,7 @@ Route::middleware(['web'])->group(function () {
 Route::get('/test/oauth', function () {
     $sessionDriver = config('session.driver');
     $sessionTableExists = \Illuminate\Support\Facades\Schema::hasTable('sessions');
-    
+
     return response()->json([
         'success' => true,
         'message' => 'OAuth маршруты работают',
@@ -179,74 +193,74 @@ Route::get('/test/oauth', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/goods', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'index']);
-    
+
     // Оптимизированный endpoint для получения всех типов товаров для главной страницы
     Route::options('/public/shop/goods/main-blocks', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/goods/main-blocks', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getMainBlocks']);
-    
+
     Route::options('/public/shop/goods/{id}', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/goods/{id}', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'show']);
-    
+
     Route::options('/public/shop/goods/slug/{slug}', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/goods/slug/{slug}', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getGoodBySlug']);
-    
+
     Route::options('/public/shop/goods/{id}/images', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/goods/{id}/images', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getGoodImages']);
-    
+
     // Публичные маршруты для медиа вариаций
     Route::options('/public/shop/goods/variations/{variationId}/images', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/goods/variations/{variationId}/images', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getVariationImages']);
-    
+
     Route::options('/public/shop/goods/variations/{variationId}/videos', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/goods/variations/{variationId}/videos', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getVariationVideos']);
-    
+
     // Массовая загрузка всех медиа вариаций (изображения + видео) - единый endpoint
     Route::options('/public/shop/goods/variations/media', function () {
         return response()->json([], 200);
     });
     Route::post('/public/shop/goods/variations/media', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getVariationsMedia']);
-    
+
     // Пакетная загрузка товаров
     Route::options('/public/shop/goods/batch', function () {
         return response()->json([], 200);
     });
     Route::post('/public/shop/goods/batch', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getBatch']);
-    
+
 
     // Публичные маршруты для категорий магазина
     Route::options('/public/shop/categories', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/categories', [App\Http\Controllers\Api\Public\ShopCategoriesController::class, 'index']);
-    
+
     // Маршрут для получения главных категорий (должен быть ПЕРЕД маршрутом с {id})
     Route::options('/public/shop/categories/main', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/categories/main', [App\Http\Controllers\Api\Public\ShopCategoryController::class, 'getMainCategories']);
-    
+
     Route::options('/public/shop/categories/{id}', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/categories/{id}', [App\Http\Controllers\Api\Public\ShopCategoriesController::class, 'show']);
-    
+
     Route::options('/public/shop/categories/{id}/children', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/categories/{id}/children', [App\Http\Controllers\Api\Public\ShopCategoriesController::class, 'getChildren']);
-    
+
     Route::options('/public/shop/categories/slug/{slug}', function () {
         return response()->json([], 200);
     });
@@ -269,127 +283,127 @@ Route::get('/test/oauth', function () {
     Route::delete('/public/shop/cart/remove', [App\Http\Controllers\Api\Public\CartController::class, 'removeFromCart']);
     Route::delete('/public/shop/cart/clear', [App\Http\Controllers\Api\Public\CartController::class, 'clearCart']);
     Route::post('/public/shop/cart/create-order', [App\Http\Controllers\Api\Public\CartController::class, 'createOrder']);
-    
+
     // Публичные маршруты для промокодов
     Route::options('/public/shop/promocodes/apply', function () {
         return response()->json([], 200);
     });
     Route::post('/public/shop/promocodes/apply', [App\Http\Controllers\PromocodeController::class, 'apply']);
-    
+
     Route::options('/public/shop/promocodes/remove', function () {
         return response()->json([], 200);
     });
     Route::post('/public/shop/promocodes/remove', [App\Http\Controllers\PromocodeController::class, 'remove']);
-    
+
     Route::options('/public/shop/promocodes/check', function () {
         return response()->json([], 200);
     });
     Route::post('/public/shop/promocodes/check', [App\Http\Controllers\PromocodeController::class, 'check']);
-    
+
     // Публичные маршруты для способов доставки и оплаты
     Route::options('/public/shop/delivery-methods', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/delivery-methods', [App\Http\Controllers\Api\Public\ShopDeliveryController::class, 'index']);
-    
+
     Route::options('/public/shop/payment-methods', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/payment-methods', [App\Http\Controllers\Api\Public\ShopPaymentController::class, 'index']);
-    
+
     // Создание платежей
     Route::options('/public/shop/payment/create', function () {
         return response()->json([], 200);
     });
     Route::post('/public/shop/payment/create', [App\Http\Controllers\Api\Public\ShopPaymentController::class, 'createPayment']);
-    
+
     // Webhook для Ю-Касса
     Route::post('/webhooks/yookassa', [App\Http\Controllers\Api\Public\ShopPaymentController::class, 'yookassaWebhook']);
-    
+
     // Яндекс Пэй маршруты
     Route::options('/yandex-pay/orders', function () {
         return response()->json([], 200);
     });
     Route::post('/yandex-pay/orders', [App\Http\Controllers\Api\YandexPayController::class, 'createOrder']);
-    
+
     Route::options('/yandex-pay/orders/{orderId}', function () {
         return response()->json([], 200);
     });
     Route::get('/yandex-pay/orders/{orderId}', [App\Http\Controllers\Api\YandexPayController::class, 'getOrderStatus']);
     Route::post('/yandex-pay/orders/{orderId}/cancel', [App\Http\Controllers\Api\YandexPayController::class, 'cancelOrder']);
     Route::post('/yandex-pay/orders/{orderId}/refund', [App\Http\Controllers\Api\YandexPayController::class, 'refundOrder']);
-    
+
     // Webhook для Яндекс Пэй
     Route::post('/webhooks/yandex-pay', [App\Http\Controllers\Api\YandexPayController::class, 'handleWebhook']);
     Route::post('/webhooks/yandex-split', [App\Http\Controllers\Api\YandexPayController::class, 'handleWebhook']);
-    
+
     // Проверка статуса платежа
     Route::options('/public/shop/payment/check-status', function () {
         return response()->json([], 200);
     });
     Route::post('/public/shop/payment/check-status', [App\Http\Controllers\Api\Public\ShopPaymentController::class, 'checkPaymentStatus']);
-    
+
     // Обновление статуса заказа
     Route::options('/public/shop/payment/update-order-status', function () {
         return response()->json([], 200);
     });
     Route::post('/public/shop/payment/update-order-status', [App\Http\Controllers\Api\Public\ShopPaymentController::class, 'updateOrderStatus']);
-    
+
     // Обработка возврата с Ю-Касса
     Route::get('/public/shop/payment/return', [App\Http\Controllers\Api\Public\ShopPaymentController::class, 'handlePaymentReturn']);
-    
+
     // СДЭК интеграция
     Route::options('/public/cdek/cities', function () {
         return response()->json([], 200);
     });
     Route::get('/public/cdek/cities', [App\Http\Controllers\Api\Public\CdekController::class, 'searchCities']);
-    
+
     Route::options('/public/cdek/streets', function () {
         return response()->json([], 200);
     });
     Route::get('/public/cdek/streets', [App\Http\Controllers\Api\Public\CdekController::class, 'searchStreets']);
-    
+
     Route::options('/public/cdek/calculate', function () {
         return response()->json([], 200);
     });
     Route::post('/public/cdek/calculate', [App\Http\Controllers\Api\Public\CdekController::class, 'calculateDelivery']);
-    
+
     Route::options('/public/cdek/pvz', function () {
         return response()->json([], 200);
     });
     Route::get('/public/cdek/pvz', [App\Http\Controllers\Api\Public\CdekController::class, 'getPvzList']);
-    
+
     // Новые маршруты СДЭК для магазина
     Route::options('/public/shop/cdek/cities', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/cdek/cities', [App\Http\Controllers\Api\Public\ShopCdekController::class, 'getCities']);
-    
+
     Route::options('/public/shop/cdek/settings/active', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/cdek/settings/active', [App\Http\Controllers\Api\Public\ShopCdekController::class, 'getActiveSettings']);
-    
+
     Route::options('/public/shop/cdek/pvz-list', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/cdek/pvz-list', [App\Http\Controllers\Api\Public\ShopCdekController::class, 'getPvzList']);
-    
+
     Route::options('/public/shop/cdek/calculate-delivery', function () {
         return response()->json([], 200);
     });
     Route::post('/public/shop/cdek/calculate-delivery', [App\Http\Controllers\Api\Public\ShopCdekController::class, 'calculateDelivery']);
-    
+
     Route::options('/public/shop/cdek/tariffs', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/cdek/tariffs', [App\Http\Controllers\Api\Public\ShopCdekController::class, 'getTariffs']);
-    
+
     Route::options('/public/shop/cdek/streets', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/cdek/streets', [App\Http\Controllers\Api\Public\ShopCdekController::class, 'getStreets']);
-    
+
 Route::options('/public/shop/cdek/houses', function () {
     return response()->json([], 200);
 });
@@ -405,52 +419,52 @@ Route::options('/public/order/details', function () {
     return response()->json([], 200);
 });
 Route::get('/public/order/details', [App\Http\Controllers\Api\OrderController::class, 'getOrderDetails']);
-    
+
     // Тест-Банк интеграция
     Route::options('/public/testbank/payment', function () {
         return response()->json([], 200);
     });
     Route::post('/public/testbank/payment', [App\Http\Controllers\Api\Public\TestBankController::class, 'createPayment']);
-    
+
     Route::options('/public/testbank/status', function () {
         return response()->json([], 200);
     });
     Route::get('/public/testbank/status', [App\Http\Controllers\Api\Public\TestBankController::class, 'getPaymentStatus']);
-    
+
     // Webhook для Тест-Банк
     Route::post('/webhooks/testbank', [App\Http\Controllers\Api\Public\TestBankController::class, 'webhook']);
-    
+
     // Настройки бонусов (публичные - видны всем)
     Route::get('/public/shop/bonus-settings', [App\Http\Controllers\Api\Public\ShopBonusSettingsController::class, 'getActive']);
     Route::post('/public/shop/bonus-settings/calculate', [App\Http\Controllers\Api\Public\ShopBonusSettingsController::class, 'calculateBonus']);
-    
+
     // Настройки магазина (публичные - видны всем)
     Route::get('/public/shop/settings', [App\Http\Controllers\ShopSettingsController::class, 'getShopSettings']);
-    
+
     // Информация о товарах (публичная)
     Route::post('/public/shop/goods/details', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getGoodsDetails']);
-    
+
     // Значения характеристик товаров (публичные)
     Route::get('/public/shop/property-values', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getPropertyValues']);
-    
+
     // Создание заказов (публичное)
     Route::options('/public/shop/orders', function () {
         return response()->json([], 200);
     });
     Route::post('/public/shop/orders', [App\Http\Controllers\Api\Public\ShopOrdersController::class, 'store']);
-    
+
     // Заказы пользователей (требует авторизации)
     Route::middleware('auth:sanctum')->group(function () {
         Route::get('/public/shop/orders', [App\Http\Controllers\Api\Public\UserOrdersController::class, 'index']);
         Route::get('/public/shop/orders/{id}', [App\Http\Controllers\Api\Public\UserOrdersController::class, 'show']);
         Route::post('/public/shop/orders/{id}/cancel', [App\Http\Controllers\Api\Public\UserOrdersController::class, 'cancel']);
-        
+
         // Бонусы пользователя
         Route::get('/public/shop/user-bonuses', [App\Http\Controllers\Api\Public\UserBonusController::class, 'index']);
         Route::post('/public/shop/user-bonuses', [App\Http\Controllers\Api\Public\UserBonusController::class, 'store']);
         Route::get('/public/shop/user-bonuses/transactions', [App\Http\Controllers\Api\Public\UserBonusController::class, 'transactions']);
         Route::post('/public/user/deduct-bonuses', [App\Http\Controllers\Api\Public\UserBonusController::class, 'deductBonuses']);
-        
+
         // CORS для списания бонусов
         Route::options('/public/user/deduct-bonuses', function () {
             return response('', 200)
@@ -460,13 +474,13 @@ Route::get('/public/order/details', [App\Http\Controllers\Api\OrderController::c
                 ->header('Access-Control-Allow-Credentials', 'true')
                 ->header('Access-Control-Max-Age', '86400');
         });
-        
+
         // Адреса пользователя
         Route::get('/public/shop/user-addresses', [App\Http\Controllers\Api\Public\UserAddressController::class, 'index']);
         Route::post('/public/shop/user-addresses', [App\Http\Controllers\Api\Public\UserAddressController::class, 'store']);
         Route::put('/public/shop/user-addresses/{id}', [App\Http\Controllers\Api\Public\UserAddressController::class, 'update']);
         Route::delete('/public/shop/user-addresses/{id}', [App\Http\Controllers\Api\Public\UserAddressController::class, 'destroy']);
-        
+
         // CORS для адресов пользователя
         Route::options('/public/shop/user-addresses', function () {
             return response('', 200)
@@ -477,19 +491,19 @@ Route::get('/public/order/details', [App\Http\Controllers\Api\OrderController::c
                 ->header('Access-Control-Max-Age', '86400');
         });
     });
-    
+
     // Маршруты для предзаказов
     Route::options('/public/shop/preorders', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/preorders', [App\Http\Controllers\Api\Public\CartController::class, 'getPreorders']);
     Route::post('/public/shop/preorders/add', [App\Http\Controllers\Api\Public\CartController::class, 'addToPreorder']);
-    
+
     Route::options('/public/shop/brands/{id}', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/brands/{id}', [App\Http\Controllers\Api\Public\ShopBrandsController::class, 'show']);
-    
+
     // Маршрут для получения бренда по slug
     Route::options('/public/shop/brands/slug/{slug}', function () {
         return response()->json([], 200);
@@ -501,7 +515,7 @@ Route::get('/public/order/details', [App\Http\Controllers\Api\OrderController::c
         return response()->json([], 200);
     });
     Route::get('/public/shop/properties', [App\Http\Controllers\Api\Public\ShopPropertiesController::class, 'index']);
-    
+
     Route::options('/public/shop/properties/{property}/values', function () {
         return response()->json([], 200);
     });
@@ -518,7 +532,7 @@ Route::get('/public/order/details', [App\Http\Controllers\Api\OrderController::c
         return response()->json([], 200);
     });
     Route::post('/public/shop/images/batch', [App\Http\Controllers\Api\Public\ShopImageController::class, 'getBatchImages']);
-    
+
     Route::options('/public/shop/images/categories', function () {
         return response()->json([], 200);
     });
@@ -530,7 +544,7 @@ Route::get('/public/order/details', [App\Http\Controllers\Api\OrderController::c
             $brandCount = \App\Models\ShopBrand::count();
             $activeBrandCount = \App\Models\ShopBrand::where('is_active', true)->count();
             $brands = \App\Models\ShopBrand::where('is_active', true)->select('id', 'name', 'slug', 'logo')->get();
-            
+
             return response()->json([
                 'success' => true,
                 'data' => [
@@ -553,7 +567,7 @@ Route::get('/public/order/details', [App\Http\Controllers\Api\OrderController::c
             $count = \App\Models\ShopGood::count();
             $activeCount = \App\Models\ShopGood::where('is_active', true)->count();
             $inStockCount = \App\Models\ShopGood::where('stock_quantity', '>', 0)->count();
-            
+
             return response()->json([
                 'success' => true,
                 'data' => [
@@ -576,7 +590,7 @@ Route::get('/public/order/details', [App\Http\Controllers\Api\OrderController::c
         return response()->json([], 200);
     });
     Route::get('/public/sliders', [App\Http\Controllers\Api\Public\SliderController::class, 'index']);
-    
+
     Route::options('/public/sliders/{id}', function () {
         return response()->json([], 200);
     });
@@ -587,17 +601,17 @@ Route::get('/public/order/details', [App\Http\Controllers\Api\OrderController::c
         return response()->json([], 200);
     });
     Route::get('/public/cookie-consent/check', [App\Http\Controllers\Api\Public\CookieConsentController::class, 'checkConsent']);
-    
+
     Route::options('/public/cookie-consent/save', function () {
         return response()->json([], 200);
     });
     Route::post('/public/cookie-consent/save', [App\Http\Controllers\Api\Public\CookieConsentController::class, 'saveConsent']);
-    
+
     Route::options('/public/cookie-consent/revoke', function () {
         return response()->json([], 200);
     });
     Route::post('/public/cookie-consent/revoke', [App\Http\Controllers\Api\Public\CookieConsentController::class, 'revokeConsent']);
-    
+
     Route::options('/public/cookie-consent/info', function () {
         return response()->json([], 200);
     });
@@ -622,11 +636,11 @@ Route::get('/public/debug/settings', function () {
             'message' => 'Ошибка: ' . $e->getMessage()
         ], 500);
     }
+});
 
-    // Маршрут для получения данных контактов для заголовка
-    Route::options('/public/contacts/header-data', function () {
-        return response()->json([], 200);
-    });
+// Маршрут для получения данных контактов для заголовка
+Route::options('/public/contacts/header-data', function () {
+    return response()->json([], 200);
 });
 
 
@@ -648,14 +662,14 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/user', [AuthController::class, 'user']);
     Route::get('/auth/check', [AuthController::class, 'check']);
-    
+
     // Избранное - простой функционал
     Route::prefix('shop/favorites')->group(function () {
         Route::post('/toggle', [\App\Http\Controllers\FavoritesController::class, 'toggle']);
         Route::get('/check', [\App\Http\Controllers\FavoritesController::class, 'check']);
         Route::get('/', [\App\Http\Controllers\FavoritesController::class, 'index']);
     });
-    
+
     // Сравнение товаров - простой функционал
     Route::prefix('shop/comparison')->group(function () {
         Route::get('/', [\App\Http\Controllers\Api\Public\ComparisonController::class, 'index']);
@@ -665,7 +679,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/check', [\App\Http\Controllers\Api\Public\ComparisonController::class, 'check']);
         Route::post('/check-multiple', [\App\Http\Controllers\Api\Public\ComparisonController::class, 'checkMultiple']);
     });
-    
+
     // Загрузка изображений для rich editor
     Route::post('/admin/upload/good-text-image', [\App\Http\Controllers\Admin\UploadController::class, 'uploadGoodTextImage']);
 
@@ -698,14 +712,14 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/test-google-sheets/{spreadsheetId}', function ($spreadsheetId) {
         try {
             $csvUrl = "https://docs.google.com/spreadsheets/d/{$spreadsheetId}/export?format=csv&gid=0";
-            
+
             $response = \Illuminate\Support\Facades\Http::timeout(30)
                 ->withHeaders([
                     'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                     'Accept' => 'text/csv,text/plain,*/*',
                 ])
                 ->get($csvUrl);
-            
+
             return response()->json([
                 'url' => $csvUrl,
                 'status' => $response->status(),
@@ -727,7 +741,7 @@ Route::middleware('auth:sanctum')->group(function () {
             ]);
 
             $spreadsheetId = $request->input('spreadsheetId');
-            
+
             // Извлекаем ID из полного URL, если пользователь ввел полный URL
             if (strpos($spreadsheetId, 'docs.google.com/spreadsheets/d/') !== false) {
                 preg_match('/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/', $spreadsheetId, $matches);
@@ -735,7 +749,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     $spreadsheetId = $matches[1];
                 }
             }
-            
+
             Log::info('Loading Google Sheets', [
                 'original_id' => $request->input('spreadsheetId'),
                 'extracted_id' => $spreadsheetId
@@ -746,10 +760,10 @@ Route::middleware('auth:sanctum')->group(function () {
             $maxSheets = 10; // Максимум 10 листов для проверки
 
             // Пробуем разные подходы к загрузке Google Sheets
-            
+
             // Подход 1: Стандартный CSV export
             $gidsToTry = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
-            
+
             foreach ($gidsToTry as $gid) {
                 try {
                     // Пробуем разные варианты URL
@@ -758,10 +772,10 @@ Route::middleware('auth:sanctum')->group(function () {
                         "https://docs.google.com/spreadsheets/d/{$spreadsheetId}/export?format=csv&gid={$gid}&usp=sharing",
                         "https://docs.google.com/spreadsheets/d/{$spreadsheetId}/gviz/tq?tqx=out:csv&gid={$gid}",
                     ];
-                    
+
                     foreach ($csvUrls as $csvUrl) {
                         Log::info("Trying CSV export gid={$gid}", ['url' => $csvUrl]);
-                        
+
                         $response = \Illuminate\Support\Facades\Http::timeout(30)
                             ->withHeaders([
                                 'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -772,7 +786,7 @@ Route::middleware('auth:sanctum')->group(function () {
                                 'Upgrade-Insecure-Requests' => '1',
                             ])
                             ->get($csvUrl);
-                        
+
                         Log::info("CSV response for gid={$gid}", [
                             'url' => $csvUrl,
                             'status' => $response->status(),
@@ -831,29 +845,29 @@ Route::middleware('auth:sanctum')->group(function () {
                     continue;
                 }
             }
-            
+
             // Подход 2: Если CSV не работает, пробуем HTML export
             if (empty($sheets)) {
                 Log::info("CSV export failed, trying HTML export");
-                
+
                 try {
                     $htmlUrl = "https://docs.google.com/spreadsheets/d/{$spreadsheetId}/export?format=html&gid=0";
                     Log::info("Trying HTML export", ['url' => $htmlUrl]);
-                    
+
                     $response = \Illuminate\Support\Facades\Http::timeout(30)->get($htmlUrl);
-                    
+
                     if ($response->successful()) {
                         Log::info("HTML export successful", [
                             'status' => $response->status(),
                             'body_length' => strlen($response->body())
                         ]);
-                        
+
                         // Парсим HTML таблицу
                         $html = $response->body();
                         if (preg_match('/<table[^>]*>(.*?)<\/table>/s', $html, $matches)) {
                             $tableHtml = $matches[1];
                             Log::info("Found HTML table", ['table_length' => strlen($tableHtml)]);
-                            
+
                             // Простой парсинг HTML таблицы
                             if (preg_match_all('/<tr[^>]*>(.*?)<\/tr>/s', $tableHtml, $rows)) {
                                 $data = [];
@@ -866,11 +880,11 @@ Route::middleware('auth:sanctum')->group(function () {
                                         }
                                     }
                                 }
-                                
+
                                 if (count($data) > 1) {
                                     $headers = $data[0];
                                     $rows = array_slice($data, 1);
-                                    
+
                                     $sheets[] = [
                                         'gid' => 0,
                                         'name' => "Лист 1",
@@ -896,7 +910,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     'tried_gids' => $gidsToTry,
                     'total_attempts' => count($gidsToTry)
                 ]);
-                
+
                 // Возвращаем детальную информацию для отладки
                 return response()->json([
                     'success' => false,
@@ -924,42 +938,42 @@ Route::middleware('auth:sanctum')->group(function () {
 
         } catch (\Exception $e) {
             Log::error('Ошибка загрузки Google Sheets: ' . $e->getMessage());
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка загрузки данных: ' . $e->getMessage()
             ], 500);
         }
     });
-    
+
 
     // Маршруты для администраторов и менеджеров
     Route::middleware('role:admin,manager')->prefix('admin')->group(function () {
         // Site info for admin
         Route::get('/site-info', [\App\Http\Controllers\Api\Public\SiteInfoController::class, 'index']);
-        
+
         // Profile management
         Route::get('/profile', [\App\Http\Controllers\Api\Admin\ProfileController::class, 'index']);
-        
+
         // Тестовые маршруты для Google Sheets
         Route::get('/test-google-sheets', function () {
             return response()->json(['message' => 'Google Sheets API is working']);
         });
-        
+
         Route::get('/test-controller', [\App\Http\Controllers\Admin\GoogleSheetsController::class, 'test']);
-        
+
         // Тестовый маршрут для проверки Google Sheets
         Route::get('/test-google-sheets/{spreadsheetId}', function ($spreadsheetId) {
             try {
                 $csvUrl = "https://docs.google.com/spreadsheets/d/{$spreadsheetId}/export?format=csv&gid=0";
-                
+
                 $response = \Illuminate\Support\Facades\Http::timeout(30)
                     ->withHeaders([
                         'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                         'Accept' => 'text/csv,text/plain,*/*',
                     ])
                     ->get($csvUrl);
-                
+
                 return response()->json([
                     'url' => $csvUrl,
                     'status' => $response->status(),
@@ -972,11 +986,11 @@ Route::middleware('auth:sanctum')->group(function () {
                 return response()->json(['error' => $e->getMessage()]);
             }
         });
-        
+
         // Settings management (только просмотр для менеджеров)
         Route::prefix('settings')->group(function () {
             Route::get('/', [\App\Http\Controllers\Admin\SettingController::class, 'index']);
-            
+
             // Только админы могут изменять настройки
             Route::middleware('role:admin')->group(function () {
                 Route::post('/', [\App\Http\Controllers\Admin\SettingController::class, 'store']);
@@ -1014,7 +1028,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('/{id}', [\App\Http\Controllers\Admin\SiteMenuController::class, 'destroy']);
         Route::put('/{id}/status', [\App\Http\Controllers\Admin\SiteMenuController::class, 'updateStatus']);
         Route::get('/statistics/overview', [\App\Http\Controllers\Admin\SiteMenuController::class, 'statistics']);
-        
+
         // Menu Items management
         Route::get('/{menuId}/items', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'index']);
         Route::post('/{menuId}/items', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'store']);
@@ -1060,7 +1074,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/upload-image', [\App\Http\Controllers\CategoryController::class, 'uploadImage']);
             Route::post('/sort-alphabetically', [\App\Http\Controllers\CategoryController::class, 'sortAlphabetically']);
             Route::post('/import', [\App\Http\Controllers\CategoryController::class, 'import']);
-            
+
             // Изменить порядок категорий
             Route::post('/order', function (Request $request) {
                 try {
@@ -1118,7 +1132,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/bulk-update', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'bulkUpdate']);
                 Route::post('/check-duplicates', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'checkDuplicates']);
                 Route::post('/bulk-import', [\App\Http\Controllers\Admin\BulkGoodsImportController::class, 'bulkImport']);
-                
+
                 // Управление изображениями товаров
                 Route::prefix('{good}/images')->group(function () {
                     Route::get('/', [ShopGoodImageController::class, 'index']);
@@ -1127,7 +1141,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::delete('/{image}', [ShopGoodImageController::class, 'destroy']);
                     Route::post('/reorder', [ShopGoodImageController::class, 'reorder']);
                 });
-                
+
                 // Импорт/экспорт товаров
                 Route::prefix('import-export')->group(function () {
                     Route::post('/export/csv', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'exportCsv']);
@@ -1135,13 +1149,13 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::post('/import/csv', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'importCsv']);
                     Route::get('/template', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getTemplate']);
                 });
-                
-                
+
+
                 // Скачивание изображений для импорта
                 Route::post('/download-image', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'downloadImage']);
                 Route::post('/download-images-batch', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'downloadImagesBatch']);
                 Route::post('/save-image-to-frontend', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'saveImageToFrontend']);
-                
+
                 // Вариации товаров
                 Route::prefix('{goodId}/variations')->group(function () {
                     Route::get('/', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'index']);
@@ -1162,7 +1176,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::delete('/{variationId}', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'destroy']);
                     Route::post('/reorder', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'reorder']);
                 });
-                
+
                 // Видео товаров
                 Route::prefix('{goodId}/videos')->group(function () {
                     Route::get('/', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'index']);
@@ -1173,7 +1187,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::post('/{videoId}/set-main', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'setMain']);
                     Route::post('/reorder', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'reorder']);
                 });
-                
+
                 // Изображения товаров
                 Route::prefix('{goodId}/images')->group(function () {
                     Route::get('/', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'index']);
@@ -1185,10 +1199,10 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::post('/reorder', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'reorder']);
                     Route::post('/import', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'createFromImport']);
                 });
-                
+
                 // Пакетное создание изображений для импорта
                 Route::post('/images/import-batch', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'createFromImportBatch']);
-                
+
                 // Видео товаров
                 Route::prefix('{goodId}/videos')->group(function () {
                     Route::get('/', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'index']);
@@ -1199,19 +1213,19 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::post('/reorder', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'reorder']);
                 });
             });
-            
+
             // Изображения вариаций
             Route::prefix('variations/{variationId}/images')->group(function () {
                 Route::post('/reorder', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'reorderVariation']);
             });
-            
+
             // Свойства товаров
             Route::prefix('properties')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'index']);
                 Route::post('/', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'store']);
                 Route::put('/{property}', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'update']);
                 Route::delete('/{property}', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'destroy']);
-                
+
                 // Значения свойств
                 Route::prefix('{propertyId}/values')->group(function () {
                     Route::get('/', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'index']);
@@ -1221,7 +1235,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::delete('/{valueId}', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'destroy']);
                 });
             });
-            
+
             // Бренды
             Route::prefix('brands')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Admin\ShopBrandsController::class, 'index']);
@@ -1231,7 +1245,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::put('/{id}', [\App\Http\Controllers\Admin\ShopBrandsController::class, 'update']);
                 Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopBrandsController::class, 'destroy']);
             });
-            
+
             // Теги
             Route::prefix('tags')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Admin\ShopTagsController::class, 'index']);
@@ -1241,8 +1255,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::put('/{id}', [\App\Http\Controllers\Admin\ShopTagsController::class, 'update']);
                 Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopTagsController::class, 'destroy']);
             });
-            
-            
+
+
             // Заказы
             Route::prefix('orders')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'index']);
@@ -1253,7 +1267,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::put('/{id}/status', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateStatus']);
                 Route::post('/export', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'export']);
             });
-            
+
             // Промокоды
             Route::prefix('promocodes')->group(function () {
                 Route::get('/test', function () {
@@ -1305,13 +1319,13 @@ Route::middleware('auth:sanctum')->group(function () {
                 try {
                     $user = $request->user();
                     $accessiblePages = [];
-                    
+
                     // Получаем все страницы
                     $allPages = \App\Models\AdminPage::orderBy('order')->get();
-                    
+
                     foreach ($allPages as $page) {
                         $hasAccess = false;
-                        
+
                         // Админ имеет доступ ко всем страницам
                         if ($user->hasRole('admin')) {
                             $hasAccess = true;
@@ -1324,7 +1338,7 @@ Route::middleware('auth:sanctum')->group(function () {
                                 $hasAccess = $page->roles()->whereIn('role_id', $user->roles->pluck('id'))->exists();
                             }
                         }
-                        
+
                         if ($hasAccess) {
                             $accessiblePages[] = $page;
                         }
@@ -1692,12 +1706,12 @@ Route::middleware('auth:sanctum')->group(function () {
                                 'updated_at' => $user->updated_at,
                                 'last_login_at' => $user->last_login_at,
                             ];
-                            
+
                             // Добавляем поля авторизации
                             $userData['google_id'] = $user->google_id;
                             $userData['yandex_id'] = $user->yandex_id;
                             $userData['vk_id'] = $user->vk_id;
-                            
+
                             return $userData;
                         });
 
@@ -1743,22 +1757,22 @@ Route::middleware('auth:sanctum')->group(function () {
                         'email' => $request->email,
                         'password' => \Illuminate\Support\Facades\Hash::make($request->password),
                     ];
-                    
+
                     // Добавляем статус активности на основе email_verified_at, если передан
                     if ($request->has('email_verified_at')) {
                         $userData['email_verified_at'] = $request->email_verified_at;
                     }
-                    
+
                     // Добавляем статус блокировки, если передан
                     if ($request->has('is_active')) {
                         $userData['is_active'] = $request->boolean('is_active');
                     }
-                    
+
                     // Добавляем URL аватара, если передан
                     if ($request->has('avatar_url')) {
                         $userData['avatar_url'] = $request->avatar_url;
                     }
-                    
+
                     $user = \App\Models\User::create($userData);
 
                     // Привязываем роли
@@ -1847,22 +1861,22 @@ Route::middleware('auth:sanctum')->group(function () {
                         'name' => $request->name,
                         'email' => $request->email,
                     ];
-                    
+
                     // Добавляем статус активности на основе email_verified_at, если передан
                     if ($request->has('email_verified_at')) {
                         $updateData['email_verified_at'] = $request->email_verified_at;
                     }
-                    
+
                     // Добавляем статус блокировки, если передан
                     if ($request->has('is_active')) {
                         $updateData['is_active'] = $request->boolean('is_active');
                     }
-                    
+
                     // Добавляем URL аватара, если передан
                     if ($request->has('avatar_url')) {
                         $updateData['avatar_url'] = $request->avatar_url;
                     }
-                    
+
                     $user->update($updateData);
 
                     // Обновляем роли
@@ -2016,18 +2030,18 @@ Route::middleware('auth:sanctum')->group(function () {
                 try {
                     $user = request()->user();
                     $page = \App\Models\AdminPage::find($pageId);
-                    
+
                     if (!$page) {
                         return response()->json([
                             'success' => false,
                             'message' => 'Страница не найдена'
                         ], 404);
                     }
-                    
+
                     // Проверяем, есть ли у пользователя доступ к этой странице
                     $hasAccess = false;
                     $userRoles = $user->roles->pluck('name')->toArray();
-                    
+
                     if ($user->hasRole('admin')) {
                         $hasAccess = true; // Админ имеет доступ ко всем страницам
                     } else {
@@ -2039,16 +2053,16 @@ Route::middleware('auth:sanctum')->group(function () {
                             $hasAccess = $page->roles()->whereIn('role_id', $user->roles->pluck('id'))->exists();
                         }
                     }
-                    
 
-                    
+
+
                     if (!$hasAccess) {
                         return response()->json([
                             'success' => false,
                             'message' => 'Доступ запрещен'
                         ], 403);
                     }
-                    
+
                     // Получаем пункты меню для конкретного раздела
                     $menuItems = \App\Models\AdminMenuItem::where('page_id', $pageId)
                         ->where('is_active', true)
@@ -2190,7 +2204,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::put('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'update']);
                 Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'destroy']);
                 Route::post('/reorder', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'reorder']);
-                
+
                 // Изображения способов оплаты
                 Route::post('/upload-image', [\App\Http\Controllers\Api\Admin\PaymentMethodImageController::class, 'upload']);
                 Route::post('/remove-image', [\App\Http\Controllers\Api\Admin\PaymentMethodImageController::class, 'remove']);
@@ -2692,7 +2706,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 }
             });
         });
-        
+
         // Шаблоны импорта товаров
         Route::prefix('import-templates')->group(function () {
             Route::get('/list', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'list']); // Легкий список для выпадающих меню
@@ -2705,7 +2719,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/{id}/duplicate', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'duplicate']);
             Route::put('/{id}/set-default', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'setDefault']);
         });
-        
+
 // Логи импорта товаров
 Route::prefix('import-logs')->group(function () {
     Route::get('/stats', [\App\Http\Controllers\Admin\ImportLogController::class, 'getLogStats']);
@@ -2721,7 +2735,7 @@ Route::prefix('import-logs')->group(function () {
     Route::post('/skip/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logSkipBatch']);
     Route::post('/error/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logErrorBatch']);
 });
-        
+
         // Тестовый endpoint для проверки шаблонов импорта
         Route::get('/test-import-templates', function (Request $request) {
             try {
@@ -2903,7 +2917,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('/avatar', [\App\Http\Controllers\Api\Public\UserProfileController::class, 'deleteAvatar']);
         Route::get('/statistics', [\App\Http\Controllers\Api\Public\UserProfileController::class, 'getStatistics']);
     });
-    
+
     // Маршруты загрузки аватаров
     Route::prefix('upload')->group(function () {
         Route::post('/avatar', [\App\Http\Controllers\Api\Public\AvatarUploadController::class, 'uploadAvatar']);
