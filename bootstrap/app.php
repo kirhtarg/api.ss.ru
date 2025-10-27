@@ -24,15 +24,12 @@ return Application::configure(basePath: dirname(__DIR__))
             \App\Http\Middleware\VerifyCsrfToken::class,
         ]);
 
-        // Настраиваем API middleware - только token-based аутентификация
+        // Настраиваем API middleware с CORS
         $middleware->api([
             \App\Http\Middleware\CustomCors::class,
             'throttle:api',
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ]);
-
-        // Добавляем CORS middleware глобально для всех запросов
-        $middleware->append(\App\Http\Middleware\CustomCors::class);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (\Throwable $e, $request) {
