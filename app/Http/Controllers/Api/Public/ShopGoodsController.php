@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
+use App\Models\Setting;
 use App\Models\ShopGood;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -11,13 +12,59 @@ use Illuminate\Support\Facades\Log;
 class ShopGoodsController extends Controller
 {
     /**
+     * Применить фильтрацию по остаткам к запросу товаров
+     */
+    private function applyStockFilter($query) {
+        $shopShowGoodMode = Setting::where('key', 'shop_show_good_mode')->first();
+        $showGoodMode = $shopShowGoodMode ? (int)$shopShowGoodMode->value : 2;
+
+        $shopRemoteQ = Setting::where('key', 'shop_remote_q')->first();
+        $remoteQ = $shopRemoteQ ? (int)$shopRemoteQ->value : 1;
+
+        if ($showGoodMode === 1) {
+            // Фильтрация по остаткам: показывать только товары с остатком
+            // Все условия фильтрации обернуты в одну группу where(), чтобы не конфликтовать с другими условиями
+            $query->where(function($mainQuery) use ($remoteQ) {
+                // Условие 1: остаток на локальном складе
+                $mainQuery->where('stock_quantity', '>', 0);
+
+                if ($remoteQ === 2 || $remoteQ === 3) {
+                    // Условие 2: остаток на удаленном складе (не null, не пустая строка, не "0")
+                    // Проверяем что значение существует и может быть преобразовано в число больше 0
+                    $mainQuery->orWhere(function($remoteCondition) {
+                        $remoteCondition->whereNotNull('remote_stock_quantity')
+                            ->where('remote_stock_quantity', '!=', '0')
+                            ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                    });
+                }
+
+                // Условие 3: есть вариации с остатком
+                $mainQuery->orWhereHas('variations', function($varQ) use ($remoteQ) {
+                    $varQ->where(function($subVarQ) use ($remoteQ) {
+                        $subVarQ->where('stock_quantity', '>', 0);
+
+                        // Если учитываем удаленный склад, проверяем и там остатки
+                        if ($remoteQ === 2 || $remoteQ === 3) {
+                            $subVarQ->orWhere(function($remoteVarQ) {
+                                $remoteVarQ->whereNotNull('remote_stock_quantity')
+                                    ->where('remote_stock_quantity', '!=', '0')
+                                    ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                            });
+                        }
+                    });
+                });
+            });
+        }
+    }
+
+    /**
      * Переключить избранное для товара
      */
     public function toggleFavorite(Request $request): JsonResponse
     {
         try {
             $goodId = $request->input('good_id');
-            
+
             if (!$goodId) {
                 return response()->json([
                     'success' => false,
@@ -70,7 +117,7 @@ class ShopGoodsController extends Controller
                     'message' => 'Товар добавлен в избранное'
                 ]);
             }
-            
+
         } catch (\Exception $e) {
             Log::error('Ошибка переключения избранного: ' . $e->getMessage());
             return response()->json([
@@ -87,7 +134,7 @@ class ShopGoodsController extends Controller
     {
         try {
             // Временное логирование для диагностики
-            
+
             $query = ShopGood::with([
                 'variations' => function($query) {
                     $query->where('is_active', true);
@@ -128,19 +175,19 @@ class ShopGoodsController extends Controller
                 // Фильтрация по множественным категориям
                 if ($request->has('categories')) {
                     $categoryIds = $request->input('categories');
-                    
+
                     // Если передан строкой через запятую, преобразуем в массив
                     if (is_string($categoryIds)) {
                         $categoryIds = array_filter(explode(',', $categoryIds));
                     }
-                    
+
                     if (is_array($categoryIds) && !empty($categoryIds)) {
                         $query->whereHas('categories', function($q) use ($categoryIds) {
                             $q->whereIn('shop_categories.id', $categoryIds);
                         });
                     }
                 }
-                
+
                 // Фильтрация по множественным категориям (альтернативный формат categories[])
                 if ($request->has('categories[]')) {
                     $categoryIds = $request->input('categories[]');
@@ -167,7 +214,7 @@ class ShopGoodsController extends Controller
                         });
                     }
                 }
-                
+
                 // Фильтрация по множественным брендам (альтернативный формат brands[])
                 if ($request->has('brands[]')) {
                     $brandIds = $request->input('brands[]');
@@ -226,14 +273,17 @@ class ShopGoodsController extends Controller
                 $query->orderBy($sortBy, $sortOrder);
             }
 
+            // Фильтрация по остаткам (shop_show_good_mode)
+            $this->applyStockFilter($query);
+
             // Пагинация
             $perPage = $request->input('limit', 20);
             $goods = $query->paginate($perPage);
-            
+
             // Получаем информацию о пользователе для проверки избранного
             $token = request()->bearerToken();
             $user = null;
-            
+
             if ($token) {
                 // Ищем пользователя по токену
                 $user = \App\Models\User::where('remember_token', $token)->first();
@@ -244,7 +294,7 @@ class ShopGoodsController extends Controller
                     }
                 }
             }
-            
+
             // Добавляем image_url, is_favorite и обрабатываем характеристики для обратной совместимости
             $goods->getCollection()->transform(function ($good) use ($user) {
                 if ($good->images && $good->images->count() > 0) {
@@ -263,8 +313,8 @@ class ShopGoodsController extends Controller
                         $good->image_url = $imagePath;
                     }
                 }
-                
-                
+
+
                 // Проверяем, находится ли товар в избранном у текущего пользователя
                 $isFavorite = false;
                 if ($user) {
@@ -273,10 +323,10 @@ class ShopGoodsController extends Controller
                         ->exists();
                 }
                 $good->is_favorite = $isFavorite;
-                
+
                 return $good;
             });
-            
+
             return response()->json([
                 'success' => true,
                 'data' => $goods->items(),
@@ -304,36 +354,36 @@ class ShopGoodsController extends Controller
     {
         try {
             $ids = $request->input('ids', '');
-            
+
             if (empty($ids)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Не указаны ID значений характеристик'
                 ], 400);
             }
-            
+
             // Преобразуем строку в массив
             $idsArray = is_string($ids) ? explode(',', $ids) : $ids;
             $idsArray = array_filter(array_map('intval', $idsArray));
-            
+
             if (empty($idsArray)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Некорректные ID значений характеристик'
                 ], 400);
             }
-            
+
             // Получаем значения характеристик
             $propertyValues = \App\Models\Shop\PropertyValue::whereIn('id', $idsArray)
                 ->where('is_active', true)
                 ->get(['id', 'value'])
                 ->toArray();
-            
+
             return response()->json([
                 'success' => true,
                 'data' => $propertyValues
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -350,7 +400,7 @@ class ShopGoodsController extends Controller
         try {
             // Простое логирование для проверки
             Log::info('=== API getGoodsDetails ВЫЗВАН ===');
-            
+
             $goodIds = $request->input('good_ids', []);
             $variationIds = $request->input('variation_ids', []);
 
@@ -413,7 +463,7 @@ class ShopGoodsController extends Controller
             $isFavorite = false;
             $token = request()->bearerToken();
             $user = null;
-            
+
             if ($token) {
                 // Ищем пользователя по токену
                 $user = \App\Models\User::where('remember_token', $token)->first();
@@ -487,7 +537,7 @@ class ShopGoodsController extends Controller
                     // Загружаем атрибуты вариации из новой схемы
                     $variationAttributes = [];
                     $variationIds = [$variation->id];
-                    
+
                     $attributeRows = \Illuminate\Support\Facades\DB::table('shop_variation_attributes_values as vav')
                         ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
                         ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
@@ -497,7 +547,7 @@ class ShopGoodsController extends Controller
                             'av.id as value_id', 'av.value as value_value'
                         )
                         ->get();
-                    
+
                     foreach ($attributeRows as $row) {
                         $variationAttributes[] = [
                             'id' => $row->attribute_id,
@@ -505,7 +555,7 @@ class ShopGoodsController extends Controller
                             'value' => $row->value_value
                         ];
                     }
-                    
+
                     // Отладочная информация о размерах и весе вариации
                     Log::info('Вариация ' . $variation->name . ' размеры и вес:', [
                         'weight' => $variation->weight,
@@ -562,32 +612,41 @@ class ShopGoodsController extends Controller
     {
         try {
             $limit = $request->get('limit', 10);
-            
+
             // Получаем хиты продаж (featured)
-            $featured = ShopGood::with(['images', 'variations', 'categories', 'brands'])
+            $featuredQuery = ShopGood::with(['images', 'variations' => function($query) {
+                $query->where('is_active', true);
+            }, 'categories', 'brands'])
                 ->where('is_featured', 1)
                 ->where('is_active', 1)
                 ->orderBy('created_at', 'desc')
-                ->limit($limit)
-                ->get();
+                ->limit($limit);
+            $this->applyStockFilter($featuredQuery);
+            $featured = $featuredQuery->get();
 
             // Получаем товары со скидками (sale)
-            $sale = ShopGood::with(['images', 'variations', 'categories', 'brands'])
+            $saleQuery = ShopGood::with(['images', 'variations' => function($query) {
+                $query->where('is_active', true);
+            }, 'categories', 'brands'])
                 ->where('is_sale', 1)
                 ->where('is_active', 1)
                 ->whereNotNull('sale_price')
                 ->where('sale_price', '>', 0)
                 ->orderBy('created_at', 'desc')
-                ->limit($limit)
-                ->get();
+                ->limit($limit);
+            $this->applyStockFilter($saleQuery);
+            $sale = $saleQuery->get();
 
             // Получаем новинки (new)
-            $new = ShopGood::with(['images', 'variations', 'categories', 'brands'])
+            $newQuery = ShopGood::with(['images', 'variations' => function($query) {
+                $query->where('is_active', true);
+            }, 'categories', 'brands'])
                 ->where('is_new', 1)
                 ->where('is_active', 1)
                 ->orderBy('created_at', 'desc')
-                ->limit($limit)
-                ->get();
+                ->limit($limit);
+            $this->applyStockFilter($newQuery);
+            $new = $newQuery->get();
 
             return response()->json([
                 'success' => true,
@@ -599,7 +658,7 @@ class ShopGoodsController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка получения главных блоков'
@@ -615,9 +674,9 @@ class ShopGoodsController extends Controller
         try {
             $variationId = $request->input('variation_id');
             $variationId = $variationId ? (int)$variationId : null;
-            
-            
-            
+
+
+
             $good = ShopGood::with([
                 'variations' => function($query) {
                     $query->where('is_active', true)->with([
@@ -667,7 +726,7 @@ class ShopGoodsController extends Controller
             if ($variationId) {
                 // Находим вариацию
                 $variation = $good->variations->where('id', $variationId)->first();
-                
+
                 if ($variation) {
                     // Заменяем основные медиа товара на медиа вариации
                     if ($variation->images && $variation->images->count() > 0) {
@@ -676,7 +735,7 @@ class ShopGoodsController extends Controller
                         // Если у вариации нет изображений, не показываем изображения вообще
                         $good->setRelation('images', collect([]));
                     }
-                    
+
                     if ($variation->videos && $variation->videos->count() > 0) {
                         $good->setRelation('videos', $variation->videos);
                     } else {
@@ -696,7 +755,7 @@ class ShopGoodsController extends Controller
                 foreach ($goodData['variations'] as &$variation) {
                     $variationAttributes = [];
                     $variationIds = [$variation['id']];
-                    
+
                     $attributeRows = \Illuminate\Support\Facades\DB::table('shop_variation_attributes_values as vav')
                         ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
                         ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
@@ -706,7 +765,7 @@ class ShopGoodsController extends Controller
                             'av.id as value_id', 'av.value as value_value'
                         )
                         ->get();
-                    
+
                     foreach ($attributeRows as $row) {
                         $variationAttributes[] = [
                             'id' => $row->attribute_id,
@@ -714,7 +773,7 @@ class ShopGoodsController extends Controller
                             'value' => $row->value_value
                         ];
                     }
-                    
+
                     $variation['attributes'] = $variationAttributes;
                 }
             }
@@ -781,7 +840,7 @@ class ShopGoodsController extends Controller
             // Проверяем, находится ли товар в избранном у текущего пользователя
             $isFavorite = false;
             $token = request()->bearerToken();
-            
+
             if ($token) {
                 // Ищем пользователя по токену
                 $user = \App\Models\User::where('remember_token', $token)->first();
@@ -791,7 +850,7 @@ class ShopGoodsController extends Controller
                         $user = $personalAccessToken->tokenable;
                     }
                 }
-                
+
                 if ($user) {
                     $isFavorite = \App\Models\ShopFavorite::where('user_id', $user->id)
                         ->where('good_id', $good->id)
@@ -802,7 +861,7 @@ class ShopGoodsController extends Controller
             // Добавляем поле is_favorite к товару и нормализуем свойства
             $goodData = $good->toArray();
             $goodData['is_favorite'] = $isFavorite;
-            
+
             // Нормализуем свойства до {id, name, value}
             if (isset($goodData['properties'])) {
                 $goodData['properties'] = collect($goodData['properties'])->toArray();
@@ -813,7 +872,7 @@ class ShopGoodsController extends Controller
                 foreach ($goodData['variations'] as &$variation) {
                     $variationAttributes = [];
                     $variationIds = [$variation['id']];
-                    
+
                     $attributeRows = \Illuminate\Support\Facades\DB::table('shop_variation_attributes_values as vav')
                         ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
                         ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
@@ -823,7 +882,7 @@ class ShopGoodsController extends Controller
                             'av.id as value_id', 'av.value as value_value'
                         )
                         ->get();
-                    
+
                     foreach ($attributeRows as $row) {
                         $variationAttributes[] = [
                             'id' => $row->attribute_id,
@@ -831,7 +890,7 @@ class ShopGoodsController extends Controller
                             'value' => $row->value_value
                         ];
                     }
-                    
+
                     $variation['attributes'] = $variationAttributes;
                 }
             }
@@ -893,7 +952,7 @@ class ShopGoodsController extends Controller
     {
         try {
             $goodIds = $request->input('good_ids', []);
-            
+
             if (empty($goodIds)) {
                 return response()->json([
                     'success' => false,
@@ -1065,7 +1124,7 @@ class ShopGoodsController extends Controller
     {
         try {
             $variationIds = $request->input('variation_ids', []);
-            
+
             if (empty($variationIds) || !is_array($variationIds)) {
                 return response()->json([
                     'success' => false,
@@ -1086,11 +1145,11 @@ class ShopGoodsController extends Controller
             ->get();
 
             $result = [];
-            
+
             foreach ($variations as $variation) {
                 $images = $variation->images ? $variation->images->toArray() : [];
                 $videos = $variation->videos ? $variation->videos->toArray() : [];
-                
+
                 $result[$variation->id] = [
                     'images' => $images,
                     'videos' => $videos
