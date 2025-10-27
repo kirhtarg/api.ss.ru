@@ -123,7 +123,7 @@ class SiteInfoController extends Controller
                     })
                     ->whereIn('key', [
                         'site_name',
-                        'site_description', 
+                        'site_description',
                         'site_logo',
                         'site_favicon',
                         'meta_title',
@@ -164,7 +164,7 @@ class SiteInfoController extends Controller
     }
 
     /**
-     * Получить полный URL изображения
+     * Получить путь к изображению (относительный, без домена)
      */
     private function getImageUrl($filePath)
     {
@@ -172,50 +172,20 @@ class SiteInfoController extends Controller
             return null;
         }
 
-        // Убираем возможные префиксы API сервера
-        $cleanPath = $filePath;
-        
         // Если в пути есть полный URL, извлекаем только относительный путь
         if (preg_match('/https?:\/\/[^\/]+(.*)/', $filePath, $matches)) {
-            $cleanPath = $matches[1];
-        }
-        
-        // Если это уже полный URL, проверяем домен
-        if (str_starts_with($cleanPath, 'http')) {
-            
-            // Заменяем старый домен на новый фронтенд домен
-            $frontendUrl = config('app.frontend_url', 'https://admin.skateandsnow.ru');
-            $oldDomains = [
-                'https://ss75.kirhtarg.ru',
-                'https://api.ss.ru',
-                'https://ss75-api.kirhtarg.ru'
-            ];
-            
-            foreach ($oldDomains as $oldDomain) {
-                if (str_starts_with($cleanPath, $oldDomain)) {
-                    $result = str_replace($oldDomain, $frontendUrl, $cleanPath);
-                    return $result;
-                }
-            }
-            
-            // Если это другой домен, возвращаем как есть
-            return $cleanPath;
+            $filePath = $matches[1];
         }
 
-        // Убираем лишний префикс images/ если он уже есть
-        $cleanPath = ltrim($cleanPath, '/');
-        
-        if (str_starts_with($cleanPath, 'images/')) {
-            // Возвращаем полный URL с фронтенда
-            $frontendUrl = config('app.frontend_url', 'https://admin.skateandsnow.ru');
-            $result = $frontendUrl . '/' . $cleanPath;
-            return $result;
+        // Убираем лишний слэш в начале
+        $filePath = ltrim($filePath, '/');
+
+        // Если путь начинается с images/, возвращаем с ведущим слэшем
+        if (str_starts_with($filePath, 'images/')) {
+            return '/' . $filePath;
         }
 
-        // Возвращаем полный URL к файлу в папке public/images/ на фронтенде
-        $frontendUrl = config('app.frontend_url', 'https://admin.skateandsnow.ru');
-        $result = $frontendUrl . '/images/' . $cleanPath;
-        Log::info('getImageUrl: Final result for regular path = ' . $result);
-        return $result;
+        // Возвращаем относительный путь к файлу в папке public/images/
+        return '/images/' . $filePath;
     }
 }
