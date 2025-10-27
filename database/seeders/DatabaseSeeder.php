@@ -15,28 +15,28 @@ class DatabaseSeeder extends Seeder
             // Основные данные системы
             RoleSeeder::class,
             UserSeeder::class,
-            SettingSeederSafe::class, // Используем безопасный сидер
+            SettingSeeder::class, // Используем безопасный сидер
             UserRoleSeeder::class,
-            
+
             // Админка
             AdminPageSeeder::class, // Сначала создаем страницы
             AdminMenuItemSeeder::class, // Потом пункты меню
-            
+
             // Сайт
             SiteTemplateSeeder::class,
             SiteMenuSeeder::class,
             SiteMenuItemSeeder::class,
-            
+
             // Магазин
             ShopTemplateSeeder::class,
             ShopOrderStatusSeeder::class,
             ShopDeliveryMethodSeeder::class,
             ShopPaymentMethodSeeder::class,
             ShopBonusSettingsSeeder::class,
-            
+
             // Слайдеры
             SliderSeeder::class,
-            
+
             // Контакты
             SocialTypeSeeder::class,
             ContactSeeder::class,
