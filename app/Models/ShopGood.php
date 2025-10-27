@@ -43,6 +43,7 @@ class ShopGood extends Model
         'price' => 'decimal:2',
         'sale_price' => 'decimal:2',
         'stock_quantity' => 'integer',
+        'remote_stock_quantity' => 'integer',
         'width' => 'decimal:2',
         'height' => 'decimal:2',
         'depth' => 'decimal:2',
@@ -311,7 +312,7 @@ class ShopGood extends Model
         if (!$this->sale_price || $this->sale_price >= $this->price) {
             return 0;
         }
-        
+
         return round((($this->price - $this->sale_price) / $this->price) * 100);
     }
 
@@ -324,7 +325,7 @@ class ShopGood extends Model
         if ($this->width) $dimensions[] = $this->width . '×';
         if ($this->height) $dimensions[] = $this->height . '×';
         if ($this->depth) $dimensions[] = $this->depth;
-        
+
         return implode('', $dimensions) ?: null;
     }
 
@@ -347,12 +348,12 @@ class ShopGood extends Model
 
         // Ищем главное изображение
         $mainImage = $this->images->where('is_main', true)->first();
-        
+
         // Если главного нет, берем первое
         if (!$mainImage) {
             $mainImage = $this->images->sortBy('sort_order')->first();
         }
-        
+
         return $mainImage;
     }
 }
