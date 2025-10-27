@@ -38,13 +38,14 @@ Route::match(['OPTIONS'], '/{any}', function (Request $request) {
         'http://localhost:3001',
     ];
 
-    $allowOrigin = in_array($origin, $allowedOrigins) ? $origin : '*';
+    // Если origin не разрешен, возвращаем заголовок только если есть Origin
+    $allowOrigin = $origin && in_array($origin, $allowedOrigins) ? $origin : ($origin ?: '*');
 
     return response('', 200)
         ->header('Access-Control-Allow-Origin', $allowOrigin)
         ->header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS')
         ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN, X-Session-ID')
-        ->header('Access-Control-Allow-Credentials', 'true')
+        ->header('Access-Control-Allow-Credentials', $allowOrigin !== '*' ? 'true' : 'false')
         ->header('Access-Control-Max-Age', '86400');
 })->where('any', '.*');
 

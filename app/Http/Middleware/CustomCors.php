@@ -47,7 +47,6 @@ class CustomCors
 
         // Проверяем паттерны для поддоменов
         $origin = $request->header('Origin');
-        $isAllowed = false;
 
         // Список разрешенных доменов
         $hardCodedAllowedOrigins = [
@@ -61,26 +60,14 @@ class CustomCors
             'http://localhost:3001',
         ];
 
-        if ($origin) {
-            // Проверяем точные совпадения (и в конфиге, и в hardcoded списке)
-            if (in_array($origin, $allowedOrigins) || in_array($origin, $hardCodedAllowedOrigins)) {
-                $isAllowed = true;
-            } else {
-                // Проверяем паттерны
-                foreach ($allowedPatterns as $pattern) {
-                    if (preg_match('/' . $pattern . '/', $origin)) {
-                        $isAllowed = true;
-                        break;
-                    }
-                }
-            }
-        }
+        // Все разрешенные origins
+        $allAllowedOrigins = array_unique(array_merge($allowedOrigins, $hardCodedAllowedOrigins));
 
         // Устанавливаем CORS заголовки
-        if ($origin && $isAllowed) {
+        if ($origin && in_array($origin, $allAllowedOrigins)) {
             $response->headers->set('Access-Control-Allow-Origin', $origin);
         } elseif ($origin) {
-            // Разрешаем origin для отладки
+            // Разрешаем origin для отладки (временно)
             $response->headers->set('Access-Control-Allow-Origin', $origin);
         } else {
             // Если нет Origin, разрешаем все домены
