@@ -360,12 +360,14 @@ class BulkGoodsImportController extends Controller
         $good->name = $goodData['name'];
         $good->slug = $this->generateSlug($goodData['name'], $goodData['sku']);
         $good->description = $goodData['description'] ?? null;
+        $good->short_description = $goodData['short_description'] ?? null;
 
         // Применяем модификацию цены
         $priceModification = $goodData['price_modification'] ?? null;
         $good->price = $this->applyPriceModification($goodData['price'] ?? 0, $priceModification['regular'] ?? null);
         $good->sale_price = $this->applySalePriceModification($goodData, $priceModification);
-        $good->stock_quantity = $goodData['stock'] ?? 0;
+        $good->stock_quantity = $goodData['stock_quantity'] ?? $goodData['stock'] ?? 0;
+        $good->remote_stock_quantity = $goodData['remote_stock_quantity'] ?? null;
         $good->weight = $goodData['weight'] ?? 0;
         $good->width = $goodData['width'] ?? 0;
         $good->height = $goodData['height'] ?? 0;
@@ -417,13 +419,30 @@ class BulkGoodsImportController extends Controller
     {
         $existingGood->name = $goodData['name'];
         $existingGood->slug = $this->generateSlug($goodData['name'], $goodData['sku']);
-        $existingGood->description = $goodData['description'] ?? $existingGood->description;
+
+        // Обновляем описание только если оно передано
+        if (isset($goodData['description'])) {
+            $existingGood->description = $goodData['description'];
+        }
+
+        // Обновляем короткое описание только если оно передано
+        if (isset($goodData['short_description'])) {
+            $existingGood->short_description = $goodData['short_description'];
+        }
 
         // Применяем модификацию цены
         $priceModification = $goodData['price_modification'] ?? null;
         $existingGood->price = $this->applyPriceModification($goodData['price'] ?? $existingGood->price, $priceModification['regular'] ?? null);
         $existingGood->sale_price = $this->applySalePriceModification($goodData, $priceModification) ?? $existingGood->sale_price;
-        $existingGood->stock_quantity = $goodData['stock'] ?? $existingGood->stock_quantity;
+
+        // Обновляем остатки только если они переданы
+        if (isset($goodData['stock_quantity']) || isset($goodData['stock'])) {
+            $existingGood->stock_quantity = $goodData['stock_quantity'] ?? $goodData['stock'] ?? $existingGood->stock_quantity;
+        }
+
+        if (isset($goodData['remote_stock_quantity'])) {
+            $existingGood->remote_stock_quantity = $goodData['remote_stock_quantity'];
+        }
         $existingGood->weight = $goodData['weight'] ?? $existingGood->weight;
         $existingGood->width = $goodData['width'] ?? $existingGood->width;
         $existingGood->height = $goodData['height'] ?? $existingGood->height;
