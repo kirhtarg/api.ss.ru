@@ -398,18 +398,8 @@ class ShopGoodsController extends Controller
     public function getGoodsDetails(Request $request): JsonResponse
     {
         try {
-            // Простое логирование для проверки
-            Log::info('=== API getGoodsDetails ВЫЗВАН ===');
-
             $goodIds = $request->input('good_ids', []);
             $variationIds = $request->input('variation_ids', []);
-
-            // Отладочная информация о запросе
-            Log::info('getGoodsDetails вызван', [
-                'good_ids' => $goodIds,
-                'variation_ids' => $variationIds,
-                'request_data' => $request->all()
-            ]);
 
             if (empty($goodIds)) {
                 return response()->json([
@@ -497,18 +487,6 @@ class ShopGoodsController extends Controller
                 }
 
 
-                // Отладочная информация о размерах и весе товара
-                Log::info('Товар ' . $good->name . ' размеры и вес:', [
-                    'weight' => $good->weight,
-                    'width' => $good->width,
-                    'height' => $good->height,
-                    'depth' => $good->depth,
-                    'raw_weight' => $good->getRawOriginal('weight'),
-                    'raw_width' => $good->getRawOriginal('width'),
-                    'raw_height' => $good->getRawOriginal('height'),
-                    'raw_depth' => $good->getRawOriginal('depth')
-                ]);
-
                 $goodData = [
                     'id' => $good->id,
                     'name' => $good->name,
@@ -555,18 +533,6 @@ class ShopGoodsController extends Controller
                             'value' => $row->value_value
                         ];
                     }
-
-                    // Отладочная информация о размерах и весе вариации
-                    Log::info('Вариация ' . $variation->name . ' размеры и вес:', [
-                        'weight' => $variation->weight,
-                        'length' => $variation->length,
-                        'width' => $variation->width,
-                        'height' => $variation->height,
-                        'raw_weight' => $variation->getRawOriginal('weight'),
-                        'raw_length' => $variation->getRawOriginal('length'),
-                        'raw_width' => $variation->getRawOriginal('width'),
-                        'raw_height' => $variation->getRawOriginal('height')
-                    ]);
 
                     $goodData['variations'][] = [
                         'id' => $variation->id,
