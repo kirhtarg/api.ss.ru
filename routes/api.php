@@ -420,15 +420,15 @@ Route::get('/test/oauth', function () {
     });
     Route::get('/public/shop/cdek/streets', [App\Http\Controllers\Api\Public\ShopCdekController::class, 'getStreets']);
 
-Route::options('/public/shop/cdek/houses', function () {
-    return response()->json([], 200);
-});
-Route::get('/public/shop/cdek/houses', [App\Http\Controllers\Api\Public\ShopCdekController::class, 'getHouses']);
+    Route::options('/public/shop/cdek/houses', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/cdek/houses', [App\Http\Controllers\Api\Public\ShopCdekController::class, 'getHouses']);
 
-Route::options('/public/shop/cdek/get-postal-code', function () {
-    return response()->json([], 200);
-});
-Route::post('/public/shop/cdek/get-postal-code', [App\Http\Controllers\Api\Public\ShopCdekController::class, 'getPostalCode']);
+    Route::options('/public/shop/cdek/get-postal-code', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/public/shop/cdek/get-postal-code', [App\Http\Controllers\Api\Public\ShopCdekController::class, 'getPostalCode']);
 
 // Order details API
 Route::options('/public/order/details', function () {
