@@ -361,6 +361,87 @@ class YandexPayController extends Controller
     }
 
     /**
+     * Возвращает paymentData для Web SDK (Ultimate widget)
+     * Использует настройки активного платежного метода (merchant_id, режим, валюта)
+     */
+    public function getPaymentSessionData(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'amount' => 'required|numeric|min:0.01',
+            'currency' => 'nullable|string|in:RUB,USD,EUR',
+            'available_payment_methods' => 'nullable|array',
+            'available_payment_methods.*' => 'in:CARD,SPLIT'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $paymentMethod = ShopPaymentMethod::where('type', 'yandex_pay')
+                ->orWhere('type', 'yandex_split')
+                ->where('is_active', true)
+                ->first();
+
+            if (!$paymentMethod) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Платежный метод не найден'
+                ], 404);
+            }
+
+            $settings = $paymentMethod->getApiSettings();
+            if (!$this->validateSettings($settings)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Неверные настройки платежного метода'
+                ], 400);
+            }
+
+            $env = ($settings['mode'] ?? 'test') === 'live' ? 'PRODUCTION' : 'SANDBOX';
+            $currency = $request->input('currency', $settings['currency'] ?? 'RUB');
+            $amount = (float) $request->input('amount');
+            $availablePaymentMethods = $request->input('available_payment_methods', ['CARD', 'SPLIT']);
+
+            // Use merchant_name from settings or fallback to payment method name
+            $merchantName = $settings['merchant_name'] ?? $paymentMethod->name ?? 'Skate & Snow';
+            
+            $paymentData = [
+                'env' => $env,
+                'version' => 2,
+                'countryCode' => 'RU',
+                'currencyCode' => $currency,
+                'merchant' => [
+                    'id' => $settings['merchant_id'],
+                    'name' => $merchantName
+                ],
+                'totalAmount' => [
+                    'amount' => $amount,
+                    'currency' => $currency,
+                ],
+                'availablePaymentMethods' => $availablePaymentMethods,
+            ];
+
+            return response()->json([
+                'success' => true,
+                'data' => $paymentData,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('YandexPay getPaymentSessionData failed', [
+                'error' => $e->getMessage(),
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Внутренняя ошибка сервера'
+            ], 500);
+        }
+    }
+
+    /**
      * Обработка webhook от Яндекс Пэй
      */
     public function handleWebhook(Request $request): JsonResponse
