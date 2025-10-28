@@ -24,11 +24,6 @@ class ShopCdekController extends Controller
      */
     public function getCities(Request $request): JsonResponse
     {
-        Log::info('=== ShopCdekController::getCities вызван ===', [
-            'query' => $request->query('query', ''),
-            'all_params' => $request->all()
-        ]);
-
         try {
             $query = $request->query('query', '');
 
@@ -37,11 +32,6 @@ class ShopCdekController extends Controller
             if (empty($query)) {
                 $query = $request->input('query', '');
             }
-
-            Log::info('ShopCdekController::getCities - декодированный запрос', [
-                'query' => $query,
-                'length' => strlen($query)
-            ]);
 
             if (strlen($query) < 2) {
                 return response()->json([
@@ -90,21 +80,29 @@ class ShopCdekController extends Controller
                         if (isset($data['suggestions'])) {
                             foreach ($data['suggestions'] as $suggestion) {
                                 $cityData = $suggestion['data'];
+                                $cityName = $cityData['city'] ?? '';
 
-                                // Получаем реальный код города CDEK через их API
+                                if (empty($cityName)) {
+                                    continue;
+                                }
+
+                                // Ищем код города CDEK по названию через их API
                                 try {
-                                    $cdekCityCode = $this->getCdekCityCodeFromName($cityData['city'] ?? '');
+                                    $cdekCities = $this->cdekService->getCities($cityName);
+                                    $cdekCityCode = null;
 
-                                    // Показываем только города, которые есть в CDEK
-                                    if ($cdekCityCode !== null) {
-                                        $formattedCities[] = [
-                                            'code' => $cdekCityCode,
-                                            'name' => $cityData['city'] ?? '',
-                                            'region' => $cityData['region_with_type'] ?? '',
-                                            'country' => 'Россия',
-                                            'full_name' => $cityData['city_with_type'] ?? $cityData['city'] ?? ''
-                                        ];
+                                    if ($cdekCities && is_array($cdekCities) && isset($cdekCities[0]['code'])) {
+                                        $cdekCityCode = $cdekCities[0]['code'];
                                     }
+
+                                    $formattedCities[] = [
+                                        'code' => $cdekCityCode,
+                                        'name' => $cityName,
+                                        'region' => $cityData['region_with_type'] ?? '',
+                                        'country' => 'Россия',
+                                        'full_name' => $cityData['city_with_type'] ?? $cityName,
+                                        'fias_id' => $cityData['fias_id'] ?? null
+                                    ];
                                 } catch (\Exception $e) {
                                     // Игнорируем ошибки для отдельных городов
                                     continue;
@@ -113,34 +111,21 @@ class ShopCdekController extends Controller
                         }
                     }
                 } catch (\Exception $e) {
-                    Log::warning('DaData API error: ' . $e->getMessage());
+                    // Игнорируем ошибки DaData API
                 }
             }
 
             // Если DaData не работает или не нашли городов, используем fallback
             if (empty($formattedCities)) {
-                Log::info('ShopCdekController::getCities - DaData вернул пустой результат, используем fallback', [
-                    'query' => $query
-                ]);
                 $formattedCities = $this->getFallbackCities($query);
-                Log::info('ShopCdekController::getCities - результат fallback', [
-                    'count' => count($formattedCities)
-                ]);
             }
 
             if (empty($formattedCities)) {
-                Log::warning('ShopCdekController::getCities - не найдено городов', [
-                    'query' => $query
-                ]);
                 return response()->json([
                     'success' => false,
                     'message' => 'Город не найден в базе данных'
                 ], 404);
             }
-
-            Log::info('ShopCdekController::getCities - возвращаем результат', [
-                'count' => count($formattedCities)
-            ]);
 
             return response()->json([
                 'success' => true,
@@ -190,15 +175,8 @@ class ShopCdekController extends Controller
      */
     public function getActiveSettings(): JsonResponse
     {
-        Log::info('=== ShopCdekController::getActiveSettings вызван ===');
-
         try {
             $settings = \App\Models\ShopCdekSettings::getActive();
-
-            Log::info('ShopCdekController::getActiveSettings - результат', [
-                'found' => $settings !== null,
-                'id' => $settings?->id
-            ]);
 
             if (!$settings) {
                 return response()->json([
@@ -314,7 +292,6 @@ class ShopCdekController extends Controller
                 // Получаем код города отправителя из настроек
                 $senderCityCode = $this->getSenderCityCode($settings);
 
-
                 if ($senderCityCode) {
                     // Рассчитываем размеры посылки на основе товаров в корзине
                     $packageDimensions = $this->calculatePackageDimensions($cartItems, $settings);
@@ -381,7 +358,6 @@ class ShopCdekController extends Controller
                         // Если настроенные тарифы не найдены, проверяем есть ли вообще доступные тарифы
                         if (empty($deliveryResult)) {
                             // Если API СДЭК не работает, используем fallback данные из настроек
-
                             foreach ($tariffs as $tariff) {
                                 if (!($tariff['enabled'] ?? true)) {
                                     continue; // Пропускаем отключенные тарифы
@@ -488,8 +464,6 @@ class ShopCdekController extends Controller
      */
     private function getFallbackCities($query)
     {
-        Log::info('ShopCdekController::getFallbackCities - начало', ['query' => $query]);
-
         $fallbackCities = [
             // Крупные города с правильными кодами CDEK
             ['code' => '44', 'name' => 'Москва', 'region' => 'Московская область', 'country' => 'Россия', 'full_name' => 'г. Москва'],
@@ -540,14 +514,6 @@ class ShopCdekController extends Controller
 
         // Фильтруем по запросу (поддерживаем частичные совпадения)
         $query = mb_strtolower(trim($query), 'UTF-8');
-        Log::info('ShopCdekController::getFallbackCities - фильтрация', [
-            'query' => $query,
-            'query_hex' => bin2hex($query),
-            'query_length' => strlen($query),
-            'total_cities' => count($fallbackCities),
-            'first_city_name' => mb_strtolower($fallbackCities[0]['name'], 'UTF-8'),
-            'first_city_hex' => bin2hex(mb_strtolower($fallbackCities[0]['name'], 'UTF-8'))
-        ]);
 
         $filteredCities = array_filter($fallbackCities, function($city) use ($query) {
             $name = mb_strtolower($city['name'], 'UTF-8');
@@ -556,35 +522,28 @@ class ShopCdekController extends Controller
 
             // Проверяем точное совпадение начала названия
             if (mb_strpos($name, $query, 0, 'UTF-8') === 0) {
-                Log::info('ShopCdekController::getFallbackCities - найдено совпадение (начало)', ['name' => $name, 'query' => $query]);
                 return true;
             }
 
             // Проверяем частичное совпадение в названии
             if (mb_strpos($name, $query, 0, 'UTF-8') !== false) {
-                Log::info('ShopCdekController::getFallbackCities - найдено совпадение (частичное)', ['name' => $name, 'query' => $query]);
                 return true;
             }
 
             // Проверяем совпадение в полном названии (включая "г.")
             if (mb_strpos($fullName, $query, 0, 'UTF-8') !== false) {
-                Log::info('ShopCdekController::getFallbackCities - найдено совпадение (full_name)', ['full_name' => $fullName, 'query' => $query]);
                 return true;
             }
 
             // Проверяем совпадение в регионе
             if (mb_strpos($region, $query, 0, 'UTF-8') !== false) {
-                Log::info('ShopCdekController::getFallbackCities - найдено совпадение (region)', ['region' => $region, 'query' => $query]);
                 return true;
             }
 
             return false;
         });
 
-        $result = array_values($filteredCities);
-        Log::info('ShopCdekController::getFallbackCities - результат', ['count' => count($result), 'query' => $query]);
-
-        return $result;
+        return array_values($filteredCities);
     }
 
     /**
@@ -651,67 +610,37 @@ class ShopCdekController extends Controller
      */
     private function getSenderCityCode($settings)
     {
-        try {
-            // Если в настройках есть код города отправителя, используем его
-            if (isset($settings->sender_city_code) && $settings->sender_city_code) {
-                return (int)$settings->sender_city_code;
-            }
+            try {
+                // НЕ используем код из настроек напрямую - он может быть неправильным
+                // Вместо этого всегда получаем код через API CDEK
 
-            // Проверяем кэш города отправителя
-            $cacheKey = 'cdek_sender_city_' . md5($settings->sender_city ?? 'default');
-            $cachedCode = cache()->get($cacheKey);
-            if ($cachedCode) {
-                return (int)$cachedCode;
-            }
+                // Проверяем кэш города отправителя
+                $cacheKey = 'cdek_sender_city_' . md5($settings->sender_city ?? 'default');
+                $cachedCode = cache()->get($cacheKey);
+                if ($cachedCode) {
+                    return (int)$cachedCode;
+                }
 
-                // Если есть название города, пытаемся найти его код через DaData
+                // Если есть название города, пытаемся найти его код через CDEK API
                 if (isset($settings->sender_city) && $settings->sender_city) {
-                    $dadataApiKey = env('DADATA_API_KEY');
-                    if ($dadataApiKey) {
-                        try {
-                            $dadataUrl = 'https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/address';
-                            $body = [
-                                'query' => $settings->sender_city,
-                                'count' => 1,
-                                'locations' => [
-                                    [
-                                        'country' => 'Россия'
-                                    ]
-                                ],
-                                'from_bound' => ['value' => 'city'],
-                                'to_bound' => ['value' => 'city']
-                            ];
+                    try {
+                        $cdekCities = $this->cdekService->getCities($settings->sender_city);
 
-                            $res = Http::withOptions([
-                                'verify' => false,
-                                'timeout' => 15,
-                                'connect_timeout' => 10
-                            ])->post($dadataUrl, $body, [
-                                'Content-Type' => 'application/json',
-                                'Accept' => 'application/json',
-                                'Authorization' => 'Token ' . $dadataApiKey
-                            ]);
-
-                            if ($res->successful()) {
-                                $data = $res->json();
-                                if (isset($data['suggestions']) && count($data['suggestions']) > 0) {
-                                    $cityData = $data['suggestions'][0]['data'];
-                                    $cityCode = (int)($cityData['city_kladr_id'] ?? 137);
-                                    // Кэшируем на 24 часа
-                                    cache()->put($cacheKey, $cityCode, 86400);
-                                    return $cityCode;
-                                }
-                            }
-                        } catch (\Exception $e) {
-                            // Игнорируем ошибки поиска города
+                        if ($cdekCities && is_array($cdekCities) && isset($cdekCities[0]['code'])) {
+                            $cityCode = (int)$cdekCities[0]['code'];
+                            // Кэшируем на 24 часа
+                            cache()->put($cacheKey, $cityCode, 86400);
+                            return $cityCode;
                         }
+                    } catch (\Exception $e) {
+                        Log::warning('Ошибка поиска кода города отправителя: ' . $e->getMessage());
                     }
                 }
 
-                // Fallback - используем Санкт-Петербург (код 137)
-                return 137;
+                // Fallback - используем Санкт-Петербург (код 270)
+                return 270;
         } catch (\Exception $e) {
-            return 137; // Fallback
+            return 270; // Fallback
         }
     }
 
