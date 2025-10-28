@@ -406,10 +406,13 @@ class YandexPayController extends Controller
             $currency = $request->input('currency', $settings['currency'] ?? 'RUB');
             $amount = (float) $request->input('amount');
             $availablePaymentMethods = $request->input('available_payment_methods', ['CARD', 'SPLIT']);
+            $orderId = $request->input('order_id');
+            $forInfoWidgets = $request->input('for_info_widgets', false);
 
             // Use merchant_name from settings or fallback to payment method name
             $merchantName = $settings['merchant_name'] ?? $paymentMethod->name ?? 'Skate & Snow';
             
+            // Build paymentData
             $paymentData = [
                 'env' => $env,
                 'version' => 2,
@@ -420,11 +423,75 @@ class YandexPayController extends Controller
                     'name' => $merchantName
                 ],
                 'totalAmount' => [
-                    'amount' => $amount,
+                    'amount' => (string)round($amount, 2),
                     'currency' => $currency,
                 ],
                 'availablePaymentMethods' => $availablePaymentMethods,
             ];
+            
+            // For info widgets, use only minimal data
+            if ($forInfoWidgets) {
+                // For info widgets, SDK needs only basic payment info
+                // Remove availablePaymentMethods to avoid SDK creating order objects
+                unset($paymentData['availablePaymentMethods']);
+            } else {
+                // For full payment widgets
+                // Add items if provided (from checkout cart items)
+                $items = $request->input('items');
+                if ($items && is_array($items) && count($items) > 0) {
+                    $paymentData['items'] = $items;
+                    
+                    // Add orderId if provided
+                    if ($orderId) {
+                        $paymentData['orderId'] = $orderId;
+                    }
+                    
+                    // Add cart object to make SDK think this is full payment context
+                    $paymentData['cart'] = [
+                        'items' => $items
+                    ];
+                } elseif ($orderId) {
+                    // Add orderId and create fake items for product page
+                    $paymentData['orderId'] = $orderId;
+                    $goodId = $request->input('good_id', 0);
+                    $goodName = $request->input('product_name', 'Product');
+                    $qty = $request->input('qty', 1);
+                    $unitPrice = $qty > 0 ? $amount / $qty : $amount;
+                    
+                    $paymentData['items'] = [
+                        [
+                            'productId' => (string)$goodId,
+                            'name' => $goodName,
+                            'quantity' => [
+                                'count' => (string)$qty,
+                                'label' => 'шт',
+                                'type' => 'FLOAT'
+                            ],
+                            'unitPrice' => [
+                                'amount' => (string)round($unitPrice, 2),
+                                'currency' => $currency
+                            ],
+                            'totalPrice' => [
+                                'amount' => (string)round($amount, 2),
+                                'currency' => $currency
+                            ]
+                        ]
+                    ];
+                    
+                    // Add cart to make SDK recognize Payment context
+                    $paymentData['cart'] = [
+                        'items' => $paymentData['items']
+                    ];
+                    
+                    // Add order object to make SDK recognize Payment context
+                    $paymentData['order'] = [
+                        'id' => $orderId,
+                        'total' => [
+                            'amount' => (string)round($amount, 2)
+                        ]
+                    ];
+                }
+            }
 
             return response()->json([
                 'success' => true,
