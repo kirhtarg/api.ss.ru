@@ -349,6 +349,12 @@ Route::get('/test/oauth', function () {
     Route::post('/yandex-pay/orders/{orderId}/cancel', [App\Http\Controllers\Api\YandexPayController::class, 'cancelOrder']);
     Route::post('/yandex-pay/orders/{orderId}/refund', [App\Http\Controllers\Api\YandexPayController::class, 'refundOrder']);
 
+    // Web SDK helper endpoint: returns paymentData for createSession/mountWidget
+    Route::options('/yandex-pay/payment-session-data', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/yandex-pay/payment-session-data', [App\Http\Controllers\Api\YandexPayController::class, 'getPaymentSessionData']);
+
     // Webhook для Яндекс Пэй
     Route::post('/webhooks/yandex-pay', [App\Http\Controllers\Api\YandexPayController::class, 'handleWebhook']);
     Route::post('/webhooks/yandex-split', [App\Http\Controllers\Api\YandexPayController::class, 'handleWebhook']);
