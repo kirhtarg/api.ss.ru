@@ -93,6 +93,9 @@ class ContactController extends Controller
                     'address_short' => $mainAddress->address_short,
                     'latitude' => $mainAddress->latitude,
                     'longitude' => $mainAddress->longitude,
+                    'howtogo' => $mainAddress->howtogo,
+                    'work_mode' => $mainAddress->work_mode,
+                    'is_main' => $mainAddress->is_main,
                     'contact_name' => $mainAddress->contact_name
                 ] : null,
                 'main_phone' => $mainPhone ? [

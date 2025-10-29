@@ -12,6 +12,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 
 class ShopPaymentController extends Controller
 {
@@ -287,14 +288,32 @@ class ShopPaymentController extends Controller
             $settings = $paymentMethod->getApiSettings();
             
             if (empty($settings['merchant_id']) || empty($settings['secret_key'])) {
+                Log::error('YandexPay: Не настроены параметры', [
+                    'merchant_id' => empty($settings['merchant_id']) ? 'missing' : 'present',
+                    'secret_key' => empty($settings['secret_key']) ? 'missing' : 'present'
+                ]);
                 return response()->json([
                     'success' => false,
                     'message' => 'Не настроены параметры Яндекс Пэй'
                 ], 400);
             }
 
+            $mode = $settings['mode'] ?? 'test';
+
             // Подготавливаем данные для создания заказа в Яндекс Пэй
             $order = ShopOrder::find($transaction->order_id);
+            
+            if (!$order) {
+                Log::error('YandexPay: Заказ не найден', [
+                    'transaction_id' => $transaction->id,
+                    'order_id' => $transaction->order_id
+                ]);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Заказ не найден'
+                ], 400);
+            }
+
             $yandexPayData = [
                 'orderId' => $order->order_number, // Уникальный идентификатор заказа
                 'currencyCode' => $settings['currency'] ?? 'RUB',
@@ -344,47 +363,126 @@ class ShopPaymentController extends Controller
                 }
             }
 
+            $apiUrl = $this->getYandexPayApiUrl($mode) . '/orders';
+            
+            // Согласно документации Яндекс Пэй:
+            // В sandbox окружении API-ключ равен значению merchant_id
+            // В production окружении используется полный API-ключ из secret_key
+            $apiKey = ($mode === 'test') ? $settings['merchant_id'] : $settings['secret_key'];
 
             // Вызываем реальный API Яндекс Пэй
             $response = Http::withOptions([
                 'verify' => false, // Отключаем проверку SSL для локальной разработки
                 'timeout' => 30
             ])->withHeaders([
-                'Authorization' => 'Api-Key ' . $settings['secret_key'],
+                'Authorization' => 'Api-Key ' . $apiKey,
                 'Content-Type' => 'application/json',
                 'X-Request-Id' => uniqid('req_', true),
                 'X-Request-Timeout' => '30000',
                 'X-Request-Attempt' => '0'
-            ])->post($this->getYandexPayApiUrl($settings['mode']) . '/orders', $yandexPayData);
-
+            ])->post($apiUrl, $yandexPayData);
 
             if ($response->successful()) {
                 $responseData = $response->json();
                 
+                // Определяем URL для оплаты из ответа
+                $paymentUrl = null;
+                if (isset($responseData['confirmation']['confirmation_url'])) {
+                    $paymentUrl = $responseData['confirmation']['confirmation_url'];
+                } elseif (isset($responseData['data']['paymentUrl'])) {
+                    $paymentUrl = $responseData['data']['paymentUrl'];
+                } elseif (isset($responseData['payment_url'])) {
+                    $paymentUrl = $responseData['payment_url'];
+                } elseif (isset($responseData['data']['confirmation_url'])) {
+                    $paymentUrl = $responseData['data']['confirmation_url'];
+                }
+                
                 // Обновляем транзакцию с данными от Яндекс Пэй
                 $transaction->update([
                     'status' => 'pending',
-                    'external_id' => $responseData['data']['paymentUrl'] ?? null,
+                    'transaction_id' => $responseData['id'] ?? null,
+                    'external_id' => $paymentUrl,
                     'response_data' => $responseData
                 ]);
 
+                if (!$paymentUrl) {
+                    Log::warning('YandexPay: URL оплаты не найден в ответе', [
+                        'response_structure' => array_keys($responseData)
+                    ]);
+                }
+
                 return response()->json([
                     'success' => true,
-                    'payment_url' => $responseData['data']['paymentUrl'] ?? null,
+                    'payment_url' => $paymentUrl,
                     'order_id' => $order->id,
+                    'transaction_id' => $transaction->id,
                     'status' => 'pending'
                 ]);
             } else {
+                $errorBody = $response->body();
+                $errorJson = $response->json();
+                
+                Log::error('YandexPay: Ошибка от API', [
+                    'status' => $response->status(),
+                    'error_body' => $errorBody,
+                    'error_json' => $errorJson,
+                    'mode' => $mode
+                ]);
+                
+                // Определяем понятное сообщение для пользователя
+                $userMessage = 'Ошибка создания заказа в Яндекс Пэй';
+                if (isset($errorJson['reasonCode']) && $errorJson['reasonCode'] === 'AUTHENTICATION_ERROR') {
+                    if ($mode === 'test') {
+                        $reason = $errorJson['reason'] ?? '';
+                        if (str_contains($reason, 'production key in sandbox')) {
+                            $userMessage = 'Неверный API ключ для sandbox. Используется production ключ в тестовом режиме. Получите тестовый API ключ в личном кабинете Яндекс Пэй (https://sandbox.pay.yandex.ru) → Настройки → API ключи.';
+                        } elseif (str_contains($reason, 'Malformed API key')) {
+                            $userMessage = 'Неправильный формат API ключа для sandbox. Убедитесь, что вы используете ключ именно из sandbox окружения (https://sandbox.pay.yandex.ru), а не из production.';
+                        } else {
+                            $userMessage = 'Неверный API ключ для тестового режима. Проверьте: 1) Ключ получен из sandbox кабинета (https://sandbox.pay.yandex.ru), 2) Merchant ID совпадает с ключом, 3) Режим установлен в "test".';
+                        }
+                    } else {
+                        $userMessage = 'Неверный API ключ для боевого режима. Проверьте настройки в личном кабинете Яндекс Пэй (https://pay.yandex.ru).';
+                    }
+                } elseif (isset($errorJson['reason'])) {
+                    $userMessage = $errorJson['reason'];
+                } elseif (isset($errorJson['message'])) {
+                    $userMessage = $errorJson['message'];
+                }
+                
+                // Обновляем транзакцию с ошибкой
+                $transaction->update([
+                    'status' => 'failed',
+                    'error_message' => $userMessage,
+                    'response_data' => $errorJson
+                ]);
+
                 return response()->json([
                     'success' => false,
-                    'message' => 'Ошибка создания заказа в Яндекс Пэй'
+                    'message' => $userMessage,
+                    'details' => config('app.debug') ? $errorJson : null
                 ], 400);
             }
 
         } catch (\Exception $e) {
+            Log::error('YandexPay: Исключение при создании платежа', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'transaction_id' => $transaction->id ?? null
+            ]);
+            
+            // Обновляем транзакцию с ошибкой
+            if (isset($transaction)) {
+                $transaction->update([
+                    'status' => 'failed',
+                    'error_message' => $e->getMessage()
+                ]);
+            }
+            
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания платежа Яндекс Пэй'
+                'message' => 'Ошибка создания платежа Яндекс Пэй: ' . $e->getMessage(),
+                'error' => config('app.debug') ? $e->getMessage() : null
             ], 500);
         }
     }
@@ -394,7 +492,8 @@ class ShopPaymentController extends Controller
      */
     private function getYandexPayApiUrl(string $mode): string
     {
-        return $mode === 'test' 
+        // Режим может быть 'test' или 'live'
+        return ($mode === 'test' || $mode === 'sandbox') 
             ? 'https://sandbox.pay.yandex.ru/api/merchant/v1'
             : 'https://pay.yandex.ru/api/merchant/v1';
     }
@@ -979,7 +1078,7 @@ class ShopPaymentController extends Controller
                 return;
             }
 
-            $variation = \DB::table('shop_good_variations')->find($variationId);
+            $variation = DB::table('shop_good_variations')->find($variationId);
             
             if (!$variation) {
                 Log::warning('Вариация товара не найдена для обновления остатка', [
@@ -992,7 +1091,7 @@ class ShopPaymentController extends Controller
             $currentStock = $variation->stock_quantity ?? 0;
             $newStock = max(0, $currentStock - $quantity); // Не уходим в минус
 
-            \DB::table('shop_good_variations')
+            DB::table('shop_good_variations')
                 ->where('id', $variationId)
                 ->update(['stock_quantity' => $newStock]);
 
