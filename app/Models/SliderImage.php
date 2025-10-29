@@ -52,6 +52,7 @@ class SliderImage extends Model
      */
     public function getImageUrlAttribute(): string
     {
-        return asset('sliders/' . $this->image_path);
+        // Возвращаем путь от корня фронтенда
+        return '/images/sliders/' . $this->image_path;
     }
 }
