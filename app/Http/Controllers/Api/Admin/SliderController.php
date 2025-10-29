@@ -172,10 +172,14 @@ class SliderController extends Controller
         try {
             $slider = Slider::findOrFail($id);
             
-            // Удаляем все изображения слайдера
+            // Удаляем все изображения слайдера с фронтенда
+            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+            $frontendPublicPath = base_path($frontendPath . '/public');
+            
             foreach ($slider->images as $image) {
-                if (Storage::disk('public')->exists('sliders/' . $image->image_path)) {
-                    Storage::disk('public')->delete('sliders/' . $image->image_path);
+                $imagePath = $frontendPublicPath . '/images/sliders/' . $image->image_path;
+                if (file_exists($imagePath)) {
+                    unlink($imagePath);
                 }
             }
             
@@ -239,34 +243,30 @@ class SliderController extends Controller
                 $height = $request->input('custom_height');
             }
             
+            // Путь к папке public фронтенда
+            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+            $frontendPublicPath = base_path($frontendPath . '/public');
+            $slidersDir = $frontendPublicPath . '/images/sliders';
+            
+            // Создаем директорию, если её нет
+            if (!is_dir($slidersDir)) {
+                if (!mkdir($slidersDir, 0755, true)) {
+                    Log::error('Не удалось создать директорию для фронтенда', ['path' => $slidersDir]);
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка создания директории для изображения'
+                    ], 500);
+                }
+            }
+            
+            $targetPath = $slidersDir . '/' . $filename;
+            
             // Обрабатываем изображение в зависимости от типа
             if ($uploadType !== 'original' && $width && $height) {
-                $this->processImage($image, $width, $height, $uploadType, public_path('sliders/' . $filename));
+                $this->processImage($image, $width, $height, $uploadType, $targetPath);
             } else {
-                // Сохраняем оригинальное изображение
-                $image->move(public_path('sliders'), $filename);
-            }
-            
-            // Копируем файл на фронтенд
-            $frontendPath = base_path('../admin.skateandsnow.ru/public/sliders/');
-            if (!is_dir($frontendPath)) {
-                if (!mkdir($frontendPath, 0755, true)) {
-                    Log::warning('Не удалось создать директорию для фронтенда', ['path' => $frontendPath]);
-                }
-            }
-            
-            $sourceFile = public_path('sliders/' . $filename);
-            $targetFile = $frontendPath . $filename;
-            
-            if (file_exists($sourceFile)) {
-                if (!copy($sourceFile, $targetFile)) {
-                    Log::warning('Не удалось скопировать файл на фронтенд', [
-                        'source' => $sourceFile,
-                        'target' => $targetFile
-                    ]);
-                }
-            } else {
-                Log::error('Исходный файл не найден', ['file' => $sourceFile]);
+                // Сохраняем оригинальное изображение напрямую на фронтенд
+                $image->move($slidersDir, $filename);
             }
             
             // Создаем запись в базе данных
@@ -463,16 +463,13 @@ class SliderController extends Controller
         try {
             $image = SliderImage::where('slider_id', $sliderId)->findOrFail($imageId);
             
-            // Удаляем файл изображения с бэкенда
-            $imagePath = public_path('sliders/' . $image->image_path);
+            // Удаляем файл изображения с фронтенда
+            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+            $frontendPublicPath = base_path($frontendPath . '/public');
+            $imagePath = $frontendPublicPath . '/images/sliders/' . $image->image_path;
+            
             if (file_exists($imagePath)) {
                 unlink($imagePath);
-            }
-            
-            // Удаляем файл изображения с фронтенда
-            $frontendPath = base_path('../admin.skateandsnow.ru/public/sliders/' . $image->image_path);
-            if (file_exists($frontendPath)) {
-                unlink($frontendPath);
             }
             
             $image->delete();
