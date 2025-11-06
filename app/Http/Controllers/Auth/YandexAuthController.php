@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Laravel\Socialite\Facades\Socialite;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 class YandexAuthController extends Controller
 {
@@ -29,7 +30,8 @@ class YandexAuthController extends Controller
             // Используем прямой URL для Yandex OAuth
             $clientId = config('services.yandex.client_id');
             $redirectUri = config('services.yandex.redirect');
-            $scope = 'login:email login:info login:avatar';
+            // Запрашиваем также телефон и дату рождения, чтобы заполнять поля в базе
+            $scope = 'login:email login:info login:avatar login:phone login:birthday';
             
             $url = "https://oauth.yandex.ru/authorize?" . http_build_query([
                 'response_type' => 'code',
@@ -182,18 +184,25 @@ class YandexAuthController extends Controller
                 // Пользователь уже существует, обновляем данные
                 Log::info('Yandex avatar URL:', ['avatar_url' => $avatarUrl]);
                 
-                $user->update([
+                $updateData = [
                     'name' => $yandexUser['display_name'] ?? $yandexUser['real_name'] ?? 'Yandex User',
                     'first_name' => $additionalData['first_name'],
                     'last_name' => $additionalData['last_name'],
                     'email' => $yandexUser['default_email'] ?? null,
                     'avatar_url' => $avatarUrl,
-                    'birthday' => $additionalData['birthday'],
-                    'phone' => $additionalData['phone'],
-                    'additional_info' => $additionalData['info'],
                     'email_verified_at' => $yandexUser['default_email'] ? now() : null,
                     'last_login_at' => now(),
-                ]);
+                ];
+                if (Schema::hasColumn('users', 'birthday')) {
+                    $updateData['birthday'] = $additionalData['birthday'];
+                }
+                if (Schema::hasColumn('users', 'phone')) {
+                    $updateData['phone'] = $additionalData['phone'];
+                }
+                if (Schema::hasColumn('users', 'additional_info')) {
+                    $updateData['additional_info'] = $additionalData['info'];
+                }
+                $user->update($updateData);
             } else {
                 // Проверяем, есть ли пользователь с таким email
                 $existingUser = null;
@@ -212,37 +221,50 @@ class YandexAuthController extends Controller
                     // Связываем существующего пользователя с Yandex
                     Log::info('Yandex existing user avatar URL:', ['avatar_url' => $avatarUrl]);
                     
-                    $existingUser->update([
+                    $updateExisting = [
                         'yandex_id' => $yandexUser['id'],
                         'first_name' => $additionalData['first_name'],
                         'last_name' => $additionalData['last_name'],
                         'avatar_url' => $avatarUrl,
-                        'birthday' => $additionalData['birthday'],
-                        'phone' => $additionalData['phone'],
-                        'additional_info' => $additionalData['info'],
                         'email_verified_at' => $yandexUser['default_email'] ? now() : $existingUser->email_verified_at,
                         'last_login_at' => now(),
-                    ]);
+                    ];
+                    if (Schema::hasColumn('users', 'birthday')) {
+                        $updateExisting['birthday'] = $additionalData['birthday'];
+                    }
+                    if (Schema::hasColumn('users', 'phone')) {
+                        $updateExisting['phone'] = $additionalData['phone'];
+                    }
+                    if (Schema::hasColumn('users', 'additional_info')) {
+                        $updateExisting['additional_info'] = $additionalData['info'];
+                    }
+                    $existingUser->update($updateExisting);
                     $user = $existingUser;
                 } else {
                     // Создаем нового пользователя
                     Log::info('Yandex new user avatar URL:', ['avatar_url' => $avatarUrl]);
                     
-                    $user = User::create([
+                    $createData = [
                         'name' => $yandexUser['display_name'] ?? $yandexUser['real_name'] ?? 'Yandex User',
                         'first_name' => $additionalData['first_name'],
                         'last_name' => $additionalData['last_name'],
                         'email' => $yandexUser['default_email'] ?? null,
                         'yandex_id' => $yandexUser['id'],
                         'avatar_url' => $avatarUrl,
-                        'birthday' => $additionalData['birthday'],
-                        'phone' => $additionalData['phone'],
-                        'additional_info' => $additionalData['info'],
                         'password' => Hash::make(Str::random(32)), // Случайный пароль
                         'email_verified_at' => $yandexUser['default_email'] ? now() : null,
-                        'email_verified_at' => now(),
                         'last_login_at' => now(),
-                    ]);
+                    ];
+                    if (Schema::hasColumn('users', 'birthday')) {
+                        $createData['birthday'] = $additionalData['birthday'];
+                    }
+                    if (Schema::hasColumn('users', 'phone')) {
+                        $createData['phone'] = $additionalData['phone'];
+                    }
+                    if (Schema::hasColumn('users', 'additional_info')) {
+                        $createData['additional_info'] = $additionalData['info'];
+                    }
+                    $user = User::create($createData);
                     
                     // Привязываем роль 'user' по умолчанию
                     $userRole = Role::where('name', 'user')->first();
