@@ -71,13 +71,23 @@ class YandexAuthController extends Controller
                 'code' => $code,
                 'client_id' => config('services.yandex.client_id'),
                 'client_secret' => config('services.yandex.client_secret'),
+                // Важно: redirect_uri должен совпадать с тем, что был на этапе authorize
+                'redirect_uri' => config('services.yandex.redirect'),
             ]);
-            
+
+            if ($tokenResponse->failed()) {
+                Log::error('Yandex token exchange failed', [
+                    'status' => $tokenResponse->status(),
+                    'body' => $tokenResponse->body(),
+                ]);
+            }
+
             $tokenData = $tokenResponse->json();
             
             if (!isset($tokenData['access_token'])) {
                 $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
-                $errorUrl = $frontendUrl . '/auth/yandex/callback?error=' . urlencode('Не удалось получить токен доступа');
+                $errorMessage = isset($tokenData['error_description']) ? $tokenData['error_description'] : 'Не удалось получить токен доступа';
+                $errorUrl = $frontendUrl . '/auth/yandex/callback?error=' . urlencode($errorMessage);
                 return redirect($errorUrl);
             }
             
