@@ -30,8 +30,15 @@ class YandexAuthController extends Controller
             // Используем прямой URL для Yandex OAuth
             $clientId = config('services.yandex.client_id');
             $redirectUri = config('services.yandex.redirect');
-            // Запрашиваем телефон; скоуп login:birthday у Яндекса отсутствует
-            $scope = 'login:email login:info login:avatar login:phone';
+            // Запрашиваем все необходимые доступы (включены в консоли Яндекса)
+            $scopes = [
+                'login:email',
+                'login:info',
+                'login:avatar',
+                'login:default_phone',
+                'login:birthday',
+            ];
+            $scope = implode(' ', $scopes);
             
             $url = "https://oauth.yandex.ru/authorize?" . http_build_query([
                 'response_type' => 'code',
