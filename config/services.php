@@ -57,6 +57,9 @@ return [
         'client_id' => env('YANDEX_CLIENT_ID'),
         'client_secret' => env('YANDEX_CLIENT_SECRET'),
         'redirect' => env('YANDEX_REDIRECT_URI'),
+        // Доп. запросы доступов (должны быть включены в консоли Яндекса)
+        'request_default_phone' => env('YANDEX_REQUEST_DEFAULT_PHONE', false), // login:default_phone
+        'request_birthday' => env('YANDEX_REQUEST_BIRTHDAY', false),           // login:birthday
     ],
 
     'call' => [
