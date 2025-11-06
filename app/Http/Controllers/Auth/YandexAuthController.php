@@ -199,9 +199,7 @@ class YandexAuthController extends Controller
                 if (Schema::hasColumn('users', 'phone')) {
                     $updateData['phone'] = $additionalData['phone'];
                 }
-                if (Schema::hasColumn('users', 'additional_info')) {
-                    $updateData['additional_info'] = $additionalData['info'];
-                }
+                // Поле additional_info временно не сохраняем, так как его нет в БД
                 $user->update($updateData);
             } else {
                 // Проверяем, есть ли пользователь с таким email
@@ -235,9 +233,7 @@ class YandexAuthController extends Controller
                     if (Schema::hasColumn('users', 'phone')) {
                         $updateExisting['phone'] = $additionalData['phone'];
                     }
-                    if (Schema::hasColumn('users', 'additional_info')) {
-                        $updateExisting['additional_info'] = $additionalData['info'];
-                    }
+                    // Поле additional_info временно не сохраняем, так как его нет в БД
                     $existingUser->update($updateExisting);
                     $user = $existingUser;
                 } else {
@@ -261,9 +257,7 @@ class YandexAuthController extends Controller
                     if (Schema::hasColumn('users', 'phone')) {
                         $createData['phone'] = $additionalData['phone'];
                     }
-                    if (Schema::hasColumn('users', 'additional_info')) {
-                        $createData['additional_info'] = $additionalData['info'];
-                    }
+                    // Поле additional_info временно не сохраняем, так как его нет в БД
                     $user = User::create($createData);
                     
                     // Привязываем роль 'user' по умолчанию
