@@ -181,6 +181,15 @@ class YandexAuthController extends Controller
             
             // Получаем дополнительные данные
             $additionalData = $this->getYandexAdditionalData($yandexUser);
+            // Нормализуем телефон до строки
+            $normalizedPhone = null;
+            if (isset($additionalData['phone'])) {
+                if (is_array($additionalData['phone'])) {
+                    $normalizedPhone = $additionalData['phone']['number'] ?? null;
+                } elseif (is_string($additionalData['phone'])) {
+                    $normalizedPhone = $additionalData['phone'];
+                }
+            }
             
             // Проверяем, есть ли пользователь с таким Yandex ID
             $user = User::where('yandex_id', $yandexUser['id'])->first();
@@ -209,7 +218,7 @@ class YandexAuthController extends Controller
                     $updateData['birthday'] = $additionalData['birthday'];
                 }
                 if (Schema::hasColumn('users', 'phone')) {
-                    $updateData['phone'] = $additionalData['phone'];
+                    $updateData['phone'] = $normalizedPhone;
                 }
                 // Поле additional_info временно не сохраняем, так как его нет в БД
                 $user->update($updateData);
@@ -243,7 +252,7 @@ class YandexAuthController extends Controller
                         $updateExisting['birthday'] = $additionalData['birthday'];
                     }
                     if (Schema::hasColumn('users', 'phone')) {
-                        $updateExisting['phone'] = $additionalData['phone'];
+                        $updateExisting['phone'] = $normalizedPhone;
                     }
                     // Поле additional_info временно не сохраняем, так как его нет в БД
                     $existingUser->update($updateExisting);
@@ -267,7 +276,7 @@ class YandexAuthController extends Controller
                         $createData['birthday'] = $additionalData['birthday'];
                     }
                     if (Schema::hasColumn('users', 'phone')) {
-                        $createData['phone'] = $additionalData['phone'];
+                        $createData['phone'] = $normalizedPhone;
                     }
                     // Поле additional_info временно не сохраняем, так как его нет в БД
                     // Логируем ключи данных перед созданием пользователя
