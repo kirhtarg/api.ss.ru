@@ -361,6 +361,137 @@ class YandexPayController extends Controller
     }
 
     /**
+     * Валидация merchant_id и подготовка данных сессии для SDK
+     * Соответствует инструкции по интеграции Яндекс.Пэй Web SDK
+     */
+    public function createSession(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'merchant_id' => 'required|string|regex:/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i',
+            'total_amount' => 'required|numeric|min:1',
+            'order_id' => 'nullable|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'error' => 'Validation failed',
+                'details' => $validator->errors()
+            ], 400);
+        }
+
+        try {
+            $data = $validator->validated();
+
+            // Получаем платежный метод для определения режима
+            $paymentMethod = ShopPaymentMethod::where('type', 'yandex_pay')
+                ->orWhere('type', 'yandex_split')
+                ->where('is_active', true)
+                ->first();
+
+            if (!$paymentMethod) {
+                return response()->json([
+                    'error' => 'Payment method not found'
+                ], 404);
+            }
+
+            $settings = $paymentMethod->getApiSettings();
+            if (!$this->validateSettings($settings)) {
+                return response()->json([
+                    'error' => 'Invalid payment method settings'
+                ], 400);
+            }
+
+            // Проверка, что merchant_id из запроса соответствует настройкам
+            if ($data['merchant_id'] !== $settings['merchant_id']) {
+                return response()->json([
+                    'error' => 'Invalid merchant_id'
+                ], 400);
+            }
+
+            // Генерация order_id (если не передан)
+            if (!isset($data['order_id']) || empty($data['order_id'])) {
+                $data['order_id'] = 'ORDER_' . time() . '_' . rand(1000, 9999);
+            }
+
+            // Определение окружения
+            $env = ($settings['mode'] ?? 'test') === 'live' ? 'PRODUCTION' : 'SANDBOX';
+            $currency = $settings['currency'] ?? 'RUB';
+
+            // Подготовка данных для SDK (согласно инструкции)
+            // totalAmount передается в копейках как число
+            $sessionData = [
+                'env' => $env,
+                'version' => 4,
+                'currencyCode' => $currency,
+                'merchant' => [
+                    'id' => $data['merchant_id']
+                ],
+                'countryCode' => 'RU',
+                'totalAmount' => (int)round($data['total_amount'] * 100), // в копейках
+                'orderId' => $data['order_id'],
+                'availablePaymentMethods' => ['SPLIT', 'CARD']
+                // Примечание: onPayButtonClick передается на клиенте, не на сервере
+            ];
+
+            return response()->json($sessionData);
+        } catch (\Exception $e) {
+            Log::error('YandexPay createSession failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json([
+                'error' => 'Internal server error',
+                'message' => 'Не удалось создать сессию'
+            ], 500);
+        }
+    }
+
+    /**
+     * Проверка статуса платежа (опционально)
+     */
+    public function checkPaymentStatus(Request $request, $orderId): JsonResponse
+    {
+        try {
+            // Здесь логика проверки статуса через API Яндекс.Пэй
+            $paymentMethod = ShopPaymentMethod::where('type', 'yandex_pay')
+                ->orWhere('type', 'yandex_split')
+                ->where('is_active', true)
+                ->first();
+
+            if (!$paymentMethod) {
+                return response()->json([
+                    'error' => 'Payment method not found'
+                ], 404);
+            }
+
+            // Поиск заказа в базе по order_id
+            $order = ShopOrder::where('yandex_pay_order_id', $orderId)
+                ->orWhere('id', $orderId)
+                ->first();
+
+            if (!$order) {
+                return response()->json([
+                    'order_id' => $orderId,
+                    'status' => 'not_found'
+                ]);
+            }
+
+            return response()->json([
+                'order_id' => $orderId,
+                'status' => $order->payment_status ?? 'pending'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('YandexPay checkPaymentStatus failed', [
+                'error' => $e->getMessage(),
+                'order_id' => $orderId
+            ]);
+            return response()->json([
+                'error' => 'Internal server error'
+            ], 500);
+        }
+    }
+
+    /**
      * Возвращает paymentData для Web SDK (Ultimate widget)
      * Использует настройки активного платежного метода (merchant_id, режим, валюта)
      */

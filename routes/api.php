@@ -355,6 +355,18 @@ Route::get('/test/oauth', function () {
     });
     Route::post('/yandex-pay/payment-session-data', [App\Http\Controllers\Api\YandexPayController::class, 'getPaymentSessionData']);
 
+    // Валидация merchant_id и подготовка данных сессии для SDK (согласно инструкции)
+    Route::options('/yandex-pay/session', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/yandex-pay/session', [App\Http\Controllers\Api\YandexPayController::class, 'createSession']);
+    
+    // Проверка статуса платежа
+    Route::options('/yandex-pay/status/{orderId}', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/yandex-pay/status/{orderId}', [App\Http\Controllers\Api\YandexPayController::class, 'checkPaymentStatus']);
+
     // Webhook для Яндекс Пэй
     Route::post('/webhooks/yandex-pay', [App\Http\Controllers\Api\YandexPayController::class, 'handleWebhook']);
     Route::post('/webhooks/yandex-split', [App\Http\Controllers\Api\YandexPayController::class, 'handleWebhook']);
