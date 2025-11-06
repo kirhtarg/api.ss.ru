@@ -59,6 +59,11 @@ class YandexAuthController extends Controller
     public function handleYandexCallback(Request $request)
     {
         try {
+            // Версионный маркер для диагностики деплоя/опкеша
+            Log::info('YANDEX HANDLE CALLBACK VERSION', [
+                'version' => 'v3-2025-11-06T13:45Z',
+                'file' => __FILE__,
+            ]);
             $code = $request->get('code');
             
             if (!$code) {
@@ -258,6 +263,8 @@ class YandexAuthController extends Controller
                         $createData['phone'] = $additionalData['phone'];
                     }
                     // Поле additional_info временно не сохраняем, так как его нет в БД
+                    // Логируем ключи данных перед созданием пользователя
+                    Log::info('Yandex create user data keys', ['keys' => array_keys($createData)]);
                     $user = User::create($createData);
                     
                     // Привязываем роль 'user' по умолчанию
