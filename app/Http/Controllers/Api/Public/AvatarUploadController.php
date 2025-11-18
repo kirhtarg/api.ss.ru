@@ -290,14 +290,9 @@ class AvatarUploadController extends Controller
             $optimizedFileSize = filesize($fullPath);
             $compressionRatio = round((1 - $optimizedFileSize / $fileSize) * 100, 2);
             
-            // Обновляем avatar в базе данных
-            $user = $request->user();
-            $user->update(['avatar' => $dbPath]);
-            Log::info('Updated avatar in database: ' . $dbPath);
-            
-            // Проверяем, что поле действительно обновилось
-            $user->refresh();
-            Log::info('User avatar after update: ' . $user->avatar);
+            // Аватар сохраняется только в папке images/users/user_{id}.jpg
+            // Поля avatar и avatar_url больше не используются в базе данных
+            Log::info('Avatar saved to: ' . $fullPath);
 
             // Возвращаем успешный ответ
             return response()->json([

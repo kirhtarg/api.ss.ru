@@ -10,6 +10,8 @@ class PromocodeUsage extends Model
 {
     use HasFactory;
 
+    protected $table = 'promocode_usage';
+
     protected $fillable = [
         'promocode_id',
         'user_id',

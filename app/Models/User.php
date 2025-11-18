@@ -18,7 +18,6 @@ class User extends Authenticatable
         'last_name',
         'email',
         'password',
-        'avatar',
         'avatar_url',
         'birthday',
         'phone',
@@ -46,8 +45,6 @@ class User extends Authenticatable
         'additional_info' => 'array',
         'is_active' => 'boolean',
     ];
-
-    protected $appends = ['avatar_url'];
 
     /**
      * Роли пользователя
@@ -136,36 +133,6 @@ class User extends Authenticatable
             }
         }
         return true;
-    }
-
-    /**
-     * Получить URL аватара
-     */
-    public function getAvatarUrlAttribute(): ?string
-    {
-        // Если есть URL аватара (от OAuth провайдеров), используем его
-        if ($this->attributes['avatar_url']) {
-            return $this->attributes['avatar_url'];
-        }
-        
-        // Если есть локальный файл аватара, используем его
-        if ($this->avatar) {
-            // Если это уже полный URL, возвращаем как есть
-            if (str_starts_with($this->avatar, 'http')) {
-                return $this->avatar;
-            }
-            
-            // Убираем лишний префикс images/ если он уже есть
-            $cleanPath = ltrim($this->avatar, '/');
-            if (str_starts_with($cleanPath, 'images/')) {
-                return '/' . $cleanPath;
-            }
-            
-            // Возвращаем путь к файлу в папке public/images/
-            return '/images/' . $cleanPath;
-        }
-        
-        return null;
     }
 
     /**

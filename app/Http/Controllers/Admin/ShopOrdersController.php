@@ -1853,4 +1853,93 @@ class ShopOrdersController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Получить статистику заказов
+     */
+    public function statistics(Request $request): JsonResponse
+    {
+        try {
+            // Получаем все статусы заказов
+            $statuses = ShopOrderStatus::where('is_active', true)
+                ->orderBy('sort_order')
+                ->get();
+
+            // Подсчитываем заказы по статусам
+            $byStatus = [];
+            $statusCounts = [];
+            
+            foreach ($statuses as $status) {
+                $count = ShopOrder::where('status_id', $status->id)->count();
+                $byStatus[$status->name] = $count;
+                $statusCounts[] = [
+                    'id' => $status->id,
+                    'name' => $status->name,
+                    'display_name' => $status->display_name,
+                    'color' => $status->color,
+                    'count' => $count
+                ];
+            }
+
+            // Статистика по датам (если указаны параметры)
+            $dateRange = null;
+            if ($request->filled('date_from') && $request->filled('date_to')) {
+                $dateFrom = $request->get('date_from');
+                $dateTo = $request->get('date_to');
+                
+                $baseQuery = ShopOrder::whereBetween('created_at', [$dateFrom . ' 00:00:00', $dateTo . ' 23:59:59']);
+                
+                $totalOrders = $baseQuery->count();
+                $totalRevenue = $baseQuery->sum('total_amount');
+                
+                // Оплаченные заказы
+                $paidOrders = ShopOrder::whereBetween('created_at', [$dateFrom . ' 00:00:00', $dateTo . ' 23:59:59'])
+                    ->where('payed', true)
+                    ->count();
+                $paidRevenue = ShopOrder::whereBetween('created_at', [$dateFrom . ' 00:00:00', $dateTo . ' 23:59:59'])
+                    ->where('payed', true)
+                    ->sum('total_amount');
+                
+                // Неоплаченные заказы: payed = 0, false или NULL
+                $unpaidOrders = ShopOrder::whereBetween('created_at', [$dateFrom . ' 00:00:00', $dateTo . ' 23:59:59'])
+                    ->where(function($q) {
+                        $q->where('payed', false)
+                          ->orWhere('payed', 0)
+                          ->orWhereNull('payed');
+                    })
+                    ->count();
+                $unpaidRevenue = ShopOrder::whereBetween('created_at', [$dateFrom . ' 00:00:00', $dateTo . ' 23:59:59'])
+                    ->where(function($q) {
+                        $q->where('payed', false)
+                          ->orWhere('payed', 0)
+                          ->orWhereNull('payed');
+                    })
+                    ->sum('total_amount');
+                
+                $dateRange = [
+                    'totalOrders' => $totalOrders,
+                    'totalRevenue' => (float) $totalRevenue,
+                    'paidOrders' => $paidOrders,
+                    'paidRevenue' => (float) $paidRevenue,
+                    'unpaidOrders' => $unpaidOrders,
+                    'unpaidRevenue' => (float) $unpaidRevenue
+                ];
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'byStatus' => $byStatus,
+                    'statuses' => $statusCounts,
+                    'dateRange' => $dateRange
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Ошибка получения статистики заказов: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения статистики: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }

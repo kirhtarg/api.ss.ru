@@ -36,7 +36,10 @@ class ShopOrdersController extends Controller
                 'items.*.quantity' => 'required|integer|min:1',
                 'items.*.price' => 'required|numeric|min:0',
                 'notes' => 'nullable|string',
-                'bonus_points_used' => 'nullable|integer|min:0'
+                'bonus_points_used' => 'nullable|integer|min:0',
+                'promo_code' => 'nullable|string|max:255',
+                'promo_code_id' => 'nullable|integer|exists:promocodes,id',
+                'promo_code_discount_amount' => 'nullable|numeric|min:0'
             ]);
 
             DB::beginTransaction();
@@ -54,7 +57,11 @@ class ShopOrdersController extends Controller
                 'customer_phone' => $request->customer_phone,
                 'items' => $request->items,
                 'subtotal' => $request->subtotal,
-                'discount_amount' => 0,
+                'discount_amount' => $request->promo_code_discount_amount ?? 0,
+                'promo_code_discount_amount' => $request->promo_code_discount_amount ?? 0,
+                'total_discount_amount' => $request->promo_code_discount_amount ?? 0,
+                'promo_code' => $request->promo_code,
+                'promo_code_id' => $request->promo_code_id,
                 'total_amount' => $request->total,
                 'total_quantity' => array_sum(array_column($request->items, 'quantity')),
                 'payment_method' => $request->payment_method,
@@ -69,6 +76,39 @@ class ShopOrdersController extends Controller
                     'bonus_points_used' => $request->bonus_points_used ?? 0
                 ]
             ]);
+
+            // Создаем запись об использовании промокода, если он был применен
+            if ($request->promo_code_id) {
+                try {
+                    $promocode = \App\Models\Promocode::find($request->promo_code_id);
+                    if ($promocode) {
+                        $sessionId = $request->header('X-Session-ID');
+                        $discountAmount = $request->promo_code_discount_amount ?? 0;
+                        $appliedTo = [
+                            'order_id' => $order->id,
+                            'order_number' => $order->order_number,
+                            'items' => $request->items
+                        ];
+                        
+                        $promocode->recordUsage(
+                            auth()->id(),
+                            $sessionId,
+                            $order->id,
+                            $discountAmount,
+                            $appliedTo
+                        );
+                        
+                        Log::info('Promocode usage recorded', [
+                            'promocode_id' => $promocode->id,
+                            'order_id' => $order->id,
+                            'discount_amount' => $discountAmount
+                        ]);
+                    }
+                } catch (\Exception $e) {
+                    Log::error('Ошибка создания записи об использовании промокода: ' . $e->getMessage());
+                    // Не прерываем создание заказа, если ошибка с промокодом
+                }
+            }
 
             DB::commit();
 

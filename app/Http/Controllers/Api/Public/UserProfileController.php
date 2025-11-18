@@ -50,7 +50,6 @@ class UserProfileController extends Controller
                 'email' => $user->email,
                 'phone' => $user->phone,
                 'birthday' => $user->birthday?->format('Y-m-d'),
-                'avatar_url' => $user->avatar_url,
                 'is_active' => $user->is_active,
                 'role' => $roles[0] ?? 'user',
                 'created_at' => $user->created_at,
@@ -95,7 +94,6 @@ class UserProfileController extends Controller
                 'last_name' => 'nullable|string|max:255',
                 'phone' => 'nullable|string|max:20',
                 'birthday' => 'nullable|date|before:today',
-                'avatar_url' => 'nullable|string|max:500',
             ], [
                 'name.max' => 'Имя на сайте не должно превышать 255 символов',
                 'first_name.max' => 'Имя не должно превышать 255 символов',
@@ -103,13 +101,7 @@ class UserProfileController extends Controller
                 'phone.max' => 'Телефон не должен превышать 20 символов',
                 'birthday.date' => 'Дата рождения должна быть корректной датой',
                 'birthday.before' => 'Дата рождения не может быть в будущем',
-                'avatar_url.max' => 'URL аватара не должен превышать 500 символов',
             ]);
-
-            // Если обновляется аватар и есть старый, удаляем его
-            if (isset($validated['avatar_url']) && $user->avatar_url && $user->avatar_url !== $validated['avatar_url']) {
-                $this->deleteOldAvatar($user->avatar_url);
-            }
 
             // Обновляем данные пользователя
             /** @var \App\Models\User $user */
@@ -126,7 +118,6 @@ class UserProfileController extends Controller
                     'full_name' => $this->getFullName($user),
                     'phone' => $user->phone,
                     'birthday' => $user->birthday?->format('Y-m-d'),
-                    'avatar_url' => $user->avatar_url,
                     'updated_at' => $user->updated_at,
                 ]
             ], 200);
@@ -230,22 +221,14 @@ class UserProfileController extends Controller
             }
             
             Log::info('User ID: ' . $user->id);
-            Log::info('User avatar in DB: ' . ($user->avatar ?? 'NULL'));
 
-            // Проверяем, есть ли аватар для удаления
-            // Аватар может существовать даже если в БД avatar = null
-            // Поэтому мы не проверяем БД, а сразу пытаемся удалить файл
-
-            // Сначала удаляем файл с диска
+            // Удаляем файл с диска
+            // Поля avatar и avatar_url больше не используются в БД
             $fileDeleted = $this->deleteAvatarFile($user);
-            
-            // Очищаем поле avatar в БД
-            /** @var \App\Models\User $user */
-            $user->update(['avatar' => null]);
 
             $message = $fileDeleted 
-                ? 'Аватар успешно удален (файл и запись в БД)'
-                : 'Аватар удален из БД, но файл не найден на диске';
+                ? 'Аватар успешно удален'
+                : 'Файл аватара не найден';
 
             Log::info('Avatar deletion completed. File deleted: ' . ($fileDeleted ? 'YES' : 'NO'));
             Log::info('=== DELETE AVATAR METHOD END ===');

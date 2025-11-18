@@ -770,6 +770,33 @@ class CartController extends Controller
                 ]
             ]);
 
+            // Создаем запись об использовании промокода, если он был применен
+            if ($request->get('promo_code_id')) {
+                try {
+                    $promocode = \App\Models\Promocode::find($request->get('promo_code_id'));
+                    if ($promocode) {
+                        $sessionId = $request->header('X-Session-ID');
+                        $discountAmount = $request->get('promo_code_discount_amount', 0);
+                        $appliedTo = [
+                            'order_id' => $order->id,
+                            'order_number' => $order->order_number,
+                            'items' => $request->get('items', [])
+                        ];
+                        
+                        $promocode->recordUsage(
+                            $customerId,
+                            $sessionId,
+                            $order->id,
+                            $discountAmount,
+                            $appliedTo
+                        );
+                    }
+                } catch (\Exception $e) {
+                    Log::error('Ошибка создания записи об использовании промокода: ' . $e->getMessage());
+                    // Не прерываем создание заказа, если ошибка с промокодом
+                }
+            }
+
             // Списываем бонусы с баланса пользователя, если они используются
             if ($customerId && $request->get('use_bonus_points') && $request->get('bonus_points_to_use', 0) > 0) {
                 try {

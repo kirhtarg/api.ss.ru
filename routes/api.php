@@ -1305,6 +1305,7 @@ Route::middleware('auth:sanctum')->group(function () {
             // Заказы
             Route::prefix('orders')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'index']);
+                Route::get('/statistics', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'statistics']);
                 Route::get('/statuses', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'getStatuses']);
                 Route::get('/{id}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'show']);
                 Route::post('/', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'store']);
@@ -1336,6 +1337,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 });
                 Route::get('/', [\App\Http\Controllers\Admin\PromocodeController::class, 'index']);
                 Route::get('/select-data', [\App\Http\Controllers\Admin\PromocodeController::class, 'getSelectData']);
+                Route::get('/search-items', [\App\Http\Controllers\Admin\PromocodeController::class, 'searchItems']);
                 Route::get('/{id}/stats', [\App\Http\Controllers\Admin\PromocodeController::class, 'stats']);
                 Route::get('/{id}', [\App\Http\Controllers\Admin\PromocodeController::class, 'show']);
                 Route::post('/', [\App\Http\Controllers\Admin\PromocodeController::class, 'store']);
@@ -1790,8 +1792,6 @@ Route::middleware('auth:sanctum')->group(function () {
                                 'name' => $user->name,
                                 'email' => $user->email,
                                 'phone' => $user->phone,
-                                'avatar' => $user->avatar,
-                                'avatar_url' => $user->avatar_url,
                                 'google_id' => $user->google_id,
                                 'yandex_id' => $user->yandex_id,
                                 'vk_id' => $user->vk_id,
@@ -1837,7 +1837,6 @@ Route::middleware('auth:sanctum')->group(function () {
                         'roles.*' => 'string|exists:roles,name',
                         'email_verified_at' => 'nullable|date', // Статус активности на основе email_verified_at
                         'is_active' => 'boolean', // Статус блокировки пользователя
-                        'avatar_url' => 'nullable|url|max:255' // URL аватара пользователя
                     ]);
 
                     if ($validator->fails()) {
@@ -1863,11 +1862,6 @@ Route::middleware('auth:sanctum')->group(function () {
                     // Добавляем статус блокировки, если передан
                     if ($request->has('is_active')) {
                         $userData['is_active'] = $request->boolean('is_active');
-                    }
-
-                    // Добавляем URL аватара, если передан
-                    if ($request->has('avatar_url')) {
-                        $userData['avatar_url'] = $request->avatar_url;
                     }
 
                     $user = \App\Models\User::create($userData);
@@ -1903,8 +1897,6 @@ Route::middleware('auth:sanctum')->group(function () {
                             'id' => $user->id,
                             'name' => $user->name,
                             'email' => $user->email,
-                            'avatar' => $user->avatar,
-                            'avatar_url' => $user->avatar_url,
                             'roles' => $user->roles->pluck('name'),
                             'email_verified_at' => $user->email_verified_at,
                             'is_active' => $user->is_active,
@@ -1942,7 +1934,6 @@ Route::middleware('auth:sanctum')->group(function () {
                         'roles.*' => 'string|exists:roles,name',
                         'email_verified_at' => 'nullable|date', // Статус активности на основе email_verified_at
                         'is_active' => 'boolean', // Статус блокировки пользователя
-                        'avatar_url' => 'nullable|url|max:255' // URL аватара пользователя
                     ]);
 
                     if ($validator->fails()) {
@@ -1969,11 +1960,6 @@ Route::middleware('auth:sanctum')->group(function () {
                         $updateData['is_active'] = $request->boolean('is_active');
                     }
 
-                    // Добавляем URL аватара, если передан
-                    if ($request->has('avatar_url')) {
-                        $updateData['avatar_url'] = $request->avatar_url;
-                    }
-
                     $user->update($updateData);
 
                     // Обновляем роли
@@ -1997,8 +1983,6 @@ Route::middleware('auth:sanctum')->group(function () {
                             'id' => $user->id,
                             'name' => $user->name,
                             'email' => $user->email,
-                            'avatar' => $user->avatar,
-                            'avatar_url' => $user->avatar_url,
                             'roles' => $user->roles->pluck('name'),
                             'email_verified_at' => $user->email_verified_at,
                             'is_active' => $user->is_active,
@@ -2333,6 +2317,10 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::put('/{id}', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'update']);
                 Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'destroy']);
                 Route::post('/{id}/toggle-active', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'toggleActive']);
+
+                // Изображения бонусных систем
+                Route::post('/upload-image', [\App\Http\Controllers\Api\Admin\BonusSettingImageController::class, 'upload']);
+                Route::post('/remove-image', [\App\Http\Controllers\Api\Admin\BonusSettingImageController::class, 'remove']);
             });
         });
 
@@ -2551,7 +2539,6 @@ Route::middleware('auth:sanctum')->group(function () {
                         'id' => $user->id,
                         'name' => $user->name,
                         'email' => $user->email,
-                        'avatar_url' => $user->avatar ? '/' . $user->avatar : null,
                         'role' => $user->roles->first()?->name ?? 'user', // Основная роль для совместимости
                         'roles' => $user->roles->map(function($role) {
                             return [
@@ -2605,7 +2592,6 @@ Route::middleware('auth:sanctum')->group(function () {
                         'id' => $user->id,
                         'name' => $user->name,
                         'email' => $user->email,
-                        'avatar_url' => $user->avatar ? '/' . $user->avatar : null,
                         'role' => $user->roles->first()?->name ?? 'user', // Основная роль для совместимости
                         'roles' => $user->roles->map(function($role) {
                             return [
@@ -2706,17 +2692,15 @@ Route::middleware('auth:sanctum')->group(function () {
                     // Сохраняем файл на фронтенде
                     $file->move($dir, $filename);
 
-                    // Удаляем старый аватар, если он есть
-                    if ($user->avatar && $user->avatar !== 'default-avatar.png') {
-                        $oldPath = $frontendPublicPath . '/' . $user->avatar;
-                        if (file_exists($oldPath)) {
-                            unlink($oldPath);
-                        }
+                    // Удаляем старый аватар пользователя, если он есть
+                    // Используем стандартное имя файла user_{id}.jpg
+                    $oldAvatarPath = $frontendPublicPath . '/images/users/user_' . $user->id . '.jpg';
+                    if (file_exists($oldAvatarPath)) {
+                        unlink($oldAvatarPath);
                     }
 
-                    // Обновляем URL аватара в базе данных
-                    $user->avatar = $path;
-                    $user->save();
+                    // Аватар сохраняется только в папке images/users/user_{id}.jpg
+                    // Поля avatar и avatar_url больше не используются в базе данных
 
                     return response()->json([
                         'success' => true,
@@ -2737,24 +2721,17 @@ Route::middleware('auth:sanctum')->group(function () {
                 try {
                     $user = $request->user();
 
-                    // Проверяем, есть ли аватар
-                    if (!$user->avatar) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Аватар не найден'
-                        ], 404);
-                    }
-
                     // Удаляем файл аватара с фронтенда
+                    // Используем стандартное имя файла user_{id}.jpg
                     $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
-                    $filePath = $frontendPublicPath . '/' . $user->avatar;
+                    $filePath = $frontendPublicPath . '/images/users/user_' . $user->id . '.jpg';
+                    
+                    $fileDeleted = false;
                     if (file_exists($filePath)) {
-                        unlink($filePath);
+                        $fileDeleted = unlink($filePath);
                     }
 
-                    // Очищаем поле аватара в базе данных
-                    $user->avatar = null;
-                    $user->save();
+                    // Поля avatar и avatar_url больше не используются в базе данных
 
                     return response()->json([
                         'success' => true,

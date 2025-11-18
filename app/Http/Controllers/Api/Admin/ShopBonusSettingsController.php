@@ -18,6 +18,21 @@ class ShopBonusSettingsController extends Controller
     {
         try {
             $settings = ShopBonusSettings::orderBy('created_at', 'desc')->get();
+            
+            // Add image_url to each setting if file exists
+            $settings = $settings->map(function ($setting) {
+                $imageUrl = '/images/bsys/bsys_' . $setting->id . '.jpg';
+                $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+                $imagePath = base_path($frontendPath . '/public' . $imageUrl);
+                
+                if (file_exists($imagePath)) {
+                    $setting->image_url = $imageUrl;
+                } else {
+                    $setting->image_url = null;
+                }
+                
+                return $setting;
+            });
 
             return response()->json([
                 'success' => true,
@@ -44,6 +59,17 @@ class ShopBonusSettingsController extends Controller
     {
         try {
             $setting = ShopBonusSettings::findOrFail($id);
+            
+            // Add image_url if file exists
+            $imageUrl = '/images/bsys/bsys_' . $setting->id . '.jpg';
+            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+            $imagePath = base_path($frontendPath . '/public' . $imageUrl);
+            
+            if (file_exists($imagePath)) {
+                $setting->image_url = $imageUrl;
+            } else {
+                $setting->image_url = null;
+            }
 
             return response()->json([
                 'success' => true,
@@ -76,6 +102,7 @@ class ShopBonusSettingsController extends Controller
                 'max_usage_percentage' => 'required|numeric|min:0|max:100',
                 'is_active' => 'boolean',
                 'min_order_amount' => 'integer|min:0',
+                'min_purchase_amount' => 'nullable|numeric|min:0', // Accept min_purchase_amount from frontend
                 'min_bonus_amount' => 'integer|min:1',
                 'max_bonus_amount' => 'nullable|integer|min:1',
                 'bonus_expiry_days' => 'integer|min:1|max:3650',
@@ -126,6 +153,7 @@ class ShopBonusSettingsController extends Controller
                 'max_usage_percentage' => 'required|numeric|min:0|max:100',
                 'is_active' => 'boolean',
                 'min_order_amount' => 'integer|min:0',
+                'min_purchase_amount' => 'nullable|numeric|min:0', // Accept min_purchase_amount from frontend
                 'min_bonus_amount' => 'integer|min:1',
                 'max_bonus_amount' => 'nullable|integer|min:1',
                 'bonus_expiry_days' => 'integer|min:1|max:3650',
