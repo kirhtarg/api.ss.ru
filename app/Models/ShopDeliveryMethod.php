@@ -9,6 +9,8 @@ class ShopDeliveryMethod extends Model
 {
     use HasFactory;
 
+    protected $table = 'shop_delivery_methods';
+
     protected $fillable = [
         'name',
         'type',
@@ -20,6 +22,7 @@ class ShopDeliveryMethod extends Model
         'sort_order',
         'is_default'
     ];
+
 
     protected $casts = [
         'is_active' => 'boolean',

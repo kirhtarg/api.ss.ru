@@ -22,7 +22,7 @@ return new class extends Migration
             $table->decimal('total', 10, 2); // Общая сумма позиции
             $table->string('good_name', 255); // Название товара на момент добавления
             $table->string('variation_name', 255)->nullable(); // Название вариации
-            $table->string('good_sku', 100); // SKU товара
+            $table->string('good_sku', 100)->nullable(); // SKU товара
             $table->string('good_image', 500)->nullable(); // URL изображения
             $table->timestamps();
             

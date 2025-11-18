@@ -237,7 +237,7 @@ class CdekService
     /**
      * Получить токен доступа
      */
-    private function getAccessToken()
+    public function getAccessToken()
     {
         if (!$this->settings || !$this->settings->client_id || !$this->settings->client_secret) {
             Log::error('CDEK API keys are not configured.');
@@ -433,6 +433,7 @@ class CdekService
                  stripos($orderData['payment_method'], 'наложенный') !== false);
 
             $sdekOrderData = [
+                // Номер заказа в системе интернет-магазина (идентификатор ИМ)
                 'number' => $orderData['order_number'] ?? 'ORDER_' . time(),
                 'tariff_code' => $orderData['tariff_code'],
                 'comment' => ($orderData['comment'] ?? '') . ($isCashOnDelivery ? ' (Наложенный платеж: ' . (($orderData['subtotal'] ?? 0) - ($orderData['delivery_cost'] ?? 0)) . ' руб.)' : ''),
@@ -454,7 +455,7 @@ class CdekService
                     'email' => $orderData['customer_email'],
                     'phones' => [
                         [
-                            'number' => $orderData['customer_phone']
+                            'number' => !empty($orderData['customer_phone']) ? $orderData['customer_phone'] : '0000000000'
                         ]
                     ]
                 ],
@@ -622,9 +623,38 @@ class CdekService
                     'data' => $response->json()
                 ];
             } else {
+                $statusCode = $response->status();
+                $responseBody = $response->body();
+                
+                // Логируем ошибку для отладки
+                Log::warning('CDEK API error', [
+                    'status_code' => $statusCode,
+                    'response_body' => $responseBody,
+                    'order_uuid' => $orderUuid
+                ]);
+                
+                // Проверяем, является ли ошибка признаком того, что заказ не найден
+                // 404 - заказ не найден
+                // Также проверяем текст ответа на наличие признаков "не найден"
+                $isNotFound = false;
+                if ($statusCode === 404) {
+                    $isNotFound = true;
+                } elseif ($responseBody) {
+                    $lowerBody = strtolower($responseBody);
+                    // Проверяем различные варианты сообщений об ошибке "не найден"
+                    if (strpos($lowerBody, 'not found') !== false || 
+                        strpos($lowerBody, 'не найден') !== false ||
+                        strpos($lowerBody, 'not_found') !== false ||
+                        strpos($lowerBody, 'order not found') !== false) {
+                        $isNotFound = true;
+                    }
+                }
+                
                 return [
                     'success' => false,
-                    'message' => 'Ошибка при получении статуса заказа'
+                    'message' => 'Ошибка при получении статуса заказа',
+                    'not_found' => $isNotFound,
+                    'status_code' => $statusCode
                 ];
             }
 
@@ -766,5 +796,279 @@ class CdekService
     private function getSenderCityCode()
     {
         return $this->settings->sender_city_code ?? '';
+    }
+
+    /**
+     * Получить штрихкод для заказа СДЭК
+     * 
+     * @param string $orderUuid UUID заказа в СДЭК
+     * @param int $copyCount Количество копий (по умолчанию 1)
+     * @param string $format Формат печати (A4, A5, A6, A7, по умолчанию A4)
+     * @param string $lang Язык (RUS, ENG, по умолчанию RUS)
+     * @return array Результат с URL для скачивания или ошибкой
+     */
+    public function getBarcode($orderUuid, $copyCount = 1, $format = 'A4', $lang = 'RUS')
+    {
+        try {
+            if (!$this->settings) {
+                return [
+                    'success' => false,
+                    'message' => 'Настройки СДЭК не найдены'
+                ];
+            }
+
+            $token = $this->getAccessToken();
+            if (!$token) {
+                return [
+                    'success' => false,
+                    'message' => 'Не удалось получить токен доступа СДЭК'
+                ];
+            }
+
+            // Сначала создаем запрос на генерацию штрихкода
+            $requestData = [
+                'orders' => [
+                    [
+                        'order_uuid' => $orderUuid
+                    ]
+                ],
+                'copy_count' => $copyCount,
+                'format' => $format,
+                'lang' => $lang
+            ];
+
+            $response = Http::withOptions([
+                'verify' => $this->sslVerify,
+                'timeout' => $this->timeout,
+            ])->withHeaders([
+                'Authorization' => 'Bearer ' . $token,
+                'Content-Type' => 'application/json'
+            ])->post($this->apiUrl . '/print/barcodes', $requestData);
+
+            if ($response->status() === 202) {
+                // Запрос принят, получаем UUID запроса
+                $data = $response->json();
+                $requestUuid = $data['entity']['uuid'] ?? null;
+
+                if ($requestUuid) {
+                    // Ждем немного и проверяем статус
+                    sleep(2);
+                    
+                    // Получаем статус генерации
+                    $statusResponse = Http::withOptions([
+                        'verify' => $this->sslVerify,
+                        'timeout' => $this->timeout,
+                    ])->withHeaders([
+                        'Authorization' => 'Bearer ' . $token
+                    ])->get($this->apiUrl . '/print/barcodes/' . $requestUuid);
+
+                    if ($statusResponse->successful()) {
+                        $statusData = $statusResponse->json();
+                        
+                        // Проверяем статус
+                        if (isset($statusData['entity']['statuses'])) {
+                            $statuses = $statusData['entity']['statuses'];
+                            $lastStatus = end($statuses);
+                            
+                            if ($lastStatus && $lastStatus['code'] === 'READY') {
+                                // Штрихкод готов, возвращаем URL для скачивания
+                                $pdfUrl = $this->apiUrl . '/print/barcodes/' . $requestUuid . '.pdf';
+                                return [
+                                    'success' => true,
+                                    'url' => $pdfUrl,
+                                    'request_uuid' => $requestUuid,
+                                    'message' => 'Штрихкод готов к скачиванию'
+                                ];
+                            } elseif ($lastStatus && $lastStatus['code'] === 'PROCESSING') {
+                                // Еще обрабатывается
+                                return [
+                                    'success' => false,
+                                    'message' => 'Штрихкод еще генерируется, попробуйте позже',
+                                    'status' => 'processing',
+                                    'request_uuid' => $requestUuid
+                                ];
+                            }
+                        }
+                    }
+
+                    // Если статус не готов, возвращаем URL для прямого скачивания (может работать)
+                    $pdfUrl = $this->apiUrl . '/print/barcodes/' . $requestUuid . '.pdf';
+                    return [
+                        'success' => true,
+                        'url' => $pdfUrl,
+                        'request_uuid' => $requestUuid,
+                        'message' => 'Ссылка на скачивание штрихкода'
+                    ];
+                }
+            }
+
+            // Если не получилось через POST, пробуем прямой GET запрос
+            $directUrl = $this->apiUrl . '/print/orders/' . $orderUuid;
+            $directResponse = Http::withOptions([
+                'verify' => $this->sslVerify,
+                'timeout' => $this->timeout,
+            ])->withHeaders([
+                'Authorization' => 'Bearer ' . $token
+            ])->get($directUrl);
+
+            if ($directResponse->successful()) {
+                $directData = $directResponse->json();
+                if (isset($directData['entity']['url'])) {
+                    return [
+                        'success' => true,
+                        'url' => $directData['entity']['url'],
+                        'message' => 'Ссылка на скачивание штрихкода'
+                    ];
+                }
+            }
+
+            return [
+                'success' => false,
+                'message' => 'Не удалось получить штрихкод: ' . ($response->body() ?? 'Неизвестная ошибка')
+            ];
+
+        } catch (\Exception $e) {
+            Log::error('CdekService: Error getting barcode: ' . $e->getMessage());
+            return [
+                'success' => false,
+                'message' => 'Ошибка при получении штрихкода: ' . $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Получить накладную для заказа СДЭК
+     * 
+     * @param string $orderUuid UUID заказа в СДЭК
+     * @param int $copyCount Количество копий (по умолчанию 2)
+     * @param string $type Тип формы (по умолчанию tpl_russia)
+     * @return array Результат с URL для скачивания или ошибкой
+     */
+    public function getWaybill($orderUuid, $copyCount = 2, $type = 'tpl_russia')
+    {
+        try {
+            if (!$this->settings) {
+                return [
+                    'success' => false,
+                    'message' => 'Настройки СДЭК не найдены'
+                ];
+            }
+
+            $token = $this->getAccessToken();
+            if (!$token) {
+                return [
+                    'success' => false,
+                    'message' => 'Не удалось получить токен доступа СДЭК'
+                ];
+            }
+
+            // Сначала получаем информацию о заказе, чтобы получить cdek_number
+            $orderInfo = $this->getOrderStatus($orderUuid);
+            
+            if (!$orderInfo['success']) {
+                // Если не удалось получить информацию, пробуем прямой URL
+                $pdfUrl = $this->apiUrl . '/print/orders/' . $orderUuid . '.pdf';
+                return [
+                    'success' => true,
+                    'url' => $pdfUrl,
+                    'message' => 'Ссылка на скачивание накладной'
+                ];
+            }
+
+            $orderData = $orderInfo['data'] ?? [];
+            $cdekNumber = $orderData['entity']['cdek_number'] ?? 0;
+
+            // Согласно документации, накладную нужно генерировать через POST запрос
+            $requestData = [
+                'orders' => [
+                    [
+                        'order_uuid' => $orderUuid,
+                        'cdek_number' => $cdekNumber
+                    ]
+                ],
+                'copy_count' => $copyCount,
+                'type' => $type
+            ];
+
+            $response = Http::withOptions([
+                'verify' => $this->sslVerify,
+                'timeout' => $this->timeout,
+            ])->withHeaders([
+                'Authorization' => 'Bearer ' . $token,
+                'Content-Type' => 'application/json'
+            ])->post($this->apiUrl . '/print/orders', $requestData);
+
+            if ($response->status() === 202) {
+                // Запрос принят, получаем UUID запроса
+                $data = $response->json();
+                $requestUuid = $data['entity']['uuid'] ?? null;
+
+                if ($requestUuid) {
+                    // Ждем немного и проверяем статус
+                    sleep(2);
+                    
+                    // Получаем статус генерации
+                    $statusResponse = Http::withOptions([
+                        'verify' => $this->sslVerify,
+                        'timeout' => $this->timeout,
+                    ])->withHeaders([
+                        'Authorization' => 'Bearer ' . $token
+                    ])->get($this->apiUrl . '/print/orders/' . $requestUuid);
+
+                    if ($statusResponse->successful()) {
+                        $statusData = $statusResponse->json();
+                        
+                        // Проверяем статус
+                        if (isset($statusData['entity']['statuses'])) {
+                            $statuses = $statusData['entity']['statuses'];
+                            $lastStatus = end($statuses);
+                            
+                            if ($lastStatus && $lastStatus['code'] === 'READY') {
+                                // Накладная готова, возвращаем URL для скачивания
+                                $pdfUrl = $this->apiUrl . '/print/orders/' . $requestUuid . '.pdf';
+                                return [
+                                    'success' => true,
+                                    'url' => $pdfUrl,
+                                    'request_uuid' => $requestUuid,
+                                    'message' => 'Накладная готова к скачиванию'
+                                ];
+                            } elseif ($lastStatus && $lastStatus['code'] === 'PROCESSING') {
+                                // Еще обрабатывается
+                                return [
+                                    'success' => false,
+                                    'message' => 'Накладная еще генерируется, попробуйте позже',
+                                    'status' => 'processing',
+                                    'request_uuid' => $requestUuid
+                                ];
+                            }
+                        }
+                    }
+
+                    // Если статус не готов, возвращаем URL для прямого скачивания (может работать)
+                    $pdfUrl = $this->apiUrl . '/print/orders/' . $requestUuid . '.pdf';
+                    return [
+                        'success' => true,
+                        'url' => $pdfUrl,
+                        'request_uuid' => $requestUuid,
+                        'message' => 'Ссылка на скачивание накладной'
+                    ];
+                }
+            }
+
+            // Если POST не сработал, пробуем прямой GET запрос
+            $directUrl = $this->apiUrl . '/print/orders/' . $orderUuid . '.pdf';
+            return [
+                'success' => true,
+                'url' => $directUrl,
+                'message' => 'Ссылка на скачивание накладной'
+            ];
+
+        } catch (\Exception $e) {
+            Log::error('CdekService: Error getting waybill: ' . $e->getMessage());
+            return [
+                'success' => false,
+                'message' => 'Ошибка при получении накладной: ' . $e->getMessage()
+            ];
+        }
     }
 }

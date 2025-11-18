@@ -16,15 +16,6 @@ class CustomCors
     public function handle(Request $request, Closure $next): Response
     {
         $origin = $request->header('Origin');
-        $method = $request->method();
-        $path = $request->path();
-
-        // Логируем входящий запрос для отладки
-        \Log::info('CustomCors middleware', [
-            'method' => $method,
-            'path' => $path,
-            'origin' => $origin,
-        ]);
 
         // Обрабатываем preflight запросы сразу
         if ($request->isMethod('OPTIONS')) {
@@ -40,12 +31,6 @@ class CustomCors
             ];
 
             $allowOrigin = in_array($origin, $allowedOrigins) ? $origin : '*';
-
-            \Log::info('CORS preflight handled', [
-                'origin' => $origin,
-                'allowOrigin' => $allowOrigin,
-                'isAllowed' => in_array($origin, $allowedOrigins),
-            ]);
 
             return response('', 200)
                 ->header('Access-Control-Allow-Origin', $allowOrigin)
@@ -98,12 +83,6 @@ class CustomCors
         $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN, X-Session-ID');
         $response->headers->set('Access-Control-Allow-Credentials', 'true');
         $response->headers->set('Access-Control-Max-Age', '86400');
-
-        \Log::info('CORS headers set', [
-            'origin' => $origin,
-            'finalOrigin' => $finalOrigin,
-            'statusCode' => $response->getStatusCode(),
-        ]);
 
         // Принудительно добавляем CORS заголовки к ошибкам
         if ($response->getStatusCode() >= 400) {

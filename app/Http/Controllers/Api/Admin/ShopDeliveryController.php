@@ -46,9 +46,33 @@ class ShopDeliveryController extends Controller
             $perPage = $request->get('per_page', 15);
             $deliveryMethods = $query->paginate($perPage);
 
+            // Безопасная сериализация данных
+            $items = [];
+            foreach ($deliveryMethods->items() as $item) {
+                try {
+                    $items[] = [
+                        'id' => $item->id,
+                        'name' => $item->name,
+                        'type' => $item->type,
+                        'is_active' => $item->is_active,
+                        'cost' => $item->cost,
+                        'free_from' => $item->free_from,
+                        'description' => $item->description,
+                        'settings' => $item->settings,
+                        'sort_order' => $item->sort_order,
+                        'is_default' => $item->is_default,
+                        'created_at' => $item->created_at,
+                        'updated_at' => $item->updated_at,
+                    ];
+                } catch (\Exception $e) {
+                    \Log::error('Error serializing delivery method item: ' . $e->getMessage());
+                    continue;
+                }
+            }
+
             return response()->json([
                 'success' => true,
-                'data' => $deliveryMethods->items(),
+                'data' => $items,
                 'pagination' => [
                     'current_page' => $deliveryMethods->currentPage(),
                     'last_page' => $deliveryMethods->lastPage(),
@@ -58,10 +82,15 @@ class ShopDeliveryController extends Controller
             ]);
 
         } catch (\Exception $e) {
+            \Log::error('ShopDeliveryController::index error: ' . $e->getMessage());
+            \Log::error('Stack trace: ' . $e->getTraceAsString());
+            
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка получения способов доставки',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
             ], 500);
         }
     }

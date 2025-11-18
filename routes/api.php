@@ -66,6 +66,8 @@ Route::match(['OPTIONS'], '/{any}', function (Request $request) {
 
 // Маршрут для получения данных контактов для заголовка
 Route::get('/public/contacts/header-data', [\App\Http\Controllers\Api\Public\ContactController::class, 'headerData']);
+// Маршрут для получения адресов самовывоза
+Route::get('/public/contacts/pickup-addresses', [\App\Http\Controllers\Api\Public\ContactController::class, 'getPickupAddresses']);
 
 
 
@@ -448,11 +450,11 @@ Route::get('/test/oauth', function () {
     });
     Route::post('/public/shop/cdek/get-postal-code', [App\Http\Controllers\Api\Public\ShopCdekController::class, 'getPostalCode']);
 
-// Order details API
-Route::options('/public/order/details', function () {
-    return response()->json([], 200);
-});
-Route::get('/public/order/details', [App\Http\Controllers\Api\OrderController::class, 'getOrderDetails']);
+    // Order details API
+    Route::options('/public/order/details', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/order/details', [App\Http\Controllers\Api\OrderController::class, 'getOrderDetails']);
 
     // Тест-Банк интеграция
     Route::options('/public/testbank/payment', function () {
@@ -514,12 +516,21 @@ Route::get('/public/order/details', [App\Http\Controllers\Api\OrderController::c
         Route::post('/public/shop/user-addresses', [App\Http\Controllers\Api\Public\UserAddressController::class, 'store']);
         Route::put('/public/shop/user-addresses/{id}', [App\Http\Controllers\Api\Public\UserAddressController::class, 'update']);
         Route::delete('/public/shop/user-addresses/{id}', [App\Http\Controllers\Api\Public\UserAddressController::class, 'destroy']);
+        Route::post('/public/shop/user-addresses/{id}/set-default', [App\Http\Controllers\Api\Public\UserAddressController::class, 'setDefault']);
 
         // CORS для адресов пользователя
         Route::options('/public/shop/user-addresses', function () {
             return response('', 200)
                 ->header('Access-Control-Allow-Origin', '*')
                 ->header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+                ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN')
+                ->header('Access-Control-Allow-Credentials', 'true')
+                ->header('Access-Control-Max-Age', '86400');
+        });
+        Route::options('/public/shop/user-addresses/{id}/set-default', function () {
+            return response('', 200)
+                ->header('Access-Control-Allow-Origin', '*')
+                ->header('Access-Control-Allow-Methods', 'POST, OPTIONS')
                 ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN')
                 ->header('Access-Control-Allow-Credentials', 'true')
                 ->header('Access-Control-Max-Age', '86400');
@@ -982,7 +993,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
 
     // Маршруты для администраторов и менеджеров
-    Route::middleware('role:admin,manager')->prefix('admin')->group(function () {
+    Route::middleware(['auth:sanctum', 'role:admin,manager'])->prefix('admin')->group(function () {
         // Site info for admin
         Route::get('/site-info', [\App\Http\Controllers\Api\Public\SiteInfoController::class, 'index']);
 
@@ -1294,11 +1305,23 @@ Route::middleware('auth:sanctum')->group(function () {
             // Заказы
             Route::prefix('orders')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'index']);
+                Route::get('/statuses', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'getStatuses']);
                 Route::get('/{id}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'show']);
                 Route::post('/', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'store']);
                 Route::put('/{id}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'update']);
                 Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'destroy']);
                 Route::put('/{id}/status', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateStatus']);
+                Route::put('/{id}/payed', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updatePayed']);
+                Route::put('/{id}/is-active', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateIsActive']);
+                Route::put('/{id}/comment', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateComment']);
+                Route::put('/{id}/delivery-status', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateDeliveryStatus']);
+                Route::get('/{id}/cdek/barcode', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'getCdekBarcode']);
+                Route::get('/{id}/cdek/barcode/download', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'downloadCdekBarcode']);
+                Route::get('/{id}/cdek/waybill', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'getCdekWaybill']);
+                Route::get('/{id}/cdek/waybill/download', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'downloadCdekWaybill']);
+                Route::put('/{id}/finish', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'finishOrder']);
+                Route::post('/{id}/items', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'addItem']);
+                Route::delete('/{id}/items/{itemId}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'removeItem']);
                 Route::post('/export', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'export']);
             });
 
@@ -1318,6 +1341,46 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/', [\App\Http\Controllers\Admin\PromocodeController::class, 'store']);
                 Route::put('/{id}', [\App\Http\Controllers\Admin\PromocodeController::class, 'update']);
                 Route::delete('/{id}', [\App\Http\Controllers\Admin\PromocodeController::class, 'destroy']);
+            });
+
+            // Управление способами доставки
+            Route::prefix('delivery-methods')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'index']);
+                Route::get('/{id}', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'show']);
+                Route::post('/', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'store']);
+                Route::put('/{id}', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'update']);
+                Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'destroy']);
+                Route::post('/reorder', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'reorder']);
+
+                // Изображения способов доставки
+                Route::post('/upload-image', [\App\Http\Controllers\Api\Admin\DeliveryMethodImageController::class, 'upload']);
+                Route::post('/remove-image', [\App\Http\Controllers\Api\Admin\DeliveryMethodImageController::class, 'remove']);
+            });
+
+            // Управление способами оплаты
+            Route::prefix('payment-methods')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'index']);
+                Route::get('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'show']);
+                Route::post('/', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'store']);
+                Route::put('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'update']);
+                Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'destroy']);
+                Route::post('/reorder', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'reorder']);
+
+                // Изображения способов оплаты
+                Route::post('/upload-image', [\App\Http\Controllers\Api\Admin\PaymentMethodImageController::class, 'upload']);
+                Route::post('/remove-image', [\App\Http\Controllers\Api\Admin\PaymentMethodImageController::class, 'remove']);
+            });
+
+            // Управление настройками СДЭК
+            Route::prefix('cdek')->group(function () {
+                Route::get('/settings', [\App\Http\Controllers\Api\Admin\ShopCdekSettingsController::class, 'index']);
+                Route::get('/settings/active', [\App\Http\Controllers\Api\Admin\ShopCdekSettingsController::class, 'getActive']);
+                Route::post('/settings', [\App\Http\Controllers\Api\Admin\ShopCdekSettingsController::class, 'store']);
+                Route::put('/settings/{id}', [\App\Http\Controllers\Api\Admin\ShopCdekSettingsController::class, 'update']);
+                Route::delete('/settings/{id}', [\App\Http\Controllers\Api\Admin\ShopCdekSettingsController::class, 'destroy']);
+                Route::post('/settings/{id}/activate', [\App\Http\Controllers\Api\Admin\ShopCdekSettingsController::class, 'activate']);
+                Route::post('/validate-keys', [\App\Http\Controllers\Api\Admin\ShopCdekSettingsController::class, 'validateKeys']);
+                Route::get('/available-tariffs', [\App\Http\Controllers\Api\Admin\ShopCdekSettingsController::class, 'getAvailableTariffs']);
             });
         });
 
@@ -1710,10 +1773,10 @@ Route::middleware('auth:sanctum')->group(function () {
                     ], 500);
                 }
             });
-            }); // Закрываем middleware для админов
         });
+    });
 
-        // Users management (только для админов)
+    // Users management (только для админов)
         Route::middleware('role:admin')->prefix('users')->group(function () {
             // Получить список всех пользователей
             Route::get('/', function () {
@@ -2100,6 +2163,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     // Получаем пункты меню для конкретного раздела
                     $menuItems = \App\Models\AdminMenuItem::where('page_id', $pageId)
                         ->where('is_active', true)
+                        ->where('in_menu', true)
                         ->orderBy('order')
                         ->get();
 
@@ -2114,32 +2178,60 @@ Route::middleware('auth:sanctum')->group(function () {
                     ], 500);
                 }
             });
+        });
 
-            // Site management (только для админов)
-            Route::middleware(['auth:sanctum', 'role:admin'])->prefix('site')->group(function () {
-                // Шаблоны сайта
-                Route::prefix('templates')->group(function () {
-                    Route::get('/', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'index']);
-                    Route::post('/', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'store']);
-                    Route::get('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'show']);
-                    Route::put('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'update']);
-                    Route::delete('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'destroy']);
-                    Route::put('/{siteTemplate}/activate', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'activate']);
-                });
+        // Site management (только для админов)
+        Route::middleware(['auth:sanctum', 'role:admin'])->prefix('site')->group(function () {
+            // Шаблоны сайта
+            Route::prefix('templates')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'index']);
+                Route::post('/', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'store']);
+                Route::get('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'show']);
+                Route::put('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'update']);
+                Route::delete('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'destroy']);
+                Route::put('/{siteTemplate}/activate', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'activate']);
             });
 
-            // Слайдеры (доступны админам и пользователям с ролью site)
-            Route::middleware(['auth:sanctum', 'role:admin,site'])->prefix('site')->group(function () {
-                Route::prefix('sliders')->group(function () {
-                    Route::get('/', [\App\Http\Controllers\Api\Admin\SliderController::class, 'index']);
-                    Route::post('/', [\App\Http\Controllers\Api\Admin\SliderController::class, 'store']);
-                    Route::get('/{id}', [\App\Http\Controllers\Api\Admin\SliderController::class, 'show']);
-                    Route::put('/{id}', [\App\Http\Controllers\Api\Admin\SliderController::class, 'update']);
-                    Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\SliderController::class, 'destroy']);
-                    Route::post('/{sliderId}/images', [\App\Http\Controllers\Api\Admin\SliderController::class, 'uploadImage']);
-                    Route::put('/{sliderId}/images/{imageId}', [\App\Http\Controllers\Api\Admin\SliderController::class, 'updateImage']);
-                    Route::delete('/{sliderId}/images/{imageId}', [\App\Http\Controllers\Api\Admin\SliderController::class, 'deleteImage']);
-                });
+            // Управление способами доставки
+            Route::prefix('delivery-methods')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'index']);
+                Route::get('/{id}', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'show']);
+                Route::post('/', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'store']);
+                Route::put('/{id}', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'update']);
+                Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'destroy']);
+                Route::post('/reorder', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'reorder']);
+
+                // Изображения способов доставки
+                Route::post('/upload-image', [\App\Http\Controllers\Api\Admin\DeliveryMethodImageController::class, 'upload']);
+                Route::post('/remove-image', [\App\Http\Controllers\Api\Admin\DeliveryMethodImageController::class, 'remove']);
+            });
+
+            // Управление способами оплаты
+            Route::prefix('payment-methods')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'index']);
+                Route::get('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'show']);
+                Route::post('/', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'store']);
+                Route::put('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'update']);
+                Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'destroy']);
+                Route::post('/reorder', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'reorder']);
+
+                // Изображения способов оплаты
+                Route::post('/upload-image', [\App\Http\Controllers\Api\Admin\PaymentMethodImageController::class, 'upload']);
+                Route::post('/remove-image', [\App\Http\Controllers\Api\Admin\PaymentMethodImageController::class, 'remove']);
+            });
+        });
+
+        // Слайдеры (доступны админам и пользователям с ролью site)
+        Route::middleware(['auth:sanctum', 'role:admin,site'])->prefix('site')->group(function () {
+            Route::prefix('sliders')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Api\Admin\SliderController::class, 'index']);
+                Route::post('/', [\App\Http\Controllers\Api\Admin\SliderController::class, 'store']);
+                Route::get('/{id}', [\App\Http\Controllers\Api\Admin\SliderController::class, 'show']);
+                Route::put('/{id}', [\App\Http\Controllers\Api\Admin\SliderController::class, 'update']);
+                Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\SliderController::class, 'destroy']);
+                Route::post('/{sliderId}/images', [\App\Http\Controllers\Api\Admin\SliderController::class, 'uploadImage']);
+                Route::put('/{sliderId}/images/{imageId}', [\App\Http\Controllers\Api\Admin\SliderController::class, 'updateImage']);
+                Route::delete('/{sliderId}/images/{imageId}', [\App\Http\Controllers\Api\Admin\SliderController::class, 'deleteImage']);
             });
         });
 
@@ -2220,29 +2312,6 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/order', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'updateOrder']);
             });
 
-            // Управление способами доставки
-            Route::prefix('delivery-methods')->group(function () {
-                Route::get('/', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'index']);
-                Route::get('/{id}', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'show']);
-                Route::post('/', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'store']);
-                Route::put('/{id}', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'update']);
-                Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'destroy']);
-                Route::post('/reorder', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'reorder']);
-            });
-
-            // Управление способами оплаты
-            Route::prefix('payment-methods')->group(function () {
-                Route::get('/', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'index']);
-                Route::get('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'show']);
-                Route::post('/', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'store']);
-                Route::put('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'update']);
-                Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'destroy']);
-                Route::post('/reorder', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'reorder']);
-
-                // Изображения способов оплаты
-                Route::post('/upload-image', [\App\Http\Controllers\Api\Admin\PaymentMethodImageController::class, 'upload']);
-                Route::post('/remove-image', [\App\Http\Controllers\Api\Admin\PaymentMethodImageController::class, 'remove']);
-            });
 
             // Управление уведомлениями Telegram
             Route::prefix('telegram-notifications')->group(function () {
@@ -2286,6 +2355,7 @@ Route::middleware('auth:sanctum')->group(function () {
                                 'href' => $item->href,
                                 'order' => $item->order,
                                 'is_active' => $item->is_active,
+                                'in_menu' => $item->in_menu ?? true,
                                 'page_name' => $item->page->name ?? null,
                                 'page_slug' => $item->page->slug ?? null,
                                 'created_at' => $item->created_at,
@@ -2318,7 +2388,8 @@ Route::middleware('auth:sanctum')->group(function () {
                         'description' => 'nullable|string|max:1000',
                         'href' => 'nullable|string|max:255',
                         'order' => 'nullable|integer|min:0',
-                        'is_active' => 'boolean'
+                        'is_active' => 'boolean',
+                        'in_menu' => 'boolean'
                     ]);
 
                     if ($validator->fails()) {
@@ -2338,6 +2409,7 @@ Route::middleware('auth:sanctum')->group(function () {
                         'href' => $request->href ?? null,
                         'order' => $request->order ?? 0,
                         'is_active' => $request->is_active ?? true,
+                        'in_menu' => $request->has('in_menu') ? (bool) $request->in_menu : true,
                     ]);
 
                     return response()->json([
@@ -2373,7 +2445,8 @@ Route::middleware('auth:sanctum')->group(function () {
                         'description' => 'nullable|string|max:1000',
                         'href' => 'nullable|string|max:255',
                         'order' => 'nullable|integer|min:0',
-                        'is_active' => 'boolean'
+                        'is_active' => 'boolean',
+                        'in_menu' => 'boolean'
                     ]);
 
                     if ($validator->fails()) {
@@ -2393,6 +2466,7 @@ Route::middleware('auth:sanctum')->group(function () {
                         'href' => $request->href ?? null,
                         'order' => $request->order ?? $menuItem->order,
                         'is_active' => $request->is_active ?? $menuItem->is_active,
+                        'in_menu' => $request->has('in_menu') ? (bool) $request->in_menu : $menuItem->in_menu,
                     ]);
 
                     return response()->json([
@@ -2918,18 +2992,6 @@ Route::middleware(['auth:sanctum', 'role:admin'])->get('/test-admin-role', funct
 // Тестовый маршрут
 Route::get('/test', [\App\Http\Controllers\Api\Admin\TestController::class, 'test']);
 
-// СДЭК настройки (для админов и пользователей с ролью shop)
-Route::middleware(['auth:sanctum'])->prefix('admin/shop/cdek')->group(function () {
-    Route::get('/settings', 'App\Http\Controllers\Api\Admin\ShopCdekSettingsController@index');
-    Route::get('/settings/active', 'App\Http\Controllers\Api\Admin\ShopCdekSettingsController@getActive');
-    Route::post('/settings', 'App\Http\Controllers\Api\Admin\ShopCdekSettingsController@store');
-    Route::put('/settings/{id}', 'App\Http\Controllers\Api\Admin\ShopCdekSettingsController@update');
-    Route::delete('/settings/{id}', 'App\Http\Controllers\Api\Admin\ShopCdekSettingsController@destroy');
-    Route::post('/settings/{id}/activate', 'App\Http\Controllers\Api\Admin\ShopCdekSettingsController@activate');
-    Route::post('/validate-keys', 'App\Http\Controllers\Api\Admin\ShopCdekSettingsController@validateKeys');
-    Route::get('/available-tariffs', 'App\Http\Controllers\Api\Admin\ShopCdekSettingsController@getAvailableTariffs');
-});
-
 // СДЭК API (публичные маршруты)
 Route::prefix('cdek')->group(function () {
     Route::get('/cities', [\App\Http\Controllers\Api\Public\CdekController::class, 'getCities']);
@@ -2938,8 +3000,8 @@ Route::prefix('cdek')->group(function () {
     Route::post('/min-cost', [\App\Http\Controllers\Api\Public\CdekController::class, 'getMinDeliveryCost']);
 });
 
-// СДЭК API для создания заказов (требует авторизации)
-Route::middleware(['auth:sanctum'])->prefix('sdek')->group(function () {
+// СДЭК API для создания заказов (авторизация опциональна - для незарегистрированных пользователей)
+Route::prefix('sdek')->group(function () {
     Route::post('/create-order', [\App\Http\Controllers\SdekOrderController::class, 'createOrder']);
     Route::get('/order-status/{orderUuid}', [\App\Http\Controllers\SdekOrderController::class, 'getOrderStatus']);
     Route::post('/cancel-order/{orderUuid}', [\App\Http\Controllers\SdekOrderController::class, 'cancelOrder']);
@@ -2955,6 +3017,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/change-password', [\App\Http\Controllers\Api\Public\UserProfileController::class, 'changePassword']);
         Route::delete('/avatar', [\App\Http\Controllers\Api\Public\UserProfileController::class, 'deleteAvatar']);
         Route::get('/statistics', [\App\Http\Controllers\Api\Public\UserProfileController::class, 'getStatistics']);
+        Route::post('/phone-change/send-code', [\App\Http\Controllers\Api\Public\UserProfileController::class, 'sendPhoneChangeCode']);
+        Route::post('/phone-change/verify-code', [\App\Http\Controllers\Api\Public\UserProfileController::class, 'verifyPhoneChangeCode']);
     });
 
     // Маршруты загрузки аватаров
