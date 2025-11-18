@@ -85,16 +85,30 @@ class ShopPaymentMethod extends Model
      */
     public function getImageUrlAttribute()
     {
-        $imagePath = '/images/payment/payment_' . $this->id . '.jpg';
-        
-        // Check if image exists in frontend public folder
-        $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
-        $fullPath = base_path($frontendPath . '/public' . $imagePath);
-        
-        if (file_exists($fullPath)) {
-            return $imagePath;
+        try {
+            if (!$this->id) {
+                return null;
+            }
+            
+            $imagePath = '/images/payment/payment_' . $this->id . '.jpg';
+            
+            // Check if image exists in frontend public folder
+            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+            
+            if (empty($frontendPath)) {
+                return null;
+            }
+            
+            $fullPath = base_path($frontendPath . '/public' . $imagePath);
+            
+            if ($fullPath && file_exists($fullPath)) {
+                return $imagePath;
+            }
+            
+            return null;
+        } catch (\Exception $e) {
+            \Log::error('Error getting payment method image URL: ' . $e->getMessage());
+            return null;
         }
-        
-        return null;
     }
 }

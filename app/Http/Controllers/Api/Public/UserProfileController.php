@@ -9,10 +9,19 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\Rule;
+use App\Services\CallService;
+use App\Models\User;
 
 class UserProfileController extends Controller
 {
+    protected $callService;
+
+    public function __construct(CallService $callService)
+    {
+        $this->callService = $callService;
+    }
     /**
      * Получить профиль текущего пользователя
      */
@@ -81,12 +90,14 @@ class UserProfileController extends Controller
 
             // Валидация данных
             $validated = $request->validate([
+                'name' => 'nullable|string|max:255',
                 'first_name' => 'nullable|string|max:255',
                 'last_name' => 'nullable|string|max:255',
                 'phone' => 'nullable|string|max:20',
                 'birthday' => 'nullable|date|before:today',
                 'avatar_url' => 'nullable|string|max:500',
             ], [
+                'name.max' => 'Имя на сайте не должно превышать 255 символов',
                 'first_name.max' => 'Имя не должно превышать 255 символов',
                 'last_name.max' => 'Фамилия не должна превышать 255 символов',
                 'phone.max' => 'Телефон не должен превышать 20 символов',
@@ -109,6 +120,7 @@ class UserProfileController extends Controller
                 'message' => 'Профиль успешно обновлен',
                 'data' => [
                     'id' => $user->id,
+                    'name' => $user->name,
                     'first_name' => $user->first_name,
                     'last_name' => $user->last_name,
                     'full_name' => $this->getFullName($user),
@@ -410,5 +422,234 @@ class UserProfileController extends Controller
         } catch (\Exception $e) {
             Log::warning('Не удалось удалить старый аватар: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Отправить код подтверждения для изменения телефона
+     */
+    public function sendPhoneChangeCode(Request $request): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Пользователь не авторизован'
+                ], 401);
+            }
+
+            $validated = $request->validate([
+                'phone' => 'required|string|min:10|max:20',
+            ], [
+                'phone.required' => 'Номер телефона обязателен',
+                'phone.min' => 'Номер телефона слишком короткий',
+                'phone.max' => 'Номер телефона слишком длинный',
+            ]);
+
+            $phone = $this->normalizePhone($validated['phone']);
+            
+            // Проверяем, что новый телефон отличается от текущего
+            if ($phone === $user->phone) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Новый телефон должен отличаться от текущего',
+                    'errors' => ['phone' => ['Новый телефон должен отличаться от текущего']]
+                ], 422);
+            }
+            
+            // Проверяем уникальность телефона
+            $existingUser = User::where('phone', $phone)
+                ->where('id', '!=', $user->id)
+                ->first();
+            
+            if ($existingUser) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Этот номер телефона уже используется другим пользователем',
+                    'errors' => ['phone' => ['Этот номер телефона уже используется другим пользователем']]
+                ], 422);
+            }
+            
+            // Проверяем, не слишком ли часто запрашивается код
+            $cacheKey = "phone_change_code_attempts_{$phone}";
+            $attempts = Cache::get($cacheKey, 0);
+            
+            if ($attempts >= 5) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Слишком много попыток. Попробуйте позже',
+                    'retry_after' => 300 // 5 минут
+                ], 429);
+            }
+
+            // Увеличиваем счетчик попыток
+            Cache::put($cacheKey, $attempts + 1, 300);
+
+            // Отправляем звонок с кодом через CallService
+            $result = $this->callService->sendCallCode($phone, '0000');
+            
+            if ($result['success'] && isset($result['data']['code'])) {
+                $code = $result['data']['code'];
+                Cache::put("phone_change_code_{$phone}_{$user->id}", $code, 300);
+            } else {
+                // Fallback - генерируем код сами
+                $code = str_pad(random_int(1000, 9999), 4, '0', STR_PAD_LEFT);
+                Cache::put("phone_change_code_{$phone}_{$user->id}", $code, 300);
+            }
+            
+            if ($result['success']) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Код отправлен на ваш телефон',
+                    'phone' => $this->maskPhone($phone)
+                ]);
+            } else {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка отправки кода: ' . ($result['message'] ?? 'Неизвестная ошибка')
+                ], 500);
+            }
+
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('Ошибка отправки кода для смены телефона: ' . $e->getMessage());
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка отправки кода',
+                'error' => config('app.debug') ? $e->getMessage() : 'Внутренняя ошибка сервера'
+            ], 500);
+        }
+    }
+
+    /**
+     * Подтвердить код и обновить телефон пользователя
+     */
+    public function verifyPhoneChangeCode(Request $request): JsonResponse
+    {
+        try {
+            $user = Auth::user();
+            
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Пользователь не авторизован'
+                ], 401);
+            }
+
+            $validated = $request->validate([
+                'phone' => 'required|string|min:10|max:20',
+                'code' => 'required|string|size:4',
+            ], [
+                'phone.required' => 'Номер телефона обязателен',
+                'code.required' => 'Код подтверждения обязателен',
+                'code.size' => 'Код должен содержать 4 цифры',
+            ]);
+
+            $phone = $this->normalizePhone($validated['phone']);
+            $code = $validated['code'];
+
+            // Проверяем код
+            $cacheKey = "phone_change_code_{$phone}_{$user->id}";
+            $cachedCode = Cache::get($cacheKey);
+            
+            if (!$cachedCode || $cachedCode !== $code) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Неверный код подтверждения',
+                    'errors' => ['code' => ['Неверный код подтверждения']]
+                ], 400);
+            }
+
+            // Проверяем уникальность телефона еще раз (на случай, если кто-то зарегистрировался между запросами)
+            $existingUser = User::where('phone', $phone)
+                ->where('id', '!=', $user->id)
+                ->first();
+            
+            if ($existingUser) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Этот номер телефона уже используется другим пользователем',
+                    'errors' => ['phone' => ['Этот номер телефона уже используется другим пользователем']]
+                ], 422);
+            }
+
+            // Обновляем телефон пользователя
+            $user->update([
+                'phone' => $phone,
+                'phone_verified_at' => now()
+            ]);
+
+            // Удаляем использованный код
+            Cache::forget($cacheKey);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Телефон успешно изменен',
+                'data' => [
+                    'id' => $user->id,
+                    'phone' => $user->phone,
+                    'phone_verified_at' => $user->phone_verified_at?->toIso8601String(),
+                ]
+            ], 200);
+
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('Ошибка подтверждения кода для смены телефона: ' . $e->getMessage());
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка подтверждения кода',
+                'error' => config('app.debug') ? $e->getMessage() : 'Внутренняя ошибка сервера'
+            ], 500);
+        }
+    }
+
+    /**
+     * Нормализовать номер телефона
+     */
+    private function normalizePhone(string $phone): string
+    {
+        // Убираем все символы кроме цифр и +
+        $phone = preg_replace('/[^\d+]/', '', $phone);
+        
+        // Если номер начинается с 8, заменяем на +7
+        if (str_starts_with($phone, '8')) {
+            $phone = '+7' . substr($phone, 1);
+        }
+        
+        // Если номер начинается с 7, добавляем +
+        if (str_starts_with($phone, '7') && !str_starts_with($phone, '+7')) {
+            $phone = '+' . $phone;
+        }
+        
+        // Проверяем, что номер соответствует российскому формату
+        if (!preg_match('/^\+7[0-9]{10}$/', $phone)) {
+            throw new \InvalidArgumentException('Неверный формат номера телефона');
+        }
+        
+        return $phone;
+    }
+
+    /**
+     * Маскировать номер телефона для отображения
+     */
+    private function maskPhone(string $phone): string
+    {
+        if (strlen($phone) === 12 && str_starts_with($phone, '+7')) {
+            return '+7 *** *** ' . substr($phone, -2);
+        }
+        return $phone;
     }
 }

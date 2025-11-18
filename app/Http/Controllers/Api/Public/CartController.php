@@ -8,6 +8,7 @@ use App\Models\ShopGoodVariation;
 use App\Models\ShopOrder;
 use App\Models\ShopOrderStatus;
 use App\Models\ShopCartItem;
+use App\Models\ShopPaymentMethod;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -564,6 +565,7 @@ class CartController extends Controller
                 'customer_phone' => 'nullable|string|max:20',
                 'customer_id' => 'nullable|integer',
                 'payment_method' => 'required|string|max:100',
+                'payment_method_id' => 'nullable|integer|exists:shop_payment_methods,id',
                 'shipping_method' => 'required|string|max:100',
                 'shipping_address' => 'nullable|string',
                 'notes' => 'nullable|string',
@@ -597,7 +599,24 @@ class CartController extends Controller
             $cartItems = $this->getCartItems($user, $sessionId);
             $cart = $this->formatCartData($cartItems);
 
+            // Если корзина в БД пуста, но есть items в запросе, используем их
+            $requestItems = $request->get('items', []);
+            if (empty($cart['items']) && !empty($requestItems)) {
+                Log::info('Корзина в БД пуста, но есть items в запросе. Используем items из запроса.', [
+                    'items_count' => count($requestItems),
+                    'session_id' => $sessionId,
+                    'user_id' => $user ? $user->id : null
+                ]);
+                // Используем items из запроса
+                $cart['items'] = $requestItems;
+            }
+
             if (empty($cart['items'])) {
+                Log::warning('Корзина пуста при создании заказа', [
+                    'session_id' => $sessionId,
+                    'user_id' => $user ? $user->id : null,
+                    'request_items_count' => count($requestItems)
+                ]);
                 return response()->json([
                     'success' => false,
                     'message' => 'Корзина пуста'
@@ -637,10 +656,64 @@ class CartController extends Controller
 
             // Определяем статусы для оплаты при получении
             $paymentMethod = $request->get('payment_method');
+            $paymentMethodId = $request->get('payment_method_id');
             $shippingMethod = $request->get('shipping_method');
+            $shippingMethodId = $request->get('shipping_method_id');
 
-            // Для оплаты при получении: payment_status_id = 1, delivery_status_id зависит от типа доставки
-            $paymentStatusId = 1; // Ожидает оплаты
+            // Определяем тип способа оплаты
+            $paymentMethodType = null;
+            $paymentMethodModel = null;
+            
+            if ($paymentMethodId) {
+                // Получаем способ оплаты по ID
+                $paymentMethodModel = ShopPaymentMethod::find($paymentMethodId);
+                if ($paymentMethodModel) {
+                    $paymentMethodType = $paymentMethodModel->type;
+                }
+            }
+            
+            // Если не нашли по ID, пытаемся найти по названию
+            if (!$paymentMethodType && $paymentMethod) {
+                $paymentMethodModel = ShopPaymentMethod::where('name', $paymentMethod)->first();
+                if ($paymentMethodModel) {
+                    $paymentMethodType = $paymentMethodModel->type;
+                    $paymentMethodId = $paymentMethodModel->id;
+                }
+            }
+
+            // Определяем ID способа доставки
+            if (!$shippingMethodId && $shippingMethod) {
+                $shippingMethodModel = \App\Models\ShopDeliveryMethod::where('name', $shippingMethod)->first();
+                if ($shippingMethodModel) {
+                    $shippingMethodId = $shippingMethodModel->id;
+                }
+            }
+
+            // Определяем is_active и paid в зависимости от типа оплаты
+            // Онлайн оплата (yandex_pay, yookassa, yandex_split, test_bank, card) - при создании предварительного счета: is_active=false, paid=false
+            // Оплата при получении (cash) - is_active=true, paid=false
+            // Другие случаи - is_active=true, paid=false
+            $isActive = true;
+            $isPaid = false;
+            
+            $onlinePaymentTypes = ['yandex_pay', 'yookassa', 'yandex_split', 'test_bank', 'card'];
+            
+            if ($paymentMethodType && in_array($paymentMethodType, $onlinePaymentTypes)) {
+                // Для онлайн оплаты при создании предварительного счета - is_active=false
+                // (при успешной оплате будет установлено is_active=true, paid=true через webhook)
+                $isActive = false;
+                $isPaid = false;
+            } elseif ($paymentMethodType === 'cash') {
+                // Для оплаты при получении (самовывоз) - is_active=true, paid=false
+                $isActive = true;
+                $isPaid = false;
+            } else {
+                // В других случаях - is_active=true, paid=false
+                $isActive = true;
+                $isPaid = false;
+            }
+
+            // delivery_status_id зависит от типа доставки
             $deliveryStatusId = 1; // Создан (по умолчанию)
 
             // Если самовывоз - delivery_status_id = 5
@@ -648,20 +721,24 @@ class CartController extends Controller
                 $deliveryStatusId = 5;
             }
 
-            Log::info('Статусы заказа для оплаты при получении', [
+            Log::info('Статусы заказа', [
                 'payment_method' => $paymentMethod,
+                'payment_method_id' => $paymentMethodId,
+                'payment_method_type' => $paymentMethodType,
                 'shipping_method' => $shippingMethod,
-                'payment_status_id' => $paymentStatusId,
-                'delivery_status_id' => $deliveryStatusId
+                'delivery_status_id' => $deliveryStatusId,
+                'is_active' => $isActive,
+                'is_paid' => $isPaid
             ]);
 
             // Создаем заказ
             $order = ShopOrder::create([
                 'order_number' => $orderNumber,
                 'user_id' => $customerId,
-                'status_id' => $pendingStatus->id,
-                'payment_status_id' => $paymentStatusId,
+                'status_id' => $pendingStatus->id, // Статус "Ожидает обработки" (id=1)
                 'delivery_status_id' => $deliveryStatusId,
+                'is_active' => $isActive,
+                'payed' => $isPaid,
                 'customer_name' => $request->get('customer_name'),
                 'customer_email' => $request->get('customer_email'),
                 'customer_phone' => $request->get('customer_phone'),
@@ -681,7 +758,9 @@ class CartController extends Controller
                 'total_amount' => $request->get('total_amount', $cart['total_amount']),
                 'total_quantity' => $cart['total_quantity'],
                 'payment_method' => $request->get('payment_method'),
+                'payment_method_id' => $paymentMethodId,
                 'shipping_method' => $request->get('shipping_method'),
+                'shipping_method_id' => $shippingMethodId,
                 'shipping_address' => $request->get('shipping_address'),
                 'notes' => $request->get('notes'),
                 'ip_address' => $request->ip(),
@@ -891,9 +970,15 @@ class CartController extends Controller
             $query->forSession($sessionId);
         }
 
-        return $query->where('good_id', $goodId)
-                    ->where('variation_id', $variationId)
-                    ->first();
+        $query->where('good_id', $goodId);
+        
+        if ($variationId === null) {
+            $query->whereNull('variation_id');
+        } else {
+            $query->where('variation_id', $variationId);
+        }
+
+        return $query->first();
     }
 
     /**

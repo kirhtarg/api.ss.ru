@@ -64,5 +64,68 @@ return Application::configure(basePath: dirname(__DIR__))
 
                 return $response;
             }
+
+            // Обработка ошибок для веб-запросов (не API)
+            $statusCode = 500;
+            
+            // Определяем статус код ошибки
+            if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpException) {
+                $statusCode = $e->getStatusCode();
+            } elseif (method_exists($e, 'getStatusCode')) {
+                $statusCode = $e->getStatusCode();
+            } elseif ($e instanceof \Illuminate\Validation\ValidationException) {
+                // Ошибки валидации обычно 422, но можем обработать как 400
+                $statusCode = 422;
+            }
+            
+            // Получаем настройки сайта для страниц ошибок
+            $siteLogo = null;
+            $mainSiteUrl = null;
+            
+            try {
+                $settings = \App\Models\Setting::whereIn('key', ['site_logo', 'main_site'])
+                    ->get()
+                    ->keyBy('key');
+                
+                // Обрабатываем логотип
+                if ($settings->has('site_logo') && $settings['site_logo']->value) {
+                    $logoPath = $settings['site_logo']->value;
+                    // Если это уже полный URL, возвращаем как есть
+                    if (str_starts_with($logoPath, 'http')) {
+                        $siteLogo = $logoPath;
+                    } else {
+                        // Нормализуем путь
+                        $logoPath = str_replace('\\', '/', $logoPath);
+                        $logoPath = ltrim($logoPath, '/');
+                        if (str_starts_with($logoPath, 'images/')) {
+                            $siteLogo = '/' . $logoPath;
+                        } else {
+                            $siteLogo = '/images/' . $logoPath;
+                        }
+                    }
+                }
+                
+                // Получаем URL главной страницы
+                if ($settings->has('main_site') && $settings['main_site']->value) {
+                    $mainSiteUrl = $settings['main_site']->value;
+                }
+            } catch (\Exception $settingsException) {
+                // Игнорируем ошибки получения настроек
+            }
+
+            // Рендерим страницы ошибок 400 и 500
+            if ($statusCode === 400 && view()->exists('errors.400')) {
+                return response()->view('errors.400', [
+                    'siteLogo' => $siteLogo,
+                    'mainSiteUrl' => $mainSiteUrl
+                ], 400);
+            }
+            
+            if ($statusCode === 500 && view()->exists('errors.500')) {
+                return response()->view('errors.500', [
+                    'siteLogo' => $siteLogo,
+                    'mainSiteUrl' => $mainSiteUrl
+                ], 500);
+            }
         });
     })->create();

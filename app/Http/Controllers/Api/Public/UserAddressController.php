@@ -249,17 +249,15 @@ class UserAddressController extends Controller
             \Log::info('Reset default flags', ['updated_count' => $updatedCount]);
 
             // Устанавливаем выбранный адрес как адрес по умолчанию
-            $address->update(['is_default' => true]);
+            $address->is_default = true;
+            $address->save();
             
             \Log::info('Set address as default', ['address_id' => $id]);
             
-            // Проверяем результат
-            $updatedAddress = ShopUserAddress::find($id);
-            \Log::info('Address after update', ['address' => $updatedAddress->toArray()]);
+            // Обновляем объект из базы данных
+            $address->refresh();
             
-            // Проверяем все адреса пользователя
-            $allAddresses = ShopUserAddress::where('user_id', $user->id)->get();
-            \Log::info('All user addresses after update', ['addresses' => $allAddresses->toArray()]);
+            \Log::info('Address after update', ['address' => $address->toArray()]);
 
             return response()->json([
                 'success' => true,

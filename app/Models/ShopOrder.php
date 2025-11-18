@@ -15,7 +15,8 @@ class ShopOrder extends Model
         'order_number',
         'user_id',
         'status_id',
-        'payment_status_id',
+        'payed',
+        'is_active',
         'delivery_status_id',
         'customer_name',
         'customer_email',
@@ -38,9 +39,14 @@ class ShopOrder extends Model
         'payment_method',
         'payment_method_id',
         'yandex_pay_order_id',
+        'yookassa_payment_id',
         'shipping_method',
+        'shipping_method_id',
         'shipping_address',
+        'cdek_order_uuid',
+        'delivery_status',
         'notes',
+        'comment',
         'ip_address',
         'user_agent',
         'metadata'
@@ -60,7 +66,8 @@ class ShopOrder extends Model
         'use_bonus_points' => 'boolean',
         'bonus_points_to_use' => 'integer',
         'order_bonus_points' => 'integer',
-        'payment_status_id' => 'integer',
+        'payed' => 'boolean',
+        'is_active' => 'boolean',
         'delivery_status_id' => 'integer',
         'metadata' => 'array'
     ];
@@ -76,9 +83,14 @@ class ShopOrder extends Model
         return $this->belongsTo(ShopOrderStatus::class, 'status_id');
     }
 
-    public function paymentStatus()
+    public function paymentMethod()
     {
-        return $this->belongsTo(ShopPaymentStatus::class, 'payment_status_id');
+        return $this->belongsTo(ShopPaymentMethod::class, 'payment_method_id');
+    }
+
+    public function deliveryMethod()
+    {
+        return $this->belongsTo(ShopDeliveryMethod::class, 'shipping_method_id');
     }
 
     public function deliveryStatus()
@@ -127,6 +139,7 @@ class ShopOrder extends Model
                 'good_name' => $item['good_name'] ?? $goodInfo['name'] ?? 'Неизвестный товар',
                 'good_image' => $item['good_image'] ?? $goodInfo['image'] ?? null,
                 'good_sku' => $item['good_sku'] ?? $goodInfo['sku'] ?? null,
+                'good_slug' => $item['good_slug'] ?? $goodInfo['slug'] ?? null,
                 'variation_id' => $item['variation_id'] ?? null,
                 'variation_name' => $item['variation_name'] ?? null,
                 'variation_sku' => $item['variation_sku'] ?? null,
@@ -148,50 +161,49 @@ class ShopOrder extends Model
             return [
                 'name' => null, 
                 'image' => null, 
-                'sku' => null, 
+                'sku' => null,
+                'slug' => null,
                 'sale_price' => null
             ];
         }
 
         try {
-            // Получаем информацию о товаре с изображением
+            // Сначала получаем основную информацию о товаре (всегда нужна)
             $good = DB::table('shop_goods')
-                ->leftJoin('shop_good_images', function($join) {
-                    $join->on('shop_goods.id', '=', 'shop_good_images.good_id')
-                         ->whereNull('shop_good_images.variation_id')
-                         ->where('shop_good_images.is_main', true);
-                })
-                ->select(
-                    'shop_goods.name', 
-                    'shop_goods.sku', 
-                    'shop_goods.sale_price',
-                    'shop_good_images.file_path as image_path'
-                )
-                ->where('shop_goods.id', (int)$goodId)
+                ->select('name', 'sku', 'slug', 'sale_price')
+                ->where('id', (int)$goodId)
                 ->first();
 
+            if (!$good) {
+                return [
+                    'name' => null, 
+                    'image' => null, 
+                    'sku' => null,
+                    'slug' => null,
+                    'sale_price' => null
+                ];
+            }
+
+            // Получаем главное изображение товара
+            $mainImage = DB::table('shop_good_images')
+                ->where('good_id', (int)$goodId)
+                ->whereNull('variation_id')
+                ->where('is_main', true)
+                ->value('file_path');
+
             // Если главного изображения нет, берем первое доступное
-            if (!$good || !$good->image_path) {
-                $good = DB::table('shop_goods')
-                    ->leftJoin('shop_good_images', function($join) {
-                        $join->on('shop_goods.id', '=', 'shop_good_images.good_id')
-                             ->whereNull('shop_good_images.variation_id');
-                    })
-                    ->select(
-                        'shop_goods.name', 
-                        'shop_goods.sku', 
-                        'shop_goods.sale_price',
-                        'shop_good_images.file_path as image_path'
-                    )
-                    ->where('shop_goods.id', (int)$goodId)
-                    ->orderBy('shop_good_images.sort_order')
-                    ->first();
+            if (!$mainImage) {
+                $mainImage = DB::table('shop_good_images')
+                    ->where('good_id', (int)$goodId)
+                    ->whereNull('variation_id')
+                    ->orderBy('sort_order')
+                    ->value('file_path');
             }
 
             $imageUrl = null;
-            if ($good && $good->image_path) {
+            if ($mainImage) {
                 // Добавляем ведущий слэш если его нет
-                $imageUrl = $good->image_path;
+                $imageUrl = $mainImage;
                 if (!str_starts_with($imageUrl, '/')) {
                     $imageUrl = '/' . $imageUrl;
                 }
@@ -201,6 +213,7 @@ class ShopOrder extends Model
                 'name' => $good->name ?? null,
                 'image' => $imageUrl,
                 'sku' => $good->sku ?? null,
+                'slug' => $good->slug ?? null,
                 'sale_price' => $good->sale_price ?? null
             ];
         } catch (\Exception $e) {
@@ -208,7 +221,8 @@ class ShopOrder extends Model
             return [
                 'name' => null, 
                 'image' => null, 
-                'sku' => null, 
+                'sku' => null,
+                'slug' => null,
                 'sale_price' => null
             ];
         }

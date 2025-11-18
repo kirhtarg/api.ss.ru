@@ -744,6 +744,13 @@ class ShopGoodsController extends Controller
                 }
             }
 
+            // Преобразуем brands в brand (берем первый бренд, если есть)
+            if (isset($goodData['brands']) && is_array($goodData['brands']) && count($goodData['brands']) > 0) {
+                $goodData['brand'] = $goodData['brands'][0];
+            } else {
+                $goodData['brand'] = null;
+            }
+
             return response()->json([
                 'success' => true,
                 'data' => $goodData
@@ -859,6 +866,13 @@ class ShopGoodsController extends Controller
 
                     $variation['attributes'] = $variationAttributes;
                 }
+            }
+
+            // Преобразуем brands в brand (берем первый бренд, если есть)
+            if (isset($goodData['brands']) && is_array($goodData['brands']) && count($goodData['brands']) > 0) {
+                $goodData['brand'] = $goodData['brands'][0];
+            } else {
+                $goodData['brand'] = null;
             }
 
             return response()->json([

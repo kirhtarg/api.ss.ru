@@ -157,15 +157,25 @@ class ShopCdekController extends Controller
 
             $points = $this->cdekService->getPickupPoints($cityCode);
 
+            // Если points null, возвращаем пустой массив
+            if ($points === null) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не удалось получить пункты выдачи',
+                    'data' => []
+                ], 500);
+            }
+
             return response()->json([
                 'success' => true,
-                'data' => $points
+                'data' => is_array($points) ? $points : []
             ]);
         } catch (\Exception $e) {
             Log::error('CDEK PVZ List Error: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения ПВЗ: ' . $e->getMessage()
+                'message' => 'Ошибка получения ПВЗ: ' . $e->getMessage(),
+                'data' => []
             ], 500);
         }
     }

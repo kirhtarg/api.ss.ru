@@ -274,10 +274,20 @@ class ShopCdekSettingsController extends Controller
 
         $validation = $this->validateCdekKeys($request->client_id, $request->client_secret);
 
+        $responseData = [
+            'valid' => $validation['valid'],
+            'error' => $validation['error'] ?? null,
+        ];
+
+        // Добавляем информацию о владельце, если она есть
+        if ($validation['valid'] && isset($validation['owner_info'])) {
+            $responseData['owner_info'] = $validation['owner_info'];
+        }
+
         return response()->json([
             'success' => $validation['valid'],
             'message' => $validation['valid'] ? 'Ключи СДЭК валидны' : $validation['error'],
-            'data' => $validation
+            'data' => $responseData
         ]);
     }
 
@@ -350,7 +360,11 @@ class ShopCdekSettingsController extends Controller
                 
                 return response()->json([
                     'success' => true,
-                    'data' => $tariffs
+                    'data' => $tariffs,
+                    'route_info' => [
+                        'from' => 'Москва',
+                        'to' => 'Санкт-Петербург'
+                    ]
                 ]);
             } else {
                 $errorBody = $response->body();
@@ -370,16 +384,123 @@ class ShopCdekSettingsController extends Controller
     }
 
     /**
-     * Проверить валидность ключей СДЭК
+     * Проверить валидность ключей СДЭК и получить информацию о владельце
      */
     private function validateCdekKeys($clientId, $clientSecret)
     {
         try {
             $token = $this->getCdekToken($clientId, $clientSecret);
-            return ['valid' => true, 'token' => $token];
+            
+            // Пытаемся получить информацию о владельце ключа
+            $ownerInfo = $this->getCdekOwnerInfo($token);
+            
+            return [
+                'valid' => true, 
+                'token' => $token,
+                'owner_info' => $ownerInfo
+            ];
         } catch (\Exception $e) {
             return ['valid' => false, 'error' => $e->getMessage()];
         }
+    }
+
+    /**
+     * Получить информацию о владельце ключа СДЭК
+     */
+    private function getCdekOwnerInfo($token)
+    {
+        try {
+            // Пытаемся получить информацию через метод получения заказов
+            // Используем пустой запрос для получения списка заказов
+            $response = Http::withOptions([
+                'verify' => config('cdek.ssl_verify', false),
+                'timeout' => config('cdek.timeout', 30),
+            ])->withToken($token)->get(config('cdek.api_url', 'https://api.cdek.ru/v2') . '/orders', [
+                'size' => 1, // Получаем только один заказ для извлечения информации
+            ]);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                
+                // Если есть заказы, извлекаем информацию о sender из первого заказа
+                if (isset($data['entity']) && is_array($data['entity']) && count($data['entity']) > 0) {
+                    $order = $data['entity'][0];
+                    if (isset($order['sender'])) {
+                        $sender = $order['sender'];
+                        return [
+                            'company' => $sender['company'] ?? null,
+                            'name' => $sender['name'] ?? null,
+                            'inn' => $sender['tin'] ?? null,
+                            'address' => isset($order['from_location']) ? $this->formatLocationAddress($order['from_location']) : null,
+                            'email' => $sender['email'] ?? null,
+                            'phone' => isset($sender['phones']) && count($sender['phones']) > 0 ? $sender['phones'][0]['number'] ?? null : null,
+                        ];
+                    }
+                }
+            }
+
+            // Если не удалось получить информацию из заказов, пробуем через метод получения контрагентов
+            // (если такой метод существует в API)
+            try {
+                $contragentResponse = Http::withOptions([
+                    'verify' => config('cdek.ssl_verify', false),
+                    'timeout' => config('cdek.timeout', 30),
+                ])->withToken($token)->get(config('cdek.api_url', 'https://api.cdek.ru/v2') . '/contragents');
+
+                if ($contragentResponse->successful()) {
+                    $contragentData = $contragentResponse->json();
+                    if (isset($contragentData['entity']) && is_array($contragentData['entity']) && count($contragentData['entity']) > 0) {
+                        $contragent = $contragentData['entity'][0];
+                        return [
+                            'company' => $contragent['company'] ?? $contragent['name'] ?? null,
+                            'name' => $contragent['name'] ?? null,
+                            'inn' => $contragent['tin'] ?? $contragent['inn'] ?? null,
+                            'address' => isset($contragent['address']) ? $contragent['address'] : null,
+                            'email' => $contragent['email'] ?? null,
+                            'phone' => isset($contragent['phones']) && count($contragent['phones']) > 0 ? $contragent['phones'][0]['number'] ?? null : null,
+                        ];
+                    }
+                }
+            } catch (\Exception $e) {
+                // Метод контрагентов может не существовать, игнорируем ошибку
+            }
+
+            // Если не удалось получить информацию, возвращаем null
+            return null;
+        } catch (\Exception $e) {
+            // В случае ошибки возвращаем null, чтобы не ломать валидацию
+            return null;
+        }
+    }
+
+    /**
+     * Форматировать адрес из объекта location
+     */
+    private function formatLocationAddress($location)
+    {
+        $parts = [];
+        
+        if (isset($location['postal_code'])) {
+            $parts[] = $location['postal_code'];
+        }
+        
+        if (isset($location['country'])) {
+            $parts[] = $location['country'];
+        }
+        
+        if (isset($location['region'])) {
+            $parts[] = $location['region'];
+        }
+        
+        if (isset($location['city'])) {
+            $parts[] = $location['city'];
+        }
+        
+        if (isset($location['address'])) {
+            $parts[] = $location['address'];
+        }
+        
+        return !empty($parts) ? implode(', ', $parts) : null;
     }
 
     /**

@@ -46,10 +46,37 @@ class ShopPaymentController extends Controller
             $perPage = $request->get('per_page', 15);
             $paymentMethods = $query->paginate($perPage);
 
-            // Add image_url to each payment method
-            $items = $paymentMethods->items();
-            foreach ($items as $method) {
-                $method->image_url = $method->image_url;
+            // Безопасная сериализация данных с image_url
+            $items = [];
+            foreach ($paymentMethods->items() as $method) {
+                try {
+                    $item = [
+                        'id' => $method->id,
+                        'name' => $method->name,
+                        'type' => $method->type,
+                        'is_active' => $method->is_active,
+                        'description' => $method->description,
+                        'settings' => $method->settings,
+                        'sort_order' => $method->sort_order,
+                        'is_default' => $method->is_default,
+                        'can_disable_default' => $method->can_disable_default,
+                        'created_at' => $method->created_at,
+                        'updated_at' => $method->updated_at,
+                    ];
+                    
+                    // Безопасно получаем image_url
+                    try {
+                        $item['image_url'] = $method->image_url;
+                    } catch (\Exception $e) {
+                        \Log::warning('Error getting image_url for payment method ' . $method->id . ': ' . $e->getMessage());
+                        $item['image_url'] = null;
+                    }
+                    
+                    $items[] = $item;
+                } catch (\Exception $e) {
+                    \Log::error('Error serializing payment method item: ' . $e->getMessage());
+                    continue;
+                }
             }
 
             return response()->json([
@@ -80,9 +107,31 @@ class ShopPaymentController extends Controller
         try {
             $paymentMethod = ShopPaymentMethod::findOrFail($id);
 
+            $data = [
+                'id' => $paymentMethod->id,
+                'name' => $paymentMethod->name,
+                'type' => $paymentMethod->type,
+                'is_active' => $paymentMethod->is_active,
+                'description' => $paymentMethod->description,
+                'settings' => $paymentMethod->settings,
+                'sort_order' => $paymentMethod->sort_order,
+                'is_default' => $paymentMethod->is_default,
+                'can_disable_default' => $paymentMethod->can_disable_default,
+                'created_at' => $paymentMethod->created_at,
+                'updated_at' => $paymentMethod->updated_at,
+            ];
+            
+            // Безопасно получаем image_url
+            try {
+                $data['image_url'] = $paymentMethod->image_url;
+            } catch (\Exception $e) {
+                \Log::warning('Error getting image_url for payment method ' . $id . ': ' . $e->getMessage());
+                $data['image_url'] = null;
+            }
+
             return response()->json([
                 'success' => true,
-                'data' => $paymentMethod
+                'data' => $data
             ]);
 
         } catch (\Exception $e) {

@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('shop_cdek_settings')) {
+            return;
+        }
+
         Schema::create('shop_cdek_settings', function (Blueprint $table) {
             $table->id();
             // Ключи СДЭК

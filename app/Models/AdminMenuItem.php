@@ -15,11 +15,13 @@ class AdminMenuItem extends Model
         'href',
         'description',
         'order',
-        'is_active'
+        'is_active',
+        'in_menu'
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
+        'in_menu' => 'boolean',
         'order' => 'integer'
     ];
 

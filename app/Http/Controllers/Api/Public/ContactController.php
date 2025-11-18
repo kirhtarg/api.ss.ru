@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
 use App\Models\Contact;
+use App\Models\ContactAddress;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
@@ -133,6 +134,47 @@ class ContactController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка получения данных контактов'
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить адреса для самовывоза
+     */
+    public function getPickupAddresses()
+    {
+        try {
+            $addresses = ContactAddress::where('is_delivery', true)
+                ->with('contact')
+                ->orderBy('is_main', 'desc')
+                ->orderBy('name')
+                ->get()
+                ->map(function ($address) {
+                    return [
+                        'id' => $address->id,
+                        'name' => $address->name,
+                        'address' => $address->address,
+                        'address_short' => $address->address_short,
+                        'latitude' => $address->latitude,
+                        'longitude' => $address->longitude,
+                        'howtogo' => $address->howtogo,
+                        'work_mode' => $address->work_mode,
+                        'is_main' => $address->is_main,
+                        'contact_name' => $address->contact->name ?? null,
+                    ];
+                });
+            
+            return response()->json([
+                'success' => true,
+                'data' => $addresses
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::error('Ошибка получения адресов самовывоза: ' . $e->getMessage());
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения адресов самовывоза'
             ], 500);
         }
     }

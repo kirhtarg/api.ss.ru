@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Services\CdekService;
+use App\Models\ShopOrder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
@@ -28,7 +29,7 @@ class SdekOrderController extends Controller
                 'tariff_code' => 'required|integer',
                 'customer_name' => 'required|string|max:255',
                 'customer_email' => 'required|email|max:255',
-                'customer_phone' => 'required|string|max:20',
+                'customer_phone' => 'nullable|string|max:20',
                 'customer_company' => 'nullable|string|max:255',
                 'city_code' => 'required|string',
                 'delivery_address' => 'required|string|max:500',
@@ -55,19 +56,168 @@ class SdekOrderController extends Controller
 
                 $orderData = $request->all();
                 
-                Log::info('SdekOrderController: Creating order', [
-                    'order_number' => $orderData['order_number'],
-                    'tariff_code' => $orderData['tariff_code'],
-                    'customer_name' => $orderData['customer_name'],
-                    'full_data' => $orderData
-                ]);
-
                 $result = $this->cdekService->createOrder($orderData);
-                
-                Log::info('SdekOrderController: Order creation result:', $result);
 
             if ($result['success']) {
-                Log::info('SdekOrderController: Returning response with additional_services:', $result['additional_services'] ?? []);
+                // Получаем UUID заказа из ответа СДЭК
+                $cdekOrderUuid = null;
+                $deliveryStatus = null;
+                $requestState = null;
+                
+                if (isset($result['data']['entity']['uuid'])) {
+                    $cdekOrderUuid = $result['data']['entity']['uuid'];
+                    
+                    // Проверяем статус запроса создания заказа
+                    if (isset($result['data']['requests']) && is_array($result['data']['requests']) && count($result['data']['requests']) > 0) {
+                        $request = $result['data']['requests'][0];
+                        $requestState = $request['state'] ?? null;
+                        
+                        // Проверяем ошибки в начальном ответе
+                        if (isset($request['errors']) && is_array($request['errors']) && count($request['errors']) > 0) {
+                            Log::error('SdekOrderController: CDEK order creation errors in initial response', [
+                                'uuid' => $cdekOrderUuid,
+                                'order_number' => $orderData['order_number'] ?? null,
+                                'errors' => $request['errors']
+                            ]);
+                            
+                            // Сохраняем информацию об ошибках в delivery_status
+                            $errorMessages = array_map(function($error) {
+                                return $error['message'] ?? ($error['code'] ?? 'Unknown error');
+                            }, $request['errors']);
+                            
+                            $deliveryStatus = [
+                                'request_state' => $requestState,
+                                'code' => 'INVALID',
+                                'name' => 'Ошибка создания заказа',
+                                'errors' => $errorMessages
+                            ];
+                        }
+                    }
+                    
+                    // Делаем одну быструю проверку статуса заказа (как было в CdekService)
+                    if (!$deliveryStatus && $requestState !== 'INVALID') {
+                        try {
+                            // Используем ту же логику, что и в CdekService - ждем 5 секунд и проверяем
+                            sleep(5);
+                            $statusResult = $this->cdekService->getOrderStatus($cdekOrderUuid);
+                            if ($statusResult['success'] && isset($statusResult['data'])) {
+                                $statusData = $statusResult['data'];
+                                
+                                // Извлекаем статус доставки из entity.statuses (приоритет)
+                                if (isset($statusData['entity']['statuses']) && is_array($statusData['entity']['statuses']) && count($statusData['entity']['statuses']) > 0) {
+                                    // Берем последний статус
+                                    $lastStatus = end($statusData['entity']['statuses']);
+                                    $deliveryStatus = [
+                                        'code' => $lastStatus['code'] ?? null,
+                                        'name' => $lastStatus['name'] ?? null,
+                                        'date_time' => $lastStatus['date_time'] ?? null,
+                                        'city' => $lastStatus['city'] ?? null,
+                                    ];
+                                } elseif (isset($statusData['statuses']) && is_array($statusData['statuses']) && count($statusData['statuses']) > 0) {
+                                    // Берем последний статус
+                                    $lastStatus = end($statusData['statuses']);
+                                    $deliveryStatus = [
+                                        'code' => $lastStatus['code'] ?? null,
+                                        'name' => $lastStatus['name'] ?? null,
+                                        'date_time' => $lastStatus['date_time'] ?? null,
+                                        'city' => $lastStatus['city'] ?? null,
+                                    ];
+                                }
+                                
+                                // Проверяем ошибки в статусе
+                                if (isset($statusData['requests']) && is_array($statusData['requests']) && count($statusData['requests']) > 0) {
+                                    $latestRequest = end($statusData['requests']);
+                                    if (isset($latestRequest['errors']) && is_array($latestRequest['errors']) && count($latestRequest['errors']) > 0) {
+                                        $errorMessages = array_map(function($error) {
+                                            return $error['message'] ?? ($error['code'] ?? 'Unknown error');
+                                        }, $latestRequest['errors']);
+                                        
+                                        $deliveryStatus = [
+                                            'request_state' => $latestRequest['state'] ?? $requestState,
+                                            'code' => 'INVALID',
+                                            'name' => 'Ошибка создания заказа',
+                                            'errors' => $errorMessages
+                                        ];
+                                    }
+                                }
+                            }
+                        } catch (\Exception $e) {
+                            // Игнорируем ошибки получения статуса
+                        }
+                    }
+                    
+                    // Сохраняем статус запроса в delivery_status, если нет статуса доставки
+                    if (!$deliveryStatus && $requestState) {
+                        $deliveryStatus = [
+                            'request_state' => $requestState,
+                            'code' => $requestState,
+                            'name' => $requestState === 'ACCEPTED' ? 'Принят на обработку' : 
+                                     ($requestState === 'SUCCESSFUL' ? 'Успешно создан' : 
+                                     ($requestState === 'INVALID' ? 'Ошибка создания' : $requestState)),
+                        ];
+                    }
+                }
+                
+                // Обновляем заказ в базе данных
+                if ($cdekOrderUuid && isset($orderData['order_number'])) {
+                    // Пытаемся обновить заказ с несколькими попытками (на случай, если заказ еще не успел сохраниться)
+                    $maxAttempts = 3;
+                    $attempt = 0;
+                    $orderUpdated = false;
+                    
+                    while ($attempt < $maxAttempts && !$orderUpdated) {
+                        try {
+                            $attempt++;
+                            
+                            // Небольшая задержка перед первой попыткой, если это не первая попытка
+                            if ($attempt > 1) {
+                                sleep(1);
+                            }
+                            
+                            // Нормализуем order_number для поиска (приводим к строке и убираем пробелы)
+                            $orderNumber = trim((string)$orderData['order_number']);
+                            
+                            // Пытаемся найти заказ по нормализованному номеру
+                            $order = ShopOrder::where('order_number', $orderNumber)->first();
+                            
+                            // Если не нашли, пробуем найти без учета регистра и пробелов
+                            if (!$order) {
+                                $order = ShopOrder::whereRaw('TRIM(order_number) = ?', [$orderNumber])->first();
+                            }
+                            
+                            if ($order) {
+                                $updateData = [
+                                    'cdek_order_uuid' => $cdekOrderUuid
+                                ];
+                                
+                                // Сохраняем delivery_status в формате JSON
+                                if ($deliveryStatus) {
+                                    $updateData['delivery_status'] = json_encode($deliveryStatus, JSON_UNESCAPED_UNICODE);
+                                }
+                                
+                                $order->update($updateData);
+                                
+                                // Проверяем, что данные сохранились
+                                $order->refresh();
+                                
+                                $orderUpdated = true;
+                            }
+                        } catch (\Exception $e) {
+                            Log::error('SdekOrderController: Failed to update order with CDEK data', [
+                                'attempt' => $attempt,
+                                'order_number' => $orderData['order_number'],
+                                'error' => $e->getMessage(),
+                                'trace' => $e->getTraceAsString()
+                            ]);
+                            
+                            // Если это последняя попытка, не прерываем процесс, так как заказ в СДЭК уже создан
+                            if ($attempt >= $maxAttempts) {
+                                break;
+                            }
+                        }
+                    }
+                }
+                
                 return response()->json([
                     'success' => true,
                     'data' => $result['data'],

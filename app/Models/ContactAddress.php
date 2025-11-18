@@ -12,6 +12,7 @@ class ContactAddress extends Model
 
     protected $fillable = [
         'id_contact',
+        'name',
         'address',
         'address_short',
         'longitude',
@@ -19,12 +20,14 @@ class ContactAddress extends Model
         'howtogo',
         'work_mode',
         'is_main',
+        'is_delivery',
     ];
 
     protected $casts = [
         'longitude' => 'decimal:7',
         'latitude' => 'decimal:7',
         'is_main' => 'boolean',
+        'is_delivery' => 'boolean',
     ];
 
     /**
