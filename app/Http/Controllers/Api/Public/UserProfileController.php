@@ -309,8 +309,7 @@ class UserProfileController extends Controller
     private function getOrdersCount($user): int
     {
         try {
-            // Предполагаем, что есть таблица orders с полем user_id
-            return \DB::table('orders')->where('user_id', $user->id)->count();
+            return \DB::table('shop_orders')->where('user_id', $user->id)->count();
         } catch (\Exception $e) {
             Log::error('Ошибка подсчета заказов: ' . $e->getMessage());
             return 0;
@@ -323,8 +322,7 @@ class UserProfileController extends Controller
     private function getFavoritesCount($user): int
     {
         try {
-            // Предполагаем, что есть таблица favorites с полем user_id
-            return \DB::table('favorites')->where('user_id', $user->id)->count();
+            return \DB::table('shop_favorites')->where('user_id', $user->id)->count();
         } catch (\Exception $e) {
             Log::error('Ошибка подсчета избранного: ' . $e->getMessage());
             return 0;
@@ -337,11 +335,23 @@ class UserProfileController extends Controller
     private function getTotalSpent($user): int
     {
         try {
-            // Предполагаем, что есть таблица orders с полями user_id и total_amount
-            return \DB::table('orders')
-                ->where('user_id', $user->id)
-                ->where('status', '!=', 'cancelled') // Исключаем отмененные заказы
-                ->sum('total_amount') ?? 0;
+            // Получаем ID статуса "отменен" если он есть
+            $cancelledStatusId = \DB::table('shop_order_statuses')
+                ->where(function($q) {
+                    $q->where('name', 'cancelled')
+                      ->orWhere('name', 'отменен');
+                })
+                ->value('id');
+            
+            $query = \DB::table('shop_orders')
+                ->where('user_id', $user->id);
+            
+            // Исключаем отмененные заказы
+            if ($cancelledStatusId) {
+                $query->where('status_id', '!=', $cancelledStatusId);
+            }
+            
+            return $query->sum('total_amount') ?? 0;
         } catch (\Exception $e) {
             Log::error('Ошибка подсчета потраченной суммы: ' . $e->getMessage());
             return 0;

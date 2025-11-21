@@ -43,7 +43,7 @@ class ShopGood extends Model
         'price' => 'decimal:2',
         'sale_price' => 'decimal:2',
         'stock_quantity' => 'integer',
-        'remote_stock_quantity' => 'integer',
+        'remote_stock_quantity' => 'string', // Может быть строкой типа ">10", поэтому не приводим к integer
         'width' => 'decimal:2',
         'height' => 'decimal:2',
         'depth' => 'decimal:2',

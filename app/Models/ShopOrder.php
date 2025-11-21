@@ -47,6 +47,7 @@ class ShopOrder extends Model
         'delivery_status',
         'notes',
         'comment',
+        'cancellation_request',
         'ip_address',
         'user_agent',
         'metadata'
@@ -67,6 +68,7 @@ class ShopOrder extends Model
         'bonus_points_to_use' => 'integer',
         'order_bonus_points' => 'integer',
         'payed' => 'boolean',
+        'cancellation_request' => 'boolean',
         'is_active' => 'boolean',
         'delivery_status_id' => 'integer',
         'metadata' => 'array'

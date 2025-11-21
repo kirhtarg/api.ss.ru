@@ -205,7 +205,7 @@ class ComparisonController extends Controller
     /**
      * Удалить товар из сравнения
      */
-    public function remove(Request $request, $id): JsonResponse
+    public function remove(Request $request, $id = null): JsonResponse
     {
         try {
             $user = Auth::user();
@@ -216,15 +216,24 @@ class ComparisonController extends Controller
                 ], 401);
             }
 
+            // Получаем good_id из URL параметра или из тела запроса
+            $goodId = $id ?? $request->get('good_id');
+
             // Валидируем ID товара
-            if (!is_numeric($id) || !ShopGood::where('id', $id)->exists()) {
+            if (!$goodId || !is_numeric($goodId)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Некорректный ID товара'
                 ], 400);
             }
 
-            $goodId = $id;
+            // Проверяем существование товара
+            if (!ShopGood::where('id', $goodId)->exists()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Товар не найден'
+                ], 404);
+            }
 
             $comparison = ShopComparison::where('user_id', $user->id)
                 ->where('good_id', $goodId)
@@ -251,9 +260,15 @@ class ComparisonController extends Controller
                 'errors' => $e->errors()
             ], 422);
         } catch (\Exception $e) {
+            Log::error('Ошибка удаления товара из сравнения:', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ]);
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления товара из сравнения'
+                'message' => 'Ошибка удаления товара из сравнения: ' . $e->getMessage()
             ], 500);
         }
     }

@@ -492,8 +492,10 @@ Route::get('/test/oauth', function () {
     // Заказы пользователей (требует авторизации)
     Route::middleware('auth:sanctum')->group(function () {
         Route::get('/public/shop/orders', [App\Http\Controllers\Api\Public\UserOrdersController::class, 'index']);
+        Route::get('/public/shop/orders/statuses', [App\Http\Controllers\Api\Public\UserOrdersController::class, 'getStatuses']);
         Route::get('/public/shop/orders/{id}', [App\Http\Controllers\Api\Public\UserOrdersController::class, 'show']);
         Route::post('/public/shop/orders/{id}/cancel', [App\Http\Controllers\Api\Public\UserOrdersController::class, 'cancel']);
+        Route::post('/public/shop/orders/{id}/request-cancellation', [App\Http\Controllers\Api\Public\UserOrdersController::class, 'requestCancellation']);
 
         // Бонусы пользователя
         Route::get('/public/shop/user-bonuses', [App\Http\Controllers\Api\Public\UserBonusController::class, 'index']);
@@ -719,6 +721,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('shop/comparison')->group(function () {
         Route::get('/', [\App\Http\Controllers\Api\Public\ComparisonController::class, 'index']);
         Route::post('/add', [\App\Http\Controllers\Api\Public\ComparisonController::class, 'add']);
+        Route::post('/remove', [\App\Http\Controllers\Api\Public\ComparisonController::class, 'remove']);
         Route::delete('/remove/{id}', [\App\Http\Controllers\Api\Public\ComparisonController::class, 'remove']);
         Route::delete('/clear', [\App\Http\Controllers\Api\Public\ComparisonController::class, 'clear']);
         Route::get('/check', [\App\Http\Controllers\Api\Public\ComparisonController::class, 'check']);
@@ -1343,6 +1346,19 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/', [\App\Http\Controllers\Admin\PromocodeController::class, 'store']);
                 Route::put('/{id}', [\App\Http\Controllers\Admin\PromocodeController::class, 'update']);
                 Route::delete('/{id}', [\App\Http\Controllers\Admin\PromocodeController::class, 'destroy']);
+            });
+
+            // Оповещения магазина
+            Route::prefix('notifications')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Api\Admin\ShopNotificationController::class, 'index']);
+                Route::get('/{id}', [\App\Http\Controllers\Api\Admin\ShopNotificationController::class, 'show']);
+                Route::post('/', [\App\Http\Controllers\Api\Admin\ShopNotificationController::class, 'store']);
+                Route::put('/{id}', [\App\Http\Controllers\Api\Admin\ShopNotificationController::class, 'update']);
+                Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\ShopNotificationController::class, 'destroy']);
+                Route::post('/{id}/toggle-active', [\App\Http\Controllers\Api\Admin\ShopNotificationController::class, 'toggleActive']);
+                Route::post('/test-telegram', [\App\Http\Controllers\Api\Admin\ShopNotificationController::class, 'testTelegram']);
+                Route::post('/test-email', [\App\Http\Controllers\Api\Admin\ShopNotificationController::class, 'testEmail']);
+                Route::post('/get-bot-info', [\App\Http\Controllers\Api\Admin\ShopNotificationController::class, 'getBotInfo']);
             });
 
             // Управление способами доставки

@@ -62,11 +62,25 @@ class ShopOrdersController extends Controller
                     });
                     
                     $query->where(function ($q) use ($hasNotFinished, $regularStatuses) {
-                        // Если выбрано "НЕ ЗАВЕРШЕННЫЕ", фильтруем по is_finished=false и is_cancelled=false
+                        // Если выбрано "НЕ ЗАВЕРШЕННЫЕ", фильтруем:
+                        // 1. Заказы с is_finished=false и is_cancelled=false
+                        // 2. Заказы с заявкой на отмену (cancellation_request=true)
+                        // 3. Отмененные заказы, которые оплачены (is_cancelled=true && payed=true)
                         if ($hasNotFinished) {
-                            $q->whereHas('status', function ($subQ) {
-                                $subQ->where('is_finished', false)
-                                     ->where('is_cancelled', false);
+                            $q->where(function ($subQ) {
+                                // Обычные незавершенные заказы
+                                $subQ->whereHas('status', function ($statusQ) {
+                                    $statusQ->where('is_finished', false)
+                                           ->where('is_cancelled', false);
+                                })
+                                // ИЛИ заказы с заявкой на отмену
+                                ->orWhere('cancellation_request', true)
+                                // ИЛИ отмененные оплаченные заказы
+                                ->orWhere(function ($cancelQ) {
+                                    $cancelQ->whereHas('status', function ($statusQ) {
+                                        $statusQ->where('is_cancelled', true);
+                                    })->where('payed', true);
+                                });
                             });
                         }
                         
@@ -86,10 +100,24 @@ class ShopOrdersController extends Controller
                 } elseif (!is_array($statuses)) {
                     // Если передан один статус (для обратной совместимости)
                     if ($statuses === 'not_finished') {
-                        // Фильтруем по is_finished=false и is_cancelled=false
-                        $query->whereHas('status', function ($q) {
-                            $q->where('is_finished', false)
-                              ->where('is_cancelled', false);
+                        // Фильтруем:
+                        // 1. Заказы с is_finished=false и is_cancelled=false
+                        // 2. Заказы с заявкой на отмену (cancellation_request=true)
+                        // 3. Отмененные заказы, которые оплачены (is_cancelled=true && payed=true)
+                        $query->where(function ($q) {
+                            // Обычные незавершенные заказы
+                            $q->whereHas('status', function ($statusQ) {
+                                $statusQ->where('is_finished', false)
+                                       ->where('is_cancelled', false);
+                            })
+                            // ИЛИ заказы с заявкой на отмену
+                            ->orWhere('cancellation_request', true)
+                            // ИЛИ отмененные оплаченные заказы
+                            ->orWhere(function ($cancelQ) {
+                                $cancelQ->whereHas('status', function ($statusQ) {
+                                    $statusQ->where('is_cancelled', true);
+                                })->where('payed', true);
+                            });
                         });
                     } else {
                         // Обычный статус
@@ -170,6 +198,11 @@ class ShopOrdersController extends Controller
                       ->where('comment', '!=', '');
             }
 
+            // Фильтрация "Заявка на отмену" (заказы с cancellation_request=true)
+            if ($request->filled('cancellation_request') && $request->get('cancellation_request') == '1') {
+                $query->where('cancellation_request', true);
+            }
+
             // Пагинация
             $perPage = $request->get('per_page', 15);
             $orders = $query->paginate($perPage);
@@ -221,6 +254,7 @@ class ShopOrdersController extends Controller
                     'delivery_status' => $order->delivery_status ? json_decode($order->delivery_status, true) : null,
                     'notes' => $order->notes,
                     'comment' => $order->comment,
+                    'cancellation_request' => (bool) ($order->cancellation_request ?? false),
                     'items_count' => count($items),
                     'total_quantity' => $order->total_quantity ?? 0,
                     'created_at' => $order->created_at->toISOString(),
@@ -530,6 +564,10 @@ class ShopOrdersController extends Controller
             if ($newStatus->is_cancelled) {
                 $this->restoreOrderItemsToStock($order);
                 $this->restoreUserBonuses($order);
+                // Снимаем отметку о заявке на отмену при установке статуса отмены
+                if ($order->cancellation_request) {
+                    $order->cancellation_request = false;
+                }
             }
             
             // Если старый статус был отмененным и выбирается другой статус (восстановление), вычитаем товары и бонусы
@@ -555,6 +593,7 @@ class ShopOrdersController extends Controller
                     'status_color' => $order->status->color,
                     'status_is_finished' => (bool) $order->status->is_finished,
                     'status_is_cancelled' => (bool) $order->status->is_cancelled,
+                    'cancellation_request' => (bool) ($order->cancellation_request ?? false),
                 ]
             ]);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
@@ -1563,6 +1602,7 @@ class ShopOrdersController extends Controller
             'delivery_status' => $order->delivery_status ? json_decode($order->delivery_status, true) : null,
             'notes' => $order->notes,
             'comment' => $order->comment,
+            'cancellation_request' => (bool) ($order->cancellation_request ?? false),
             'promo_code' => $order->promo_code,
             'promo_code_id' => $order->promo_code_id,
             'use_bonus_points' => $order->use_bonus_points ?? false,
