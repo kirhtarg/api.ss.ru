@@ -1329,6 +1329,16 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/export', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'export']);
             });
 
+            // Предзаказы
+            Route::prefix('preorders')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Admin\ShopPreordersController::class, 'index']);
+                Route::get('/stats/overview', [\App\Http\Controllers\Admin\ShopPreordersController::class, 'stats']);
+                Route::get('/{id}', [\App\Http\Controllers\Admin\ShopPreordersController::class, 'show']);
+                Route::put('/{id}', [\App\Http\Controllers\Admin\ShopPreordersController::class, 'update']);
+                Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopPreordersController::class, 'destroy']);
+                Route::put('/{id}/status', [\App\Http\Controllers\Admin\ShopPreordersController::class, 'updateStatus']);
+            });
+
             // Промокоды
             Route::prefix('promocodes')->group(function () {
                 Route::get('/test', function () {

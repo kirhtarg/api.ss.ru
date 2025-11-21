@@ -210,6 +210,8 @@ class EmailNotificationService
                     $mail->to($email)
                         ->subject($subject);
                 });
+                
+                Log::info("Email sent successfully", [
                     'email' => $email,
                     'subject' => $subject,
                     'view' => $view
