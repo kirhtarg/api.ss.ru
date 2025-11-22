@@ -1180,6 +1180,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/bulk-update', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'bulkUpdate']);
                 Route::post('/check-duplicates', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'checkDuplicates']);
                 Route::post('/bulk-import', [\App\Http\Controllers\Admin\BulkGoodsImportController::class, 'bulkImport']);
+                Route::post('/mass-parse-properties', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'massParseProperties']);
 
                 // Управление изображениями товаров
                 Route::prefix('{good}/images')->group(function () {
@@ -1218,6 +1219,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::post('/', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'store']);
                     Route::post('/bulk', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'storeBulk']);
                     Route::post('/check-duplicate', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'checkDuplicate']);
+                    Route::post('/add-attribute-to-all', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'addAttributeToAll']);
                     Route::post('/add-property', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'addProperty']);
                     Route::post('/remove-property', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'removeProperty']);
                     Route::put('/{variationId}', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'update']);

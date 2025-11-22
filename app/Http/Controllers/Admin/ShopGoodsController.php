@@ -7,6 +7,7 @@ use App\Models\ShopGood;
 use App\Models\ShopBrand;
 use App\Models\ShopTag;
 use App\Models\ShopProperty;
+use App\Models\ShopPropertyValue;
 use App\Models\ShopCategory;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -25,7 +26,7 @@ class ShopGoodsController extends Controller
     {
         $query = ShopGood::select([
             'id', 'name', 'slug', 'sku', 'description', 'short_description', 
-            'price', 'sale_price', 'stock_quantity', 'rating', 'reviews_count',
+            'price', 'sale_price', 'stock_quantity', 'remote_stock_quantity', 'rating', 'reviews_count',
             'is_active', 'is_featured', 'is_new', 'is_sale', 'sort_order', 
             'created_at', 'updated_at'
         ])->with([
@@ -98,6 +99,15 @@ class ShopGoodsController extends Controller
                 $query->whereHas('variations');
             } elseif ($hasVariations === 'false') {
                 $query->whereDoesntHave('variations');
+            }
+        }
+
+        // Фильтр по наличию описания
+        if ($request->filled('has_description')) {
+            $hasDescription = $request->get('has_description');
+            if ($hasDescription === '1' || $hasDescription === 'true') {
+                $query->whereNotNull('description')
+                      ->where('description', '!=', '');
             }
         }
 
@@ -191,6 +201,7 @@ class ShopGoodsController extends Controller
             'price' => 'required|numeric|min:0',
             'sale_price' => 'nullable|numeric|min:0',
             'stock_quantity' => 'integer|min:0',
+            'remote_stock_quantity' => 'nullable|string|max:255',
             'width' => 'nullable|numeric|min:0',
             'height' => 'nullable|numeric|min:0',
             'depth' => 'nullable|numeric|min:0',
@@ -227,7 +238,7 @@ class ShopGoodsController extends Controller
 
             $good = ShopGood::create($request->only([
                 'name', 'slug', 'sku', 'description', 'short_description',
-                'price', 'sale_price', 'stock_quantity', 'width', 'height',
+                'price', 'sale_price', 'stock_quantity', 'remote_stock_quantity', 'width', 'height',
                 'depth', 'weight', 'meta_title', 'meta_description',
                 'is_active', 'is_featured', 'is_new', 'is_sale', 'sort_order'
             ]));
@@ -324,6 +335,7 @@ class ShopGoodsController extends Controller
             'price' => 'required|numeric|min:0',
             'sale_price' => 'nullable|numeric|min:0',
             'stock_quantity' => 'integer|min:0',
+            'remote_stock_quantity' => 'nullable|string|max:255',
             'width' => 'nullable|numeric|min:0',
             'height' => 'nullable|numeric|min:0',
             'depth' => 'nullable|numeric|min:0',
@@ -358,12 +370,24 @@ class ShopGoodsController extends Controller
         try {
             DB::beginTransaction();
 
-            $good->update($request->only([
+            // Подготавливаем данные для обновления
+            $updateData = $request->only([
                 'name', 'slug', 'sku', 'description', 'short_description',
                 'price', 'sale_price', 'stock_quantity', 'width', 'height',
                 'depth', 'weight', 'meta_title', 'meta_description',
                 'is_active', 'is_featured', 'is_new', 'is_sale', 'sort_order'
-            ]));
+            ]);
+            
+            // Явно обрабатываем remote_stock_quantity - всегда обновляем, даже если null
+            // Используем прямой доступ к полю из JSON тела запроса
+            $allRequestData = $request->all();
+            if (isset($allRequestData['remote_stock_quantity'])) {
+                $remoteStockValue = $allRequestData['remote_stock_quantity'];
+                $updateData['remote_stock_quantity'] = ($remoteStockValue === '' || $remoteStockValue === null) ? null : (string)$remoteStockValue;
+            }
+            
+            // Обновляем товар
+            $good->update($updateData);
 
             // Обновление категорий
             if ($request->has('category_ids')) {
@@ -415,11 +439,34 @@ class ShopGoodsController extends Controller
                     if ($hasShopValueIdCol) {
                         $propertyValueId = null;
                         if (!empty($property['shop_property_value_id'])) {
-                            $propertyValueId = (int) $property['shop_property_value_id'];
+                            // Если есть shop_property_value_id и новое значение, обновляем существующее значение
+                            $existingValueId = (int) $property['shop_property_value_id'];
+                            $existingValue = \App\Models\Shop\PropertyValue::find($existingValueId);
+                            
+                            if (!empty($property['value']) && $existingValue) {
+                                $valueToSave = trim($property['value']);
+                                // Убираем двоеточие в начале и конце значения перед сохранением
+                                $valueToSave = preg_replace('/^:\s*/', '', $valueToSave);
+                                $valueToSave = preg_replace('/\s*:\s*$/', '', $valueToSave);
+                                $valueToSave = trim($valueToSave);
+                                
+                                // Обновляем существующее значение
+                                $existingValue->update(['value' => $valueToSave]);
+                                $propertyValueId = $existingValueId;
+                            } else {
+                                // Если значения нет, используем существующий ID
+                                $propertyValueId = $existingValueId;
+                            }
                         } elseif (!empty($property['value'])) {
+                            $valueToSave = trim($property['value']);
+                            // Убираем двоеточие в начале и конце значения перед сохранением
+                            $valueToSave = preg_replace('/^:\s*/', '', $valueToSave);
+                            $valueToSave = preg_replace('/\s*:\s*$/', '', $valueToSave);
+                            $valueToSave = trim($valueToSave);
+                            
                             $pv = \App\Models\Shop\PropertyValue::firstOrCreate([
                                 'property_id' => $propertyId,
-                                'value' => trim($property['value'])
+                                'value' => $valueToSave
                             ], [
                                 'is_active' => true,
                                 'sort_order' => 0
@@ -490,6 +537,9 @@ class ShopGoodsController extends Controller
 
             DB::commit();
 
+            // Обновляем модель из БД для получения актуальных данных
+            $good->refresh();
+
             // Подтверждаем результат: возвращаем свойства с pivot
             $good->load(['properties' => function($q){
                 $q->withPivot('shop_property_value_id');
@@ -522,12 +572,21 @@ class ShopGoodsController extends Controller
     {
         $good = ShopGood::findOrFail($id);
 
-        $validator = Validator::make($request->all(), [
-            'properties' => 'required|array',
-            'properties.*.property_id' => 'required|exists:shop_properties,id',
-            'properties.*.value' => 'nullable|string|max:255',
-            'properties.*.shop_property_value_id' => 'nullable|exists:shop_property_values,id'
-        ]);
+        $properties = $request->get('properties', []);
+        
+        // Валидация: массив обязателен, но может быть пустым
+        $rules = [
+            'properties' => 'present|array'
+        ];
+        
+        // Если массив не пустой, добавляем правила для элементов
+        if (!empty($properties)) {
+            $rules['properties.*.property_id'] = 'required|exists:shop_properties,id';
+            $rules['properties.*.value'] = 'nullable|string|max:255';
+            $rules['properties.*.shop_property_value_id'] = 'nullable|exists:shop_property_values,id';
+        }
+        
+        $validator = Validator::make($request->all(), $rules);
 
         if ($validator->fails()) {
             return response()->json([
@@ -565,11 +624,34 @@ class ShopGoodsController extends Controller
                 if ($hasShopValueIdCol) {
                     $propertyValueId = null;
                     if (!empty($property['shop_property_value_id'])) {
-                        $propertyValueId = (int) $property['shop_property_value_id'];
+                        // Если есть shop_property_value_id и новое значение, обновляем существующее значение
+                        $existingValueId = (int) $property['shop_property_value_id'];
+                        $existingValue = \App\Models\Shop\PropertyValue::find($existingValueId);
+                        
+                        if (!empty($property['value']) && $existingValue) {
+                            $valueToSave = trim($property['value']);
+                            // Убираем двоеточие в начале и конце значения перед сохранением
+                            $valueToSave = preg_replace('/^:\s*/', '', $valueToSave);
+                            $valueToSave = preg_replace('/\s*:\s*$/', '', $valueToSave);
+                            $valueToSave = trim($valueToSave);
+                            
+                            // Обновляем существующее значение
+                            $existingValue->update(['value' => $valueToSave]);
+                            $propertyValueId = $existingValueId;
+                        } else {
+                            // Если значения нет, используем существующий ID
+                            $propertyValueId = $existingValueId;
+                        }
                     } elseif (!empty($property['value'])) {
+                        $valueToSave = trim($property['value']);
+                        // Убираем двоеточие в начале и конце значения перед сохранением
+                        $valueToSave = preg_replace('/^:\s*/', '', $valueToSave);
+                        $valueToSave = preg_replace('/\s*:\s*$/', '', $valueToSave);
+                        $valueToSave = trim($valueToSave);
+                        
                         $pv = \App\Models\Shop\PropertyValue::firstOrCreate([
                             'property_id' => $propertyId,
-                            'value' => trim($property['value'])
+                            'value' => $valueToSave
                         ], [
                             'is_active' => true,
                             'sort_order' => 0
@@ -591,9 +673,19 @@ class ShopGoodsController extends Controller
                     $textValue = null;
                     if (!empty($property['value'])) {
                         $textValue = trim($property['value']);
+                        // Убираем двоеточие в начале и конце значения
+                        $textValue = preg_replace('/^:\s*/', '', $textValue);
+                        $textValue = preg_replace('/\s*:\s*$/', '', $textValue);
+                        $textValue = trim($textValue);
                     } elseif (!empty($property['shop_property_value_id'])) {
                         $found = \App\Models\Shop\PropertyValue::find((int) $property['shop_property_value_id']);
                         $textValue = $found ? $found->value : null;
+                        if ($textValue) {
+                            // Убираем двоеточие в начале и конце значения
+                            $textValue = preg_replace('/^:\s*/', '', $textValue);
+                            $textValue = preg_replace('/\s*:\s*$/', '', $textValue);
+                            $textValue = trim($textValue);
+                        }
                     }
                     if ($textValue !== null && $textValue !== '') {
                         DB::table('shop_good_properties')->updateOrInsert(
@@ -1831,5 +1923,701 @@ class ShopGoodsController extends Controller
         } catch (\Exception $e) {
             return false;
         }
+    }
+
+    /**
+     * Массовый парсинг характеристик из описаний товаров
+     */
+    public function massParseProperties(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'batch_size' => 'nullable|integer|min:1|max:1000',
+            'offset' => 'nullable|integer|min:0'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $batchSize = $request->get('batch_size', 1000);
+            $offset = $request->get('offset', 0);
+
+            // Получаем товары батчами
+            $goods = ShopGood::select('id', 'description')
+                ->whereNotNull('description')
+                ->where('description', '!=', '')
+                ->skip($offset)
+                ->take($batchSize)
+                ->get();
+
+            $stats = [
+                'processed' => 0,
+                'success' => 0,
+                'error' => 0,
+                'skipped' => 0,
+                'errors' => [] // Детальная информация об ошибках
+            ];
+
+            $hasValueCol = Schema::hasColumn('shop_good_properties', 'value');
+            $hasShopValueIdCol = Schema::hasColumn('shop_good_properties', 'shop_property_value_id');
+            $hasVariationIdCol = Schema::hasColumn('shop_good_properties', 'variation_id');
+
+            // Кэш свойств для избежания повторных запросов
+            $propertiesCache = [];
+            $propertyValuesCache = [];
+
+            foreach ($goods as $good) {
+                try {
+                    if (empty($good->description)) {
+                        $stats['skipped']++;
+                        $stats['processed']++;
+                        continue;
+                    }
+
+                    // Парсим описание
+                    $parsedProperties = $this->parseDescription($good->description);
+
+                    if (empty($parsedProperties)) {
+                        $stats['skipped']++;
+                        $stats['processed']++;
+                        continue;
+                    }
+
+                    // Подготавливаем свойства для сохранения
+                    $propertiesToSave = [];
+
+                    foreach ($parsedProperties as $parsed) {
+                        $propertyName = trim($parsed['name']);
+                        $propertyValue = trim($parsed['value']);
+
+                        if (empty($propertyName) || empty($propertyValue)) {
+                            continue;
+                        }
+
+                        // Проверяем длину названия свойства (обычно VARCHAR(255))
+                        $maxNameLength = 255;
+                        if (mb_strlen($propertyName) > $maxNameLength) {
+                            Log::warning('Пропущена характеристика с слишком длинным названием', [
+                                'good_id' => $good->id,
+                                'property_name_length' => mb_strlen($propertyName),
+                                'property_name_preview' => mb_substr($propertyName, 0, 100) . '...'
+                            ]);
+                            
+                            $stats['errors'][] = [
+                                'good_id' => $good->id,
+                                'type' => 'name_too_long',
+                                'message' => "Название характеристики слишком длинное ({$maxNameLength} символов максимум)",
+                                'details' => "Название длиной " . mb_strlen($propertyName) . " символов (показано первые 100: " . mb_substr($propertyName, 0, 100) . "...)"
+                            ];
+                            continue;
+                        }
+
+                        // Проверяем длину значения (VARCHAR(255) = максимум 255 символов)
+                        $maxValueLength = 255;
+                        if (mb_strlen($propertyValue) > $maxValueLength) {
+                            Log::warning('Пропущена характеристика с слишком длинным значением', [
+                                'good_id' => $good->id,
+                                'property_name' => $propertyName,
+                                'value_length' => mb_strlen($propertyValue),
+                                'value_preview' => mb_substr($propertyValue, 0, 100) . '...'
+                            ]);
+                            
+                            $stats['errors'][] = [
+                                'good_id' => $good->id,
+                                'type' => 'value_too_long',
+                                'message' => "Значение характеристики слишком длинное ({$maxValueLength} символов максимум)",
+                                'details' => "Характеристика '{$propertyName}': значение длиной " . mb_strlen($propertyValue) . " символов (показано первые 100: " . mb_substr($propertyValue, 0, 100) . "...)"
+                            ];
+                            continue;
+                        }
+
+                        // Ищем или создаем свойство
+                        $property = null;
+                        $cacheKey = strtolower($propertyName);
+
+                        if (isset($propertiesCache[$cacheKey])) {
+                            $property = $propertiesCache[$cacheKey];
+                        } else {
+                            try {
+                                $property = ShopProperty::whereRaw('LOWER(name) = ?', [strtolower($propertyName)])->first();
+
+                                if (!$property) {
+                                    $property = ShopProperty::create([
+                                        'name' => $propertyName,
+                                        'property_type' => 'string',
+                                        'slug' => \Illuminate\Support\Str::slug($propertyName)
+                                    ]);
+                                }
+
+                                $propertiesCache[$cacheKey] = $property;
+                            } catch (\Exception $e) {
+                                Log::error('Ошибка создания/поиска свойства', [
+                                    'good_id' => $good->id,
+                                    'property_name' => $propertyName,
+                                    'exception' => get_class($e),
+                                    'message' => $e->getMessage()
+                                ]);
+                                continue;
+                            }
+                        }
+
+                        if (!$property) {
+                            continue;
+                        }
+
+                        // Ищем или создаем значение свойства
+                        $propertyValueModel = null;
+                        $valueCacheKey = $property->id . '_' . strtolower($propertyValue);
+
+                        if (isset($propertyValuesCache[$valueCacheKey])) {
+                            $propertyValueModel = $propertyValuesCache[$valueCacheKey];
+                        } else {
+                            try {
+                                $propertyValueModel = ShopPropertyValue::where('property_id', $property->id)
+                                    ->whereRaw('LOWER(value) = ?', [strtolower($propertyValue)])
+                                    ->first();
+
+                                if (!$propertyValueModel) {
+                                    $propertyValueModel = ShopPropertyValue::create([
+                                        'property_id' => $property->id,
+                                        'value' => $propertyValue,
+                                        'is_active' => true
+                                    ]);
+                                }
+
+                                $propertyValuesCache[$valueCacheKey] = $propertyValueModel;
+                            } catch (\Exception $e) {
+                                Log::error('Ошибка создания/поиска значения свойства', [
+                                    'good_id' => $good->id,
+                                    'property_id' => $property->id,
+                                    'property_name' => $propertyName,
+                                    'property_value' => $propertyValue,
+                                    'exception' => get_class($e),
+                                    'message' => $e->getMessage()
+                                ]);
+                                
+                                $stats['errors'][] = [
+                                    'good_id' => $good->id,
+                                    'type' => 'property_value_error',
+                                    'message' => $e->getMessage(),
+                                    'details' => "Ошибка при создании значения свойства '{$propertyName}': '{$propertyValue}'"
+                                ];
+                                continue;
+                            }
+                        }
+
+                        if ($propertyValueModel) {
+                            $propertiesToSave[] = [
+                                'property_id' => $property->id,
+                                'shop_property_value_id' => $propertyValueModel->id,
+                                'value' => $propertyValue
+                            ];
+                        }
+                    }
+
+                    // Сохраняем свойства товара
+                    if (!empty($propertiesToSave)) {
+                        DB::beginTransaction();
+
+                        try {
+                            // Удаляем старые свойства товара (только базовые, не вариации)
+                            $deleteQuery = DB::table('shop_good_properties')->where('good_id', $good->id);
+                            if ($hasVariationIdCol) {
+                                $deleteQuery->whereNull('variation_id');
+                            }
+                            $deleteQuery->delete();
+
+                            // Убираем дубликаты по property_id (оставляем последнее вхождение)
+                            $uniqueProperties = [];
+                            foreach ($propertiesToSave as $prop) {
+                                $uniqueProperties[$prop['property_id']] = $prop;
+                            }
+                            $propertiesToSave = array_values($uniqueProperties);
+
+                            // Вставляем новые свойства
+                            foreach ($propertiesToSave as $prop) {
+                                $insertData = [
+                                    'good_id' => $good->id,
+                                    'property_id' => $prop['property_id'],
+                                    'created_at' => now(),
+                                    'updated_at' => now()
+                                ];
+
+                                // Указываем variation_id как NULL для базовых свойств
+                                if ($hasVariationIdCol) {
+                                    $insertData['variation_id'] = null;
+                                }
+
+                                if ($hasShopValueIdCol) {
+                                    $insertData['shop_property_value_id'] = $prop['shop_property_value_id'];
+                                }
+
+                                if ($hasValueCol) {
+                                    $insertData['value'] = $prop['value'];
+                                }
+
+                                // Используем updateOrInsert для избежания дубликатов
+                                $whereConditions = [
+                                    'good_id' => $good->id,
+                                    'property_id' => $prop['property_id']
+                                ];
+                                
+                                if ($hasVariationIdCol) {
+                                    $whereConditions['variation_id'] = null;
+                                }
+
+                                DB::table('shop_good_properties')->updateOrInsert($whereConditions, $insertData);
+                            }
+
+                            DB::commit();
+                            $stats['success']++;
+                        } catch (\Exception $e) {
+                            DB::rollBack();
+                            $errorMessage = 'Ошибка сохранения свойств для товара ' . $good->id . ': ' . $e->getMessage();
+                            Log::error($errorMessage, [
+                                'good_id' => $good->id,
+                                'exception' => get_class($e),
+                                'message' => $e->getMessage(),
+                                'trace' => $e->getTraceAsString(),
+                                'properties_count' => count($propertiesToSave)
+                            ]);
+                            
+                            $stats['error']++;
+                            $stats['errors'][] = [
+                                'good_id' => $good->id,
+                                'type' => 'save_error',
+                                'message' => $e->getMessage(),
+                                'details' => 'Ошибка при сохранении свойств в БД'
+                            ];
+                        }
+                    } else {
+                        $stats['skipped']++;
+                    }
+
+                    $stats['processed']++;
+                } catch (\Exception $e) {
+                    $errorMessage = 'Ошибка обработки товара ' . $good->id . ': ' . $e->getMessage();
+                    Log::error($errorMessage, [
+                        'good_id' => $good->id,
+                        'exception' => get_class($e),
+                        'message' => $e->getMessage(),
+                        'trace' => $e->getTraceAsString(),
+                        'file' => $e->getFile(),
+                        'line' => $e->getLine()
+                    ]);
+                    
+                    $stats['error']++;
+                    $stats['errors'][] = [
+                        'good_id' => $good->id,
+                        'type' => 'processing_error',
+                        'message' => $e->getMessage(),
+                        'details' => 'Ошибка при парсинге или обработке товара'
+                    ];
+                    $stats['processed']++;
+                }
+            }
+
+            // Ограничиваем количество ошибок в ответе (первые 50)
+            $totalErrorsCount = count($stats['errors']);
+            $errorsToReturn = array_slice($stats['errors'], 0, 50);
+            $stats['errors'] = $errorsToReturn;
+            $stats['total_errors'] = $totalErrorsCount;
+            if ($totalErrorsCount > 50) {
+                $stats['errors_truncated'] = true;
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Парсинг завершен',
+                'data' => [
+                    'stats' => $stats,
+                    'has_more' => $goods->count() === $batchSize
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Ошибка массового парсинга: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка массового парсинга: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Парсинг HTML описания для извлечения характеристик
+     */
+    private function parseDescription(string $htmlDescription): array
+    {
+        if (empty($htmlDescription)) {
+            return [];
+        }
+
+        $results = [];
+        
+        // Используем DOMDocument для парсинга HTML
+        libxml_use_internal_errors(true);
+        
+        // Оборачиваем в контейнер для корректного парсинга
+        $wrappedHtml = '<div>' . $htmlDescription . '</div>';
+        $dom = new \DOMDocument('1.0', 'UTF-8');
+        @$dom->loadHTML(mb_convert_encoding($wrappedHtml, 'HTML-ENTITIES', 'UTF-8'), LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+        libxml_clear_errors();
+
+        // Получаем все блочные элементы верхнего уровня
+        $xpath = new \DOMXPath($dom);
+        $allBlockElements = $xpath->query('//p | //div | //li');
+        
+        $topLevelElements = [];
+
+        if ($allBlockElements && $allBlockElements->length > 0) {
+            foreach ($allBlockElements as $element) {
+                // Проверяем, не является ли элемент вложенным
+                $isNested = false;
+                $parent = $element->parentNode;
+                while ($parent && $parent->nodeName !== '#document' && $parent->nodeName !== 'body' && $parent->nodeName !== 'div') {
+                    $parentTagName = strtolower($parent->nodeName);
+                    if (in_array($parentTagName, ['p', 'div', 'li'])) {
+                        $isNested = true;
+                        break;
+                    }
+                    $parent = $parent->parentNode;
+                }
+
+                if (!$isNested) {
+                    $topLevelElements[] = $element;
+                }
+            }
+        }
+
+        $lines = [];
+
+        if (count($topLevelElements) > 0) {
+            // Если есть блочные элементы верхнего уровня, обрабатываем каждый
+            foreach ($topLevelElements as $element) {
+                $innerHTML = $this->getInnerHTML($element);
+                $textContent = trim($element->textContent);
+
+                if (empty($textContent)) {
+                    continue;
+                }
+
+                // Разбиваем HTML по <br> тегам для правильной обработки строк
+                $htmlParts = preg_split('/(?:<br\s*\/?>|<br>)/i', $innerHTML);
+
+                foreach ($htmlParts as $htmlPart) {
+                    $htmlPart = trim($htmlPart);
+                    if (empty($htmlPart)) {
+                        continue;
+                    }
+
+                    // Создаем временный DOM для извлечения текста
+                    $tempDom = new \DOMDocument('1.0', 'UTF-8');
+                    $tempWrapped = '<div>' . $htmlPart . '</div>';
+                    @$tempDom->loadHTML(mb_convert_encoding($tempWrapped, 'HTML-ENTITIES', 'UTF-8'), LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+                    $text = trim($tempDom->textContent);
+
+                    if (!empty($text) && mb_strlen($text) >= 3) {
+                        $lines[] = [
+                            'html' => $htmlPart,
+                            'text' => $text
+                        ];
+                    }
+                }
+            }
+        }
+
+        // Если не получилось разбить по элементам, разбиваем по переносам строк и тегам
+        if (empty($lines)) {
+            $htmlContent = $htmlDescription;
+            $textContent = strip_tags($htmlDescription);
+            
+            // Сначала пробуем разбить по HTML тегам
+            $htmlParts = preg_split('/(?:<br\s*\/?>|<\/p>|<\/div>|<\/li>)/i', $htmlContent);
+            
+            if (count($htmlParts) > 1) {
+                foreach ($htmlParts as $htmlPart) {
+                    $htmlPart = trim($htmlPart);
+                    if (empty($htmlPart)) {
+                        continue;
+                    }
+                    
+                    $tempDom = new \DOMDocument('1.0', 'UTF-8');
+                    $tempWrapped = '<div>' . $htmlPart . '</div>';
+                    @$tempDom->loadHTML(mb_convert_encoding($tempWrapped, 'HTML-ENTITIES', 'UTF-8'), LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+                    $text = trim($tempDom->textContent);
+                    
+                    if (!empty($text) && mb_strlen($text) >= 3) {
+                        $lines[] = [
+                            'html' => $htmlPart,
+                            'text' => $text
+                        ];
+                    }
+                }
+            } else {
+                // Если HTML не разбился, пробуем разбить по переносам строк в тексте
+                $textLines = preg_split('/\n/', $textContent);
+                foreach ($textLines as $textLine) {
+                    $textLine = trim($textLine);
+                    if (!empty($textLine) && mb_strlen($textLine) >= 3) {
+                        $lines[] = [
+                            'html' => $textLine,
+                            'text' => $textLine
+                        ];
+                    }
+                }
+            }
+        }
+        
+        // Если все еще нет строк, берем весь контент как одну строку
+        if (empty($lines)) {
+            $htmlContent = $htmlDescription;
+            $textContent = strip_tags($htmlDescription);
+            
+            if (!empty($textContent) && mb_strlen($textContent) >= 3) {
+                $lines[] = [
+                    'html' => $htmlContent,
+                    'text' => $textContent
+                ];
+            }
+        }
+
+        // Парсим каждую строку
+        foreach ($lines as $lineData) {
+            $lineHTML = $lineData['html'];
+            $lineText = $lineData['text'];
+
+            if (empty($lineText) || mb_strlen($lineText) < 3) {
+                continue;
+            }
+
+            $propertyName = '';
+            $propertyValue = '';
+
+            // Парсим HTML строки для поиска жирного текста
+            $lineWrapped = '<div>' . $lineHTML . '</div>';
+            $lineDom = new \DOMDocument('1.0', 'UTF-8');
+            libxml_use_internal_errors(true);
+            @$lineDom->loadHTML(mb_convert_encoding($lineWrapped, 'HTML-ENTITIES', 'UTF-8'), LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+            libxml_clear_errors();
+
+            $lineXpath = new \DOMXPath($lineDom);
+            
+            // Ищем жирные элементы (strong, b) - сначала стандартные теги
+            $boldElements = $lineXpath->query('//strong | //b');
+            $boldElement = null;
+            
+            if ($boldElements && $boldElements->length > 0) {
+                $boldElement = $boldElements->item(0);
+            } else {
+                // Если не нашли стандартные теги, ищем все элементы и проверяем их стили
+                $allElements = $lineXpath->query('//*');
+                if ($allElements) {
+                    foreach ($allElements as $elem) {
+                        // Проверяем тег
+                        $tagName = strtolower($elem->nodeName);
+                        if ($tagName === 'strong' || $tagName === 'b') {
+                            $boldElement = $elem;
+                            break;
+                        }
+                        
+                        // Проверяем inline стиль
+                        if ($elem->hasAttribute('style')) {
+                            $style = $elem->getAttribute('style');
+                            if (preg_match('/font-weight\s*:\s*(bold|700|6\d{2}|7\d{2}|8\d{2}|900)/i', $style)) {
+                                $boldElement = $elem;
+                                break;
+                            }
+                        }
+                        
+                        // Проверяем класс
+                        if ($elem->hasAttribute('class')) {
+                            $className = $elem->getAttribute('class');
+                            if (preg_match('/(?:^|\s)(?:bold|font-bold|font-weight-bold|fw-bold)(?:\s|$)/i', $className)) {
+                                $boldElement = $elem;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if ($boldElement) {
+                // ШАГ 1: Извлекаем ВЕСЬ текст из жирного элемента - это характеристика
+                $propertyName = trim($boldElement->textContent);
+                $propertyName = preg_replace('/\s+/', ' ', $propertyName);
+                
+                if (!empty($propertyName)) {
+                    // ШАГ 2: Находим позицию закрывающего тега в исходном HTML
+                    // Получаем outerHTML элемента (включая сам тег и его содержимое)
+                    $boldOuterHTML = $this->getOuterHTML($boldElement);
+                    
+                    // Ищем позицию этого элемента в исходном HTML
+                    $boldEndIndex = -1;
+                    
+                    // Пробуем найти точное совпадение outerHTML
+                    $elementIndex = mb_strpos($lineHTML, $boldOuterHTML);
+                    
+                    if ($elementIndex !== false) {
+                        // Находим конец элемента (после закрывающего тега)
+                        $boldEndIndex = $elementIndex + mb_strlen($boldOuterHTML);
+                    } else {
+                        // Если не нашли точное совпадение, пробуем найти через имя тега
+                        $tagName = strtolower($boldElement->nodeName);
+                        
+                        if ($tagName === 'strong' || $tagName === 'b') {
+                            // Для стандартных тегов ищем закрывающий тег
+                            if (preg_match('/<\/' . preg_quote($tagName, '/') . '>/i', $lineHTML, $matches, PREG_OFFSET_CAPTURE)) {
+                                $boldEndIndex = $matches[0][1] + mb_strlen($matches[0][0]);
+                            }
+                        } else {
+                            // Для других тегов ищем закрывающий тег с таким же именем
+                            $searchPattern = '/<\/' . preg_quote($tagName, '/') . '[^>]*>/i';
+                            $searchIndex = 0;
+                            $lastMatchIndex = -1;
+                            
+                            while (preg_match($searchPattern, $lineHTML, $matches, PREG_OFFSET_CAPTURE, $searchIndex)) {
+                                $lastMatchIndex = $matches[0][1] + mb_strlen($matches[0][0]);
+                                $searchIndex = $lastMatchIndex;
+                            }
+                            
+                            if ($lastMatchIndex >= 0) {
+                                $boldEndIndex = $lastMatchIndex;
+                            }
+                        }
+                    }
+                    
+                    // Если нашли закрывающий тег
+                    if ($boldEndIndex >= 0) {
+                        // ШАГ 3: Берем все что после закрывающего тега
+                        $afterBoldHTML = mb_substr($lineHTML, $boldEndIndex);
+                        
+                        // ШАГ 4: Очищаем от HTML тегов - это будет значение
+                        $afterBoldWrapped = '<div>' . $afterBoldHTML . '</div>';
+                        $afterBoldDom = new \DOMDocument('1.0', 'UTF-8');
+                        libxml_use_internal_errors(true);
+                        @$afterBoldDom->loadHTML(mb_convert_encoding($afterBoldWrapped, 'HTML-ENTITIES', 'UTF-8'), LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+                        libxml_clear_errors();
+                        $propertyValue = trim($afterBoldDom->textContent);
+                        
+                        // Убираем двоеточие в начале, если есть
+                        $propertyValue = preg_replace('/^:\s*/', '', $propertyValue);
+                        
+                        // Нормализуем пробелы
+                        $propertyValue = preg_replace('/\s+/', ' ', trim($propertyValue));
+                    }
+                }
+            }
+            
+            // Если не нашли через жирный текст, пробуем вариант с двоеточием
+            if (empty($propertyName) || empty($propertyValue)) {
+                // Вариант 2: Ищем текст до двоеточия в текстовом представлении
+                // Но только если двоеточие находится в начале строки или после короткого названия (не более 3 слов)
+                $colonIndex = mb_strpos($lineText, ':');
+                if ($colonIndex !== false && $colonIndex > 0 && $colonIndex < mb_strlen($lineText) - 1) {
+                    $beforeColon = trim(mb_substr($lineText, 0, $colonIndex));
+                    $wordsBeforeColon = preg_split('/\s+/u', $beforeColon);
+                    $wordsBeforeColon = array_filter($wordsBeforeColon, function($w) { return !empty(trim($w)); });
+                    
+                    // Используем двоеточие только если до него не более 3 слов (чтобы не разбивать значения с двоеточием внутри)
+                    if (count($wordsBeforeColon) > 0 && count($wordsBeforeColon) <= 3) {
+                        $propertyName = $beforeColon;
+                        $propertyValue = trim(mb_substr($lineText, $colonIndex + 1));
+                    } else {
+                        // Если до двоеточия больше 3 слов, это скорее всего двоеточие внутри значения, пропускаем
+                        $colonIndex = false;
+                    }
+                }
+                
+                if ($colonIndex === false) {
+                    // Вариант 3: Дополнительная проверка - поиск до первого дефиса (но не более 3-х слов)
+                    // Ищем дефис с пробелами вокруг (например: " - " или " -")
+                    $dashPattern = '/\s*-\s*/u';
+                    $dashMatch = preg_match($dashPattern, $lineText, $matches, PREG_OFFSET_CAPTURE);
+                    
+                    if ($dashMatch && isset($matches[0]) && isset($matches[0][1])) {
+                        $dashIndex = $matches[0][1];
+                        $beforeDash = trim(mb_substr($lineText, 0, $dashIndex));
+                        
+                        // Проверяем, что до дефиса не более 3-х слов
+                        $words = preg_split('/\s+/u', $beforeDash);
+                        $words = array_filter($words, function($w) { return !empty(trim($w)); });
+                        
+                        if (count($words) > 0 && count($words) <= 3) {
+                            $propertyName = $beforeDash;
+                            // Берем все после дефиса (включая сам дефис и пробелы)
+                            $propertyValue = trim(mb_substr($lineText, $dashIndex + mb_strlen($matches[0][0])));
+                        } else {
+                            // Если нет ни жирного текста, ни двоеточия, ни подходящего дефиса - пропускаем строку
+                            continue;
+                        }
+                    } else {
+                        // Если нет ни жирного текста, ни двоеточия, ни дефиса - пропускаем строку
+                        continue;
+                    }
+                }
+            }
+
+            // Нормализуем
+            $propertyName = preg_replace('/\s+/', ' ', trim($propertyName));
+            $propertyValue = preg_replace('/\s+/', ' ', trim($propertyValue));
+            
+            // Убираем двоеточие в начале и конце значения, если оно там есть (на случай ошибок парсинга)
+            $propertyValue = preg_replace('/^:\s*/', '', $propertyValue);
+            $propertyValue = preg_replace('/\s*:\s*$/', '', $propertyValue);
+            $propertyValue = trim($propertyValue);
+
+            // Трансформируем название: первая буква заглавная, остальные маленькие
+            $propertyName = mb_convert_case($propertyName, MB_CASE_TITLE, 'UTF-8');
+
+            if (empty($propertyName) || empty($propertyValue) || mb_strlen($propertyName) < 2 || mb_strlen($propertyValue) < 1) {
+                continue;
+            }
+
+            // Проверяем на дубликаты
+            $isDuplicate = false;
+            foreach ($results as $result) {
+                if (mb_strtolower(trim($result['name'])) === mb_strtolower(trim($propertyName)) &&
+                    mb_strtolower(trim($result['value'])) === mb_strtolower(trim($propertyValue))) {
+                    $isDuplicate = true;
+                    break;
+                }
+            }
+
+            if (!$isDuplicate) {
+                $results[] = [
+                    'name' => $propertyName,
+                    'value' => $propertyValue
+                ];
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * Получить innerHTML элемента
+     */
+    private function getInnerHTML(\DOMElement $element): string
+    {
+        $innerHTML = '';
+        $children = $element->childNodes;
+        foreach ($children as $child) {
+            $innerHTML .= $element->ownerDocument->saveHTML($child);
+        }
+        return $innerHTML;
+    }
+
+    /**
+     * Получить outerHTML элемента
+     */
+    private function getOuterHTML(\DOMElement $element): string
+    {
+        return $element->ownerDocument->saveHTML($element);
     }
 }

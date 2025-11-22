@@ -59,12 +59,31 @@ class PropertyController extends Controller
         try {
             DB::beginTransaction();
 
-            $property = Property::create([
-                'name' => $request->name,
-                'description' => $request->description,
-                'property_type' => $request->property_type,
-                'sort_order' => 0,
-            ]);
+            // Генерируем slug для проверки
+            $slug = \Illuminate\Support\Str::slug($request->name);
+
+            // Проверяем, существует ли свойство с таким же именем (без учета регистра) или slug
+            $property = Property::where(function($query) use ($request, $slug) {
+                $query->whereRaw('LOWER(name) = ?', [strtolower($request->name)])
+                      ->orWhere('slug', $slug);
+            })->first();
+
+            if (!$property) {
+                // Если свойства нет, создаем новое
+                $property = Property::create([
+                    'name' => $request->name,
+                    'description' => $request->description,
+                    'property_type' => $request->property_type,
+                    'sort_order' => 0,
+                    'slug' => $slug, // Явно указываем slug, чтобы избежать дубликатов
+                ]);
+            } else {
+                // Если свойство существует, обновляем его (если нужно)
+                $property->update([
+                    'description' => $request->description ?? $property->description,
+                    'property_type' => $request->property_type ?? $property->property_type,
+                ]);
+            }
 
             // Если тип "выбор", создаем значения
             if ($request->property_type === 'select' && $request->has('values')) {
