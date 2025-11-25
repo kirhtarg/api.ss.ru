@@ -66,6 +66,8 @@ Route::match(['OPTIONS'], '/{any}', function (Request $request) {
 
 // Маршрут для получения данных контактов для заголовка
 Route::get('/public/contacts/header-data', [\App\Http\Controllers\Api\Public\ContactController::class, 'headerData']);
+// Маршрут для получения основных контактов магазина
+Route::get('/public/contacts/main', [\App\Http\Controllers\Api\Public\ContactController::class, 'getMain']);
 // Маршрут для получения адресов самовывоза
 Route::get('/public/contacts/pickup-addresses', [\App\Http\Controllers\Api\Public\ContactController::class, 'getPickupAddresses']);
 
@@ -470,6 +472,14 @@ Route::get('/test/oauth', function () {
     // Webhook для Тест-Банк
     Route::post('/webhooks/testbank', [App\Http\Controllers\Api\Public\TestBankController::class, 'webhook']);
 
+    // Генерация счета для банковского перевода
+    Route::options('/payment-methods/transfer/invoice', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/payment-methods/transfer/invoice', [App\Http\Controllers\Api\Public\TransferInvoiceController::class, 'generateInvoice']);
+    Route::get('/payment-methods/transfer/invoice/excel', [App\Http\Controllers\Api\Public\TransferInvoiceController::class, 'generateInvoiceExcel']);
+    Route::get('/payment-methods/transfer/invoice/pdf', [App\Http\Controllers\Api\Public\TransferInvoiceController::class, 'generateInvoicePdf']);
+
     // Настройки бонусов (публичные - видны всем)
     Route::get('/public/shop/bonus-settings', [App\Http\Controllers\Api\Public\ShopBonusSettingsController::class, 'getActive']);
     Route::post('/public/shop/bonus-settings/calculate', [App\Http\Controllers\Api\Public\ShopBonusSettingsController::class, 'calculateBonus']);
@@ -739,6 +749,14 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('/{id}', [\App\Http\Controllers\ContactController::class, 'update']);
         Route::delete('/{id}', [\App\Http\Controllers\ContactController::class, 'destroy']);
         Route::get('/social-types/list', [\App\Http\Controllers\ContactController::class, 'getSocialTypes']);
+    });
+
+    // Управление типами социальных сетей
+    Route::middleware(['auth:sanctum', 'role:admin,site'])->prefix('contact-social-types')->group(function () {
+        Route::get('/', [\App\Http\Controllers\ContactSocialTypeController::class, 'index']);
+        Route::post('/', [\App\Http\Controllers\ContactSocialTypeController::class, 'store']);
+        Route::put('/{id}', [\App\Http\Controllers\ContactSocialTypeController::class, 'update']);
+        Route::delete('/{id}', [\App\Http\Controllers\ContactSocialTypeController::class, 'destroy']);
     });
 
     // Сообщения с сайта (доступны админам)
@@ -1815,34 +1833,57 @@ Route::middleware('auth:sanctum')->group(function () {
             // Получить список всех пользователей
             Route::get('/', function () {
                 try {
+                    // Получаем всех пользователей с ролями
                     $users = \App\Models\User::with('roles')
                         ->orderBy('created_at', 'desc')
-                        ->get()
-                        ->map(function ($user) {
-                            $userData = [
-                                'id' => $user->id,
-                                'name' => $user->name,
-                                'email' => $user->email,
-                                'phone' => $user->phone,
-                                'google_id' => $user->google_id,
-                                'yandex_id' => $user->yandex_id,
-                                'vk_id' => $user->vk_id,
-                                'phone_verified_at' => $user->phone_verified_at ? 1 : 0, // 1 если есть дата, 0 если null
-                                'roles' => $user->roles->pluck('name'),
-                                'email_verified_at' => $user->email_verified_at ? 1 : 0, // 1 если есть дата, 0 если null
-                                'is_active' => $user->is_active,
-                                'created_at' => $user->created_at,
-                                'updated_at' => $user->updated_at,
-                                'last_login_at' => $user->last_login_at,
-                            ];
+                        ->get();
+                    
+                    // Получаем все бонусы одним запросом для оптимизации
+                    $userIds = $users->pluck('id')->toArray();
+                    $bonuses = \App\Models\UserBonus::whereIn('user_id', $userIds)
+                        ->pluck('points', 'user_id')
+                        ->toArray();
+                    
+                    // Получаем количество персональных промокодов для каждого пользователя
+                    $promocodesCount = \App\Models\Promocode::whereIn('user_id', $userIds)
+                        ->whereNotNull('user_id')
+                        ->selectRaw('user_id, COUNT(*) as count')
+                        ->groupBy('user_id')
+                        ->pluck('count', 'user_id')
+                        ->toArray();
+                    
+                    $users = $users->map(function ($user) use ($bonuses, $promocodesCount) {
+                        // Получаем бонусы пользователя из предзагруженного массива
+                        $bonusPoints = $bonuses[$user->id] ?? 0;
+                        $hasPromocodes = isset($promocodesCount[$user->id]) && $promocodesCount[$user->id] > 0;
+                        
+                        $userData = [
+                            'id' => $user->id,
+                            'name' => $user->name,
+                            'email' => $user->email,
+                            'phone' => $user->phone,
+                            'google_id' => $user->google_id,
+                            'yandex_id' => $user->yandex_id,
+                            'vk_id' => $user->vk_id,
+                            'phone_verified_at' => $user->phone_verified_at ? 1 : 0, // 1 если есть дата, 0 если null
+                            'roles' => $user->roles->pluck('name'),
+                            'email_verified_at' => $user->email_verified_at ? 1 : 0, // 1 если есть дата, 0 если null
+                            'is_active' => $user->is_active,
+                            'created_at' => $user->created_at,
+                            'updated_at' => $user->updated_at,
+                            'last_login_at' => $user->last_login_at,
+                            'bonus_points' => $bonusPoints,
+                            'bonuses' => $bonusPoints, // Дублируем для совместимости
+                            'has_promocodes' => $hasPromocodes, // Флаг наличия персональных промокодов
+                        ];
 
-                            // Добавляем поля авторизации
-                            $userData['google_id'] = $user->google_id;
-                            $userData['yandex_id'] = $user->yandex_id;
-                            $userData['vk_id'] = $user->vk_id;
+                        // Добавляем поля авторизации
+                        $userData['google_id'] = $user->google_id;
+                        $userData['yandex_id'] = $user->yandex_id;
+                        $userData['vk_id'] = $user->vk_id;
 
-                            return $userData;
-                        });
+                        return $userData;
+                    });
 
                     return response()->json([
                         'success' => true,
@@ -2134,6 +2175,11 @@ Route::middleware('auth:sanctum')->group(function () {
                     ], 500);
                 }
             });
+
+            // Управление бонусами пользователя
+            Route::get('/{id}/bonuses', [\App\Http\Controllers\Admin\UserBonusController::class, 'show']);
+            Route::put('/{id}/bonuses', [\App\Http\Controllers\Admin\UserBonusController::class, 'update']);
+            Route::get('/{id}/bonuses/transactions', [\App\Http\Controllers\Admin\UserBonusController::class, 'transactions']);
         });
 
         // Menu management

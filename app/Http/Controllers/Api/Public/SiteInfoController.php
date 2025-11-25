@@ -22,8 +22,11 @@ class SiteInfoController extends Controller
 
             // Получаем все настройки с группой general, site, auth и shop без кэширования
             $settings = Setting::select('key', 'value', 'type', 'group')
-                ->whereIn('group', ['general', 'site', 'auth', 'shop'])
-                ->orWhere('key', 'site_google_font') // Включаем параметр Google Fonts из любой группы
+                ->where(function ($query) {
+                    $query->whereIn('group', ['general', 'site', 'auth', 'shop'])
+                          ->orWhere('key', 'site_google_font') // Включаем параметр Google Fonts из любой группы
+                          ->orWhere('key', 'yandex_metrika'); // Включаем параметр Яндекс.Метрики из любой группы
+                })
                 ->get();
 
             $siteInfo = [];
@@ -42,6 +45,11 @@ class SiteInfoController extends Controller
             ]);
 
         } catch (\Exception $e) {
+            Log::error('Ошибка в SiteInfoController::index: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
 
             // Возвращаем ошибку вместо fallback данных
             return response()->json([
@@ -168,24 +176,34 @@ class SiteInfoController extends Controller
      */
     private function getImageUrl($filePath)
     {
-        if (!$filePath) {
+        if (!$filePath || !is_string($filePath)) {
             return null;
         }
 
-        // Если в пути есть полный URL, извлекаем только относительный путь
-        if (preg_match('/https?:\/\/[^\/]+(.*)/', $filePath, $matches)) {
-            $filePath = $matches[1];
+        try {
+            // Если в пути есть полный URL, извлекаем только относительный путь
+            if (preg_match('/https?:\/\/[^\/]+(.*)/', $filePath, $matches)) {
+                $filePath = $matches[1];
+            }
+
+            // Убираем лишний слэш в начале
+            $filePath = ltrim($filePath, '/');
+
+            // Если путь пустой после обработки
+            if (empty($filePath)) {
+                return null;
+            }
+
+            // Если путь начинается с images/, возвращаем с ведущим слэшем
+            if (str_starts_with($filePath, 'images/')) {
+                return '/' . $filePath;
+            }
+
+            // Возвращаем относительный путь к файлу в папке public/images/
+            return '/images/' . $filePath;
+        } catch (\Exception $e) {
+            Log::error('Ошибка в getImageUrl: ' . $e->getMessage(), ['filePath' => $filePath]);
+            return null;
         }
-
-        // Убираем лишний слэш в начале
-        $filePath = ltrim($filePath, '/');
-
-        // Если путь начинается с images/, возвращаем с ведущим слэшем
-        if (str_starts_with($filePath, 'images/')) {
-            return '/' . $filePath;
-        }
-
-        // Возвращаем относительный путь к файлу в папке public/images/
-        return '/images/' . $filePath;
     }
 }

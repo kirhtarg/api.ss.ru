@@ -78,7 +78,13 @@ class ShopCategoriesController extends Controller
 
 
             // Вычисляем количество товаров для каждой категории и подкатегории
+            // И обрабатываем изображения
             foreach ($categories as $category) {
+                // Обрабатываем изображение категории
+                if ($category->image) {
+                    $category->image = $this->getImageUrl($category->image);
+                }
+                
                 // Количество товаров в главной категории
                 $category->products_count = \DB::table('shop_good_categories')
                     ->join('shop_goods', 'shop_good_categories.good_id', '=', 'shop_goods.id')

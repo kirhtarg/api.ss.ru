@@ -30,6 +30,6 @@ class ContactSocial extends Model
      */
     public function socialType(): BelongsTo
     {
-        return $this->belongsTo(SocialType::class, 'social_type');
+        return $this->belongsTo(ContactSocialType::class, 'social_type');
     }
 }

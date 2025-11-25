@@ -29,6 +29,7 @@ class Promocode extends Model
         'applicable_categories',
         'applicable_goods',
         'applicable_variations',
+        'user_id', // ID пользователя для персональных промокодов
     ];
 
     protected $casts = [
@@ -68,11 +69,28 @@ class Promocode extends Model
     }
 
     /**
-     * Связь с пользователями (персональные промокоды)
+     * Связь с пользователем (персональный промокод)
+     */
+    public function user(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    /**
+     * Связь с пользователями (many-to-many, для обратной совместимости)
+     * @deprecated Используйте user_id для персональных промокодов
      */
     public function users(): BelongsToMany
     {
         return $this->belongsToMany(User::class, 'promocode_users', 'promocode_id', 'user_id');
+    }
+
+    /**
+     * Проверка, является ли промокод персональным
+     */
+    public function isPersonal(): bool
+    {
+        return $this->user_id !== null;
     }
 
     /**
@@ -205,30 +223,23 @@ class Promocode extends Model
             $errors[] = "Минимальная сумма заказа для этого промокода: " . number_format($this->min_order_amount, 2, '.', ' ') . " ₽";
         }
 
-        // Проверка персональных промокодов
-        $allowedUsersCount = $this->users()->count();
-        if ($allowedUsersCount > 0) {
+        // Проверка персональных промокодов (через user_id)
+        if ($this->user_id !== null) {
             if (!$userId) {
                 \Illuminate\Support\Facades\Log::warning('Promocode user check failed: no userId', [
                     'promocode_id' => $this->id,
                 ]);
                 $errors[] = "Этот промокод доступен только для определенных пользователей";
             } else {
-                // Проверяем, есть ли пользователь в списке разрешенных
-                // Используем более простой способ - загружаем коллекцию и проверяем через contains
-                $allowedUsers = $this->users()->get();
-                $allowedUserIds = $allowedUsers->pluck('id')->map(function($id) {
-                    return (int)$id;
-                })->toArray();
-                
-                // Приводим userId к int для корректного сравнения
+                // Проверяем, соответствует ли user_id промокода текущему пользователю
                 $userIdInt = (int)$userId;
+                $promocodeUserId = (int)$this->user_id;
                 
                 // Логирование для отладки
                 \Illuminate\Support\Facades\Log::info('Promocode user check', [
                     'promocode_id' => $this->id,
                     'user_id' => $userId,
-                    'user_id_type' => gettype($userId),
+                    'promocode_user_id' => $this->user_id,
                     'user_id_int' => $userIdInt,
                     'allowed_users_count' => $allowedUsers->count(),
                     'allowed_user_ids' => $allowedUserIds,

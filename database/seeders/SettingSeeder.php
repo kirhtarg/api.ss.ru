@@ -541,6 +541,17 @@ class SettingSeeder extends Seeder
                 'created_at' => '2025-09-25 17:24:08',
                 'updated_at' => '2025-09-25 17:25:41',
             ],
+            [
+                'id' => 43,
+                'key' => 'yandex_metrika',
+                'name' => 'Яндекс Метрика',
+                'value' => '',
+                'type' => 'string',
+                'group' => 'general',
+                'description' => 'ID счетчика Яндекс Метрики',
+                'created_at' => '2025-09-25 17:24:08',
+                'updated_at' => '2025-09-25 17:25:41',
+            ],
         ];
 
         foreach ($settings as $setting) {

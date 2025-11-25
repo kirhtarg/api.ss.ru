@@ -50,7 +50,7 @@ class PromocodeController extends Controller
         $orderAmount = $validated['order_amount'];
 
         // Находим промокод с загруженными связями
-        $promocode = Promocode::with('users')->where('code', $code)->first();
+        $promocode = Promocode::with('user')->where('code', $code)->first();
 
         if (!$promocode) {
             return response()->json([
@@ -66,15 +66,14 @@ class PromocodeController extends Controller
         $sessionId = $request->header('X-Session-ID');
 
         // Логирование для отладки
-        $allowedUserIds = $promocode->users()->select('users.id')->pluck('users.id')->toArray();
         \Illuminate\Support\Facades\Log::info('Promocode apply check', [
             'promocode_id' => $promocode->id,
             'promocode_code' => $promocode->code,
+            'promocode_user_id' => $promocode->user_id,
             'user_id' => $userId,
             'user_from_token' => $user ? $user->id : null,
             'auth_id' => Auth::id(),
-            'allowed_users_count' => $promocode->users()->count(),
-            'allowed_user_ids' => $allowedUserIds,
+            'is_personal' => $promocode->user_id !== null,
         ]);
 
         // Собираем все ошибки проверок

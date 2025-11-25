@@ -6,7 +6,7 @@ use App\Models\Contact;
 use App\Models\ContactPhone;
 use App\Models\ContactAddress;
 use App\Models\ContactSocial;
-use App\Models\SocialType;
+use App\Models\ContactSocialType;
 use App\Http\Requests\ContactRequest;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -293,7 +293,7 @@ class ContactController extends Controller
      */
     public function getSocialTypes(): JsonResponse
     {
-        $socialTypes = SocialType::orderBy('social')->get();
+        $socialTypes = ContactSocialType::orderBy('social')->get();
 
         return response()->json([
             'success' => true,

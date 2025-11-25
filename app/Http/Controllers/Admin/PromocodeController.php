@@ -44,6 +44,12 @@ class PromocodeController extends Controller
                 $query->where('is_active', $request->is_active);
             }
 
+            // Фильтр по пользователю (user_id) - персональные промокоды
+            if ($request->has('user_id') && $request->user_id !== '' && $request->user_id !== null) {
+                $userId = (int) $request->user_id;
+                $query->where('user_id', $userId);
+            }
+
             // Сортировка
             $sortBy = $request->get('sort_by', 'created_at');
             $sortOrder = $request->get('sort_order', 'desc');
@@ -55,7 +61,7 @@ class PromocodeController extends Controller
             $totalCount = Promocode::count();
             \Log::info('Total promocodes in database: ' . $totalCount);
             
-            $promocodes = $query->with(['categories', 'goods', 'users'])->paginate($perPage);
+            $promocodes = $query->with(['categories', 'goods', 'user'])->paginate($perPage);
             
             \Log::info('Query result count: ' . $promocodes->count());
             \Log::info('Query SQL: ' . $query->toSql());
@@ -90,7 +96,7 @@ class PromocodeController extends Controller
             ], 404);
         }
         
-        $promocode->load(['categories', 'goods', 'users']);
+        $promocode->load(['categories', 'goods', 'user']);
         return response()->json([
             'success' => true,
             'data' => $promocode
@@ -121,6 +127,7 @@ class PromocodeController extends Controller
             'applicable_goods.*' => 'integer|exists:shop_goods,id',
             'applicable_variations' => 'nullable|array',
             'applicable_variations.*' => 'integer|exists:good_variations,id',
+            'user_id' => 'nullable|integer|exists:users,id', // ID пользователя для персонального промокода
         ]);
 
         // Валидация value для определенных типов
@@ -134,10 +141,15 @@ class PromocodeController extends Controller
         // Извлекаем связи для обработки отдельно
         $categoryIds = $request->input('category_ids', []);
         $goodIds = $request->input('good_ids', []);
-        $userIds = $request->input('user_ids', []);
+        $userId = $request->input('user_id', null); // Для персональных промокодов
 
         // Удаляем эти поля из validated, так как они не в fillable
         unset($validated['applicable_categories'], $validated['applicable_goods']);
+
+        // Если передан user_id, устанавливаем его для персонального промокода
+        if ($userId) {
+            $validated['user_id'] = (int) $userId;
+        }
 
         $promocode = Promocode::create($validated);
 
@@ -148,12 +160,9 @@ class PromocodeController extends Controller
         if (!empty($goodIds)) {
             $promocode->goods()->attach($goodIds);
         }
-        if (!empty($userIds)) {
-            $promocode->users()->attach($userIds);
-        }
 
         // Загружаем связи для ответа
-        $promocode->load(['categories', 'goods', 'users']);
+        $promocode->load(['categories', 'goods', 'user']);
 
         return response()->json([
             'success' => true,
@@ -195,6 +204,7 @@ class PromocodeController extends Controller
             'applicable_goods.*' => 'integer|exists:shop_goods,id',
             'applicable_variations' => 'nullable|array',
             'applicable_variations.*' => 'integer|exists:good_variations,id',
+            'user_id' => 'nullable|integer|exists:users,id', // ID пользователя для персонального промокода
         ]);
 
         // Валидация value для определенных типов
@@ -208,10 +218,15 @@ class PromocodeController extends Controller
         // Извлекаем связи для обработки отдельно
         $categoryIds = $request->input('category_ids', []);
         $goodIds = $request->input('good_ids', []);
-        $userIds = $request->input('user_ids', []);
+        $userId = $request->input('user_id', null); // Для персональных промокодов
 
         // Удаляем эти поля из validated, так как они не в fillable
         unset($validated['applicable_categories'], $validated['applicable_goods']);
+
+        // Если передан user_id, устанавливаем его для персонального промокода
+        if ($request->has('user_id')) {
+            $validated['user_id'] = $userId ? (int) $userId : null;
+        }
 
         $promocode->update($validated);
 
@@ -222,12 +237,9 @@ class PromocodeController extends Controller
         if ($request->has('good_ids')) {
             $promocode->goods()->sync($goodIds);
         }
-        if ($request->has('user_ids')) {
-            $promocode->users()->sync($userIds);
-        }
 
         // Загружаем связи для ответа
-        $promocode->load(['categories', 'goods', 'users']);
+        $promocode->load(['categories', 'goods', 'user']);
 
         return response()->json([
             'success' => true,
@@ -239,22 +251,32 @@ class PromocodeController extends Controller
     /**
      * Удалить промокод
      */
-    public function destroy(Promocode $promocode): JsonResponse
+    public function destroy($id): JsonResponse
     {
-        // Проверяем, есть ли использования промокода
-        if ($promocode->usages()->count() > 0) {
+        try {
+            $promocode = Promocode::find($id);
+            
+            if (!$promocode) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Промокод не найден'
+                ], 404);
+            }
+            
+            // Удаляем промокод (даже если он использовался)
+            // Связи many-to-many будут удалены автоматически благодаря onDelete('cascade')
+            $promocode->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Промокод успешно удален'
+            ]);
+        } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Нельзя удалить промокод, который уже использовался'
-            ], 422);
+                'message' => 'Ошибка при удалении промокода: ' . $e->getMessage()
+            ], 500);
         }
-
-        $promocode->delete();
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Промокод успешно удален'
-        ]);
     }
 
     /**

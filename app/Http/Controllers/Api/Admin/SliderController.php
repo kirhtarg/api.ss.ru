@@ -149,7 +149,17 @@ class SliderController extends Controller
 
         try {
             $slider = Slider::findOrFail($id);
-            $slider->update($request->all());
+            
+            // Подготавливаем данные для обновления
+            $updateData = $request->all();
+            
+            // Обрабатываем пустую строку для name
+            // Если имя пустое, устанавливаем его как пустую строку (разрешено для слайдера)
+            if (isset($updateData['name']) && $updateData['name'] === '') {
+                $updateData['name'] = ''; // Явно устанавливаем пустую строку
+            }
+            
+            $slider->update($updateData);
 
             return response()->json([
                 'success' => true,

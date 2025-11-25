@@ -41,7 +41,7 @@ class ContactRequest extends FormRequest
             'addresses.*.work_mode' => 'nullable|string',
             'addresses.*.is_main' => 'nullable|boolean',
             'socials' => 'nullable|array',
-            'socials.*.social_type' => 'required_with:socials|exists:social_types,id',
+            'socials.*.social_type' => 'required_with:socials|exists:contact_social_types,id',
             'socials.*.social_name' => 'required_with:socials|string|max:255',
             'socials.*.social_url' => 'required_with:socials|string|url|max:500',
         ];
