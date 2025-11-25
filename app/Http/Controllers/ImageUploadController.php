@@ -86,14 +86,14 @@ class ImageUploadController extends Controller
             $category->update(['image' => $imagePath]);
             Log::info('Категория обновлена с новым изображением');
 
-            // Используем стандартный Storage URL для public диска
-            $fullUrl = config('app.url') . '/storage/' . $imagePath;
-            Log::info('Полный URL изображения: ' . $fullUrl);
+            // Возвращаем путь относительно корня фронтенда
+            $relativePath = '/' . $imagePath;
+            Log::info('Относительный путь изображения: ' . $relativePath);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Изображение успешно загружено',
-                'image_url' => $fullUrl
+                'image_url' => $relativePath
             ]);
 
         } catch (\Exception $e) {
@@ -148,10 +148,13 @@ class ImageUploadController extends Controller
                 ], 400);
             }
 
+            // Возвращаем путь относительно корня фронтенда
+            $relativePath = '/' . $imagePath;
+            
             return response()->json([
                 'success' => true,
                 'message' => 'Изображение успешно загружено',
-                'image_url' => config('app.url') . '/storage/' . $imagePath
+                'image_url' => $relativePath
             ]);
 
         } catch (\Exception $e) {
@@ -197,12 +200,26 @@ class ImageUploadController extends Controller
                 'maintainAspectRatio' => $maintainAspectRatio
             ]);
 
-                    // Генерируем уникальное имя файла
-        $fileName = Str::uuid() . '.' . $file->getClientOriginalExtension();
-        $path = 'shop/categories/' . $fileName;
-        Log::info('Сгенерированный путь: ' . $path);
-        
+            // Генерируем уникальное имя файла
+            $fileName = Str::uuid() . '.' . $file->getClientOriginalExtension();
+            $relativePath = 'images/shop/categories/' . $fileName;
+            
+            // Получаем путь к фронтенду из переменной окружения
+            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+            $frontendPublicPath = base_path($frontendPath . '/public');
+            $fullPath = $frontendPublicPath . '/' . $relativePath;
+            $dir = dirname($fullPath);
+            
+            Log::info('Путь к фронтенду: ' . $frontendPath);
+            Log::info('Полный путь к public фронтенда: ' . $frontendPublicPath);
+            Log::info('Полный путь к файлу: ' . $fullPath);
+            Log::info('Директория для сохранения: ' . $dir);
 
+            // Создаем директорию если не существует
+            if (!is_dir($dir)) {
+                mkdir($dir, 0755, true);
+                Log::info('Директория создана: ' . $dir);
+            }
 
             // Создаем менеджер изображений
             $manager = new ImageManager(new Driver());
@@ -227,21 +244,19 @@ class ImageUploadController extends Controller
             $imageData = $image->toJpeg();
             Log::info('Изображение сконвертировано в JPEG, размер: ' . strlen($imageData) . ' байт');
             
-            // Сохраняем в Storage public (доступно через /storage/ URL)
-            $result = Storage::disk('public')->put($path, $imageData);
-            Log::info('Результат сохранения в Storage public: ' . ($result ? 'успешно' : 'ошибка'));
+            // Сохраняем файл на фронтенд
+            file_put_contents($fullPath, $imageData);
+            Log::info('Файл сохранен на фронтенд: ' . $fullPath);
 
             // Проверяем, что файл действительно создался
-            if (Storage::disk('public')->exists($path)) {
-                Log::info('Файл подтвержден в Storage public: ' . $path);
-                Log::info('Размер файла в Storage public: ' . Storage::disk('public')->size($path) . ' байт');
+            if (file_exists($fullPath)) {
+                Log::info('Файл подтвержден на фронтенде: ' . $fullPath);
+                Log::info('Размер файла: ' . filesize($fullPath) . ' байт');
             } else {
-                Log::error('Файл не найден в Storage public после сохранения: ' . $path);
+                Log::error('Файл не найден на фронтенде после сохранения: ' . $fullPath);
             }
-            
 
-
-            return $path;
+            return $relativePath;
             
         } catch (\Exception $e) {
             Log::error('Ошибка в processUploadedImage: ' . $e->getMessage());
@@ -263,6 +278,8 @@ class ImageUploadController extends Controller
         $maintainAspectRatio = $request->input('maintainAspectRatio', true);
 
         try {
+            Log::info('Обработка изображения из URL: ' . $url);
+            
             // Загружаем изображение из URL
             $imageContent = file_get_contents($url);
             if (!$imageContent) {
@@ -280,7 +297,23 @@ class ImageUploadController extends Controller
 
             // Генерируем уникальное имя файла
             $fileName = Str::uuid() . '.' . $extension;
-            $path = 'shop/categories/' . $fileName;
+            $relativePath = 'images/shop/categories/' . $fileName;
+            
+            // Получаем путь к фронтенду из переменной окружения
+            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+            $frontendPublicPath = base_path($frontendPath . '/public');
+            $fullPath = $frontendPublicPath . '/' . $relativePath;
+            $dir = dirname($fullPath);
+            
+            Log::info('Путь к фронтенду: ' . $frontendPath);
+            Log::info('Полный путь к файлу: ' . $fullPath);
+            Log::info('Директория для сохранения: ' . $dir);
+
+            // Создаем директорию если не существует
+            if (!is_dir($dir)) {
+                mkdir($dir, 0755, true);
+                Log::info('Директория создана: ' . $dir);
+            }
 
             // Создаем менеджер изображений
             $manager = new ImageManager(new Driver());
@@ -297,10 +330,12 @@ class ImageUploadController extends Controller
                 $image->resize($width, $height);
             }
 
-            // Сохраняем изображение в Storage public
-            Storage::disk('public')->put($path, $image->toJpeg());
+            // Сохраняем изображение на фронтенд
+            $imageData = $image->toJpeg();
+            file_put_contents($fullPath, $imageData);
+            Log::info('Файл сохранен на фронтенд: ' . $fullPath);
 
-            return $path;
+            return $relativePath;
 
         } catch (\Exception $e) {
             Log::error('Ошибка обработки изображения из URL: ' . $e->getMessage());
@@ -337,13 +372,26 @@ class ImageUploadController extends Controller
                 ]);
             }
 
-            // Удаляем файл из storage
-            $imagePath = 'shop/categories/' . basename($currentImage);
-            if (Storage::disk('public')->exists($imagePath)) {
-                Storage::disk('public')->delete($imagePath);
-                Log::info('Файл удален из storage: ' . $imagePath);
+            // Удаляем файл с фронтенда
+            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+            $frontendPublicPath = base_path($frontendPath . '/public');
+            
+            // Обрабатываем разные форматы пути
+            $imagePathToDelete = $currentImage;
+            if (strpos($imagePathToDelete, '/') === 0) {
+                // Если путь начинается с /, убираем его
+                $imagePathToDelete = ltrim($imagePathToDelete, '/');
+            }
+            
+            $fullPath = $frontendPublicPath . '/' . $imagePathToDelete;
+            
+            Log::info('Попытка удаления файла: ' . $fullPath);
+            
+            if (file_exists($fullPath)) {
+                unlink($fullPath);
+                Log::info('Файл удален с фронтенда: ' . $fullPath);
             } else {
-                Log::warning('Файл не найден в storage: ' . $imagePath);
+                Log::warning('Файл не найден на фронтенде: ' . $fullPath);
             }
 
             // Очищаем поле image в базе данных
@@ -359,6 +407,336 @@ class ImageUploadController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Ошибка удаления изображения: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка удаления изображения: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Загрузка изображения для бренда
+     */
+    public function uploadBrandImage(Request $request, $brandId)
+    {
+        try {
+            Log::info('Начало загрузки изображения для бренда: ' . $brandId);
+            Log::info('Данные запроса:', $request->all());
+            
+            // Валидация
+            $validator = Validator::make($request->all(), [
+                'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:5120', // 5MB
+                'image_url' => 'nullable|url',
+                'width' => 'nullable|integer|min:1|max:2000',
+                'height' => 'nullable|integer|min:1|max:2000',
+                'maintainAspectRatio' => 'boolean'
+            ]);
+
+            if ($validator->fails()) {
+                Log::warning('Ошибка валидации:', $validator->errors()->toArray());
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            // Проверяем, что бренд существует
+            $brand = \App\Models\ShopBrand::find($brandId);
+            if (!$brand) {
+                Log::warning('Бренд не найден: ' . $brandId);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Бренд не найден'
+                ], 404);
+            }
+
+            Log::info('Бренд найден:', ['id' => $brand->id, 'name' => $brand->name]);
+
+            $imagePath = null;
+
+            // Обработка загруженного файла
+            if ($request->hasFile('image')) {
+                Log::info('Обработка загруженного файла');
+                $file = $request->file('image');
+                Log::info('Информация о файле:', [
+                    'original_name' => $file->getClientOriginalName(),
+                    'size' => $file->getSize(),
+                    'mime_type' => $file->getMimeType(),
+                    'extension' => $file->getClientOriginalExtension()
+                ]);
+                $imagePath = $this->processUploadedBrandImage($file, $request);
+            }
+            // Обработка URL
+            elseif ($request->has('image_url')) {
+                Log::info('Обработка изображения из URL: ' . $request->image_url);
+                $imagePath = $this->processBrandImageFromUrl($request->image_url, $request);
+            }
+
+            if (!$imagePath) {
+                Log::error('Не удалось получить путь к изображению');
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не удалось обработать изображение'
+                ], 400);
+            }
+
+            Log::info('Путь к изображению получен: ' . $imagePath);
+
+            // Обновляем бренд
+            $brand->update(['logo' => $imagePath]);
+            Log::info('Бренд обновлен с новым изображением');
+
+            // Возвращаем путь относительно корня фронтенда
+            $relativePath = '/' . $imagePath;
+            Log::info('Относительный путь изображения: ' . $relativePath);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Изображение успешно загружено',
+                'image_url' => $relativePath
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Ошибка загрузки изображения бренда: ' . $e->getMessage());
+            Log::error('Стек вызовов: ' . $e->getTraceAsString());
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка загрузки изображения: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Обработка загруженного файла для бренда
+     */
+    private function processUploadedBrandImage($file, Request $request)
+    {
+        try {
+            Log::info('Начало обработки загруженного файла для бренда');
+            
+            // Получаем настройки изображений (используем те же, что и для категорий)
+            $imageSettings = $this->getImageSettings();
+            Log::info('Настройки изображения:', $imageSettings);
+            
+            $width = $request->input('width', $imageSettings['width']);
+            $height = $request->input('height', $imageSettings['height']);
+            $maintainAspectRatio = $request->input('maintainAspectRatio', true);
+            
+            Log::info('Параметры обработки:', [
+                'width' => $width,
+                'height' => $height,
+                'maintainAspectRatio' => $maintainAspectRatio
+            ]);
+
+            // Генерируем уникальное имя файла
+            $fileName = Str::uuid() . '.' . $file->getClientOriginalExtension();
+            $relativePath = 'images/shop/brands/' . $fileName;
+            
+            // Получаем путь к фронтенду из переменной окружения
+            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+            $frontendPublicPath = base_path($frontendPath . '/public');
+            $fullPath = $frontendPublicPath . '/' . $relativePath;
+            $dir = dirname($fullPath);
+            
+            Log::info('Путь к фронтенду: ' . $frontendPath);
+            Log::info('Полный путь к public фронтенда: ' . $frontendPublicPath);
+            Log::info('Полный путь к файлу: ' . $fullPath);
+            Log::info('Директория для сохранения: ' . $dir);
+
+            // Создаем директорию если не существует
+            if (!is_dir($dir)) {
+                mkdir($dir, 0755, true);
+                Log::info('Директория создана: ' . $dir);
+            }
+
+            // Создаем менеджер изображений
+            $manager = new ImageManager(new Driver());
+            Log::info('Менеджер изображений создан');
+
+            // Создаем изображение с помощью Intervention Image
+            $image = $manager->read($file);
+            Log::info('Изображение прочитано');
+
+            // Ресайзим изображение с обрезкой до точных размеров
+            if ($maintainAspectRatio) {
+                // Обрезаем изображение до точных размеров с сохранением пропорций
+                $image->cover($width, $height);
+                Log::info('Изображение обрезано до размеров: ' . $width . 'x' . $height . ' с сохранением пропорций');
+            } else {
+                // Растягиваем изображение до точных размеров (может исказить пропорции)
+                $image->resize($width, $height);
+                Log::info('Изображение растянуто до размеров: ' . $width . 'x' . $height);
+            }
+
+            // Сохраняем изображение
+            $imageData = $image->toJpeg();
+            Log::info('Изображение сконвертировано в JPEG, размер: ' . strlen($imageData) . ' байт');
+            
+            // Сохраняем файл на фронтенд
+            file_put_contents($fullPath, $imageData);
+            Log::info('Файл сохранен на фронтенд: ' . $fullPath);
+
+            // Проверяем, что файл действительно создался
+            if (file_exists($fullPath)) {
+                Log::info('Файл подтвержден на фронтенде: ' . $fullPath);
+                Log::info('Размер файла: ' . filesize($fullPath) . ' байт');
+            } else {
+                Log::error('Файл не найден на фронтенде после сохранения: ' . $fullPath);
+            }
+
+            return $relativePath;
+            
+        } catch (\Exception $e) {
+            Log::error('Ошибка в processUploadedBrandImage: ' . $e->getMessage());
+            Log::error('Стек вызовов: ' . $e->getTraceAsString());
+            throw $e;
+        }
+    }
+
+    /**
+     * Обработка изображения из URL для бренда
+     */
+    private function processBrandImageFromUrl($url, Request $request)
+    {
+        // Получаем настройки изображений
+        $imageSettings = $this->getImageSettings();
+        
+        $width = $request->input('width', $imageSettings['width']);
+        $height = $request->input('height', $imageSettings['height']);
+        $maintainAspectRatio = $request->input('maintainAspectRatio', true);
+
+        try {
+            Log::info('Обработка изображения бренда из URL: ' . $url);
+            
+            // Загружаем изображение из URL
+            $imageContent = file_get_contents($url);
+            if (!$imageContent) {
+                throw new \Exception('Не удалось загрузить изображение из URL');
+            }
+
+            // Определяем расширение файла
+            $extension = 'jpg'; // по умолчанию
+            $contentType = get_headers($url, 1)['Content-Type'] ?? '';
+            if (strpos($contentType, 'png') !== false) {
+                $extension = 'png';
+            } elseif (strpos($contentType, 'gif') !== false) {
+                $extension = 'gif';
+            }
+
+            // Генерируем уникальное имя файла
+            $fileName = Str::uuid() . '.' . $extension;
+            $relativePath = 'images/shop/brands/' . $fileName;
+            
+            // Получаем путь к фронтенду из переменной окружения
+            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+            $frontendPublicPath = base_path($frontendPath . '/public');
+            $fullPath = $frontendPublicPath . '/' . $relativePath;
+            $dir = dirname($fullPath);
+            
+            Log::info('Путь к фронтенду: ' . $frontendPath);
+            Log::info('Полный путь к файлу: ' . $fullPath);
+            Log::info('Директория для сохранения: ' . $dir);
+
+            // Создаем директорию если не существует
+            if (!is_dir($dir)) {
+                mkdir($dir, 0755, true);
+                Log::info('Директория создана: ' . $dir);
+            }
+
+            // Создаем менеджер изображений
+            $manager = new ImageManager(new Driver());
+
+            // Создаем изображение
+            $image = $manager->read($imageContent);
+
+            // Ресайзим изображение с обрезкой до точных размеров
+            if ($maintainAspectRatio) {
+                // Обрезаем изображение до точных размеров с сохранением пропорций
+                $image->cover($width, $height);
+            } else {
+                // Растягиваем изображение до точных размеров (может исказить пропорции)
+                $image->resize($width, $height);
+            }
+
+            // Сохраняем изображение на фронтенд
+            $imageData = $image->toJpeg();
+            file_put_contents($fullPath, $imageData);
+            Log::info('Файл сохранен на фронтенд: ' . $fullPath);
+
+            return $relativePath;
+
+        } catch (\Exception $e) {
+            Log::error('Ошибка обработки изображения бренда из URL: ' . $e->getMessage());
+            throw $e;
+        }
+    }
+
+    /**
+     * Удаление изображения бренда
+     */
+    public function deleteBrandImage(Request $request, $brandId)
+    {
+        try {
+            Log::info('Начало удаления изображения для бренда: ' . $brandId);
+            
+            // Проверяем, что бренд существует
+            $brand = \App\Models\ShopBrand::find($brandId);
+            if (!$brand) {
+                Log::warning('Бренд не найден: ' . $brandId);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Бренд не найден'
+                ], 404);
+            }
+
+            // Получаем текущее изображение
+            $currentImage = $brand->logo;
+            
+            if (!$currentImage) {
+                Log::info('У бренда нет изображения для удаления');
+                return response()->json([
+                    'success' => true,
+                    'message' => 'У бренда нет изображения'
+                ]);
+            }
+
+            // Удаляем файл с фронтенда
+            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+            $frontendPublicPath = base_path($frontendPath . '/public');
+            
+            // Обрабатываем разные форматы пути
+            $imagePathToDelete = $currentImage;
+            if (strpos($imagePathToDelete, '/') === 0) {
+                // Если путь начинается с /, убираем его
+                $imagePathToDelete = ltrim($imagePathToDelete, '/');
+            }
+            
+            $fullPath = $frontendPublicPath . '/' . $imagePathToDelete;
+            
+            Log::info('Попытка удаления файла: ' . $fullPath);
+            
+            if (file_exists($fullPath)) {
+                unlink($fullPath);
+                Log::info('Файл удален с фронтенда: ' . $fullPath);
+            } else {
+                Log::warning('Файл не найден на фронтенде: ' . $fullPath);
+            }
+
+            // Очищаем поле logo в базе данных
+            $brand->logo = null;
+            $brand->save();
+
+            Log::info('Изображение успешно удалено для бренда: ' . $brandId);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Изображение успешно удалено'
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Ошибка удаления изображения бренда: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка удаления изображения: ' . $e->getMessage()

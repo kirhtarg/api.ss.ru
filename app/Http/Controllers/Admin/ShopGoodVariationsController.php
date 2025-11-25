@@ -581,7 +581,7 @@ class ShopGoodVariationsController extends Controller
             'stock_quantity' => 'nullable|integer|min:0',
             'remote_stock_quantity' => 'nullable|string|max:255',
             'weight' => 'nullable|numeric|min:0',
-            'depth' => 'nullable|numeric|min:0',
+            'length' => 'nullable|numeric|min:0',
             'height' => 'nullable|numeric|min:0',
             'width' => 'nullable|numeric|min:0',
             'is_active' => 'boolean'
@@ -598,7 +598,7 @@ class ShopGoodVariationsController extends Controller
         // Подготавливаем данные для обновления
         $updateData = $request->only([
             'name', 'sku', 'price', 'sale_price', 'stock_quantity', 'weight', 
-            'depth', 'height', 'width', 'is_active'
+            'length', 'height', 'width', 'is_active'
         ]);
         
         // Явно обрабатываем remote_stock_quantity - всегда обновляем, даже если null

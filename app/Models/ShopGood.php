@@ -26,7 +26,7 @@ class ShopGood extends Model
         'remote_stock_quantity',
         'width',
         'height',
-        'depth',
+        'depth', // В базе данных поле называется depth, но через accessor доступно как length
         'weight',
         'rating',
         'reviews_count',
@@ -46,7 +46,7 @@ class ShopGood extends Model
         'remote_stock_quantity' => 'string', // Может быть строкой типа ">10", поэтому не приводим к integer
         'width' => 'decimal:2',
         'height' => 'decimal:2',
-        'depth' => 'decimal:2',
+        'depth' => 'decimal:2', // В базе данных поле называется depth, но через accessor доступно как length
         'weight' => 'decimal:2',
         'rating' => 'decimal:2',
         'reviews_count' => 'integer',
@@ -241,12 +241,23 @@ class ShopGood extends Model
      */
     public function scopePriceRange($query, $minPrice, $maxPrice)
     {
-        if ($minPrice) {
-            $query->where('price', '>=', $minPrice);
+        // Преобразуем значения в числа, если они не null
+        $minPriceNum = ($minPrice !== null && $minPrice !== '') ? (float)$minPrice : null;
+        $maxPriceNum = ($maxPrice !== null && $maxPrice !== '') ? (float)$maxPrice : null;
+        
+        // Если оба значения заданы и они одинаковы (с учетом погрешности), это точное значение
+        if ($minPriceNum !== null && $maxPriceNum !== null && abs($minPriceNum - $maxPriceNum) < 0.01) {
+            $query->where('price', '=', $maxPriceNum);
+        } else {
+            // Применяем диапазон
+            if ($minPriceNum !== null) {
+                $query->where('price', '>=', $minPriceNum);
+            }
+            if ($maxPriceNum !== null) {
+                $query->where('price', '<=', $maxPriceNum);
+            }
         }
-        if ($maxPrice) {
-            $query->where('price', '<=', $maxPrice);
-        }
+        
         return $query;
     }
 
@@ -317,6 +328,19 @@ class ShopGood extends Model
     }
 
     /**
+     * Accessor для length - использует length или depth для обратной совместимости
+     */
+    public function getLengthAttribute($value)
+    {
+        // Если length есть в атрибутах, возвращаем его
+        if (isset($this->attributes['length']) && $this->attributes['length'] !== null) {
+            return $this->attributes['length'];
+        }
+        // Иначе возвращаем depth для обратной совместимости
+        return $this->attributes['depth'] ?? null;
+    }
+
+    /**
      * Получить габариты в виде строки
      */
     public function getDimensionsAttribute()
@@ -324,7 +348,8 @@ class ShopGood extends Model
         $dimensions = [];
         if ($this->width) $dimensions[] = $this->width . '×';
         if ($this->height) $dimensions[] = $this->height . '×';
-        if ($this->depth) $dimensions[] = $this->depth;
+        $length = $this->length ?? $this->depth ?? null;
+        if ($length) $dimensions[] = $length;
 
         return implode('', $dimensions) ?: null;
     }

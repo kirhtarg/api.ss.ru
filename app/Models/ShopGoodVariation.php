@@ -135,7 +135,7 @@ class ShopGoodVariation extends Model
         $dimensions = [];
         if ($this->width) $dimensions[] = $this->width . '×';
         if ($this->height) $dimensions[] = $this->height . '×';
-        if ($this->depth) $dimensions[] = $this->depth;
+        if ($this->length) $dimensions[] = $this->length;
         
         return implode('', $dimensions) ?: null;
     }

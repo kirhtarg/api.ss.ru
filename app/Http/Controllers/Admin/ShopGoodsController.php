@@ -48,6 +48,15 @@ class ShopGoodsController extends Controller
             }
         }]);
 
+        // Фильтр по массиву ID (для массовой загрузки)
+        if ($request->has('ids')) {
+            $ids = $request->input('ids');
+            if (is_array($ids) && !empty($ids)) {
+                $ids = array_map('intval', $ids);
+                $query->whereIn('id', $ids);
+            }
+        }
+
         // Поиск
         if ($request->filled('search')) {
             $search = $request->get('search');
@@ -59,9 +68,29 @@ class ShopGoodsController extends Controller
             $query->byCategory($request->get('category_id'));
         }
 
+        // Фильтр по множественным категориям
+        if ($request->has('categories')) {
+            $categoryIds = $request->input('categories');
+            if (is_array($categoryIds) && !empty($categoryIds)) {
+                $query->whereHas('categories', function($q) use ($categoryIds) {
+                    $q->whereIn('shop_categories.id', $categoryIds);
+                });
+            }
+        }
+
         // Фильтр по бренду
         if ($request->filled('brand_id')) {
             $query->byBrand($request->get('brand_id'));
+        }
+
+        // Фильтр по множественным брендам
+        if ($request->has('brands')) {
+            $brandIds = $request->input('brands');
+            if (is_array($brandIds) && !empty($brandIds)) {
+                $query->whereHas('brands', function($q) use ($brandIds) {
+                    $q->whereIn('shop_brands.id', $brandIds);
+                });
+            }
         }
 
         // Фильтр по тегу
@@ -70,8 +99,11 @@ class ShopGoodsController extends Controller
         }
 
         // Фильтр по цене
-        if ($request->filled('min_price') || $request->filled('max_price')) {
-            $query->priceRange($request->get('min_price'), $request->get('max_price'));
+        $minPrice = $request->has('min_price') ? $request->get('min_price') : null;
+        $maxPrice = $request->has('max_price') ? $request->get('max_price') : null;
+        
+        if ($minPrice !== null || $maxPrice !== null) {
+            $query->priceRange($minPrice, $maxPrice);
         }
 
         // Фильтр по рейтингу
@@ -89,6 +121,29 @@ class ShopGoodsController extends Controller
             } elseif ($inStock === 'low') {
                 $query->where('stock_quantity', '>', 0)
                       ->where('stock_quantity', '<', 3);
+            } elseif (strpos($inStock, 'exact:') === 0) {
+                // Точное значение остатка в формате exact:value
+                $exactValue = (int)substr($inStock, 6);
+                $query->where('stock_quantity', '=', $exactValue);
+            }
+        }
+
+        // Фильтр по остатку (stock_quantity_min и stock_quantity_max для точного значения)
+        if ($request->filled('stock_quantity_min') || $request->filled('stock_quantity_max')) {
+            if ($request->filled('stock_quantity_min') && $request->filled('stock_quantity_max')) {
+                $min = (int)$request->get('stock_quantity_min');
+                $max = (int)$request->get('stock_quantity_max');
+                if ($min === $max) {
+                    // Точное значение
+                    $query->where('stock_quantity', '=', $min);
+                } else {
+                    // Диапазон
+                    $query->whereBetween('stock_quantity', [$min, $max]);
+                }
+            } elseif ($request->filled('stock_quantity_min')) {
+                $query->where('stock_quantity', '>=', (int)$request->get('stock_quantity_min'));
+            } elseif ($request->filled('stock_quantity_max')) {
+                $query->where('stock_quantity', '<=', (int)$request->get('stock_quantity_max'));
             }
         }
 
@@ -99,6 +154,26 @@ class ShopGoodsController extends Controller
                 $query->whereHas('variations');
             } elseif ($hasVariations === 'false') {
                 $query->whereDoesntHave('variations');
+            }
+        }
+
+        // Фильтр по категориям
+        if ($request->filled('has_categories')) {
+            $hasCategories = $request->get('has_categories');
+            if ($hasCategories === 'true') {
+                $query->whereHas('categories');
+            } elseif ($hasCategories === 'false') {
+                $query->whereDoesntHave('categories');
+            }
+        }
+
+        // Фильтр по брендам
+        if ($request->filled('has_brands')) {
+            $hasBrands = $request->get('has_brands');
+            if ($hasBrands === 'true') {
+                $query->whereHas('brands');
+            } elseif ($hasBrands === 'false') {
+                $query->whereDoesntHave('brands');
             }
         }
 
@@ -116,6 +191,70 @@ class ShopGoodsController extends Controller
             $query->where('is_active', $request->boolean('is_active'));
         }
 
+        // Фильтр по характеристикам (properties[property_id][])
+        if ($request->has('properties')) {
+            $properties = $request->input('properties');
+            if (is_array($properties) && !empty($properties)) {
+                // Логика ИЛИ - товар должен иметь хотя бы одну из выбранных характеристик
+                $query->where(function($q) use ($properties) {
+                    foreach ($properties as $propertyId => $valueIds) {
+                        if (is_array($valueIds) && !empty($valueIds)) {
+                            $q->orWhereHas('properties', function($propQuery) use ($propertyId, $valueIds) {
+                                $propQuery->where('shop_properties.id', $propertyId)
+                                          ->whereIn('shop_good_properties.shop_property_value_id', $valueIds);
+                            });
+                        }
+                    }
+                });
+            }
+        }
+
+        // Фильтр по количеству характеристик
+        if ($request->filled('properties_count_type')) {
+            $countType = $request->get('properties_count_type');
+            if ($countType === 'none') {
+                $query->whereDoesntHave('properties');
+            } elseif ($countType === 'with') {
+                $query->whereHas('properties');
+            } elseif ($countType === 'exact' && $request->filled('properties_count')) {
+                $exactCount = (int)$request->get('properties_count');
+                $query->has('properties', '=', $exactCount);
+            }
+        }
+
+        // Фильтр по артикулу
+        if ($request->filled('sku_filter_type')) {
+            $skuFilterType = $request->get('sku_filter_type');
+            if ($skuFilterType === 'empty') {
+                $query->where(function($q) {
+                    $q->whereNull('sku')
+                      ->orWhere('sku', '=', '');
+                });
+            } elseif ($skuFilterType === 'not_empty') {
+                $query->whereNotNull('sku')
+                      ->where('sku', '!=', '');
+            }
+        }
+
+        // Фильтр по остатку у/с (remote_stock_quantity)
+        if ($request->filled('remote_stock_quantity_not_empty')) {
+            $query->where(function($q) {
+                $q->whereNotNull('remote_stock_quantity')
+                  ->where('remote_stock_quantity', '!=', '')
+                  ->where('remote_stock_quantity', '!=', '0');
+            });
+        } elseif ($request->filled('remote_stock_quantity_empty')) {
+            $query->where(function($q) {
+                $q->whereNull('remote_stock_quantity')
+                  ->orWhere('remote_stock_quantity', '=', '')
+                  ->orWhere('remote_stock_quantity', '=', '0');
+            });
+        } elseif ($request->filled('remote_stock_quantity')) {
+            // Точное значение
+            $exactValue = $request->get('remote_stock_quantity');
+            $query->where('remote_stock_quantity', '=', $exactValue);
+        }
+
         // Сортировка
         $sortBy = $request->get('sort_by', 'sort_order');
         $sortDirection = $request->get('sort_direction', 'asc');
@@ -124,24 +263,51 @@ class ShopGoodsController extends Controller
             $query->orderBy($sortBy, $sortDirection);
         }
 
-        // Пагинация
-        $perPage = $request->get('per_page', 20);
-        $perPage = in_array($perPage, [10, 20, 50, 100]) ? $perPage : 20;
-
-        $goods = $query->paginate($perPage);
-
-        return response()->json([
-            'success' => true,
-            'data' => $goods->items(),
-            'pagination' => [
-                'current_page' => $goods->currentPage(),
-                'last_page' => $goods->lastPage(),
-                'per_page' => $goods->perPage(),
-                'total' => $goods->total(),
-                'from' => $goods->firstItem(),
-                'to' => $goods->lastItem()
-            ]
-        ]);
+        // Пагинация (если не запрашиваются конкретные ID, используем пагинацию)
+        if (!$request->has('ids')) {
+            $perPage = $request->get('per_page', 20);
+            $perPage = in_array($perPage, [10, 20, 50, 100]) ? $perPage : 20;
+            $goods = $query->paginate($perPage);
+            
+            return response()->json([
+                'success' => true,
+                'data' => $goods->items(),
+                'pagination' => [
+                    'current_page' => $goods->currentPage(),
+                    'last_page' => $goods->lastPage(),
+                    'per_page' => $goods->perPage(),
+                    'total' => $goods->total(),
+                    'from' => $goods->firstItem(),
+                    'to' => $goods->lastItem()
+                ]
+            ]);
+        } else {
+            // Если запрашиваются конкретные ID, возвращаем все без пагинации
+            $goods = $query->get();
+            
+            // Загружаем значения свойств для всех товаров
+            $hasValueCol = Schema::hasColumn('shop_good_properties', 'value');
+            foreach ($goods as $good) {
+                foreach ($good->properties as $property) {
+                    if (isset($property->pivot) && $property->pivot->shop_property_value_id) {
+                        $propertyValue = \App\Models\Shop\PropertyValue::find($property->pivot->shop_property_value_id);
+                        $property->property_value = $propertyValue;
+                    } elseif ($hasValueCol && isset($property->pivot) && $property->pivot->value) {
+                        // Если свойство использует value напрямую
+                        $property->property_value = (object)[
+                            'id' => null,
+                            'value' => $property->pivot->value,
+                            'property_id' => $property->id
+                        ];
+                    }
+                }
+            }
+            
+            return response()->json([
+                'success' => true,
+                'data' => $goods->toArray()
+            ]);
+        }
     }
 
     /**
@@ -762,7 +928,7 @@ class ShopGoodsController extends Controller
         $validator = Validator::make($request->all(), [
             'ids' => 'required|array',
             'ids.*' => 'exists:shop_goods,id',
-            'action' => 'required|in:activate,deactivate,delete,update_categories,update_brands,update_tags',
+            'action' => 'required|in:activate,deactivate,delete,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_price,update_sale_price',
             'data' => 'nullable|array'
         ]);
 
@@ -786,6 +952,13 @@ class ShopGoodsController extends Controller
             foreach ($goods as $good) {
                 $oldValues = $good->toArray();
 
+                // Для удаления сначала создаем запись аудита, потом удаляем товар
+                if ($action === 'delete') {
+                    $this->logAudit($good, 'bulk_deleted', $oldValues, null);
+                    $good->delete();
+                    continue;
+                }
+
                 switch ($action) {
                     case 'activate':
                         $good->update(['is_active' => true]);
@@ -793,17 +966,52 @@ class ShopGoodsController extends Controller
                     case 'deactivate':
                         $good->update(['is_active' => false]);
                         break;
-                    case 'delete':
-                        $good->delete();
-                        break;
                     case 'update_categories':
-                        if (isset($data['category_ids'])) {
-                            $good->categories()->sync($data['category_ids']);
+                        $currentCategoryIds = $good->categories()->pluck('shop_categories.id')->toArray();
+                        
+                        // Если установлен флаг очистки всех категорий
+                        if (isset($data['clear_all']) && $data['clear_all']) {
+                            $good->categories()->sync([]);
+                        } else {
+                            // Удаляем категории из списка на удаление
+                            if (isset($data['category_ids_to_remove']) && is_array($data['category_ids_to_remove'])) {
+                                $currentCategoryIds = array_diff($currentCategoryIds, $data['category_ids_to_remove']);
+                            }
+                            
+                            // Добавляем новые категории
+                            if (isset($data['category_ids']) && is_array($data['category_ids'])) {
+                                $newCategoryIds = $data['category_ids'];
+                                // Объединяем и убираем дубликаты
+                                $allCategoryIds = array_unique(array_merge($currentCategoryIds, $newCategoryIds));
+                            } else {
+                                $allCategoryIds = $currentCategoryIds;
+                            }
+                            
+                            $good->categories()->sync($allCategoryIds);
                         }
                         break;
                     case 'update_brands':
-                        if (isset($data['brand_ids'])) {
-                            $good->brands()->sync($data['brand_ids']);
+                        $currentBrandIds = $good->brands()->pluck('shop_brands.id')->toArray();
+                        
+                        // Если установлен флаг очистки всех брендов
+                        if (isset($data['clear_all']) && $data['clear_all']) {
+                            $good->brands()->sync([]);
+                        } else {
+                            // Удаляем бренды из списка на удаление
+                            if (isset($data['brand_ids_to_remove']) && is_array($data['brand_ids_to_remove'])) {
+                                $currentBrandIds = array_diff($currentBrandIds, $data['brand_ids_to_remove']);
+                            }
+                            
+                            // Добавляем новые бренды
+                            if (isset($data['brand_ids']) && is_array($data['brand_ids'])) {
+                                $newBrandIds = $data['brand_ids'];
+                                // Объединяем и убираем дубликаты
+                                $allBrandIds = array_unique(array_merge($currentBrandIds, $newBrandIds));
+                            } else {
+                                $allBrandIds = $currentBrandIds;
+                            }
+                            
+                            $good->brands()->sync($allBrandIds);
                         }
                         break;
                     case 'update_tags':
@@ -811,14 +1019,269 @@ class ShopGoodsController extends Controller
                             $good->tags()->sync($data['tag_ids']);
                         }
                         break;
+                    case 'update_properties':
+                        $hasValueCol = Schema::hasColumn('shop_good_properties', 'value');
+                        $hasShopValueIdCol = Schema::hasColumn('shop_good_properties', 'shop_property_value_id');
+                        $hasVariationIdCol = Schema::hasColumn('shop_good_properties', 'variation_id');
+                        
+                        // Получаем текущие свойства товара
+                        $currentProperties = [];
+                        $existingPropertiesQuery = DB::table('shop_good_properties')->where('good_id', $good->id);
+                        if ($hasVariationIdCol) {
+                            $existingPropertiesQuery->whereNull('variation_id');
+                        }
+                        $existingProperties = $existingPropertiesQuery->get();
+                        
+                        foreach ($existingProperties as $existingProp) {
+                            $currentProperties[] = [
+                                'property_id' => $existingProp->property_id,
+                                'shop_property_value_id' => $existingProp->shop_property_value_id ?? null,
+                                'value' => $existingProp->value ?? null
+                            ];
+                        }
+                        
+                        // Если установлен флаг очистки всех свойств
+                        if (isset($data['clear_all']) && $data['clear_all']) {
+                            $deleteQuery = DB::table('shop_good_properties')->where('good_id', $good->id);
+                            if ($hasVariationIdCol) {
+                                $deleteQuery->whereNull('variation_id');
+                            }
+                            $deleteQuery->delete();
+                            $currentProperties = [];
+                        } else {
+                            // Удаляем свойства из списка на удаление
+                            if (isset($data['properties_to_remove']) && is_array($data['properties_to_remove'])) {
+                                foreach ($data['properties_to_remove'] as $propertyToRemove) {
+                                    $removePropertyId = (int) $propertyToRemove['property_id'];
+                                    $removeShopPropertyValueId = isset($propertyToRemove['shop_property_value_id']) ? (int) $propertyToRemove['shop_property_value_id'] : null;
+                                    $removeValue = isset($propertyToRemove['value']) ? trim($propertyToRemove['value']) : null;
+                                    
+                                    $currentProperties = array_filter($currentProperties, function($prop) use ($removePropertyId, $removeShopPropertyValueId, $removeValue, $hasShopValueIdCol, $hasValueCol) {
+                                        if ($prop['property_id'] != $removePropertyId) {
+                                            return true;
+                                        }
+                                        
+                                        if ($hasShopValueIdCol && $removeShopPropertyValueId !== null) {
+                                            $propShopPropertyValueId = isset($prop['shop_property_value_id']) ? (int) $prop['shop_property_value_id'] : null;
+                                            return $propShopPropertyValueId != $removeShopPropertyValueId;
+                                        }
+                                        
+                                        if ($hasValueCol && $removeValue !== null) {
+                                            $propValue = trim($prop['value'] ?? '');
+                                            return $propValue !== $removeValue;
+                                        }
+                                        
+                                        return true;
+                                    });
+                                }
+                            }
+                        }
+                        
+                        // Добавляем новые свойства (если не установлен флаг очистки всех)
+                        if (!isset($data['clear_all']) || !$data['clear_all']) {
+                            if (isset($data['properties']) && is_array($data['properties'])) {
+                                $incoming = $data['properties'];
+                                
+                                // Объединяем текущие свойства с новыми (убираем дубликаты)
+                                // Проверяем каждое новое свойство - если у товара уже есть такая характеристика с таким значением, пропускаем
+                                $allProperties = array_values($currentProperties);
+                                foreach ($incoming as $property) {
+                                    if (empty($property['property_id'])) {
+                                        continue;
+                                    }
+                                    
+                                    $propertyId = (int) $property['property_id'];
+                                    $newShopPropertyValueId = isset($property['shop_property_value_id']) ? (int) $property['shop_property_value_id'] : null;
+                                    $newValue = $property['value'] ?? null;
+                                    
+                                    // Проверяем, нет ли уже такого свойства с таким значением
+                                    $exists = false;
+                                    foreach ($allProperties as $existing) {
+                                        if ($existing['property_id'] == $propertyId) {
+                                            // Если используется shop_property_value_id
+                                            if ($hasShopValueIdCol) {
+                                                $existingShopPropertyValueId = isset($existing['shop_property_value_id']) ? (int) $existing['shop_property_value_id'] : null;
+                                                if ($newShopPropertyValueId !== null && $existingShopPropertyValueId == $newShopPropertyValueId) {
+                                                    $exists = true;
+                                                    break;
+                                                }
+                                            }
+                                            // Если используется value
+                                            if ($hasValueCol) {
+                                                $existingValue = trim($existing['value'] ?? '');
+                                                if ($newValue !== null && $existingValue !== '' && $existingValue === trim($newValue)) {
+                                                    $exists = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Если свойство с таким значением уже есть, пропускаем добавление
+                                    if (!$exists) {
+                                        $allProperties[] = $property;
+                                    }
+                                }
+                                
+                                // Очистим существующие свойства товара (только базовые, если есть колонка variation_id)
+                                $deleteQuery = DB::table('shop_good_properties')->where('good_id', $good->id);
+                                if ($hasVariationIdCol) {
+                                    $deleteQuery->whereNull('variation_id');
+                                }
+                                $deleteQuery->delete();
+                                
+                                // Добавляем все свойства (текущие после удаления + новые)
+                                foreach ($allProperties as $property) {
+                                    if (empty($property['property_id'])) {
+                                        continue;
+                                    }
+                                    
+                                    $propertyId = (int) $property['property_id'];
+                                    
+                                    // Режим через справочник значений
+                                    if ($hasShopValueIdCol) {
+                                        $propertyValueId = null;
+                                        if (!empty($property['shop_property_value_id'])) {
+                                            $propertyValueId = (int) $property['shop_property_value_id'];
+                                        } elseif (!empty($property['value'])) {
+                                            $valueToSave = trim($property['value']);
+                                            $valueToSave = preg_replace('/^:\s*/', '', $valueToSave);
+                                            $valueToSave = preg_replace('/\s*:\s*$/', '', $valueToSave);
+                                            $valueToSave = trim($valueToSave);
+                                            
+                                            $pv = \App\Models\Shop\PropertyValue::firstOrCreate([
+                                                'property_id' => $propertyId,
+                                                'value' => $valueToSave
+                                            ], [
+                                                'is_active' => true,
+                                                'sort_order' => 0
+                                            ]);
+                                            $propertyValueId = (int) $pv->id;
+                                        }
+                                        
+                                        if ($propertyValueId) {
+                                            DB::table('shop_good_properties')->updateOrInsert(
+                                                ['good_id' => $good->id, 'property_id' => $propertyId],
+                                                [
+                                                    'shop_property_value_id' => $propertyValueId,
+                                                    'updated_at' => now(),
+                                                    'created_at' => now(),
+                                                ]
+                                            );
+                                        }
+                                    }
+                                    // Режим хранения прямого текста значения
+                                    elseif ($hasValueCol) {
+                                        $textValue = null;
+                                        if (!empty($property['value'])) {
+                                            $textValue = trim($property['value']);
+                                        } elseif (!empty($property['shop_property_value_id'])) {
+                                            $found = \App\Models\Shop\PropertyValue::find((int) $property['shop_property_value_id']);
+                                            $textValue = $found ? $found->value : null;
+                                        }
+                                        
+                                        if ($textValue !== null && $textValue !== '') {
+                                            DB::table('shop_good_properties')->updateOrInsert(
+                                                ['good_id' => $good->id, 'property_id' => $propertyId],
+                                                [
+                                                    'value' => $textValue,
+                                                    'updated_at' => now(),
+                                                    'created_at' => now(),
+                                                ]
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        break;
+                    case 'update_stock':
+                        if (isset($data['stock_action']) && isset($data['stock_value'])) {
+                            $stockAction = $data['stock_action'];
+                            $stockValue = (int) $data['stock_value'];
+                            $currentStock = (int) $good->stock_quantity;
+                            
+                            if ($stockAction === 'set') {
+                                $good->update(['stock_quantity' => $stockValue]);
+                            } elseif ($stockAction === 'add') {
+                                $good->update(['stock_quantity' => max(0, $currentStock + $stockValue)]);
+                            } elseif ($stockAction === 'subtract') {
+                                $good->update(['stock_quantity' => max(0, $currentStock - $stockValue)]);
+                            }
+                        }
+                        break;
+                    case 'update_remote_stock':
+                        if (isset($data['remote_stock_quantity'])) {
+                            $remoteStockValue = $data['remote_stock_quantity'];
+                            $good->update([
+                                'remote_stock_quantity' => ($remoteStockValue === '' || $remoteStockValue === null) ? null : (string)$remoteStockValue
+                            ]);
+                        }
+                        break;
+                    case 'update_price':
+                        if (isset($data['price_action']) && isset($data['price_value'])) {
+                            $priceAction = $data['price_action'];
+                            $priceValue = (float) $data['price_value'];
+                            $isPercent = isset($data['price_is_percent']) && $data['price_is_percent'];
+                            $currentPrice = (float) $good->price;
+                            
+                            if ($priceAction === 'set') {
+                                $good->update(['price' => max(0, $priceValue)]);
+                            } elseif ($priceAction === 'add') {
+                                if ($isPercent) {
+                                    $good->update(['price' => max(0, $currentPrice * (1 + $priceValue / 100))]);
+                                } else {
+                                    $good->update(['price' => max(0, $currentPrice + $priceValue)]);
+                                }
+                            } elseif ($priceAction === 'subtract') {
+                                if ($isPercent) {
+                                    $good->update(['price' => max(0, $currentPrice * (1 - $priceValue / 100))]);
+                                } else {
+                                    $good->update(['price' => max(0, $currentPrice - $priceValue)]);
+                                }
+                            }
+                        }
+                        break;
+                    case 'update_sale_price':
+                        if (isset($data['sale_price_action'])) {
+                            $salePriceAction = $data['sale_price_action'];
+                            
+                            // Очистка акционной цены
+                            if ($salePriceAction === 'clear') {
+                                $good->update(['sale_price' => null]);
+                            } elseif (isset($data['sale_price_value'])) {
+                                $salePriceValue = (float) $data['sale_price_value'];
+                                $isPercent = isset($data['sale_price_is_percent']) && $data['sale_price_is_percent'];
+                                $currentPrice = (float) $good->price;
+                                $currentSalePrice = $good->sale_price ? (float) $good->sale_price : 0;
+                                
+                                if ($salePriceAction === 'set') {
+                                    $newSalePrice = max(0, $salePriceValue);
+                                    // Проверяем, чтобы акционная цена была меньше базовой
+                                    if ($newSalePrice >= $currentPrice) {
+                                        $newSalePrice = null;
+                                    }
+                                    $good->update(['sale_price' => $newSalePrice]);
+                                } elseif ($salePriceAction === 'add') {
+                                    if ($isPercent) {
+                                        $newSalePrice = $currentSalePrice + ($currentPrice * $salePriceValue / 100);
+                                    } else {
+                                        $newSalePrice = $currentSalePrice + $salePriceValue;
+                                    }
+                                    $newSalePrice = max(0, $newSalePrice);
+                                    // Проверяем, чтобы акционная цена была меньше базовой
+                                    if ($newSalePrice >= $currentPrice) {
+                                        $newSalePrice = null;
+                                    }
+                                    $good->update(['sale_price' => $newSalePrice]);
+                                }
+                            }
+                        }
+                        break;
                 }
 
-                // Аудит
-                if ($action !== 'delete') {
-                    $this->logAudit($good, 'bulk_' . $action, $oldValues, $good->fresh()->toArray());
-                } else {
-                    $this->logAudit($good, 'bulk_deleted', $oldValues, null);
-                }
+                // Аудит для всех действий кроме delete (для delete уже создан выше)
+                $this->logAudit($good, 'bulk_' . $action, $oldValues, $good->fresh()->toArray());
             }
 
             DB::commit();
@@ -2044,14 +2507,25 @@ class ShopGoodsController extends Controller
                             $property = $propertiesCache[$cacheKey];
                         } else {
                             try {
+                                // Нормализуем название: только первое слово с большой буквы
+                                $normalizedName = mb_strtolower($propertyName);
+                                $normalizedName = mb_strtoupper(mb_substr($normalizedName, 0, 1)) . mb_substr($normalizedName, 1);
+                                
                                 $property = ShopProperty::whereRaw('LOWER(name) = ?', [strtolower($propertyName)])->first();
 
                                 if (!$property) {
                                     $property = ShopProperty::create([
-                                        'name' => $propertyName,
+                                        'name' => $normalizedName,
                                         'property_type' => 'string',
-                                        'slug' => \Illuminate\Support\Str::slug($propertyName)
+                                        'slug' => \Illuminate\Support\Str::slug($normalizedName)
                                     ]);
+                                } else {
+                                    // Если свойство существует, обновляем его название на нормализованное (если оно отличается)
+                                    if ($property->name !== $normalizedName) {
+                                        $property->update([
+                                            'name' => $normalizedName
+                                        ]);
+                                    }
                                 }
 
                                 $propertiesCache[$cacheKey] = $property;
@@ -2572,8 +3046,9 @@ class ShopGoodsController extends Controller
             $propertyValue = preg_replace('/\s*:\s*$/', '', $propertyValue);
             $propertyValue = trim($propertyValue);
 
-            // Трансформируем название: первая буква заглавная, остальные маленькие
-            $propertyName = mb_convert_case($propertyName, MB_CASE_TITLE, 'UTF-8');
+            // Трансформируем название: только первое слово с большой буквы
+            $propertyName = mb_strtolower($propertyName);
+            $propertyName = mb_strtoupper(mb_substr($propertyName, 0, 1)) . mb_substr($propertyName, 1);
 
             if (empty($propertyName) || empty($propertyValue) || mb_strlen($propertyName) < 2 || mb_strlen($propertyValue) < 1) {
                 continue;

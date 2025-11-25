@@ -1294,6 +1294,10 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/', [\App\Http\Controllers\Admin\ShopBrandsController::class, 'store']);
                 Route::put('/{id}', [\App\Http\Controllers\Admin\ShopBrandsController::class, 'update']);
                 Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopBrandsController::class, 'destroy']);
+                Route::post('/{id}/image', [\App\Http\Controllers\ImageUploadController::class, 'uploadBrandImage']);
+                Route::delete('/{id}/image', [\App\Http\Controllers\ImageUploadController::class, 'deleteBrandImage']);
+                Route::post('/order', [\App\Http\Controllers\Admin\ShopBrandsController::class, 'updateOrder']);
+                Route::post('/import', [\App\Http\Controllers\Admin\ShopBrandsController::class, 'import']);
             });
 
             // Теги
