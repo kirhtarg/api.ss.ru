@@ -24,21 +24,177 @@ class TelegramService
      */
     public function sendMessage(string $chatId, string $message, array $options = []): array
     {
+        return $this->sendMessageWithToken($this->botToken, $chatId, $message, $options);
+    }
+
+    /**
+     * Отправить сообщение в Telegram с указанным токеном
+     */
+    public function sendMessageWithToken(string $botToken, string $chatId, string $message, array $options = []): array
+    {
+        $maxRetries = 2; // Количество повторных попыток
+        $retryDelay = 2; // Задержка между попытками в секундах
+        
+        for ($attempt = 0; $attempt <= $maxRetries; $attempt++) {
+            try {
+                $apiUrl = "https://api.telegram.org/bot{$botToken}";
+                
+                // Настройка HTTP клиента с увеличенным таймаутом
+                // Увеличиваем таймаут для DNS резолвинга и подключения
+                $httpClient = Http::timeout(60); // Общий таймаут (включая DNS резолвинг)
+                
+                // Отключение проверки SSL для локальной разработки или если явно указано в конфиге
+                $verifySsl = config('telegram.verify_ssl', true);
+                $isLocal = config('app.env') === 'local' || config('app.debug') === true;
+                
+                // Для локальной разработки автоматически отключаем проверку SSL
+                if ($verifySsl === false || $isLocal) {
+                    $httpClient = $httpClient->withoutVerifying();
+                }
+                
+                $response = $httpClient->post("{$apiUrl}/sendMessage", [
+                    'chat_id' => $chatId,
+                    'text' => $message,
+                    'parse_mode' => 'HTML',
+                    'disable_web_page_preview' => true,
+                    ...$options
+                ]);
+
+                if ($response->successful()) {
+                    $data = $response->json();
+                    if ($attempt > 0) {
+                        Log::info("Telegram message sent successfully after {$attempt} retry attempts");
+                    }
+                    return [
+                        'success' => true,
+                        'message_id' => $data['result']['message_id'] ?? null,
+                        'data' => $data
+                    ];
+                } else {
+                    // Если это не таймаут, не повторяем
+                    if ($response->status() !== 408 && !str_contains(strtolower($response->body()), 'timeout')) {
+                        return [
+                            'success' => false,
+                            'error' => $response->body(),
+                            'status' => $response->status()
+                        ];
+                    }
+                    // Если таймаут и есть еще попытки, продолжаем цикл
+                    if ($attempt < $maxRetries) {
+                        Log::warning("Telegram API timeout, retrying... (attempt " . ($attempt + 1) . "/{$maxRetries})");
+                        sleep($retryDelay);
+                        continue;
+                    }
+                    return [
+                        'success' => false,
+                        'error' => $response->body(),
+                        'status' => $response->status()
+                    ];
+                }
+            } catch (\Illuminate\Http\Client\ConnectionException $e) {
+                $errorMessage = $e->getMessage();
+                $isSslError = str_contains(strtolower($errorMessage), 'ssl') || 
+                             str_contains(strtolower($errorMessage), 'certificate') ||
+                             str_contains(strtolower($errorMessage), 'cURL error 60');
+                $isTimeout = str_contains(strtolower($errorMessage), 'timed out') || 
+                            str_contains(strtolower($errorMessage), 'timeout') ||
+                            str_contains($errorMessage, 'cURL error 28');
+                
+                // Если это таймаут и есть еще попытки, повторяем
+                if ($isTimeout && $attempt < $maxRetries) {
+                    Log::warning("Telegram connection timeout, retrying... (attempt " . ($attempt + 1) . "/{$maxRetries})");
+                    sleep($retryDelay);
+                    continue;
+                }
+                
+                // Если это SSL ошибка, не повторяем
+                if ($isSslError) {
+                    $isLocal = config('app.env') === 'local' || config('app.debug') === true;
+                    if ($isLocal) {
+                        $errorMessage = 'Ошибка SSL сертификата на localhost. Для локальной разработки проверка SSL автоматически отключена при следующей попытке.';
+                    } else {
+                        $errorMessage = 'Ошибка SSL сертификата при подключении к Telegram API. Проверьте настройки SSL на сервере.';
+                    }
+                } elseif ($isTimeout) {
+                    $errorMessage = 'Таймаут подключения к Telegram API после ' . ($maxRetries + 1) . ' попыток. Проверьте интернет-соединение или попробуйте позже.';
+                } else {
+                    $errorMessage = 'Ошибка подключения к Telegram API. Проверьте интернет-соединение или попробуйте позже.';
+                }
+                
+                Log::error('Telegram send message connection error: ' . $e->getMessage(), [
+                    'attempt' => $attempt + 1,
+                    'max_retries' => $maxRetries
+                ]);
+                return [
+                    'success' => false,
+                    'error' => $errorMessage,
+                    'is_ssl_error' => $isSslError,
+                    'is_timeout' => $isTimeout
+                ];
+            } catch (\Exception $e) {
+                $errorMessage = $e->getMessage();
+                $isSslError = str_contains(strtolower($errorMessage), 'ssl') || 
+                             str_contains(strtolower($errorMessage), 'certificate') ||
+                             str_contains(strtolower($errorMessage), 'cURL error 60');
+                $isTimeout = str_contains(strtolower($errorMessage), 'timed out') || 
+                            str_contains(strtolower($errorMessage), 'timeout') ||
+                            str_contains($errorMessage, 'cURL error 28');
+                
+                // Если это таймаут и есть еще попытки, повторяем
+                if ($isTimeout && $attempt < $maxRetries) {
+                    Log::warning("Telegram timeout error, retrying... (attempt " . ($attempt + 1) . "/{$maxRetries})");
+                    sleep($retryDelay);
+                    continue;
+                }
+                
+                Log::error('Telegram send message error: ' . $e->getMessage(), [
+                    'attempt' => $attempt + 1,
+                    'max_retries' => $maxRetries
+                ]);
+                return [
+                    'success' => false,
+                    'error' => $errorMessage,
+                    'is_ssl_error' => $isSslError,
+                    'is_timeout' => $isTimeout
+                ];
+            }
+        }
+        
+        // Если все попытки исчерпаны
+        return [
+            'success' => false,
+            'error' => 'Не удалось отправить сообщение в Telegram после ' . ($maxRetries + 1) . ' попыток.'
+        ];
+    }
+
+    /**
+     * Получить информацию о боте
+     */
+    public function getBotInfo(?string $botToken = null): array
+    {
         try {
-            $response = Http::post("{$this->apiUrl}/sendMessage", [
-                'chat_id' => $chatId,
-                'text' => $message,
-                'parse_mode' => 'HTML',
-                'disable_web_page_preview' => true,
-                ...$options
-            ]);
+            $token = $botToken ?? $this->botToken;
+            $apiUrl = "https://api.telegram.org/bot{$token}";
+            
+            // Настройка HTTP клиента
+            $httpClient = Http::timeout(30);
+            
+            // Отключение проверки SSL для локальной разработки или если явно указано в конфиге
+            $verifySsl = config('telegram.verify_ssl', true);
+            $isLocal = config('app.env') === 'local' || config('app.debug') === true;
+            
+            // Для локальной разработки автоматически отключаем проверку SSL
+            if ($verifySsl === false || $isLocal) {
+                $httpClient = $httpClient->withoutVerifying();
+            }
+            
+            $response = $httpClient->get("{$apiUrl}/getMe");
 
             if ($response->successful()) {
                 $data = $response->json();
                 return [
                     'success' => true,
-                    'message_id' => $data['result']['message_id'] ?? null,
-                    'data' => $data
+                    'data' => $data['result'] ?? null
                 ];
             } else {
                 return [
@@ -47,11 +203,70 @@ class TelegramService
                     'status' => $response->status()
                 ];
             }
-        } catch (\Exception $e) {
-            Log::error('Telegram send message error: ' . $e->getMessage());
+        } catch (\Illuminate\Http\Client\ConnectionException $e) {
+            $errorMessage = $e->getMessage();
+            $isTimeout = str_contains(strtolower($errorMessage), 'timed out') || 
+                        str_contains(strtolower($errorMessage), 'timeout') ||
+                        str_contains(strtolower($errorMessage), 'cURL error 28');
+            
+            $isSslError = str_contains(strtolower($errorMessage), 'ssl') || 
+                         str_contains(strtolower($errorMessage), 'certificate') ||
+                         str_contains(strtolower($errorMessage), 'cURL error 60');
+            
+            if ($isTimeout) {
+                $errorMessage = 'Таймаут подключения к Telegram API. Возможные причины: проблемы с интернет-соединением, блокировка Telegram API на сервере, или временная недоступность сервиса. Попробуйте позже.';
+            } elseif ($isSslError) {
+                $errorMessage = 'Ошибка SSL сертификата при подключении к Telegram API. Это проблема конфигурации сервера, не связанная с вашим ботом. Вы можете сохранить канал без проверки - он будет работать при отправке уведомлений. Для решения проблемы обратитесь к администратору сервера.';
+            } else {
+                $errorMessage = 'Ошибка подключения к Telegram API: ' . $errorMessage . '. Возможные причины: блокировка Telegram API на сервере, проблемы с DNS, или временная недоступность сервиса. Вы можете сохранить канал без проверки - он будет работать при отправке уведомлений.';
+            }
+            
+            Log::error('Telegram get bot info connection error: ' . $e->getMessage(), [
+                'is_timeout' => $isTimeout,
+                'is_ssl_error' => $isSslError,
+                'error_class' => get_class($e)
+            ]);
+            
             return [
                 'success' => false,
-                'error' => $e->getMessage()
+                'error' => $errorMessage,
+                'is_timeout' => $isTimeout,
+                'is_ssl_error' => $isSslError,
+                'can_skip_check' => true
+            ];
+        } catch (\Exception $e) {
+            $errorMessage = $e->getMessage();
+            $isTimeout = str_contains(strtolower($errorMessage), 'timed out') || 
+                        str_contains(strtolower($errorMessage), 'timeout') ||
+                        str_contains(strtolower($errorMessage), 'cURL error 28');
+            
+            $isSslError = str_contains(strtolower($errorMessage), 'ssl') || 
+                         str_contains(strtolower($errorMessage), 'certificate') ||
+                         str_contains(strtolower($errorMessage), 'cURL error 60');
+            
+            // Улучшаем сообщение об ошибке
+            if ($isTimeout) {
+                $errorMessage = 'Таймаут подключения к Telegram API. Проверьте интернет-соединение или попробуйте позже.';
+            } elseif ($isSslError) {
+                $errorMessage = 'Ошибка SSL сертификата при подключении к Telegram API. Это проблема конфигурации сервера, не связанная с вашим ботом. Вы можете сохранить канал без проверки - он будет работать при отправке уведомлений. Для решения проблемы обратитесь к администратору сервера.';
+            } elseif (str_contains(strtolower($errorMessage), 'connection') || 
+                      str_contains(strtolower($errorMessage), 'resolve') ||
+                      str_contains(strtolower($errorMessage), 'dns')) {
+                $errorMessage = 'Ошибка подключения к Telegram API: ' . $errorMessage . '. Возможные причины: блокировка Telegram API на сервере, проблемы с DNS, или временная недоступность сервиса. Вы можете сохранить канал без проверки.';
+            }
+            
+            Log::error('Telegram get bot info error: ' . $e->getMessage(), [
+                'is_timeout' => $isTimeout,
+                'is_ssl_error' => $isSslError,
+                'error_class' => get_class($e)
+            ]);
+            
+            return [
+                'success' => false,
+                'error' => $errorMessage,
+                'is_timeout' => $isTimeout,
+                'is_ssl_error' => $isSslError,
+                'can_skip_check' => true // Всегда можно пропустить проверку
             ];
         }
     }

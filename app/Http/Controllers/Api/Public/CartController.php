@@ -16,6 +16,7 @@ use App\Models\ShopPreorder;
 use App\Models\User;
 use App\Models\Setting;
 use App\Services\TelegramService;
+use App\Services\NotificationService;
 use App\Mail\OrderInvoiceMail;
 use App\Models\Contact;
 use Illuminate\Support\Facades\Mail;
@@ -68,6 +69,36 @@ class CartController extends Controller
     private function parseRemoteStock(string $remoteStockStr): int
     {
         return (int)preg_replace('/\D/', '', $remoteStockStr) ?: 0;
+    }
+
+    /**
+     * Проверить, есть ли остаток на удаленном складе
+     */
+    private function hasRemoteStock(?string $remoteStockQuantity, int $shopRemoteQ): bool
+    {
+        // Если shop_remote_q = 1, не учитываем удаленный склад
+        if ($shopRemoteQ === 1) {
+            return false;
+        }
+
+        // Если значение пустое, null или "0"
+        if (empty($remoteStockQuantity) || $remoteStockQuantity === '0' || $remoteStockQuantity === '') {
+            return false;
+        }
+
+        // Если значение - число больше 0
+        $parsed = $this->parseRemoteStock($remoteStockQuantity);
+        if ($parsed > 0) {
+            return true;
+        }
+
+        // Если строка содержит что-то (например, ">10"), считаем что есть остаток
+        $trimmed = trim($remoteStockQuantity);
+        if ($trimmed !== '' && $trimmed !== '0') {
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -148,6 +179,9 @@ class CartController extends Controller
 
             // Получаем режим показа товаров при нулевых остатках
             $showGoodMode = $this->getShopShowGoodMode();
+            
+            // Получаем параметр shop_remote_q
+            $shopRemoteQ = $this->getShopRemoteQ();
 
             // Проверяем существование товара
             $good = ShopGood::where('id', $goodId)
@@ -177,87 +211,109 @@ class CartController extends Controller
 
                 // Проверяем остатки в зависимости от режима
                 $stockQuantity = $variation->stock_quantity ?? 0;
-                if ($showGoodMode === 1 && $stockQuantity <= 0) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Товар недоступен для заказа'
-                    ], 400);
-                } elseif ($showGoodMode === 2 && $stockQuantity <= 0) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Товар временно отсутствует на складе'
-                    ], 400);
-                } elseif ($showGoodMode === 3) {
-                    // Режим 3: игнорируем остатки - разрешаем добавление
-                } elseif ($showGoodMode === 4) {
-                    // Режим 4: предзаказ - проверяем авторизацию и ограничиваем количество остатками
-                    $user = $this->getUserFromToken($request);
-                    if (!$user) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Для предзаказа необходимо авторизоваться',
-                            'requires_auth' => true
-                        ], 401);
-                    }
-                    // Ограничиваем количество остатками
-                    if ($stockQuantity < $quantity) {
-                        Log::info('Mode 4 addToCart variation: limiting quantity to stock', [
-                            'stock_quantity' => $stockQuantity,
-                            'requested_quantity' => $quantity,
-                            'adjusted_quantity' => $stockQuantity
-                        ]);
-                        $quantity = $stockQuantity;
-                    }
+                $remoteStockQuantity = $variation->remote_stock_quantity ?? '';
+                
+                // Проверяем наличие удаленного остатка ПЕРВЫМ
+                $hasRemoteStock = $this->hasRemoteStock($remoteStockQuantity, $shopRemoteQ);
+                
+                if ($hasRemoteStock) {
+                    // Если есть удаленный остаток, разрешаем добавление независимо от локального остатка
+                    // Продолжаем выполнение функции
                 } else {
-                    // Обычная проверка остатков
-                    if ($stockQuantity < $quantity) {
+                    // Если нет удаленного остатка, проверяем локальный остаток
+                    if ($showGoodMode === 1 && $stockQuantity <= 0) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Недостаточно товара на складе'
+                            'message' => 'Товар недоступен для заказа'
                         ], 400);
+                    } elseif ($showGoodMode === 2 && $stockQuantity <= 0) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Товар временно отсутствует на складе'
+                        ], 400);
+                    } elseif ($showGoodMode === 3) {
+                        // Режим 3: игнорируем остатки - разрешаем добавление
+                    } elseif ($showGoodMode === 4) {
+                        // Режим 4: предзаказ - проверяем авторизацию и ограничиваем количество остатками
+                        $user = $this->getUserFromToken($request);
+                        if (!$user) {
+                            return response()->json([
+                                'success' => false,
+                                'message' => 'Для предзаказа необходимо авторизоваться',
+                                'requires_auth' => true
+                            ], 401);
+                        }
+                        // Ограничиваем количество остатками
+                        if ($stockQuantity < $quantity) {
+                            Log::info('Mode 4 addToCart variation: limiting quantity to stock', [
+                                'stock_quantity' => $stockQuantity,
+                                'requested_quantity' => $quantity,
+                                'adjusted_quantity' => $stockQuantity
+                            ]);
+                            $quantity = $stockQuantity;
+                        }
+                    } else {
+                        // Обычная проверка остатков
+                        if ($stockQuantity < $quantity) {
+                            return response()->json([
+                                'success' => false,
+                                'message' => 'Недостаточно товара на складе'
+                            ], 400);
+                        }
                     }
                 }
             } else {
                 // Проверяем остатки основного товара в зависимости от режима
                 $stockQuantity = $good->stock_quantity ?? 0;
-                if ($showGoodMode === 1 && $stockQuantity <= 0) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Товар недоступен для заказа'
-                    ], 400);
-                } elseif ($showGoodMode === 2 && $stockQuantity <= 0) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Товар временно отсутствует на складе'
-                    ], 400);
-                } elseif ($showGoodMode === 3) {
-                    // Режим 3: игнорируем остатки - разрешаем добавление
-                } elseif ($showGoodMode === 4) {
-                    // Режим 4: предзаказ - проверяем авторизацию и ограничиваем количество остатками
-                    $user = $this->getUserFromToken($request);
-                    if (!$user) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Для предзаказа необходимо авторизоваться',
-                            'requires_auth' => true
-                        ], 401);
-                    }
-                    // Ограничиваем количество остатками
-                    if ($stockQuantity < $quantity) {
-                        Log::info('Mode 4 addToCart main: limiting quantity to stock', [
-                            'stock_quantity' => $stockQuantity,
-                            'requested_quantity' => $quantity,
-                            'adjusted_quantity' => $stockQuantity
-                        ]);
-                        $quantity = $stockQuantity;
-                    }
+                $remoteStockQuantity = $good->remote_stock_quantity ?? '';
+                
+                // Проверяем наличие удаленного остатка ПЕРВЫМ
+                $hasRemoteStock = $this->hasRemoteStock($remoteStockQuantity, $shopRemoteQ);
+                
+                if ($hasRemoteStock) {
+                    // Если есть удаленный остаток, разрешаем добавление независимо от локального остатка
+                    // Продолжаем выполнение функции
                 } else {
-                    // Обычная проверка остатков
-                    if ($stockQuantity < $quantity) {
+                    // Если нет удаленного остатка, проверяем локальный остаток
+                    if ($showGoodMode === 1 && $stockQuantity <= 0) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Недостаточно товара на складе'
+                            'message' => 'Товар недоступен для заказа'
                         ], 400);
+                    } elseif ($showGoodMode === 2 && $stockQuantity <= 0) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Товар временно отсутствует на складе'
+                        ], 400);
+                    } elseif ($showGoodMode === 3) {
+                        // Режим 3: игнорируем остатки - разрешаем добавление
+                    } elseif ($showGoodMode === 4) {
+                        // Режим 4: предзаказ - проверяем авторизацию и ограничиваем количество остатками
+                        $user = $this->getUserFromToken($request);
+                        if (!$user) {
+                            return response()->json([
+                                'success' => false,
+                                'message' => 'Для предзаказа необходимо авторизоваться',
+                                'requires_auth' => true
+                            ], 401);
+                        }
+                        // Ограничиваем количество остатками
+                        if ($stockQuantity < $quantity) {
+                            Log::info('Mode 4 addToCart main: limiting quantity to stock', [
+                                'stock_quantity' => $stockQuantity,
+                                'requested_quantity' => $quantity,
+                                'adjusted_quantity' => $stockQuantity
+                            ]);
+                            $quantity = $stockQuantity;
+                        }
+                    } else {
+                        // Обычная проверка остатков
+                        if ($stockQuantity < $quantity) {
+                            return response()->json([
+                                'success' => false,
+                                'message' => 'Недостаточно товара на складе'
+                            ], 400);
+                        }
                     }
                 }
             }
@@ -286,9 +342,8 @@ class CartController extends Controller
                 if ($variationId) {
                     $existingItem->variation_name = $this->formatVariationProperties($variation);
                 }
-                // Обновляем поля остатков
-                $existingItem->stock_quantity = $variationId ? $variation->stock_quantity : $good->stock_quantity;
-                $existingItem->remote_stock_quantity = $variationId ? $variation->remote_stock_quantity : $good->remote_stock_quantity;
+                // Поля stock_quantity и remote_stock_quantity не сохраняются в таблице shop_cart_items
+                // Они используются только на фронтенде для отображения остатков
                 $existingItem->save();
             } else {
                 // Создаем новый элемент корзины
@@ -304,9 +359,9 @@ class CartController extends Controller
                     'good_name' => $good->name,
                     'variation_name' => $variationId ? $this->formatVariationProperties($variation) : null,
                     'good_sku' => $variationId ? $variation->sku : $good->sku,
-                    'good_image' => $this->getGoodImage($good, $variationId),
-                    'stock_quantity' => $variationId ? $variation->stock_quantity : $good->stock_quantity,
-                    'remote_stock_quantity' => $variationId ? $variation->remote_stock_quantity : $good->remote_stock_quantity
+                    'good_image' => $this->getGoodImage($good, $variationId)
+                    // Поля stock_quantity и remote_stock_quantity не сохраняются в таблице shop_cart_items
+                    // Они используются только на фронтенде для отображения остатков
                 ]);
             }
 
@@ -386,6 +441,7 @@ class CartController extends Controller
                 $shopRemoteQ = $this->getShopRemoteQ();
 
                 // Получаем остатки в зависимости от режима shop_remote_q
+                $remoteStockQuantity = null;
                 if ($variationId) {
                     $variation = ShopGoodVariation::find($variationId);
                     if (!$variation) {
@@ -395,40 +451,53 @@ class CartController extends Controller
                         ], 404);
                     }
                     $localStock = $variation->stock_quantity ?? 0;
-                    $remoteStock = $this->parseRemoteStock($variation->remote_stock_quantity ?? '');
+                    $remoteStockQuantity = $variation->remote_stock_quantity;
                 } else {
                     $localStock = $good->stock_quantity ?? 0;
-                    $remoteStock = $this->parseRemoteStock($good->remote_stock_quantity ?? '');
+                    $remoteStockQuantity = $good->remote_stock_quantity;
                 }
 
-                // Определяем максимальное количество в зависимости от shop_remote_q
-                $maxQuantity = $this->getMaxQuantityForUpdate($localStock, $remoteStock, $shopRemoteQ, $showGoodMode);
+                // Проверяем наличие удаленного остатка ПЕРВЫМ
+                $hasRemote = $this->hasRemoteStock($remoteStockQuantity, $shopRemoteQ);
 
-                // Проверяем остатки в зависимости от режима
-                if ($showGoodMode === 1 && $maxQuantity <= 0) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Товар недоступен для заказа'
-                    ], 400);
-                } elseif ($showGoodMode === 2 && $maxQuantity <= 0) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Товар временно отсутствует на складе'
-                    ], 400);
-                } elseif ($showGoodMode === 3) {
-                    // Режим 3: игнорируем остатки - разрешаем обновление
-                } elseif ($showGoodMode === 4) {
-                    // Режим 4: предзаказ - ограничиваем количество в корзине остатками
-                    if ($maxQuantity < $quantity) {
-                        $quantity = $maxQuantity; // Устанавливаем максимальное количество
+                if ($hasRemote) {
+                    // Если есть удаленный остаток, разрешаем обновление до 99
+                    // Максимальное количество для удаленного склада - 99
+                    $maxQuantity = 99;
+                    if ($quantity > $maxQuantity) {
+                        $quantity = $maxQuantity; // Ограничиваем до 99
                     }
                 } else {
-                    // Обычная проверка остатков
-                    if ($maxQuantity < $quantity) {
+                    // Если нет удаленного остатка, используем стандартную логику
+                    $remoteStock = $this->parseRemoteStock($remoteStockQuantity ?? '');
+                    $maxQuantity = $this->getMaxQuantityForUpdate($localStock, $remoteStock, $shopRemoteQ, $showGoodMode);
+
+                    // Проверяем остатки в зависимости от режима
+                    if ($showGoodMode === 1 && $maxQuantity <= 0) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Недостаточно товара на складе. Доступно: ' . $maxQuantity . ' шт.'
+                            'message' => 'Товар недоступен для заказа'
                         ], 400);
+                    } elseif ($showGoodMode === 2 && $maxQuantity <= 0) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Товар временно отсутствует на складе'
+                        ], 400);
+                    } elseif ($showGoodMode === 3) {
+                        // Режим 3: игнорируем остатки - разрешаем обновление
+                    } elseif ($showGoodMode === 4) {
+                        // Режим 4: предзаказ - ограничиваем количество в корзине остатками
+                        if ($maxQuantity < $quantity) {
+                            $quantity = $maxQuantity; // Устанавливаем максимальное количество
+                        }
+                    } else {
+                        // Обычная проверка остатков
+                        if ($maxQuantity < $quantity) {
+                            return response()->json([
+                                'success' => false,
+                                'message' => 'Недостаточно товара на складе. Доступно: ' . $maxQuantity . ' шт.'
+                            ], 400);
+                        }
                     }
                 }
 
@@ -770,6 +839,33 @@ class CartController extends Controller
                 ]
             ]);
 
+            // Создаем запись об использовании промокода, если он был применен
+            if ($request->get('promo_code_id')) {
+                try {
+                    $promocode = \App\Models\Promocode::find($request->get('promo_code_id'));
+                    if ($promocode) {
+                        $sessionId = $request->header('X-Session-ID');
+                        $discountAmount = $request->get('promo_code_discount_amount', 0);
+                        $appliedTo = [
+                            'order_id' => $order->id,
+                            'order_number' => $order->order_number,
+                            'items' => $request->get('items', [])
+                        ];
+                        
+                        $promocode->recordUsage(
+                            $customerId,
+                            $sessionId,
+                            $order->id,
+                            $discountAmount,
+                            $appliedTo
+                        );
+                    }
+                } catch (\Exception $e) {
+                    Log::error('Ошибка создания записи об использовании промокода: ' . $e->getMessage());
+                    // Не прерываем создание заказа, если ошибка с промокодом
+                }
+            }
+
             // Списываем бонусы с баланса пользователя, если они используются
             if ($customerId && $request->get('use_bonus_points') && $request->get('bonus_points_to_use', 0) > 0) {
                 try {
@@ -817,16 +913,15 @@ class CartController extends Controller
 
             $query->delete();
 
-            // Отправляем уведомления в Telegram
+            // Отправляем уведомления через систему оповещений
             try {
-                $telegramService = app(TelegramService::class);
+                $notificationService = app(NotificationService::class);
+                $notificationService->notifyOrderCreated($order);
 
-                // Уведомление администратору
-                $telegramService->notifyAdminNewOrder($order);
-
-                // Уведомление клиенту (если указан chat_id)
+                // Также отправляем уведомление клиенту через Telegram (если указан chat_id)
                 $customerChatId = $request->get('telegram_chat_id');
                 if ($customerChatId) {
+                    $telegramService = app(TelegramService::class);
                     $customerMessage = "✅ <b>Заказ #{$order->order_number} принят</b>\n\n";
                     $customerMessage .= "Спасибо за ваш заказ! Мы получили вашу заявку и в ближайшее время свяжемся с вами для подтверждения.\n\n";
                     $customerMessage .= "💰 <b>Сумма заказа:</b> " . number_format($order->total_amount, 0, ',', ' ') . " ₽\n";
@@ -843,7 +938,7 @@ class CartController extends Controller
                 }
             } catch (\Exception $e) {
                 // Логируем ошибку, но не прерываем создание заказа
-                Log::error('Telegram notification error: ' . $e->getMessage());
+                Log::error('Notification error: ' . $e->getMessage());
             }
 
             // Отправляем email с накладной
@@ -1196,6 +1291,35 @@ class CartController extends Controller
                 'customer_phone' => $request->get('customer_phone'),
                 'notes' => $request->get('notes')
             ]);
+
+            // Отправляем уведомления администраторам о предзаказе
+            try {
+                $notificationService = app(NotificationService::class);
+                $notificationService->notifyPreorderCreated($preorder);
+            } catch (\Exception $e) {
+                Log::error('Preorder notification error: ' . $e->getMessage());
+            }
+
+            // Отправляем email клиенту о принятом предзаказе
+            if ($preorder->customer_email) {
+                try {
+                    $siteInfo = \App\Services\SiteInfoService::getSiteInfoForEmail();
+                    
+                    Mail::send('emails.preorder-confirmation', [
+                        'preorder' => $preorder,
+                        'siteInfo' => $siteInfo
+                    ], function ($mail) use ($preorder, $siteInfo) {
+                        $siteName = $siteInfo['site_name'] ?? 'Интернет-магазин';
+                        $mail->to($preorder->customer_email)
+                            ->subject("Ваш предзаказ принят - {$siteName}");
+                    });
+                    
+                    Log::info('Preorder confirmation email sent to: ' . $preorder->customer_email);
+                } catch (\Exception $e) {
+                    // Логируем ошибку, но не прерываем создание предзаказа
+                    Log::error('Preorder confirmation email error: ' . $e->getMessage());
+                }
+            }
 
             return response()->json([
                 'success' => true,

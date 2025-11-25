@@ -60,6 +60,7 @@ class ShopOrderStatusSeeder extends Seeder
                 'display_name' => 'Отменен',
                 'color' => '#EF4444',
                 'is_active' => true,
+                'is_cancelled' => true,
                 'sort_order' => 60,
                 'description' => 'Заказ отменен',
                 'created_at' => now(),

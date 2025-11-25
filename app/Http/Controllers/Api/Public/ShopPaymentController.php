@@ -1167,6 +1167,39 @@ class ShopPaymentController extends Controller
         $orderNumber = $this->generateUniqueOrderNumber($order->id);
         $order->update(['order_number' => $orderNumber]);
 
+        // Создаем запись об использовании промокода, если он был применен
+        if (!empty($orderData['promo_code_id'])) {
+            try {
+                $promocode = \App\Models\Promocode::find($orderData['promo_code_id']);
+                if ($promocode) {
+                    $sessionId = request()->header('X-Session-ID');
+                    $discountAmount = $orderData['promo_code_discount_amount'] ?? 0;
+                    $appliedTo = [
+                        'order_id' => $order->id,
+                        'order_number' => $orderNumber,
+                        'items' => $items
+                    ];
+                    
+                    $promocode->recordUsage(
+                        $orderData['customer_id'] ?? null,
+                        $sessionId,
+                        $order->id,
+                        $discountAmount,
+                        $appliedTo
+                    );
+                    
+                    Log::info('Promocode usage recorded', [
+                        'promocode_id' => $promocode->id,
+                        'order_id' => $order->id,
+                        'discount_amount' => $discountAmount
+                    ]);
+                }
+            } catch (\Exception $e) {
+                Log::error('Ошибка создания записи об использовании промокода: ' . $e->getMessage());
+                // Не прерываем создание заказа, если ошибка с промокодом
+            }
+        }
+
         Log::info('Order created for payment', [
             'order_id' => $order->id,
             'order_number' => $orderNumber,

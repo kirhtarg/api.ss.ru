@@ -12,6 +12,24 @@ use Carbon\Carbon;
 class PromocodeController extends Controller
 {
     /**
+     * Получить пользователя из токена Authorization
+     */
+    private function getUserFromToken(Request $request): ?\App\Models\User
+    {
+        $token = $request->bearerToken();
+        if (!$token) {
+            return null;
+        }
+
+        $personalAccessToken = \Laravel\Sanctum\PersonalAccessToken::findToken($token);
+        if (!$personalAccessToken) {
+            return null;
+        }
+
+        return $personalAccessToken->tokenable;
+    }
+
+    /**
      * Применить промокод
      */
     public function apply(Request $request): JsonResponse
@@ -31,54 +49,78 @@ class PromocodeController extends Controller
         $cartItems = $validated['cart_items'];
         $orderAmount = $validated['order_amount'];
 
-        // Находим промокод
-        $promocode = Promocode::where('code', $code)->first();
+        // Находим промокод с загруженными связями
+        $promocode = Promocode::with('user')->where('code', $code)->first();
 
         if (!$promocode) {
             return response()->json([
                 'success' => false,
-                'message' => 'Промокод не найден'
+                'message' => 'Промокод не найден',
+                'errors' => ['Промокод с таким кодом не существует']
             ], 404);
         }
 
-        // Проверяем, можно ли использовать промокод
-        if (!$promocode->canBeUsed()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Промокод неактивен или исчерпан лимит использований'
-            ], 422);
-        }
-
-        // Получаем ID пользователя или сессии
-        $userId = Auth::id();
+        // Получаем пользователя из токена или через Auth
+        $user = $this->getUserFromToken($request);
+        $userId = $user ? $user->id : Auth::id();
         $sessionId = $request->header('X-Session-ID');
 
-        if (!$promocode->canBeUsedByUser($userId, $sessionId)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Вы уже использовали этот промокод максимальное количество раз'
-            ], 422);
+        // Логирование для отладки
+        \Illuminate\Support\Facades\Log::info('Promocode apply check', [
+            'promocode_id' => $promocode->id,
+            'promocode_code' => $promocode->code,
+            'promocode_user_id' => $promocode->user_id,
+            'user_id' => $userId,
+            'user_from_token' => $user ? $user->id : null,
+            'auth_id' => Auth::id(),
+            'is_personal' => $promocode->user_id !== null,
+        ]);
+
+        // Собираем все ошибки проверок
+        $allErrors = [];
+
+        // Проверяем, можно ли использовать промокод (общий лимит)
+        $canBeUsedCheck = $promocode->canBeUsed();
+        if (!$canBeUsedCheck['can_use']) {
+            $allErrors = array_merge($allErrors, $canBeUsedCheck['errors']);
+        }
+
+        // Проверяем лимит на пользователя
+        $canBeUsedByUserCheck = $promocode->canBeUsedByUser($userId, $sessionId);
+        if (!$canBeUsedByUserCheck['can_use']) {
+            $allErrors = array_merge($allErrors, $canBeUsedByUserCheck['errors']);
         }
 
         // Проверяем применимость к заказу
-        if (!$promocode->isApplicableToOrder($cartItems, $orderAmount)) {
+        $applicabilityCheck = $promocode->isApplicableToOrder($cartItems, $orderAmount, $userId);
+        if (!$applicabilityCheck['is_applicable']) {
+            $allErrors = array_merge($allErrors, $applicabilityCheck['errors']);
+        }
+
+        // Если есть ошибки, возвращаем их все
+        if (!empty($allErrors)) {
             return response()->json([
                 'success' => false,
-                'message' => 'Промокод не применим к данному заказу'
+                'message' => 'Промокод не может быть применен',
+                'errors' => $allErrors
             ], 422);
         }
 
         // Рассчитываем скидку
-        $discountAmount = $promocode->calculateDiscount($orderAmount, $cartItems);
+        $discountResult = $promocode->calculateDiscount($orderAmount, $cartItems, $userId);
 
-        if ($discountAmount <= 0) {
+        // Для бесплатной доставки discount всегда 0, но промокод все равно применим
+        if ($promocode->type !== 'free_delivery' && ($discountResult['discount'] <= 0 || !empty($discountResult['errors']))) {
+            $errors = $discountResult['errors'] ?: ['Промокод не дает скидку для данного заказа'];
             return response()->json([
                 'success' => false,
-                'message' => 'Промокод не дает скидку для данного заказа'
+                'message' => 'Промокод не может быть применен',
+                'errors' => $errors
             ], 422);
         }
 
         // Возвращаем информацию о примененном промокоде
+        // Запись в promocode_usage будет создана при создании заказа
         return response()->json([
             'success' => true,
             'message' => 'Промокод успешно применен',
@@ -89,8 +131,9 @@ class PromocodeController extends Controller
                     'name' => $promocode->name,
                     'type' => $promocode->type,
                     'value' => $promocode->value,
+                    'max_discount_amount' => $promocode->max_discount_amount,
                 ],
-                'discount_amount' => $discountAmount,
+                'discount_amount' => $discountResult['discount'],
                 'is_free_delivery' => $promocode->type === 'free_delivery',
             ]
         ]);
@@ -135,13 +178,8 @@ class PromocodeController extends Controller
             ], 404);
         }
 
-        if (!$promocode->isActive()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Промокод неактивен'
-            ], 422);
-        }
-
+        $canBeUsedCheck = $promocode->canBeUsed();
+        
         return response()->json([
             'success' => true,
             'data' => [
@@ -152,7 +190,8 @@ class PromocodeController extends Controller
                 'value' => $promocode->value,
                 'min_order_amount' => $promocode->min_order_amount,
                 'is_active' => $promocode->isActive(),
-                'can_be_used' => $promocode->canBeUsed(),
+                'can_be_used' => $canBeUsedCheck['can_use'],
+                'errors' => $canBeUsedCheck['errors'] ?? [],
             ]
         ]);
     }

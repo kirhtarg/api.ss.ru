@@ -104,7 +104,6 @@ class GoogleAuthController extends Controller
                         'avatar_url' => $googleUser->getAvatar(),
                         'password' => Hash::make(Str::random(32)), // Случайный пароль
                         'email_verified_at' => now(),
-                        'email_verified_at' => now(),
                         'last_login_at' => now(),
                     ]);
                     

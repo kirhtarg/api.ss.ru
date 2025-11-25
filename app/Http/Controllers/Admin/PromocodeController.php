@@ -4,8 +4,8 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Promocode;
-use App\Models\Category;
-use App\Models\Good;
+use App\Models\ShopCategory;
+use App\Models\ShopGood;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Validation\Rule;
@@ -44,6 +44,12 @@ class PromocodeController extends Controller
                 $query->where('is_active', $request->is_active);
             }
 
+            // Фильтр по пользователю (user_id) - персональные промокоды
+            if ($request->has('user_id') && $request->user_id !== '' && $request->user_id !== null) {
+                $userId = (int) $request->user_id;
+                $query->where('user_id', $userId);
+            }
+
             // Сортировка
             $sortBy = $request->get('sort_by', 'created_at');
             $sortOrder = $request->get('sort_order', 'desc');
@@ -55,7 +61,7 @@ class PromocodeController extends Controller
             $totalCount = Promocode::count();
             \Log::info('Total promocodes in database: ' . $totalCount);
             
-            $promocodes = $query->paginate($perPage);
+            $promocodes = $query->with(['categories', 'goods', 'user'])->paginate($perPage);
             
             \Log::info('Query result count: ' . $promocodes->count());
             \Log::info('Query SQL: ' . $query->toSql());
@@ -79,8 +85,18 @@ class PromocodeController extends Controller
     /**
      * Получить промокод по ID
      */
-    public function show(Promocode $promocode): JsonResponse
+    public function show($id): JsonResponse
     {
+        $promocode = Promocode::find($id);
+        
+        if (!$promocode) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Промокод не найден'
+            ], 404);
+        }
+        
+        $promocode->load(['categories', 'goods', 'user']);
         return response()->json([
             'success' => true,
             'data' => $promocode
@@ -106,11 +122,12 @@ class PromocodeController extends Controller
             'starts_at' => 'nullable|date',
             'expires_at' => 'nullable|date|after:starts_at',
             'applicable_categories' => 'nullable|array',
-            'applicable_categories.*' => 'integer|exists:categories,id',
+            'applicable_categories.*' => 'integer|exists:shop_categories,id',
             'applicable_goods' => 'nullable|array',
-            'applicable_goods.*' => 'integer|exists:goods,id',
+            'applicable_goods.*' => 'integer|exists:shop_goods,id',
             'applicable_variations' => 'nullable|array',
             'applicable_variations.*' => 'integer|exists:good_variations,id',
+            'user_id' => 'nullable|integer|exists:users,id', // ID пользователя для персонального промокода
         ]);
 
         // Валидация value для определенных типов
@@ -121,7 +138,31 @@ class PromocodeController extends Controller
             ], 422);
         }
 
+        // Извлекаем связи для обработки отдельно
+        $categoryIds = $request->input('category_ids', []);
+        $goodIds = $request->input('good_ids', []);
+        $userId = $request->input('user_id', null); // Для персональных промокодов
+
+        // Удаляем эти поля из validated, так как они не в fillable
+        unset($validated['applicable_categories'], $validated['applicable_goods']);
+
+        // Если передан user_id, устанавливаем его для персонального промокода
+        if ($userId) {
+            $validated['user_id'] = (int) $userId;
+        }
+
         $promocode = Promocode::create($validated);
+
+        // Синхронизируем связи many-to-many
+        if (!empty($categoryIds)) {
+            $promocode->categories()->attach($categoryIds);
+        }
+        if (!empty($goodIds)) {
+            $promocode->goods()->attach($goodIds);
+        }
+
+        // Загружаем связи для ответа
+        $promocode->load(['categories', 'goods', 'user']);
 
         return response()->json([
             'success' => true,
@@ -133,10 +174,19 @@ class PromocodeController extends Controller
     /**
      * Обновить промокод
      */
-    public function update(Request $request, Promocode $promocode): JsonResponse
+    public function update(Request $request, $id): JsonResponse
     {
+        $promocode = Promocode::find($id);
+        
+        if (!$promocode) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Промокод не найден'
+            ], 404);
+        }
+
         $validated = $request->validate([
-            'code' => ['required', 'string', 'max:255', Rule::unique('promocodes', 'code')->ignore($promocode->id)],
+            'code' => ['required', 'string', 'max:255', Rule::unique('promocodes', 'code')->ignore($promocode->id, 'id')],
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
             'type' => ['required', Rule::in(['percentage', 'fixed_amount', 'free_delivery'])],
@@ -149,11 +199,12 @@ class PromocodeController extends Controller
             'starts_at' => 'nullable|date',
             'expires_at' => 'nullable|date|after:starts_at',
             'applicable_categories' => 'nullable|array',
-            'applicable_categories.*' => 'integer|exists:categories,id',
+            'applicable_categories.*' => 'integer|exists:shop_categories,id',
             'applicable_goods' => 'nullable|array',
-            'applicable_goods.*' => 'integer|exists:goods,id',
+            'applicable_goods.*' => 'integer|exists:shop_goods,id',
             'applicable_variations' => 'nullable|array',
             'applicable_variations.*' => 'integer|exists:good_variations,id',
+            'user_id' => 'nullable|integer|exists:users,id', // ID пользователя для персонального промокода
         ]);
 
         // Валидация value для определенных типов
@@ -164,7 +215,31 @@ class PromocodeController extends Controller
             ], 422);
         }
 
+        // Извлекаем связи для обработки отдельно
+        $categoryIds = $request->input('category_ids', []);
+        $goodIds = $request->input('good_ids', []);
+        $userId = $request->input('user_id', null); // Для персональных промокодов
+
+        // Удаляем эти поля из validated, так как они не в fillable
+        unset($validated['applicable_categories'], $validated['applicable_goods']);
+
+        // Если передан user_id, устанавливаем его для персонального промокода
+        if ($request->has('user_id')) {
+            $validated['user_id'] = $userId ? (int) $userId : null;
+        }
+
         $promocode->update($validated);
+
+        // Синхронизируем связи many-to-many
+        if ($request->has('category_ids')) {
+            $promocode->categories()->sync($categoryIds);
+        }
+        if ($request->has('good_ids')) {
+            $promocode->goods()->sync($goodIds);
+        }
+
+        // Загружаем связи для ответа
+        $promocode->load(['categories', 'goods', 'user']);
 
         return response()->json([
             'success' => true,
@@ -176,22 +251,32 @@ class PromocodeController extends Controller
     /**
      * Удалить промокод
      */
-    public function destroy(Promocode $promocode): JsonResponse
+    public function destroy($id): JsonResponse
     {
-        // Проверяем, есть ли использования промокода
-        if ($promocode->usages()->count() > 0) {
+        try {
+            $promocode = Promocode::find($id);
+            
+            if (!$promocode) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Промокод не найден'
+                ], 404);
+            }
+            
+            // Удаляем промокод (даже если он использовался)
+            // Связи many-to-many будут удалены автоматически благодаря onDelete('cascade')
+            $promocode->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Промокод успешно удален'
+            ]);
+        } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Нельзя удалить промокод, который уже использовался'
-            ], 422);
+                'message' => 'Ошибка при удалении промокода: ' . $e->getMessage()
+            ], 500);
         }
-
-        $promocode->delete();
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Промокод успешно удален'
-        ]);
     }
 
     /**
@@ -200,22 +285,40 @@ class PromocodeController extends Controller
     public function stats(Promocode $promocode): JsonResponse
     {
         try {
-            // Упрощенная статистика без сложных запросов
-            $stats = [
-                'total_usage' => $promocode->used_count,
-                'recent_usage' => 0, // Пока оставляем 0
-                'usage_by_period' => [], // Пока пустой массив
+            // Получаем статистику из таблицы promocode_usage
+            $totalUsage = $promocode->usages()->count();
+            $recentUsage = $promocode->usages()
+                ->where('used_at', '>=', Carbon::now()->subDays(30))
+                ->count();
+            
+            // Статистика по пользователям
+            $uniqueUsers = $promocode->usages()
+                ->whereNotNull('user_id')
+                ->distinct('user_id')
+                ->count('user_id');
+            
+            // Общая сумма скидок
+            $totalDiscountAmount = $promocode->usages()
+                ->sum('discount_amount');
+            
+            // Статистика по периодам (последние 7 дней, 30 дней, все время)
+            $usageByPeriod = [
+                'last_7_days' => $promocode->usages()
+                    ->where('used_at', '>=', Carbon::now()->subDays(7))
+                    ->count(),
+                'last_30_days' => $recentUsage,
+                'all_time' => $totalUsage
             ];
 
-            // Пытаемся получить статистику по использованию, если связь работает
-            try {
-                $recentUsage = $promocode->usages()
-                    ->where('used_at', '>=', Carbon::now()->subDays(30))
-                    ->count();
-                $stats['recent_usage'] = $recentUsage;
-            } catch (\Exception $e) {
-                \Log::warning('Could not load recent usage stats: ' . $e->getMessage());
-            }
+            $stats = [
+                'total_usage' => $totalUsage,
+                'recent_usage' => $recentUsage,
+                'unique_users' => $uniqueUsers,
+                'total_discount_amount' => round($totalDiscountAmount, 2),
+                'usage_by_period' => $usageByPeriod,
+                'usage_limit' => $promocode->usage_limit,
+                'usage_limit_per_user' => $promocode->usage_limit_per_user,
+            ];
 
             return response()->json([
                 'success' => true,
@@ -233,19 +336,72 @@ class PromocodeController extends Controller
     }
 
     /**
-     * Получить данные для селектов (категории, товары)
+     * Получить данные для селектов (категории, товары, пользователи)
      */
     public function getSelectData(): JsonResponse
     {
-        $categories = Category::select('id', 'name')->get();
-        $goods = Good::select('id', 'name')->get();
+        $categories = ShopCategory::select('id', 'name')->orderBy('name')->get();
+        $goods = ShopGood::select('id', 'name')->orderBy('name')->get();
+        $users = \App\Models\User::select('id', 'name', 'email')->orderBy('name')->get();
 
         return response()->json([
             'success' => true,
             'data' => [
                 'categories' => $categories,
-                'goods' => $goods
+                'goods' => $goods,
+                'users' => $users
             ]
+        ]);
+    }
+
+    /**
+     * Поиск категорий, товаров или пользователей
+     */
+    public function searchItems(Request $request): JsonResponse
+    {
+        $type = $request->input('type'); // 'categories', 'goods', 'users'
+        $search = $request->input('search', '');
+
+        $results = [];
+
+        switch ($type) {
+            case 'categories':
+                $query = ShopCategory::select('id', 'name');
+                if ($search) {
+                    $query->where('name', 'like', "%{$search}%");
+                }
+                $results = $query->orderBy('name')->limit(20)->get();
+                break;
+
+            case 'goods':
+                $query = ShopGood::select('id', 'name');
+                if ($search) {
+                    $query->where('name', 'like', "%{$search}%");
+                }
+                $results = $query->orderBy('name')->limit(20)->get();
+                break;
+
+            case 'users':
+                $query = \App\Models\User::select('id', 'name', 'email');
+                if ($search) {
+                    $query->where(function($q) use ($search) {
+                        $q->where('name', 'like', "%{$search}%")
+                          ->orWhere('email', 'like', "%{$search}%");
+                    });
+                }
+                $results = $query->orderBy('name')->limit(20)->get();
+                break;
+
+            default:
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Неверный тип поиска'
+                ], 400);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $results
         ]);
     }
 }

@@ -59,12 +59,44 @@ class PropertyController extends Controller
         try {
             DB::beginTransaction();
 
-            $property = Property::create([
-                'name' => $request->name,
-                'description' => $request->description,
-                'property_type' => $request->property_type,
-                'sort_order' => 0,
-            ]);
+            // Генерируем slug для проверки
+            $slug = \Illuminate\Support\Str::slug($request->name);
+
+            // Нормализуем название: только первое слово с большой буквы
+            $normalizedName = mb_strtolower($request->name);
+            $normalizedName = mb_strtoupper(mb_substr($normalizedName, 0, 1)) . mb_substr($normalizedName, 1);
+            
+            // Проверяем, существует ли свойство с таким же именем (без учета регистра) или slug
+            $property = Property::where(function($query) use ($request, $slug) {
+                $query->whereRaw('LOWER(name) = ?', [strtolower($request->name)])
+                      ->orWhere('slug', $slug);
+            })->first();
+
+            if (!$property) {
+                // Если свойства нет, создаем новое
+                $property = Property::create([
+                    'name' => $normalizedName,
+                    'description' => $request->description,
+                    'property_type' => $request->property_type,
+                    'sort_order' => 0,
+                    'slug' => $slug, // Явно указываем slug, чтобы избежать дубликатов
+                ]);
+            } else {
+                // Если свойство существует, обновляем его название на нормализованное (если оно отличается)
+                if ($property->name !== $normalizedName) {
+                    $property->update([
+                        'name' => $normalizedName,
+                        'description' => $request->description ?? $property->description,
+                        'property_type' => $request->property_type ?? $property->property_type,
+                    ]);
+                } else {
+                    // Если название уже правильное, обновляем только описание и тип
+                    $property->update([
+                        'description' => $request->description ?? $property->description,
+                        'property_type' => $request->property_type ?? $property->property_type,
+                    ]);
+                }
+            }
 
             // Если тип "выбор", создаем значения
             if ($request->property_type === 'select' && $request->has('values')) {
@@ -149,8 +181,12 @@ class PropertyController extends Controller
         try {
             DB::beginTransaction();
 
+            // Нормализуем название: только первое слово с большой буквы
+            $normalizedName = mb_strtolower($request->name);
+            $normalizedName = mb_strtoupper(mb_substr($normalizedName, 0, 1)) . mb_substr($normalizedName, 1);
+            
             $property->update([
-                'name' => $request->name,
+                'name' => $normalizedName,
                 'description' => $request->description,
                 'property_type' => $request->property_type,
             ]);

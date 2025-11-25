@@ -155,7 +155,6 @@ class PhoneAuthController extends Controller
                     'email' => 'NO', // Для пользователей по телефону email = NO
                     'password' => Hash::make(Str::random(32)), // Случайный пароль для пользователей по телефону
                     'phone' => $phone,
-                    'avatar_url' => '/ph.png', // Аватар по умолчанию
                     'phone_verified_at' => now(),
                     'email_verified_at' => now(), // Активируем пользователя
                 ]);
@@ -194,7 +193,6 @@ class PhoneAuthController extends Controller
                     'email' => $user->email,
                     'phone' => $user->phone,
                     'role' => $user->roles->first() ? $user->roles->first()->name : 'user',
-                    'avatar_url' => $user->avatar_url ?? null,
                     'email_verified_at' => $user->email_verified_at,
                     'permissions' => $permissions,
                     'last_login_at' => $user->last_login_at,

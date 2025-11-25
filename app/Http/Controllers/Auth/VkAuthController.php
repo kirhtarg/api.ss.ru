@@ -211,7 +211,6 @@ class VkAuthController extends Controller
                         'avatar_url' => $vkUser['photo'] ?? null,
                         'password' => Hash::make(Str::random(32)), // Случайный пароль
                         'email_verified_at' => $vkUser['email'] ? now() : null,
-                        'email_verified_at' => now(),
                         'last_login_at' => now(),
                     ]);
                     
@@ -593,7 +592,6 @@ class VkAuthController extends Controller
                     'avatar_url' => $vkUser['photo'] ?? null,
                     'password' => Hash::make(Str::random(32)), // Случайный пароль
                     'email_verified_at' => $vkUser['email'] ? now() : null,
-                    'email_verified_at' => now(),
                     'last_login_at' => now(),
                 ]);
                 

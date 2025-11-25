@@ -66,6 +66,8 @@ Route::match(['OPTIONS'], '/{any}', function (Request $request) {
 
 // Маршрут для получения данных контактов для заголовка
 Route::get('/public/contacts/header-data', [\App\Http\Controllers\Api\Public\ContactController::class, 'headerData']);
+// Маршрут для получения основных контактов магазина
+Route::get('/public/contacts/main', [\App\Http\Controllers\Api\Public\ContactController::class, 'getMain']);
 // Маршрут для получения адресов самовывоза
 Route::get('/public/contacts/pickup-addresses', [\App\Http\Controllers\Api\Public\ContactController::class, 'getPickupAddresses']);
 
@@ -470,6 +472,14 @@ Route::get('/test/oauth', function () {
     // Webhook для Тест-Банк
     Route::post('/webhooks/testbank', [App\Http\Controllers\Api\Public\TestBankController::class, 'webhook']);
 
+    // Генерация счета для банковского перевода
+    Route::options('/payment-methods/transfer/invoice', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/payment-methods/transfer/invoice', [App\Http\Controllers\Api\Public\TransferInvoiceController::class, 'generateInvoice']);
+    Route::get('/payment-methods/transfer/invoice/excel', [App\Http\Controllers\Api\Public\TransferInvoiceController::class, 'generateInvoiceExcel']);
+    Route::get('/payment-methods/transfer/invoice/pdf', [App\Http\Controllers\Api\Public\TransferInvoiceController::class, 'generateInvoicePdf']);
+
     // Настройки бонусов (публичные - видны всем)
     Route::get('/public/shop/bonus-settings', [App\Http\Controllers\Api\Public\ShopBonusSettingsController::class, 'getActive']);
     Route::post('/public/shop/bonus-settings/calculate', [App\Http\Controllers\Api\Public\ShopBonusSettingsController::class, 'calculateBonus']);
@@ -492,8 +502,10 @@ Route::get('/test/oauth', function () {
     // Заказы пользователей (требует авторизации)
     Route::middleware('auth:sanctum')->group(function () {
         Route::get('/public/shop/orders', [App\Http\Controllers\Api\Public\UserOrdersController::class, 'index']);
+        Route::get('/public/shop/orders/statuses', [App\Http\Controllers\Api\Public\UserOrdersController::class, 'getStatuses']);
         Route::get('/public/shop/orders/{id}', [App\Http\Controllers\Api\Public\UserOrdersController::class, 'show']);
         Route::post('/public/shop/orders/{id}/cancel', [App\Http\Controllers\Api\Public\UserOrdersController::class, 'cancel']);
+        Route::post('/public/shop/orders/{id}/request-cancellation', [App\Http\Controllers\Api\Public\UserOrdersController::class, 'requestCancellation']);
 
         // Бонусы пользователя
         Route::get('/public/shop/user-bonuses', [App\Http\Controllers\Api\Public\UserBonusController::class, 'index']);
@@ -719,6 +731,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('shop/comparison')->group(function () {
         Route::get('/', [\App\Http\Controllers\Api\Public\ComparisonController::class, 'index']);
         Route::post('/add', [\App\Http\Controllers\Api\Public\ComparisonController::class, 'add']);
+        Route::post('/remove', [\App\Http\Controllers\Api\Public\ComparisonController::class, 'remove']);
         Route::delete('/remove/{id}', [\App\Http\Controllers\Api\Public\ComparisonController::class, 'remove']);
         Route::delete('/clear', [\App\Http\Controllers\Api\Public\ComparisonController::class, 'clear']);
         Route::get('/check', [\App\Http\Controllers\Api\Public\ComparisonController::class, 'check']);
@@ -736,6 +749,14 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('/{id}', [\App\Http\Controllers\ContactController::class, 'update']);
         Route::delete('/{id}', [\App\Http\Controllers\ContactController::class, 'destroy']);
         Route::get('/social-types/list', [\App\Http\Controllers\ContactController::class, 'getSocialTypes']);
+    });
+
+    // Управление типами социальных сетей
+    Route::middleware(['auth:sanctum', 'role:admin,site'])->prefix('contact-social-types')->group(function () {
+        Route::get('/', [\App\Http\Controllers\ContactSocialTypeController::class, 'index']);
+        Route::post('/', [\App\Http\Controllers\ContactSocialTypeController::class, 'store']);
+        Route::put('/{id}', [\App\Http\Controllers\ContactSocialTypeController::class, 'update']);
+        Route::delete('/{id}', [\App\Http\Controllers\ContactSocialTypeController::class, 'destroy']);
     });
 
     // Сообщения с сайта (доступны админам)
@@ -1177,6 +1198,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/bulk-update', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'bulkUpdate']);
                 Route::post('/check-duplicates', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'checkDuplicates']);
                 Route::post('/bulk-import', [\App\Http\Controllers\Admin\BulkGoodsImportController::class, 'bulkImport']);
+                Route::post('/mass-parse-properties', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'massParseProperties']);
 
                 // Управление изображениями товаров
                 Route::prefix('{good}/images')->group(function () {
@@ -1215,6 +1237,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::post('/', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'store']);
                     Route::post('/bulk', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'storeBulk']);
                     Route::post('/check-duplicate', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'checkDuplicate']);
+                    Route::post('/add-attribute-to-all', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'addAttributeToAll']);
                     Route::post('/add-property', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'addProperty']);
                     Route::post('/remove-property', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'removeProperty']);
                     Route::put('/{variationId}', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'update']);
@@ -1289,6 +1312,10 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/', [\App\Http\Controllers\Admin\ShopBrandsController::class, 'store']);
                 Route::put('/{id}', [\App\Http\Controllers\Admin\ShopBrandsController::class, 'update']);
                 Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopBrandsController::class, 'destroy']);
+                Route::post('/{id}/image', [\App\Http\Controllers\ImageUploadController::class, 'uploadBrandImage']);
+                Route::delete('/{id}/image', [\App\Http\Controllers\ImageUploadController::class, 'deleteBrandImage']);
+                Route::post('/order', [\App\Http\Controllers\Admin\ShopBrandsController::class, 'updateOrder']);
+                Route::post('/import', [\App\Http\Controllers\Admin\ShopBrandsController::class, 'import']);
             });
 
             // Теги
@@ -1305,6 +1332,7 @@ Route::middleware('auth:sanctum')->group(function () {
             // Заказы
             Route::prefix('orders')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'index']);
+                Route::get('/statistics', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'statistics']);
                 Route::get('/statuses', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'getStatuses']);
                 Route::get('/{id}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'show']);
                 Route::post('/', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'store']);
@@ -1325,6 +1353,16 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/export', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'export']);
             });
 
+            // Предзаказы
+            Route::prefix('preorders')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Admin\ShopPreordersController::class, 'index']);
+                Route::get('/stats/overview', [\App\Http\Controllers\Admin\ShopPreordersController::class, 'stats']);
+                Route::get('/{id}', [\App\Http\Controllers\Admin\ShopPreordersController::class, 'show']);
+                Route::put('/{id}', [\App\Http\Controllers\Admin\ShopPreordersController::class, 'update']);
+                Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopPreordersController::class, 'destroy']);
+                Route::put('/{id}/status', [\App\Http\Controllers\Admin\ShopPreordersController::class, 'updateStatus']);
+            });
+
             // Промокоды
             Route::prefix('promocodes')->group(function () {
                 Route::get('/test', function () {
@@ -1336,11 +1374,25 @@ Route::middleware('auth:sanctum')->group(function () {
                 });
                 Route::get('/', [\App\Http\Controllers\Admin\PromocodeController::class, 'index']);
                 Route::get('/select-data', [\App\Http\Controllers\Admin\PromocodeController::class, 'getSelectData']);
+                Route::get('/search-items', [\App\Http\Controllers\Admin\PromocodeController::class, 'searchItems']);
                 Route::get('/{id}/stats', [\App\Http\Controllers\Admin\PromocodeController::class, 'stats']);
                 Route::get('/{id}', [\App\Http\Controllers\Admin\PromocodeController::class, 'show']);
                 Route::post('/', [\App\Http\Controllers\Admin\PromocodeController::class, 'store']);
                 Route::put('/{id}', [\App\Http\Controllers\Admin\PromocodeController::class, 'update']);
                 Route::delete('/{id}', [\App\Http\Controllers\Admin\PromocodeController::class, 'destroy']);
+            });
+
+            // Оповещения магазина
+            Route::prefix('notifications')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Api\Admin\ShopNotificationController::class, 'index']);
+                Route::get('/{id}', [\App\Http\Controllers\Api\Admin\ShopNotificationController::class, 'show']);
+                Route::post('/', [\App\Http\Controllers\Api\Admin\ShopNotificationController::class, 'store']);
+                Route::put('/{id}', [\App\Http\Controllers\Api\Admin\ShopNotificationController::class, 'update']);
+                Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\ShopNotificationController::class, 'destroy']);
+                Route::post('/{id}/toggle-active', [\App\Http\Controllers\Api\Admin\ShopNotificationController::class, 'toggleActive']);
+                Route::post('/test-telegram', [\App\Http\Controllers\Api\Admin\ShopNotificationController::class, 'testTelegram']);
+                Route::post('/test-email', [\App\Http\Controllers\Api\Admin\ShopNotificationController::class, 'testEmail']);
+                Route::post('/get-bot-info', [\App\Http\Controllers\Api\Admin\ShopNotificationController::class, 'getBotInfo']);
             });
 
             // Управление способами доставки
@@ -1781,36 +1833,57 @@ Route::middleware('auth:sanctum')->group(function () {
             // Получить список всех пользователей
             Route::get('/', function () {
                 try {
+                    // Получаем всех пользователей с ролями
                     $users = \App\Models\User::with('roles')
                         ->orderBy('created_at', 'desc')
-                        ->get()
-                        ->map(function ($user) {
-                            $userData = [
-                                'id' => $user->id,
-                                'name' => $user->name,
-                                'email' => $user->email,
-                                'phone' => $user->phone,
-                                'avatar' => $user->avatar,
-                                'avatar_url' => $user->avatar_url,
-                                'google_id' => $user->google_id,
-                                'yandex_id' => $user->yandex_id,
-                                'vk_id' => $user->vk_id,
-                                'phone_verified_at' => $user->phone_verified_at ? 1 : 0, // 1 если есть дата, 0 если null
-                                'roles' => $user->roles->pluck('name'),
-                                'email_verified_at' => $user->email_verified_at ? 1 : 0, // 1 если есть дата, 0 если null
-                                'is_active' => $user->is_active,
-                                'created_at' => $user->created_at,
-                                'updated_at' => $user->updated_at,
-                                'last_login_at' => $user->last_login_at,
-                            ];
+                        ->get();
+                    
+                    // Получаем все бонусы одним запросом для оптимизации
+                    $userIds = $users->pluck('id')->toArray();
+                    $bonuses = \App\Models\UserBonus::whereIn('user_id', $userIds)
+                        ->pluck('points', 'user_id')
+                        ->toArray();
+                    
+                    // Получаем количество персональных промокодов для каждого пользователя
+                    $promocodesCount = \App\Models\Promocode::whereIn('user_id', $userIds)
+                        ->whereNotNull('user_id')
+                        ->selectRaw('user_id, COUNT(*) as count')
+                        ->groupBy('user_id')
+                        ->pluck('count', 'user_id')
+                        ->toArray();
+                    
+                    $users = $users->map(function ($user) use ($bonuses, $promocodesCount) {
+                        // Получаем бонусы пользователя из предзагруженного массива
+                        $bonusPoints = $bonuses[$user->id] ?? 0;
+                        $hasPromocodes = isset($promocodesCount[$user->id]) && $promocodesCount[$user->id] > 0;
+                        
+                        $userData = [
+                            'id' => $user->id,
+                            'name' => $user->name,
+                            'email' => $user->email,
+                            'phone' => $user->phone,
+                            'google_id' => $user->google_id,
+                            'yandex_id' => $user->yandex_id,
+                            'vk_id' => $user->vk_id,
+                            'phone_verified_at' => $user->phone_verified_at ? 1 : 0, // 1 если есть дата, 0 если null
+                            'roles' => $user->roles->pluck('name'),
+                            'email_verified_at' => $user->email_verified_at ? 1 : 0, // 1 если есть дата, 0 если null
+                            'is_active' => $user->is_active,
+                            'created_at' => $user->created_at,
+                            'updated_at' => $user->updated_at,
+                            'last_login_at' => $user->last_login_at,
+                            'bonus_points' => $bonusPoints,
+                            'bonuses' => $bonusPoints, // Дублируем для совместимости
+                            'has_promocodes' => $hasPromocodes, // Флаг наличия персональных промокодов
+                        ];
 
-                            // Добавляем поля авторизации
-                            $userData['google_id'] = $user->google_id;
-                            $userData['yandex_id'] = $user->yandex_id;
-                            $userData['vk_id'] = $user->vk_id;
+                        // Добавляем поля авторизации
+                        $userData['google_id'] = $user->google_id;
+                        $userData['yandex_id'] = $user->yandex_id;
+                        $userData['vk_id'] = $user->vk_id;
 
-                            return $userData;
-                        });
+                        return $userData;
+                    });
 
                     return response()->json([
                         'success' => true,
@@ -1837,7 +1910,6 @@ Route::middleware('auth:sanctum')->group(function () {
                         'roles.*' => 'string|exists:roles,name',
                         'email_verified_at' => 'nullable|date', // Статус активности на основе email_verified_at
                         'is_active' => 'boolean', // Статус блокировки пользователя
-                        'avatar_url' => 'nullable|url|max:255' // URL аватара пользователя
                     ]);
 
                     if ($validator->fails()) {
@@ -1863,11 +1935,6 @@ Route::middleware('auth:sanctum')->group(function () {
                     // Добавляем статус блокировки, если передан
                     if ($request->has('is_active')) {
                         $userData['is_active'] = $request->boolean('is_active');
-                    }
-
-                    // Добавляем URL аватара, если передан
-                    if ($request->has('avatar_url')) {
-                        $userData['avatar_url'] = $request->avatar_url;
                     }
 
                     $user = \App\Models\User::create($userData);
@@ -1903,8 +1970,6 @@ Route::middleware('auth:sanctum')->group(function () {
                             'id' => $user->id,
                             'name' => $user->name,
                             'email' => $user->email,
-                            'avatar' => $user->avatar,
-                            'avatar_url' => $user->avatar_url,
                             'roles' => $user->roles->pluck('name'),
                             'email_verified_at' => $user->email_verified_at,
                             'is_active' => $user->is_active,
@@ -1942,7 +2007,6 @@ Route::middleware('auth:sanctum')->group(function () {
                         'roles.*' => 'string|exists:roles,name',
                         'email_verified_at' => 'nullable|date', // Статус активности на основе email_verified_at
                         'is_active' => 'boolean', // Статус блокировки пользователя
-                        'avatar_url' => 'nullable|url|max:255' // URL аватара пользователя
                     ]);
 
                     if ($validator->fails()) {
@@ -1969,11 +2033,6 @@ Route::middleware('auth:sanctum')->group(function () {
                         $updateData['is_active'] = $request->boolean('is_active');
                     }
 
-                    // Добавляем URL аватара, если передан
-                    if ($request->has('avatar_url')) {
-                        $updateData['avatar_url'] = $request->avatar_url;
-                    }
-
                     $user->update($updateData);
 
                     // Обновляем роли
@@ -1997,8 +2056,6 @@ Route::middleware('auth:sanctum')->group(function () {
                             'id' => $user->id,
                             'name' => $user->name,
                             'email' => $user->email,
-                            'avatar' => $user->avatar,
-                            'avatar_url' => $user->avatar_url,
                             'roles' => $user->roles->pluck('name'),
                             'email_verified_at' => $user->email_verified_at,
                             'is_active' => $user->is_active,
@@ -2118,6 +2175,11 @@ Route::middleware('auth:sanctum')->group(function () {
                     ], 500);
                 }
             });
+
+            // Управление бонусами пользователя
+            Route::get('/{id}/bonuses', [\App\Http\Controllers\Admin\UserBonusController::class, 'show']);
+            Route::put('/{id}/bonuses', [\App\Http\Controllers\Admin\UserBonusController::class, 'update']);
+            Route::get('/{id}/bonuses/transactions', [\App\Http\Controllers\Admin\UserBonusController::class, 'transactions']);
         });
 
         // Menu management
@@ -2333,6 +2395,10 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::put('/{id}', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'update']);
                 Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'destroy']);
                 Route::post('/{id}/toggle-active', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'toggleActive']);
+
+                // Изображения бонусных систем
+                Route::post('/upload-image', [\App\Http\Controllers\Api\Admin\BonusSettingImageController::class, 'upload']);
+                Route::post('/remove-image', [\App\Http\Controllers\Api\Admin\BonusSettingImageController::class, 'remove']);
             });
         });
 
@@ -2551,7 +2617,6 @@ Route::middleware('auth:sanctum')->group(function () {
                         'id' => $user->id,
                         'name' => $user->name,
                         'email' => $user->email,
-                        'avatar_url' => $user->avatar ? '/' . $user->avatar : null,
                         'role' => $user->roles->first()?->name ?? 'user', // Основная роль для совместимости
                         'roles' => $user->roles->map(function($role) {
                             return [
@@ -2605,7 +2670,6 @@ Route::middleware('auth:sanctum')->group(function () {
                         'id' => $user->id,
                         'name' => $user->name,
                         'email' => $user->email,
-                        'avatar_url' => $user->avatar ? '/' . $user->avatar : null,
                         'role' => $user->roles->first()?->name ?? 'user', // Основная роль для совместимости
                         'roles' => $user->roles->map(function($role) {
                             return [
@@ -2706,17 +2770,15 @@ Route::middleware('auth:sanctum')->group(function () {
                     // Сохраняем файл на фронтенде
                     $file->move($dir, $filename);
 
-                    // Удаляем старый аватар, если он есть
-                    if ($user->avatar && $user->avatar !== 'default-avatar.png') {
-                        $oldPath = $frontendPublicPath . '/' . $user->avatar;
-                        if (file_exists($oldPath)) {
-                            unlink($oldPath);
-                        }
+                    // Удаляем старый аватар пользователя, если он есть
+                    // Используем стандартное имя файла user_{id}.jpg
+                    $oldAvatarPath = $frontendPublicPath . '/images/users/user_' . $user->id . '.jpg';
+                    if (file_exists($oldAvatarPath)) {
+                        unlink($oldAvatarPath);
                     }
 
-                    // Обновляем URL аватара в базе данных
-                    $user->avatar = $path;
-                    $user->save();
+                    // Аватар сохраняется только в папке images/users/user_{id}.jpg
+                    // Поля avatar и avatar_url больше не используются в базе данных
 
                     return response()->json([
                         'success' => true,
@@ -2737,24 +2799,17 @@ Route::middleware('auth:sanctum')->group(function () {
                 try {
                     $user = $request->user();
 
-                    // Проверяем, есть ли аватар
-                    if (!$user->avatar) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Аватар не найден'
-                        ], 404);
-                    }
-
                     // Удаляем файл аватара с фронтенда
+                    // Используем стандартное имя файла user_{id}.jpg
                     $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
-                    $filePath = $frontendPublicPath . '/' . $user->avatar;
+                    $filePath = $frontendPublicPath . '/images/users/user_' . $user->id . '.jpg';
+                    
+                    $fileDeleted = false;
                     if (file_exists($filePath)) {
-                        unlink($filePath);
+                        $fileDeleted = unlink($filePath);
                     }
 
-                    // Очищаем поле аватара в базе данных
-                    $user->avatar = null;
-                    $user->save();
+                    // Поля avatar и avatar_url больше не используются в базе данных
 
                     return response()->json([
                         'success' => true,

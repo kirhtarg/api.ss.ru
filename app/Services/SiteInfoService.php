@@ -35,7 +35,7 @@ class SiteInfoService
             // Добавляем значения по умолчанию если не найдены
             $siteInfo['site_name'] = $siteInfo['site_name'] ?? config('app.name');
             $siteInfo['site_description'] = $siteInfo['site_description'] ?? 'Добро пожаловать на наш сайт!';
-            $siteInfo['main_site'] = $siteInfo['main_site'] ?? config('app.url');
+            $siteInfo['main_site'] = $siteInfo['main_site'] ?? config('app.frontend_url', env('FRONTEND_URL', config('app.url')));
             $siteInfo['site_logo'] = $siteInfo['site_logo'] ?? null;
             $siteInfo['site_color1'] = $siteInfo['site_color1'] ?? '#1a1a1a';
             $siteInfo['site_color2'] = $siteInfo['site_color2'] ?? '#b8860b';

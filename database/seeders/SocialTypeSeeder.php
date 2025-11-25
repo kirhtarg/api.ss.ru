@@ -100,7 +100,7 @@ class SocialTypeSeeder extends Seeder
         ];
 
         foreach ($socialTypes as $socialType) {
-            DB::table('social_types')->updateOrInsert(
+            DB::table('contact_social_types')->updateOrInsert(
                 ['id' => $socialType['id']],
                 $socialType
             );

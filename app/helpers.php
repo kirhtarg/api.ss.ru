@@ -38,3 +38,19 @@ if (!function_exists('get_shop_setting')) {
         return get_setting($key, $default, 'shop');
     }
 }
+
+if (!function_exists('mb_ucfirst')) {
+    /**
+     * Преобразует первый символ строки в верхний регистр (с поддержкой UTF-8)
+     * 
+     * @param string $string Строка для преобразования
+     * @param string $encoding Кодировка (по умолчанию UTF-8)
+     * @return string
+     */
+    function mb_ucfirst($string, $encoding = 'UTF-8')
+    {
+        $firstChar = mb_substr($string, 0, 1, $encoding);
+        $rest = mb_substr($string, 1, null, $encoding);
+        return mb_strtoupper($firstChar, $encoding) . $rest;
+    }
+}

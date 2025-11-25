@@ -205,7 +205,29 @@
                 Спасибо за ваш заказ! Мы получили его и в ближайшее время свяжемся с вами для подтверждения деталей. 
                 Ниже представлена подробная информация о вашем заказе.
             </p>
-            <p style="margin: 0; color: #155724; font-size: 14px;">
+            @if($order->payment_method === 'Банковский перевод' || (isset($order->payment_method_id) && $order->payment_method_id))
+                @php
+                    $isTransfer = false;
+                    if ($order->payment_method === 'Банковский перевод') {
+                        $isTransfer = true;
+                    } elseif (isset($order->payment_method_id)) {
+                        $paymentMethod = \App\Models\ShopPaymentMethod::find($order->payment_method_id);
+                        $isTransfer = $paymentMethod && $paymentMethod->type === 'transfer';
+                    }
+                @endphp
+                @if($isTransfer)
+                    <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 15px 0; border-left: 4px solid #ffc107;">
+                        <p style="margin: 0 0 10px 0; color: #856404; font-size: 16px; font-weight: bold;">
+                            💳 Счет на оплату
+                        </p>
+                        <p style="margin: 0; color: #856404; font-size: 14px; line-height: 1.5;">
+                            К данному письму прикреплен счет на оплату в формате PDF с банковскими реквизитами и суммой к оплате. 
+                            Пожалуйста, произведите оплату по указанным реквизитам.
+                        </p>
+                    </div>
+                @endif
+            @endif
+            <p style="margin: 15px 0 0 0; color: #155724; font-size: 14px;">
                 Посетите наш <a href="{{ $siteInfo['main_site'] ?? config('app.url') }}" style="color: #28a745; text-decoration: none; font-weight: bold;">интернет-магазин</a> 
                 для просмотра новых товаров и акций!
             </p>

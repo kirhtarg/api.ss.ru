@@ -81,6 +81,14 @@ class SiteMessageController extends Controller
         
         $message = SiteMessage::create($messageData);
 
+        // Отправляем уведомления о новом сообщении на сайте
+        try {
+            $notificationService = app(\App\Services\NotificationService::class);
+            $notificationService->notifySiteMessage($message);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Site message notification error: ' . $e->getMessage());
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Сообщение успешно отправлено',

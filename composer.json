@@ -12,7 +12,9 @@
         "laravel/sanctum": "^4.2",
         "laravel/socialite": "^5.23",
         "laravel/tinker": "^2.10.1",
-        "socialiteproviders/vkontakte": "^5.0"
+        "phpoffice/phpspreadsheet": "^5.3",
+        "socialiteproviders/vkontakte": "^5.0",
+        "tecnickcom/tcpdf": "^6.10"
     },
     "require-dev": {
         "doctrine/dbal": "^4.0",
