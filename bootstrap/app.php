@@ -17,6 +17,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'role' => \App\Http\Middleware\CheckRole::class,
             'shop.access' => \App\Http\Middleware\CheckShopAccess::class,
             'cors' => \App\Http\Middleware\CustomCors::class,
+            'throttle.public' => \App\Http\Middleware\ThrottlePublicRoutes::class,
         ]);
 
         // Настраиваем web middleware с CSRF
@@ -25,9 +26,10 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
 
         // Настраиваем API middleware с CORS
+        // Используем кастомный throttle middleware, который пропускает публичные маршруты
         $middleware->api([
             \App\Http\Middleware\CustomCors::class,
-            'throttle:api',
+            'throttle.public',
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ]);
     })

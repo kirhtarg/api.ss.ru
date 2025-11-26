@@ -191,6 +191,21 @@ class ShopGoodsController extends Controller
             $query->where('is_active', $request->boolean('is_active'));
         }
 
+        // Фильтр по is_new
+        if ($request->filled('is_new')) {
+            $query->where('is_new', $request->boolean('is_new'));
+        }
+
+        // Фильтр по is_featured
+        if ($request->filled('is_featured')) {
+            $query->where('is_featured', $request->boolean('is_featured'));
+        }
+
+        // Фильтр по is_sale
+        if ($request->filled('is_sale')) {
+            $query->where('is_sale', $request->boolean('is_sale'));
+        }
+
         // Фильтр по характеристикам (properties[property_id][])
         if ($request->has('properties')) {
             $properties = $request->input('properties');

@@ -23,8 +23,14 @@ class RouteServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // Увеличенный лимит для обычных API маршрутов
         RateLimiter::for('api', function (Request $request) {
-            return Limit::perMinute(60)->by($request->user()?->id ?: $request->ip());
+            return Limit::perMinute(150)->by($request->user()?->id ?: $request->ip());
+        });
+
+        // Отдельный rate limiter для публичных эндпоинтов с более высоким лимитом
+        RateLimiter::for('public', function (Request $request) {
+            return Limit::perMinute(300)->by($request->ip());
         });
     }
 }

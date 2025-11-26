@@ -64,12 +64,14 @@ Route::match(['OPTIONS'], '/{any}', function (Request $request) {
         ->header('Access-Control-Max-Age', '86400');
 })->where('any', '.*');
 
-// Маршрут для получения данных контактов для заголовка
-Route::get('/public/contacts/header-data', [\App\Http\Controllers\Api\Public\ContactController::class, 'headerData']);
-// Маршрут для получения основных контактов магазина
-Route::get('/public/contacts/main', [\App\Http\Controllers\Api\Public\ContactController::class, 'getMain']);
-// Маршрут для получения адресов самовывоза
-Route::get('/public/contacts/pickup-addresses', [\App\Http\Controllers\Api\Public\ContactController::class, 'getPickupAddresses']);
+// Маршрут для получения данных контактов для заголовка (публичные, с отдельным rate limiter)
+Route::middleware(['throttle:public'])->group(function () {
+    Route::get('/public/contacts/header-data', [\App\Http\Controllers\Api\Public\ContactController::class, 'headerData']);
+    // Маршрут для получения основных контактов магазина
+    Route::get('/public/contacts/main', [\App\Http\Controllers\Api\Public\ContactController::class, 'getMain']);
+    // Маршрут для получения адресов самовывоза
+    Route::get('/public/contacts/pickup-addresses', [\App\Http\Controllers\Api\Public\ContactController::class, 'getPickupAddresses']);
+});
 
 
 
@@ -149,8 +151,8 @@ Route::get('/test/oauth', function () {
 });
 
 
-    // Публичные маршруты для получения информации о сайте (с CORS middleware)
-    Route::middleware(['cors'])->group(function () {
+    // Публичные маршруты для получения информации о сайте (с CORS middleware и отдельным rate limiter)
+    Route::middleware(['cors', 'throttle:public'])->group(function () {
     Route::options('/public/site-info', function () {
         return response()->json([], 200);
     });
