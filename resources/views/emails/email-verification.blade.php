@@ -173,9 +173,10 @@
             @if(isset($siteInfo['site_logo']) && $siteInfo['site_logo'])
                 @php
                     $logoUrl = $siteInfo['site_logo'];
-                    // Если это не полный URL, добавляем префикс
-                    if (!str_starts_with($logoUrl, 'http')) {
-                        $logoUrl = config('app.url') . '/storage/' . $logoUrl;
+                    // Если это не полный URL, строим путь из main_site
+                    if (!str_starts_with($logoUrl, 'http://') && !str_starts_with($logoUrl, 'https://')) {
+                        $mainSite = rtrim($siteInfo['main_site'] ?? config('app.url'), '/');
+                        $logoUrl = $mainSite . '/' . ltrim($logoUrl, '/');
                     }
                 @endphp
                 <img src="{{ $logoUrl }}" alt="Логотип" class="logo">

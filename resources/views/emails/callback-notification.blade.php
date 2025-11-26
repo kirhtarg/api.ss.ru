@@ -165,7 +165,15 @@
         <div class="header">
             <div class="logo-container">
                 @if(isset($siteInfo['site_logo']) && $siteInfo['site_logo'])
-                    <img src="{{ $siteInfo['site_logo'] }}" alt="Логотип {{ $siteInfo['site_name'] ?? 'Магазина' }}">
+                    @php
+                        $logoUrl = $siteInfo['site_logo'];
+                        // Если это не полный URL, строим путь из main_site
+                        if (!str_starts_with($logoUrl, 'http://') && !str_starts_with($logoUrl, 'https://')) {
+                            $mainSite = rtrim($siteInfo['main_site'] ?? config('app.url'), '/');
+                            $logoUrl = $mainSite . '/' . ltrim($logoUrl, '/');
+                        }
+                    @endphp
+                    <img src="{{ $logoUrl }}" alt="Логотип {{ $siteInfo['site_name'] ?? 'Магазина' }}">
                 @endif
             </div>
             <h1>{{ $siteInfo['site_name'] ?? 'Интернет-магазин' }}</h1>

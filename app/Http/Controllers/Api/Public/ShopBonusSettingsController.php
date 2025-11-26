@@ -12,16 +12,28 @@ class ShopBonusSettingsController extends Controller
 {
     /**
      * Получить активные настройки бонусов
+     * Возвращает массив всех настроек с image_url (как админский контроллер)
      */
     public function getActive(): JsonResponse
     {
         try {
-            $settings = ShopBonusSettings::getActiveSettings();
-
-            if (!$settings) {
-                // Создаем настройки по умолчанию
-                $settings = ShopBonusSettings::getDefaultSettings();
-            }
+            // Получаем все настройки, отсортированные по дате создания
+            $settings = ShopBonusSettings::orderBy('created_at', 'desc')->get();
+            
+            // Добавляем image_url к каждой настройке, если файл существует
+            $settings = $settings->map(function ($setting) {
+                $imageUrl = '/images/bsys/bsys_' . $setting->id . '.jpg';
+                $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+                $imagePath = base_path($frontendPath . '/public' . $imageUrl);
+                
+                if (file_exists($imagePath)) {
+                    $setting->image_url = $imageUrl;
+                } else {
+                    $setting->image_url = null;
+                }
+                
+                return $setting;
+            });
 
             return response()->json([
                 'success' => true,

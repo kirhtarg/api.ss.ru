@@ -68,13 +68,26 @@ class GoogleAuthController extends Controller
                 }
                 
                 // Пользователь уже существует, обновляем данные
-                $user->update([
-                    'name' => $googleUser->getName(),
-                    'email' => $googleUser->getEmail(),
+                $displayName = $googleUser->getName();
+                // Добавляем источник регистрации в скобках
+                if (!str_ends_with($displayName, ' (google)')) {
+                    $displayName .= ' (google)';
+                }
+                
+                $updateData = [
+                    'name' => $displayName,
                     'avatar_url' => $googleUser->getAvatar(),
-                    'email_verified_at' => now(),
                     'last_login_at' => now(),
-                ]);
+                ];
+                
+                // Обновляем email только если он пустой у пользователя
+                // Если email уже есть, не обновляем его (пользователь мог изменить его)
+                if (empty($user->email) || $user->email === 'NO' || $user->email === '') {
+                    $updateData['email'] = $googleUser->getEmail();
+                    $updateData['email_verified_at'] = now();
+                }
+                
+                $user->update($updateData);
             } else {
                 // Проверяем, есть ли пользователь с таким email
                 $existingUser = User::where('email', $googleUser->getEmail())->first();
@@ -88,17 +101,31 @@ class GoogleAuthController extends Controller
                     }
                     
                     // Связываем существующего пользователя с Google
-                    $existingUser->update([
+                    $updateExisting = [
                         'google_id' => $googleUser->getId(),
                         'avatar_url' => $googleUser->getAvatar(),
-                        'email_verified_at' => now(),
                         'last_login_at' => now(),
-                    ]);
+                    ];
+                    
+                    // Обновляем email только если он пустой у пользователя
+                    // Если email уже есть, не обновляем его (пользователь мог изменить его)
+                    if (empty($existingUser->email) || $existingUser->email === 'NO' || $existingUser->email === '') {
+                        $updateExisting['email'] = $googleUser->getEmail();
+                        $updateExisting['email_verified_at'] = now();
+                    }
+                    
+                    $existingUser->update($updateExisting);
                     $user = $existingUser;
                 } else {
                     // Создаем нового пользователя
+                    $displayName = $googleUser->getName();
+                    // Добавляем источник регистрации в скобках
+                    if (!str_ends_with($displayName, ' (google)')) {
+                        $displayName .= ' (google)';
+                    }
+                    
                     $user = User::create([
-                        'name' => $googleUser->getName(),
+                        'name' => $displayName,
                         'email' => $googleUser->getEmail(),
                         'google_id' => $googleUser->getId(),
                         'avatar_url' => $googleUser->getAvatar(),

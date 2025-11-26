@@ -2619,6 +2619,12 @@ Route::middleware('auth:sanctum')->group(function () {
                         'id' => $user->id,
                         'name' => $user->name,
                         'email' => $user->email,
+                        'phone' => $user->phone,
+                        'phone_verified_at' => $user->phone_verified_at, // Для определения телефонных пользователей
+                        'avatar_url' => $user->avatar_url, // URL аватара от OAuth провайдеров
+                        'google_id' => $user->google_id, // Для определения соц-аккаунта
+                        'yandex_id' => $user->yandex_id, // Для определения соц-аккаунта
+                        'vk_id' => $user->vk_id, // Для определения соц-аккаунта
                         'role' => $user->roles->first()?->name ?? 'user', // Основная роль для совместимости
                         'roles' => $user->roles->map(function($role) {
                             return [
@@ -3076,6 +3082,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/statistics', [\App\Http\Controllers\Api\Public\UserProfileController::class, 'getStatistics']);
         Route::post('/phone-change/send-code', [\App\Http\Controllers\Api\Public\UserProfileController::class, 'sendPhoneChangeCode']);
         Route::post('/phone-change/verify-code', [\App\Http\Controllers\Api\Public\UserProfileController::class, 'verifyPhoneChangeCode']);
+        // Маршруты для смены email
+        Route::post('/email-change/send-code', [\App\Http\Controllers\Api\Public\EmailChangeController::class, 'sendVerificationCode']);
+        Route::post('/email-change/verify-code', [\App\Http\Controllers\Api\Public\EmailChangeController::class, 'verifyCode']);
     });
 
     // Маршруты загрузки аватаров

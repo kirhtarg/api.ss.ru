@@ -187,8 +187,16 @@
     <div class="email-container">
         <!-- Логотип и название магазина -->
         <div class="store-header" style="text-align: center; margin-bottom: 30px; padding: 20px; background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border-radius: 8px;">
-            @if($siteInfo['site_logo'])
-                <img src="{{ $siteInfo['site_logo'] }}" alt="Логотип" style="max-height: 60px; margin-bottom: 15px;">
+            @if(isset($siteInfo['site_logo']) && $siteInfo['site_logo'])
+                @php
+                    $logoUrl = $siteInfo['site_logo'];
+                    // Если это не полный URL, строим путь из main_site
+                    if (!str_starts_with($logoUrl, 'http://') && !str_starts_with($logoUrl, 'https://')) {
+                        $mainSite = rtrim($siteInfo['main_site'] ?? config('app.url'), '/');
+                        $logoUrl = $mainSite . '/' . ltrim($logoUrl, '/');
+                    }
+                @endphp
+                <img src="{{ $logoUrl }}" alt="Логотип" style="max-height: 60px; margin-bottom: 15px;">
             @endif
             <h1 style="margin: 0; font-size: 28px; color: #333; font-weight: bold;">{{ $siteInfo['site_name'] ?? 'Интернет-магазин' }}</h1>
             @if($siteInfo['site_description'])

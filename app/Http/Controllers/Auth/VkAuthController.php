@@ -172,13 +172,26 @@ class VkAuthController extends Controller
                 }
                 
                 // Пользователь уже существует, обновляем данные
-                $user->update([
-                    'name' => trim(($vkUser['first_name'] ?? '') . ' ' . ($vkUser['last_name'] ?? '')),
-                    'email' => $vkUser['email'],
+                $displayName = trim(($vkUser['first_name'] ?? '') . ' ' . ($vkUser['last_name'] ?? ''));
+                // Добавляем источник регистрации в скобках
+                if (!str_ends_with($displayName, ' (вк)')) {
+                    $displayName .= ' (вк)';
+                }
+                
+                $updateData = [
+                    'name' => $displayName,
                     'avatar_url' => $vkUser['photo'] ?? null,
-                    'email_verified_at' => $vkUser['email'] ? now() : null,
                     'last_login_at' => now(),
-                ]);
+                ];
+                
+                // Обновляем email только если он пустой у пользователя
+                // Если email уже есть, не обновляем его (пользователь мог изменить его)
+                if (empty($user->email) || $user->email === 'NO' || $user->email === '') {
+                    $updateData['email'] = $vkUser['email'] ?? null;
+                    $updateData['email_verified_at'] = $vkUser['email'] ? now() : null;
+                }
+                
+                $user->update($updateData);
             } else {
                 // Проверяем, есть ли пользователь с таким email
                 $existingUser = null;
@@ -195,17 +208,31 @@ class VkAuthController extends Controller
                     }
                     
                     // Связываем существующего пользователя с VK
-                    $existingUser->update([
+                    $updateExisting = [
                         'vk_id' => $vkUser['id'],
                         'avatar_url' => $vkUser['photo'] ?? null,
-                        'email_verified_at' => $vkUser['email'] ? now() : $existingUser->email_verified_at,
                         'last_login_at' => now(),
-                    ]);
+                    ];
+                    
+                    // Обновляем email только если он пустой у пользователя
+                    // Если email уже есть, не обновляем его (пользователь мог изменить его)
+                    if (empty($existingUser->email) || $existingUser->email === 'NO' || $existingUser->email === '') {
+                        $updateExisting['email'] = $vkUser['email'] ?? null;
+                        $updateExisting['email_verified_at'] = $vkUser['email'] ? now() : $existingUser->email_verified_at;
+                    }
+                    
+                    $existingUser->update($updateExisting);
                     $user = $existingUser;
                 } else {
                     // Создаем нового пользователя
+                    $displayName = trim(($vkUser['first_name'] ?? '') . ' ' . ($vkUser['last_name'] ?? ''));
+                    // Добавляем источник регистрации в скобках
+                    if (!str_ends_with($displayName, ' (вк)')) {
+                        $displayName .= ' (вк)';
+                    }
+                    
                     $user = User::create([
-                        'name' => trim(($vkUser['first_name'] ?? '') . ' ' . ($vkUser['last_name'] ?? '')),
+                        'name' => $displayName,
                         'email' => $vkUser['email'],
                         'vk_id' => $vkUser['id'],
                         'avatar_url' => $vkUser['photo'] ?? null,
@@ -555,13 +582,26 @@ class VkAuthController extends Controller
             }
             
             // Пользователь уже существует, обновляем данные
-            $user->update([
-                'name' => trim(($vkUser['first_name'] ?? '') . ' ' . ($vkUser['last_name'] ?? '')),
-                'email' => $vkUser['email'],
+            $displayName = trim(($vkUser['first_name'] ?? '') . ' ' . ($vkUser['last_name'] ?? ''));
+            // Добавляем источник регистрации в скобках
+            if (!str_ends_with($displayName, ' (вк)')) {
+                $displayName .= ' (вк)';
+            }
+            
+            $updateData = [
+                'name' => $displayName,
                 'avatar_url' => $vkUser['photo'] ?? null,
-                'email_verified_at' => $vkUser['email'] ? now() : null,
                 'last_login_at' => now(),
-            ]);
+            ];
+            
+            // Обновляем email только если он пустой у пользователя
+            // Если email уже есть, не обновляем его (пользователь мог изменить его)
+            if (empty($user->email) || $user->email === 'NO' || $user->email === '') {
+                $updateData['email'] = $vkUser['email'] ?? null;
+                $updateData['email_verified_at'] = $vkUser['email'] ? now() : null;
+            }
+            
+            $user->update($updateData);
         } else {
             // Проверяем, есть ли пользователь с таким email
             $existingUser = null;
@@ -576,17 +616,31 @@ class VkAuthController extends Controller
                 }
                 
                 // Связываем существующего пользователя с VK
-                $existingUser->update([
+                $updateExisting = [
                     'vk_id' => $vkUser['id'],
                     'avatar_url' => $vkUser['photo'] ?? null,
-                    'email_verified_at' => $vkUser['email'] ? now() : $existingUser->email_verified_at,
                     'last_login_at' => now(),
-                ]);
+                ];
+                
+                // Обновляем email только если он пустой у пользователя
+                // Если email уже есть, не обновляем его (пользователь мог изменить его)
+                if (empty($existingUser->email) || $existingUser->email === 'NO' || $existingUser->email === '') {
+                    $updateExisting['email'] = $vkUser['email'] ?? null;
+                    $updateExisting['email_verified_at'] = $vkUser['email'] ? now() : $existingUser->email_verified_at;
+                }
+                
+                $existingUser->update($updateExisting);
                 $user = $existingUser;
             } else {
                 // Создаем нового пользователя
+                $displayName = trim(($vkUser['first_name'] ?? '') . ' ' . ($vkUser['last_name'] ?? ''));
+                // Добавляем источник регистрации в скобках
+                if (!str_ends_with($displayName, ' (вк)')) {
+                    $displayName .= ' (вк)';
+                }
+                
                 $user = User::create([
-                    'name' => trim(($vkUser['first_name'] ?? '') . ' ' . ($vkUser['last_name'] ?? '')),
+                    'name' => $displayName,
                     'email' => $vkUser['email'],
                     'vk_id' => $vkUser['id'],
                     'avatar_url' => $vkUser['photo'] ?? null,
@@ -630,12 +684,25 @@ class VkAuthController extends Controller
                 $avatar = $userDataFromVkId['avatar'] ?? null;
                 
                 // Пользователь уже существует, обновляем данные
-                $user->update([
-                    'name' => !empty($fullName) ? $fullName : $user->name,
-                    'email' => $finalEmail,
-                    'email_verified_at' => $finalEmail !== $user->email ? now() : $user->email_verified_at,
+                $displayName = !empty($fullName) ? $fullName : $user->name;
+                // Добавляем источник регистрации в скобках, если его еще нет
+                if (!str_ends_with($displayName, ' (вк)')) {
+                    $displayName .= ' (вк)';
+                }
+                
+                $updateData = [
+                    'name' => $displayName,
                     'last_login_at' => now(),
-                ]);
+                ];
+                
+                // Обновляем email только если он пустой у пользователя
+                // Если email уже есть, не обновляем его (пользователь мог изменить его)
+                if (empty($user->email) || $user->email === 'NO' || $user->email === '') {
+                    $updateData['email'] = $finalEmail;
+                    $updateData['email_verified_at'] = $finalEmail ? now() : null;
+                }
+                
+                $user->update($updateData);
             } else {
                 // Проверяем, есть ли пользователь с таким email
                 $existingUser = null;
@@ -650,11 +717,19 @@ class VkAuthController extends Controller
                     }
                     
                     // Связываем существующего пользователя с VK
-                    $existingUser->update([
+                    $updateExisting = [
                         'vk_id' => $vkId,
-                        'email_verified_at' => $email ? now() : $existingUser->email_verified_at,
                         'last_login_at' => now(),
-                    ]);
+                    ];
+                    
+                    // Обновляем email только если он пустой у пользователя
+                    // Если email уже есть, не обновляем его (пользователь мог изменить его)
+                    if (empty($existingUser->email) || $existingUser->email === 'NO' || $existingUser->email === '') {
+                        $updateExisting['email'] = $email;
+                        $updateExisting['email_verified_at'] = $email ? now() : $existingUser->email_verified_at;
+                    }
+                    
+                    $existingUser->update($updateExisting);
                     $user = $existingUser;
                 } else {
                     // Получаем имя из VK ID API или создаем временное
@@ -663,6 +738,10 @@ class VkAuthController extends Controller
                     $fullName = trim(($firstName ?? '') . ' ' . ($lastName ?? ''));
                     if (empty($fullName)) {
                         $fullName = 'VK User ' . $vkId;
+                    }
+                    // Добавляем источник регистрации в скобках
+                    if (!str_ends_with($fullName, ' (вк)')) {
+                        $fullName .= ' (вк)';
                     }
                     
                     // Получаем email из VK ID API или используем переданный

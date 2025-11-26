@@ -205,15 +205,26 @@ class YandexAuthController extends Controller
                 // Пользователь уже существует, обновляем данные
                 Log::info('Yandex avatar URL:', ['avatar_url' => $avatarUrl]);
                 
+                $displayName = $yandexUser['display_name'] ?? $yandexUser['real_name'] ?? 'Yandex User';
+                // Добавляем источник регистрации в скобках
+                if (!str_ends_with($displayName, ' (яндекс)')) {
+                    $displayName .= ' (яндекс)';
+                }
+                
                 $updateData = [
-                    'name' => $yandexUser['display_name'] ?? $yandexUser['real_name'] ?? 'Yandex User',
+                    'name' => $displayName,
                     'first_name' => $additionalData['first_name'],
                     'last_name' => $additionalData['last_name'],
-                    'email' => $yandexUser['default_email'] ?? null,
                     'avatar_url' => $avatarUrl,
-                    'email_verified_at' => $yandexUser['default_email'] ? now() : null,
                     'last_login_at' => now(),
                 ];
+                
+                // Обновляем email только если он пустой у пользователя
+                // Если email уже есть, не обновляем его (пользователь мог изменить его)
+                if (empty($user->email) || $user->email === 'NO' || $user->email === '') {
+                    $updateData['email'] = $yandexUser['default_email'] ?? null;
+                    $updateData['email_verified_at'] = $yandexUser['default_email'] ? now() : null;
+                }
                 if (Schema::hasColumn('users', 'birthday')) {
                     $updateData['birthday'] = $additionalData['birthday'];
                 }
@@ -245,9 +256,15 @@ class YandexAuthController extends Controller
                         'first_name' => $additionalData['first_name'],
                         'last_name' => $additionalData['last_name'],
                         'avatar_url' => $avatarUrl,
-                        'email_verified_at' => $yandexUser['default_email'] ? now() : $existingUser->email_verified_at,
                         'last_login_at' => now(),
                     ];
+                    
+                    // Обновляем email только если он пустой у пользователя
+                    // Если email уже есть, не обновляем его (пользователь мог изменить его)
+                    if (empty($existingUser->email) || $existingUser->email === 'NO' || $existingUser->email === '') {
+                        $updateExisting['email'] = $yandexUser['default_email'] ?? null;
+                        $updateExisting['email_verified_at'] = $yandexUser['default_email'] ? now() : $existingUser->email_verified_at;
+                    }
                     if (Schema::hasColumn('users', 'birthday')) {
                         $updateExisting['birthday'] = $additionalData['birthday'];
                     }
@@ -261,8 +278,14 @@ class YandexAuthController extends Controller
                     // Создаем нового пользователя
                     Log::info('Yandex new user avatar URL:', ['avatar_url' => $avatarUrl]);
                     
+                    $displayName = $yandexUser['display_name'] ?? $yandexUser['real_name'] ?? 'Yandex User';
+                    // Добавляем источник регистрации в скобках
+                    if (!str_ends_with($displayName, ' (яндекс)')) {
+                        $displayName .= ' (яндекс)';
+                    }
+                    
                     $createData = [
-                        'name' => $yandexUser['display_name'] ?? $yandexUser['real_name'] ?? 'Yandex User',
+                        'name' => $displayName,
                         'first_name' => $additionalData['first_name'],
                         'last_name' => $additionalData['last_name'],
                         'email' => $yandexUser['default_email'] ?? null,

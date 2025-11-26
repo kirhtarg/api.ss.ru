@@ -49,7 +49,12 @@ class UserProfileController extends Controller
                 'full_name' => $this->getFullName($user),
                 'email' => $user->email,
                 'phone' => $user->phone,
+                'phone_verified_at' => $user->phone_verified_at, // Для определения телефонных пользователей
                 'birthday' => $user->birthday?->format('Y-m-d'),
+                'avatar_url' => $user->avatar_url, // URL аватара от OAuth провайдеров
+                'google_id' => $user->google_id, // Для определения соц-аккаунта
+                'yandex_id' => $user->yandex_id, // Для определения соц-аккаунта
+                'vk_id' => $user->vk_id, // Для определения соц-аккаунта
                 'is_active' => $user->is_active,
                 'role' => $roles[0] ?? 'user',
                 'created_at' => $user->created_at,
@@ -116,8 +121,13 @@ class UserProfileController extends Controller
                     'first_name' => $user->first_name,
                     'last_name' => $user->last_name,
                     'full_name' => $this->getFullName($user),
+                    'email' => $user->email,
                     'phone' => $user->phone,
                     'birthday' => $user->birthday?->format('Y-m-d'),
+                    'avatar_url' => $user->avatar_url, // URL аватара от OAuth провайдеров
+                    'google_id' => $user->google_id, // Для определения соц-аккаунта
+                    'yandex_id' => $user->yandex_id, // Для определения соц-аккаунта
+                    'vk_id' => $user->vk_id, // Для определения соц-аккаунта
                     'updated_at' => $user->updated_at,
                 ]
             ], 200);
