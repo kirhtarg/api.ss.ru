@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Auth;
 
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Auth\Traits\AwardsWelcomeBonuses;
 use App\Models\User;
 use App\Services\CallService;
 use Illuminate\Http\Request;
@@ -16,6 +17,7 @@ use Illuminate\Validation\ValidationException;
 
 class PhoneAuthController extends Controller
 {
+    use AwardsWelcomeBonuses;
     protected $callService;
 
     public function __construct(CallService $callService)
@@ -147,6 +149,7 @@ class PhoneAuthController extends Controller
 
             // Ищем пользователя по телефону
             $user = User::where('phone', $phone)->first();
+            $bonusAmount = 0; // По умолчанию бонусы не начислены
 
             if (!$user) {
                 // Создаем нового пользователя
@@ -167,6 +170,9 @@ class PhoneAuthController extends Controller
                         'assigned_at' => now()
                     ]);
                 }
+                
+                // Начисляем приветственные бонусы новому пользователю
+                $bonusAmount = $this->awardWelcomeBonuses($user);
             } else {
                 // Обновляем время подтверждения телефона
                 $user->update([
@@ -197,7 +203,8 @@ class PhoneAuthController extends Controller
                     'permissions' => $permissions,
                     'last_login_at' => $user->last_login_at,
                 ],
-                'token' => $token
+                'token' => $token,
+                'bonus_amount' => $bonusAmount
             ]);
 
         } catch (ValidationException $e) {

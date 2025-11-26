@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Подтверждение регистрации</title>
+    <title>Добро пожаловать!</title>
     <style>
         body {
             margin: 0;
@@ -71,47 +71,6 @@
             margin: 0 0 30px 0;
         }
         
-        .verification-button {
-            display: inline-block;
-            background: {{ $gradient }};
-            color: white;
-            text-decoration: none;
-            padding: 16px 32px;
-            border-radius: 8px;
-            font-size: 18px;
-            font-weight: 600;
-            text-align: center;
-            margin: 20px 0;
-            box-shadow: 0 4px 15px rgba(184, 134, 11, 0.3);
-            transition: all 0.3s ease;
-        }
-        
-        .verification-button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(184, 134, 11, 0.4);
-        }
-        
-        .verification-link {
-            word-break: break-all;
-            background-color: #f8f9fa;
-            padding: 15px;
-            border-radius: 6px;
-            border-left: 4px solid #b8860b;
-            font-family: monospace;
-            font-size: 14px;
-            color: #666;
-            margin: 20px 0;
-        }
-        
-        .warning {
-            background-color: #fff3cd;
-            border: 1px solid #ffeaa7;
-            border-radius: 6px;
-            padding: 15px;
-            margin: 20px 0;
-            color: #856404;
-        }
-        
         .footer {
             background-color: #f8f9fa;
             padding: 30px;
@@ -157,12 +116,6 @@
             .greeting {
                 font-size: 20px;
             }
-            
-            .verification-button {
-                display: block;
-                width: 100%;
-                box-sizing: border-box;
-            }
         }
     </style>
 </head>
@@ -199,12 +152,16 @@
                 Спасибо за регистрацию на нашем сайте! Мы рады приветствовать вас в нашем сообществе.
             </p>
             
+            <p class="message">
+                Ваша регистрация успешно завершена, и ваш аккаунт активирован. Теперь вы можете пользоваться всеми возможностями нашего сайта.
+            </p>
+            
             @if(isset($bonusAmount) && $bonusAmount > 0)
             <div style="background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%); border: 2px solid #28a745; border-radius: 10px; padding: 25px; margin: 25px 0; text-align: center; box-shadow: 0 4px 15px rgba(40, 167, 69, 0.2);">
                 <div style="font-size: 48px; margin-bottom: 15px;">🎁</div>
                 <h3 style="color: #155724; margin: 0 0 15px 0; font-size: 22px; font-weight: 600;">Приветственный подарок!</h3>
                 <p style="color: #155724; margin: 0 0 10px 0; font-size: 18px; line-height: 1.5;">
-                    После подтверждения регистрации вам будет начислено
+                    На ваш счет уже начислено
                 </p>
                 <div style="background-color: #ffffff; border-radius: 8px; padding: 15px; margin: 15px 0; display: inline-block;">
                     <div style="font-size: 32px; font-weight: bold; color: #28a745; margin: 0;">
@@ -217,32 +174,27 @@
             </div>
             @endif
             
-            <p class="message">
-                Для завершения регистрации и активации вашего аккаунта, пожалуйста, подтвердите ваш email адрес, нажав на кнопку ниже:
-            </p>
-            
-            <div style="text-align: center;">
-                <a href="{{ $verificationUrl }}" class="verification-button">
-                    Подтвердить Email
-                </a>
-            </div>
-            
             <div class="divider"></div>
             
+            <div style="background-color: #e7f3ff; border: 1px solid #b3d9ff; border-radius: 8px; padding: 20px; margin: 25px 0;">
+                <h3 style="color: #004085; margin: 0 0 15px 0; font-size: 18px; font-weight: 600;">🔐 Ваши данные для входа:</h3>
+                <p style="color: #004085; margin: 0 0 10px 0; font-size: 16px; line-height: 1.6;">
+                    <strong>Email:</strong> {{ $user->email }}
+                </p>
+                <p style="color: #004085; margin: 0; font-size: 16px; line-height: 1.6;">
+                    <strong>Пароль:</strong> Используйте пароль, который вы указали при регистрации
+                </p>
+                <p style="color: #004085; margin: 15px 0 0 0; font-size: 14px; line-height: 1.6;">
+                    Для входа на сайт используйте ваш email и введенный при регистрации пароль.
+                </p>
+            </div>
+            
             <p class="message">
-                Если кнопка не работает, скопируйте и вставьте следующую ссылку в адресную строку браузера:
+                Если у вас возникнут вопросы, наша служба поддержки всегда готова помочь.
             </p>
             
-            <div class="verification-link">
-                {{ $verificationUrl }}
-            </div>
-            
-            <div class="warning">
-                <strong>Важно:</strong> Ссылка действительна в течение 24 часов. Если вы не подтвердите email в течение этого времени, вам потребуется зарегистрироваться заново.
-            </div>
-            
             <p class="message">
-                Если вы не регистрировались на нашем сайте, просто проигнорируйте это письмо.
+                Желаем вам приятных покупок!
             </p>
         </div>
         
@@ -268,3 +220,4 @@
     </div>
 </body>
 </html>
+

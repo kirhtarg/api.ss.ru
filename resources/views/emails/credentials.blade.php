@@ -137,6 +137,25 @@
             <p>Теперь вы можете накапливать бонусы за покупки и получать скидки!</p>
         </div>
 
+        @if(isset($bonusAmount) && $bonusAmount > 0)
+        <div style="background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%); border: 2px solid #28a745; border-radius: 10px; padding: 25px; margin: 25px 0; text-align: center; box-shadow: 0 4px 15px rgba(40, 167, 69, 0.2);">
+            <div style="font-size: 48px; margin-bottom: 15px;">🎁</div>
+            <h3 style="color: #155724; margin: 0 0 15px 0; font-size: 22px; font-weight: 600;">Приветственные бонусы начислены!</h3>
+            <p style="color: #155724; margin: 0 0 10px 0; font-size: 18px; line-height: 1.5;">
+                Вам начислено
+            </p>
+            <div style="background-color: #ffffff; border-radius: 8px; padding: 15px; margin: 15px 0; display: inline-block;">
+                <div style="font-size: 32px; font-weight: bold; color: #28a745; margin: 0;">
+                    {{ number_format($bonusAmount, 0, ',', ' ') }} бонусных баллов
+                </div>
+            </div>
+            <p style="color: #155724; margin: 15px 0 0 0; font-size: 16px; line-height: 1.5;">
+                <strong>Бонусы уже на вашем счету и готовы к использованию!</strong><br>
+                Вы можете потратить их прямо сейчас при оформлении заказа.
+            </p>
+        </div>
+        @endif
+
         <div class="warning">
             <strong>🔒 Важно:</strong> Сохраните эти данные в надежном месте. Для безопасности рекомендуем сменить пароль после первого входа.
         </div>

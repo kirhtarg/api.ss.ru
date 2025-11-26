@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Auth\Traits\AwardsWelcomeBonuses;
 use App\Models\User;
 use App\Models\Role;
 use Illuminate\Http\Request;
@@ -15,6 +16,7 @@ use Illuminate\Support\Facades\Log;
 
 class VkAuthController extends Controller
 {
+    use AwardsWelcomeBonuses;
     /**
      * Перенаправление на VK OAuth
      */
@@ -162,6 +164,7 @@ class VkAuthController extends Controller
             
             // Проверяем, есть ли пользователь с таким VK ID
             $user = User::where('vk_id', $vkUser['id'])->first();
+            $bonusAmount = 0; // По умолчанию бонусы не начислены
             
             if ($user) {
                 // Проверяем, что пользователь не заблокирован
@@ -249,6 +252,9 @@ class VkAuthController extends Controller
                             'assigned_at' => now()
                         ]);
                     }
+                    
+                    // Начисляем приветственные бонусы новому пользователю
+                    $bonusAmount = $this->awardWelcomeBonuses($user);
                 }
             }
             
@@ -268,7 +274,7 @@ class VkAuthController extends Controller
                 'role' => $user->roles->first() ? $user->roles->first()->name : 'user',
                 'email_verified_at' => now(),
                 'permissions' => $permissions,
-            ]));
+            ])) . '&bonus_amount=' . $bonusAmount;
             
             Log::info('Redirecting to frontend:', [
                 'frontend_url' => $frontendUrl,

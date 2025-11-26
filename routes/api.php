@@ -762,8 +762,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('/{id}', [\App\Http\Controllers\ContactSocialTypeController::class, 'destroy']);
     });
 
-    // Сообщения с сайта (доступны админам)
-    Route::middleware(['auth:sanctum', 'role:admin'])->prefix('site-messages')->group(function () {
+    // Сообщения с сайта (доступны пользователям с доступом к разделу shop)
+    Route::middleware(['auth:sanctum', 'shop.access'])->prefix('site-messages')->group(function () {
         Route::get('/', [\App\Http\Controllers\SiteMessageController::class, 'index']);
         Route::get('/{id}', [\App\Http\Controllers\SiteMessageController::class, 'show']);
         Route::put('/{id}', [\App\Http\Controllers\SiteMessageController::class, 'update']);
@@ -1023,6 +1023,51 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Profile management
         Route::get('/profile', [\App\Http\Controllers\Api\Admin\ProfileController::class, 'index']);
+        
+        // Тестовый endpoint для диагностики профиля
+        Route::get('/profile/debug', function (Request $request) {
+            try {
+                $user = $request->user();
+                if (!$user) {
+                    return response()->json(['error' => 'User not authenticated'], 401);
+                }
+                
+                $result = [
+                    'user_id' => $user->id,
+                    'user_name' => $user->name,
+                    'user_email' => $user->email,
+                ];
+                
+                // Пробуем получить роли через прямой запрос
+                try {
+                    $roles = \Illuminate\Support\Facades\DB::table('user_roles')
+                        ->join('roles', 'user_roles.role_id', '=', 'roles.id')
+                        ->where('user_roles.user_id', $user->id)
+                        ->get(['roles.name', 'user_roles.is_active']);
+                    $result['roles_direct'] = $roles->pluck('name')->toArray();
+                    $result['roles_data'] = $roles->toArray();
+                } catch (\Exception $e) {
+                    $result['roles_direct_error'] = $e->getMessage();
+                }
+                
+                // Пробуем получить роли через связь
+                try {
+                    $user->load('roles');
+                    $result['roles_relation'] = $user->roles ? $user->roles->pluck('name')->toArray() : [];
+                } catch (\Exception $e) {
+                    $result['roles_relation_error'] = $e->getMessage();
+                }
+                
+                return response()->json($result);
+            } catch (\Exception $e) {
+                return response()->json([
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine()
+                ], 500);
+            }
+        });
 
         // Тестовые маршруты для Google Sheets
         Route::get('/test-google-sheets', function () {
@@ -1056,14 +1101,16 @@ Route::middleware('auth:sanctum')->group(function () {
             }
         });
 
-        // Settings management (только просмотр для менеджеров)
+        // Settings management
         Route::prefix('settings')->group(function () {
             Route::get('/', [\App\Http\Controllers\Admin\SettingController::class, 'index']);
 
-            // Только админы могут изменять настройки
+            // Обновление настроек (доступно менеджерам для настроек магазина, админам - для всех)
+            Route::put('/{id}', [\App\Http\Controllers\Admin\SettingController::class, 'update']);
+
+            // Только админы могут создавать, удалять настройки и работать с изображениями
             Route::middleware('role:admin')->group(function () {
                 Route::post('/', [\App\Http\Controllers\Admin\SettingController::class, 'store']);
-                Route::put('/{id}', [\App\Http\Controllers\Admin\SettingController::class, 'update']);
                 Route::delete('/{id}', [\App\Http\Controllers\Admin\SettingController::class, 'destroy']);
 
                 // Маршрут для загрузки изображений
@@ -2020,15 +2067,23 @@ Route::middleware('auth:sanctum')->group(function () {
                         ], 422);
                     }
 
+                    // ВАЖНО: Сохраняем текущее значение email_verified_at ДО обновления
+                    // чтобы Laravel не обнулил его при изменении email
+                    $originalEmailVerifiedAt = $user->email_verified_at;
+
                     // Обновляем пользователя
                     $updateData = [
                         'name' => $request->name,
                         'email' => $request->email,
                     ];
 
-                    // Добавляем статус активности на основе email_verified_at, если передан
+                    // ВАЖНО: email_verified_at НЕ трогаем вообще, если оно не передано явно
+                    // Это поле управляется только через отдельный endpoint toggle-email-verification
                     if ($request->has('email_verified_at')) {
                         $updateData['email_verified_at'] = $request->email_verified_at;
+                    } else {
+                        // Если не передано - явно сохраняем текущее значение, чтобы Laravel не обнулил его
+                        $updateData['email_verified_at'] = $originalEmailVerifiedAt;
                     }
 
                     // Добавляем статус блокировки, если передан
@@ -2245,19 +2300,8 @@ Route::middleware('auth:sanctum')->group(function () {
             });
         });
 
-        // Site management (только для админов)
-        Route::middleware(['auth:sanctum', 'role:admin'])->prefix('site')->group(function () {
-            // Шаблоны сайта
-            Route::prefix('templates')->group(function () {
-                Route::get('/', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'index']);
-                Route::post('/', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'store']);
-                Route::get('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'show']);
-                Route::put('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'update']);
-                Route::delete('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'destroy']);
-                Route::put('/{siteTemplate}/activate', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'activate']);
-            });
-
-            // Управление способами доставки
+        // Управление способами доставки (доступно менеджерам и админам)
+        Route::middleware(['auth:sanctum', 'shop.access'])->prefix('site')->group(function () {
             Route::prefix('delivery-methods')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'index']);
                 Route::get('/{id}', [\App\Http\Controllers\Api\Admin\ShopDeliveryController::class, 'show']);
@@ -2271,7 +2315,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/remove-image', [\App\Http\Controllers\Api\Admin\DeliveryMethodImageController::class, 'remove']);
             });
 
-            // Управление способами оплаты
+            // Управление способами оплаты (доступно менеджерам и админам)
             Route::prefix('payment-methods')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'index']);
                 Route::get('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'show']);
@@ -2283,6 +2327,19 @@ Route::middleware('auth:sanctum')->group(function () {
                 // Изображения способов оплаты
                 Route::post('/upload-image', [\App\Http\Controllers\Api\Admin\PaymentMethodImageController::class, 'upload']);
                 Route::post('/remove-image', [\App\Http\Controllers\Api\Admin\PaymentMethodImageController::class, 'remove']);
+            });
+        });
+
+        // Site management (только для админов)
+        Route::middleware(['auth:sanctum', 'role:admin'])->prefix('site')->group(function () {
+            // Шаблоны сайта
+            Route::prefix('templates')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'index']);
+                Route::post('/', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'store']);
+                Route::get('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'show']);
+                Route::put('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'update']);
+                Route::delete('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'destroy']);
+                Route::put('/{siteTemplate}/activate', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'activate']);
             });
         });
 
@@ -2405,44 +2462,93 @@ Route::middleware('auth:sanctum')->group(function () {
             });
         });
 
-        // Menu management (только для админов - создание/редактирование/удаление)
-        Route::middleware('role:admin')->prefix('menu')->group(function () {
-            // Получить все пункты меню (для MenuManager)
-            Route::get('/', function () {
-                try {
-                    $menuItems = \App\Models\AdminMenuItem::with('page')
-                        ->orderBy('order')
-                        ->get()
-                        ->map(function ($item) {
-                            return [
-                                'id' => $item->id,
-                                'page_id' => $item->page_id,
-                                'parent_id' => $item->parent_id,
-                                'icon' => $item->icon,
-                                'label' => $item->label,
-                                'description' => $item->description,
-                                'href' => $item->href,
-                                'order' => $item->order,
-                                'is_active' => $item->is_active,
-                                'in_menu' => $item->in_menu ?? true,
-                                'page_name' => $item->page->name ?? null,
-                                'page_slug' => $item->page->slug ?? null,
-                                'created_at' => $item->created_at,
-                                'updated_at' => $item->updated_at,
-                            ];
-                        });
-
-                    return response()->json([
-                        'success' => true,
-                        'data' => $menuItems
-                    ]);
-                } catch (\Exception $e) {
+        // Получить все пункты меню (доступно менеджерам и админам, с фильтрацией по правам доступа)
+        Route::get('/menu', function (Request $request) {
+            try {
+                $user = $request->user();
+                if (!$user) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Ошибка получения списка меню: ' . $e->getMessage()
-                    ], 500);
+                        'message' => 'Пользователь не аутентифицирован'
+                    ], 401);
                 }
-            });
+
+                // Получаем все пункты меню
+                $allMenuItems = \App\Models\AdminMenuItem::with('page')
+                    ->orderBy('order')
+                    ->get();
+
+                // Если пользователь - админ, возвращаем все пункты меню
+                if ($user->hasRole('admin')) {
+                    $menuItems = $allMenuItems->map(function ($item) {
+                        return [
+                            'id' => $item->id,
+                            'page_id' => $item->page_id,
+                            'parent_id' => $item->parent_id,
+                            'icon' => $item->icon,
+                            'label' => $item->label,
+                            'description' => $item->description,
+                            'href' => $item->href,
+                            'order' => $item->order,
+                            'is_active' => $item->is_active,
+                            'in_menu' => $item->in_menu ?? true,
+                            'page_name' => $item->page->name ?? null,
+                            'page_slug' => $item->page->slug ?? null,
+                            'created_at' => $item->created_at,
+                            'updated_at' => $item->updated_at,
+                        ];
+                    });
+                } else {
+                    // Для не-админов фильтруем пункты меню по правам доступа
+                    $userRoleIds = $user->roles->pluck('id')->toArray();
+                    
+                    $menuItems = $allMenuItems->filter(function ($item) use ($user, $userRoleIds) {
+                        // Если у пункта меню нет страницы, пропускаем
+                        if (!$item->page) {
+                            return false;
+                        }
+                        
+                        // Dashboard доступен всем авторизованным пользователям
+                        if ($item->page->slug === 'dashboard') {
+                            return true;
+                        }
+                        
+                        // Проверяем, есть ли у роли пользователя доступ к странице
+                        return $item->page->roles()->whereIn('role_id', $userRoleIds)->exists();
+                    })->map(function ($item) {
+                        return [
+                            'id' => $item->id,
+                            'page_id' => $item->page_id,
+                            'parent_id' => $item->parent_id,
+                            'icon' => $item->icon,
+                            'label' => $item->label,
+                            'description' => $item->description,
+                            'href' => $item->href,
+                            'order' => $item->order,
+                            'is_active' => $item->is_active,
+                            'in_menu' => $item->in_menu ?? true,
+                            'page_name' => $item->page->name ?? null,
+                            'page_slug' => $item->page->slug ?? null,
+                            'created_at' => $item->created_at,
+                            'updated_at' => $item->updated_at,
+                        ];
+                    })->values();
+                }
+
+                return response()->json([
+                    'success' => true,
+                    'data' => $menuItems
+                ]);
+            } catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка получения списка меню: ' . $e->getMessage()
+                ], 500);
+            }
+        });
+
+        // Menu management (только для админов - создание/редактирование/удаление)
+        Route::middleware('role:admin')->prefix('menu')->group(function () {
 
 
 
@@ -2616,6 +2722,11 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/', function (Request $request) {
                 try {
                     $user = $request->user();
+                    
+                    // Загружаем роли пользователя с безопасной обработкой
+                    $user->load('roles');
+                    $roles = $user->roles ?? collect();
+                    
                     $userData = [
                         'id' => $user->id,
                         'name' => $user->name,
@@ -2626,8 +2737,8 @@ Route::middleware('auth:sanctum')->group(function () {
                         'google_id' => $user->google_id, // Для определения соц-аккаунта
                         'yandex_id' => $user->yandex_id, // Для определения соц-аккаунта
                         'vk_id' => $user->vk_id, // Для определения соц-аккаунта
-                        'role' => $user->roles->first()?->name ?? 'user', // Основная роль для совместимости
-                        'roles' => $user->roles->map(function($role) {
+                        'role' => $roles->first()?->name ?? 'user', // Основная роль для совместимости
+                        'roles' => $roles->map(function($role) {
                             return [
                                 'id' => $role->id,
                                 'name' => $role->name,
@@ -2644,6 +2755,11 @@ Route::middleware('auth:sanctum')->group(function () {
                         'message' => 'Profile retrieved successfully'
                     ]);
                 } catch (\Exception $e) {
+                    \Log::error('Ошибка получения профиля: ' . $e->getMessage(), [
+                        'trace' => $e->getTraceAsString(),
+                        'user_id' => $request->user()?->id
+                    ]);
+                    
                     return response()->json([
                         'success' => false,
                         'message' => 'Ошибка получения профиля: ' . $e->getMessage()
@@ -2674,13 +2790,17 @@ Route::middleware('auth:sanctum')->group(function () {
                         'email' => $request->email,
                     ]);
 
+                    // Загружаем роли пользователя с безопасной обработкой
+                    $user->load('roles');
+                    $roles = $user->roles ?? collect();
+
                     // Получаем обновленные данные
                     $userData = [
                         'id' => $user->id,
                         'name' => $user->name,
                         'email' => $user->email,
-                        'role' => $user->roles->first()?->name ?? 'user', // Основная роль для совместимости
-                        'roles' => $user->roles->map(function($role) {
+                        'role' => $roles->first()?->name ?? 'user', // Основная роль для совместимости
+                        'roles' => $roles->map(function($role) {
                             return [
                                 'id' => $role->id,
                                 'name' => $role->name,
@@ -2697,6 +2817,11 @@ Route::middleware('auth:sanctum')->group(function () {
                         'data' => $userData
                     ]);
                 } catch (\Exception $e) {
+                    \Log::error('Ошибка обновления профиля: ' . $e->getMessage(), [
+                        'trace' => $e->getTraceAsString(),
+                        'user_id' => $request->user()?->id
+                    ]);
+                    
                     return response()->json([
                         'success' => false,
                         'message' => 'Ошибка обновления профиля: ' . $e->getMessage()
@@ -2762,28 +2887,65 @@ Route::middleware('auth:sanctum')->group(function () {
 
                     $file = $request->file('avatar');
 
-                    // Создаем уникальное имя файла
-                    $filename = 'avatar_' . $user->id . '_' . time() . '.' . $file->getClientOriginalExtension();
-
                     // Путь для сохранения на фронтенде
-                    $path = 'images/users/' . $filename;
                     $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
-                    $fullPath = $frontendPublicPath . '/' . $path;
-                    $dir = dirname($fullPath);
+                    $dir = $frontendPublicPath . '/images/users';
 
                     // Создаем директорию, если её нет
                     if (!is_dir($dir)) {
                         mkdir($dir, 0755, true);
                     }
 
-                    // Сохраняем файл на фронтенде
-                    $file->move($dir, $filename);
-
                     // Удаляем старый аватар пользователя, если он есть
                     // Используем стандартное имя файла user_{id}.jpg
-                    $oldAvatarPath = $frontendPublicPath . '/images/users/user_' . $user->id . '.jpg';
+                    $oldAvatarPath = $dir . '/user_' . $user->id . '.jpg';
                     if (file_exists($oldAvatarPath)) {
                         unlink($oldAvatarPath);
+                    }
+
+                    // Сохраняем файл с именем user_{id}.jpg
+                    $filename = 'user_' . $user->id . '.jpg';
+                    $fullPath = $dir . '/' . $filename;
+                    
+                    // Получаем информацию об изображении
+                    $imageInfo = getimagesize($file->getRealPath());
+                    if (!$imageInfo) {
+                        throw new \Exception('Не удалось получить информацию об изображении');
+                    }
+                    
+                    $imageType = $imageInfo[2];
+                    
+                    // Загружаем изображение в зависимости от типа
+                    $sourceImage = null;
+                    switch ($imageType) {
+                        case IMAGETYPE_JPEG:
+                            $sourceImage = imagecreatefromjpeg($file->getRealPath());
+                            break;
+                        case IMAGETYPE_PNG:
+                            $sourceImage = imagecreatefrompng($file->getRealPath());
+                            break;
+                        case IMAGETYPE_GIF:
+                            $sourceImage = imagecreatefromgif($file->getRealPath());
+                            break;
+                        case IMAGETYPE_WEBP:
+                            $sourceImage = imagecreatefromwebp($file->getRealPath());
+                            break;
+                        default:
+                            throw new \Exception('Неподдерживаемый тип изображения');
+                    }
+                    
+                    if (!$sourceImage) {
+                        throw new \Exception('Не удалось загрузить изображение');
+                    }
+                    
+                    // Сохраняем как JPEG с качеством 90
+                    $result = imagejpeg($sourceImage, $fullPath, 90);
+                    
+                    // Освобождаем память
+                    imagedestroy($sourceImage);
+                    
+                    if (!$result) {
+                        throw new \Exception('Не удалось сохранить изображение');
                     }
 
                     // Аватар сохраняется только в папке images/users/user_{id}.jpg
@@ -2793,7 +2955,7 @@ Route::middleware('auth:sanctum')->group(function () {
                         'success' => true,
                         'message' => 'Аватар успешно загружен',
                         'data' => [
-                            'avatar' => '/' . $path
+                            'avatar' => '/images/users/' . $filename
                         ]
                     ]);
                 } catch (\Exception $e) {

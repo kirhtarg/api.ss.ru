@@ -88,6 +88,18 @@
             <strong>⚠️ Важно:</strong> Этот код действителен в течение 15 минут. Не передавайте его третьим лицам.
         </div>
 
+        @if(isset($bonusAmount) && $bonusAmount > 0)
+        <div style="background-color: #d4edda; border: 1px solid #c3e6cb; border-radius: 5px; padding: 20px; margin: 20px 0; text-align: center;">
+            <h3 style="color: #155724; margin: 0 0 10px 0; font-size: 20px;">🎁 Приветственный подарок!</h3>
+            <p style="color: #155724; margin: 0; font-size: 16px;">
+                После подтверждения регистрации вам будет начислено <strong style="font-size: 18px;">{{ number_format($bonusAmount, 0, ',', ' ') }}</strong> приветственных бонусных баллов!
+            </p>
+            <p style="color: #155724; margin: 10px 0 0 0; font-size: 14px;">
+                Используйте их для получения скидок на покупки в нашем магазине.
+            </p>
+        </div>
+        @endif
+
         <div class="message">
             <p>Если вы не регистрировались на нашем сайте, просто проигнорируйте это письмо.</p>
         </div>

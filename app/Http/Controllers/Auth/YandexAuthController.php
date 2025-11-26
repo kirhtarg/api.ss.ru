@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Auth\Traits\AwardsWelcomeBonuses;
 use App\Models\User;
 use App\Models\Role;
 use Illuminate\Http\Request;
@@ -16,6 +17,7 @@ use Illuminate\Support\Facades\Schema;
 
 class YandexAuthController extends Controller
 {
+    use AwardsWelcomeBonuses;
     /**
      * Перенаправление на Yandex OAuth
      */
@@ -193,6 +195,7 @@ class YandexAuthController extends Controller
             
             // Проверяем, есть ли пользователь с таким Yandex ID
             $user = User::where('yandex_id', $yandexUser['id'])->first();
+            $bonusAmount = 0; // По умолчанию бонусы не начислены
             
             if ($user) {
                 // Проверяем, что пользователь не заблокирован
@@ -314,6 +317,9 @@ class YandexAuthController extends Controller
                             'assigned_at' => now()
                         ]);
                     }
+                    
+                    // Начисляем приветственные бонусы новому пользователю
+                    $bonusAmount = $this->awardWelcomeBonuses($user);
                 }
             }
             
@@ -333,7 +339,7 @@ class YandexAuthController extends Controller
                 'role' => $user->roles->first() ? $user->roles->first()->name : 'user',
                 'email_verified_at' => now(),
                 'permissions' => $permissions,
-            ]));
+            ])) . '&bonus_amount=' . $bonusAmount;
             
             return redirect($redirectUrl);
             

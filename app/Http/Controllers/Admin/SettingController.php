@@ -109,6 +109,19 @@ class SettingController extends Controller
                 ], 404);
             }
 
+            // Проверяем права доступа для менеджеров
+            $user = $request->user();
+            if ($user && !$user->hasRole('admin')) {
+                // Менеджеры могут обновлять только настройки магазина
+                $isShopSetting = $setting->group === 'shop' || str_starts_with($setting->key, 'shop_');
+                if (!$isShopSetting) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Доступ запрещен. Менеджеры могут изменять только настройки магазина'
+                    ], 403);
+                }
+            }
+
             // Создаем правила валидации только для переданных полей
             $validationRules = [];
             $updateData = [];

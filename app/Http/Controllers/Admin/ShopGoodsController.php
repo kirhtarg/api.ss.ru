@@ -2773,64 +2773,85 @@ class ShopGoodsController extends Controller
         @$dom->loadHTML(mb_convert_encoding($wrappedHtml, 'HTML-ENTITIES', 'UTF-8'), LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
         libxml_clear_errors();
 
-        // Получаем все блочные элементы верхнего уровня
         $xpath = new \DOMXPath($dom);
-        $allBlockElements = $xpath->query('//p | //div | //li');
+        $lines = [];
+
+        // Сначала ищем все div-ы с data-block="true" - каждая характеристика в отдельном блоке
+        $dataBlockElements = $xpath->query('//div[@data-block="true"]');
         
-        $topLevelElements = [];
+        if ($dataBlockElements && $dataBlockElements->length > 0) {
+            // Обрабатываем каждый div с data-block="true" как отдельную строку
+            foreach ($dataBlockElements as $element) {
+                $innerHTML = $this->getInnerHTML($element);
+                $textContent = trim($element->textContent);
 
-        if ($allBlockElements && $allBlockElements->length > 0) {
-            foreach ($allBlockElements as $element) {
-                // Проверяем, не является ли элемент вложенным
-                $isNested = false;
-                $parent = $element->parentNode;
-                while ($parent && $parent->nodeName !== '#document' && $parent->nodeName !== 'body' && $parent->nodeName !== 'div') {
-                    $parentTagName = strtolower($parent->nodeName);
-                    if (in_array($parentTagName, ['p', 'div', 'li'])) {
-                        $isNested = true;
-                        break;
-                    }
-                    $parent = $parent->parentNode;
-                }
-
-                if (!$isNested) {
-                    $topLevelElements[] = $element;
+                if (!empty($textContent) && mb_strlen($textContent) >= 3) {
+                    $lines[] = [
+                        'html' => $innerHTML,
+                        'text' => $textContent
+                    ];
                 }
             }
         }
 
-        $lines = [];
+        // Если не нашли data-block элементы, используем стандартную логику
+        if (empty($lines)) {
+            // Получаем все блочные элементы верхнего уровня
+            $allBlockElements = $xpath->query('//p | //div | //li');
+            
+            $topLevelElements = [];
 
-        if (count($topLevelElements) > 0) {
-            // Если есть блочные элементы верхнего уровня, обрабатываем каждый
-            foreach ($topLevelElements as $element) {
-                $innerHTML = $this->getInnerHTML($element);
-                $textContent = trim($element->textContent);
+            if ($allBlockElements && $allBlockElements->length > 0) {
+                foreach ($allBlockElements as $element) {
+                    // Проверяем, не является ли элемент вложенным
+                    $isNested = false;
+                    $parent = $element->parentNode;
+                    while ($parent && $parent->nodeName !== '#document' && $parent->nodeName !== 'body' && $parent->nodeName !== 'div') {
+                        $parentTagName = strtolower($parent->nodeName);
+                        if (in_array($parentTagName, ['p', 'div', 'li'])) {
+                            $isNested = true;
+                            break;
+                        }
+                        $parent = $parent->parentNode;
+                    }
 
-                if (empty($textContent)) {
-                    continue;
+                    if (!$isNested) {
+                        $topLevelElements[] = $element;
+                    }
                 }
+            }
 
-                // Разбиваем HTML по <br> тегам для правильной обработки строк
-                $htmlParts = preg_split('/(?:<br\s*\/?>|<br>)/i', $innerHTML);
+            if (count($topLevelElements) > 0) {
+                // Если есть блочные элементы верхнего уровня, обрабатываем каждый
+                foreach ($topLevelElements as $element) {
+                    $innerHTML = $this->getInnerHTML($element);
+                    $textContent = trim($element->textContent);
 
-                foreach ($htmlParts as $htmlPart) {
-                    $htmlPart = trim($htmlPart);
-                    if (empty($htmlPart)) {
+                    if (empty($textContent)) {
                         continue;
                     }
 
-                    // Создаем временный DOM для извлечения текста
-                    $tempDom = new \DOMDocument('1.0', 'UTF-8');
-                    $tempWrapped = '<div>' . $htmlPart . '</div>';
-                    @$tempDom->loadHTML(mb_convert_encoding($tempWrapped, 'HTML-ENTITIES', 'UTF-8'), LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
-                    $text = trim($tempDom->textContent);
+                    // Для остальных элементов разбиваем HTML по <br> тегам для правильной обработки строк
+                    $htmlParts = preg_split('/(?:<br\s*\/?>|<br>)/i', $innerHTML);
 
-                    if (!empty($text) && mb_strlen($text) >= 3) {
-                        $lines[] = [
-                            'html' => $htmlPart,
-                            'text' => $text
-                        ];
+                    foreach ($htmlParts as $htmlPart) {
+                        $htmlPart = trim($htmlPart);
+                        if (empty($htmlPart)) {
+                            continue;
+                        }
+
+                        // Создаем временный DOM для извлечения текста
+                        $tempDom = new \DOMDocument('1.0', 'UTF-8');
+                        $tempWrapped = '<div>' . $htmlPart . '</div>';
+                        @$tempDom->loadHTML(mb_convert_encoding($tempWrapped, 'HTML-ENTITIES', 'UTF-8'), LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+                        $text = trim($tempDom->textContent);
+
+                        if (!empty($text) && mb_strlen($text) >= 3) {
+                            $lines[] = [
+                                'html' => $htmlPart,
+                                'text' => $text
+                            ];
+                        }
                     }
                 }
             }
@@ -2956,65 +2977,68 @@ class ShopGoodsController extends Controller
                 $propertyName = trim($boldElement->textContent);
                 $propertyName = preg_replace('/\s+/', ' ', $propertyName);
                 
+                // Убираем двоеточие в конце названия, если есть
+                $propertyName = preg_replace('/:\s*$/', '', $propertyName);
+                
                 if (!empty($propertyName)) {
-                    // ШАГ 2: Находим позицию закрывающего тега в исходном HTML
-                    // Получаем outerHTML элемента (включая сам тег и его содержимое)
-                    $boldOuterHTML = $this->getOuterHTML($boldElement);
+                    // ШАГ 2: Ищем значение - сначала пробуем найти следующий sibling элемент
+                    $propertyValue = '';
+                    $nextSibling = $boldElement->nextSibling;
                     
-                    // Ищем позицию этого элемента в исходном HTML
-                    $boldEndIndex = -1;
-                    
-                    // Пробуем найти точное совпадение outerHTML
-                    $elementIndex = mb_strpos($lineHTML, $boldOuterHTML);
-                    
-                    if ($elementIndex !== false) {
-                        // Находим конец элемента (после закрывающего тега)
-                        $boldEndIndex = $elementIndex + mb_strlen($boldOuterHTML);
-                    } else {
-                        // Если не нашли точное совпадение, пробуем найти через имя тега
-                        $tagName = strtolower($boldElement->nodeName);
-                        
-                        if ($tagName === 'strong' || $tagName === 'b') {
-                            // Для стандартных тегов ищем закрывающий тег
-                            if (preg_match('/<\/' . preg_quote($tagName, '/') . '>/i', $lineHTML, $matches, PREG_OFFSET_CAPTURE)) {
-                                $boldEndIndex = $matches[0][1] + mb_strlen($matches[0][0]);
+                    while ($nextSibling) {
+                        if ($nextSibling->nodeType === XML_ELEMENT_NODE) {
+                            $siblingText = trim($nextSibling->textContent);
+                            if (!empty($siblingText)) {
+                                $propertyValue = $siblingText;
+                                break;
                             }
-                        } else {
-                            // Для других тегов ищем закрывающий тег с таким же именем
-                            $searchPattern = '/<\/' . preg_quote($tagName, '/') . '[^>]*>/i';
-                            $searchIndex = 0;
-                            $lastMatchIndex = -1;
+                        } elseif ($nextSibling->nodeType === XML_TEXT_NODE) {
+                            $text = trim($nextSibling->textContent);
+                            if (!empty($text)) {
+                                $propertyValue = $text;
+                                break;
+                            }
+                        }
+                        $nextSibling = $nextSibling->nextSibling;
+                    }
+                    
+                    // Если не нашли через sibling, пробуем извлечь из родительского элемента
+                    if (empty($propertyValue)) {
+                        $parent = $boldElement->parentNode;
+                        if ($parent) {
+                            $parentText = trim($parent->textContent);
+                            $boldText = trim($boldElement->textContent);
                             
-                            while (preg_match($searchPattern, $lineHTML, $matches, PREG_OFFSET_CAPTURE, $searchIndex)) {
-                                $lastMatchIndex = $matches[0][1] + mb_strlen($matches[0][0]);
-                                $searchIndex = $lastMatchIndex;
-                            }
-                            
-                            if ($lastMatchIndex >= 0) {
-                                $boldEndIndex = $lastMatchIndex;
-                            }
+                            // Убираем название из текста родителя
+                            $parentText = str_replace($boldText, '', $parentText);
+                            $parentText = preg_replace('/^:\s*/', '', $parentText);
+                            $propertyValue = trim($parentText);
                         }
                     }
                     
-                    // Если нашли закрывающий тег
-                    if ($boldEndIndex >= 0) {
-                        // ШАГ 3: Берем все что после закрывающего тега
-                        $afterBoldHTML = mb_substr($lineHTML, $boldEndIndex);
+                    // Если все еще пусто, пробуем найти через HTML позицию
+                    if (empty($propertyValue)) {
+                        $boldOuterHTML = $this->getOuterHTML($boldElement);
+                        $elementIndex = mb_strpos($lineHTML, $boldOuterHTML);
                         
-                        // ШАГ 4: Очищаем от HTML тегов - это будет значение
-                        $afterBoldWrapped = '<div>' . $afterBoldHTML . '</div>';
-                        $afterBoldDom = new \DOMDocument('1.0', 'UTF-8');
-                        libxml_use_internal_errors(true);
-                        @$afterBoldDom->loadHTML(mb_convert_encoding($afterBoldWrapped, 'HTML-ENTITIES', 'UTF-8'), LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
-                        libxml_clear_errors();
-                        $propertyValue = trim($afterBoldDom->textContent);
-                        
-                        // Убираем двоеточие в начале, если есть
-                        $propertyValue = preg_replace('/^:\s*/', '', $propertyValue);
-                        
-                        // Нормализуем пробелы
-                        $propertyValue = preg_replace('/\s+/', ' ', trim($propertyValue));
+                        if ($elementIndex !== false) {
+                            $boldEndIndex = $elementIndex + mb_strlen($boldOuterHTML);
+                            $afterBoldHTML = mb_substr($lineHTML, $boldEndIndex);
+                            
+                            $afterBoldWrapped = '<div>' . $afterBoldHTML . '</div>';
+                            $afterBoldDom = new \DOMDocument('1.0', 'UTF-8');
+                            libxml_use_internal_errors(true);
+                            @$afterBoldDom->loadHTML(mb_convert_encoding($afterBoldWrapped, 'HTML-ENTITIES', 'UTF-8'), LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+                            libxml_clear_errors();
+                            $propertyValue = trim($afterBoldDom->textContent);
+                        }
                     }
+                    
+                    // Убираем двоеточие в начале, если есть
+                    $propertyValue = preg_replace('/^:\s*/', '', $propertyValue);
+                    
+                    // Нормализуем пробелы
+                    $propertyValue = preg_replace('/\s+/', ' ', trim($propertyValue));
                 }
             }
             

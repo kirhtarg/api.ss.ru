@@ -47,13 +47,22 @@ class User extends Authenticatable
     ];
 
     /**
-     * Роли пользователя
+     * Роли пользователя (только активные)
      */
     public function roles(): BelongsToMany
     {
         return $this->belongsToMany(Role::class, 'user_roles', 'user_id', 'role_id')
             ->withPivot('is_active', 'assigned_at')
-            ->wherePivot('is_active', true);
+            ->wherePivot('is_active', '!=', 0); // Исключаем только явно неактивные (0 или false)
+    }
+    
+    /**
+     * Все роли пользователя (включая неактивные) - для отладки
+     */
+    public function allRoles(): BelongsToMany
+    {
+        return $this->belongsToMany(Role::class, 'user_roles', 'user_id', 'role_id')
+            ->withPivot('is_active', 'assigned_at');
     }
 
     /**

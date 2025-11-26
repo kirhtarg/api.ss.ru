@@ -17,6 +17,7 @@ class EmailVerificationMail extends Mailable
     public $user;
     public $verificationUrl;
     public $siteInfo;
+    public $bonusAmount;
 
     /**
      * Create a new message instance.
@@ -26,6 +27,12 @@ class EmailVerificationMail extends Mailable
         $this->user = $user;
         $this->verificationUrl = $verificationUrl;
         $this->siteInfo = $siteInfo;
+        
+        // Получаем информацию о приветственных бонусах
+        $bonusesAtReg = \App\Models\Setting::where('key', 'bonuses_at_reg')->first();
+        $this->bonusAmount = ($bonusesAtReg && $bonusesAtReg->value && $bonusesAtReg->value > 0) 
+            ? (int) $bonusesAtReg->value 
+            : 0;
     }
 
     /**
@@ -52,6 +59,7 @@ class EmailVerificationMail extends Mailable
                 'user' => $this->user,
                 'verificationUrl' => $this->verificationUrl,
                 'siteInfo' => $this->siteInfo,
+                'bonusAmount' => $this->bonusAmount,
             ]
         );
     }

@@ -99,21 +99,38 @@ class AuthController extends Controller
             $request->validate([
                 'name' => 'required|string|max:255',
                 'email' => 'required|string|email|max:255|unique:users',
+                'password' => 'nullable|string|min:8|confirmed', // Пароль опционален (для быстрой регистрации)
+                'phone' => 'nullable|string|max:20', // Телефон опционален
             ]);
 
-            // Генерируем логин и пароль
-            $login = $this->generateLogin($request->name, $request->email);
-            $password = $this->generatePassword();
+            // Если пароль передан, используем его (для регистрации в чекауте)
+            // Если пароль не передан, генерируем логин и пароль (для быстрой регистрации)
+            $hasPassword = $request->has('password') && !empty($request->password);
             
-            // НЕ создаем пользователя сразу - сохраняем данные во временном хранилище
-            $tempUserData = [
-                'name' => $request->name,
-                'email' => $request->email,
-                'login' => $login,
-                'password' => Hash::make($password),
-                'original_password' => $password, // Сохраняем оригинальный пароль для письма
-                'created_at' => now(),
-            ];
+            if ($hasPassword) {
+                // Регистрация в чекауте - используем пароль пользователя
+                $tempUserData = [
+                    'name' => $request->name,
+                    'email' => $request->email,
+                    'password' => Hash::make($request->password),
+                    'phone' => $request->phone ?? null, // Сохраняем телефон если указан
+                    'created_at' => now(),
+                ];
+            } else {
+                // Быстрая регистрация - генерируем логин и пароль
+                $login = $this->generateLogin($request->name, $request->email);
+                $password = $this->generatePassword();
+                
+                $tempUserData = [
+                    'name' => $request->name,
+                    'email' => $request->email,
+                    'login' => $login,
+                    'password' => Hash::make($password),
+                    'original_password' => $password, // Сохраняем оригинальный пароль для письма
+                    'phone' => $request->phone ?? null, // Сохраняем телефон если указан
+                    'created_at' => now(),
+                ];
+            }
 
             // Генерируем 4-значный код для подтверждения email
             $verificationCode = str_pad(random_int(1000, 9999), 4, '0', STR_PAD_LEFT);
@@ -481,6 +498,16 @@ class AuthController extends Controller
         $user->email_verified_at = now();
         $user->save();
 
+        // Начисляем приветственные бонусы
+        $this->awardWelcomeBonuses($user);
+
+        // Отправляем приветственное письмо после подтверждения email
+        try {
+            $this->sendWelcomeEmail($user);
+        } catch (\Exception $e) {
+            Log::error('Welcome email sending failed: ' . $e->getMessage());
+        }
+
         // Удаляем токен из кеша
         \Illuminate\Support\Facades\Cache::forget('email_verification_' . $token);
 
@@ -550,12 +577,19 @@ class AuthController extends Controller
         }
 
         // Создаем пользователя в базе данных
-        $user = User::create([
+        $userData = [
             'name' => $tempUserData['name'],
             'email' => $tempUserData['email'],
             'password' => $tempUserData['password'],
             'email_verified_at' => now(), // Сразу подтверждаем email
-        ]);
+        ];
+        
+        // Добавляем телефон, если он был указан
+        if (isset($tempUserData['phone']) && !empty($tempUserData['phone'])) {
+            $userData['phone'] = $tempUserData['phone'];
+        }
+        
+        $user = User::create($userData);
 
         // Привязываем роль 'user' по умолчанию
         $userRole = \App\Models\Role::where('name', 'user')->first();
@@ -569,13 +603,27 @@ class AuthController extends Controller
         // Начисляем приветственные бонусы
         $this->awardWelcomeBonuses($user);
 
-        // Если есть логин и пароль в временных данных, отправляем письмо с учетными данными
-        if (isset($tempUserData['login'])) {
+        // Отправляем письма в зависимости от типа регистрации
+        if (isset($tempUserData['login']) && isset($tempUserData['original_password'])) {
+            // Быстрая регистрация - отправляем письмо с учетными данными
             try {
-                $originalPassword = $tempUserData['original_password'] ?? $tempUserData['password'];
-                $this->sendCredentialsEmail($user, $tempUserData['login'], $originalPassword);
+                $this->sendCredentialsEmail($user, $tempUserData['login'], $tempUserData['original_password']);
             } catch (\Exception $e) {
                 Log::error('Credentials email sending failed: ' . $e->getMessage());
+            }
+            
+            // Также отправляем приветственное письмо для быстрой регистрации
+            try {
+                $this->sendWelcomeEmail($user);
+            } catch (\Exception $e) {
+                Log::error('Welcome email sending failed: ' . $e->getMessage());
+            }
+        } else {
+            // Регистрация в чекауте (с введенным паролем) - отправляем только приветственное письмо
+            try {
+                $this->sendWelcomeEmail($user);
+            } catch (\Exception $e) {
+                Log::error('Welcome email sending failed: ' . $e->getMessage());
             }
         }
 
@@ -597,6 +645,7 @@ class AuthController extends Controller
                     'id' => $user->id,
                     'name' => $user->name,
                     'email' => $user->email,
+                    'phone' => $user->phone,
                     'email_verified_at' => $user->email_verified_at,
                     'role' => $user->roles->first() ? $user->roles->first()->name : 'user',
                     'permissions' => $permissions,
@@ -745,11 +794,18 @@ class AuthController extends Controller
         // Получаем информацию о сайте
         $siteInfo = SiteInfoService::getSiteInfoForEmail();
         
+        // Получаем информацию о приветственных бонусах
+        $bonusesAtReg = \App\Models\Setting::where('key', 'bonuses_at_reg')->first();
+        $bonusAmount = ($bonusesAtReg && $bonusesAtReg->value && $bonusesAtReg->value > 0) 
+            ? (int) $bonusesAtReg->value 
+            : 0;
+        
         // Отправляем простое письмо с кодом
         Mail::send('emails.verification-code', [
             'user' => $user,
             'code' => $code,
-            'siteInfo' => $siteInfo
+            'siteInfo' => $siteInfo,
+            'bonusAmount' => $bonusAmount
         ], function ($message) use ($user, $siteInfo) {
             $message->to($user->email, $user->name)
                     ->subject('Код подтверждения регистрации - ' . ($siteInfo['site_name'] ?? 'Skate & Snow'));
@@ -776,28 +832,57 @@ class AuthController extends Controller
     private function awardWelcomeBonuses(User $user): void
     {
         try {
+            // Проверяем, были ли уже начислены приветственные бонусы
+            // Проверяем наличие транзакции с registration_bonus в metadata
+            $existingRegistrationBonus = \App\Models\UserBonusTransaction::where('user_id', $user->id)
+                ->where('type', 'earn')
+                ->whereJsonContains('metadata->registration_bonus', true)
+                ->first();
+            
+            if ($existingRegistrationBonus) {
+                Log::info('Welcome bonuses not awarded: user already has registration bonus transaction', [
+                    'user_id' => $user->id,
+                    'transaction_id' => $existingRegistrationBonus->id
+                ]);
+                return; // Приветственные бонусы уже начислены, не начисляем повторно
+            }
+            
             // Получаем значение bonuses_at_reg из настроек
             $bonusesAtReg = \App\Models\Setting::where('key', 'bonuses_at_reg')->first();
             
             if (!$bonusesAtReg || !$bonusesAtReg->value || $bonusesAtReg->value <= 0) {
+                Log::info('Welcome bonuses not awarded: setting not found or value is 0', [
+                    'user_id' => $user->id,
+                    'setting_value' => $bonusesAtReg?->value ?? 'not found'
+                ]);
                 return; // Если настройка не найдена или равна 0, не начисляем бонусы
             }
             
             $bonusAmount = (int) $bonusesAtReg->value;
             
-            // Создаем запись о бонусах в таблице user_bonuses
-            DB::table('user_bonuses')->insert([
+            // Используем модель UserBonus для правильного создания записи и транзакции
+            $userBonus = \App\Models\UserBonus::getOrCreateForUser($user->id);
+            
+            // Добавляем бонусы через метод addPoints, который создаст транзакцию
+            $userBonus->addPoints(
+                $bonusAmount,
+                'Приветственные бонусы за регистрацию',
+                null, // order_id
+                null, // expires_at (без срока действия для приветственных бонусов)
+                ['registration_bonus' => true, 'bonuses_at_reg' => $bonusAmount]
+            );
+            
+            Log::info('Welcome bonuses awarded successfully', [
                 'user_id' => $user->id,
-                'points' => $bonusAmount,
-                'total_earned' => $bonusAmount,
-                'total_spent' => 0,
-                'created_at' => now(),
-                'updated_at' => now()
+                'bonus_amount' => $bonusAmount
             ]);
             
         } catch (\Exception $e) {
             // Логируем ошибку, но не прерываем регистрацию
-            Log::error('Error awarding welcome bonuses: ' . $e->getMessage());
+            Log::error('Error awarding welcome bonuses: ' . $e->getMessage(), [
+                'user_id' => $user->id,
+                'trace' => $e->getTraceAsString()
+            ]);
         }
     }
 
@@ -871,15 +956,47 @@ class AuthController extends Controller
         // Получаем информацию о сайте
         $siteInfo = SiteInfoService::getSiteInfoForEmail();
         
+        // Получаем информацию о приветственных бонусах
+        $bonusesAtReg = \App\Models\Setting::where('key', 'bonuses_at_reg')->first();
+        $bonusAmount = ($bonusesAtReg && $bonusesAtReg->value && $bonusesAtReg->value > 0) 
+            ? (int) $bonusesAtReg->value 
+            : 0;
+        
         // Отправляем письмо с учетными данными
         Mail::send('emails.credentials', [
             'user' => $user,
             'login' => $login,
             'password' => $password,
-            'siteInfo' => $siteInfo
+            'siteInfo' => $siteInfo,
+            'bonusAmount' => $bonusAmount
         ], function ($message) use ($user, $siteInfo) {
             $message->to($user->email, $user->name)
                     ->subject('Ваши учетные данные - ' . ($siteInfo['site_name'] ?? 'Skate & Snow'));
+        });
+    }
+
+    /**
+     * Отправить приветственное письмо об успешной регистрации (для регистрации в чекауте)
+     */
+    private function sendWelcomeEmail(User $user): void
+    {
+        // Получаем информацию о сайте
+        $siteInfo = SiteInfoService::getSiteInfoForEmail();
+        
+        // Получаем информацию о приветственных бонусах
+        $bonusesAtReg = \App\Models\Setting::where('key', 'bonuses_at_reg')->first();
+        $bonusAmount = ($bonusesAtReg && $bonusesAtReg->value && $bonusesAtReg->value > 0) 
+            ? (int) $bonusesAtReg->value 
+            : 0;
+        
+        // Отправляем приветственное письмо
+        Mail::send('emails.welcome', [
+            'user' => $user,
+            'siteInfo' => $siteInfo,
+            'bonusAmount' => $bonusAmount
+        ], function ($message) use ($user, $siteInfo) {
+            $message->to($user->email, $user->name)
+                    ->subject('Добро пожаловать на ' . ($siteInfo['site_name'] ?? 'Skate & Snow') . '!');
         });
     }
 }
