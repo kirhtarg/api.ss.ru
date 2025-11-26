@@ -693,6 +693,51 @@ class AuthController extends Controller
     }
 
     /**
+     * Проверка телефона на уникальность
+     */
+    public function checkPhone(Request $request): JsonResponse
+    {
+        try {
+            $request->validate([
+                'phone' => 'required|string',
+            ]);
+
+            $phone = $request->phone;
+            // Нормализуем телефон для проверки (убираем все нецифровые символы кроме +)
+            $normalizedPhone = preg_replace('/[^\d+]/', '', $phone);
+            // Если начинается с 8, заменяем на +7
+            if (str_starts_with($normalizedPhone, '8')) {
+                $normalizedPhone = '+7' . substr($normalizedPhone, 1);
+            } elseif (str_starts_with($normalizedPhone, '7')) {
+                $normalizedPhone = '+' . $normalizedPhone;
+            } elseif (!str_starts_with($normalizedPhone, '+')) {
+                $normalizedPhone = '+7' . $normalizedPhone;
+            }
+
+            $exists = User::where('phone', $normalizedPhone)->exists();
+
+            return response()->json([
+                'success' => true,
+                'exists' => $exists,
+                'message' => $exists ? 'Телефон найден' : 'Телефон свободен'
+            ]);
+
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка проверки телефона',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Отправить email с кодом подтверждения
      */
     private function sendVerificationCodeEmail(User $user, string $code): void

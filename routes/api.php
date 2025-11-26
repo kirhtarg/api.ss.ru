@@ -83,6 +83,7 @@ Route::post('/register-with-code', [AuthController::class, 'registerWithCode']);
 Route::post('/verify-email', [AuthController::class, 'verifyEmail']);
 Route::post('/resend-verification', [AuthController::class, 'resendVerificationEmail']);
 Route::post('/check-email', [AuthController::class, 'checkEmail']);
+Route::post('/check-phone', [AuthController::class, 'checkPhone']);
 
 // Phone authentication routes
 Route::post('/phone/send-code', [\App\Http\Controllers\Auth\PhoneAuthController::class, 'sendPhoneCode']);
