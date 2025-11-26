@@ -928,7 +928,7 @@ class ShopGoodsController extends Controller
         $validator = Validator::make($request->all(), [
             'ids' => 'required|array',
             'ids.*' => 'exists:shop_goods,id',
-            'action' => 'required|in:activate,deactivate,delete,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_price,update_sale_price',
+            'action' => 'required|in:activate,deactivate,delete,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_price,update_sale_price,remove_after_symbol',
             'data' => 'nullable|array'
         ]);
 
@@ -1275,6 +1275,21 @@ class ShopGoodsController extends Controller
                                     }
                                     $good->update(['sale_price' => $newSalePrice]);
                                 }
+                            }
+                        }
+                        break;
+                    case 'remove_after_symbol':
+                        if (isset($data['symbol']) && !empty($data['symbol'])) {
+                            $symbol = $data['symbol'];
+                            $name = $good->name;
+                            
+                            // Находим первое вхождение символа/сочетания
+                            $position = mb_strpos($name, $symbol);
+                            
+                            if ($position !== false) {
+                                // Удаляем символ и всё после него
+                                $newName = mb_substr($name, 0, $position);
+                                $good->update(['name' => $newName]);
                             }
                         }
                         break;
