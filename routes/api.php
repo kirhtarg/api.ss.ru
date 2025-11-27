@@ -1384,23 +1384,25 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'index']);
                 Route::get('/statistics', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'statistics']);
                 Route::get('/statuses', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'getStatuses']);
-                Route::get('/{id}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'show']);
                 Route::post('/', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'store']);
-                Route::put('/{id}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'update']);
-                Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'destroy']);
+                Route::post('/export', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'export']);
+                // Специфичные роуты должны быть определены ПЕРЕД общими роутами с {id}
                 Route::put('/{id}/status', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateStatus']);
                 Route::put('/{id}/payed', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updatePayed']);
                 Route::put('/{id}/is-active', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateIsActive']);
                 Route::put('/{id}/comment', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateComment']);
                 Route::put('/{id}/delivery-status', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateDeliveryStatus']);
+                Route::put('/{id}/finish', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'finishOrder']);
                 Route::get('/{id}/cdek/barcode', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'getCdekBarcode']);
                 Route::get('/{id}/cdek/barcode/download', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'downloadCdekBarcode']);
                 Route::get('/{id}/cdek/waybill', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'getCdekWaybill']);
                 Route::get('/{id}/cdek/waybill/download', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'downloadCdekWaybill']);
-                Route::put('/{id}/finish', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'finishOrder']);
                 Route::post('/{id}/items', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'addItem']);
                 Route::delete('/{id}/items/{itemId}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'removeItem']);
-                Route::post('/export', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'export']);
+                // Общие роуты с {id} должны быть в конце
+                Route::get('/{id}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'show']);
+                Route::put('/{id}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'update']);
+                Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'destroy']);
             });
 
             // Предзаказы

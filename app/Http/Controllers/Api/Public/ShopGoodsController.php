@@ -579,36 +579,34 @@ class ShopGoodsController extends Controller
         try {
             $limit = $request->get('limit', 10);
 
-            // Получаем хиты продаж (featured)
+            // Получаем хиты продаж (featured) - показываем напрямую товары с is_featured = true без дополнительных условий
             $featuredQuery = ShopGood::with(['images', 'variations' => function($query) {
                 $query->where('is_active', true);
             }, 'categories', 'brands'])
-                ->where('is_featured', 1)
-                ->where('is_active', 1)
+                ->featured() // Только товары с is_featured = true
+                ->active() // Только активные товары
                 ->orderBy('created_at', 'desc')
                 ->limit($limit);
-            $this->applyStockFilter($featuredQuery);
+            // Не применяем applyStockFilter - показываем все товары с is_featured = true независимо от настроек показа
             $featured = $featuredQuery->get();
 
-            // Получаем товары со скидками (sale)
+            // Получаем товары со скидками (sale) - показываем напрямую товары с is_sale = true без дополнительных условий
             $saleQuery = ShopGood::with(['images', 'variations' => function($query) {
                 $query->where('is_active', true);
             }, 'categories', 'brands'])
-                ->where('is_sale', 1)
-                ->where('is_active', 1)
-                ->whereNotNull('sale_price')
-                ->where('sale_price', '>', 0)
+                ->sale() // Только товары с is_sale = true
+                ->active() // Только активные товары
                 ->orderBy('created_at', 'desc')
                 ->limit($limit);
-            $this->applyStockFilter($saleQuery);
+            // Не применяем applyStockFilter - показываем все товары с is_sale = true независимо от настроек показа
             $sale = $saleQuery->get();
 
             // Получаем новинки (new)
             $newQuery = ShopGood::with(['images', 'variations' => function($query) {
                 $query->where('is_active', true);
             }, 'categories', 'brands'])
-                ->where('is_new', 1)
-                ->where('is_active', 1)
+                ->new() // Используем scope метод для правильной фильтрации boolean поля
+                ->active() // Используем scope метод для правильной фильтрации boolean поля
                 ->orderBy('created_at', 'desc')
                 ->limit($limit);
             $this->applyStockFilter($newQuery);
