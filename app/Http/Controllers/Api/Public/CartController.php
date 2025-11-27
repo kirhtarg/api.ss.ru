@@ -1272,6 +1272,14 @@ class CartController extends Controller
 
             $total = $price * $quantity;
 
+            // Определяем SKU товара (может быть null)
+            $goodSku = null;
+            if ($variation) {
+                $goodSku = $variation->sku ?? $good->sku ?? null;
+            } else {
+                $goodSku = $good->sku ?? null;
+            }
+
             // Создаем предзаказ
             $preorder = ShopPreorder::create([
                 'user_id' => $user ? $user->id : null,
@@ -1283,7 +1291,7 @@ class CartController extends Controller
                 'total' => $total,
                 'good_name' => $good->name,
                 'variation_name' => $variation ? $variation->name : null,
-                'good_sku' => $variation ? ($variation->sku ?? $good->sku) : $good->sku,
+                'good_sku' => $goodSku,
                 'good_image' => $this->getGoodImage($good),
                 'status' => 'pending',
                 'customer_name' => $request->get('customer_name'),

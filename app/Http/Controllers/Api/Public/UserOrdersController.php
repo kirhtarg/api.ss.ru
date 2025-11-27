@@ -232,16 +232,44 @@ class UserOrdersController extends Controller
     private function restoreOrderItemsToStock(ShopOrder $order): void
     {
         try {
-            $items = is_string($order->items) ? json_decode($order->items, true) : $order->items;
+            // Безопасная обработка items - учитываем, что в модели есть cast 'array'
+            $items = $order->items;
             
-            if (!is_array($items) || empty($items)) {
+            // Если items null или пусто, выходим
+            if (empty($items)) {
                 Log::info('Заказ не содержит товаров для возврата на склад', [
                     'order_id' => $order->id
                 ]);
                 return;
             }
+            
+            // Если items строка (на случай, если cast не сработал), декодируем
+            if (is_string($items)) {
+                $items = json_decode($items, true);
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    Log::error('Ошибка декодирования JSON items при возврате товаров на склад', [
+                        'order_id' => $order->id,
+                        'json_error' => json_last_error_msg()
+                    ]);
+                    return;
+                }
+            }
+            
+            // Проверяем, что items является массивом
+            if (!is_array($items)) {
+                Log::error('Items не является массивом при возврате товаров на склад', [
+                    'order_id' => $order->id,
+                    'items_type' => gettype($items)
+                ]);
+                return;
+            }
 
             foreach ($items as $item) {
+                // Проверяем, что item является массивом
+                if (!is_array($item)) {
+                    continue;
+                }
+                
                 $goodId = $item['good_id'] ?? null;
                 $variationId = $item['variation_id'] ?? null;
                 $quantity = (int) ($item['quantity'] ?? 0);
@@ -252,34 +280,49 @@ class UserOrdersController extends Controller
 
                 // Если есть вариация, обновляем stock_quantity в shop_good_variations
                 if ($variationId) {
-                    $variation = ShopGoodVariation::find($variationId);
-                    if ($variation) {
-                        $oldQuantity = $variation->stock_quantity ?? 0;
-                        $variation->increment('stock_quantity', $quantity);
-                        $variation->refresh();
+                    try {
+                        $variation = ShopGoodVariation::find($variationId);
+                        if ($variation) {
+                            $oldQuantity = $variation->stock_quantity ?? 0;
+                            $variation->increment('stock_quantity', $quantity);
+                            $variation->refresh();
 
-                        Log::info('Товар (вариация) возвращен на склад при отмене заказа', [
+                            Log::info('Товар (вариация) возвращен на склад при отмене заказа', [
+                                'order_id' => $order->id,
+                                'good_id' => $goodId,
+                                'variation_id' => $variationId,
+                                'quantity_returned' => $quantity,
+                                'old_quantity' => $oldQuantity,
+                                'new_quantity' => $variation->stock_quantity
+                            ]);
+                        }
+                    } catch (\Exception $e) {
+                        Log::error('Ошибка при возврате вариации на склад: ' . $e->getMessage(), [
                             'order_id' => $order->id,
-                            'good_id' => $goodId,
                             'variation_id' => $variationId,
-                            'quantity_returned' => $quantity,
-                            'old_quantity' => $oldQuantity,
-                            'new_quantity' => $variation->stock_quantity
+                            'good_id' => $goodId
                         ]);
                     }
                 } else {
-                    $good = ShopGood::find($goodId);
-                    if ($good) {
-                        $oldQuantity = $good->stock_quantity ?? 0;
-                        $good->increment('stock_quantity', $quantity);
-                        $good->refresh();
+                    try {
+                        $good = ShopGood::find($goodId);
+                        if ($good) {
+                            $oldQuantity = $good->stock_quantity ?? 0;
+                            $good->increment('stock_quantity', $quantity);
+                            $good->refresh();
 
-                        Log::info('Товар возвращен на склад при отмене заказа', [
+                            Log::info('Товар возвращен на склад при отмене заказа', [
+                                'order_id' => $order->id,
+                                'good_id' => $goodId,
+                                'quantity_returned' => $quantity,
+                                'old_quantity' => $oldQuantity,
+                                'new_quantity' => $good->stock_quantity
+                            ]);
+                        }
+                    } catch (\Exception $e) {
+                        Log::error('Ошибка при возврате товара на склад: ' . $e->getMessage(), [
                             'order_id' => $order->id,
-                            'good_id' => $goodId,
-                            'quantity_returned' => $quantity,
-                            'old_quantity' => $oldQuantity,
-                            'new_quantity' => $good->stock_quantity
+                            'good_id' => $goodId
                         ]);
                     }
                 }
@@ -290,6 +333,7 @@ class UserOrdersController extends Controller
                 'order_id' => $order->id,
                 'error' => $e->getTraceAsString()
             ]);
+            // Не пробрасываем исключение, чтобы не прерывать процесс отмены заказа
         }
     }
 
@@ -373,29 +417,61 @@ class UserOrdersController extends Controller
     private function restoreUserBonuses(ShopOrder $order): void
     {
         try {
-            if (!$order->user_id || !$order->use_bonus_points || !$order->bonus_points_to_use || $order->bonus_points_to_use <= 0) {
+            // Безопасная проверка условий для возврата бонусов
+            if (!$order->user_id) {
+                Log::info('Нет user_id для возврата бонусов', [
+                    'order_id' => $order->id
+                ]);
+                return;
+            }
+            
+            // Проверяем, использовались ли бонусы в заказе
+            $useBonusPoints = $order->use_bonus_points ?? false;
+            $bonusPointsToUse = $order->bonus_points_to_use ?? 0;
+            
+            // Преобразуем в числовые значения для проверки
+            if (is_bool($useBonusPoints)) {
+                $useBonusPoints = $useBonusPoints ? 1 : 0;
+            }
+            $bonusPointsToUse = (int) $bonusPointsToUse;
+            
+            if (!$useBonusPoints || $bonusPointsToUse <= 0) {
+                Log::info('Бонусы не использовались в заказе или количество равно 0', [
+                    'order_id' => $order->id,
+                    'use_bonus_points' => $useBonusPoints,
+                    'bonus_points_to_use' => $bonusPointsToUse
+                ]);
                 return;
             }
 
             $userBonus = UserBonus::getOrCreateForUser($order->user_id);
-            $bonusPoints = (int) $order->bonus_points_to_use;
+            $bonusPoints = $bonusPointsToUse;
 
             // Возвращаем бонусы пользователю
             $userBonus->points += $bonusPoints;
             $userBonus->save();
 
             // Создаем транзакцию о возврате
-            UserBonusTransaction::create([
-                'user_id' => $order->user_id,
-                'type' => 'refund',
-                'points' => $bonusPoints,
-                'description' => "Возврат бонусов за отмененный заказ #{$order->order_number}",
-                'order_id' => $order->id,
-                'metadata' => [
-                    'order_number' => $order->order_number,
-                    'action' => 'cancel_order_refund'
-                ]
-            ]);
+            try {
+                UserBonusTransaction::create([
+                    'user_id' => $order->user_id,
+                    'type' => 'refund',
+                    'points' => $bonusPoints,
+                    'description' => "Возврат бонусов за отмененный заказ #{$order->order_number}",
+                    'order_id' => $order->id,
+                    'metadata' => [
+                        'order_number' => $order->order_number ?? null,
+                        'action' => 'cancel_order_refund'
+                    ]
+                ]);
+            } catch (\Exception $e) {
+                Log::error('Ошибка создания транзакции возврата бонусов: ' . $e->getMessage(), [
+                    'order_id' => $order->id,
+                    'user_id' => $order->user_id,
+                    'bonus_points' => $bonusPoints
+                ]);
+                // Продолжаем выполнение, так как бонусы уже возвращены
+            }
 
             Log::info('Бонусы возвращены пользователю при отмене заказа', [
                 'order_id' => $order->id,
@@ -407,8 +483,10 @@ class UserOrdersController extends Controller
         } catch (\Exception $e) {
             Log::error('Ошибка при возврате бонусов пользователю: ' . $e->getMessage(), [
                 'order_id' => $order->id,
+                'user_id' => $order->user_id ?? null,
                 'error' => $e->getTraceAsString()
             ]);
+            // Не пробрасываем исключение, чтобы не прерывать процесс отмены заказа
         }
     }
 

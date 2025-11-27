@@ -116,13 +116,13 @@ class InvoicePdfService
         
         // Таблица банковских реквизитов
         $tableData = [
-            ['Банк получателя', $settings['bank_name'] ?? ''],
-            ['БИК', $settings['bik'] ?? ''],
-            ['Сч. №', $settings['correspondent_account'] ?? ''],
-            ['Банк получателя', $settings['bank_name'] ?? ''],
-            ['ИНН', $settings['inn'] ?? ''],
-            ['КПП', $settings['kpp'] ?? ''],
-            ['Сч. №', $settings['account_number'] ?? ''],
+            ['Банк получателя', $this->cleanText($settings['bank_name'] ?? '')],
+            ['БИК', $this->cleanText($settings['bik'] ?? '')],
+            ['Сч. №', $this->cleanText($settings['correspondent_account'] ?? '')],
+            ['Банк получателя', $this->cleanText($settings['bank_name'] ?? '')],
+            ['ИНН', $this->cleanText($settings['inn'] ?? '')],
+            ['КПП', $this->cleanText($settings['kpp'] ?? '')],
+            ['Сч. №', $this->cleanText($settings['account_number'] ?? '')],
         ];
         
         $pdf->SetFillColor(240, 240, 240);
@@ -159,7 +159,8 @@ class InvoicePdfService
     {
         $pdf->SetFont('dejavusans', 'B', 10);
         $pdf->SetXY(15, $y);
-        $pdf->Cell(0, 7, 'Получатель: ' . ($settings['legal_name'] ?? ''), 0, 1, 'L');
+        $legalName = $this->cleanText($settings['legal_name'] ?? '');
+        $pdf->Cell(0, 7, 'Получатель: ' . $legalName, 0, 1, 'L');
         
         return $y + 7;
     }
@@ -186,17 +187,41 @@ class InvoicePdfService
         $pdf->Cell(0, 7, 'Поставщик:', 0, 1, 'L');
         
         $supplierText = '';
-        if (isset($settings['legal_name'])) {
-            $supplierText = $settings['legal_name'];
+        
+        // Получаем название организации
+        if (isset($settings['legal_name']) && !empty($settings['legal_name'])) {
+            $supplierText = $this->cleanText($settings['legal_name']);
         }
-        if (isset($settings['legal_address'])) {
-            $supplierText .= ($supplierText ? ', ' : '') . $settings['legal_address'];
+        
+        // Получаем адрес
+        $address = '';
+        if (isset($settings['legal_address']) && !empty($settings['legal_address'])) {
+            $address = $this->cleanText($settings['legal_address']);
         } elseif (isset($data['main_address'])) {
-            $supplierText .= ($supplierText ? ', ' : '') . $data['main_address'];
+            // Если main_address - это объект ContactAddress, извлекаем адрес
+            if (is_object($data['main_address'])) {
+                $addressObj = $data['main_address'];
+                // Пробуем получить address_short, если есть, иначе address
+                $address = $this->cleanText($addressObj->address_short ?? $addressObj->address ?? '');
+            } elseif (is_array($data['main_address'])) {
+                // Если это массив, извлекаем адрес
+                $address = $this->cleanText($data['main_address']['address_short'] ?? $data['main_address']['address'] ?? '');
+            } else {
+                // Если это строка, очищаем её
+                $address = $this->cleanText($data['main_address']);
+            }
         }
-        if (isset($settings['inn'])) {
+        
+        if ($address) {
+            $supplierText .= ($supplierText ? ', ' : '') . $address;
+        }
+        
+        // Добавляем ИНН
+        if (isset($settings['inn']) && !empty($settings['inn'])) {
             $supplierText .= ($supplierText ? ', ' : '') . 'ИНН: ' . $settings['inn'];
         }
+        
+        // Добавляем КПП
         if (isset($settings['kpp']) && !empty($settings['kpp'])) {
             $supplierText .= ', КПП: ' . $settings['kpp'];
         }
@@ -209,6 +234,74 @@ class InvoicePdfService
     }
     
     /**
+     * Очистка текста от HTML тегов и Unicode escape-последовательностей
+     */
+    private function cleanText($text): string
+    {
+        if (empty($text)) {
+            return '';
+        }
+        
+        // Если это объект, извлекаем нужные свойства
+        if (is_object($text)) {
+            // Если это ContactAddress, получаем адрес
+            if (method_exists($text, 'getAttribute')) {
+                $text = $text->address_short ?? $text->address ?? (string) $text;
+            } elseif (isset($text->address_short)) {
+                $text = $text->address_short;
+            } elseif (isset($text->address)) {
+                $text = $text->address;
+            } else {
+                $text = (string) $text;
+            }
+        }
+        
+        // Если это массив, извлекаем адрес
+        if (is_array($text)) {
+            $text = $text['address_short'] ?? $text['address'] ?? '';
+        }
+        
+        // Если это не строка, преобразуем в строку
+        if (!is_string($text)) {
+            $text = (string) $text;
+        }
+        
+        // Проверяем, не является ли это JSON строкой с объектом
+        if (is_string($text) && (strpos($text, '{') === 0 || strpos($text, '[') === 0)) {
+            $decoded = json_decode($text, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                $text = $decoded['address'] ?? $decoded['address_short'] ?? $text;
+            }
+        }
+        
+        // Декодируем Unicode escape-последовательности (\u0441 и т.д.)
+        if (is_string($text) && preg_match('/\\\\u[0-9a-fA-F]{4}/', $text)) {
+            // Пробуем декодировать через json_decode
+            $decoded = json_decode('"' . str_replace('"', '\\"', $text) . '"', true);
+            if ($decoded !== null && $decoded !== $text) {
+                $text = $decoded;
+            } else {
+                // Если не получилось, используем preg_replace_callback
+                $text = preg_replace_callback('/\\\\u([0-9a-fA-F]{4})/', function ($match) {
+                    return mb_convert_encoding(pack('H*', $match[1]), 'UTF-8', 'UCS-2BE');
+                }, $text);
+            }
+        }
+        
+        // Удаляем HTML теги
+        $text = strip_tags($text);
+        
+        // Декодируем HTML сущности
+        $text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        
+        // Удаляем лишние пробелы и переносы строк
+        $text = preg_replace('/\s+/', ' ', $text);
+        $text = trim($text);
+        
+        return $text;
+    }
+    
+    /**
      * Покупатель
      */
     private function fillCustomer(TCPDF $pdf, array $data, float $y): float
@@ -217,10 +310,10 @@ class InvoicePdfService
         $pdf->SetXY(15, $y);
         $pdf->Cell(0, 7, 'Покупатель:', 0, 1, 'L');
         
-        $customerName = $data['customer_name'] ?? 'Покупатель';
-        $customerInn = $data['customer_inn'] ?? '';
-        $customerAddress = $data['customer_address'] ?? '';
-        $customerPhone = $data['customer_phone'] ?? '';
+        $customerName = $this->cleanText($data['customer_name'] ?? 'Покупатель');
+        $customerInn = $this->cleanText($data['customer_inn'] ?? '');
+        $customerAddress = $this->cleanText($data['customer_address'] ?? '');
+        $customerPhone = $this->cleanText($data['customer_phone'] ?? '');
         
         $customerText = $customerName;
         if ($customerAddress) {
@@ -281,7 +374,7 @@ class InvoicePdfService
             $x += $colWidths[0];
             
             // Наименование
-            $goodName = $item['good_name'] ?? $item['name'] ?? 'Товар';
+            $goodName = $this->cleanText($item['good_name'] ?? $item['name'] ?? 'Товар');
             $pdf->SetXY($x, $row);
             $pdf->Cell($colWidths[1], $rowHeight, $goodName, 1, 0, 'L', true);
             $x += $colWidths[1];

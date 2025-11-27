@@ -261,7 +261,13 @@
                 
                 <div class="info-row">
                     <span class="info-label">Цена за единицу:</span>
-                    <span class="info-value">{{ number_format($preorder->price, 0, ',', ' ') }} ₽</span>
+                    <span class="info-value">
+                        @if($preorder->price == 0)
+                            цена уточняется
+                        @else
+                            {{ number_format($preorder->price, 0, ',', ' ') }} ₽
+                        @endif
+                    </span>
                 </div>
             </div>
 
@@ -303,7 +309,13 @@
             <!-- Итоговая сумма -->
             <div class="total-box">
                 <div class="total-label">Сумма предзаказа</div>
-                <div class="total-amount">{{ number_format($preorder->total, 0, ',', ' ') }} ₽</div>
+                <div class="total-amount">
+                    @if($preorder->total == 0)
+                        цена уточняется
+                    @else
+                        {{ number_format($preorder->total, 0, ',', ' ') }} ₽
+                    @endif
+                </div>
             </div>
         </div>
 

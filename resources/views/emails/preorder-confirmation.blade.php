@@ -257,7 +257,13 @@
                             <div class="product-sku">Артикул: {{ $preorder->good_sku }}</div>
                         @endif
                         <div class="product-quantity">Количество: {{ $preorder->quantity }} шт.</div>
-                        <div class="product-price">{{ number_format($preorder->price, 0, ',', ' ') }} ₽ за шт.</div>
+                        <div class="product-price">
+                            @if($preorder->price == 0)
+                                цена уточняется
+                            @else
+                                {{ number_format($preorder->price, 0, ',', ' ') }} ₽ за шт.
+                            @endif
+                        </div>
                     </div>
                 </div>
                 
@@ -282,7 +288,13 @@
             <!-- Итоговая сумма -->
             <div class="total-box">
                 <div class="total-label">Сумма предзаказа</div>
-                <div class="total-amount">{{ number_format($preorder->total, 0, ',', ' ') }} ₽</div>
+                <div class="total-amount">
+                    @if($preorder->total == 0)
+                        цена уточняется
+                    @else
+                        {{ number_format($preorder->total, 0, ',', ' ') }} ₽
+                    @endif
+                </div>
             </div>
 
             <!-- Информация для клиента -->
