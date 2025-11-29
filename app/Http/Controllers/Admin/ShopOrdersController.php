@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\ShopOrder;
 use App\Models\ShopOrderStatus;
+use App\Models\ShopOrderLog;
+use App\Models\ShopOrderLogIcon;
 use App\Models\ShopStock;
 use App\Models\ShopWarehouse;
 use App\Models\ShopGood;
@@ -27,8 +29,25 @@ class ShopOrdersController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $query = ShopOrder::with(['status', 'user', 'paymentMethod', 'deliveryMethod'])
-                ->orderBy('created_at', 'desc');
+            $query = ShopOrder::with(['status', 'user', 'paymentMethod', 'deliveryMethod']);
+            
+            // Сортировка
+            $sortBy = $request->get('sort_by', 'created_at');
+            $sortOrder = $request->get('sort_order', 'desc');
+            
+            if ($sortBy === 'order_number') {
+                $query->orderBy('order_number', $sortOrder);
+            } elseif ($sortBy === 'last_log') {
+                // Сортировка по дате последнего события в журнале
+                $query->leftJoin('shop_order_logs', function ($join) {
+                    $join->on('shop_orders.id', '=', 'shop_order_logs.entity_id')
+                        ->whereRaw('shop_order_logs.created_at = (SELECT MAX(created_at) FROM shop_order_logs WHERE entity_id = shop_orders.id AND (section = "orders" OR section IS NULL))');
+                })
+                ->select('shop_orders.*')
+                ->orderBy('shop_order_logs.created_at', $sortOrder);
+            } else {
+                $query->orderBy('created_at', $sortOrder);
+            }
 
             // Поиск по номеру заказа, имени клиента, комментариям, телефону, email и сумме заказа
             if ($request->filled('search')) {
@@ -227,6 +246,7 @@ class ShopOrdersController extends Controller
                     'status_is_finished' => $order->status ? (bool) $order->status->is_finished : false,
                     'status_is_cancelled' => $order->status ? (bool) $order->status->is_cancelled : false,
                     'payed' => (bool) $order->payed,
+                    'pay_agree' => (bool) ($order->pay_agree ?? false),
                     'is_active' => (bool) ($order->is_active ?? false),
                 'order_bonus_points' => (int) ($order->order_bonus_points ?? 0),
                 'user_bonus_points' => $order->user_id ? (\App\Models\UserBonus::where('user_id', $order->user_id)->value('points') ?? 0) : 0,
@@ -470,10 +490,22 @@ class ShopOrdersController extends Controller
     /**
      * Удалить заказ
      */
-    public function destroy($id): JsonResponse
+    public function destroy(Request $request, $id): JsonResponse
     {
         try {
             $order = ShopOrder::findOrFail($id);
+            
+            // Логгируем удаление перед удалением записи
+            $user = $request->user();
+            $userName = $user ? $user->name : 'Администратор';
+            
+            ShopOrderLog::logOrderDeleted(
+                $order->id,
+                $user ? $user->id : null,
+                $userName,
+                $order->order_number
+            );
+            
             $order->delete();
 
             return response()->json([
@@ -536,7 +568,8 @@ class ShopOrdersController extends Controller
         try {
             $validator = Validator::make($request->all(), [
                 'status_id' => 'required|integer|exists:shop_order_statuses,id',
-                'is_restore' => 'sometimes|boolean'
+                'is_restore' => 'sometimes|boolean',
+                'comment' => 'nullable|string|max:2000'
             ]);
 
             if ($validator->fails()) {
@@ -578,6 +611,28 @@ class ShopOrdersController extends Controller
 
             $order->status_id = $statusId;
             $order->save();
+
+            // Логируем смену статуса
+            $user = $request->user();
+            $userName = $user ? $user->name : 'Администратор';
+            
+            $oldStatusName = $oldStatus ? $oldStatus->display_name : 'Не установлен';
+            $oldStatusColor = $oldStatus ? $oldStatus->color : '#6B7280';
+            $newStatusName = $newStatus->display_name;
+            $newStatusColor = $newStatus->color;
+            
+            // Формируем HTML-строку для действия с цветами
+            $action = "<span style=\"color:{$oldStatusColor}\">{$oldStatusName}</span> → <span style=\"color:{$newStatusColor}\">{$newStatusName}</span>";
+            
+            ShopOrderLog::create([
+                'entity_id' => $order->id,
+                'action' => $action,
+                'comment' => $request->get('comment'),
+                'user_id' => $user ? $user->id : null,
+                'user_name' => $userName,
+                'section' => ShopOrderLog::SECTION_ORDERS,
+                'info' => "Заказ № {$order->order_number}"
+            ]);
 
             // Загружаем обновленные связи
             $order->load(['status']);
@@ -863,7 +918,8 @@ class ShopOrdersController extends Controller
         try {
             $validator = Validator::make($request->all(), [
                 'payed' => 'required|boolean',
-                'bonus_points' => 'nullable|integer|min:0'
+                'bonus_points' => 'nullable|integer|min:0',
+                'comment' => 'nullable|string|max:2000'
             ]);
 
             if ($validator->fails()) {
@@ -965,6 +1021,20 @@ class ShopOrdersController extends Controller
             // Обновляем статус оплаты
             $order->payed = $newPayedStatus;
             $order->save();
+
+            // Логируем смену статуса оплаты
+            $user = $request->user();
+            $userName = $user ? $user->name : 'Администратор';
+            
+            ShopOrderLog::logPaymentStatusChange(
+                $order->id, 
+                $newPayedStatus, 
+                $user ? $user->id : null, 
+                $userName,
+                $request->get('comment'),
+                ShopOrderLog::SECTION_ORDERS,
+                $order->order_number
+            );
 
             // Получаем обновленное количество бонусов после изменения
             $newBonusPoints = $currentBonusPoints;
@@ -1598,6 +1668,7 @@ class ShopOrdersController extends Controller
             'status_is_finished' => $order->status ? (bool) $order->status->is_finished : false,
             'status_is_cancelled' => $order->status ? (bool) $order->status->is_cancelled : false,
             'payed' => (bool) $order->payed,
+            'pay_agree' => (bool) ($order->pay_agree ?? false),
             'is_active' => (bool) ($order->is_active ?? false),
             'delivery_status_id' => $order->delivery_status_id,
             'delivery_status' => $order->deliveryStatus ? [
@@ -2276,6 +2347,693 @@ class ShopOrdersController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка изменения порядка: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    // ==================== ORDER LOGS ====================
+
+    /**
+     * Получить логи заказа
+     */
+    public function getOrderLogs($orderId): JsonResponse
+    {
+        try {
+            $order = ShopOrder::findOrFail($orderId);
+            
+            $logs = ShopOrderLog::where('entity_id', $orderId)
+                ->where(function ($q) {
+                    // Фильтруем только логи заказов (section = orders или null для обратной совместимости)
+                    $q->where('section', ShopOrderLog::SECTION_ORDERS)
+                      ->orWhereNull('section');
+                })
+                ->with('actionIcon')
+                ->orderBy('created_at', 'desc')
+                ->get()
+                ->map(function ($log) {
+                    return [
+                        'id' => $log->id,
+                        'action' => $log->action,
+                        'action_color' => $log->action_color,
+                        'action_bg_color' => $log->action_bg_color,
+                        'comment' => $log->comment,
+                        'user_name' => $log->user_name,
+                        'action_icon' => $log->actionIcon ? [
+                            'id' => $log->actionIcon->id,
+                            'name' => $log->actionIcon->name,
+                            'icon' => $log->actionIcon->icon,
+                            'color' => $log->actionIcon->color
+                        ] : null,
+                        'created_at' => $log->created_at->format('Y-m-d H:i:s')
+                    ];
+                });
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'logs' => $logs,
+                    'total' => $logs->count()
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения логов: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Добавить комментарий/лог к заказу
+     */
+    public function addOrderLog(Request $request, $orderId): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'comment' => 'required|string|max:2000',
+                'action_icon_id' => 'nullable|integer|exists:shop_order_log_icons,id'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $order = ShopOrder::findOrFail($orderId);
+            
+            // Получаем информацию о текущем пользователе (админе)
+            $user = $request->user();
+            $userName = $user ? $user->name : 'Администратор';
+
+            $log = ShopOrderLog::create([
+                'entity_id' => $orderId,
+                'action' => 'Комментарий',
+                'comment' => $request->get('comment'),
+                'action_icon_id' => $request->get('action_icon_id'),
+                'user_id' => $user ? $user->id : null,
+                'user_name' => $userName,
+                'section' => ShopOrderLog::SECTION_ORDERS,
+                'info' => "Заказ № {$order->order_number}"
+            ]);
+
+            $log->load('actionIcon');
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Комментарий добавлен',
+                'data' => [
+                    'id' => $log->id,
+                    'action' => $log->action,
+                    'action_color' => $log->action_color,
+                    'action_bg_color' => $log->action_bg_color,
+                    'comment' => $log->comment,
+                    'user_name' => $log->user_name,
+                    'action_icon' => $log->actionIcon ? [
+                        'id' => $log->actionIcon->id,
+                        'name' => $log->actionIcon->name,
+                        'icon' => $log->actionIcon->icon,
+                        'color' => $log->actionIcon->color
+                    ] : null,
+                    'created_at' => $log->created_at->format('Y-m-d H:i:s')
+                ]
+            ], 201);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка добавления комментария: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить статистику логов для списка заказов
+     */
+    public function getOrdersLogsStats(Request $request): JsonResponse
+    {
+        try {
+            $orderIds = $request->get('order_ids', []);
+            
+            if (empty($orderIds)) {
+                return response()->json([
+                    'success' => true,
+                    'data' => []
+                ]);
+            }
+
+            // Получаем базовую статистику
+            $stats = ShopOrderLog::whereIn('entity_id', $orderIds)
+                ->where(function ($q) {
+                    $q->where('section', ShopOrderLog::SECTION_ORDERS)
+                      ->orWhereNull('section');
+                })
+                ->select('entity_id', DB::raw('COUNT(*) as logs_count'), DB::raw('MAX(created_at) as last_log_at'))
+                ->groupBy('entity_id')
+                ->get()
+                ->keyBy('entity_id');
+
+            // Получаем последние записи с иконками для каждого заказа
+            $lastLogs = ShopOrderLog::whereIn('entity_id', $orderIds)
+                ->where(function ($q) {
+                    $q->where('section', ShopOrderLog::SECTION_ORDERS)
+                      ->orWhereNull('section');
+                })
+                ->with('actionIcon')
+                ->whereNotNull('action_icon_id')
+                ->orderBy('created_at', 'desc')
+                ->get()
+                ->unique('entity_id')
+                ->keyBy('entity_id');
+
+            $result = $stats->map(function ($item) use ($lastLogs) {
+                $lastLog = $lastLogs->get($item->entity_id);
+                return [
+                    'logs_count' => $item->logs_count,
+                    'last_log_at' => $item->last_log_at,
+                    'last_log_icon' => $lastLog && $lastLog->actionIcon ? [
+                        'icon' => $lastLog->actionIcon->icon,
+                        'color' => $lastLog->actionIcon->color
+                    ] : null
+                ];
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => $result
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения статистики логов: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    // ==================== LOG ICONS ====================
+
+    /**
+     * Получить все иконки действий
+     */
+    public function getLogIcons(): JsonResponse
+    {
+        try {
+            $icons = ShopOrderLogIcon::orderBy('sort_order')
+                ->orderBy('name')
+                ->get()
+                ->map(function ($icon) {
+                    return [
+                        'id' => $icon->id,
+                        'name' => $icon->name,
+                        'icon' => $icon->icon,
+                        'color' => $icon->color,
+                        'is_active' => (bool) $icon->is_active,
+                        'sort_order' => $icon->sort_order
+                    ];
+                });
+
+            return response()->json([
+                'success' => true,
+                'data' => $icons
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения иконок: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Создать иконку действия
+     */
+    public function createLogIcon(Request $request): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'name' => 'required|string|max:255',
+                'icon' => 'required|string|max:255',
+                'color' => 'required|string|max:7'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $maxSortOrder = ShopOrderLogIcon::max('sort_order') ?? 0;
+
+            $icon = ShopOrderLogIcon::create([
+                'name' => $request->get('name'),
+                'icon' => $request->get('icon'),
+                'color' => $request->get('color'),
+                'is_active' => true,
+                'sort_order' => $maxSortOrder + 1
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Иконка создана',
+                'data' => [
+                    'id' => $icon->id,
+                    'name' => $icon->name,
+                    'icon' => $icon->icon,
+                    'color' => $icon->color,
+                    'is_active' => (bool) $icon->is_active,
+                    'sort_order' => $icon->sort_order
+                ]
+            ], 201);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка создания иконки: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Обновить иконку действия
+     */
+    public function updateLogIcon(Request $request, $iconId): JsonResponse
+    {
+        try {
+            $icon = ShopOrderLogIcon::findOrFail($iconId);
+
+            $validator = Validator::make($request->all(), [
+                'name' => 'sometimes|string|max:255',
+                'icon' => 'sometimes|string|max:255',
+                'color' => 'sometimes|string|max:7',
+                'is_active' => 'sometimes|boolean'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $updateData = [];
+            if ($request->has('name')) $updateData['name'] = $request->get('name');
+            if ($request->has('icon')) $updateData['icon'] = $request->get('icon');
+            if ($request->has('color')) $updateData['color'] = $request->get('color');
+            if ($request->has('is_active')) $updateData['is_active'] = $request->get('is_active');
+
+            $icon->update($updateData);
+            $icon->refresh();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Иконка обновлена',
+                'data' => [
+                    'id' => $icon->id,
+                    'name' => $icon->name,
+                    'icon' => $icon->icon,
+                    'color' => $icon->color,
+                    'is_active' => (bool) $icon->is_active,
+                    'sort_order' => $icon->sort_order
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка обновления иконки: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Удалить иконку действия
+     */
+    public function deleteLogIcon($iconId): JsonResponse
+    {
+        try {
+            $icon = ShopOrderLogIcon::findOrFail($iconId);
+
+            // Проверяем, используется ли иконка в логах
+            $logsCount = ShopOrderLog::where('action_icon_id', $iconId)->count();
+            if ($logsCount > 0) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Нельзя удалить иконку, так как она используется в {$logsCount} записях журнала"
+                ], 422);
+            }
+
+            $icon->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Иконка удалена'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка удаления иконки: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    // ==================== PAY AGREE ====================
+
+    /**
+     * Обновить статус разрешения оплаты
+     */
+    public function updatePayAgree(Request $request, $id): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'pay_agree' => 'required|boolean'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $order = ShopOrder::findOrFail($id);
+            $newPayAgree = $request->get('pay_agree');
+            
+            $order->pay_agree = $newPayAgree;
+            $order->save();
+
+            // Логируем изменение
+            $user = $request->user();
+            $userName = $user ? $user->name : 'Администратор';
+            
+            $action = $newPayAgree ? 'Оплата разрешена' : 'Оплата запрещена';
+            ShopOrderLog::createLog($order->id, $action, [
+                'action_color' => $newPayAgree ? '#7C3AED' : '#6B7280', // purple or gray
+                'user_id' => $user ? $user->id : null,
+                'user_name' => $userName,
+                'section' => ShopOrderLog::SECTION_ORDERS,
+                'info' => "Заказ № {$order->order_number}"
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Статус разрешения оплаты обновлен',
+                'data' => [
+                    'id' => $order->id,
+                    'pay_agree' => (bool) $order->pay_agree
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка обновления: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    // ==================== BULK OPERATIONS ====================
+
+    /**
+     * Массовое удаление заказов
+     */
+    public function bulkDelete(Request $request): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'order_ids' => 'required|array|min:1',
+                'order_ids.*' => 'integer|exists:shop_orders,id'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $orderIds = $request->get('order_ids');
+            
+            DB::beginTransaction();
+            
+            // Удаляем логи заказов
+            ShopOrderLog::whereIn('entity_id', $orderIds)
+                ->where(function ($q) {
+                    $q->where('section', ShopOrderLog::SECTION_ORDERS)
+                      ->orWhereNull('section');
+                })
+                ->delete();
+            
+            // Удаляем заказы
+            $deletedCount = ShopOrder::whereIn('id', $orderIds)->delete();
+            
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => "Удалено заказов: {$deletedCount}",
+                'data' => [
+                    'deleted_count' => $deletedCount
+                ]
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка массового удаления: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Массовое изменение статуса заказов
+     */
+    public function bulkUpdateStatus(Request $request): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'order_ids' => 'required|array|min:1',
+                'order_ids.*' => 'integer|exists:shop_orders,id',
+                'status_id' => 'required|integer|exists:shop_order_statuses,id',
+                'comment' => 'nullable|string|max:2000'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $orderIds = $request->get('order_ids');
+            $statusId = $request->get('status_id');
+            $comment = $request->get('comment');
+            $newStatus = ShopOrderStatus::findOrFail($statusId);
+            
+            $user = $request->user();
+            $userName = $user ? $user->name : 'Администратор';
+            
+            DB::beginTransaction();
+            
+            $updatedCount = 0;
+            $skippedCount = 0;
+            
+            foreach ($orderIds as $orderId) {
+                $order = ShopOrder::with('status')->find($orderId);
+                if (!$order) continue;
+                
+                // Проверка на завершенный статус для неоплаченного заказа
+                if ($newStatus->is_finished && !$order->payed) {
+                    $skippedCount++;
+                    continue;
+                }
+                
+                $oldStatus = $order->status;
+                
+                // Обработка отмены
+                if ($newStatus->is_cancelled) {
+                    $this->restoreOrderItemsToStock($order);
+                    $this->restoreUserBonuses($order);
+                }
+                
+                $order->status_id = $statusId;
+                $order->save();
+                
+                // Логируем смену статуса
+                $oldStatusName = $oldStatus ? $oldStatus->display_name : 'Не установлен';
+                $oldStatusColor = $oldStatus ? $oldStatus->color : '#6B7280';
+                $newStatusName = $newStatus->display_name;
+                $newStatusColor = $newStatus->color;
+                
+                $action = "<span style=\"color:{$oldStatusColor}\">{$oldStatusName}</span> → <span style=\"color:{$newStatusColor}\">{$newStatusName}</span>";
+                
+                ShopOrderLog::create([
+                    'entity_id' => $order->id,
+                    'action' => $action,
+                    'comment' => $comment,
+                    'user_id' => $user ? $user->id : null,
+                    'user_name' => $userName,
+                    'section' => ShopOrderLog::SECTION_ORDERS,
+                    'info' => "Заказ № {$order->order_number}"
+                ]);
+                
+                $updatedCount++;
+            }
+            
+            DB::commit();
+
+            $message = "Обновлено заказов: {$updatedCount}";
+            if ($skippedCount > 0) {
+                $message .= ". Пропущено (неоплаченные): {$skippedCount}";
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => $message,
+                'data' => [
+                    'updated_count' => $updatedCount,
+                    'skipped_count' => $skippedCount
+                ]
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка массового обновления статуса: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Массовое изменение статуса оплаты
+     */
+    public function bulkUpdatePayed(Request $request): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'order_ids' => 'required|array|min:1',
+                'order_ids.*' => 'integer|exists:shop_orders,id',
+                'payed' => 'required|boolean',
+                'comment' => 'nullable|string|max:2000'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $orderIds = $request->get('order_ids');
+            $payed = $request->get('payed');
+            $comment = $request->get('comment');
+            
+            $user = $request->user();
+            $userName = $user ? $user->name : 'Администратор';
+            
+            DB::beginTransaction();
+            
+            $updatedCount = 0;
+            
+            foreach ($orderIds as $orderId) {
+                $order = ShopOrder::find($orderId);
+                if (!$order || $order->payed === $payed) continue;
+                
+                $order->payed = $payed;
+                $order->save();
+                
+                // Логируем изменение
+                ShopOrderLog::logPaymentStatusChange(
+                    $order->id,
+                    $payed,
+                    $user ? $user->id : null,
+                    $userName,
+                    $comment,
+                    ShopOrderLog::SECTION_ORDERS,
+                    $order->order_number
+                );
+                
+                $updatedCount++;
+            }
+            
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => "Обновлено заказов: {$updatedCount}",
+                'data' => [
+                    'updated_count' => $updatedCount
+                ]
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка массового обновления статуса оплаты: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Массовое добавление комментария в журнал
+     */
+    public function bulkAddLog(Request $request): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'order_ids' => 'required|array|min:1',
+                'order_ids.*' => 'integer|exists:shop_orders,id',
+                'comment' => 'required|string|max:2000',
+                'action_icon_id' => 'nullable|integer|exists:shop_order_log_icons,id'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $orderIds = $request->get('order_ids');
+            $comment = $request->get('comment');
+            $actionIconId = $request->get('action_icon_id');
+            
+            $user = $request->user();
+            $userName = $user ? $user->name : 'Администратор';
+            
+            DB::beginTransaction();
+            
+            foreach ($orderIds as $orderId) {
+                ShopOrderLog::create([
+                    'entity_id' => $orderId,
+                    'action' => 'Комментарий',
+                    'comment' => $comment,
+                    'action_icon_id' => $actionIconId,
+                    'user_id' => $user ? $user->id : null,
+                    'user_name' => $userName,
+                    'section' => ShopOrderLog::SECTION_ORDERS
+                ]);
+            }
+            
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => "Комментарий добавлен к " . count($orderIds) . " заказам",
+                'data' => [
+                    'updated_count' => count($orderIds)
+                ]
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка массового добавления комментария: ' . $e->getMessage()
             ], 500);
         }
     }

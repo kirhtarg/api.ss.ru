@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Public;
 use App\Http\Controllers\Controller;
 use App\Models\ShopOrder;
 use App\Models\ShopOrderStatus;
+use App\Models\ShopOrderLog;
 use App\Models\ShopGood;
 use App\Models\ShopGoodVariation;
 use App\Models\UserBonus;
@@ -193,6 +194,15 @@ class UserOrdersController extends Controller
             // Загружаем обновленные связи
             $order->load(['status']);
 
+            // Логируем отмену заказа
+            ShopOrderLog::createLog($order->id, 'Отмена заказа', [
+                'action_color' => '#DC2626', // red-600
+                'user_id' => $user->id,
+                'user_name' => $user->name ?? 'Покупатель',
+                'section' => ShopOrderLog::SECTION_USER,
+                'info' => "Заказ № {$order->order_number}"
+            ]);
+
             // Отправляем уведомления об отмене заказа
             try {
                 $notificationService = app(\App\Services\NotificationService::class);
@@ -371,6 +381,15 @@ class UserOrdersController extends Controller
             // Устанавливаем флаг заявки на отмену
             $order->cancellation_request = true;
             $order->save();
+
+            // Логируем заявку на отмену заказа
+            ShopOrderLog::createLog($order->id, 'Заявка на отмену заказа', [
+                'action_color' => '#DC2626', // red-600
+                'user_id' => $user->id,
+                'user_name' => $user->name ?? 'Покупатель',
+                'section' => ShopOrderLog::SECTION_USER,
+                'info' => "Заказ № {$order->order_number}"
+            ]);
 
             // Отправляем уведомления о заявке на отмену (только для оплаченных заказов)
             if ($order->payed) {

@@ -16,6 +16,7 @@ class ShopOrder extends Model
         'user_id',
         'status_id',
         'payed',
+        'pay_agree',
         'is_active',
         'delivery_status_id',
         'customer_name',
@@ -68,6 +69,7 @@ class ShopOrder extends Model
         'bonus_points_to_use' => 'integer',
         'order_bonus_points' => 'integer',
         'payed' => 'boolean',
+        'pay_agree' => 'boolean',
         'cancellation_request' => 'boolean',
         'is_active' => 'boolean',
         'delivery_status_id' => 'integer',
@@ -98,6 +100,11 @@ class ShopOrder extends Model
     public function deliveryStatus()
     {
         return $this->belongsTo(ShopDeliveryStatus::class, 'delivery_status_id');
+    }
+
+    public function logs()
+    {
+        return $this->hasMany(ShopOrderLog::class, 'order_id')->orderBy('created_at', 'desc');
     }
 
     public function getItemsWithDetails()

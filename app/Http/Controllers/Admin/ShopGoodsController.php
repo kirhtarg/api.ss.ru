@@ -30,7 +30,7 @@ class ShopGoodsController extends Controller
             'price', 'sale_price', 'demping_price', 'show_demping', 'label_id',
             'stock_quantity', 'remote_stock_quantity', 'rating', 'reviews_count',
             'width', 'height', 'depth', 'weight',
-            'is_active', 'is_featured', 'is_new', 'is_sale', 'sort_order', 
+            'is_active', 'is_featured', 'is_new', 'is_sale', 'is_preorder', 'sort_order', 
             'created_at', 'updated_at'
         ])->with([
             'categories:id,name',
@@ -409,6 +409,11 @@ class ShopGoodsController extends Controller
         // Фильтр по is_sale
         if ($request->filled('is_sale')) {
             $query->where('is_sale', $request->boolean('is_sale'));
+        }
+
+        // Фильтр по is_preorder
+        if ($request->filled('is_preorder')) {
+            $query->where('is_preorder', $request->boolean('is_preorder'));
         }
 
         // Фильтр по характеристикам (properties[property_id][])
@@ -1201,7 +1206,7 @@ class ShopGoodsController extends Controller
         $validator = Validator::make($request->all(), [
             'ids' => 'required|array',
             'ids.*' => 'exists:shop_goods,id',
-            'action' => 'required|in:activate,deactivate,delete,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_price,update_sale_price,update_demping_price,toggle_show_demping,update_label,remove_after_symbol,update_dimensions',
+            'action' => 'required|in:activate,deactivate,delete,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_price,update_sale_price,update_demping_price,toggle_show_demping,update_label,remove_after_symbol,update_dimensions,enable_preorder,disable_preorder',
             'data' => 'nullable|array'
         ]);
 
@@ -1238,6 +1243,12 @@ class ShopGoodsController extends Controller
                         break;
                     case 'deactivate':
                         $good->update(['is_active' => false]);
+                        break;
+                    case 'enable_preorder':
+                        $good->update(['is_preorder' => true]);
+                        break;
+                    case 'disable_preorder':
+                        $good->update(['is_preorder' => false]);
                         break;
                     case 'update_categories':
                         $currentCategoryIds = $good->categories()->pluck('shop_categories.id')->toArray();

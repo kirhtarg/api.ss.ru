@@ -1412,6 +1412,20 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::put('/statuses/reorder', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'reorderStatuses']);
                 Route::put('/statuses/{statusId}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateOrderStatus']);
                 Route::delete('/statuses/{statusId}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'deleteOrderStatus']);
+                // Logs
+                Route::post('/logs/stats', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'getOrdersLogsStats']);
+                Route::get('/log-icons', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'getLogIcons']);
+                Route::post('/log-icons', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'createLogIcon']);
+                Route::put('/log-icons/{iconId}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateLogIcon']);
+                Route::delete('/log-icons/{iconId}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'deleteLogIcon']);
+                Route::get('/{orderId}/logs', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'getOrderLogs']);
+                Route::post('/{orderId}/logs', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'addOrderLog']);
+                Route::put('/{id}/pay-agree', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updatePayAgree']);
+                // Bulk operations
+                Route::post('/bulk/delete', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'bulkDelete']);
+                Route::post('/bulk/status', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'bulkUpdateStatus']);
+                Route::post('/bulk/payed', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'bulkUpdatePayed']);
+                Route::post('/bulk/log', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'bulkAddLog']);
                 Route::post('/', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'store']);
                 Route::post('/export', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'export']);
                 // Специфичные роуты должны быть определены ПЕРЕД общими роутами с {id}
@@ -1450,6 +1464,9 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::put('/{id}', [\App\Http\Controllers\Admin\ShopPreordersController::class, 'update']);
                 Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopPreordersController::class, 'destroy']);
                 Route::put('/{id}/status', [\App\Http\Controllers\Admin\ShopPreordersController::class, 'updateStatus']);
+                Route::get('/{id}/logs', [\App\Http\Controllers\Admin\ShopPreordersController::class, 'logs']);
+                Route::post('/{id}/logs', [\App\Http\Controllers\Admin\ShopPreordersController::class, 'addLog']);
+                Route::post('/{id}/log-add-to-cart', [\App\Http\Controllers\Admin\ShopPreordersController::class, 'logAddToCart']);
             });
 
             // Промокоды

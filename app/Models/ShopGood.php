@@ -40,6 +40,7 @@ class ShopGood extends Model
         'is_featured',
         'is_new',
         'is_sale',
+        'is_preorder',
         'sort_order'
     ];
 
@@ -60,6 +61,7 @@ class ShopGood extends Model
         'is_featured' => 'boolean',
         'is_new' => 'boolean',
         'is_sale' => 'boolean',
+        'is_preorder' => 'boolean',
         'sort_order' => 'integer'
     ];
 

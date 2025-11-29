@@ -7,6 +7,7 @@ use App\Models\ShopGood;
 use App\Models\ShopGoodVariation;
 use App\Models\ShopOrder;
 use App\Models\ShopOrderStatus;
+use App\Models\ShopOrderLog;
 use App\Models\ShopCartItem;
 use App\Models\ShopPaymentMethod;
 use Illuminate\Support\Facades\Log;
@@ -838,6 +839,14 @@ class CartController extends Controller
                     // Дополнительные метаданные, если нужны
                 ]
             ]);
+
+            // Логируем создание заказа
+            $userName = null;
+            if ($customerId) {
+                $customerUser = User::find($customerId);
+                $userName = $customerUser ? $customerUser->name : null;
+            }
+            ShopOrderLog::logOrderCreated($order->id, $userName ?? $request->get('customer_name', 'Покупатель'), null, $order->order_number);
 
             // Создаем запись об использовании промокода, если он был применен
             if ($request->get('promo_code_id')) {

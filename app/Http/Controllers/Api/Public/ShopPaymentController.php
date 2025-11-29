@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\ShopPaymentMethod;
 use App\Models\ShopPaymentTransaction;
 use App\Models\ShopOrder;
+use App\Models\ShopOrderLog;
 use App\Models\ShopGood;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -892,6 +893,10 @@ class ShopPaymentController extends Controller
             }
             
             $order->update($updateData);
+            
+            // Логируем оплату заказа
+            $userName = $order->user ? $order->user->name : ($order->customer_name ?? 'Покупатель');
+            ShopOrderLog::logOrderPaid($order->id, $userName, 'Оплата через YooKassa', null, $order->order_number);
             
             // Обновляем остатки товаров
             $this->updateStockQuantities($order);
