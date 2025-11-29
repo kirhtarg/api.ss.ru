@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
@@ -22,6 +23,9 @@ class ShopGood extends Model
         'short_description',
         'price',
         'sale_price',
+        'demping_price',
+        'show_demping',
+        'label_id',
         'stock_quantity',
         'remote_stock_quantity',
         'width',
@@ -42,6 +46,8 @@ class ShopGood extends Model
     protected $casts = [
         'price' => 'decimal:2',
         'sale_price' => 'decimal:2',
+        'demping_price' => 'decimal:2',
+        'show_demping' => 'boolean',
         'stock_quantity' => 'integer',
         'remote_stock_quantity' => 'string', // Может быть строкой типа ">10", поэтому не приводим к integer
         'width' => 'decimal:2',
@@ -96,6 +102,14 @@ class ShopGood extends Model
     public function tags(): BelongsToMany
     {
         return $this->belongsToMany(ShopTag::class, 'shop_good_tags', 'good_id', 'tag_id');
+    }
+
+    /**
+     * Лейбл товара
+     */
+    public function label(): BelongsTo
+    {
+        return $this->belongsTo(ShopLabel::class, 'label_id');
     }
 
     /**

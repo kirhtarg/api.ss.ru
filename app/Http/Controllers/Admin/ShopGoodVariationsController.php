@@ -1107,4 +1107,488 @@ class ShopGoodVariationsController extends Controller
         return $duplicates;
     }
 
+    /**
+     * Массовое обновление вариаций
+     */
+    public function bulkUpdate(Request $request, $goodId): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'variation_ids' => 'required|array',
+            'variation_ids.*' => 'exists:shop_good_variations,id',
+            'action' => 'required|in:delete,change_stock,change_remote_stock,change_price,change_sale_price,change_demping_price,activate,deactivate,enable_demping,disable_demping',
+            'data' => 'nullable|array'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $variationIds = $request->get('variation_ids');
+            $action = $request->get('action');
+            $data = $request->get('data', []);
+
+            $variations = ShopGoodVariation::where('good_id', $goodId)
+                ->whereIn('id', $variationIds)
+                ->get();
+
+            if ($variations->isEmpty()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Вариации не найдены'
+                ], 404);
+            }
+
+            $updatedCount = 0;
+
+            switch ($action) {
+                case 'delete':
+                    $variations->each(function($variation) {
+                        $variation->delete();
+                    });
+                    $updatedCount = $variations->count();
+                    break;
+
+                case 'change_stock':
+                    $type = $data['type'] ?? 'set';
+                    $value = isset($data['value']) ? (int)$data['value'] : 0;
+                    
+                    foreach ($variations as $variation) {
+                        $currentStock = (int)($variation->stock_quantity ?? 0);
+                        if ($type === 'set') {
+                            $variation->stock_quantity = $value;
+                        } elseif ($type === 'add') {
+                            $variation->stock_quantity = $currentStock + $value;
+                        } elseif ($type === 'subtract') {
+                            $variation->stock_quantity = max(0, $currentStock - $value);
+                        }
+                        $variation->save();
+                        $updatedCount++;
+                    }
+                    break;
+
+                case 'change_remote_stock':
+                    $remoteStockValue = $data['value'] ?? null;
+                    foreach ($variations as $variation) {
+                        $variation->remote_stock_quantity = $remoteStockValue ? (string)$remoteStockValue : null;
+                        $variation->save();
+                        $updatedCount++;
+                    }
+                    break;
+
+                case 'change_price':
+                    $type = $data['type'] ?? 'set';
+                    $value = isset($data['value']) ? (float)$data['value'] : 0;
+                    $isPercent = isset($data['is_percent']) && $data['is_percent'];
+                    
+                    foreach ($variations as $variation) {
+                        $currentPrice = (float)($variation->price ?? 0);
+                        if ($type === 'set') {
+                            $variation->price = max(0, $value);
+                        } elseif ($type === 'add') {
+                            if ($isPercent) {
+                                $variation->price = max(0, $currentPrice + ($currentPrice * $value / 100));
+                            } else {
+                                $variation->price = max(0, $currentPrice + $value);
+                            }
+                        } elseif ($type === 'subtract') {
+                            if ($isPercent) {
+                                $variation->price = max(0, $currentPrice - ($currentPrice * $value / 100));
+                            } else {
+                                $variation->price = max(0, $currentPrice - $value);
+                            }
+                        }
+                        $variation->save();
+                        $updatedCount++;
+                    }
+                    break;
+
+                case 'change_sale_price':
+                    $type = $data['type'] ?? 'set';
+                    $value = isset($data['value']) ? (float)$data['value'] : 0;
+                    $isPercent = isset($data['is_percent']) && $data['is_percent'];
+                    
+                    foreach ($variations as $variation) {
+                        $basePrice = (float)($variation->price ?? 0);
+                        if ($type === 'clear') {
+                            $variation->sale_price = null;
+                        } elseif ($type === 'set') {
+                            $variation->sale_price = max(0, $value);
+                        } elseif ($type === 'subtract') {
+                            if ($isPercent) {
+                                $variation->sale_price = max(0, $basePrice - ($basePrice * $value / 100));
+                            } else {
+                                $variation->sale_price = max(0, $basePrice - $value);
+                            }
+                        }
+                        $variation->save();
+                        $updatedCount++;
+                    }
+                    break;
+
+                case 'change_demping_price':
+                    $type = $data['type'] ?? 'set';
+                    $value = isset($data['value']) ? (float)$data['value'] : 0;
+                    $isPercent = isset($data['is_percent']) && $data['is_percent'];
+                    $activateDemping = isset($data['activate_demping']) && $data['activate_demping'];
+                    
+                    foreach ($variations as $variation) {
+                        $basePrice = (float)($variation->price ?? 0);
+                        if ($type === 'clear') {
+                            $variation->demping_price = null;
+                        } elseif ($type === 'set') {
+                            $variation->demping_price = max(0, $value);
+                        } elseif ($type === 'subtract') {
+                            if ($isPercent) {
+                                $variation->demping_price = max(0, $basePrice - ($basePrice * $value / 100));
+                            } else {
+                                $variation->demping_price = max(0, $basePrice - $value);
+                            }
+                        }
+                        
+                        if ($activateDemping) {
+                            $variation->show_demping = true;
+                        }
+                        
+                        $variation->save();
+                        $updatedCount++;
+                    }
+                    break;
+
+                case 'activate':
+                    foreach ($variations as $variation) {
+                        $variation->is_active = true;
+                        $variation->save();
+                        $updatedCount++;
+                    }
+                    break;
+
+                case 'deactivate':
+                    foreach ($variations as $variation) {
+                        $variation->is_active = false;
+                        $variation->save();
+                        $updatedCount++;
+                    }
+                    break;
+
+                case 'enable_demping':
+                    foreach ($variations as $variation) {
+                        $variation->show_demping = true;
+                        $variation->save();
+                        $updatedCount++;
+                    }
+                    break;
+
+                case 'disable_demping':
+                    foreach ($variations as $variation) {
+                        $variation->show_demping = false;
+                        $variation->save();
+                        $updatedCount++;
+                    }
+                    break;
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => "Обновлено вариаций: {$updatedCount}",
+                'data' => [
+                    'updated_count' => $updatedCount
+                ]
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка массового обновления: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Глобальное массовое обновление вариаций (без привязки к товару)
+     * Поддерживает два варианта:
+     * 1. Передача variation_ids - обновление конкретных вариаций
+     * 2. Передача good_ids - получение всех вариаций товаров и их обновление
+     */
+    public function globalBulkUpdate(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'variation_ids' => 'nullable|array',
+            'variation_ids.*' => 'exists:shop_good_variations,id',
+            'good_ids' => 'nullable|array',
+            'good_ids.*' => 'exists:shop_goods,id',
+            'action' => 'required|in:delete,change_stock,change_remote_stock,change_price,change_sale_price,change_demping_price,activate,deactivate,enable_demping,disable_demping',
+            'data' => 'nullable|array'
+        ]);
+
+        // Проверяем, что передан хотя бы один из массивов
+        if (!$request->has('variation_ids') && !$request->has('good_ids')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => ['variation_ids' => ['Необходимо передать variation_ids или good_ids']]
+            ], 422);
+        }
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $action = $request->get('action');
+            $data = $request->get('data', []);
+
+            // Если переданы good_ids, сначала получаем все вариации этих товаров
+            if ($request->has('good_ids')) {
+                $goodIds = $request->get('good_ids');
+                $variationIds = ShopGoodVariation::whereIn('good_id', $goodIds)
+                    ->pluck('id')
+                    ->toArray();
+            } else {
+                $variationIds = $request->get('variation_ids');
+            }
+
+            if (empty($variationIds)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Вариации не найдены'
+                ], 404);
+            }
+
+            $variations = ShopGoodVariation::whereIn('id', $variationIds)->get();
+
+            if ($variations->isEmpty()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Вариации не найдены'
+                ], 404);
+            }
+
+            $updatedCount = 0;
+
+            switch ($action) {
+                case 'delete':
+                    $variations->each(function($variation) {
+                        $variation->delete();
+                    });
+                    $updatedCount = $variations->count();
+                    break;
+
+                case 'change_stock':
+                    $type = $data['type'] ?? 'set';
+                    $value = isset($data['value']) ? (int)$data['value'] : 0;
+                    
+                    foreach ($variations as $variation) {
+                        $currentStock = (int)($variation->stock_quantity ?? 0);
+                        if ($type === 'set') {
+                            $variation->stock_quantity = $value;
+                        } elseif ($type === 'add') {
+                            $variation->stock_quantity = $currentStock + $value;
+                        } elseif ($type === 'subtract') {
+                            $variation->stock_quantity = max(0, $currentStock - $value);
+                        }
+                        $variation->save();
+                        $updatedCount++;
+                    }
+                    break;
+
+                case 'change_remote_stock':
+                    $remoteStockValue = $data['value'] ?? null;
+                    foreach ($variations as $variation) {
+                        $variation->remote_stock_quantity = $remoteStockValue ? (string)$remoteStockValue : null;
+                        $variation->save();
+                        $updatedCount++;
+                    }
+                    break;
+
+                case 'change_price':
+                    $type = $data['type'] ?? 'set';
+                    $value = isset($data['value']) ? (float)$data['value'] : 0;
+                    $isPercent = isset($data['is_percent']) && $data['is_percent'];
+                    
+                    foreach ($variations as $variation) {
+                        $currentPrice = (float)($variation->price ?? 0);
+                        if ($type === 'set') {
+                            $variation->price = max(0, $value);
+                        } elseif ($type === 'add') {
+                            if ($isPercent) {
+                                $variation->price = max(0, $currentPrice + ($currentPrice * $value / 100));
+                            } else {
+                                $variation->price = max(0, $currentPrice + $value);
+                            }
+                        } elseif ($type === 'subtract') {
+                            if ($isPercent) {
+                                $variation->price = max(0, $currentPrice - ($currentPrice * $value / 100));
+                            } else {
+                                $variation->price = max(0, $currentPrice - $value);
+                            }
+                        }
+                        $variation->save();
+                        $updatedCount++;
+                    }
+                    break;
+
+                case 'change_sale_price':
+                    $type = $data['type'] ?? 'set';
+                    $value = isset($data['value']) ? (float)$data['value'] : 0;
+                    $isPercent = isset($data['is_percent']) && $data['is_percent'];
+                    
+                    foreach ($variations as $variation) {
+                        $basePrice = (float)($variation->price ?? 0);
+                        if ($type === 'clear') {
+                            $variation->sale_price = null;
+                        } elseif ($type === 'set') {
+                            $variation->sale_price = max(0, $value);
+                        } elseif ($type === 'subtract') {
+                            if ($isPercent) {
+                                $variation->sale_price = max(0, $basePrice - ($basePrice * $value / 100));
+                            } else {
+                                $variation->sale_price = max(0, $basePrice - $value);
+                            }
+                        }
+                        $variation->save();
+                        $updatedCount++;
+                    }
+                    break;
+
+                case 'change_demping_price':
+                    $type = $data['type'] ?? 'set';
+                    $value = isset($data['value']) ? (float)$data['value'] : 0;
+                    $isPercent = isset($data['is_percent']) && $data['is_percent'];
+                    $activateDemping = isset($data['activate_demping']) && $data['activate_demping'];
+                    
+                    foreach ($variations as $variation) {
+                        $basePrice = (float)($variation->price ?? 0);
+                        if ($type === 'clear') {
+                            $variation->demping_price = null;
+                        } elseif ($type === 'set') {
+                            $variation->demping_price = max(0, $value);
+                        } elseif ($type === 'subtract') {
+                            if ($isPercent) {
+                                $variation->demping_price = max(0, $basePrice - ($basePrice * $value / 100));
+                            } else {
+                                $variation->demping_price = max(0, $basePrice - $value);
+                            }
+                        }
+                        
+                        if ($activateDemping) {
+                            $variation->show_demping = true;
+                        }
+                        
+                        $variation->save();
+                        $updatedCount++;
+                    }
+                    break;
+
+                case 'activate':
+                    foreach ($variations as $variation) {
+                        $variation->is_active = true;
+                        $variation->save();
+                        $updatedCount++;
+                    }
+                    break;
+
+                case 'deactivate':
+                    foreach ($variations as $variation) {
+                        $variation->is_active = false;
+                        $variation->save();
+                        $updatedCount++;
+                    }
+                    break;
+
+                case 'enable_demping':
+                    foreach ($variations as $variation) {
+                        $variation->show_demping = true;
+                        $variation->save();
+                        $updatedCount++;
+                    }
+                    break;
+
+                case 'disable_demping':
+                    foreach ($variations as $variation) {
+                        $variation->show_demping = false;
+                        $variation->save();
+                        $updatedCount++;
+                    }
+                    break;
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => "Обновлено вариаций: {$updatedCount}",
+                'data' => [
+                    'updated_count' => $updatedCount
+                ]
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка массового обновления: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить ID вариаций для списка товаров
+     */
+    public function getVariationIdsByGoods(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'good_ids' => 'required|array',
+            'good_ids.*' => 'exists:shop_goods,id'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $goodIds = $request->get('good_ids');
+            
+            $variations = ShopGoodVariation::whereIn('good_id', $goodIds)
+                ->select('id', 'good_id')
+                ->get();
+
+            $result = [
+                'variation_ids' => $variations->pluck('id')->toArray(),
+                'variations_by_good' => $variations->groupBy('good_id')->map(function ($group) {
+                    return $group->pluck('id')->toArray();
+                })->toArray(),
+                'total_count' => $variations->count(),
+                'goods_count' => count($goodIds)
+            ];
+
+            return response()->json([
+                'success' => true,
+                'data' => $result
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения вариаций: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
 }

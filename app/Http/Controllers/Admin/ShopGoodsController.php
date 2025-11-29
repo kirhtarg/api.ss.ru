@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\ShopGood;
 use App\Models\ShopBrand;
 use App\Models\ShopTag;
+use App\Models\ShopLabel;
 use App\Models\ShopProperty;
 use App\Models\ShopPropertyValue;
 use App\Models\ShopCategory;
@@ -26,16 +27,19 @@ class ShopGoodsController extends Controller
     {
         $query = ShopGood::select([
             'id', 'name', 'slug', 'sku', 'description', 'short_description', 
-            'price', 'sale_price', 'stock_quantity', 'remote_stock_quantity', 'rating', 'reviews_count',
+            'price', 'sale_price', 'demping_price', 'show_demping', 'label_id',
+            'stock_quantity', 'remote_stock_quantity', 'rating', 'reviews_count',
+            'width', 'height', 'depth', 'weight',
             'is_active', 'is_featured', 'is_new', 'is_sale', 'sort_order', 
             'created_at', 'updated_at'
         ])->with([
             'categories:id,name',
             'brands:id,name',
             'tags:id,name,color',
+            'label:id,name,color',
             'properties:id,name,slug',
             'images:id,good_id,file_path,alt_text,is_main,sort_order',
-            'variations:id,good_id,name,price,sale_price,stock_quantity,is_active'
+            'variations:id,good_id,name,sku,price,sale_price,demping_price,show_demping,stock_quantity,remote_stock_quantity,is_active'
         ])->withCount('variations');
 
         // Загружаем pivot данные для свойств (поддерживаем разные схемы: value или shop_property_value_id)
@@ -48,12 +52,30 @@ class ShopGoodsController extends Controller
             }
         }]);
 
-        // Фильтр по массиву ID (для массовой загрузки)
+        // Фильтр по массиву ID (для массовой загрузки) - должен быть первым
+        // Проверяем оба варианта: ids[] и ids
+        $ids = null;
         if ($request->has('ids')) {
             $ids = $request->input('ids');
-            if (is_array($ids) && !empty($ids)) {
+        } elseif ($request->has('ids[]')) {
+            $ids = $request->input('ids[]');
+        }
+        
+        if ($ids !== null) {
+            // Если это не массив, пытаемся преобразовать
+            if (!is_array($ids)) {
+                $ids = [$ids];
+            }
+            
+            if (!empty($ids)) {
                 $ids = array_map('intval', $ids);
-                $query->whereIn('id', $ids);
+                $ids = array_filter($ids, function($id) {
+                    return $id > 0;
+                });
+                
+                if (!empty($ids)) {
+                    $query->whereIn('id', $ids);
+                }
             }
         }
 
@@ -98,12 +120,137 @@ class ShopGoodsController extends Controller
             $query->byTag($request->get('tag_id'));
         }
 
+        // Фильтр по множественным тегам
+        if ($request->has('tags')) {
+            $tagIds = $request->input('tags');
+            if (is_array($tagIds) && !empty($tagIds)) {
+                $query->whereHas('tags', function($q) use ($tagIds) {
+                    $q->whereIn('shop_tags.id', $tagIds);
+                });
+            }
+        }
+
+        // Фильтр по лейблам
+        if ($request->has('labels')) {
+            $labelIds = $request->input('labels');
+            if (is_array($labelIds) && !empty($labelIds)) {
+                $query->whereIn('label_id', $labelIds);
+            }
+        }
+
+        // Фильтр по демпингу (по полю show_demping)
+        if ($request->filled('has_demping')) {
+            $hasDemping = $request->get('has_demping');
+            if ($hasDemping === 'true') {
+                // Товары с демпингом в основном товаре
+                $query->where('show_demping', true);
+            } elseif ($hasDemping === 'false') {
+                $query->where(function($q) {
+                    $q->where('show_demping', false)
+                      ->orWhereNull('show_demping');
+                });
+            } elseif ($hasDemping === 'variations') {
+                // Товары с демпингом в вариациях
+                $query->whereHas('variations', function($q) {
+                    $q->where('show_demping', true);
+                });
+            } elseif ($hasDemping === 'both') {
+                // Товары с демпингом в основном товаре ИЛИ в вариациях (или в обоих)
+                $query->where(function($q) {
+                    $q->where('show_demping', true)
+                      ->orWhereHas('variations', function($subQ) {
+                          $subQ->where('show_demping', true);
+                      });
+                });
+            }
+        }
+
+        // Фильтр по наличию тегов
+        if ($request->filled('has_tags')) {
+            $hasTags = $request->get('has_tags');
+            if ($hasTags === 'true') {
+                $query->whereHas('tags');
+            } elseif ($hasTags === 'false') {
+                $query->whereDoesntHave('tags');
+            }
+        }
+
+        // Фильтр по демпинговой цене (пустое/не пустое)
+        if ($request->filled('has_demping_price')) {
+            $hasDempingPrice = $request->get('has_demping_price');
+            if ($hasDempingPrice === 'true') {
+                $query->whereNotNull('demping_price')
+                      ->where('demping_price', '>', 0);
+            } elseif ($hasDempingPrice === 'false') {
+                $query->where(function($q) {
+                    $q->whereNull('demping_price')
+                      ->orWhere('demping_price', '=', 0);
+                });
+            }
+        }
+
+        // Фильтр по наличию лейбла
+        if ($request->filled('has_label')) {
+            $hasLabel = $request->get('has_label');
+            if ($hasLabel === 'true') {
+                $query->whereNotNull('label_id');
+            } elseif ($hasLabel === 'false') {
+                $query->whereNull('label_id');
+            }
+        }
+
         // Фильтр по цене
         $minPrice = $request->has('min_price') ? $request->get('min_price') : null;
         $maxPrice = $request->has('max_price') ? $request->get('max_price') : null;
         
         if ($minPrice !== null || $maxPrice !== null) {
             $query->priceRange($minPrice, $maxPrice);
+        }
+
+        // Фильтр по акционной цене
+        $minSalePrice = $request->has('min_sale_price') ? $request->get('min_sale_price') : null;
+        $maxSalePrice = $request->has('max_sale_price') ? $request->get('max_sale_price') : null;
+        
+        if ($minSalePrice !== null || $maxSalePrice !== null) {
+            // Точное значение (когда min и max равны)
+            if ($minSalePrice !== null && $maxSalePrice !== null && $minSalePrice == $maxSalePrice) {
+                $query->where('sale_price', '=', $minSalePrice);
+            } else {
+                // Обрабатываем min и max отдельно
+                if ($minSalePrice !== null) {
+                    // Для min_sale_price > 0 (not_zero) - исключаем null и 0
+                    if ($minSalePrice > 0) {
+                        $query->whereNotNull('sale_price')
+                              ->where('sale_price', '>=', $minSalePrice);
+                    } else {
+                        $query->where(function($q) use ($minSalePrice) {
+                            $q->whereNotNull('sale_price')
+                              ->where('sale_price', '>=', $minSalePrice);
+                        });
+                    }
+                }
+                if ($maxSalePrice !== null) {
+                    if ($maxSalePrice == 0) {
+                        // Фильтр "равна 0" - включаем null и 0
+                        $query->where(function($q) {
+                            $q->whereNull('sale_price')
+                              ->orWhere('sale_price', '=', 0);
+                        });
+                    } else {
+                        // Для max_sale_price > 0
+                        if ($minSalePrice !== null && $minSalePrice > 0) {
+                            // Если есть min > 0, то null уже исключен
+                            $query->where('sale_price', '<=', $maxSalePrice);
+                        } else {
+                            // Если нет min или min <= 0, то включаем null в результат
+                            $query->where(function($q) use ($maxSalePrice) {
+                                $q->whereNull('sale_price')
+                                  ->orWhere('sale_price', '<=', $maxSalePrice);
+                            });
+                        }
+                    }
+                }
+            }
         }
 
         // Фильтр по рейтингу
@@ -174,6 +321,64 @@ class ShopGoodsController extends Controller
                 $query->whereHas('brands');
             } elseif ($hasBrands === 'false') {
                 $query->whereDoesntHave('brands');
+            }
+        }
+
+        // Фильтр по исключению категорий (товары БЕЗ выбранных категорий)
+        if ($request->has('exclude_categories')) {
+            $excludeCategoryIds = $request->input('exclude_categories');
+            if (is_array($excludeCategoryIds) && !empty($excludeCategoryIds)) {
+                $query->whereDoesntHave('categories', function($q) use ($excludeCategoryIds) {
+                    $q->whereIn('shop_categories.id', $excludeCategoryIds);
+                });
+            }
+        }
+
+        // Фильтр по исключению брендов (товары БЕЗ выбранных брендов)
+        if ($request->has('exclude_brands')) {
+            $excludeBrandIds = $request->input('exclude_brands');
+            if (is_array($excludeBrandIds) && !empty($excludeBrandIds)) {
+                $query->whereDoesntHave('brands', function($q) use ($excludeBrandIds) {
+                    $q->whereIn('shop_brands.id', $excludeBrandIds);
+                });
+            }
+        }
+
+        // Фильтр по исключению характеристик (товары БЕЗ выбранных характеристик)
+        if ($request->has('exclude_properties')) {
+            $excludeProperties = $request->input('exclude_properties');
+            if (is_array($excludeProperties) && !empty($excludeProperties)) {
+                $query->where(function($q) use ($excludeProperties) {
+                    foreach ($excludeProperties as $propertyId => $valueIds) {
+                        if (is_array($valueIds) && !empty($valueIds)) {
+                            $q->whereDoesntHave('properties', function($propQuery) use ($propertyId, $valueIds) {
+                                $propQuery->where('shop_properties.id', $propertyId)
+                                          ->whereIn('shop_good_properties.shop_property_value_id', $valueIds);
+                            });
+                        }
+                    }
+                });
+            }
+        }
+
+        // Фильтр по исключению лейблов (товары БЕЗ выбранных лейблов)
+        if ($request->has('exclude_labels')) {
+            $excludeLabelIds = $request->input('exclude_labels');
+            if (is_array($excludeLabelIds) && !empty($excludeLabelIds)) {
+                $query->where(function($q) use ($excludeLabelIds) {
+                    $q->whereNull('label_id')
+                      ->orWhereNotIn('label_id', $excludeLabelIds);
+                });
+            }
+        }
+
+        // Фильтр по исключению тегов (товары БЕЗ выбранных тегов)
+        if ($request->has('exclude_tags')) {
+            $excludeTagIds = $request->input('exclude_tags');
+            if (is_array($excludeTagIds) && !empty($excludeTagIds)) {
+                $query->whereDoesntHave('tags', function($q) use ($excludeTagIds) {
+                    $q->whereIn('shop_tags.id', $excludeTagIds);
+                });
             }
         }
 
@@ -270,11 +475,36 @@ class ShopGoodsController extends Controller
             $query->where('remote_stock_quantity', '=', $exactValue);
         }
 
+        // Фильтр по общему остатку (total_stock)
+        if ($request->filled('total_stock_not_empty')) {
+            // Остаток > 0 ИЛИ остаток на у/с не пустой/не "0"
+            $query->where(function($q) {
+                $q->where('stock_quantity', '>', 0)
+                  ->orWhere(function($remoteQ) {
+                      $remoteQ->whereNotNull('remote_stock_quantity')
+                          ->where('remote_stock_quantity', '!=', '')
+                          ->where('remote_stock_quantity', '!=', '0')
+                          ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                  });
+            });
+        } elseif ($request->filled('total_stock_both_empty')) {
+            // Оба остатка пустые: stock_quantity = 0 И remote_stock_quantity пустой/равен "0"
+            $query->where(function($q) {
+                $q->where('stock_quantity', '=', 0)
+                  ->where(function($remoteQ) {
+                      $remoteQ->whereNull('remote_stock_quantity')
+                          ->orWhere('remote_stock_quantity', '=', '')
+                          ->orWhere('remote_stock_quantity', '=', '0')
+                          ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
+                  });
+            });
+        }
+
         // Сортировка
         $sortBy = $request->get('sort_by', 'sort_order');
         $sortDirection = $request->get('sort_direction', 'asc');
         
-        if (in_array($sortBy, ['name', 'price', 'rating', 'stock_quantity', 'created_at', 'sort_order'])) {
+        if (in_array($sortBy, ['name', 'sku', 'price', 'rating', 'stock_quantity', 'created_at', 'sort_order'])) {
             $query->orderBy($sortBy, $sortDirection);
         }
 
@@ -283,6 +513,36 @@ class ShopGoodsController extends Controller
             $perPage = $request->get('per_page', 20);
             $perPage = in_array($perPage, [10, 20, 50, 100]) ? $perPage : 20;
             $goods = $query->paginate($perPage);
+            
+            // Добавляем вычисления для вариаций
+            foreach ($goods->items() as $good) {
+                if ($good->variations_count > 0 && $good->variations) {
+                    // Сумма остатков вариаций
+                    $good->variations_stock_sum = $good->variations->sum('stock_quantity');
+                    
+                    // Проверка наличия непустых remote_stock_quantity
+                    $hasRemoteStock = $good->variations->filter(function($variation) {
+                        $remoteStock = $variation->remote_stock_quantity;
+                        return $remoteStock !== null 
+                            && $remoteStock !== '' 
+                            && $remoteStock !== '0'
+                            && trim($remoteStock) !== '';
+                    })->count() > 0;
+                    
+                    $good->variations_has_remote_stock = $hasRemoteStock;
+                    
+                    // Проверка наличия активного демпинга
+                    $hasDemping = $good->variations->filter(function($variation) {
+                        return $variation->show_demping === true || $variation->show_demping === 1;
+                    })->count() > 0;
+                    
+                    $good->variations_has_demping = $hasDemping;
+                } else {
+                    $good->variations_stock_sum = 0;
+                    $good->variations_has_remote_stock = false;
+                    $good->variations_has_demping = false;
+                }
+            }
             
             return response()->json([
                 'success' => true,
@@ -316,6 +576,34 @@ class ShopGoodsController extends Controller
                         ];
                     }
                 }
+                
+                // Добавляем вычисления для вариаций
+                if ($good->variations_count > 0 && $good->variations) {
+                    // Сумма остатков вариаций
+                    $good->variations_stock_sum = $good->variations->sum('stock_quantity');
+                    
+                    // Проверка наличия непустых remote_stock_quantity
+                    $hasRemoteStock = $good->variations->filter(function($variation) {
+                        $remoteStock = $variation->remote_stock_quantity;
+                        return $remoteStock !== null 
+                            && $remoteStock !== '' 
+                            && $remoteStock !== '0'
+                            && trim($remoteStock) !== '';
+                    })->count() > 0;
+                    
+                    $good->variations_has_remote_stock = $hasRemoteStock;
+                    
+                    // Проверка наличия активного демпинга
+                    $hasDemping = $good->variations->filter(function($variation) {
+                        return $variation->show_demping === true || $variation->show_demping === 1;
+                    })->count() > 0;
+                    
+                    $good->variations_has_demping = $hasDemping;
+                } else {
+                    $good->variations_stock_sum = 0;
+                    $good->variations_has_remote_stock = false;
+                    $good->variations_has_demping = false;
+                }
             }
             
             return response()->json([
@@ -337,7 +625,7 @@ class ShopGoodsController extends Controller
             'properties:id,name,slug',
             'images:id,good_id,variation_id,file_path,alt_text,is_main,sort_order',
             'videos:id,good_id,variation_id,video_path,external_url,title,sort_order',
-            'variations:id,good_id,name,description,price,sale_price,stock_quantity,sku,is_active',
+            'variations:id,good_id,name,description,price,sale_price,demping_price,show_demping,stock_quantity,remote_stock_quantity,sku,is_active',
             'stock:id,good_id,warehouse_id,quantity,reserved_quantity,min_quantity',
             'stock.warehouse:id,name',
             'prices:id,good_id,price_type_id,price,sale_price',
@@ -419,7 +707,8 @@ class ShopGoodsController extends Controller
 
             $good = ShopGood::create($request->only([
                 'name', 'slug', 'sku', 'description', 'short_description',
-                'price', 'sale_price', 'stock_quantity', 'remote_stock_quantity', 'width', 'height',
+                'price', 'sale_price', 'demping_price', 'show_demping', 'label_id',
+                'stock_quantity', 'remote_stock_quantity', 'width', 'height',
                 'depth', 'weight', 'meta_title', 'meta_description',
                 'is_active', 'is_featured', 'is_new', 'is_sale', 'sort_order'
             ]));
@@ -500,10 +789,6 @@ class ShopGoodsController extends Controller
      */
     public function update(Request $request, $id): JsonResponse
     {
-        Log::info('Update request received for good ID: ' . $id);
-        Log::info('Request data:', $request->all());
-        Log::info('Properties in request:', $request->get('properties', []));
-        
         $good = ShopGood::findOrFail($id);
         $oldValues = $good->toArray();
 
@@ -515,6 +800,9 @@ class ShopGoodsController extends Controller
             'short_description' => 'nullable|string',
             'price' => 'required|numeric|min:0',
             'sale_price' => 'nullable|numeric|min:0',
+            'demping_price' => 'nullable|numeric|min:0',
+            'show_demping' => 'boolean',
+            'label_id' => 'nullable|exists:shop_labels,id',
             'stock_quantity' => 'integer|min:0',
             'remote_stock_quantity' => 'nullable|string|max:255',
             'width' => 'nullable|numeric|min:0',
@@ -554,7 +842,8 @@ class ShopGoodsController extends Controller
             // Подготавливаем данные для обновления
             $updateData = $request->only([
                 'name', 'slug', 'sku', 'description', 'short_description',
-                'price', 'sale_price', 'stock_quantity', 'width', 'height',
+                'price', 'sale_price', 'demping_price', 'show_demping', 'label_id',
+                'stock_quantity', 'width', 'height',
                 'depth', 'weight', 'meta_title', 'meta_description',
                 'is_active', 'is_featured', 'is_new', 'is_sale', 'sort_order'
             ]);
@@ -589,16 +878,10 @@ class ShopGoodsController extends Controller
             $lastSyncData = [];
             if ($request->has('properties')) {
                 $incoming = $request->get('properties', []);
-                Log::info('Properties data received (count): ' . count($incoming));
 
                 $hasValueCol = Schema::hasColumn('shop_good_properties', 'value');
                 $hasShopValueIdCol = Schema::hasColumn('shop_good_properties', 'shop_property_value_id');
                 $hasVariationIdCol = Schema::hasColumn('shop_good_properties', 'variation_id');
-                Log::info('shop_good_properties schema:', [
-                    'has_value' => $hasValueCol,
-                    'has_shop_property_value_id' => $hasShopValueIdCol,
-                    'has_variation_id' => $hasVariationIdCol,
-                ]);
 
                 // Очистим существующие свойства товара (только базовые, если есть колонка variation_id)
                 $deleteQuery = DB::table('shop_good_properties')->where('good_id', $good->id);
@@ -606,11 +889,9 @@ class ShopGoodsController extends Controller
                     $deleteQuery->whereNull('variation_id');
                 }
                 $deleted = $deleteQuery->delete();
-                Log::info('Deleted base properties for good', ['good_id' => $good->id, 'deleted' => $deleted]);
 
                 foreach ($incoming as $property) {
                     if (empty($property['property_id'])) {
-                        Log::warning('Skipping property without property_id:', $property);
                         continue;
                     }
 
@@ -664,14 +945,7 @@ class ShopGoodsController extends Controller
                                     'created_at' => now(),
                                 ]
                             );
-                            Log::info('Upsert property (ref mode)', [
-                                'good_id' => $good->id,
-                                'property_id' => $propertyId,
-                                'shop_property_value_id' => $propertyValueId
-                            ]);
                             $lastSyncData[$propertyId] = ['shop_property_value_id' => $propertyValueId];
-                        } else {
-                            Log::warning('Skipping property without resolvable value/id (ref mode)', $property);
                         }
                     }
                     // Режим хранения прямого текста значения
@@ -693,24 +967,10 @@ class ShopGoodsController extends Controller
                                     'created_at' => now(),
                                 ]
                             );
-                            Log::info('Upsert property (text mode)', [
-                                'good_id' => $good->id,
-                                'property_id' => $propertyId,
-                                'value' => $textValue
-                            ]);
                             $lastSyncData[$propertyId] = ['value' => $textValue];
-                        } else {
-                            Log::warning('Skipping property without resolvable text value (text mode)', $property);
                         }
-                    } else {
-                        Log::error('shop_good_properties has neither value nor shop_property_value_id column.');
                     }
                 }
-                Log::info('Final properties sync summary', [
-                    'good_id' => $good->id,
-                    'count' => count($lastSyncData),
-                    'data' => $lastSyncData
-                ]);
             }
 
             // Аудит
@@ -781,7 +1041,6 @@ class ShopGoodsController extends Controller
             DB::beginTransaction();
 
             $incoming = $request->get('properties', []);
-            Log::info('updateProperties: received', ['good_id' => $good->id, 'count' => count($incoming)]);
 
             $hasValueCol = Schema::hasColumn('shop_good_properties', 'value');
             $hasShopValueIdCol = Schema::hasColumn('shop_good_properties', 'shop_property_value_id');
@@ -793,7 +1052,6 @@ class ShopGoodsController extends Controller
                 $deleteQuery->whereNull('variation_id');
             }
             $deleted = $deleteQuery->delete();
-            Log::info('updateProperties: deleted previous', ['good_id' => $good->id, 'deleted' => $deleted]);
 
             $lastSyncData = [];
             foreach ($incoming as $property) {
@@ -943,7 +1201,7 @@ class ShopGoodsController extends Controller
         $validator = Validator::make($request->all(), [
             'ids' => 'required|array',
             'ids.*' => 'exists:shop_goods,id',
-            'action' => 'required|in:activate,deactivate,delete,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_price,update_sale_price,remove_after_symbol',
+            'action' => 'required|in:activate,deactivate,delete,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_price,update_sale_price,update_demping_price,toggle_show_demping,update_label,remove_after_symbol,update_dimensions',
             'data' => 'nullable|array'
         ]);
 
@@ -1030,8 +1288,27 @@ class ShopGoodsController extends Controller
                         }
                         break;
                     case 'update_tags':
-                        if (isset($data['tag_ids'])) {
-                            $good->tags()->sync($data['tag_ids']);
+                        $currentTagIds = $good->tags()->pluck('shop_tags.id')->toArray();
+                        
+                        // Если установлен флаг очистки всех тегов
+                        if (isset($data['clear_all']) && $data['clear_all']) {
+                            $good->tags()->sync([]);
+                        } else {
+                            // Удаляем теги из списка на удаление
+                            if (isset($data['tag_ids_to_remove']) && is_array($data['tag_ids_to_remove'])) {
+                                $currentTagIds = array_diff($currentTagIds, $data['tag_ids_to_remove']);
+                            }
+                            
+                            // Добавляем новые теги
+                            if (isset($data['tag_ids']) && is_array($data['tag_ids'])) {
+                                $newTagIds = $data['tag_ids'];
+                                // Объединяем и убираем дубликаты
+                                $allTagIds = array_unique(array_merge($currentTagIds, $newTagIds));
+                            } else {
+                                $allTagIds = $currentTagIds;
+                            }
+                            
+                            $good->tags()->sync($allTagIds);
                         }
                         break;
                     case 'update_properties':
@@ -1277,11 +1554,11 @@ class ShopGoodsController extends Controller
                                         $newSalePrice = null;
                                     }
                                     $good->update(['sale_price' => $newSalePrice]);
-                                } elseif ($salePriceAction === 'add') {
+                                } elseif ($salePriceAction === 'subtract') {
                                     if ($isPercent) {
-                                        $newSalePrice = $currentSalePrice + ($currentPrice * $salePriceValue / 100);
+                                        $newSalePrice = $currentPrice - ($currentPrice * $salePriceValue / 100);
                                     } else {
-                                        $newSalePrice = $currentSalePrice + $salePriceValue;
+                                        $newSalePrice = $currentPrice - $salePriceValue;
                                     }
                                     $newSalePrice = max(0, $newSalePrice);
                                     // Проверяем, чтобы акционная цена была меньше базовой
@@ -1289,8 +1566,106 @@ class ShopGoodsController extends Controller
                                         $newSalePrice = null;
                                     }
                                     $good->update(['sale_price' => $newSalePrice]);
+                                } elseif ($salePriceAction === 'subtract_from_sale') {
+                                    if ($currentSalePrice > 0) {
+                                        if ($isPercent) {
+                                            $newSalePrice = $currentSalePrice - ($currentSalePrice * $salePriceValue / 100);
+                                        } else {
+                                            $newSalePrice = $currentSalePrice - $salePriceValue;
+                                        }
+                                        $newSalePrice = max(0, $newSalePrice);
+                                        // Проверяем, чтобы акционная цена была меньше базовой
+                                        if ($newSalePrice >= $currentPrice) {
+                                            $newSalePrice = null;
+                                        }
+                                        $good->update(['sale_price' => $newSalePrice]);
+                                    }
+                                } elseif ($salePriceAction === 'add_to_sale') {
+                                    if ($currentSalePrice > 0) {
+                                        if ($isPercent) {
+                                            $newSalePrice = $currentSalePrice + ($currentSalePrice * $salePriceValue / 100);
+                                        } else {
+                                            $newSalePrice = $currentSalePrice + $salePriceValue;
+                                        }
+                                        $newSalePrice = max(0, $newSalePrice);
+                                        // Проверяем, чтобы акционная цена была меньше базовой
+                                        if ($newSalePrice >= $currentPrice) {
+                                            $newSalePrice = null;
+                                        }
+                                        $good->update(['sale_price' => $newSalePrice]);
+                                    }
                                 }
                             }
+                        }
+                        break;
+                    case 'update_demping_price':
+                        if (isset($data['demping_price_action'])) {
+                            $dempingPriceAction = $data['demping_price_action'];
+                            
+                            // Очистка демпинговой цены
+                            if ($dempingPriceAction === 'clear') {
+                                $good->update(['demping_price' => null]);
+                            } elseif (isset($data['demping_price_value'])) {
+                                $dempingPriceValue = (float) $data['demping_price_value'];
+                                $isPercent = isset($data['demping_price_is_percent']) && $data['demping_price_is_percent'];
+                                $currentPrice = (float) $good->price;
+                                $currentDempingPrice = $good->demping_price ? (float) $good->demping_price : 0;
+                                
+                                if ($dempingPriceAction === 'set') {
+                                    $newDempingPrice = max(0, $dempingPriceValue);
+                                    $good->update(['demping_price' => $newDempingPrice]);
+                                } elseif ($dempingPriceAction === 'subtract') {
+                                    if ($isPercent) {
+                                        $newDempingPrice = $currentPrice - ($currentPrice * $dempingPriceValue / 100);
+                                    } else {
+                                        $newDempingPrice = $currentPrice - $dempingPriceValue;
+                                    }
+                                    $newDempingPrice = max(0, $newDempingPrice);
+                                    $good->update(['demping_price' => $newDempingPrice]);
+                                } elseif ($dempingPriceAction === 'subtract_from_sale') {
+                                    $currentSalePrice = $good->sale_price ? (float) $good->sale_price : null;
+                                    if ($currentSalePrice !== null) {
+                                        if ($isPercent) {
+                                            $newDempingPrice = $currentSalePrice - ($currentSalePrice * $dempingPriceValue / 100);
+                                        } else {
+                                            $newDempingPrice = $currentSalePrice - $dempingPriceValue;
+                                        }
+                                        $newDempingPrice = max(0, $newDempingPrice);
+                                        $good->update(['demping_price' => $newDempingPrice]);
+                                    }
+                                } elseif ($dempingPriceAction === 'add_to_sale') {
+                                    $currentSalePrice = $good->sale_price ? (float) $good->sale_price : null;
+                                    if ($currentSalePrice !== null) {
+                                        if ($isPercent) {
+                                            $newDempingPrice = $currentSalePrice + ($currentSalePrice * $dempingPriceValue / 100);
+                                        } else {
+                                            $newDempingPrice = $currentSalePrice + $dempingPriceValue;
+                                        }
+                                        $newDempingPrice = max(0, $newDempingPrice);
+                                        $good->update(['demping_price' => $newDempingPrice]);
+                                    }
+                                } elseif ($dempingPriceAction === 'subtract_from_demping') {
+                                    if ($currentDempingPrice > 0) {
+                                        if ($isPercent) {
+                                            $newDempingPrice = $currentDempingPrice - ($currentDempingPrice * $dempingPriceValue / 100);
+                                        } else {
+                                            $newDempingPrice = $currentDempingPrice - $dempingPriceValue;
+                                        }
+                                        $newDempingPrice = max(0, $newDempingPrice);
+                                        $good->update(['demping_price' => $newDempingPrice]);
+                                    }
+                                }
+                            }
+                        }
+                        break;
+                    case 'toggle_show_demping':
+                        if (isset($data['show_demping'])) {
+                            $good->update(['show_demping' => (bool) $data['show_demping']]);
+                        }
+                        break;
+                    case 'update_label':
+                        if (isset($data['label_id'])) {
+                            $good->update(['label_id' => $data['label_id'] ?: null]);
                         }
                         break;
                     case 'remove_after_symbol':
@@ -1306,6 +1681,25 @@ class ShopGoodsController extends Controller
                                 $newName = mb_substr($name, 0, $position);
                                 $good->update(['name' => $newName]);
                             }
+                        }
+                        break;
+                    case 'update_dimensions':
+                        $updateData = [];
+                        // Обновляем только заполненные поля (размеры округляем до целых)
+                        if (isset($data['width']) && $data['width'] !== null && $data['width'] !== '') {
+                            $updateData['width'] = (int) round((float) $data['width']);
+                        }
+                        if (isset($data['height']) && $data['height'] !== null && $data['height'] !== '') {
+                            $updateData['height'] = (int) round((float) $data['height']);
+                        }
+                        if (isset($data['depth']) && $data['depth'] !== null && $data['depth'] !== '') {
+                            $updateData['depth'] = (int) round((float) $data['depth']);
+                        }
+                        if (isset($data['weight']) && $data['weight'] !== null && $data['weight'] !== '') {
+                            $updateData['weight'] = (float) $data['weight']; // Вес может быть дробным
+                        }
+                        if (!empty($updateData)) {
+                            $good->update($updateData);
                         }
                         break;
                 }
@@ -1336,9 +1730,15 @@ class ShopGoodsController extends Controller
      */
     public function filters(): JsonResponse
     {
-        $categories = ShopCategory::active()->ordered()->get(['id', 'name']);
+        $categories = ShopCategory::active()->ordered()->with(['children' => function($query) {
+            $query->where('is_active', true)
+                  ->orderBy('sort_order', 'asc')
+                  ->orderBy('name', 'asc')
+                  ->select('id', 'name', 'parent_id');
+        }])->get(['id', 'name', 'parent_id']);
         $brands = ShopBrand::active()->ordered()->get(['id', 'name']);
         $tags = ShopTag::active()->ordered()->get(['id', 'name', 'color']);
+        $labels = ShopLabel::ordered()->get(['id', 'name', 'color']);
         $properties = ShopProperty::active()->ordered()->get(['id', 'name', 'slug']);
 
         return response()->json([
@@ -1347,6 +1747,7 @@ class ShopGoodsController extends Controller
                 'categories' => $categories,
                 'brands' => $brands,
                 'tags' => $tags,
+                'labels' => $labels,
                 'properties' => $properties
             ]
         ]);
@@ -1424,6 +1825,45 @@ class ShopGoodsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка создания бренда: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Создать новый лейбл
+     */
+    public function createLabel(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'name' => 'required|string|max:255',
+            'color' => 'nullable|string|max:7|regex:/^#[0-9A-Fa-f]{6}$/'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $label = ShopLabel::create([
+                'name' => $request->get('name'),
+                'color' => $request->get('color', '#3B82F6'),
+                'sort_order' => ShopLabel::max('sort_order') + 1
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Лейбл успешно создан',
+                'data' => $label
+            ], 201);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка создания лейбла: ' . $e->getMessage()
             ], 500);
         }
     }
@@ -3148,5 +3588,200 @@ class ShopGoodsController extends Controller
     private function getOuterHTML(\DOMElement $element): string
     {
         return $element->ownerDocument->saveHTML($element);
+    }
+
+    /**
+     * Получить атрибуты вариации
+     */
+    public function getVariationAttributes($goodId, $variationId): JsonResponse
+    {
+        try {
+            $variation = \App\Models\ShopGoodVariation::where('good_id', $goodId)
+                ->where('id', $variationId)
+                ->firstOrFail();
+
+            $attributesString = $variation->attributes_string;
+
+            return response()->json([
+                'success' => true,
+                'data' => $attributesString
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения атрибутов вариации: ' . $e->getMessage()
+            ], 404);
+        }
+    }
+
+    /**
+     * Обновить остаток вариации
+     */
+    public function updateVariationStock(Request $request, $goodId, $variationId): JsonResponse
+    {
+        try {
+            $variation = \App\Models\ShopGoodVariation::where('good_id', $goodId)
+                ->where('id', $variationId)
+                ->firstOrFail();
+
+            $validator = Validator::make($request->all(), [
+                'stock_quantity' => 'required|integer|min:0'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $variation->stock_quantity = $request->get('stock_quantity');
+            $variation->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Остаток обновлен',
+                'data' => [
+                    'id' => $variation->id,
+                    'stock_quantity' => $variation->stock_quantity
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка обновления остатка: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Обновить остаток на у/с вариации
+     */
+    public function updateVariationRemoteStock(Request $request, $goodId, $variationId): JsonResponse
+    {
+        try {
+            $variation = \App\Models\ShopGoodVariation::where('good_id', $goodId)
+                ->where('id', $variationId)
+                ->firstOrFail();
+
+            $validator = Validator::make($request->all(), [
+                'remote_stock_quantity' => 'nullable|string|max:255'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $remoteStockValue = $request->get('remote_stock_quantity');
+            $variation->remote_stock_quantity = ($remoteStockValue === '' || $remoteStockValue === null) ? null : (string)$remoteStockValue;
+            $variation->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Остаток на у/с обновлен',
+                'data' => [
+                    'id' => $variation->id,
+                    'remote_stock_quantity' => $variation->remote_stock_quantity
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка обновления остатка на у/с: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Обновить цены вариации
+     */
+    public function updateVariationPrice(Request $request, $goodId, $variationId): JsonResponse
+    {
+        try {
+            $variation = \App\Models\ShopGoodVariation::where('good_id', $goodId)
+                ->where('id', $variationId)
+                ->firstOrFail();
+
+            $validator = Validator::make($request->all(), [
+                'price' => 'required|numeric|min:0',
+                'sale_price' => 'nullable|numeric|min:0',
+                'demping_price' => 'nullable|numeric|min:0'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $variation->price = $request->get('price');
+            $variation->sale_price = $request->has('sale_price') && $request->get('sale_price') !== null && $request->get('sale_price') !== '' ? $request->get('sale_price') : null;
+            $variation->demping_price = $request->has('demping_price') && $request->get('demping_price') !== null && $request->get('demping_price') !== '' ? $request->get('demping_price') : null;
+            $variation->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Цены обновлены',
+                'data' => [
+                    'id' => $variation->id,
+                    'price' => $variation->price,
+                    'sale_price' => $variation->sale_price,
+                    'demping_price' => $variation->demping_price
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка обновления цен: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Обновить демпинг вариации
+     */
+    public function updateVariationDemping(Request $request, $goodId, $variationId): JsonResponse
+    {
+        try {
+            $variation = \App\Models\ShopGoodVariation::where('good_id', $goodId)
+                ->where('id', $variationId)
+                ->firstOrFail();
+
+            $validator = Validator::make($request->all(), [
+                'show_demping' => 'required|boolean'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $variation->show_demping = $request->get('show_demping');
+            $variation->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Демпинг обновлен',
+                'data' => [
+                    'id' => $variation->id,
+                    'show_demping' => $variation->show_demping
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка обновления демпинга: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }

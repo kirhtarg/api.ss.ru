@@ -1334,10 +1334,30 @@ class ShopOrdersController extends Controller
                 ->orderBy('sort_order')
                 ->first();
             
+            // Если не найден по is_finished, пытаемся найти по имени 'finished'
             if (!$finishedStatus) {
+                $finishedStatus = ShopOrderStatus::where('name', 'finished')
+                    ->where('is_active', true)
+                    ->first();
+            }
+            
+            // Если все еще не найден, пытаемся найти по display_name 'Завершен'
+            if (!$finishedStatus) {
+                $finishedStatus = ShopOrderStatus::where('display_name', 'Завершен')
+                    ->where('is_active', true)
+                    ->first();
+            }
+            
+            if (!$finishedStatus) {
+                // Логируем для отладки
+                \Log::warning('Не найден статус для завершенных заказов', [
+                    'order_id' => $id,
+                    'available_statuses' => ShopOrderStatus::where('is_active', true)->pluck('name', 'id')->toArray()
+                ]);
+                
                 return response()->json([
                     'success' => false,
-                    'message' => 'Не найден статус для завершенных заказов'
+                    'message' => 'Не найден статус для завершенных заказов. Пожалуйста, убедитесь, что в системе есть активный статус с is_finished=true или name="finished"'
                 ], 404);
             }
             
@@ -1979,6 +1999,283 @@ class ShopOrdersController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка получения статистики: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить все статусы заказов (включая неактивные) для админки
+     */
+    public function getAllStatuses(): JsonResponse
+    {
+        try {
+            $statuses = ShopOrderStatus::orderBy('sort_order')
+                ->get()
+                ->map(function ($status) {
+                    return [
+                        'id' => $status->id,
+                        'name' => $status->name,
+                        'display_name' => $status->display_name,
+                        'color' => $status->color,
+                        'is_active' => (bool) $status->is_active,
+                        'is_finished' => (bool) $status->is_finished,
+                        'is_cancelled' => (bool) $status->is_cancelled,
+                        'sort_order' => $status->sort_order,
+                        'description' => $status->description,
+                    ];
+                });
+
+            return response()->json([
+                'success' => true,
+                'data' => $statuses
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка загрузки статусов: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Создать новый статус заказа
+     */
+    public function createOrderStatus(Request $request): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'name' => 'required|string|max:255|unique:shop_order_statuses,name',
+                'display_name' => 'required|string|max:255',
+                'color' => 'nullable|string|max:7',
+                'is_active' => 'sometimes|boolean',
+                'is_finished' => 'sometimes|boolean',
+                'is_cancelled' => 'sometimes|boolean',
+                'description' => 'nullable|string'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            DB::beginTransaction();
+
+            // Если is_finished=true, сбрасываем у других
+            if ($request->get('is_finished', false)) {
+                ShopOrderStatus::where('is_finished', true)->update(['is_finished' => false]);
+            }
+
+            // Если is_cancelled=true, сбрасываем у других
+            if ($request->get('is_cancelled', false)) {
+                ShopOrderStatus::where('is_cancelled', true)->update(['is_cancelled' => false]);
+            }
+
+            $maxSortOrder = ShopOrderStatus::max('sort_order') ?? 0;
+
+            $status = ShopOrderStatus::create([
+                'name' => $request->get('name'),
+                'display_name' => $request->get('display_name'),
+                'color' => $request->get('color', '#6B7280'),
+                'is_active' => $request->get('is_active', true),
+                'is_finished' => $request->get('is_finished', false),
+                'is_cancelled' => $request->get('is_cancelled', false),
+                'sort_order' => $maxSortOrder + 1,
+                'description' => $request->get('description')
+            ]);
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Статус успешно создан',
+                'data' => [
+                    'id' => $status->id,
+                    'name' => $status->name,
+                    'display_name' => $status->display_name,
+                    'color' => $status->color,
+                    'is_active' => (bool) $status->is_active,
+                    'is_finished' => (bool) $status->is_finished,
+                    'is_cancelled' => (bool) $status->is_cancelled,
+                    'sort_order' => $status->sort_order,
+                    'description' => $status->description,
+                ]
+            ], 201);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка создания статуса: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Обновить статус заказа
+     */
+    public function updateOrderStatus(Request $request, $id): JsonResponse
+    {
+        try {
+            $status = ShopOrderStatus::findOrFail($id);
+
+            $validator = Validator::make($request->all(), [
+                'name' => 'sometimes|string|max:255|unique:shop_order_statuses,name,' . $id,
+                'display_name' => 'sometimes|string|max:255',
+                'color' => 'nullable|string|max:7',
+                'is_active' => 'sometimes|boolean',
+                'is_finished' => 'sometimes|boolean',
+                'is_cancelled' => 'sometimes|boolean',
+                'description' => 'nullable|string'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            DB::beginTransaction();
+
+            // Если is_finished=true, сбрасываем у других
+            if ($request->has('is_finished') && $request->get('is_finished')) {
+                ShopOrderStatus::where('id', '!=', $id)->where('is_finished', true)->update(['is_finished' => false]);
+            }
+
+            // Если is_cancelled=true, сбрасываем у других
+            if ($request->has('is_cancelled') && $request->get('is_cancelled')) {
+                ShopOrderStatus::where('id', '!=', $id)->where('is_cancelled', true)->update(['is_cancelled' => false]);
+            }
+
+            $updateData = [];
+            if ($request->has('name')) $updateData['name'] = $request->get('name');
+            if ($request->has('display_name')) $updateData['display_name'] = $request->get('display_name');
+            if ($request->has('color')) $updateData['color'] = $request->get('color');
+            if ($request->has('is_active')) $updateData['is_active'] = $request->get('is_active');
+            if ($request->has('is_finished')) $updateData['is_finished'] = $request->get('is_finished');
+            if ($request->has('is_cancelled')) $updateData['is_cancelled'] = $request->get('is_cancelled');
+            if ($request->has('description')) $updateData['description'] = $request->get('description');
+
+            $status->update($updateData);
+            $status->refresh();
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Статус успешно обновлен',
+                'data' => [
+                    'id' => $status->id,
+                    'name' => $status->name,
+                    'display_name' => $status->display_name,
+                    'color' => $status->color,
+                    'is_active' => (bool) $status->is_active,
+                    'is_finished' => (bool) $status->is_finished,
+                    'is_cancelled' => (bool) $status->is_cancelled,
+                    'sort_order' => $status->sort_order,
+                    'description' => $status->description,
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка обновления статуса: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Удалить статус заказа
+     */
+    public function deleteOrderStatus($id): JsonResponse
+    {
+        try {
+            $status = ShopOrderStatus::findOrFail($id);
+
+            // Проверяем, что статус не является завершающим или отменяющим
+            if ($status->is_finished) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Нельзя удалить статус "Завершен"'
+                ], 422);
+            }
+
+            if ($status->is_cancelled) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Нельзя удалить статус "Отменен"'
+                ], 422);
+            }
+
+            // Проверяем, есть ли заказы с этим статусом
+            $ordersCount = ShopOrder::where('status_id', $id)->count();
+            if ($ordersCount > 0) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Нельзя удалить статус, так как с ним связано {$ordersCount} заказ(ов)"
+                ], 422);
+            }
+
+            $status->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Статус успешно удален'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка удаления статуса: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Изменить порядок статусов
+     */
+    public function reorderStatuses(Request $request): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'statuses' => 'required|array',
+                'statuses.*.id' => 'required|integer|exists:shop_order_statuses,id',
+                'statuses.*.sort_order' => 'required|integer'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            DB::beginTransaction();
+
+            foreach ($request->get('statuses') as $statusData) {
+                ShopOrderStatus::where('id', $statusData['id'])
+                    ->update(['sort_order' => $statusData['sort_order']]);
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Порядок статусов обновлен'
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка изменения порядка: ' . $e->getMessage()
             ], 500);
         }
     }

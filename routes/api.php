@@ -1240,6 +1240,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('/filters', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'filters']);
                 Route::post('/categories', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'createCategory']);
                 Route::post('/brands', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'createBrand']);
+                Route::post('/labels', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'createLabel']);
                 Route::get('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'show']);
                 Route::post('/', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'store']);
                 Route::put('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'update']);
@@ -1293,7 +1294,19 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::put('/{variationId}', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'update']);
                     Route::delete('/{variationId}', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'destroy']);
                     Route::post('/reorder', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'reorder']);
+                    Route::post('/bulk-update', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'bulkUpdate']);
+                    // Атрибуты и остатки вариаций
+                    Route::get('/{variationId}/attributes', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getVariationAttributes']);
+                    Route::put('/{variationId}/stock', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'updateVariationStock']);
+                    Route::put('/{variationId}/remote-stock', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'updateVariationRemoteStock']);
+                    Route::put('/{variationId}/price', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'updateVariationPrice']);
+                    Route::put('/{variationId}/demping', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'updateVariationDemping']);
                 });
+                
+                // Глобальное массовое обновление вариаций (без привязки к товару)
+                Route::post('/variations/bulk-update', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'globalBulkUpdate']);
+                // Получить ID вариаций для списка товаров
+                Route::post('/variations/get-ids', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'getVariationIdsByGoods']);
 
                 // Видео товаров
                 Route::prefix('{goodId}/videos')->group(function () {
@@ -1378,12 +1391,27 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopTagsController::class, 'destroy']);
             });
 
+            // Лейблы
+            Route::prefix('labels')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Admin\ShopLabelsController::class, 'index']);
+                Route::get('/all', [\App\Http\Controllers\Admin\ShopLabelsController::class, 'all']);
+                Route::get('/{id}', [\App\Http\Controllers\Admin\ShopLabelsController::class, 'show']);
+                Route::post('/', [\App\Http\Controllers\Admin\ShopLabelsController::class, 'store']);
+                Route::put('/{id}', [\App\Http\Controllers\Admin\ShopLabelsController::class, 'update']);
+                Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopLabelsController::class, 'destroy']);
+            });
+
 
             // Заказы
             Route::prefix('orders')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'index']);
                 Route::get('/statistics', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'statistics']);
                 Route::get('/statuses', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'getStatuses']);
+                Route::get('/statuses/all', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'getAllStatuses']);
+                Route::post('/statuses', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'createOrderStatus']);
+                Route::put('/statuses/reorder', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'reorderStatuses']);
+                Route::put('/statuses/{statusId}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateOrderStatus']);
+                Route::delete('/statuses/{statusId}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'deleteOrderStatus']);
                 Route::post('/', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'store']);
                 Route::post('/export', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'export']);
                 // Специфичные роуты должны быть определены ПЕРЕД общими роутами с {id}
@@ -1392,6 +1420,15 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::put('/{id}/is-active', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateIsActive']);
                 Route::put('/{id}/comment', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateComment']);
                 Route::put('/{id}/delivery-status', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateDeliveryStatus']);
+                // OPTIONS для CORS preflight
+                Route::options('/{id}/finish', function () {
+                    return response('', 200)
+                        ->header('Access-Control-Allow-Origin', '*')
+                        ->header('Access-Control-Allow-Methods', 'PUT, OPTIONS')
+                        ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN')
+                        ->header('Access-Control-Allow-Credentials', 'true')
+                        ->header('Access-Control-Max-Age', '86400');
+                });
                 Route::put('/{id}/finish', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'finishOrder']);
                 Route::get('/{id}/cdek/barcode', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'getCdekBarcode']);
                 Route::get('/{id}/cdek/barcode/download', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'downloadCdekBarcode']);
@@ -2717,6 +2754,12 @@ Route::middleware('auth:sanctum')->group(function () {
                     ], 500);
                 }
             });
+        });
+
+        // User preferences
+        Route::prefix('user')->group(function () {
+            Route::get('/preferences', [\App\Http\Controllers\Admin\UserPreferencesController::class, 'getPreferences']);
+            Route::put('/preferences', [\App\Http\Controllers\Admin\UserPreferencesController::class, 'updatePreferences']);
         });
 
         // Profile management
