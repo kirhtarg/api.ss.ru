@@ -85,6 +85,11 @@ Route::post('/resend-verification', [AuthController::class, 'resendVerificationE
 Route::post('/check-email', [AuthController::class, 'checkEmail']);
 Route::post('/check-phone', [AuthController::class, 'checkPhone']);
 
+// Password recovery routes
+Route::post('/password/forgot', [AuthController::class, 'forgotPassword']);
+Route::post('/password/verify-code', [AuthController::class, 'verifyPasswordResetCode']);
+Route::post('/password/reset', [AuthController::class, 'resetPassword']);
+
 // Phone authentication routes
 Route::post('/phone/send-code', [\App\Http\Controllers\Auth\PhoneAuthController::class, 'sendPhoneCode']);
 Route::post('/phone/verify-code', [\App\Http\Controllers\Auth\PhoneAuthController::class, 'verifyPhoneCode']);
@@ -1186,6 +1191,8 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::delete('/{id}', [\App\Http\Controllers\CategoryController::class, 'destroy']);
             Route::post('/{id}/image', [\App\Http\Controllers\ImageUploadController::class, 'uploadCategoryImage']);
             Route::delete('/{id}/image', [\App\Http\Controllers\ImageUploadController::class, 'deleteCategoryImage']);
+            Route::post('/{id}/figure-image', [\App\Http\Controllers\ImageUploadController::class, 'uploadCategoryFigureImage']);
+            Route::delete('/{id}/figure-image', [\App\Http\Controllers\ImageUploadController::class, 'deleteCategoryFigureImage']);
             Route::post('/temp/image', [\App\Http\Controllers\ImageUploadController::class, 'uploadTempImage']);
             Route::post('/upload-image', [\App\Http\Controllers\CategoryController::class, 'uploadImage']);
             Route::post('/sort-alphabetically', [\App\Http\Controllers\CategoryController::class, 'sortAlphabetically']);

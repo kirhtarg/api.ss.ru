@@ -157,10 +157,10 @@ class ShopGoodsController extends Controller
                         })());
                 },
                 'categories' => function($query) {
-                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug');
+                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug', 'shop_categories.image', 'shop_categories.icon');
                 },
                 'brands' => function($query) {
-                    $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug');
+                    $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug', 'shop_brands.logo');
                 }
             ])
             ->where('is_active', true);
@@ -437,10 +437,10 @@ class ShopGoodsController extends Controller
                         })());
                 },
                 'categories' => function($query) {
-                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug');
+                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug', 'shop_categories.image', 'shop_categories.icon');
                 },
                 'brands' => function($query) {
-                    $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug');
+                    $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug', 'shop_brands.logo');
                 }
             ])
             ->whereIn('id', $goodIds)
@@ -669,10 +669,13 @@ class ShopGoodsController extends Controller
                         })());
                 },
                 'categories' => function($query) {
-                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug');
+                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug', 'shop_categories.image', 'shop_categories.icon');
                 },
                 'brands' => function($query) {
-                    $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug');
+                    $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug', 'shop_brands.logo');
+                },
+                'label' => function($query) {
+                    $query->select('id', 'name', 'color');
                 }
             ])
             ->where('id', $id)
@@ -791,10 +794,13 @@ class ShopGoodsController extends Controller
                         })());
                 },
                 'categories' => function($query) {
-                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug');
+                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug', 'shop_categories.image', 'shop_categories.icon');
                 },
                 'brands' => function($query) {
-                    $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug');
+                    $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug', 'shop_brands.logo');
+                },
+                'label' => function($query) {
+                    $query->select('id', 'name', 'color');
                 }
             ])
             ->where('slug', $slug)
@@ -866,11 +872,52 @@ class ShopGoodsController extends Controller
                 }
             }
 
-            // Преобразуем brands в brand (берем первый бренд, если есть)
-            if (isset($goodData['brands']) && is_array($goodData['brands']) && count($goodData['brands']) > 0) {
-                $goodData['brand'] = $goodData['brands'][0];
+            // Обрабатываем все бренды (логотипы)
+            if (isset($goodData['brands']) && is_array($goodData['brands'])) {
+                foreach ($goodData['brands'] as &$brand) {
+                    // Обрабатываем логотип бренда
+                    if (isset($brand['logo']) && $brand['logo']) {
+                        $logoPath = $brand['logo'];
+                        if (!str_starts_with($logoPath, '/') && !str_starts_with($logoPath, 'http')) {
+                            $cleanPath = ltrim($logoPath, '/');
+                            // Проверяем, не начинается ли путь уже с images/
+                            if (!str_starts_with($cleanPath, 'images/')) {
+                                $logoPath = '/images/' . $cleanPath;
+                            } else {
+                                $logoPath = '/' . $cleanPath;
+                            }
+                        }
+                        $brand['logo'] = $logoPath;
+                    }
+                }
+                // Преобразуем brands в brand (берем первый бренд, если есть) для обратной совместимости
+                if (count($goodData['brands']) > 0) {
+                    $goodData['brand'] = $goodData['brands'][0];
+                } else {
+                    $goodData['brand'] = null;
+                }
             } else {
                 $goodData['brand'] = null;
+            }
+            
+            // Обрабатываем изображения и иконки категорий
+            if (isset($goodData['categories']) && is_array($goodData['categories'])) {
+                foreach ($goodData['categories'] as &$category) {
+                    // Обрабатываем изображение категории
+                    if (isset($category['image']) && $category['image']) {
+                        $imagePath = $category['image'];
+                        if (!str_starts_with($imagePath, '/') && !str_starts_with($imagePath, 'http')) {
+                            $cleanPath = ltrim($imagePath, '/');
+                            // Проверяем, не начинается ли путь уже с images/
+                            if (!str_starts_with($cleanPath, 'images/')) {
+                                $imagePath = '/images/' . $cleanPath;
+                            } else {
+                                $imagePath = '/' . $cleanPath;
+                            }
+                        }
+                        $category['image'] = $imagePath;
+                    }
+                }
             }
 
             return response()->json([
@@ -952,10 +999,10 @@ class ShopGoodsController extends Controller
                     $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug', 'shop_good_properties.shop_property_value_id');
                 },
                 'categories' => function($query) {
-                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug');
+                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug', 'shop_categories.image', 'shop_categories.icon');
                 },
                 'brands' => function($query) {
-                    $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug');
+                    $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug', 'shop_brands.logo');
                 }
             ])
             ->whereIn('id', $goodIds)

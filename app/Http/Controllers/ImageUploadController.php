@@ -168,6 +168,146 @@ class ImageUploadController extends Controller
     }
 
     /**
+     * Загрузка изображения для in_figure (без изменения размера)
+     */
+    public function uploadCategoryFigureImage(Request $request, $categoryId)
+    {
+        try {
+            Log::info('Начало загрузки изображения in_figure для категории: ' . $categoryId);
+            
+            // Валидация
+            $validator = Validator::make($request->all(), [
+                'image' => 'required|image|mimes:jpeg,png,jpg,gif|max:10240', // 10MB
+                'image_url' => 'nullable|url'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            // Проверяем, что категория существует
+            $category = \App\Models\ShopCategory::find($categoryId);
+            if (!$category) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Категория не найдена'
+                ], 404);
+            }
+
+            $imagePath = null;
+
+            // Обработка загруженного файла
+            if ($request->hasFile('image')) {
+                $file = $request->file('image');
+                
+                // Генерируем уникальное имя файла
+                $fileName = Str::uuid() . '.' . $file->getClientOriginalExtension();
+                $relativePath = 'images/shop/categories/' . $fileName;
+                
+                // Получаем путь к фронтенду
+                $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+                $frontendPublicPath = base_path($frontendPath . '/public');
+                $fullPath = $frontendPublicPath . '/' . $relativePath;
+                $dir = dirname($fullPath);
+                
+                // Создаем директорию если не существует
+                if (!is_dir($dir)) {
+                    mkdir($dir, 0755, true);
+                }
+                
+                // Сохраняем файл БЕЗ изменения размера
+                $file->move($dir, $fileName);
+                
+                $imagePath = $relativePath;
+            }
+            // Обработка URL
+            elseif ($request->has('image_url')) {
+                // Для URL тоже сохраняем как есть
+                $imagePath = $this->processImageFromUrlAsIs($request->image_url);
+            }
+
+            if (!$imagePath) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не удалось обработать изображение'
+                ], 400);
+            }
+
+            // Обновляем категорию
+            $category->update(['in_figure_img' => $imagePath]);
+
+            // Возвращаем путь относительно корня фронтенда
+            $relativePath = '/' . $imagePath;
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Изображение успешно загружено',
+                'image_url' => $relativePath
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Ошибка загрузки изображения in_figure: ' . $e->getMessage());
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка загрузки изображения: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Обработка изображения из URL без изменения размера
+     */
+    private function processImageFromUrlAsIs($url)
+    {
+        try {
+            Log::info('Обработка изображения из URL (как есть): ' . $url);
+            
+            // Загружаем изображение
+            $imageData = file_get_contents($url);
+            if ($imageData === false) {
+                throw new \Exception('Не удалось загрузить изображение из URL');
+            }
+            
+            // Определяем расширение из URL или Content-Type
+            $extension = 'jpg';
+            $urlInfo = parse_url($url);
+            $pathInfo = pathinfo($urlInfo['path'] ?? '');
+            if (isset($pathInfo['extension'])) {
+                $extension = strtolower($pathInfo['extension']);
+            }
+            
+            // Генерируем уникальное имя файла
+            $fileName = Str::uuid() . '.' . $extension;
+            $relativePath = 'images/shop/categories/' . $fileName;
+            
+            // Получаем путь к фронтенду
+            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+            $frontendPublicPath = base_path($frontendPath . '/public');
+            $fullPath = $frontendPublicPath . '/' . $relativePath;
+            $dir = dirname($fullPath);
+            
+            // Создаем директорию если не существует
+            if (!is_dir($dir)) {
+                mkdir($dir, 0755, true);
+            }
+            
+            // Сохраняем файл как есть
+            file_put_contents($fullPath, $imageData);
+            
+            return $relativePath;
+            
+        } catch (\Exception $e) {
+            Log::error('Ошибка обработки изображения из URL (как есть): ' . $e->getMessage());
+            throw $e;
+        }
+    }
+
+    /**
      * Получение настроек изображений категорий
      */
     private function getImageSettings()
@@ -410,6 +550,77 @@ class ImageUploadController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка удаления изображения: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Удаление изображения фигуры категории
+     */
+    public function deleteCategoryFigureImage(Request $request, $categoryId)
+    {
+        try {
+            Log::info('Начало удаления изображения in_figure для категории: ' . $categoryId);
+            
+            // Проверяем, что категория существует
+            $category = \App\Models\ShopCategory::find($categoryId);
+            if (!$category) {
+                Log::warning('Категория не найдена: ' . $categoryId);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Категория не найдена'
+                ], 404);
+            }
+
+            // Получаем текущее изображение фигуры
+            $currentImage = $category->in_figure_img;
+            
+            if (!$currentImage) {
+                Log::info('У категории нет изображения фигуры для удаления');
+                return response()->json([
+                    'success' => true,
+                    'message' => 'У категории нет изображения фигуры'
+                ]);
+            }
+
+            // Удаляем файл с фронтенда
+            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+            $frontendPublicPath = base_path($frontendPath . '/public');
+            
+            // Обрабатываем разные форматы пути
+            $imagePathToDelete = $currentImage;
+            if (strpos($imagePathToDelete, '/') === 0) {
+                // Если путь начинается с /, убираем его
+                $imagePathToDelete = ltrim($imagePathToDelete, '/');
+            }
+            
+            $fullPath = $frontendPublicPath . '/' . $imagePathToDelete;
+            
+            Log::info('Попытка удаления файла: ' . $fullPath);
+            
+            if (file_exists($fullPath)) {
+                unlink($fullPath);
+                Log::info('Файл удален с фронтенда: ' . $fullPath);
+            } else {
+                Log::warning('Файл не найден на фронтенде: ' . $fullPath);
+            }
+
+            // Очищаем поле in_figure_img в базе данных
+            $category->in_figure_img = null;
+            $category->save();
+
+            Log::info('Изображение фигуры успешно удалено для категории: ' . $categoryId);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Изображение фигуры успешно удалено'
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Ошибка удаления изображения фигуры: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка удаления изображения фигуры: ' . $e->getMessage()
             ], 500);
         }
     }

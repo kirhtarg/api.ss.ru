@@ -999,4 +999,260 @@ class AuthController extends Controller
                     ->subject('Добро пожаловать на ' . ($siteInfo['site_name'] ?? 'Skate & Snow') . '!');
         });
     }
+
+    // ========== PASSWORD RECOVERY METHODS ==========
+
+    /**
+     * Отправить код для восстановления пароля
+     */
+    public function forgotPassword(Request $request): JsonResponse
+    {
+        try {
+            $request->validate([
+                'email' => 'required|email',
+            ]);
+
+            $email = $request->email;
+            
+            // Проверяем, существует ли пользователь
+            $user = User::where('email', $email)->first();
+            
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Пользователь с таким email не найден'
+                ], 404);
+            }
+
+            // Проверяем, зарегистрирован ли пользователь через соцсети или телефон
+            $authMethods = [];
+            
+            if (!empty($user->google_id)) {
+                $authMethods[] = 'google';
+            }
+            if (!empty($user->vk_id)) {
+                $authMethods[] = 'vk';
+            }
+            if (!empty($user->yandex_id)) {
+                $authMethods[] = 'yandex';
+            }
+            if (!empty($user->phone_verified_at)) {
+                $authMethods[] = 'phone';
+            }
+            
+            // Если пользователь зарегистрирован через соцсеть/телефон и НЕ имеет обычного пароля
+            // (проверяем, был ли когда-либо установлен пароль вручную)
+            if (!empty($authMethods)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Этот аккаунт зарегистрирован через другой способ авторизации',
+                    'auth_methods' => $authMethods,
+                    'error' => 'social_auth_account'
+                ], 400);
+            }
+
+            // Генерируем 6-значный код
+            $resetCode = str_pad(random_int(100000, 999999), 6, '0', STR_PAD_LEFT);
+            
+            // Сохраняем код в кеше (действителен 15 минут)
+            \Illuminate\Support\Facades\Cache::put(
+                'password_reset_code_' . $email,
+                $resetCode,
+                now()->addMinutes(15)
+            );
+
+            // Отправляем email с кодом
+            try {
+                $this->sendPasswordResetCodeEmail($user, $resetCode);
+            } catch (\Exception $e) {
+                Log::error('Password reset email sending failed: ' . $e->getMessage());
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка отправки письма. Попробуйте позже.'
+                ], 500);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Код для восстановления пароля отправлен на email'
+            ]);
+
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка отправки кода',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Проверить код восстановления пароля
+     */
+    public function verifyPasswordResetCode(Request $request): JsonResponse
+    {
+        try {
+            $request->validate([
+                'email' => 'required|email',
+                'code' => 'required|string|size:6',
+            ]);
+
+            $email = $request->email;
+            $code = $request->code;
+            
+            // Получаем сохраненный код из кеша
+            $cachedCode = \Illuminate\Support\Facades\Cache::get('password_reset_code_' . $email);
+
+            if (!$cachedCode || $cachedCode !== $code) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Неверный или истекший код'
+                ], 400);
+            }
+
+            // Генерируем токен для сброса пароля
+            $resetToken = Str::random(64);
+            
+            // Сохраняем токен в кеше (действителен 15 минут)
+            \Illuminate\Support\Facades\Cache::put(
+                'password_reset_token_' . $email,
+                $resetToken,
+                now()->addMinutes(15)
+            );
+
+            // Удаляем код из кеша
+            \Illuminate\Support\Facades\Cache::forget('password_reset_code_' . $email);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Код подтвержден',
+                'token' => $resetToken
+            ]);
+
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка проверки кода',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Сбросить пароль
+     */
+    public function resetPassword(Request $request): JsonResponse
+    {
+        try {
+            $request->validate([
+                'email' => 'required|email',
+                'token' => 'required|string',
+                'password' => 'required|string|min:8|confirmed',
+            ]);
+
+            $email = $request->email;
+            $token = $request->token;
+            
+            // Проверяем токен
+            $cachedToken = \Illuminate\Support\Facades\Cache::get('password_reset_token_' . $email);
+
+            if (!$cachedToken || $cachedToken !== $token) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Недействительный токен сброса пароля. Попробуйте снова.'
+                ], 400);
+            }
+
+            // Находим пользователя
+            $user = User::where('email', $email)->first();
+            
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Пользователь не найден'
+                ], 404);
+            }
+
+            // Обновляем пароль
+            $user->password = Hash::make($request->password);
+            $user->save();
+
+            // Удаляем токен из кеша
+            \Illuminate\Support\Facades\Cache::forget('password_reset_token_' . $email);
+
+            // Отправляем уведомление об изменении пароля
+            try {
+                $this->sendPasswordChangedEmail($user);
+            } catch (\Exception $e) {
+                Log::error('Password changed notification email failed: ' . $e->getMessage());
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Пароль успешно изменён'
+            ]);
+
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка сброса пароля',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Отправить email с кодом восстановления пароля
+     */
+    private function sendPasswordResetCodeEmail(User $user, string $code): void
+    {
+        // Получаем информацию о сайте
+        $siteInfo = SiteInfoService::getSiteInfoForEmail();
+        
+        // Отправляем письмо с кодом
+        Mail::send('emails.password-reset-code', [
+            'user' => $user,
+            'code' => $code,
+            'siteInfo' => $siteInfo
+        ], function ($message) use ($user, $siteInfo) {
+            $message->to($user->email, $user->name)
+                    ->subject('Код для восстановления пароля - ' . ($siteInfo['site_name'] ?? 'Skate & Snow'));
+        });
+    }
+
+    /**
+     * Отправить уведомление об изменении пароля
+     */
+    private function sendPasswordChangedEmail(User $user): void
+    {
+        // Получаем информацию о сайте
+        $siteInfo = SiteInfoService::getSiteInfoForEmail();
+        
+        // Отправляем уведомление
+        Mail::send('emails.password-changed', [
+            'user' => $user,
+            'siteInfo' => $siteInfo
+        ], function ($message) use ($user, $siteInfo) {
+            $message->to($user->email, $user->name)
+                    ->subject('Пароль изменён - ' . ($siteInfo['site_name'] ?? 'Skate & Snow'));
+        });
+    }
 }

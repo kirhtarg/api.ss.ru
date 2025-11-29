@@ -20,6 +20,10 @@ class ShopCategory extends Model
         'slug',
         'is_active',
         'is_main',
+        'in_catalog',
+        'in_figure',
+        'in_figure_img',
+        'in_figure_text',
         'sort_order',
         'parent_id'
     ];
@@ -27,6 +31,8 @@ class ShopCategory extends Model
     protected $casts = [
         'is_active' => 'boolean',
         'is_main' => 'boolean',
+        'in_catalog' => 'boolean',
+        'in_figure' => 'boolean',
         'sort_order' => 'integer',
         'parent_id' => 'integer'
     ];

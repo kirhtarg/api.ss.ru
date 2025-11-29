@@ -85,6 +85,11 @@ class ShopCategoriesController extends Controller
                     $category->image = $this->getImageUrl($category->image);
                 }
                 
+                // Обрабатываем изображение для фигуры
+                if ($category->in_figure_img) {
+                    $category->in_figure_img = $this->getImageUrl($category->in_figure_img);
+                }
+                
                 // Количество товаров в главной категории
                 $category->products_count = \DB::table('shop_good_categories')
                     ->join('shop_goods', 'shop_good_categories.good_id', '=', 'shop_goods.id')

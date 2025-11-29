@@ -121,6 +121,11 @@ class CategoryController extends Controller
                 'icon' => 'nullable|string|max:255',
                 'slug' => 'nullable|string|max:255|unique:shop_categories,slug',
                 'is_active' => 'boolean',
+                'is_main' => 'boolean',
+                'in_catalog' => 'boolean',
+                'in_figure' => 'boolean',
+                'in_figure_img' => 'nullable|string',
+                'in_figure_text' => 'nullable|string',
                 'sort_order' => 'integer|min:0',
                 'parent_id' => 'nullable|integer|exists:shop_categories,id'
             ]);
@@ -194,6 +199,11 @@ class CategoryController extends Controller
                 'icon' => 'nullable|string|max:255',
                 'slug' => 'nullable|string|max:255|unique:shop_categories,slug,' . $id,
                 'is_active' => 'boolean',
+                'is_main' => 'boolean',
+                'in_catalog' => 'boolean',
+                'in_figure' => 'boolean',
+                'in_figure_img' => 'nullable|string',
+                'in_figure_text' => 'nullable|string',
                 'sort_order' => 'integer|min:0',
                 'parent_id' => 'nullable|integer|exists:shop_categories,id'
             ]);
