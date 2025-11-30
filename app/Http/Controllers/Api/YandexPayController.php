@@ -540,6 +540,7 @@ class YandexPayController extends Controller
             $availablePaymentMethods = $request->input('available_payment_methods', ['CARD', 'SPLIT']);
             $orderId = $request->input('order_id');
             $forInfoWidgets = $request->input('for_info_widgets', false);
+            $useCreatePayment = $request->input('use_create_payment', false); // Для createPayment нужен totalAmount как строка
 
             // Use merchant_name from settings or fallback to payment method name
             $merchantName = $settings['merchant_name'] ?? $paymentMethod->name ?? 'Skate & Snow';
@@ -554,12 +555,18 @@ class YandexPayController extends Controller
                     'id' => $settings['merchant_id'],
                     'name' => $merchantName
                 ],
-                'totalAmount' => [
-                    'amount' => (string)round($amount, 2),
-                    'currency' => $currency,
-                ],
                 'availablePaymentMethods' => $availablePaymentMethods,
             ];
+            
+            // Для createPayment totalAmount должен быть строкой, для createSession - объектом
+            if ($useCreatePayment) {
+                $paymentData['totalAmount'] = (string)round($amount, 2);
+            } else {
+                $paymentData['totalAmount'] = [
+                    'amount' => (string)round($amount, 2),
+                    'currency' => $currency,
+            ];
+            }
             
             // For info widgets, use only minimal data
             if ($forInfoWidgets) {
