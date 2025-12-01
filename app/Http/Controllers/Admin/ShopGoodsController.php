@@ -820,6 +820,7 @@ class ShopGoodsController extends Controller
             'is_featured' => 'boolean',
             'is_new' => 'boolean',
             'is_sale' => 'boolean',
+            'is_preorder' => 'boolean',
             'sort_order' => 'integer',
             'category_ids' => 'array',
             'category_ids.*' => 'exists:shop_categories,id',
@@ -850,7 +851,7 @@ class ShopGoodsController extends Controller
                 'price', 'sale_price', 'demping_price', 'show_demping', 'label_id',
                 'stock_quantity', 'width', 'height',
                 'depth', 'weight', 'meta_title', 'meta_description',
-                'is_active', 'is_featured', 'is_new', 'is_sale', 'sort_order'
+                'is_active', 'is_featured', 'is_new', 'is_sale', 'is_preorder', 'sort_order'
             ]);
             
             // Явно обрабатываем remote_stock_quantity - всегда обновляем, даже если null
