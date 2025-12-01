@@ -55,6 +55,70 @@ class ShopGoodsController extends Controller
                 });
             });
         }
+
+        // Фильтр для режима 4: показывать товары с остатком > 0 ИЛИ товары с остатком = 0 и is_preorder = 1
+        if ($showGoodMode === 4) {
+            $query->where(function($mainQuery) use ($remoteQ) {
+                // Условие 1: остаток на локальном складе товара > 0
+                $mainQuery->where('stock_quantity', '>', 0);
+
+                if ($remoteQ === 2 || $remoteQ === 3) {
+                    // Условие 2: остаток на удаленном складе товара (не null, не пустая строка, не "0")
+                    $mainQuery->orWhere(function($remoteCondition) {
+                        $remoteCondition->whereNotNull('remote_stock_quantity')
+                            ->where('remote_stock_quantity', '!=', '0')
+                            ->where('remote_stock_quantity', '!=', '')
+                            ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                    });
+                }
+
+                // Условие 3: товар с остатком = 0, но is_preorder = 1
+                $mainQuery->orWhere(function($preorderCondition) {
+                    $preorderCondition->where('stock_quantity', '<=', 0)
+                        ->where(function($preorderSubCondition) {
+                            $preorderSubCondition->where('is_preorder', '=', 1)
+                                ->orWhere('is_preorder', '=', true);
+                        });
+                });
+
+                // Условие 4: есть вариации с остатком
+                $mainQuery->orWhereHas('variations', function($varQ) use ($remoteQ) {
+                    $varQ->where(function($subVarQ) use ($remoteQ) {
+                        $subVarQ->where('stock_quantity', '>', 0);
+
+                        if ($remoteQ === 2 || $remoteQ === 3) {
+                            $subVarQ->orWhere(function($remoteVarQ) {
+                                $remoteVarQ->whereNotNull('remote_stock_quantity')
+                                    ->where('remote_stock_quantity', '!=', '0')
+                                    ->where('remote_stock_quantity', '!=', '')
+                                    ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                            });
+                        }
+                    });
+                });
+
+                // Условие 5: все вариации без остатка, но is_preorder = 1 у товара
+                $mainQuery->orWhere(function($preorderVarCondition) use ($remoteQ) {
+                    $preorderVarCondition->where(function($preorderCheck) {
+                        $preorderCheck->where('is_preorder', '=', 1)
+                            ->orWhere('is_preorder', '=', true);
+                    })
+                    ->whereDoesntHave('variations', function($varQ) use ($remoteQ) {
+                        $varQ->where(function($subVarQ) use ($remoteQ) {
+                            $subVarQ->where('stock_quantity', '>', 0);
+                            if ($remoteQ === 2 || $remoteQ === 3) {
+                                $subVarQ->orWhere(function($remoteVarQ) {
+                                    $remoteVarQ->whereNotNull('remote_stock_quantity')
+                                        ->where('remote_stock_quantity', '!=', '0')
+                                        ->where('remote_stock_quantity', '!=', '')
+                                        ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                });
+                            }
+                        });
+                    });
+                });
+            });
+        }
     }
 
     /**
@@ -838,6 +902,10 @@ class ShopGoodsController extends Controller
             // Добавляем поле is_favorite к товару и нормализуем свойства
             $goodData = $good->toArray();
             $goodData['is_favorite'] = $isFavorite;
+            // Явно добавляем is_preorder, если его нет (для совместимости)
+            if (!isset($goodData['is_preorder'])) {
+                $goodData['is_preorder'] = $good->is_preorder ?? 0;
+            }
 
             // Нормализуем свойства до {id, name, value}
             if (isset($goodData['properties'])) {

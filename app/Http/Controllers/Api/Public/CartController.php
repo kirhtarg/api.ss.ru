@@ -235,7 +235,19 @@ class CartController extends Controller
                     } elseif ($showGoodMode === 3) {
                         // Режим 3: игнорируем остатки - разрешаем добавление
                     } elseif ($showGoodMode === 4) {
-                        // Режим 4: предзаказ - проверяем авторизацию и ограничиваем количество остатками
+                        // Режим 4: предзаказ - проверяем is_preorder
+                        $isPreorder = $variation->good->is_preorder == 1 || $variation->good->is_preorder === true;
+                        
+                        if (!$isPreorder && $stockQuantity <= 0) {
+                            // Если is_preorder = 0 и остаток = 0, блокируем добавление
+                            return response()->json([
+                                'success' => false,
+                                'message' => 'Товар недоступен для заказа',
+                                'is_preorder_disabled' => true
+                            ], 400);
+                        }
+                        
+                        // Если is_preorder = 1, разрешаем предзаказ
                         $user = $this->getUserFromToken($request);
                         if (!$user) {
                             return response()->json([
@@ -244,8 +256,8 @@ class CartController extends Controller
                                 'requires_auth' => true
                             ], 401);
                         }
-                        // Ограничиваем количество остатками
-                        if ($stockQuantity < $quantity) {
+                        // Ограничиваем количество остатками только если есть остаток
+                        if ($stockQuantity > 0 && $stockQuantity < $quantity) {
                             Log::info('Mode 4 addToCart variation: limiting quantity to stock', [
                                 'stock_quantity' => $stockQuantity,
                                 'requested_quantity' => $quantity,
@@ -289,7 +301,19 @@ class CartController extends Controller
                     } elseif ($showGoodMode === 3) {
                         // Режим 3: игнорируем остатки - разрешаем добавление
                     } elseif ($showGoodMode === 4) {
-                        // Режим 4: предзаказ - проверяем авторизацию и ограничиваем количество остатками
+                        // Режим 4: предзаказ - проверяем is_preorder
+                        $isPreorder = $good->is_preorder == 1 || $good->is_preorder === true;
+                        
+                        if (!$isPreorder && $stockQuantity <= 0) {
+                            // Если is_preorder = 0 и остаток = 0, блокируем добавление
+                            return response()->json([
+                                'success' => false,
+                                'message' => 'Товар недоступен для заказа',
+                                'is_preorder_disabled' => true
+                            ], 400);
+                        }
+                        
+                        // Если is_preorder = 1, разрешаем предзаказ
                         $user = $this->getUserFromToken($request);
                         if (!$user) {
                             return response()->json([
@@ -298,8 +322,8 @@ class CartController extends Controller
                                 'requires_auth' => true
                             ], 401);
                         }
-                        // Ограничиваем количество остатками
-                        if ($stockQuantity < $quantity) {
+                        // Ограничиваем количество остатками только если есть остаток
+                        if ($stockQuantity > 0 && $stockQuantity < $quantity) {
                             Log::info('Mode 4 addToCart main: limiting quantity to stock', [
                                 'stock_quantity' => $stockQuantity,
                                 'requested_quantity' => $quantity,
