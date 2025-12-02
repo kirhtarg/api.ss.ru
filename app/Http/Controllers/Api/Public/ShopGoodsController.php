@@ -309,12 +309,19 @@ class ShopGoodsController extends Controller
                 if (is_array($properties) && !empty($properties)) {
                     foreach ($properties as $propertyId => $values) {
                         if (is_array($values) && !empty($values)) {
-                            $query->whereHas('properties', function($q) use ($propertyId, $values) {
-                                $q->where('shop_properties.id', $propertyId)
-                                  ->whereHas('values', function($pv) use ($values) {
-                                      $pv->whereIn('value', $values);
-                                  });
-                            });
+                            // Получаем ID значений из таблицы shop_property_values по их строковым значениям
+                            $valueIds = \App\Models\Shop\PropertyValue::where('property_id', $propertyId)
+                                ->whereIn('value', $values)
+                                ->pluck('id')
+                                ->toArray();
+                            
+                            if (!empty($valueIds)) {
+                                // Фильтруем товары, у которых есть свойство с указанным ID и одним из выбранных значений
+                                $query->whereHas('properties', function($q) use ($propertyId, $valueIds) {
+                                    $q->where('shop_properties.id', $propertyId)
+                                      ->whereIn('shop_good_properties.shop_property_value_id', $valueIds);
+                                });
+                            }
                         }
                     }
                 }
