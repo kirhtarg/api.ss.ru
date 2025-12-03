@@ -40,6 +40,7 @@ class ShopOrder extends Model
         'payment_method',
         'payment_method_id',
         'yandex_pay_order_id',
+        'payment_url',
         'yookassa_payment_id',
         'shipping_method',
         'shipping_method_id',

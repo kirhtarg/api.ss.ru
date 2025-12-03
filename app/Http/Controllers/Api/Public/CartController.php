@@ -784,28 +784,10 @@ class CartController extends Controller
             }
 
             // Определяем is_active и paid в зависимости от типа оплаты
-            // Онлайн оплата (yandex_pay, yookassa, yandex_split, test_bank, card) - при создании предварительного счета: is_active=false, paid=false
-            // Оплата при получении (cash) - is_active=true, paid=false
-            // Другие случаи - is_active=true, paid=false
+            // Все заказы создаются активными (is_active=true)
+            // При успешной оплате будет установлено paid=true через webhook
             $isActive = true;
             $isPaid = false;
-            
-            $onlinePaymentTypes = ['yandex_pay', 'yookassa', 'yandex_split', 'test_bank', 'card'];
-            
-            if ($paymentMethodType && in_array($paymentMethodType, $onlinePaymentTypes)) {
-                // Для онлайн оплаты при создании предварительного счета - is_active=false
-                // (при успешной оплате будет установлено is_active=true, paid=true через webhook)
-                $isActive = false;
-                $isPaid = false;
-            } elseif ($paymentMethodType === 'cash') {
-                // Для оплаты при получении (самовывоз) - is_active=true, paid=false
-                $isActive = true;
-                $isPaid = false;
-            } else {
-                // В других случаях - is_active=true, paid=false
-                $isActive = true;
-                $isPaid = false;
-            }
 
             // delivery_status_id зависит от типа доставки
             $deliveryStatusId = 1; // Создан (по умолчанию)
@@ -870,7 +852,7 @@ class CartController extends Controller
                 $customerUser = User::find($customerId);
                 $userName = $customerUser ? $customerUser->name : null;
             }
-            ShopOrderLog::logOrderCreated($order->id, $userName ?? $request->get('customer_name', 'Покупатель'), null, $order->order_number);
+            ShopOrderLog::logOrderCreated($order->id, $userName ?? $request->get('customer_name', 'Покупатель'), ShopOrderLog::SECTION_ORDERS, $order->order_number);
 
             // Создаем запись об использовании промокода, если он был применен
             if ($request->get('promo_code_id')) {
@@ -996,14 +978,40 @@ class CartController extends Controller
                 Log::error('Email notification error: ' . $e->getMessage());
             }
 
-            return response()->json([
+            // Проверяем настройку two_stage_pay
+            $twoStagePay = \App\Models\Setting::where('key', 'two_stage_pay')->first();
+            $isTwoStagePay = $twoStagePay && ($twoStagePay->value === '1' || $twoStagePay->value === true);
+            
+            // Проверяем, является ли способ оплаты банковским переводом, Яндекс.Пэй или Ю-мани
+            $paymentMethodId = $request->get('payment_method_id');
+            $paymentMethodName = $request->get('payment_method');
+            $isTwoStagePaymentMethod = false;
+            
+            if ($paymentMethodId) {
+                $paymentMethodModel = \App\Models\ShopPaymentMethod::find($paymentMethodId);
+                if ($paymentMethodModel) {
+                    $isTwoStagePaymentMethod = in_array($paymentMethodModel->type, ['transfer', 'yandex_pay', 'yandex_split', 'yookassa']);
+                }
+            } elseif ($paymentMethodName === 'Банковский перевод') {
+                $isTwoStagePaymentMethod = true;
+            }
+            
+            $responseData = [
                 'success' => true,
                 'message' => 'Заказ создан успешно',
                 'data' => [
                     'order_id' => $order->id,
                     'order_number' => $order->order_number
                 ]
-            ]);
+            ];
+            
+            // Если включена двухэтапная оплата и способ оплаты требует одобрения
+            if ($isTwoStagePay && $isTwoStagePaymentMethod) {
+                $responseData['two_stage_pay'] = true;
+                $responseData['message'] = 'Заказ создан. Менеджер проверит наличие товаров и после одобрения вы сможете произвести оплату.';
+            }
+            
+            return response()->json($responseData);
 
         } catch (\Exception $e) {
             Log::error('Ошибка создания заказа: ' . $e->getMessage(), [

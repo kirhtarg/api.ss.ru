@@ -481,27 +481,70 @@ class ShopGoodsController extends Controller
         }
 
         // Фильтр по общему остатку (total_stock)
+        // Если у товара есть вариации, остатки вариаций проверяются в приоритете
         if ($request->filled('total_stock_not_empty')) {
-            // Остаток > 0 ИЛИ остаток на у/с не пустой/не "0"
-            $query->where(function($q) {
-                $q->where('stock_quantity', '>', 0)
-                  ->orWhere(function($remoteQ) {
-                      $remoteQ->whereNotNull('remote_stock_quantity')
-                          ->where('remote_stock_quantity', '!=', '')
-                          ->where('remote_stock_quantity', '!=', '0')
-                          ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
-                  });
+            // В наличии: (нет вариаций И остаток основного товара > 0 или у/с не пустой) ИЛИ (есть вариации И есть вариации с остатком)
+            $query->where(function($mainQuery) {
+                // Вариант 1: Нет вариаций И остаток основного товара > 0 или у/с не пустой
+                $mainQuery->where(function($noVariationsQuery) {
+                    $noVariationsQuery->whereDoesntHave('variations')
+                        ->where(function($stockQuery) {
+                            $stockQuery->where('stock_quantity', '>', 0)
+                                ->orWhere(function($remoteCondition) {
+                                    $remoteCondition->whereNotNull('remote_stock_quantity')
+                                        ->where('remote_stock_quantity', '!=', '0')
+                                        ->where('remote_stock_quantity', '!=', '')
+                                        ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                });
+                        });
+                });
+
+                // Вариант 2: Есть вариации И есть вариации с остатком
+                $mainQuery->orWhere(function($hasVariationsQuery) {
+                    $hasVariationsQuery->whereHas('variations')
+                        ->whereHas('variations', function($varQ) {
+                            $varQ->where(function($subVarQ) {
+                                $subVarQ->where('stock_quantity', '>', 0)
+                                    ->orWhere(function($remoteVarQ) {
+                                        $remoteVarQ->whereNotNull('remote_stock_quantity')
+                                            ->where('remote_stock_quantity', '!=', '0')
+                                            ->where('remote_stock_quantity', '!=', '')
+                                            ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                    });
+                            });
+                        });
+                });
             });
         } elseif ($request->filled('total_stock_both_empty')) {
-            // Оба остатка пустые: stock_quantity = 0 И remote_stock_quantity пустой/равен "0"
-            $query->where(function($q) {
-                $q->where('stock_quantity', '=', 0)
-                  ->where(function($remoteQ) {
-                      $remoteQ->whereNull('remote_stock_quantity')
-                          ->orWhere('remote_stock_quantity', '=', '')
-                          ->orWhere('remote_stock_quantity', '=', '0')
-                          ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
-                  });
+            // Нет в наличии: (нет вариаций И остаток основного товара = 0 и у/с пустой) ИЛИ (есть вариации И нет вариаций с остатком)
+            $query->where(function($mainQuery) {
+                // Вариант 1: Нет вариаций И остаток основного товара = 0 и у/с пустой
+                $mainQuery->where(function($noVariationsQuery) {
+                    $noVariationsQuery->whereDoesntHave('variations')
+                        ->where('stock_quantity', '=', 0)
+                        ->where(function($remoteCondition) {
+                            $remoteCondition->whereNull('remote_stock_quantity')
+                                ->orWhere('remote_stock_quantity', '=', '0')
+                                ->orWhere('remote_stock_quantity', '=', '')
+                                ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
+                        });
+                });
+
+                // Вариант 2: Есть вариации И нет вариаций с остатком
+                $mainQuery->orWhere(function($hasVariationsQuery) {
+                    $hasVariationsQuery->whereHas('variations')
+                        ->whereDoesntHave('variations', function($varQ) {
+                            $varQ->where(function($subVarQ) {
+                                $subVarQ->where('stock_quantity', '>', 0)
+                                    ->orWhere(function($remoteVarQ) {
+                                        $remoteVarQ->whereNotNull('remote_stock_quantity')
+                                            ->where('remote_stock_quantity', '!=', '0')
+                                            ->where('remote_stock_quantity', '!=', '')
+                                            ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                    });
+                            });
+                        });
+                });
             });
         }
 

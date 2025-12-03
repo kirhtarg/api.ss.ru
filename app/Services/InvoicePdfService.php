@@ -118,8 +118,7 @@ class InvoicePdfService
         $tableData = [
             ['Банк получателя', $this->cleanText($settings['bank_name'] ?? '')],
             ['БИК', $this->cleanText($settings['bik'] ?? '')],
-            ['Сч. №', $this->cleanText($settings['correspondent_account'] ?? '')],
-            ['Банк получателя', $this->cleanText($settings['bank_name'] ?? '')],
+            ['Корр. сч. №', $this->cleanText($settings['correspondent_account'] ?? '')],
             ['ИНН', $this->cleanText($settings['inn'] ?? '')],
             ['КПП', $this->cleanText($settings['kpp'] ?? '')],
             ['Сч. №', $this->cleanText($settings['account_number'] ?? '')],

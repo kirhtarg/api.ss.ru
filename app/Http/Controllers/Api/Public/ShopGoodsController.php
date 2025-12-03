@@ -122,6 +122,123 @@ class ShopGoodsController extends Controller
     }
 
     /**
+     * Применить пользовательскую фильтрацию по остаткам
+     */
+    private function applyCustomStockFilter($query, $stockFilter) {
+        $shopRemoteQ = Setting::where('key', 'shop_remote_q')->first();
+        $remoteQ = $shopRemoteQ ? (int)$shopRemoteQ->value : 1;
+
+        if ($stockFilter === 'in_stock') {
+            // Только товары в наличии
+            // Если у товара есть вариации, остатки основного товара не учитываются
+            // Товар в наличии, если:
+            // 1. (Нет вариаций И остаток основного товара > 0) ИЛИ
+            // 2. (Есть вариации И есть вариации с остатком)
+            $query->where(function($mainQuery) use ($remoteQ) {
+                // Вариант 1: Нет вариаций И (остаток основного товара > 0 ИЛИ остаток на у/с не пустой)
+                $mainQuery->where(function($noVariationsQuery) {
+                    $noVariationsQuery->whereDoesntHave('variations')
+                        ->where(function($stockQuery) {
+                            $stockQuery->where('stock_quantity', '>', 0)
+                                ->orWhere(function($remoteCondition) {
+                                    $remoteCondition->whereNotNull('remote_stock_quantity')
+                                        ->where('remote_stock_quantity', '!=', '0')
+                                        ->where('remote_stock_quantity', '!=', '')
+                                        ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                });
+                        });
+                });
+
+                // Вариант 2: Есть вариации И есть вариации с остатком
+                $mainQuery->orWhere(function($hasVariationsQuery) use ($remoteQ) {
+                    $hasVariationsQuery->whereHas('variations')
+                        ->whereHas('variations', function($varQ) use ($remoteQ) {
+                            $varQ->where(function($subVarQ) use ($remoteQ) {
+                                $subVarQ->where('stock_quantity', '>', 0);
+                                if ($remoteQ === 2 || $remoteQ === 3) {
+                                    $subVarQ->orWhere(function($remoteVarQ) {
+                                        $remoteVarQ->whereNotNull('remote_stock_quantity')
+                                            ->where('remote_stock_quantity', '!=', '0')
+                                            ->where('remote_stock_quantity', '!=', '')
+                                            ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                    });
+                                }
+                            });
+                        });
+                });
+            });
+        } elseif ($stockFilter === 'out_of_stock') {
+            // Только товары не в наличии
+            // Если у товара есть вариации, остатки основного товара не учитываются
+            // Товар не в наличии, если:
+            // 1. (Нет вариаций И остаток основного товара = 0) ИЛИ
+            // 2. (Есть вариации И нет вариаций с остатком)
+            $query->where(function($mainQuery) use ($remoteQ) {
+                // Вариант 1: Нет вариаций И остаток основного товара = 0 И остаток на у/с пустой
+                $mainQuery->where(function($noVariationsQuery) {
+                    $noVariationsQuery->whereDoesntHave('variations')
+                        ->where('stock_quantity', '=', 0)
+                        ->where(function($remoteCondition) {
+                            $remoteCondition->whereNull('remote_stock_quantity')
+                                ->orWhere('remote_stock_quantity', '=', '0')
+                                ->orWhere('remote_stock_quantity', '=', '')
+                                ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
+                        });
+                });
+
+                // Вариант 2: Есть вариации И нет вариаций с остатком
+                $mainQuery->orWhere(function($hasVariationsQuery) use ($remoteQ) {
+                    $hasVariationsQuery->whereHas('variations')
+                        ->whereDoesntHave('variations', function($varQ) use ($remoteQ) {
+                            $varQ->where(function($subVarQ) use ($remoteQ) {
+                                $subVarQ->where('stock_quantity', '>', 0);
+                                if ($remoteQ === 2 || $remoteQ === 3) {
+                                    $subVarQ->orWhere(function($remoteVarQ) {
+                                        $remoteVarQ->whereNotNull('remote_stock_quantity')
+                                            ->where('remote_stock_quantity', '!=', '0')
+                                            ->where('remote_stock_quantity', '!=', '')
+                                            ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                    });
+                                }
+                            });
+                        });
+                });
+            });
+        } elseif ($stockFilter === 'preorder') {
+            // Только товары для предзаказа (остатки = 0 и is_preorder = 1)
+            $query->where(function($mainQuery) use ($remoteQ) {
+                $mainQuery->where(function($preorderCondition) {
+                    $preorderCondition->where('is_preorder', '=', 1)
+                        ->orWhere('is_preorder', '=', true);
+                });
+                $mainQuery->where('stock_quantity', '=', 0);
+                if ($remoteQ === 2 || $remoteQ === 3) {
+                    $mainQuery->where(function($remoteCondition) {
+                        $remoteCondition->whereNull('remote_stock_quantity')
+                            ->orWhere('remote_stock_quantity', '=', '0')
+                            ->orWhere('remote_stock_quantity', '=', '')
+                            ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
+                    });
+                }
+                $mainQuery->whereDoesntHave('variations', function($varQ) use ($remoteQ) {
+                    $varQ->where(function($subVarQ) use ($remoteQ) {
+                        $subVarQ->where('stock_quantity', '>', 0);
+                        if ($remoteQ === 2 || $remoteQ === 3) {
+                            $subVarQ->orWhere(function($remoteVarQ) {
+                                $remoteVarQ->whereNotNull('remote_stock_quantity')
+                                    ->where('remote_stock_quantity', '!=', '0')
+                                    ->where('remote_stock_quantity', '!=', '')
+                                    ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                            });
+                        }
+                    });
+                });
+            });
+        }
+        // Если stockFilter === 'all', не применяем фильтрацию (показываем все)
+    }
+
+    /**
      * Переключить избранное для товара
      */
     public function toggleFavorite(Request $request): JsonResponse
@@ -302,6 +419,36 @@ class ShopGoodsController extends Controller
             if ($request->has('max_price')) {
                 $query->where('price', '<=', $request->input('max_price'));
             }
+            
+            // Фильтрация по товарам с неопределенной ценой (цена = 0)
+            // Если передан параметр include_zero_price и он true, показываем товары с ценой 0
+            // Иначе проверяем параметр hidden_0_price из настроек сайта
+            $includeZeroPrice = $request->has('include_zero_price') && $request->input('include_zero_price');
+            
+            if (!$includeZeroPrice) {
+                // Получаем параметр hidden_0_price из настроек
+                $hidden0PriceSetting = Setting::where('key', 'hidden_0_price')->first();
+                $hidden0Price = $hidden0PriceSetting ? (int)$hidden0PriceSetting->value : 0;
+                
+                // Если hidden_0_price = 1, не показываем товары с ценой 0
+                if ($hidden0Price === 1) {
+                    $query->where(function($q) {
+                        // Показываем товары, у которых цена > 0 (проверяем и price, и sale_price)
+                        $q->where(function($priceQ) {
+                            $priceQ->where('price', '>', 0)
+                                   ->orWhere('sale_price', '>', 0);
+                        })
+                        // ИЛИ есть вариации с ценой > 0
+                        ->orWhereHas('variations', function($varQ) {
+                            $varQ->where('is_active', true)
+                                 ->where(function($varPriceQ) {
+                                     $varPriceQ->where('price', '>', 0)
+                                               ->orWhere('sale_price', '>', 0);
+                                 });
+                        });
+                    });
+                }
+            }
 
             // Фильтрация по свойствам
             if ($request->has('properties')) {
@@ -345,7 +492,13 @@ class ShopGoodsController extends Controller
             }
 
             // Фильтрация по остаткам (shop_show_good_mode)
-            $this->applyStockFilter($query);
+            // Если передан параметр stock_filter, используем его вместо автоматической фильтрации
+            if ($request->has('stock_filter')) {
+                $stockFilter = $request->input('stock_filter');
+                $this->applyCustomStockFilter($query, $stockFilter);
+            } else {
+                $this->applyStockFilter($query);
+            }
 
             // Пагинация
             $perPage = $request->input('limit', 20);

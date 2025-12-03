@@ -25,7 +25,8 @@ class SiteInfoController extends Controller
                 ->where(function ($query) {
                     $query->whereIn('group', ['general', 'site', 'auth', 'shop'])
                           ->orWhere('key', 'site_google_font') // Включаем параметр Google Fonts из любой группы
-                          ->orWhere('key', 'yandex_metrika'); // Включаем параметр Яндекс.Метрики из любой группы
+                          ->orWhere('key', 'yandex_metrika') // Включаем параметр Яндекс.Метрики из любой группы
+                          ->orWhere('key', 'show_counters'); // Включаем параметр show_counters из любой группы
                 })
                 ->get();
 
@@ -71,16 +72,19 @@ class SiteInfoController extends Controller
             $publicSettings = Cache::remember($cacheKey, 3600, function () {
                 // Получаем только публичные настройки с group='global'
                 $settings = Setting::select('key', 'value')
-                    ->where('group', 'global')
-                    ->whereIn('key', [
-                        'admin_name',
-                        'site_logo',
-                        'site_description',
-                        'site_keywords',
-                        'contact_email',
-                        'contact_phone',
-                        'working_hours'
-                    ])
+                    ->where(function ($query) {
+                        $query->where('group', 'global')
+                              ->whereIn('key', [
+                                  'admin_name',
+                                  'site_logo',
+                                  'site_description',
+                                  'site_keywords',
+                                  'contact_email',
+                                  'contact_phone',
+                                  'working_hours'
+                              ]);
+                    })
+                    ->orWhere('key', 'show_counters') // Включаем параметр show_counters из любой группы
                     ->get();
 
                 $publicSettings = [];

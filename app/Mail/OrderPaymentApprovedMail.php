@@ -12,9 +12,8 @@ use Illuminate\Queue\SerializesModels;
 use App\Services\InvoicePdfService;
 use App\Models\ShopPaymentMethod;
 use App\Models\Contact;
-use App\Models\Setting;
 
-class OrderInvoiceMail extends Mailable
+class OrderPaymentApprovedMail extends Mailable
 {
     use Queueable, SerializesModels;
 
@@ -37,12 +36,7 @@ class OrderInvoiceMail extends Mailable
      */
     public function envelope(): Envelope
     {
-        $subject = 'Накладная по заказу №' . $this->order->order_number;
-        
-        // Если способ оплаты - банковский перевод, меняем тему письма
-        if ($this->isTransferPaymentMethod()) {
-            $subject = 'Счет на оплату по заказу №' . $this->order->order_number;
-        }
+        $subject = 'Заказ №' . $this->order->order_number . ' готов к оплате';
         
         return new Envelope(
             subject: $subject,
@@ -55,7 +49,7 @@ class OrderInvoiceMail extends Mailable
     public function content(): Content
     {
         return new Content(
-            view: 'emails.order-invoice',
+            view: 'emails.order-payment-approved',
         );
     }
 
@@ -68,18 +62,8 @@ class OrderInvoiceMail extends Mailable
     {
         $attachments = [];
         
-        // Проверяем настройку two_stage_pay
-        $twoStagePay = Setting::where('key', 'two_stage_pay')->first();
-        $isTwoStagePay = $twoStagePay && ($twoStagePay->value === '1' || $twoStagePay->value === true);
-        
-        // Если включена двухэтапная оплата и оплата еще не одобрена, не прикрепляем счет
-        if ($isTwoStagePay && (!$this->order->pay_agree || $this->order->pay_agree == 0)) {
-            return $attachments;
-        }
-        
         // Если способ оплаты - банковский перевод, добавляем PDF счет
         if ($this->isTransferPaymentMethod()) {
-            
             try {
                 $pdfService = new InvoicePdfService();
                 
@@ -154,3 +138,4 @@ class OrderInvoiceMail extends Mailable
         return false;
     }
 }
+

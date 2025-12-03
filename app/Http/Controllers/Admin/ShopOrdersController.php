@@ -2707,7 +2707,8 @@ class ShopOrdersController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
-                'pay_agree' => 'required|boolean'
+                'pay_agree' => 'required|boolean',
+                'send_email' => 'nullable|boolean'
             ]);
 
             if ($validator->fails()) {
@@ -2720,6 +2721,7 @@ class ShopOrdersController extends Controller
 
             $order = ShopOrder::findOrFail($id);
             $newPayAgree = $request->get('pay_agree');
+            $sendEmail = $request->get('send_email', false);
             
             $order->pay_agree = $newPayAgree;
             $order->save();
@@ -2736,6 +2738,34 @@ class ShopOrdersController extends Controller
                 'section' => ShopOrderLog::SECTION_ORDERS,
                 'info' => "Заказ № {$order->order_number}"
             ]);
+
+            // Отправляем письмо, если оплата разрешена и запрошена отправка
+            if ($newPayAgree && $sendEmail) {
+                try {
+                    // Загружаем заказ с необходимыми отношениями
+                    $order->load(['status', 'paymentMethod', 'deliveryMethod']);
+                    
+                    $contacts = \App\Models\Contact::where('is_main', 1)->first();
+                    $siteInfo = \App\Services\SiteInfoService::getSiteInfoForEmail();
+                    
+                    // Убеждаемся, что items преобразованы в массив
+                    if (is_string($order->items)) {
+                        $order->items = json_decode($order->items, true);
+                    }
+                    
+                    \Illuminate\Support\Facades\Mail::to($order->customer_email)->send(
+                        new \App\Mail\OrderPaymentApprovedMail($order, $contacts, $siteInfo)
+                    );
+                    
+                    Log::info('Payment approved email sent to: ' . $order->customer_email);
+                } catch (\Exception $e) {
+                    Log::error('Ошибка отправки письма о разрешении оплаты: ' . $e->getMessage(), [
+                        'order_id' => $order->id,
+                        'trace' => $e->getTraceAsString()
+                    ]);
+                    // Не прерываем выполнение, только логируем ошибку
+                }
+            }
 
             return response()->json([
                 'success' => true,

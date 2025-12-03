@@ -14,6 +14,8 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Http;
+use App\Models\ShopPaymentMethod;
 
 class UserOrdersController extends Controller
 {
@@ -48,6 +50,18 @@ class UserOrdersController extends Controller
             // Обогащаем данные заказов
             $orders->getCollection()->transform(function ($order) {
                 $order->items = $order->getItemsWithDetails();
+                
+                // Если payment_url отсутствует, но есть yookassa_payment_id, пытаемся получить его из API
+                if (!$order->payment_url && $order->yookassa_payment_id) {
+                    $paymentUrl = $this->getYooKassaPaymentUrl($order->yookassa_payment_id);
+                    
+                    if ($paymentUrl) {
+                        $order->payment_url = $paymentUrl;
+                        // Сохраняем в БД для будущих запросов
+                        $order->update(['payment_url' => $paymentUrl]);
+                    }
+                }
+                
                 return $order;
             });
 
@@ -542,6 +556,72 @@ class UserOrdersController extends Controller
                 'success' => false,
                 'message' => 'Ошибка загрузки статусов: ' . $e->getMessage()
             ], 500);
+        }
+    }
+
+    /**
+     * Получить payment_url из API YooKassa по payment ID
+     */
+    private function getYooKassaPaymentUrl(string $paymentId): ?string
+    {
+        try {
+            $paymentMethod = ShopPaymentMethod::where('type', 'yookassa')->first();
+            if (!$paymentMethod) {
+                Log::warning('Метод оплаты YooKassa не найден');
+                return null;
+            }
+            
+            $settings = $paymentMethod->getApiSettings();
+            if (empty($settings['shop_id']) || empty($settings['secret_key'])) {
+                Log::warning('Настройки YooKassa не заполнены', [
+                    'has_shop_id' => !empty($settings['shop_id']),
+                    'has_secret_key' => !empty($settings['secret_key'])
+                ]);
+                return null;
+            }
+            
+            $apiUrl = 'https://api.yookassa.ru/v3/payments/' . $paymentId;
+            
+            $response = Http::withBasicAuth($settings['shop_id'], $settings['secret_key'])
+                ->withOptions(['verify' => false])
+                ->get($apiUrl);
+            
+            if ($response->successful()) {
+                $data = $response->json();
+                
+                // Проверяем разные возможные места, где может быть payment_url
+                if (isset($data['confirmation']['confirmation_url'])) {
+                    return $data['confirmation']['confirmation_url'];
+                } elseif (isset($data['confirmation_url'])) {
+                    return $data['confirmation_url'];
+                } elseif (isset($data['payment_url'])) {
+                    return $data['payment_url'];
+                } elseif (isset($data['data']['confirmation_url'])) {
+                    return $data['data']['confirmation_url'];
+                }
+                
+                // Если есть confirmation_token, формируем URL для redirect
+                if (isset($data['confirmation']['confirmation_token'])) {
+                    $confirmationType = $data['confirmation']['type'] ?? 'redirect';
+                    
+                    // Для всех типов формируем URL
+                    if (in_array($confirmationType, ['redirect', 'embedded', 'qr'])) {
+                        return 'https://yoomoney.ru/checkout/payments/v2/contract?orderId=' . $paymentId;
+                    }
+                }
+            } else {
+                Log::warning('Ошибка запроса к YooKassa API', [
+                    'status' => $response->status(),
+                    'body' => $response->body()
+                ]);
+            }
+            
+            return null;
+        } catch (\Exception $e) {
+            Log::error('Ошибка получения payment_url из YooKassa: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
+            return null;
         }
     }
 }

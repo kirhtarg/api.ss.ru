@@ -213,27 +213,48 @@
                 Спасибо за ваш заказ! Мы получили его и в ближайшее время свяжемся с вами для подтверждения деталей. 
                 Ниже представлена подробная информация о вашем заказе.
             </p>
-            @if($order->payment_method === 'Банковский перевод' || (isset($order->payment_method_id) && $order->payment_method_id))
-                @php
-                    $isTransfer = false;
-                    if ($order->payment_method === 'Банковский перевод') {
-                        $isTransfer = true;
-                    } elseif (isset($order->payment_method_id)) {
-                        $paymentMethod = \App\Models\ShopPaymentMethod::find($order->payment_method_id);
-                        $isTransfer = $paymentMethod && $paymentMethod->type === 'transfer';
+            @php
+                $twoStagePay = \App\Models\Setting::where('key', 'two_stage_pay')->first();
+                $isTwoStagePay = $twoStagePay && ($twoStagePay->value === '1' || $twoStagePay->value === true);
+                $isTwoStagePaymentMethod = false;
+                $isTransfer = false;
+                
+                if (isset($order->payment_method_id)) {
+                    $paymentMethod = \App\Models\ShopPaymentMethod::find($order->payment_method_id);
+                    if ($paymentMethod) {
+                        $isTwoStagePaymentMethod = in_array($paymentMethod->type, ['transfer', 'yandex_pay', 'yandex_split', 'yookassa']);
+                        $isTransfer = $paymentMethod->type === 'transfer';
                     }
-                @endphp
-                @if($isTransfer)
-                    <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 15px 0; border-left: 4px solid #ffc107;">
-                        <p style="margin: 0 0 10px 0; color: #856404; font-size: 16px; font-weight: bold;">
-                            💳 Счет на оплату
-                        </p>
-                        <p style="margin: 0; color: #856404; font-size: 14px; line-height: 1.5;">
+                } elseif ($order->payment_method === 'Банковский перевод') {
+                    $isTwoStagePaymentMethod = true;
+                    $isTransfer = true;
+                }
+            @endphp
+            
+            @if($isTwoStagePay && $isTwoStagePaymentMethod && (!$order->pay_agree || $order->pay_agree == 0))
+                <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 15px 0; border-left: 4px solid #ffc107;">
+                    <p style="margin: 0 0 10px 0; color: #856404; font-size: 16px; font-weight: bold;">
+                        ⏳ Ожидание одобрения менеджера
+                    </p>
+                    <p style="margin: 0; color: #856404; font-size: 14px; line-height: 1.5;">
+                        Менеджер проверит наличие товаров в заказе. После одобрения заказа вы получите уведомление и сможете произвести оплату в личном кабинете или по ссылке, приложенной к письму.
+                    </p>
+                </div>
+            @elseif($isTransfer && (!$isTwoStagePay || ($isTwoStagePay && $order->pay_agree)))
+                <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 15px 0; border-left: 4px solid #ffc107;">
+                    <p style="margin: 0 0 10px 0; color: #856404; font-size: 16px; font-weight: bold;">
+                        💳 Счет на оплату
+                    </p>
+                    <p style="margin: 0; color: #856404; font-size: 14px; line-height: 1.5;">
+                        @if($isTwoStagePay && $order->pay_agree)
                             К данному письму прикреплен счет на оплату в формате PDF с банковскими реквизитами и суммой к оплате. 
                             Пожалуйста, произведите оплату по указанным реквизитам.
-                        </p>
-                    </div>
-                @endif
+                        @else
+                            К данному письму прикреплен счет на оплату в формате PDF с банковскими реквизитами и суммой к оплате. 
+                            Пожалуйста, произведите оплату по указанным реквизитам.
+                        @endif
+                    </p>
+                </div>
             @endif
             <p style="margin: 15px 0 0 0; color: #155724; font-size: 14px;">
                 Посетите наш <a href="{{ $siteInfo['main_site'] ?? config('app.url') }}" style="color: #28a745; text-decoration: none; font-weight: bold;">интернет-магазин</a> 

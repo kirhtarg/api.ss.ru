@@ -8,12 +8,18 @@ use App\Models\ShopPaymentTransaction;
 use App\Models\ShopOrder;
 use App\Models\ShopOrderLog;
 use App\Models\ShopGood;
+use App\Models\Setting;
+use App\Services\NotificationService;
+use App\Services\TelegramService;
+use App\Mail\OrderInvoiceMail;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Auth;
 
 class ShopPaymentController extends Controller
 {
@@ -116,8 +122,6 @@ class ShopPaymentController extends Controller
         try {
             $settings = $paymentMethod->getApiSettings();
             
-            Log::info('YooKassa settings:', $settings);
-            
             if (empty($settings['shop_id']) || empty($settings['secret_key'])) {
                 Log::error('YooKassa settings missing: shop_id=' . ($settings['shop_id'] ?? 'empty') . ', secret_key=' . (empty($settings['secret_key']) ? 'empty' : 'present'));
                 return response()->json([
@@ -196,8 +200,6 @@ class ShopPaymentController extends Controller
                     $paymentData = array_merge($paymentData, $additionalSettings);
                 }
             }
-
-            Log::info('YooKassa payment data:', $paymentData);
             
             $response = Http::withBasicAuth($settings['shop_id'], $settings['secret_key'])
                 ->withHeaders([
@@ -208,9 +210,6 @@ class ShopPaymentController extends Controller
                     'verify' => false // Отключаем проверку SSL для локальной разработки
                 ])
                 ->post($apiUrl, $paymentData);
-                
-            Log::info('YooKassa response status: ' . $response->status());
-            Log::info('YooKassa response body: ' . $response->body());
 
             if ($response->successful()) {
                 $responseData = $response->json();
@@ -223,10 +222,66 @@ class ShopPaymentController extends Controller
                     'status' => 'pending'
                 ]);
 
-                // Сохраняем ID платежа в ЮKassa в заказе
+                // Проверяем настройку two_stage_pay
+                $twoStagePay = Setting::where('key', 'two_stage_pay')->first();
+                $isTwoStagePay = $twoStagePay && ($twoStagePay->value === '1' || $twoStagePay->value === true);
+                
+                // Получаем payment_url из ответа (если есть)
+                // YooKassa может возвращать URL в разных местах
+                $paymentUrl = null;
+                if (isset($responseData['confirmation']['confirmation_url'])) {
+                    $paymentUrl = $responseData['confirmation']['confirmation_url'];
+                } elseif (isset($responseData['confirmation_url'])) {
+                    $paymentUrl = $responseData['confirmation_url'];
+                } elseif (isset($responseData['payment_url'])) {
+                    $paymentUrl = $responseData['payment_url'];
+                } elseif (isset($responseData['data']['confirmation_url'])) {
+                    $paymentUrl = $responseData['data']['confirmation_url'];
+                }
+                
+                // Если payment_url не найден, но есть confirmation_token, формируем URL
+                if (!$paymentUrl && isset($responseData['confirmation']['confirmation_token'])) {
+                    $confirmationType = $responseData['confirmation']['type'] ?? 'redirect';
+                    // Формируем URL для оплаты на основе payment ID
+                    $paymentUrl = 'https://yoomoney.ru/checkout/payments/v2/contract?orderId=' . $yookassaPaymentId;
+                }
+                
+                if (!$paymentUrl) {
+                    Log::warning('YooKassa: URL оплаты не найден в ответе', [
+                        'response_structure' => array_keys($responseData),
+                        'confirmation_structure' => isset($responseData['confirmation']) ? array_keys($responseData['confirmation']) : null,
+                        'has_confirmation_token' => isset($responseData['confirmation']['confirmation_token'])
+                    ]);
+                }
+                
+                // Сохраняем ID платежа в ЮKassa и payment_url в заказе
+                $updateData = [];
                 if ($yookassaPaymentId) {
-                    $order->update([
-                        'yookassa_payment_id' => $yookassaPaymentId
+                    $updateData['yookassa_payment_id'] = $yookassaPaymentId;
+                }
+                if ($paymentUrl) {
+                    $updateData['payment_url'] = $paymentUrl;
+                }
+                if (!empty($updateData)) {
+                    $order->update($updateData);
+                }
+
+                // Обновляем заказ из БД, чтобы получить актуальные данные (включая order_number)
+                $order->refresh();
+                
+                // Отправляем уведомления о создании заказа
+                $this->sendOrderNotifications($order, $data['order_data'] ?? []);
+                
+                // Если включена двухэтапная оплата, не возвращаем confirmation_token
+                if ($isTwoStagePay) {
+                    return response()->json([
+                        'success' => true,
+                        'two_stage_pay' => true,
+                        'message' => 'Заказ создан. Менеджер проверит наличие товаров и после одобрения вы сможете произвести оплату.',
+                        'order_id' => $order->id,
+                        'order_number' => $order->order_number,
+                        'transaction_id' => $transaction->id,
+                        'status' => 'pending'
                     ]);
                 }
 
@@ -246,11 +301,22 @@ class ShopPaymentController extends Controller
                     'error_message' => $errorData['description'] ?? 'Ошибка создания платежа в Ю-Касса'
                 ]);
 
-                // Удаляем заказ, так как платеж не удался
+                // Проверяем настройку two_stage_pay
+                $twoStagePay = Setting::where('key', 'two_stage_pay')->first();
+                $isTwoStagePay = $twoStagePay && ($twoStagePay->value === '1' || $twoStagePay->value === true);
+
+                // Удаляем заказ только если двухэтапная оплата выключена
+                // При двухэтапной оплате заказ должен остаться, чтобы менеджер мог его обработать
                 $order = ShopOrder::find($transaction->order_id);
-                if ($order) {
+                if ($order && !$isTwoStagePay) {
                     $order->delete();
                     Log::info('Order deleted due to payment failure', [
+                        'order_id' => $order->id,
+                        'order_number' => $order->order_number,
+                        'error' => $errorData['description'] ?? 'Unknown error'
+                    ]);
+                } elseif ($order && $isTwoStagePay) {
+                    Log::info('Order kept despite payment failure (two_stage_pay enabled)', [
                         'order_id' => $order->id,
                         'order_number' => $order->order_number,
                         'error' => $errorData['description'] ?? 'Unknown error'
@@ -270,11 +336,22 @@ class ShopPaymentController extends Controller
                 'error_message' => $e->getMessage()
             ]);
 
-            // Удаляем заказ, так как произошла ошибка
+            // Проверяем настройку two_stage_pay
+            $twoStagePay = Setting::where('key', 'two_stage_pay')->first();
+            $isTwoStagePay = $twoStagePay && ($twoStagePay->value === '1' || $twoStagePay->value === true);
+
+            // Удаляем заказ только если двухэтапная оплата выключена
+            // При двухэтапной оплате заказ должен остаться, чтобы менеджер мог его обработать
             $order = ShopOrder::find($transaction->order_id);
-            if ($order) {
+            if ($order && !$isTwoStagePay) {
                 $order->delete();
                 Log::info('Order deleted due to payment error', [
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                    'error' => $e->getMessage()
+                ]);
+            } elseif ($order && $isTwoStagePay) {
+                Log::info('Order kept despite payment error (two_stage_pay enabled)', [
                     'order_id' => $order->id,
                     'order_number' => $order->order_number,
                     'error' => $e->getMessage()
@@ -415,16 +492,44 @@ class ShopPaymentController extends Controller
                     'response_data' => $responseData
                 ]);
 
-                // Сохраняем ID заказа в Яндекс Пэй в заказе
+                // Проверяем настройку two_stage_pay
+                $twoStagePay = Setting::where('key', 'two_stage_pay')->first();
+                $isTwoStagePay = $twoStagePay && ($twoStagePay->value === '1' || $twoStagePay->value === true);
+                
+                // Сохраняем ID заказа в Яндекс Пэй и payment_url в заказе
+                $updateData = [];
                 if ($yandexOrderId) {
-                    $order->update([
-                        'yandex_pay_order_id' => $yandexOrderId
-                    ]);
+                    $updateData['yandex_pay_order_id'] = $yandexOrderId;
+                }
+                if ($paymentUrl) {
+                    $updateData['payment_url'] = $paymentUrl;
+                }
+                if (!empty($updateData)) {
+                    $order->update($updateData);
                 }
 
                 if (!$paymentUrl) {
                     Log::warning('YandexPay: URL оплаты не найден в ответе', [
                         'response_structure' => array_keys($responseData)
+                    ]);
+                }
+
+                // Обновляем заказ из БД, чтобы получить актуальные данные (включая order_number)
+                $order->refresh();
+                
+                // Отправляем уведомления о создании заказа
+                $this->sendOrderNotifications($order, $data['order_data'] ?? []);
+                
+                // Если включена двухэтапная оплата, не возвращаем payment_url
+                if ($isTwoStagePay) {
+                    return response()->json([
+                        'success' => true,
+                        'two_stage_pay' => true,
+                        'message' => 'Заказ создан. Менеджер проверит наличие товаров и после одобрения вы сможете произвести оплату.',
+                        'order_id' => $order->id,
+                        'order_number' => $order->order_number,
+                        'transaction_id' => $transaction->id,
+                        'status' => 'pending'
                     ]);
                 }
 
@@ -1054,6 +1159,25 @@ class ShopPaymentController extends Controller
     {
         $orderData = $data['order_data'] ?? [];
         
+        // Получаем ID пользователя из авторизации, если пользователь зарегистрирован
+        $authUser = Auth::user();
+        $userId = null;
+        if ($authUser) {
+            $userId = $authUser->id;
+        } elseif (isset($orderData['customer_id'])) {
+            $userId = $orderData['customer_id'];
+        }
+        
+        // Логируем данные для отладки
+        Log::info('createOrderFromPaymentData: входные данные', [
+            'has_auth_user' => $authUser !== null,
+            'auth_user_id' => $authUser ? $authUser->id : null,
+            'order_data_customer_id' => $orderData['customer_id'] ?? null,
+            'final_user_id' => $userId,
+            'shipping_address' => $orderData['shipping_address'] ?? null,
+            'order_data_keys' => array_keys($orderData)
+        ]);
+        
         // Подготавливаем данные товаров для JSON поля
         $items = $orderData['items'] ?? [];
         $totalQuantity = array_sum(array_column($items, 'quantity'));
@@ -1107,10 +1231,19 @@ class ShopPaymentController extends Controller
             }
         }
 
+        // Проверяем настройку two_stage_pay
+        $twoStagePay = Setting::where('key', 'two_stage_pay')->first();
+        $isTwoStagePay = $twoStagePay && ($twoStagePay->value === '1' || $twoStagePay->value === true);
+        
+        // Определяем pay_agree в зависимости от настройки two_stage_pay
+        // Если двухэтапная оплата включена, то pay_agree = false (требуется одобрение менеджера)
+        // Если двухэтапная оплата выключена, то pay_agree = true (оплата разрешена сразу)
+        $payAgreeStatus = !$isTwoStagePay; // true если двухэтапная оплата выключена, false если включена
+
         // Подготавливаем данные для создания заказа
         $orderDataForCreate = [
             'order_number' => 'TEMP-' . time(), // Временный номер
-            'user_id' => $orderData['customer_id'] ?? null,
+            'user_id' => $userId, // Используем ID из авторизации или order_data
             'status_id' => 1, // Статус "Ожидает обработки" (id=1)
             'customer_name' => $orderData['customer_name'] ?? 'Покупатель',
             'customer_email' => $orderData['customer_email'] ?? null,
@@ -1134,14 +1267,15 @@ class ShopPaymentController extends Controller
             'payment_method_id' => $data['payment_method_id'],
             'shipping_method' => $shippingMethodName, // Название тарифа для СДЭК или название метода
             'shipping_method_id' => $shippingMethodId, // ID метода доставки
-            'shipping_address' => $orderData['shipping_address'] ?? null,
+            'shipping_address' => $orderData['shipping_address'] ?? $orderData['address'] ?? $orderData['delivery_address'] ?? null,
             'notes' => $orderData['notes'] ?? null,
             'ip_address' => request()->ip(),
             'user_agent' => request()->userAgent(),
-            // При создании предварительного счета для онлайн оплаты: is_active=false, paid=false
-            // При успешной оплате будет установлено is_active=true, paid=true через webhook
-            'is_active' => false,
+            // Заказы создаются активными (is_active=true)
+            // При успешной оплате будет установлено payed=true через webhook
+            'is_active' => true,
             'payed' => false,
+            'pay_agree' => $payAgreeStatus, // Устанавливаем pay_agree в зависимости от настройки two_stage_pay
             'metadata' => json_encode([
                 'delivery_cost' => $orderData['delivery_cost'] ?? '0.00',
                 'sale_discount_amount' => $orderData['sale_discount_amount'] ?? 0,
@@ -1161,16 +1295,38 @@ class ShopPaymentController extends Controller
         // Добавляем поля статусов при создании заказа
         $orderDataForCreate['delivery_status_id'] = 1; // Статус "Создан" (остается неизменным)
         
-        Log::info('Order data for create', $orderDataForCreate);
+        Log::info('Order data for create', [
+            'order_data' => $orderDataForCreate,
+            'two_stage_pay_enabled' => $isTwoStagePay,
+            'pay_agree' => $payAgreeStatus,
+            'user_id' => $userId,
+            'shipping_address' => $orderDataForCreate['shipping_address']
+        ]);
 
         // Создаем заказ
         $order = ShopOrder::create($orderDataForCreate);
+        
+        Log::info('Order created successfully', [
+            'order_id' => $order->id,
+            'order_number' => $order->order_number,
+            'payed' => $order->payed,
+            'pay_agree' => $order->pay_agree,
+            'two_stage_pay_enabled' => $isTwoStagePay
+        ]);
 
         // Товары уже сохранены в JSON поле items
 
         // Генерируем правильный номер заказа на основе ID
         $orderNumber = $this->generateUniqueOrderNumber($order->id);
         $order->update(['order_number' => $orderNumber]);
+        
+        // Создаем запись в журнал о создании заказа
+        $userName = null;
+        if ($orderData['customer_id'] ?? null) {
+            $customerUser = \App\Models\User::find($orderData['customer_id']);
+            $userName = $customerUser ? $customerUser->name : null;
+        }
+        ShopOrderLog::logOrderCreated($order->id, $userName ?? ($orderData['customer_name'] ?? 'Покупатель'), ShopOrderLog::SECTION_ORDERS, $orderNumber);
 
         // Создаем запись об использовании промокода, если он был применен
         if (!empty($orderData['promo_code_id'])) {
@@ -1478,6 +1634,210 @@ class ShopPaymentController extends Controller
                 'order_id' => $orderId
             ]);
         }
+    }
+
+    /**
+     * Отправить уведомления о создании заказа
+     */
+    private function sendOrderNotifications(ShopOrder $order, array $orderData = []): void
+    {
+        try {
+            // Отправляем уведомления через систему оповещений (администраторам)
+            $notificationService = app(NotificationService::class);
+            $notificationService->notifyOrderCreated($order);
+
+            // Также отправляем уведомление клиенту через Telegram (если указан chat_id)
+            $customerChatId = $orderData['telegram_chat_id'] ?? null;
+            if ($customerChatId) {
+                $telegramService = app(TelegramService::class);
+                $customerMessage = "✅ <b>Заказ #{$order->order_number} принят</b>\n\n";
+                $customerMessage .= "Спасибо за ваш заказ! Мы получили вашу заявку и в ближайшее время свяжемся с вами для подтверждения.\n\n";
+                $customerMessage .= "💰 <b>Сумма заказа:</b> " . number_format($order->total_amount, 0, ',', ' ') . " ₽\n";
+                $customerMessage .= "📦 <b>Товаров:</b> {$order->total_quantity} шт.\n\n";
+                $customerMessage .= "📞 <b>Наш телефон:</b> +7 (999) 123-45-67\n";
+                $customerMessage .= "📧 <b>Email:</b> info@skateandsnow.ru";
+
+                $telegramService->notifyCustomer(
+                    $customerChatId,
+                    'order_created',
+                    $order->id,
+                    $customerMessage
+                );
+            }
+        } catch (\Exception $e) {
+            // Логируем ошибку, но не прерываем создание заказа
+            Log::error('Notification error in ShopPaymentController: ' . $e->getMessage());
+        }
+
+        // Отправляем email с накладной клиенту
+        try {
+            Log::info('Starting email notification process', [
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+                'customer_email' => $order->customer_email,
+                'has_email' => !empty($order->customer_email)
+            ]);
+
+            if (empty($order->customer_email)) {
+                Log::warning('Customer email is empty, skipping email notification', [
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number
+                ]);
+                return;
+            }
+
+            $contacts = $this->getShopContacts();
+            $siteInfo = \App\Services\SiteInfoService::getSiteInfoForEmail();
+
+            Log::info('Contacts and site info retrieved', [
+                'order_id' => $order->id,
+                'has_contacts' => !empty($contacts),
+                'has_site_info' => !empty($siteInfo)
+            ]);
+
+            // Обогащаем данные товаров названиями
+            $enrichedOrder = $this->enrichOrderItems($order);
+
+            // Отладочная информация о товарах в заказе
+            Log::info('Order items for email (ShopPaymentController):', [
+                'order_id' => $order->id,
+                'items' => $enrichedOrder->items,
+                'items_count' => is_array($enrichedOrder->items) ? count($enrichedOrder->items) : 'not array',
+                'items_type' => gettype($enrichedOrder->items)
+            ]);
+
+            Log::info('Attempting to send email', [
+                'order_id' => $order->id,
+                'to' => $order->customer_email
+            ]);
+
+            Mail::to($order->customer_email)->send(new OrderInvoiceMail($enrichedOrder, $contacts, $siteInfo));
+            
+            Log::info('Invoice email sent successfully', [
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+                'customer_email' => $order->customer_email
+            ]);
+        } catch (\Exception $e) {
+            // Логируем ошибку, но не прерываем создание заказа
+            Log::error('Email notification error in ShopPaymentController', [
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+                'customer_email' => $order->customer_email ?? 'not set',
+                'error_message' => $e->getMessage(),
+                'error_trace' => $e->getTraceAsString()
+            ]);
+        }
+    }
+
+    /**
+     * Получить контакты магазина
+     */
+    private function getShopContacts()
+    {
+        try {
+            $contact = \App\Models\Contact::with(['addresses', 'phones', 'socials'])
+                ->where('is_main', 1)
+                ->first();
+
+            if (!$contact) {
+                return null;
+            }
+
+            // Получаем основные данные
+            $mainAddress = $contact->mainAddress();
+            $mainPhone = $contact->mainPhone();
+
+            // Формируем данные для накладной
+            return [
+                'name' => $contact->name,
+                'short_name' => $contact->short_name,
+                'legal_name' => $contact->legal_name,
+                'inn' => $contact->inn,
+                'ogrn' => $contact->ogrnip, // Используем ogrnip как ogrn
+                'kpp' => null, // KPP не хранится в таблице
+                'address' => $mainAddress ? $mainAddress->address : null,
+                'phone' => $mainPhone ? $mainPhone->phone : null,
+                'email' => null, // Email не хранится в таблице contacts
+                'legal_address' => $contact->legal_address,
+            ];
+
+        } catch (\Exception $e) {
+            Log::error('Error getting shop contacts: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Обогатить данные товаров заказа названиями
+     */
+    private function enrichOrderItems($order)
+    {
+        // Получаем items - они могут быть уже массивом (благодаря cast) или JSON строкой
+        $items = $order->items;
+        
+        // Если items - это строка, декодируем JSON
+        if (is_string($items)) {
+            $items = json_decode($items, true);
+        }
+        
+        // Если items не массив или пустой, возвращаем заказ как есть
+        if (!$items || !is_array($items)) {
+            Log::warning('Order items is not an array or is empty', [
+                'order_id' => $order->id,
+                'items_type' => gettype($order->items),
+                'items_value' => $order->items
+            ]);
+            return $order;
+        }
+
+        $enrichedItems = [];
+        foreach ($items as $item) {
+            $enrichedItem = $item;
+
+            // Получаем название товара по good_id
+            if (isset($item['good_id'])) {
+                try {
+                    $good = ShopGood::find($item['good_id']);
+                    if ($good) {
+                        $enrichedItem['name'] = $good->name;
+                        $enrichedItem['good_name'] = $good->name;
+
+                        // Если есть вариация, получаем её название
+                        if (isset($item['variation_id']) && $item['variation_id']) {
+                            $variation = \App\Models\ShopGoodVariation::find($item['variation_id']);
+                            if ($variation && $variation->name) {
+                                $enrichedItem['name'] = $good->name . ' (' . $variation->name . ')';
+                                $enrichedItem['good_name'] = $good->name . ' (' . $variation->name . ')';
+                            }
+                        }
+                    }
+                } catch (\Exception $e) {
+                    Log::error('Error enriching item: ' . $e->getMessage(), [
+                        'item' => $item,
+                        'order_id' => $order->id
+                    ]);
+                }
+            }
+
+            // Пересчитываем сумму товара
+            $quantity = $item['quantity'] ?? 1;
+            $price = $item['price'] ?? 0;
+            $enrichedItem['total'] = $price * $quantity;
+
+            $enrichedItems[] = $enrichedItem;
+        }
+
+        // Создаем копию заказа с обогащенными данными
+        $enrichedOrder = clone $order;
+        $enrichedOrder->items = $enrichedItems;
+
+        Log::info('Order items enriched', [
+            'order_id' => $order->id,
+            'items_count' => count($enrichedItems)
+        ]);
+
+        return $enrichedOrder;
     }
 
 }

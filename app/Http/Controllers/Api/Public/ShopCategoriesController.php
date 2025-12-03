@@ -27,6 +27,14 @@ class ShopCategoriesController extends Controller
             ->where('is_active', true)
             ->ordered();
 
+            // Фильтр по in_catalog
+            if ($request->filled('in_catalog')) {
+                $inCatalog = $request->get('in_catalog');
+                if ($inCatalog == '1' || $inCatalog === 1 || $inCatalog === true) {
+                    $query->where('in_catalog', 1);
+                }
+            }
+
             // Фильтр по бренду - показываем только категории, у которых есть товары данного бренда
             if ($request->filled('brand_id')) {
                 $brandId = $request->get('brand_id');

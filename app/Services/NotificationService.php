@@ -347,6 +347,16 @@ class NotificationService
         
         $message .= "\nВремя создания: " . $order->created_at->format('d.m.Y H:i');
         
+        // Проверяем, включена ли двухэтапная оплата и требуется ли одобрение
+        $twoStagePay = \App\Models\Setting::where('key', 'two_stage_pay')->first();
+        $isTwoStagePay = $twoStagePay && ($twoStagePay->value === '1' || $twoStagePay->value === true);
+        
+        if ($isTwoStagePay && !$order->pay_agree) {
+            $message .= "\n\n⚠️ ВНИМАНИЕ: Включен режим двухэтапной оплаты!\n";
+            $message .= "Необходимо проверить наличие товаров в заказе и одобрить оплату в админ-панели.\n";
+            $message .= "Клиент сможет оплатить заказ только после вашего одобрения.";
+        }
+        
         return $message;
     }
 
@@ -377,6 +387,16 @@ class NotificationService
         }
         if ($order->notes) {
             $message .= "📝 <b>Комментарий:</b> {$order->notes}\n";
+        }
+        
+        // Проверяем, включена ли двухэтапная оплата и требуется ли одобрение
+        $twoStagePay = \App\Models\Setting::where('key', 'two_stage_pay')->first();
+        $isTwoStagePay = $twoStagePay && ($twoStagePay->value === '1' || $twoStagePay->value === true);
+        
+        if ($isTwoStagePay && !$order->pay_agree) {
+            $message .= "\n\n⚠️ <b>ВНИМАНИЕ: Включен режим двухэтапной оплаты!</b>\n";
+            $message .= "🔍 Необходимо проверить наличие товаров в заказе и одобрить оплату в админ-панели.\n";
+            $message .= "💳 Клиент сможет оплатить заказ только после вашего одобрения.";
         }
         
         return $message;
