@@ -235,26 +235,12 @@ class Promocode extends Model
                 $userIdInt = (int)$userId;
                 $promocodeUserId = (int)$this->user_id;
                 
-                // Логирование для отладки
-                \Illuminate\Support\Facades\Log::info('Promocode user check', [
-                    'promocode_id' => $this->id,
-                    'user_id' => $userId,
-                    'promocode_user_id' => $this->user_id,
-                    'user_id_int' => $userIdInt,
-                    'allowed_users_count' => $allowedUsers->count(),
-                    'allowed_user_ids' => $allowedUserIds,
-                    'allowed_user_ids_types' => array_map('gettype', $allowedUserIds),
-                    'user_in_array' => in_array($userIdInt, $allowedUserIds, true),
-                    'user_in_collection' => $allowedUsers->contains('id', $userIdInt),
-                ]);
-                
-                // Проверяем через contains для более надежной работы
-                $userExists = $allowedUsers->contains('id', $userIdInt);
-                if (!$userExists) {
-                    \Illuminate\Support\Facades\Log::warning('Promocode user check failed: user not in allowed list', [
+                // Для персональных промокодов просто сравниваем user_id
+                if ($userIdInt !== $promocodeUserId) {
+                    \Illuminate\Support\Facades\Log::warning('Promocode user check failed: user mismatch', [
                         'promocode_id' => $this->id,
                         'user_id' => $userIdInt,
-                        'allowed_user_ids' => $allowedUserIds,
+                        'promocode_user_id' => $promocodeUserId,
                     ]);
                     $errors[] = "Этот промокод доступен только для определенных пользователей";
                 }

@@ -23,35 +23,65 @@ class ShopGoodsController extends Controller
 
         if ($showGoodMode === 1) {
             // Фильтрация по остаткам: показывать только товары с остатком
-            // Все условия фильтрации обернуты в одну группу where(), чтобы не конфликтовать с другими условиями
+            // Для товаров БЕЗ вариаций: проверяем остатки основного товара
+            // Для товаров С вариациями: проверяем что сумма остатков всех вариаций > 0
             $query->where(function($mainQuery) use ($remoteQ) {
-                // Условие 1: остаток на локальном складе
-                $mainQuery->where('stock_quantity', '>', 0);
-
-                if ($remoteQ === 2 || $remoteQ === 3) {
-                    // Условие 2: остаток на удаленном складе (не null, не пустая строка, не "0")
-                    // Проверяем что значение существует и может быть преобразовано в число больше 0
-                    $mainQuery->orWhere(function($remoteCondition) {
-                        $remoteCondition->whereNotNull('remote_stock_quantity')
-                            ->where('remote_stock_quantity', '!=', '0')
-                            ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                // Вариант 1: Товары БЕЗ вариаций с остатком основного товара
+                $mainQuery->where(function($noVariationsQuery) use ($remoteQ) {
+                    $noVariationsQuery->whereDoesntHave('variations')
+                        ->where(function($stockQuery) use ($remoteQ) {
+                            // Локальный остаток > 0
+                            $stockQuery->where('stock_quantity', '>', 0);
+                            
+                            // ИЛИ удаленный остаток не пустой (если учитываем удаленный склад)
+                            if ($remoteQ === 2 || $remoteQ === 3) {
+                                $stockQuery->orWhere(function($remoteCondition) {
+                                    $remoteCondition->whereNotNull('remote_stock_quantity')
+                                        ->where('remote_stock_quantity', '!=', '0')
+                                        ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                });
+                            }
+                        });
+                });
+                
+                // Вариант 2: Товары С вариациями, у которых сумма остатков всех вариаций > 0
+                $mainQuery->orWhere(function($hasVariationsQuery) use ($remoteQ) {
+                    // Товар должен иметь вариации
+                    $hasVariationsQuery->whereHas('variations', function($varQ) {
+                        $varQ->where('is_active', true);
                     });
-                }
-
-                // Условие 3: есть вариации с остатком
-                $mainQuery->orWhereHas('variations', function($varQ) use ($remoteQ) {
-                    $varQ->where(function($subVarQ) use ($remoteQ) {
-                        $subVarQ->where('stock_quantity', '>', 0);
-
-                        // Если учитываем удаленный склад, проверяем и там остатки
-                        if ($remoteQ === 2 || $remoteQ === 3) {
-                            $subVarQ->orWhere(function($remoteVarQ) {
-                                $remoteVarQ->whereNotNull('remote_stock_quantity')
-                                    ->where('remote_stock_quantity', '!=', '0')
-                                    ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
-                            });
-                        }
-                    });
+                    
+                    // Проверяем что сумма остатков всех вариаций > 0
+                    if ($remoteQ === 2 || $remoteQ === 3) {
+                        // Если учитываем удаленный склад, проверяем сумму локальных и удаленных остатков
+                        // Для каждой вариации суммируем локальный и удаленный остатки
+                        $hasVariationsQuery->whereRaw('(
+                            SELECT COALESCE(SUM(
+                                COALESCE(stock_quantity, 0) + 
+                                CASE 
+                                    WHEN remote_stock_quantity IS NOT NULL 
+                                         AND remote_stock_quantity != "0" 
+                                         AND LENGTH(TRIM(remote_stock_quantity)) > 0
+                                         AND remote_stock_quantity REGEXP "^[0-9]+$"
+                                         AND CAST(remote_stock_quantity AS UNSIGNED) > 0
+                                    THEN CAST(remote_stock_quantity AS UNSIGNED)
+                                    ELSE 0
+                                END
+                            ), 0)
+                            FROM shop_good_variations
+                            WHERE shop_good_variations.good_id = shop_goods.id 
+                            AND shop_good_variations.is_active = 1
+                        ) > 0');
+                    } else {
+                        // Если не учитываем удаленный склад, проверяем только локальные остатки
+                        $hasVariationsQuery->whereRaw('(
+                            SELECT COALESCE(SUM(stock_quantity), 0)
+                            FROM shop_good_variations
+                            WHERE shop_good_variations.good_id = shop_goods.id 
+                            AND shop_good_variations.is_active = 1
+                            AND stock_quantity > 0
+                        ) > 0');
+                    }
                 });
             });
         }

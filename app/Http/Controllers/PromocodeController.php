@@ -4,9 +4,13 @@ namespace App\Http\Controllers;
 
 use App\Models\Promocode;
 use App\Models\PromocodeUsage;
+use App\Models\AbsentPromocodeUsage;
+use App\Models\Setting;
+use App\Models\ShopGood;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 
 class PromocodeController extends Controller
@@ -193,6 +197,196 @@ class PromocodeController extends Controller
                 'can_be_used' => $canBeUsedCheck['can_use'],
                 'errors' => $canBeUsedCheck['errors'] ?? [],
             ]
+        ]);
+    }
+
+    /**
+     * Создать промокод за отсутствующий товар
+     */
+    public function createAbsentPromocode(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'good_id' => 'required|integer|exists:shop_goods,id',
+        ]);
+
+        // Получаем пользователя из токена
+        $user = $this->getUserFromToken($request);
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Необходима авторизация'
+            ], 401);
+        }
+
+        $goodId = $validated['good_id'];
+        $userId = $user->id;
+
+        // Проверяем, не получал ли пользователь уже промокод на этот товар
+        $existingUsage = AbsentPromocodeUsage::where('user_id', $userId)
+            ->where('good_id', $goodId)
+            ->first();
+
+        if ($existingUsage) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Промокод для этого товара уже был получен'
+            ], 422);
+        }
+
+        // Получаем параметры сайта
+        $absentPromocodePercent = Setting::where('key', 'absent_promocode_percent')->first();
+        $absentPromocodePercentDays = Setting::where('key', 'absent_promocode_percent_days')->first();
+
+        // Проверяем, что процент скидки не равен 0
+        $percentValue = $absentPromocodePercent ? (float) $absentPromocodePercent->value : 0;
+        if ($percentValue <= 0) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Промокоды за отсутствующие товары отключены'
+            ], 422);
+        }
+
+        $daysValue = $absentPromocodePercentDays ? (int) $absentPromocodePercentDays->value : 30;
+
+        // Получаем информацию о товаре
+        $good = ShopGood::find($goodId);
+        if (!$good) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Товар не найден'
+            ], 404);
+        }
+
+        // Генерируем уникальный код промокода
+        $code = $this->generateUniquePromocodeCode();
+
+        // Создаем промокод в транзакции
+        try {
+            DB::beginTransaction();
+
+            // Создаем промокод
+            $promocode = Promocode::create([
+                'code' => $code,
+                'name' => "отсутствие товара id {$goodId} для пользователя {$user->name}",
+                'type' => 'percentage',
+                'value' => $percentValue,
+                'usage_limit' => 1,
+                'is_active' => true,
+                'user_id' => $userId,
+                'expires_at' => Carbon::now()->addDays($daysValue),
+            ]);
+
+            // Создаем запись об использовании
+            AbsentPromocodeUsage::create([
+                'user_id' => $userId,
+                'good_id' => $goodId,
+                'promocode_id' => $promocode->id,
+            ]);
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Промокод успешно создан',
+                'data' => [
+                    'promocode' => [
+                        'id' => $promocode->id,
+                        'code' => $promocode->code,
+                        'name' => $promocode->name,
+                        'type' => $promocode->type,
+                        'value' => $promocode->value,
+                        'expires_at' => $promocode->expires_at->format('Y-m-d H:i:s'),
+                    ]
+                ]
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            \Illuminate\Support\Facades\Log::error('Error creating absent promocode: ' . $e->getMessage());
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при создании промокода: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Генерация уникального кода промокода (8 символов, буквенно-цифровой)
+     */
+    private function generateUniquePromocodeCode(): string
+    {
+        $characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        $maxAttempts = 100;
+        $attempt = 0;
+
+        do {
+            $code = '';
+            for ($i = 0; $i < 8; $i++) {
+                $code .= $characters[random_int(0, strlen($characters) - 1)];
+            }
+
+            $exists = Promocode::where('code', $code)->exists();
+            $attempt++;
+
+            if (!$exists) {
+                return $code;
+            }
+        } while ($attempt < $maxAttempts);
+
+        throw new \Exception('Не удалось сгенерировать уникальный код промокода');
+    }
+
+    /**
+     * Проверить, может ли пользователь получить промокод за отсутствующий товар
+     */
+    public function checkAbsentPromocode(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'good_id' => 'required|integer|exists:shop_goods,id',
+        ]);
+
+        // Получаем пользователя из токена
+        $user = $this->getUserFromToken($request);
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'can_get' => false,
+                'message' => 'Необходима авторизация'
+            ]);
+        }
+
+        $goodId = $validated['good_id'];
+        $userId = $user->id;
+
+        // Проверяем, не получал ли пользователь уже промокод на этот товар
+        $existingUsage = AbsentPromocodeUsage::where('user_id', $userId)
+            ->where('good_id', $goodId)
+            ->first();
+
+        if ($existingUsage) {
+            return response()->json([
+                'success' => true,
+                'can_get' => false,
+                'message' => 'Промокод для этого товара уже был получен'
+            ]);
+        }
+
+        // Проверяем параметр сайта
+        $absentPromocodePercent = Setting::where('key', 'absent_promocode_percent')->first();
+        $percentValue = $absentPromocodePercent ? (float) $absentPromocodePercent->value : 0;
+
+        if ($percentValue <= 0) {
+            return response()->json([
+                'success' => true,
+                'can_get' => false,
+                'message' => 'Промокоды за отсутствующие товары отключены'
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'can_get' => true,
+            'message' => 'Промокод доступен'
         ]);
     }
 }

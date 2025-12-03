@@ -328,6 +328,16 @@ Route::get('/test/oauth', function () {
     });
     Route::post('/public/shop/promocodes/check', [App\Http\Controllers\PromocodeController::class, 'check']);
 
+    Route::options('/public/shop/promocodes/create-absent', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/public/shop/promocodes/create-absent', [App\Http\Controllers\PromocodeController::class, 'createAbsentPromocode']);
+
+    Route::options('/public/shop/promocodes/check-absent', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/public/shop/promocodes/check-absent', [App\Http\Controllers\PromocodeController::class, 'checkAbsentPromocode']);
+
     // Публичные маршруты для способов доставки и оплаты
     Route::options('/public/shop/delivery-methods', function () {
         return response()->json([], 200);
