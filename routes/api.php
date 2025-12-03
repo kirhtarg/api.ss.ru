@@ -1557,6 +1557,39 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/validate-keys', [\App\Http\Controllers\Api\Admin\ShopCdekSettingsController::class, 'validateKeys']);
                 Route::get('/available-tariffs', [\App\Http\Controllers\Api\Admin\ShopCdekSettingsController::class, 'getAvailableTariffs']);
             });
+
+            // Управление настройками Деловых линий
+            Route::prefix('dellin')->group(function () {
+                Route::get('/settings', [\App\Http\Controllers\Api\Admin\ShopDellinSettingsController::class, 'index']);
+                Route::get('/settings/active', [\App\Http\Controllers\Api\Admin\ShopDellinSettingsController::class, 'getActive']);
+                Route::post('/settings', [\App\Http\Controllers\Api\Admin\ShopDellinSettingsController::class, 'store']);
+                Route::put('/settings/{id}', [\App\Http\Controllers\Api\Admin\ShopDellinSettingsController::class, 'update']);
+                Route::delete('/settings/{id}', [\App\Http\Controllers\Api\Admin\ShopDellinSettingsController::class, 'destroy']);
+                Route::post('/settings/{id}/activate', [\App\Http\Controllers\Api\Admin\ShopDellinSettingsController::class, 'activate']);
+                Route::post('/validate-key', [\App\Http\Controllers\Api\Admin\ShopDellinSettingsController::class, 'validateKey']);
+            });
+
+            // Управление настройками Почты России
+            Route::prefix('russianpost')->group(function () {
+                Route::get('/settings', [\App\Http\Controllers\Api\Admin\ShopRussianPostSettingsController::class, 'index']);
+                Route::get('/settings/active', [\App\Http\Controllers\Api\Admin\ShopRussianPostSettingsController::class, 'getActive']);
+                Route::post('/settings', [\App\Http\Controllers\Api\Admin\ShopRussianPostSettingsController::class, 'store']);
+                Route::put('/settings/{id}', [\App\Http\Controllers\Api\Admin\ShopRussianPostSettingsController::class, 'update']);
+                Route::delete('/settings/{id}', [\App\Http\Controllers\Api\Admin\ShopRussianPostSettingsController::class, 'destroy']);
+                Route::post('/settings/{id}/activate', [\App\Http\Controllers\Api\Admin\ShopRussianPostSettingsController::class, 'activate']);
+                Route::post('/validate-credentials', [\App\Http\Controllers\Api\Admin\ShopRussianPostSettingsController::class, 'validateCredentials']);
+            });
+
+            // Управление настройками DPD
+            Route::prefix('dpd')->group(function () {
+                Route::get('/settings', [\App\Http\Controllers\Api\Admin\ShopDpdSettingsController::class, 'index']);
+                Route::get('/settings/active', [\App\Http\Controllers\Api\Admin\ShopDpdSettingsController::class, 'getActive']);
+                Route::post('/settings', [\App\Http\Controllers\Api\Admin\ShopDpdSettingsController::class, 'store']);
+                Route::put('/settings/{id}', [\App\Http\Controllers\Api\Admin\ShopDpdSettingsController::class, 'update']);
+                Route::delete('/settings/{id}', [\App\Http\Controllers\Api\Admin\ShopDpdSettingsController::class, 'destroy']);
+                Route::post('/settings/{id}/activate', [\App\Http\Controllers\Api\Admin\ShopDpdSettingsController::class, 'activate']);
+                Route::post('/validate-credentials', [\App\Http\Controllers\Api\Admin\ShopDpdSettingsController::class, 'validateCredentials']);
+            });
         });
 
         // Users management

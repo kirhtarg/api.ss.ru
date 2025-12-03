@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\ShopPaymentMethod;
 use App\Models\ShopOrder;
 use App\Models\ShopPaymentTransaction;
+use App\Models\Setting;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
@@ -545,6 +546,11 @@ class YandexPayController extends Controller
             // Use merchant_name from settings or fallback to payment method name
             $merchantName = $settings['merchant_name'] ?? $paymentMethod->name ?? 'Skate & Snow';
             
+            // Получаем main_site из настроек сайта
+            $mainSite = Setting::where('key', 'main_site')->value('value');
+            // Если main_site не найден, используем fallback
+            $merchantUrl = $mainSite ?: config('app.frontend_url') ?: $request->getSchemeAndHttpHost();
+            
             // Build paymentData
             $paymentData = [
                 'env' => $env,
@@ -553,7 +559,8 @@ class YandexPayController extends Controller
                 'currencyCode' => $currency,
                 'merchant' => [
                     'id' => $settings['merchant_id'],
-                    'name' => $merchantName
+                    'name' => $merchantName,
+                    'url' => $merchantUrl // Используем main_site из настроек сайта
                 ],
                 'availablePaymentMethods' => $availablePaymentMethods,
             ];
