@@ -115,6 +115,9 @@ class OrderInvoiceMail extends Mailable
                     'customer_inn' => '',
                     'customer_address' => $this->order->shipping_address ?? '',
                     'customer_phone' => $this->order->customer_phone ?? '',
+                    'promo_code_discount_amount' => $this->order->promo_code_discount_amount ?? 0,
+                    'bonus_points_to_use' => $this->order->bonus_points_to_use ?? 0,
+                    'delivery_cost' => $this->order->delivery_cost ?? 0,
                 ];
                 
                 // Генерируем PDF

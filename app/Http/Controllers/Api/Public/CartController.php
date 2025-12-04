@@ -349,10 +349,32 @@ class CartController extends Controller
             // Определяем цены - сохраняем и акционную, и обычную
             $regularPrice = $variationId ? $variation->price : $good->price;
             $salePrice = $variationId ? $variation->sale_price : $good->sale_price;
-
-            // Финальная цена для расчета - акционная если есть, иначе обычная
-            $finalPrice = ($salePrice && $salePrice > 0) ? $salePrice : $regularPrice;
-            $total = $finalPrice * $quantity;
+            
+            // Определяем финальную цену с учетом демпинга
+            // Приоритет: демпинговая (если show_demping = 1 или true) > акционная > базовая
+            if ($variationId) {
+                // Для вариации проверяем демпинг
+                $isDempingActive = ($variation->show_demping == 1 || $variation->show_demping === true || $variation->show_demping === '1');
+                if ($isDempingActive && $variation->demping_price && $variation->demping_price > 0) {
+                    $finalPrice = \App\Helpers\PriceHelper::roundPrice($variation->demping_price);
+                } elseif ($salePrice && $salePrice > 0 && $salePrice < $regularPrice) {
+                    $finalPrice = \App\Helpers\PriceHelper::roundPrice($salePrice);
+                } else {
+                    $finalPrice = \App\Helpers\PriceHelper::roundPrice($regularPrice);
+                }
+            } else {
+                // Для основного товара (без вариаций) проверяем демпинг
+                $isDempingActive = ($good->show_demping == 1 || $good->show_demping === true || $good->show_demping === '1');
+                if ($isDempingActive && $good->demping_price && $good->demping_price > 0) {
+                    $finalPrice = \App\Helpers\PriceHelper::roundPrice($good->demping_price);
+                } elseif ($salePrice && $salePrice > 0 && $salePrice < $regularPrice) {
+                    $finalPrice = \App\Helpers\PriceHelper::roundPrice($salePrice);
+                } else {
+                    $finalPrice = \App\Helpers\PriceHelper::roundPrice($regularPrice);
+                }
+            }
+            
+            $total = \App\Helpers\PriceHelper::roundPrice($finalPrice * $quantity);
 
             // Ищем существующий элемент корзины
             $existingItem = $this->findCartItem($user, $sessionId, $goodId, $variationId);
@@ -360,9 +382,9 @@ class CartController extends Controller
             if ($existingItem) {
                 // Обновляем количество существующего товара
                 $existingItem->quantity += $quantity;
-                $existingItem->price = $regularPrice; // Сохраняем обычную цену
-                $existingItem->sale_price = $salePrice; // Сохраняем акционную цену
-                $existingItem->total = $finalPrice * $existingItem->quantity; // Используем финальную цену для total
+                $existingItem->price = \App\Helpers\PriceHelper::roundPrice($regularPrice); // Сохраняем обычную цену
+                $existingItem->sale_price = $salePrice ? \App\Helpers\PriceHelper::roundPrice($salePrice) : null; // Сохраняем акционную цену
+                $existingItem->total = \App\Helpers\PriceHelper::roundPrice($finalPrice * $existingItem->quantity); // Используем финальную цену для total
                 // Обновляем variation_name с параметрами
                 if ($variationId) {
                     $existingItem->variation_name = $this->formatVariationProperties($variation);
@@ -378,9 +400,9 @@ class CartController extends Controller
                     'good_id' => $goodId,
                     'variation_id' => $variationId,
                     'quantity' => $quantity,
-                    'price' => $regularPrice, // Сохраняем обычную цену
-                    'sale_price' => $salePrice, // Сохраняем акционную цену
-                    'total' => $total, // Используем финальную цену для total
+                    'price' => \App\Helpers\PriceHelper::roundPrice($regularPrice), // Сохраняем обычную цену
+                    'sale_price' => $salePrice ? \App\Helpers\PriceHelper::roundPrice($salePrice) : null, // Сохраняем акционную цену
+                    'total' => $total, // Используем финальную цену для total (уже округлено)
                     'good_name' => $good->name,
                     'variation_name' => $variationId ? $this->formatVariationProperties($variation) : null,
                     'good_sku' => $variationId ? $variation->sku : $good->sku,
@@ -527,9 +549,38 @@ class CartController extends Controller
                 }
 
                 // Обновляем количество
+                // Пересчитываем финальную цену с учетом демпинга
+                $regularPrice = $cartItem->price;
+                $salePrice = $cartItem->sale_price;
+                $finalPrice = $regularPrice;
+                
+                if ($variationId) {
+                    // Для вариации проверяем демпинг
+                    $variation = ShopGoodVariation::find($variationId);
+                    if ($variation) {
+                        $isDempingActive = ($variation->show_demping == 1 || $variation->show_demping === true || $variation->show_demping === '1');
+                        if ($isDempingActive && $variation->demping_price && $variation->demping_price > 0) {
+                            $finalPrice = \App\Helpers\PriceHelper::roundPrice($variation->demping_price);
+                        } elseif ($salePrice && $salePrice > 0 && $salePrice < $regularPrice) {
+                            $finalPrice = \App\Helpers\PriceHelper::roundPrice($salePrice);
+                        } else {
+                            $finalPrice = \App\Helpers\PriceHelper::roundPrice($regularPrice);
+                        }
+                    }
+                } else {
+                    // Для основного товара проверяем демпинг
+                    $isDempingActive = ($good->show_demping == 1 || $good->show_demping === true || $good->show_demping === '1');
+                    if ($isDempingActive && $good->demping_price && $good->demping_price > 0) {
+                        $finalPrice = \App\Helpers\PriceHelper::roundPrice($good->demping_price);
+                    } elseif ($salePrice && $salePrice > 0 && $salePrice < $regularPrice) {
+                        $finalPrice = \App\Helpers\PriceHelper::roundPrice($salePrice);
+                    } else {
+                        $finalPrice = \App\Helpers\PriceHelper::roundPrice($regularPrice);
+                    }
+                }
 
                 $cartItem->quantity = $quantity;
-                $cartItem->total = $cartItem->price * $quantity;
+                $cartItem->total = \App\Helpers\PriceHelper::roundPrice($finalPrice * $quantity);
                 $cartItem->save();
             }
 
@@ -1079,9 +1130,9 @@ class CartController extends Controller
     private function getCartItems(?User $user, string $sessionId)
     {
         $query = ShopCartItem::active()->with([
-            'good:id,slug,stock_quantity,remote_stock_quantity',
+            'good:id,slug,stock_quantity,remote_stock_quantity,demping_price,show_demping',
             // Загружаем только саму вариацию; атрибуты подтянем отдельно при форматировании, если нужно
-            'variation:id,name,sku,stock_quantity,remote_stock_quantity'
+            'variation:id,name,sku,stock_quantity,remote_stock_quantity,demping_price,show_demping'
         ]);
 
         if ($user) {
@@ -1176,8 +1227,27 @@ class CartController extends Controller
             }
 
             // Используем цены из корзины (уже сохранены при добавлении)
-            $regularPrice = $item->price;
-            $salePrice = $item->sale_price;
+            $regularPrice = \App\Helpers\PriceHelper::roundPrice($item->price);
+            $salePrice = $item->sale_price ? \App\Helpers\PriceHelper::roundPrice($item->sale_price) : null;
+
+            // Получаем демпинговую цену и флаг активации
+            $dempingPrice = null;
+            $showDemping = false;
+            if ($item->variation_id && $item->relationLoaded('variation') && $item->variation) {
+                // Проверяем show_demping как 1 или true, и наличие демпинговой цены
+                $isDempingActive = ($item->variation->show_demping == 1 || $item->variation->show_demping === true || $item->variation->show_demping === '1');
+                if ($isDempingActive && $item->variation->demping_price && $item->variation->demping_price > 0) {
+                    $dempingPrice = \App\Helpers\PriceHelper::roundPrice($item->variation->demping_price);
+                    $showDemping = true;
+                }
+            } elseif ($item->relationLoaded('good') && $item->good) {
+                // Проверяем show_demping как 1 или true, и наличие демпинговой цены
+                $isDempingActive = ($item->good->show_demping == 1 || $item->good->show_demping === true || $item->good->show_demping === '1');
+                if ($isDempingActive && $item->good->demping_price && $item->good->demping_price > 0) {
+                    $dempingPrice = \App\Helpers\PriceHelper::roundPrice($item->good->demping_price);
+                    $showDemping = true;
+                }
+            }
 
             // Получаем остатки товара
             $stockQuantity = 0;
@@ -1196,7 +1266,9 @@ class CartController extends Controller
                 'quantity' => $item->quantity,
                 'price' => $regularPrice, // Обычная цена
                 'sale_price' => $salePrice, // Акционная цена
-                'total' => $item->total,
+                'demping_price' => $dempingPrice, // Демпинговая цена
+                'show_demping' => $showDemping, // Флаг активации демпинга
+                'total' => \App\Helpers\PriceHelper::roundPrice($item->total),
                 'good_name' => $item->good_name,
                 'variation_name' => $variationName,
                 'good_sku' => $item->good_sku,
@@ -1212,8 +1284,8 @@ class CartController extends Controller
 
         return [
             'items' => $items,
-            'subtotal' => $subtotal,
-            'total_amount' => $subtotal, // Пока без скидок
+            'subtotal' => \App\Helpers\PriceHelper::roundPrice($subtotal),
+            'total_amount' => \App\Helpers\PriceHelper::roundPrice($subtotal), // Пока без скидок
             'total_quantity' => $totalQuantity
         ];
     }

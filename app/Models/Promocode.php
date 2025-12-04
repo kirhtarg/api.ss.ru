@@ -341,7 +341,7 @@ class Promocode extends Model
         }
 
         return [
-            'discount' => round($discount, 2),
+            'discount' => \App\Helpers\PriceHelper::roundPrice($discount),
             'errors' => []
         ];
     }

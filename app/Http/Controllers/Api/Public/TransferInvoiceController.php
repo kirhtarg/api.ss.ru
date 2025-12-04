@@ -147,15 +147,29 @@ class TransferInvoiceController extends Controller
                 }
             }
             
+            // Получаем данные о скидках и доставке из заказа, если он передан
+            $promoCodeDiscount = 0;
+            $bonusDiscount = 0;
+            $deliveryCost = 0;
+            if ($order) {
+                $promoCodeDiscount = (float)($order->promo_code_discount_amount ?? 0);
+                $bonusDiscount = (float)($order->bonus_points_to_use ?? 0); // Скидка от списанных бонусов (1 бонус = 1 рубль)
+                // Получаем стоимость доставки из заказа
+                $deliveryCost = isset($order->delivery_cost) ? (float)$order->delivery_cost : 0;
+                if ($deliveryCost < 0) {
+                    $deliveryCost = 0;
+                }
+            }
+            
             // Формируем HTML для счета в зависимости от типа
             // Используем шаблон ИП без НДС для всех случаев без НДС (и ИП, и ООО)
             // Используем шаблон ООО с НДС только для случаев с НДС
             if (!$withVat) {
                 // Без НДС (ИП или ООО на УСН)
-                $html = $this->generateInvoiceHtmlIP($orderId, $amount, $settings, $contact, $mainAddress, $mainPhone, $orderItems, $customerName, $customerInn, $customerAddress, $customerPhone);
+                $html = $this->generateInvoiceHtmlIP($orderId, $amount, $settings, $contact, $mainAddress, $mainPhone, $orderItems, $customerName, $customerInn, $customerAddress, $customerPhone, $promoCodeDiscount, $bonusDiscount, $deliveryCost);
             } else {
                 // С НДС (ООО с НДС)
-                $html = $this->generateInvoiceHtmlOOO($orderId, $amount, $settings, $contact, $mainAddress, $mainPhone, $orderItems, $customerName, $customerInn, $customerAddress, $customerPhone);
+                $html = $this->generateInvoiceHtmlOOO($orderId, $amount, $settings, $contact, $mainAddress, $mainPhone, $orderItems, $customerName, $customerInn, $customerAddress, $customerPhone, $promoCodeDiscount, $bonusDiscount, $deliveryCost);
             }
             
             // Возвращаем HTML, который можно распечатать как PDF
@@ -188,7 +202,10 @@ class TransferInvoiceController extends Controller
         $customerName = 'Покупатель (данные будут заполнены при оформлении заказа)',
         $customerInn = '',
         $customerAddress = '',
-        $customerPhone = ''
+        $customerPhone = '',
+        $promoCodeDiscount = 0,
+        $bonusPointsToUse = 0,
+        $deliveryCost = 0
     ) {
         $legalName = $settings['legal_name'] ?? ($contact->legal_name ?? 'Не указано');
         $inn = $settings['inn'] ?? ($contact->inn ?? 'Не указано');
@@ -200,28 +217,39 @@ class TransferInvoiceController extends Controller
         $accountNumber = $settings['account_number'] ?? 'Не указано';
         $correspondentAccount = $settings['correspondent_account'] ?? 'Не указано';
         
-        // Рассчитываем суммы
-        $totalSum = 0;
+        // Рассчитываем суммы товаров (без доставки)
+        $itemsSum = 0;
         if (!empty($orderItems)) {
             foreach ($orderItems as $item) {
-                $totalSum += $item['total'] ?? 0;
+                $itemsSum += (float)($item['total'] ?? 0);
             }
         } else {
-            $totalSum = (float)$amount;
+            $itemsSum = (float)$amount;
         }
+        
+        // Итоговая сумма = товары + доставка (ВАЖНО: доставка должна быть включена в Итого)
+        $deliveryCost = (float)$deliveryCost;
+        // Явно добавляем доставку к сумме товаров
+        $totalSum = (float)$itemsSum + (float)$deliveryCost;
         
         // НДС 20%
         $vatRate = 20;
         $vatAmount = $totalSum * $vatRate / (100 + $vatRate);
         $totalWithVat = $totalSum;
         
-        $formattedTotalSum = number_format($totalSum, 2, ',', ' ');
-        $formattedVatAmount = number_format($vatAmount, 2, ',', ' ');
+        // Форматируем скидки для отображения
+        $formattedPromoCodeDiscount = \App\Helpers\PriceHelper::formatPrice($promoCodeDiscount);
+        $formattedBonusDiscount = \App\Helpers\PriceHelper::formatPrice($bonusPointsToUse);
+        
+        // Форматируем итоговую сумму (товары + доставка) для отображения в строке "Итого"
+        $formattedTotalSum = \App\Helpers\PriceHelper::formatPrice($totalSum);
+        $formattedVatAmount = \App\Helpers\PriceHelper::formatPrice($vatAmount);
         $currentDate = date('d.m.Y');
         $currentDateFull = date('d.m.Y H:i');
         
-        // Сумма прописью
-        $amountInWords = $this->numberToWords($totalSum);
+        // Сумма прописью (используем итоговую сумму с учетом скидок)
+        $finalAmount = $totalSum - $promoCodeDiscount - $bonusPointsToUse;
+        $amountInWords = $this->numberToWords($finalAmount);
         
         // Количество наименований
         $itemsCount = count($orderItems);
@@ -504,11 +532,13 @@ HTML;
                     $itemName .= ' (' . $item['variation_name'] . ')';
                 }
                 $quantity = $item['quantity'] ?? 1;
-                $price = $item['sale_price'] ?? $item['price'] ?? 0;
-                $total = $item['total'] ?? ($price * $quantity);
+                $total = $item['total'] ?? 0;
                 
-                $formattedPrice = number_format((float)$price, 2, ',', ' ');
-                $formattedTotal = number_format((float)$total, 2, ',', ' ');
+                // Финальная цена за единицу товара (уже с учетом всех скидок)
+                $finalPricePerUnit = $quantity > 0 ? ($total / $quantity) : 0;
+                
+                $formattedPrice = \App\Helpers\PriceHelper::formatPrice((float)$finalPricePerUnit);
+                $formattedTotal = \App\Helpers\PriceHelper::formatPrice((float)$total);
                 
                 $html .= <<<HTML
                 <tr>
@@ -523,15 +553,31 @@ HTML;
                 $itemNumber++;
             }
         } else {
-            // Если товаров нет, показываем одну строку с общей суммой
+            // Если товаров нет, показываем одну строку с суммой товаров (без доставки)
+            $formattedItemsSum = \App\Helpers\PriceHelper::formatPrice($itemsSum);
             $html .= <<<HTML
                 <tr>
                     <td>1</td>
                     <td>Товары по заказу №{$orderId}</td>
                     <td>1</td>
                     <td>шт</td>
-                    <td>{$formattedTotalSum}</td>
-                    <td>{$formattedTotalSum}</td>
+                    <td>{$formattedItemsSum}</td>
+                    <td>{$formattedItemsSum}</td>
+                </tr>
+HTML;
+        }
+        
+        // Добавляем доставку в таблицу товаров, если она не нулевая
+        if ($deliveryCost > 0) {
+            $formattedDeliveryCost = \App\Helpers\PriceHelper::formatPrice($deliveryCost);
+            $html .= <<<HTML
+                <tr>
+                    <td>{$itemNumber}</td>
+                    <td>Доставка</td>
+                    <td>1</td>
+                    <td>шт</td>
+                    <td>{$formattedDeliveryCost}</td>
+                    <td>{$formattedDeliveryCost}</td>
                 </tr>
 HTML;
         }
@@ -546,6 +592,32 @@ HTML;
                 <span class="total-label">Итого, вкл. НДС {$vatRate}%:</span>
                 <span class="total-value">{$formattedTotalSum}</span>
             </div>
+HTML;
+        
+        // Добавляем строки со скидками после "Итого"
+        if ($promoCodeDiscount > 0) {
+            $html .= <<<HTML
+            <div class="total-line" style="color: #dc2626;">
+                <span class="total-label">Скидка по промокоду:</span>
+                <span class="total-value">-{$formattedPromoCodeDiscount}</span>
+            </div>
+HTML;
+        }
+        
+        if ($bonusPointsToUse > 0) {
+            $html .= <<<HTML
+            <div class="total-line" style="color: #dc2626;">
+                <span class="total-label">Скидка по списанию бонусов:</span>
+                <span class="total-value">-{$formattedBonusDiscount}</span>
+            </div>
+HTML;
+        }
+        
+        $html .= <<<HTML
+            <div class="total-line" style="font-weight: bold;">
+                <span class="total-label">Всего к оплате:</span>
+                <span class="total-value">{$formattedFinalAmount}</span>
+            </div>
             <div class="total-line">
                 <span class="total-label">НДС {$vatRate}%:</span>
                 <span class="total-value">{$formattedVatAmount}</span>
@@ -554,7 +626,7 @@ HTML;
         
         <!-- Сумма прописью -->
         <div class="amount-in-words">
-            <div>Всего наименований {$itemsCount} на сумму {$formattedTotalSum} руб.</div>
+            <div>Всего наименований {$itemsCount} на сумму {$formattedFinalAmount} руб.</div>
             <div><strong>{$amountInWords}</strong></div>
         </div>
         
@@ -599,7 +671,10 @@ HTML;
         $customerName = 'Покупатель (данные будут заполнены при оформлении заказа)',
         $customerInn = '',
         $customerAddress = '',
-        $customerPhone = ''
+        $customerPhone = '',
+        $promoCodeDiscount = 0,
+        $bonusPointsToUse = 0,
+        $deliveryCost = 0
     ) {
         $legalName = $settings['legal_name'] ?? ($contact->legal_name ?? 'Не указано');
         $inn = $settings['inn'] ?? ($contact->inn ?? 'Не указано');
@@ -610,21 +685,32 @@ HTML;
         $accountNumber = $settings['account_number'] ?? 'Не указано';
         $correspondentAccount = $settings['correspondent_account'] ?? 'Не указано';
         
-        // Рассчитываем суммы (без НДС)
-        $totalSum = 0;
+        // Рассчитываем суммы товаров (без доставки)
+        $itemsSum = 0;
         if (!empty($orderItems)) {
             foreach ($orderItems as $item) {
-                $totalSum += $item['total'] ?? 0;
+                $itemsSum += (float)($item['total'] ?? 0);
             }
         } else {
-            $totalSum = (float)$amount;
+            $itemsSum = (float)$amount;
         }
         
-        $formattedTotalSum = number_format($totalSum, 2, ',', ' ');
+        // Итоговая сумма = товары + доставка (ВАЖНО: доставка должна быть включена в Итого)
+        $deliveryCost = (float)$deliveryCost;
+        // Явно добавляем доставку к сумме товаров
+        $totalSum = (float)$itemsSum + (float)$deliveryCost;
+        
+        // Форматируем скидки для отображения
+        $formattedPromoCodeDiscount = \App\Helpers\PriceHelper::formatPrice($promoCodeDiscount);
+        $formattedBonusDiscount = \App\Helpers\PriceHelper::formatPrice($bonusPointsToUse);
+        
+        // Форматируем итоговую сумму (товары + доставка) для отображения в строке "Итого"
+        $formattedTotalSum = \App\Helpers\PriceHelper::formatPrice($totalSum);
         $currentDate = date('d.m.Y');
         
-        // Сумма прописью
-        $amountInWords = $this->numberToWords($totalSum);
+        // Сумма прописью (используем итоговую сумму с учетом скидок)
+        $finalAmount = $totalSum - $promoCodeDiscount - $bonusPointsToUse;
+        $amountInWords = $this->numberToWords($finalAmount);
         
         // Количество наименований
         $itemsCount = count($orderItems);
@@ -900,11 +986,13 @@ HTML;
                     $itemName .= ' (' . $item['variation_name'] . ')';
                 }
                 $quantity = $item['quantity'] ?? 1;
-                $price = $item['sale_price'] ?? $item['price'] ?? 0;
-                $total = $item['total'] ?? ($price * $quantity);
+                $total = $item['total'] ?? 0;
                 
-                $formattedPrice = number_format((float)$price, 2, ',', ' ');
-                $formattedTotal = number_format((float)$total, 2, ',', ' ');
+                // Финальная цена за единицу товара (уже с учетом всех скидок)
+                $finalPricePerUnit = $quantity > 0 ? ($total / $quantity) : 0;
+                
+                $formattedPrice = \App\Helpers\PriceHelper::formatPrice((float)$finalPricePerUnit);
+                $formattedTotal = \App\Helpers\PriceHelper::formatPrice((float)$total);
                 
                 $html .= <<<HTML
                 <tr>
@@ -919,15 +1007,31 @@ HTML;
                 $itemNumber++;
             }
         } else {
-            // Если товаров нет, показываем одну строку с общей суммой
+            // Если товаров нет, показываем одну строку с суммой товаров (без доставки)
+            $formattedItemsSum = \App\Helpers\PriceHelper::formatPrice($itemsSum);
             $html .= <<<HTML
                 <tr>
                     <td>1</td>
                     <td>Товары по заказу №{$orderId}</td>
                     <td>1</td>
                     <td>шт</td>
-                    <td>{$formattedTotalSum}</td>
-                    <td>{$formattedTotalSum}</td>
+                    <td>{$formattedItemsSum}</td>
+                    <td>{$formattedItemsSum}</td>
+                </tr>
+HTML;
+        }
+        
+        // Добавляем доставку в таблицу товаров, если она не нулевая
+        if ($deliveryCost > 0) {
+            $formattedDeliveryCost = \App\Helpers\PriceHelper::formatPrice($deliveryCost);
+            $html .= <<<HTML
+                <tr>
+                    <td>{$itemNumber}</td>
+                    <td>Доставка</td>
+                    <td>1</td>
+                    <td>шт</td>
+                    <td>{$formattedDeliveryCost}</td>
+                    <td>{$formattedDeliveryCost}</td>
                 </tr>
 HTML;
         }
@@ -939,12 +1043,40 @@ HTML;
                     <td colspan="5" style="text-align: right; font-weight: bold; padding-right: 10px;">Итого:</td>
                     <td style="text-align: right; font-weight: bold;">{$formattedTotalSum}</td>
                 </tr>
+HTML;
+        
+        // Добавляем строки со скидками после "Итого"
+        if ($promoCodeDiscount > 0) {
+            $html .= <<<HTML
+                <tr>
+                    <td colspan="5" style="text-align: right; padding-right: 10px; color: #dc2626;">Скидка по промокоду:</td>
+                    <td style="text-align: right; color: #dc2626;">-{$formattedPromoCodeDiscount}</td>
+                </tr>
+HTML;
+        }
+        
+        if ($bonusPointsToUse > 0) {
+            $html .= <<<HTML
+                <tr>
+                    <td colspan="5" style="text-align: right; padding-right: 10px; color: #dc2626;">Скидка по списанию бонусов:</td>
+                    <td style="text-align: right; color: #dc2626;">-{$formattedBonusDiscount}</td>
+                </tr>
+HTML;
+        }
+        
+        // Итоговая сумма к оплате
+        $formattedFinalAmount = \App\Helpers\PriceHelper::formatPrice($finalAmount);
+        $html .= <<<HTML
+                <tr>
+                    <td colspan="5" style="text-align: right; font-weight: bold; padding-right: 10px;">Всего к оплате:</td>
+                    <td style="text-align: right; font-weight: bold;">{$formattedFinalAmount}</td>
+                </tr>
             </tfoot>
         </table>
         
         <!-- Сумма прописью -->
         <div class="amount-in-words">
-            <div>Всего наименований {$itemsCount} на сумму {$formattedTotalSum} руб.</div>
+            <div>Всего наименований {$itemsCount} на сумму {$formattedFinalAmount} руб.</div>
             <div><strong>{$amountInWords}</strong></div>
         </div>
         
@@ -1366,6 +1498,14 @@ HTML;
                 }
             }
             
+            // Получаем данные о скидках из заказа, если он передан
+            $promoCodeDiscount = 0;
+            $bonusDiscount = 0;
+            if ($order) {
+                $promoCodeDiscount = $order->promo_code_discount_amount ?? 0;
+                $bonusDiscount = $order->bonus_points_to_use ?? 0; // Скидка от списанных бонусов (1 бонус = 1 рубль)
+            }
+            
             $data = [
                 'order_id' => $orderId,
                 'date' => date('d.m.Y'),
@@ -1380,6 +1520,8 @@ HTML;
                 'customer_inn' => $customerInn,
                 'customer_address' => $customerAddress,
                 'customer_phone' => $customerPhone,
+                'promo_code_discount_amount' => $promoCodeDiscount,
+                'bonus_points_to_use' => $bonusDiscount,
             ];
             
             // Генерируем PDF напрямую

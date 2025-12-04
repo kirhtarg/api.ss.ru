@@ -69,6 +69,9 @@ class SiteInfoController extends Controller
     public function settings(): JsonResponse
     {
         try {
+            // Очищаем кэш для этого API (как в index())
+            Cache::forget('site_settings_public');
+            
             // Используем кэш для уменьшения нагрузки на базу
             $cacheKey = 'site_settings_public';
             $publicSettings = Cache::remember($cacheKey, 3600, function () {

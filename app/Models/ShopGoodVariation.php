@@ -104,11 +104,23 @@ class ShopGoodVariation extends Model
     }
 
     /**
-     * Получить финальную цену (с учетом скидки)
+     * Получить финальную цену (с учетом скидки и демпинга)
+     * Приоритет: демпинговая (если show_demping = true) > акционная > базовая
      */
     public function getFinalPriceAttribute()
     {
-        return $this->sale_price ?: $this->price;
+        // Если демпинг активирован и есть демпинговая цена, используем её
+        if ($this->show_demping && $this->demping_price && $this->demping_price > 0) {
+            return $this->demping_price;
+        }
+        
+        // Если есть акционная цена, используем её
+        if ($this->sale_price && $this->sale_price > 0 && $this->sale_price < $this->price) {
+            return $this->sale_price;
+        }
+        
+        // Иначе базовая цена
+        return $this->price;
     }
 
     /**
