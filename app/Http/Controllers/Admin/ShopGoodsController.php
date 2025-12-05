@@ -2099,6 +2099,14 @@ class ShopGoodsController extends Controller
 
         try {
             $imageUrls = $request->input('imageUrls');
+            // Очищаем все URL от невалидных UTF-8 символов
+            if (is_array($imageUrls)) {
+                $imageUrls = array_map(function($url) {
+                    $url = mb_convert_encoding($url, 'UTF-8', 'UTF-8');
+                    return preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $url);
+                }, $imageUrls);
+            }
+            
             $storagePath = $request->input('storagePath', '/images/shop/goods'); // Исправляем путь по умолчанию
             $optimize = $request->input('optimize', true);
             $naming = $request->input('naming', 'hash');
@@ -2125,38 +2133,64 @@ class ShopGoodsController extends Controller
                 );
 
                 if ($response['success']) {
-                    $results[$response['originalUrl']] = $response['path'];
+                    // Очищаем URL от невалидных UTF-8 символов для использования в качестве ключа
+                    $cleanUrl = mb_convert_encoding($response['originalUrl'], 'UTF-8', 'UTF-8');
+                    $cleanPath = mb_convert_encoding($response['path'], 'UTF-8', 'UTF-8');
+                    
+                    $results[$cleanUrl] = $cleanPath;
                     
                     if (isset($response['skipped']) && $response['skipped']) {
-                        $skipped[] = $response['originalUrl'];
+                        $skipped[] = $cleanUrl;
                     } else {
                     }
                 } else {
+                    // Очищаем URL и сообщение об ошибке от невалидных UTF-8 символов
+                    $cleanUrl = isset($response['originalUrl']) ? mb_convert_encoding($response['originalUrl'], 'UTF-8', 'UTF-8') : '';
+                    $cleanError = isset($response['error']) ? mb_convert_encoding($response['error'], 'UTF-8', 'UTF-8') : 'Неизвестная ошибка';
+                    $cleanError = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $cleanError); // Удаляем управляющие символы
+                    
                     $errors[] = [
-                        'url' => $response['originalUrl'],
-                        'error' => $response['error']
+                        'url' => $cleanUrl,
+                        'error' => $cleanError
                     ];
                 }
             }
 
 
+            // Очищаем все данные перед JSON-кодированием для предотвращения ошибок UTF-8
+            $cleanResults = [];
+            foreach ($results as $url => $path) {
+                $cleanUrl = mb_convert_encoding($url, 'UTF-8', 'UTF-8');
+                $cleanPath = mb_convert_encoding($path, 'UTF-8', 'UTF-8');
+                $cleanResults[$cleanUrl] = $cleanPath;
+            }
+            
+            $cleanSkipped = array_map(function($url) {
+                return mb_convert_encoding($url, 'UTF-8', 'UTF-8');
+            }, $skipped);
+            
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'paths' => $results,
+                    'paths' => $cleanResults,
                     'errors' => $errors,
-                    'skipped' => $skipped,
+                    'skipped' => $cleanSkipped,
                     'total' => count($imageUrls),
-                    'successful' => count($results),
-                    'skipped_count' => count($skipped),
+                    'successful' => count($cleanResults),
+                    'skipped_count' => count($cleanSkipped),
                     'failed' => count($errors)
                 ]
-            ]);
+            ], 200, [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
         } catch (\Exception $e) {
+            // Очищаем сообщение об ошибке от невалидных UTF-8 символов
+            $errorMessage = $e->getMessage();
+            $errorMessage = mb_convert_encoding($errorMessage, 'UTF-8', 'UTF-8');
+            $errorMessage = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $errorMessage); // Удаляем управляющие символы
+            
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка пакетной загрузки изображений: ' . $e->getMessage()
+                'message' => 'Ошибка пакетной загрузки изображений: ' . $errorMessage
             ], 500);
         }
     }
@@ -2234,12 +2268,17 @@ class ShopGoodsController extends Controller
     private function downloadSingleImage($imageUrl, $storagePath, $optimize, $naming, $resize, $width, $height, $index)
     {
         try {
-
+            // Очищаем URL от невалидных UTF-8 символов перед обработкой
+            $imageUrl = mb_convert_encoding($imageUrl, 'UTF-8', 'UTF-8');
+            $imageUrl = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $imageUrl); // Удаляем управляющие символы
+            
             // Валидация URL
             if (!filter_var($imageUrl, FILTER_VALIDATE_URL)) {
+                $cleanUrl = mb_convert_encoding($imageUrl, 'UTF-8', 'UTF-8');
+                
                 return [
                     'success' => false,
-                    'originalUrl' => $imageUrl,
+                    'originalUrl' => $cleanUrl,
                     'error' => 'Неверный формат URL'
                 ];
             }
@@ -2250,17 +2289,24 @@ class ShopGoodsController extends Controller
             $extension = strtolower(pathinfo($urlPath, PATHINFO_EXTENSION));
             
             if (!in_array($extension, $imageExtensions)) {
+                $cleanUrl = mb_convert_encoding($imageUrl, 'UTF-8', 'UTF-8');
+                
                 return [
                     'success' => false,
-                    'originalUrl' => $imageUrl,
+                    'originalUrl' => $cleanUrl,
                     'error' => 'Неподдерживаемый формат изображения'
                 ];
             }
 
             // Генерация имени файла
             if ($naming === 'original') {
-                $originalName = pathinfo(parse_url($imageUrl, PHP_URL_PATH), PATHINFO_FILENAME);
+                $urlPath = parse_url($imageUrl, PHP_URL_PATH);
+                $originalName = pathinfo($urlPath, PATHINFO_FILENAME);
+                // Очищаем от невалидных UTF-8 символов
+                $originalName = mb_convert_encoding($originalName, 'UTF-8', 'UTF-8');
+                $originalName = preg_replace('/[^\p{L}\p{N}._-]/u', '_', $originalName);
                 $fileName = $originalName . '.' . $extension;
+                // Дополнительная очистка для безопасности
                 $fileName = preg_replace('/[^a-zA-Z0-9._-]/', '_', $fileName);
             } else {
                 $hash = hash('sha256', $imageUrl . $index); // Добавляем индекс для уникальности
@@ -2276,11 +2322,13 @@ class ShopGoodsController extends Controller
             
             // Проверяем, существует ли файл уже
             if (file_exists($storageFullPath)) {
+                $cleanUrl = mb_convert_encoding($imageUrl, 'UTF-8', 'UTF-8');
+                $cleanPath = mb_convert_encoding($fullPath, 'UTF-8', 'UTF-8');
                 
                 return [
                     'success' => true,
-                    'originalUrl' => $imageUrl,
-                    'path' => $fullPath,
+                    'originalUrl' => $cleanUrl,
+                    'path' => $cleanPath,
                     'skipped' => true // Флаг, что файл был пропущен
                 ];
             }
@@ -2288,9 +2336,11 @@ class ShopGoodsController extends Controller
             // Создаем директорию если не существует
             $directory = dirname($storageFullPath);
             if (!\App\Helpers\StorageHelper::createDirectory($directory)) {
+                $cleanUrl = mb_convert_encoding($imageUrl, 'UTF-8', 'UTF-8');
+                
                 return [
                     'success' => false,
-                    'originalUrl' => $imageUrl,
+                    'originalUrl' => $cleanUrl,
                     'error' => 'Не удалось создать директорию для изображения'
                 ];
             }
@@ -2299,10 +2349,17 @@ class ShopGoodsController extends Controller
             $downloadResult = $this->downloadImageWithCurl($imageUrl);
             
             if (!$downloadResult['success']) {
+                // Очищаем сообщение об ошибке от невалидных UTF-8 символов
+                $errorMsg = $downloadResult['error'] ?: "HTTP {$downloadResult['http_code']}";
+                $errorMsg = mb_convert_encoding($errorMsg, 'UTF-8', 'UTF-8');
+                $errorMsg = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $errorMsg);
+                
+                $cleanUrl = mb_convert_encoding($imageUrl, 'UTF-8', 'UTF-8');
+                
                 return [
                     'success' => false,
-                    'originalUrl' => $imageUrl,
-                    'error' => 'Не удалось скачать изображение: ' . ($downloadResult['error'] ?: "HTTP {$downloadResult['http_code']}")
+                    'originalUrl' => $cleanUrl,
+                    'error' => 'Не удалось скачать изображение: ' . $errorMsg
                 ];
             }
             
@@ -2310,9 +2367,11 @@ class ShopGoodsController extends Controller
 
             // Проверка размера файла (максимум 30MB)
             if (strlen($imageData) > 30 * 1024 * 1024) {
+                $cleanUrl = mb_convert_encoding($imageUrl, 'UTF-8', 'UTF-8');
+                
                 return [
                     'success' => false,
-                    'originalUrl' => $imageUrl,
+                    'originalUrl' => $cleanUrl,
                     'error' => 'Файл слишком большой (максимум 30MB)'
                 ];
             }
@@ -2326,18 +2385,28 @@ class ShopGoodsController extends Controller
             }
 
 
+            // Очищаем URL и путь от невалидных UTF-8 символов перед возвратом
+            $cleanUrl = mb_convert_encoding($imageUrl, 'UTF-8', 'UTF-8');
+            $cleanPath = mb_convert_encoding($fullPath, 'UTF-8', 'UTF-8');
+            
             return [
                 'success' => true,
-                'originalUrl' => $imageUrl,
-                'path' => $fullPath
+                'originalUrl' => $cleanUrl,
+                'path' => $cleanPath
             ];
 
         } catch (\Exception $e) {
+            // Очищаем сообщение об ошибке и URL от невалидных UTF-8 символов
+            $errorMessage = $e->getMessage();
+            $errorMessage = mb_convert_encoding($errorMessage, 'UTF-8', 'UTF-8');
+            $errorMessage = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $errorMessage); // Удаляем управляющие символы
+            
+            $cleanUrl = mb_convert_encoding($imageUrl, 'UTF-8', 'UTF-8');
             
             return [
                 'success' => false,
-                'originalUrl' => $imageUrl,
-                'error' => 'Ошибка: ' . $e->getMessage()
+                'originalUrl' => $cleanUrl,
+                'error' => 'Ошибка: ' . $errorMessage
             ];
         }
     }

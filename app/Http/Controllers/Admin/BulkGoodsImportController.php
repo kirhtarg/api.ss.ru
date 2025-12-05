@@ -7,6 +7,8 @@ use App\Models\ShopGood;
 use App\Models\ShopCategory;
 use App\Models\ShopBrand;
 use App\Models\ShopGoodImage;
+use App\Models\ShopPropertyValue;
+use App\Models\ShopGoodProperty;
 use App\Services\ImportLogService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -358,7 +360,12 @@ class BulkGoodsImportController extends Controller
         // Если SKU пустой, устанавливаем null вместо пустой строки
         $good->sku = !empty($goodData['sku']) ? $goodData['sku'] : null;
         $good->name = $goodData['name'];
-        $good->slug = $this->generateSlug($goodData['name'], $goodData['sku']);
+        // Используем slug из данных, если он есть и не пустой, иначе генерируем автоматически
+        if (!empty($goodData['slug']) && trim($goodData['slug']) !== '') {
+            $good->slug = trim($goodData['slug']);
+        } else {
+            $good->slug = $this->generateSlug($goodData['name'], $goodData['sku']);
+        }
         $good->description = $goodData['description'] ?? null;
         $good->short_description = $goodData['short_description'] ?? null;
 
@@ -371,7 +378,8 @@ class BulkGoodsImportController extends Controller
         $good->weight = $goodData['weight'] ?? 0;
         $good->width = $goodData['width'] ?? 0;
         $good->height = $goodData['height'] ?? 0;
-        $good->depth = $goodData['length'] ?? 0;
+        // Поддерживаем и depth, и length для обратной совместимости
+        $good->depth = $goodData['depth'] ?? $goodData['length'] ?? 0;
         $good->is_active = $goodData['is_active'] ?? true;
         $good->is_featured = $goodData['is_featured'] ?? false;
         $good->meta_title = $goodData['meta_title'] ?? null;
@@ -418,7 +426,12 @@ class BulkGoodsImportController extends Controller
     private function updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands)
     {
         $existingGood->name = $goodData['name'];
-        $existingGood->slug = $this->generateSlug($goodData['name'], $goodData['sku']);
+        // Используем slug из данных, если он есть и не пустой, иначе генерируем автоматически
+        if (!empty($goodData['slug']) && trim($goodData['slug']) !== '') {
+            $existingGood->slug = trim($goodData['slug']);
+        } else {
+            $existingGood->slug = $this->generateSlug($goodData['name'], $goodData['sku']);
+        }
 
         // Обновляем описание только если оно передано
         if (isset($goodData['description'])) {
@@ -446,7 +459,12 @@ class BulkGoodsImportController extends Controller
         $existingGood->weight = $goodData['weight'] ?? $existingGood->weight;
         $existingGood->width = $goodData['width'] ?? $existingGood->width;
         $existingGood->height = $goodData['height'] ?? $existingGood->height;
-        $existingGood->depth = $goodData['length'] ?? $existingGood->depth;
+        // Поддерживаем и depth, и length для обратной совместимости
+        if (isset($goodData['depth'])) {
+            $existingGood->depth = $goodData['depth'];
+        } elseif (isset($goodData['length'])) {
+            $existingGood->depth = $goodData['length'];
+        }
         $existingGood->is_active = $goodData['is_active'] ?? $existingGood->is_active;
         $existingGood->is_featured = $goodData['is_featured'] ?? $existingGood->is_featured;
         $existingGood->meta_title = $goodData['meta_title'] ?? $existingGood->meta_title;
@@ -1113,6 +1131,7 @@ class BulkGoodsImportController extends Controller
 
     /**
      * Обрабатывает свойства товара
+     * Не удаляет существующие свойства, только обновляет или добавляет новые
      */
     private function processProperties($good, $properties)
     {
@@ -1125,22 +1144,89 @@ class BulkGoodsImportController extends Controller
             'properties' => $properties
         ]);
 
-        // Подготавливаем данные для синхронизации
-        $propertiesToSync = [];
+        // Получаем текущие свойства товара
+        // Колонка variation_id была удалена из таблицы, поэтому фильтруем только по good_id
+        $existingProperties = ShopGoodProperty::where('good_id', $good->id)
+            ->get()
+            ->keyBy('property_id');
 
         foreach ($properties as $propertyId => $value) {
             if (is_numeric($propertyId) && !empty($value)) {
-                $propertiesToSync[$propertyId] = ['value' => $value];
+                $valueString = trim((string) $value);
+                
+                if (empty($valueString)) {
+                    continue;
+                }
+
+                try {
+                    // Ищем значение в таблице shop_property_values
+                    $propertyValue = ShopPropertyValue::where('property_id', $propertyId)
+                        ->whereRaw('LOWER(value) = ?', [strtolower($valueString)])
+                        ->first();
+
+                    // Если не найдено - создаем новое значение
+                    if (!$propertyValue) {
+                        $propertyValue = ShopPropertyValue::create([
+                            'property_id' => $propertyId,
+                            'value' => $valueString,
+                            'is_active' => true
+                        ]);
+                    }
+
+                    // Проверяем, существует ли уже это свойство у товара
+                    $existingProperty = $existingProperties->get($propertyId);
+
+                    if ($existingProperty) {
+                        // Свойство уже существует - проверяем значение
+                        $currentValueId = $existingProperty->shop_property_value_id;
+                        
+                        // Сравниваем значения (учитываем null)
+                        if ($currentValueId === null || $currentValueId != $propertyValue->id) {
+                            // Значение изменилось или было null - обновляем
+                            $existingProperty->shop_property_value_id = $propertyValue->id;
+                            $existingProperty->save();
+                            
+                            \Log::info('Updated property value', [
+                                'good_id' => $good->id,
+                                'property_id' => $propertyId,
+                                'old_value_id' => $currentValueId,
+                                'new_value_id' => $propertyValue->id
+                            ]);
+                        } else {
+                            // Значение не изменилось - пропускаем
+                            \Log::info('Skipped unchanged property', [
+                                'good_id' => $good->id,
+                                'property_id' => $propertyId,
+                                'value_id' => $propertyValue->id
+                            ]);
+                        }
+                    } else {
+                        // Свойства нет - создаем новое
+                        ShopGoodProperty::create([
+                            'good_id' => $good->id,
+                            'property_id' => $propertyId,
+                            'shop_property_value_id' => $propertyValue->id
+                        ]);
+                        
+                        \Log::info('Created new property', [
+                            'good_id' => $good->id,
+                            'property_id' => $propertyId,
+                            'value_id' => $propertyValue->id
+                        ]);
+                    }
+                } catch (\Exception $e) {
+                    \Log::error('Ошибка обработки свойства товара', [
+                        'good_id' => $good->id,
+                        'property_id' => $propertyId,
+                        'value' => $valueString,
+                        'error' => $e->getMessage()
+                    ]);
+                    // Пропускаем это свойство при ошибке
+                    continue;
+                }
             }
         }
 
-        if (!empty($propertiesToSync)) {
-            \Log::info('Syncing properties', [
-                'good_id' => $good->id,
-                'properties_to_sync' => $propertiesToSync
-            ]);
-
-            $good->properties()->sync($propertiesToSync);
-        }
+        // Старые свойства, которых нет в новых данных, не трогаем (не удаляем)
     }
 }
