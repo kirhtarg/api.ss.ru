@@ -248,13 +248,45 @@ class Promocode extends Model
         }
 
         // Проверка категорий товаров (используем отношения many-to-many)
-        $categoryIds = $this->categories()->pluck('category_id')->toArray();
+        // Явно указываем таблицу для избежания неоднозначности колонки id
+        $categoryIds = $this->categories()->pluck('shop_categories.id')->toArray();
+        // Нормализуем ID категорий промокода к int
+        $categoryIds = array_map('intval', $categoryIds);
+        $applicableCategories = null; // Для возврата информации о категориях
         if (count($categoryIds) > 0) {
+            // Загружаем категории с их данными (название, slug)
+            $categories = $this->categories()->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug')->get();
+            $applicableCategories = $categories->map(function($category) {
+                return [
+                    'id' => $category->id,
+                    'name' => $category->name,
+                    'slug' => $category->slug,
+                ];
+            })->toArray();
+            
             $hasApplicableCategory = false;
             foreach ($cartItems as $item) {
-                if (isset($item['categories']) && is_array($item['categories'])) {
-                    foreach ($item['categories'] as $categoryId) {
-                        if (in_array($categoryId, $categoryIds)) {
+                $itemCategories = $item['categories'] ?? [];
+                
+                // Нормализуем категории товара: если это массив объектов, извлекаем id
+                if (is_array($itemCategories) && !empty($itemCategories)) {
+                    $normalizedCategories = [];
+                    foreach ($itemCategories as $categoryId) {
+                        if (is_array($categoryId) && isset($categoryId['id'])) {
+                            $normalizedCategories[] = (int) $categoryId['id'];
+                        } else {
+                            $normalizedCategories[] = (int) $categoryId;
+                        }
+                    }
+                    $itemCategories = $normalizedCategories;
+                }
+                
+                if (is_array($itemCategories) && !empty($itemCategories)) {
+                    foreach ($itemCategories as $categoryId) {
+                        // Приводим к int для корректного сравнения
+                        $categoryIdInt = (int) $categoryId;
+                        // Используем строгое сравнение с нормализованными ID
+                        if (in_array($categoryIdInt, $categoryIds, true)) {
                             $hasApplicableCategory = true;
                             break 2;
                         }
@@ -267,7 +299,7 @@ class Promocode extends Model
         }
 
         // Проверка конкретных товаров (используем отношения many-to-many)
-        $goodIds = $this->goods()->pluck('good_id')->toArray();
+        $goodIds = $this->goods()->pluck('shop_goods.id')->toArray();
         if (count($goodIds) > 0) {
             $hasApplicableGood = false;
             foreach ($cartItems as $item) {
@@ -297,7 +329,8 @@ class Promocode extends Model
 
         return [
             'is_applicable' => count($errors) === 0,
-            'errors' => $errors
+            'errors' => $errors,
+            'applicable_categories' => $applicableCategories // Информация о категориях, к которым применим промокод
         ];
     }
 
@@ -314,14 +347,39 @@ class Promocode extends Model
             ];
         }
 
+        // Определяем, какие товары подходят под ограничения промокода
+        $applicableItems = $this->getApplicableCartItems($cartItems);
+        
+        // Рассчитываем сумму только для подходящих товаров
+        $applicableAmount = 0;
+        foreach ($applicableItems as $item) {
+            // Используем total, если он есть, иначе вычисляем price * quantity
+            if (isset($item['total']) && $item['total'] > 0) {
+                $applicableAmount += (float) $item['total'];
+            } else {
+                $itemTotal = ((float) ($item['price'] ?? 0)) * ((int) ($item['quantity'] ?? 1));
+                $applicableAmount += $itemTotal;
+            }
+        }
+
+        // Если нет подходящих товаров, возвращаем 0
+        if ($applicableAmount <= 0) {
+            return [
+                'discount' => 0,
+                'errors' => []
+            ];
+        }
+
         $discount = 0;
 
         switch ($this->type) {
             case 'percentage':
-                $discount = $orderAmount * ($this->value / 100);
+                // Применяем процент к сумме подходящих товаров
+                $discount = $applicableAmount * ($this->value / 100);
                 break;
             case 'fixed_amount':
-                $discount = $this->value;
+                // Фиксированная скидка применяется к сумме подходящих товаров
+                $discount = min($this->value, $applicableAmount);
                 break;
             case 'free_delivery':
                 // Для бесплатной доставки возвращаем 0, логика обработки в контроллере
@@ -335,15 +393,71 @@ class Promocode extends Model
             $discount = $this->max_discount_amount;
         }
 
-        // Скидка не может быть больше суммы заказа
-        if ($discount > $orderAmount) {
-            $discount = $orderAmount;
+        // Скидка не может быть больше суммы подходящих товаров
+        if ($discount > $applicableAmount) {
+            $discount = $applicableAmount;
         }
 
         return [
             'discount' => \App\Helpers\PriceHelper::roundPrice($discount),
             'errors' => []
         ];
+    }
+
+    /**
+     * Получить товары из корзины, которые подходят под ограничения промокода
+     */
+    protected function getApplicableCartItems(array $cartItems): array
+    {
+        $applicableItems = [];
+
+        // Получаем ограничения промокода
+        $categoryIds = $this->categories()->pluck('shop_categories.id')->toArray();
+        $goodIds = $this->goods()->pluck('shop_goods.id')->toArray();
+        $variationIds = $this->applicable_variations ?? [];
+
+        foreach ($cartItems as $item) {
+            $isApplicable = false;
+
+            // Проверка по конкретным товарам (приоритет 1)
+            if (count($goodIds) > 0) {
+                if (in_array($item['good_id'] ?? null, $goodIds)) {
+                    $isApplicable = true;
+                }
+            }
+
+            // Проверка по категориям (приоритет 2)
+            if (!$isApplicable && count($categoryIds) > 0) {
+                $itemCategories = $item['categories'] ?? [];
+                if (is_array($itemCategories) && !empty($itemCategories)) {
+                    foreach ($itemCategories as $categoryId) {
+                        $categoryIdInt = (int) $categoryId;
+                        if (in_array($categoryIdInt, $categoryIds)) {
+                            $isApplicable = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Проверка по вариациям (приоритет 3)
+            if (!$isApplicable && !empty($variationIds)) {
+                if (isset($item['variation_id']) && in_array($item['variation_id'], $variationIds)) {
+                    $isApplicable = true;
+                }
+            }
+
+            // Если нет ограничений (категории, товары, вариации), то все товары подходят
+            if (count($categoryIds) === 0 && count($goodIds) === 0 && empty($variationIds)) {
+                $isApplicable = true;
+            }
+
+            if ($isApplicable) {
+                $applicableItems[] = $item;
+            }
+        }
+
+        return $applicableItems;
     }
 
     /**

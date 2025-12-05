@@ -344,7 +344,6 @@ class ShopGoodsController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            // Временное логирование для диагностики
 
             $query = ShopGood::with([
                 'variations' => function($query) {
@@ -436,10 +435,112 @@ class ShopGoodsController extends Controller
                     }
                 }
 
-            // Поиск по названию
+            // Умный поиск по названию: сначала И (все слова), если нет результатов - ИЛИ (хотя бы одно слово)
             if ($request->has('search')) {
                 $search = $request->input('search');
-                $query->where('name', 'like', "%{$search}%");
+                
+                // Разбиваем запрос на слова
+                $words = preg_split('/\s+/', $search);
+                $words = array_filter($words, function($word) {
+                    $trimmed = trim($word);
+                    return mb_strlen($trimmed) >= 2; // Минимум 2 символа для слова
+                });
+                $words = array_map('trim', $words);
+                $words = array_values($words);
+                
+                
+                if (count($words) > 0) {
+                    // Создаем упрощенный запрос для проверки наличия товаров с логикой И
+                    // Проверяем БЕЗ фильтров по остаткам, чтобы понять, есть ли вообще товары с нужными словами
+                    $testQuerySimple = ShopGood::where('is_active', true);
+                    
+                    // Применяем только основные фильтры (категории, бренды)
+                    if ($request->has('category_id')) {
+                        $testQuerySimple->whereHas('categories', function($q) use ($request) {
+                            $q->where('shop_categories.id', $request->input('category_id'));
+                        });
+                    }
+                    
+                    if ($request->has('categories')) {
+                        $categoryIds = $request->input('categories');
+                        if (is_string($categoryIds)) {
+                            $categoryIds = array_filter(explode(',', $categoryIds));
+                        }
+                        if (is_array($categoryIds) && !empty($categoryIds)) {
+                            $testQuerySimple->whereHas('categories', function($q) use ($categoryIds) {
+                                $q->whereIn('shop_categories.id', $categoryIds);
+                            });
+                        }
+                    }
+                    
+                    if ($request->has('categories[]')) {
+                        $categoryIds = $request->input('categories[]');
+                        if (is_array($categoryIds) && !empty($categoryIds)) {
+                            $testQuerySimple->whereHas('categories', function($q) use ($categoryIds) {
+                                $q->whereIn('shop_categories.id', $categoryIds);
+                            });
+                        }
+                    }
+                    
+                    if ($request->has('brand_id')) {
+                        $testQuerySimple->whereHas('brands', function($q) use ($request) {
+                            $q->where('shop_brands.id', $request->input('brand_id'));
+                        });
+                    }
+                    
+                    if ($request->has('brands')) {
+                        $brandIds = $request->input('brands');
+                        if (is_array($brandIds) && !empty($brandIds)) {
+                            $testQuerySimple->whereHas('brands', function($q) use ($brandIds) {
+                                $q->whereIn('shop_brands.id', $brandIds);
+                            });
+                        }
+                    }
+                    
+                    if ($request->has('brands[]')) {
+                        $brandIds = $request->input('brands[]');
+                        if (is_array($brandIds) && !empty($brandIds)) {
+                            $testQuerySimple->whereHas('brands', function($q) use ($brandIds) {
+                                $q->whereIn('shop_brands.id', $brandIds);
+                            });
+                        }
+                    }
+                    
+                    // Применяем поиск с логикой И (все слова) - БЕЗ фильтров по остаткам и цене
+                    $testQuerySimple->where(function($q) use ($words) {
+                        foreach ($words as $word) {
+                            $q->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($word) . '%']);
+                        }
+                    });
+                    
+                    // Проверяем количество результатов с логикой И (без фильтров по остаткам)
+                    $countWithAnd = $testQuerySimple->count();
+                    
+                    $useAndLogic = $countWithAnd > 0;
+                    
+                    if ($useAndLogic) {
+                        // Если есть результаты с логикой И, используем её
+                        $query->where(function($q) use ($words) {
+                            foreach ($words as $word) {
+                                $q->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($word) . '%']);
+                            }
+                        });
+                    } else {
+                        // Если нет результатов с логикой И, используем логику ИЛИ
+                        $query->where(function($q) use ($words) {
+                            foreach ($words as $index => $word) {
+                                if ($index === 0) {
+                                    $q->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($word) . '%']);
+                                } else {
+                                    $q->orWhereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($word) . '%']);
+                                }
+                            }
+                        });
+                    }
+                } else {
+                    // Если нет слов длиннее 2 символов, используем простой поиск
+                    $query->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($search) . '%']);
+                }
             }
 
             // Фильтрация по цене

@@ -29,6 +29,9 @@ class SiteMessageController extends Controller
         // Сортировка
         $query->orderBy('created_at', 'desc');
 
+        // Загружаем связь с товаром
+        $query->with('good:id,name,slug');
+
         $messages = $query->paginate(20);
 
         return response()->json([
@@ -42,13 +45,29 @@ class SiteMessageController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $type = $request->type ?? 'callback';
+        
+        // Правила валидации в зависимости от типа
+        $rules = [
             'name' => 'required|string|max:255',
-            'phone' => 'nullable|string|max:20',
-            'email' => 'nullable|email|max:255',
-            'message' => 'nullable|string|max:1000',
-            'type' => 'required|in:callback,message'
-        ]);
+            'type' => 'required|in:callback,message,found_cheaper'
+        ];
+        
+        if ($type === 'found_cheaper') {
+            $rules['email'] = 'required|email|max:255';
+            $rules['good_link'] = 'required|url|max:500';
+            $rules['good_price'] = 'nullable|numeric|min:0';
+            $rules['phone'] = 'nullable|string|max:20';
+            $rules['message'] = 'nullable|string|max:1000';
+            $rules['good_id'] = 'nullable|integer|exists:shop_goods,id';
+        } else {
+            $rules['phone'] = 'nullable|string|max:20';
+            $rules['email'] = 'nullable|email|max:255';
+            $rules['message'] = 'nullable|string|max:1000';
+            $rules['good_id'] = 'nullable|integer|exists:shop_goods,id';
+        }
+        
+        $validator = Validator::make($request->all(), $rules);
 
         if ($validator->fails()) {
             return response()->json([
@@ -60,12 +79,18 @@ class SiteMessageController extends Controller
 
         // Проверяем таймаут между сообщениями (1 минута)
         $phone = $request->phone;
+        $email = $request->email;
         $ipAddress = $request->ip();
         
-        // Проверяем по номеру телефона ИЛИ по IP-адресу
-        $lastMessage = SiteMessage::where(function($query) use ($phone, $ipAddress) {
-            $query->where('phone', $phone)
-                  ->orWhere('ip_address', $ipAddress);
+        // Проверяем по номеру телефона, email ИЛИ по IP-адресу
+        $lastMessage = SiteMessage::where(function($query) use ($phone, $email, $ipAddress) {
+            if ($phone) {
+                $query->where('phone', $phone);
+            }
+            if ($email) {
+                $query->orWhere('email', $email);
+            }
+            $query->orWhere('ip_address', $ipAddress);
         })
         ->where('created_at', '>=', now()->subMinute())
         ->first();
@@ -134,9 +159,12 @@ class SiteMessageController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'sometimes|string|max:255',
             'phone' => 'sometimes|string|max:20',
+            'email' => 'sometimes|email|max:255',
             'message' => 'nullable|string|max:1000',
-            'type' => 'sometimes|in:callback,message',
-            'is_processed' => 'sometimes|boolean'
+            'type' => 'sometimes|in:callback,message,found_cheaper',
+            'is_processed' => 'sometimes|boolean',
+            'good_link' => 'sometimes|url|max:500',
+            'good_price' => 'sometimes|numeric|min:0'
         ]);
 
         if ($validator->fails()) {
@@ -213,6 +241,7 @@ class SiteMessageController extends Controller
             'total' => SiteMessage::count(),
             'callbacks' => SiteMessage::callbacks()->count(),
             'messages' => SiteMessage::messages()->count(),
+            'found_cheaper' => SiteMessage::foundCheaper()->count(),
             'unprocessed' => SiteMessage::unprocessed()->count(),
             'processed' => SiteMessage::processed()->count(),
             'today' => SiteMessage::whereDate('created_at', today())->count(),

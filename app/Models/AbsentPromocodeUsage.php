@@ -14,6 +14,7 @@ class AbsentPromocodeUsage extends Model
 
     protected $fillable = [
         'user_id',
+        'ip_address',
         'good_id',
         'promocode_id',
     ];

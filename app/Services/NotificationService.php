@@ -164,6 +164,11 @@ class NotificationService
      */
     public function notifySiteMessage(SiteMessage $message): void
     {
+        // Загружаем связь с товаром, если есть good_id
+        if ($message->good_id) {
+            $message->load('good:id,name,slug');
+        }
+        
         $this->sendNotification('site_message', [
             'message' => $message
         ]);
@@ -282,9 +287,11 @@ class NotificationService
             'cancellation_request' => "Заявка на отмену заказа #{$data['order']->order_number}",
             'order_cancelled' => "Заказ #{$data['order']->order_number} отменен",
             'preorder_created' => "Новый предзаказ товара",
-            'site_message' => $data['message']->type === 'callback' 
-                ? "Запрос обратного звонка от {$data['message']->name}"
-                : "Новое сообщение на сайте от {$data['message']->name}",
+            'site_message' => match($data['message']->type) {
+                'callback' => "Запрос обратного звонка от {$data['message']->name}",
+                'found_cheaper' => "Нашел дешевле от {$data['message']->name}",
+                default => "Новое сообщение на сайте от {$data['message']->name}"
+            },
             default => "Уведомление магазина"
         };
     }
@@ -601,14 +608,56 @@ class NotificationService
      */
     protected function formatSiteMessageEmail(SiteMessage $siteMessage): string
     {
-        $message = "Новое сообщение на сайте\n\n";
-        $message .= "Имя: {$siteMessage->name}\n";
-        $message .= "Телефон: " . $this->formatPhoneForEmail($siteMessage->phone) . "\n";
-        if ($siteMessage->message) {
-            $message .= "Сообщение: {$siteMessage->message}\n";
+        if ($siteMessage->type === 'found_cheaper') {
+            $message = "Нашел дешевле\n\n";
+            $message .= "Имя: {$siteMessage->name}\n";
+            $message .= "Email: {$siteMessage->email}\n";
+            if ($siteMessage->phone) {
+                $message .= "Телефон: " . $this->formatPhoneForEmail($siteMessage->phone) . "\n";
+            }
+            
+            // Информация о товаре со страницы
+            if ($siteMessage->good && $siteMessage->good->name) {
+                $message .= "\n--- Товар со страницы ---\n";
+                $message .= "Название: {$siteMessage->good->name}\n";
+                if ($siteMessage->good->slug) {
+                    // Получаем путь каталога из настроек
+                    $catalogPathSetting = \App\Models\Setting::where('key', 'shop_catalog_path')->first();
+                    $catalogPath = $catalogPathSetting && $catalogPathSetting->value 
+                        ? '/' . ltrim($catalogPathSetting->value, '/') 
+                        : '/catalog';
+                    
+                    // Формируем URL товара
+                    $baseUrl = config('app.frontend_url', config('app.url', 'https://skateandsnow.ru'));
+                    $goodUrl = $baseUrl . $catalogPath . '/' . $siteMessage->good->slug;
+                    $message .= "Ссылка: {$goodUrl}\n";
+                }
+            }
+            
+            if ($siteMessage->good_link) {
+                $message .= "\n--- Ссылка на аналогичный товар ---\n";
+                $message .= "Ссылка: {$siteMessage->good_link}\n";
+            }
+            if ($siteMessage->good_price) {
+                $message .= "Указанная цена: " . number_format($siteMessage->good_price, 2, ',', ' ') . " ₽\n";
+            }
+            if ($siteMessage->message) {
+                $message .= "\nСообщение: {$siteMessage->message}\n";
+            }
+            $message .= "\nВремя отправки: " . $siteMessage->created_at->format('d.m.Y H:i');
+        } else {
+            $message = "Новое сообщение на сайте\n\n";
+            $message .= "Имя: {$siteMessage->name}\n";
+            $message .= "Телефон: " . $this->formatPhoneForEmail($siteMessage->phone) . "\n";
+            if ($siteMessage->email) {
+                $message .= "Email: {$siteMessage->email}\n";
+            }
+            if ($siteMessage->message) {
+                $message .= "Сообщение: {$siteMessage->message}\n";
+            }
+            $message .= "Тип: {$siteMessage->type}\n";
+            $message .= "\nВремя отправки: " . $siteMessage->created_at->format('d.m.Y H:i');
         }
-        $message .= "Тип: {$siteMessage->type}\n";
-        $message .= "\nВремя отправки: " . $siteMessage->created_at->format('d.m.Y H:i');
         
         return $message;
     }
@@ -628,10 +677,50 @@ class NotificationService
             }
             $message .= "\n🕐 <b>Время:</b> " . $siteMessage->created_at->format('d.m.Y H:i');
             $message .= "\n\n⚠️ <b>Требуется срочный звонок клиенту!</b>";
+        } elseif ($siteMessage->type === 'found_cheaper') {
+            $message = "💰 <b>Нашел дешевле</b>\n\n";
+            $message .= "👤 <b>Имя:</b> {$siteMessage->name}\n";
+            $message .= "📧 <b>Email:</b> {$siteMessage->email}\n";
+            if ($siteMessage->phone) {
+                $message .= "📞 <b>Телефон:</b> " . $this->formatPhoneForTelegram($siteMessage->phone) . "\n";
+            }
+            
+            // Информация о товаре со страницы
+            if ($siteMessage->good && $siteMessage->good->name) {
+                $message .= "\n🛍️ <b>Товар со страницы:</b>\n";
+                $message .= "📦 <b>Название:</b> {$siteMessage->good->name}\n";
+                if ($siteMessage->good->slug) {
+                    // Получаем путь каталога из настроек
+                    $catalogPathSetting = \App\Models\Setting::where('key', 'shop_catalog_path')->first();
+                    $catalogPath = $catalogPathSetting && $catalogPathSetting->value 
+                        ? '/' . ltrim($catalogPathSetting->value, '/') 
+                        : '/catalog';
+                    
+                    // Формируем URL товара
+                    $baseUrl = config('app.frontend_url', config('app.url', 'https://skateandsnow.ru'));
+                    $goodUrl = $baseUrl . $catalogPath . '/' . $siteMessage->good->slug;
+                    $message .= "🔗 <b>Ссылка:</b> {$goodUrl}\n";
+                }
+            }
+            
+            if ($siteMessage->good_link) {
+                $message .= "\n🔗 <b>Ссылка на аналогичный товар:</b> {$siteMessage->good_link}\n";
+            }
+            if ($siteMessage->good_price) {
+                $message .= "💵 <b>Указанная цена:</b> " . number_format($siteMessage->good_price, 2, ',', ' ') . " ₽\n";
+            }
+            if ($siteMessage->message) {
+                $message .= "💭 <b>Сообщение:</b> {$siteMessage->message}\n";
+            }
+            $message .= "\n🕐 <b>Время:</b> " . $siteMessage->created_at->format('d.m.Y H:i');
+            $message .= "\n\n⚠️ <b>Требуется рассмотрение предложения!</b>";
         } else {
             $message = "💬 <b>Новое сообщение на сайте</b>\n\n";
             $message .= "👤 <b>Имя:</b> {$siteMessage->name}\n";
             $message .= "📞 <b>Телефон:</b> " . $this->formatPhoneForTelegram($siteMessage->phone) . "\n";
+            if ($siteMessage->email) {
+                $message .= "📧 <b>Email:</b> {$siteMessage->email}\n";
+            }
             if ($siteMessage->message) {
                 $message .= "💭 <b>Сообщение:</b> {$siteMessage->message}\n";
             }

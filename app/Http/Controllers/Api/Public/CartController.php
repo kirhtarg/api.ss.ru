@@ -247,15 +247,8 @@ class CartController extends Controller
                             ], 400);
                         }
                         
-                        // Если is_preorder = 1, разрешаем предзаказ
-                        $user = $this->getUserFromToken($request);
-                        if (!$user) {
-                            return response()->json([
-                                'success' => false,
-                                'message' => 'Для предзаказа необходимо авторизоваться',
-                                'requires_auth' => true
-                            ], 401);
-                        }
+                        // Если is_preorder = 1, разрешаем предзаказ (без проверки авторизации)
+                        // Незарегистрированные пользователи могут делать предзаказы
                         // Ограничиваем количество остатками только если есть остаток
                         if ($stockQuantity > 0 && $stockQuantity < $quantity) {
                             Log::info('Mode 4 addToCart variation: limiting quantity to stock', [
@@ -313,15 +306,8 @@ class CartController extends Controller
                             ], 400);
                         }
                         
-                        // Если is_preorder = 1, разрешаем предзаказ
-                        $user = $this->getUserFromToken($request);
-                        if (!$user) {
-                            return response()->json([
-                                'success' => false,
-                                'message' => 'Для предзаказа необходимо авторизоваться',
-                                'requires_auth' => true
-                            ], 401);
-                        }
+                        // Если is_preorder = 1, разрешаем предзаказ (без проверки авторизации)
+                        // Незарегистрированные пользователи могут делать предзаказы
                         // Ограничиваем количество остатками только если есть остаток
                         if ($stockQuantity > 0 && $stockQuantity < $quantity) {
                             Log::info('Mode 4 addToCart main: limiting quantity to stock', [

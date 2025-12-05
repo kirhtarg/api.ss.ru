@@ -358,6 +358,7 @@ class EmailNotificationService
         $view = match($messageType) {
             'callback' => 'emails.callback-notification',
             'message' => 'emails.site-message-notification',
+            'found_cheaper' => 'emails.found-cheaper-notification',
             default => null
         };
         
