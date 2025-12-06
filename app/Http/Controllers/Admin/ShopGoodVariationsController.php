@@ -195,6 +195,68 @@ class ShopGoodVariationsController extends Controller
     }
 
     /**
+     * Создать новый атрибут вариаций (глобально, без привязки к товару)
+     */
+    public function createAttributeGlobal(Request $request): JsonResponse
+    {
+        $name = trim((string)$request->input('name'));
+        if ($name === '') {
+            return response()->json(['success' => false, 'message' => 'Название атрибута обязательно'], 422);
+        }
+
+        $exists = \Illuminate\Support\Facades\DB::table('shop_variation_attributes')->where('name', $name)->exists();
+        if ($exists) {
+            return response()->json(['success' => false, 'message' => 'Атрибут с таким названием уже существует'], 422);
+        }
+
+        // Определяем slug на основе типа или названия
+        $type = $request->input('type');
+        $slug = '';
+        
+        if ($type === 'color') {
+            // Для типа color используем slug 'color'
+            $slug = 'color';
+            // Проверяем уникальность slug 'color'
+            $i = 2;
+            while (\Illuminate\Support\Facades\DB::table('shop_variation_attributes')->where('slug', $slug)->exists()) {
+                $slug = 'color-' . $i;
+                $i++;
+            }
+        } elseif ($type === 'select') {
+            // Для типа select добавляем префикс 'select-' к slug из названия
+            $baseSlug = 'select-' . (\Illuminate\Support\Str::slug($name) ?: ('attr-' . uniqid()));
+            $slug = $baseSlug;
+            $i = 2;
+            while (\Illuminate\Support\Facades\DB::table('shop_variation_attributes')->where('slug', $slug)->exists()) {
+                $slug = $baseSlug . '-' . $i;
+                $i++;
+            }
+        } else {
+            // Для остальных типов генерируем slug из названия
+            $baseSlug = \Illuminate\Support\Str::slug($name) ?: ('attr-' . uniqid());
+            $slug = $baseSlug;
+            $i = 2;
+            while (\Illuminate\Support\Facades\DB::table('shop_variation_attributes')->where('slug', $slug)->exists()) {
+                $slug = $baseSlug . '-' . $i;
+                $i++;
+            }
+        }
+
+        $id = \Illuminate\Support\Facades\DB::table('shop_variation_attributes')->insertGetId([
+            'name' => $name,
+            'slug' => $slug,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => ['id' => $id, 'name' => $name, 'slug' => $slug, 'type' => $type],
+            'message' => 'Атрибут создан'
+        ]);
+    }
+
+    /**
      * Создать новый атрибут вариаций
      */
     public function createAttribute(Request $request, $goodId): JsonResponse

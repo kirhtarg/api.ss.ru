@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\ShopGood;
 use App\Models\ShopGoodImage;
 use App\Models\ShopGoodVariation;
+use App\Services\ImportLogService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Storage;
@@ -14,6 +15,12 @@ use Illuminate\Support\Facades\Log;
 
 class ShopGoodImagesController extends Controller
 {
+    protected $importLogService;
+    
+    public function __construct(ImportLogService $importLogService)
+    {
+        $this->importLogService = $importLogService;
+    }
     /**
      * Получить изображения товара
      */
@@ -383,15 +390,34 @@ class ShopGoodImagesController extends Controller
      */
     public function createFromImportBatch(Request $request): JsonResponse
     {
+        // Валидация с поддержкой вариаций: либо good_id, либо variation_id должен быть указан
         $validator = Validator::make($request->all(), [
             'images' => 'required|array|min:1|max:100', // Максимум 100 изображений за раз
-            'images.*.good_id' => 'required|exists:shop_goods,id',
+            'images.*.good_id' => 'nullable|exists:shop_goods,id',
+            'images.*.variation_id' => 'nullable|exists:shop_good_variations,id',
             'images.*.file_path' => 'required|string',
             'images.*.alt_text' => 'nullable|string|max:255',
             'images.*.is_main' => 'boolean',
             'images.*.sort_order' => 'integer',
             'images.*.image_action' => 'nullable|in:add,replace,skip,unique'
         ]);
+        
+        // Дополнительная валидация: либо good_id, либо variation_id должен быть указан
+        $validator->after(function ($validator) use ($request) {
+            $images = $request->input('images', []);
+            foreach ($images as $index => $image) {
+                $hasGoodId = !empty($image['good_id']);
+                $hasVariationId = !empty($image['variation_id']);
+                
+                if (!$hasGoodId && !$hasVariationId) {
+                    $validator->errors()->add("images.{$index}.good_id", 'Необходимо указать либо good_id, либо variation_id');
+                }
+                
+                if ($hasGoodId && $hasVariationId) {
+                    $validator->errors()->add("images.{$index}.good_id", 'Нельзя указывать одновременно good_id и variation_id');
+                }
+            }
+        });
 
         if ($validator->fails()) {
             return response()->json([
@@ -414,14 +440,26 @@ class ShopGoodImagesController extends Controller
                 'request_size' => strlen(json_encode($request->all()))
             ]);
 
-            // Группируем изображения по товарам для оптимизации
+            // Группируем изображения по товарам/вариациям для оптимизации
             $imagesByGood = [];
+            $imagesByVariation = [];
+            
             foreach ($images as $index => $imageData) {
-                $goodId = $imageData['good_id'];
-                if (!isset($imagesByGood[$goodId])) {
-                    $imagesByGood[$goodId] = [];
+                if (!empty($imageData['variation_id'])) {
+                    // Изображение для вариации
+                    $variationId = $imageData['variation_id'];
+                    if (!isset($imagesByVariation[$variationId])) {
+                        $imagesByVariation[$variationId] = [];
+                    }
+                    $imagesByVariation[$variationId][] = array_merge($imageData, ['_index' => $index]);
+                } else {
+                    // Изображение для товара
+                    $goodId = $imageData['good_id'];
+                    if (!isset($imagesByGood[$goodId])) {
+                        $imagesByGood[$goodId] = [];
+                    }
+                    $imagesByGood[$goodId][] = array_merge($imageData, ['_index' => $index]);
                 }
-                $imagesByGood[$goodId][] = array_merge($imageData, ['_index' => $index]);
             }
 
             // Обрабатываем изображения для каждого товара
@@ -435,6 +473,13 @@ class ShopGoodImagesController extends Controller
                         
                         if ($result['status'] === 'skipped') {
                             $skipped[] = $result;
+                            // Логируем пропущенное изображение (файл уже существует)
+                            $message = $result['message'] ?? 'Изображение пропущено';
+                            $this->importLogService->logImageLoadingError(
+                                $message,
+                                $imageData['file_path'] ?? null,
+                                $good->sku ?? null
+                            );
                         } else {
                             $results[] = $result;
                         }
@@ -453,6 +498,60 @@ class ShopGoodImagesController extends Controller
                             'file_path' => $imageData['file_path'],
                             'error' => $e->getMessage()
                         ];
+                        
+                        // Логируем ошибку загрузки изображения
+                        $this->importLogService->logImageLoadingError(
+                            $e->getMessage(),
+                            $imageData['file_path'] ?? null,
+                            $good->sku ?? null
+                        );
+                    }
+                }
+            }
+            
+            // Обрабатываем изображения для каждой вариации
+            foreach ($imagesByVariation as $variationId => $variationImages) {
+                $variation = ShopGoodVariation::findOrFail($variationId);
+                
+                // Обрабатываем каждое изображение для вариации
+                foreach ($variationImages as $imageData) {
+                    try {
+                        $result = $this->processSingleVariationImage($variation, $imageData);
+                        
+                        if ($result['status'] === 'skipped') {
+                            $skipped[] = $result;
+                            // Логируем пропущенное изображение (файл уже существует)
+                            $message = $result['message'] ?? 'Изображение пропущено';
+                            $this->importLogService->logImageLoadingError(
+                                $message,
+                                $imageData['file_path'] ?? null,
+                                $variation->sku ?? $variation->good->sku ?? null
+                            );
+                        } else {
+                            $results[] = $result;
+                        }
+                    } catch (\Exception $e) {
+                        Log::error('Ошибка создания изображения вариации', [
+                            'index' => $imageData['_index'],
+                            'variation_id' => $variationId,
+                            'file_path' => $imageData['file_path'],
+                            'error' => $e->getMessage(),
+                            'trace' => $e->getTraceAsString()
+                        ]);
+                        
+                        $errors[] = [
+                            'index' => $imageData['_index'],
+                            'variation_id' => $variationId,
+                            'file_path' => $imageData['file_path'],
+                            'error' => $e->getMessage()
+                        ];
+                        
+                        // Логируем ошибку загрузки изображения
+                        $this->importLogService->logImageLoadingError(
+                            $e->getMessage(),
+                            $imageData['file_path'] ?? null,
+                            $variation->sku ?? $variation->good->sku ?? null
+                        );
                     }
                 }
             }
@@ -594,6 +693,117 @@ class ShopGoodImagesController extends Controller
             'image_id' => $goodImage->id,
             'status' => 'created',
             'message' => 'Изображение успешно создано'
+        ];
+    }
+    
+    /**
+     * Обработка одного изображения вариации (вспомогательный метод)
+     */
+    private function processSingleVariationImage(ShopGoodVariation $variation, array $imageData): array
+    {
+        $imageAction = $imageData['image_action'] ?? 'add';
+        $filePath = $imageData['file_path'];
+        $altText = $imageData['alt_text'] ?? '';
+        $isMain = $imageData['is_main'] ?? true;
+        $sortOrder = $imageData['sort_order'] ?? 0;
+        $variationId = $variation->id;
+
+        // Проверяем существование файла на фронтенде
+        $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+        $fullFilePath = $frontendPublicPath . '/' . $filePath;
+        if (!file_exists($fullFilePath)) {
+            throw new \Exception('Файл изображения не найден: ' . $filePath);
+        }
+
+        // Проверяем, существует ли уже связь между вариацией и изображением
+        $existingImage = ShopGoodImage::whereNull('good_id')
+            ->where('variation_id', $variationId)
+            ->where('file_path', $filePath)
+            ->first();
+            
+        if ($existingImage) {
+            return [
+                'variation_id' => $variationId,
+                'file_path' => $filePath,
+                'image_id' => $existingImage->id,
+                'status' => 'skipped',
+                'message' => 'Связь вариация-изображение уже существует'
+            ];
+        }
+
+        // Обрабатываем действие с изображениями
+        if ($imageAction === 'replace') {
+            // Удаляем все существующие изображения вариации
+            $existingImages = ShopGoodImage::whereNull('good_id')
+                ->where('variation_id', $variationId)
+                ->get();
+            foreach ($existingImages as $existingImage) {
+                if (Storage::disk('public')->exists($existingImage->file_path)) {
+                    Storage::disk('public')->delete($existingImage->file_path);
+                }
+                $existingImage->delete();
+            }
+        } elseif ($imageAction === 'skip') {
+            // Проверяем, есть ли уже изображения у вариации
+            $existingCount = ShopGoodImage::whereNull('good_id')
+                ->where('variation_id', $variationId)
+                ->count();
+            if ($existingCount > 0) {
+                return [
+                    'variation_id' => $variationId,
+                    'file_path' => $filePath,
+                    'status' => 'skipped',
+                    'message' => 'Изображения пропущены (уже существуют)'
+                ];
+            }
+        } elseif ($imageAction === 'unique') {
+            // Проверяем, есть ли уже изображение с таким же путем в базе
+            $existingImage = ShopGoodImage::where('file_path', $filePath)->first();
+            if ($existingImage) {
+                return [
+                    'variation_id' => $variationId,
+                    'file_path' => $filePath,
+                    'status' => 'skipped',
+                    'message' => 'Изображение пропущено (уже существует в базе)'
+                ];
+            }
+        }
+
+        // Создаем новое изображение для вариации
+        $imageRecord = [
+            'good_id' => null, // Для вариаций good_id = null
+            'variation_id' => $variationId,
+            'file_path' => $filePath,
+            'alt_text' => $altText,
+            'is_main' => $isMain,
+            'sort_order' => $sortOrder
+        ];
+
+        $goodImage = ShopGoodImage::create($imageRecord);
+        
+        // Логируем успешное создание
+        Log::info('ShopGoodImage для вариации создано успешно', [
+            'image_id' => $goodImage->id,
+            'variation_id' => $variationId,
+            'file_path' => $filePath,
+            'is_main' => $isMain,
+            'sort_order' => $sortOrder
+        ]);
+
+        // Если это главное изображение, снимаем флаг с других изображений этой вариации
+        if ($goodImage->is_main) {
+            ShopGoodImage::whereNull('good_id')
+                ->where('variation_id', $variationId)
+                ->where('id', '!=', $goodImage->id)
+                ->update(['is_main' => false]);
+        }
+
+        return [
+            'variation_id' => $variationId,
+            'file_path' => $filePath,
+            'image_id' => $goodImage->id,
+            'status' => 'created',
+            'message' => 'Изображение вариации успешно создано'
         ];
     }
 

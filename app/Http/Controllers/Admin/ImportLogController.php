@@ -21,13 +21,15 @@ class ImportLogController extends Controller
      */
     public function getLog(Request $request, $type)
     {
-        $allowedTypes = ['import-load', 'import-skip', 'import-update', 'import-error'];
+        $allowedTypes = ['import-load', 'import-skip', 'import-update', 'import-error', 'import-variation'];
         
         if (!in_array($type, $allowedTypes)) {
             return response()->json(['error' => 'Invalid log type'], 400);
         }
         
-        $logPath = public_path("logs/{$type}.log");
+        // Используем тот же путь, что и ImportLogService
+        $logDir = storage_path('app/public/import-logs');
+        $logPath = $logDir . "/{$type}.log";
         
         if (!File::exists($logPath)) {
             return response()->json(['content' => '', 'lines' => 0]);
@@ -48,18 +50,19 @@ class ImportLogController extends Controller
      */
     public function clearLog(Request $request, $type)
     {
-        $allowedTypes = ['import-load', 'import-skip', 'import-update', 'import-error'];
+        $allowedTypes = ['import-load', 'import-skip', 'import-update', 'import-error', 'import-variation'];
         
         if (!in_array($type, $allowedTypes)) {
             return response()->json(['error' => 'Invalid log type'], 400);
         }
         
-        $logPath = public_path("logs/{$type}.log");
+        // Используем тот же путь, что и ImportLogService
+        $logDir = storage_path('app/public/import-logs');
+        $logPath = $logDir . "/{$type}.log";
         
         // Создаем директорию если не существует
-        $logDir = dirname($logPath);
         if (!File::exists($logDir)) {
-            File::makeDirectory($logDir, 0755, true);
+            \App\Helpers\StorageHelper::createDirectory($logDir);
         }
         
         // Очищаем файл
@@ -74,10 +77,13 @@ class ImportLogController extends Controller
     public function getLogStats()
     {
         $stats = [];
-        $logTypes = ['import-load', 'import-skip', 'import-update', 'import-error'];
+        $logTypes = ['import-load', 'import-skip', 'import-update', 'import-error', 'import-variation'];
+        
+        // Используем тот же путь, что и ImportLogService
+        $logDir = storage_path('app/public/import-logs');
         
         foreach ($logTypes as $type) {
-            $logPath = public_path("logs/{$type}.log");
+            $logPath = $logDir . "/{$type}.log";
             
             if (File::exists($logPath)) {
                 $content = File::get($logPath);
@@ -214,6 +220,42 @@ class ImportLogController extends Controller
         $items = $request->input('items', []);
         
         $this->importLogService->logErrorBatch($items);
+        
+        return response()->json(['success' => true, 'count' => count($items)]);
+    }
+    
+    /**
+     * Пакетная запись успешных загрузок изображений
+     */
+    public function logImageSuccessBatch(Request $request)
+    {
+        $items = $request->input('items', []);
+        
+        $this->importLogService->logImageLoadingSuccessBatch($items);
+        
+        return response()->json(['success' => true, 'count' => count($items)]);
+    }
+    
+    /**
+     * Пакетная запись ошибок загрузки изображений
+     */
+    public function logImageErrorBatch(Request $request)
+    {
+        $items = $request->input('items', []);
+        
+        $this->importLogService->logImageLoadingErrorBatch($items);
+        
+        return response()->json(['success' => true, 'count' => count($items)]);
+    }
+    
+    /**
+     * Пакетная запись действий с вариациями
+     */
+    public function logVariationBatch(Request $request)
+    {
+        $items = $request->input('items', []);
+        
+        $this->importLogService->logVariationBatch($items);
         
         return response()->json(['success' => true, 'count' => count($items)]);
     }

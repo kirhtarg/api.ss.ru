@@ -2345,8 +2345,11 @@ class ShopGoodsController extends Controller
                 ];
             }
 
+            // Нормализуем URL перед скачиванием
+            $normalizedImageUrl = $this->normalizeImageUrl($imageUrl);
+            
             // Скачиваем изображение с помощью cURL для обхода SSL проблем
-            $downloadResult = $this->downloadImageWithCurl($imageUrl);
+            $downloadResult = $this->downloadImageWithCurl($normalizedImageUrl);
             
             if (!$downloadResult['success']) {
                 // Очищаем сообщение об ошибке от невалидных UTF-8 символов
@@ -2491,9 +2494,12 @@ class ShopGoodsController extends Controller
      */
     private function downloadImageWithCurl($imageUrl)
     {
+        // Нормализуем URL перед использованием в cURL
+        $normalizedUrl = $this->normalizeImageUrl($imageUrl);
+        
         // Сначала пробуем cURL с агрессивными настройками SSL
         $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $imageUrl);
+        curl_setopt($ch, CURLOPT_URL, $normalizedUrl);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, 30);
@@ -2547,8 +2553,12 @@ class ShopGoodsController extends Controller
         $tempFile = tempnam(sys_get_temp_dir(), 'image_download_');
         
         try {
+            // Нормализуем URL перед передачей в wget
+            // Используем функцию normalizeImageUrl, которая делает многократное декодирование
+            $normalizedUrl = $this->normalizeImageUrl($imageUrl);
+            
             // Используем wget с отключенной проверкой SSL
-            $wgetCommand = "wget --no-check-certificate --timeout=30 --tries=1 -O '{$tempFile}' " . escapeshellarg($imageUrl) . " 2>&1";
+            $wgetCommand = "wget --no-check-certificate --timeout=30 --tries=1 -O '{$tempFile}' " . escapeshellarg($normalizedUrl) . " 2>&1";
             $output = shell_exec($wgetCommand);
             
             if (file_exists($tempFile) && filesize($tempFile) > 0) {
@@ -2584,6 +2594,78 @@ class ShopGoodsController extends Controller
                 'error' => 'wget exception: ' . $e->getMessage(),
                 'success' => false
             ];
+        }
+    }
+    
+    /**
+     * Нормализация URL изображения для правильной обработки Unicode символов
+     */
+    private function normalizeImageUrl($url)
+    {
+        if (empty($url)) {
+            return $url;
+        }
+        
+        try {
+            // Парсим URL
+            $parsed = parse_url($url);
+            
+            if (!$parsed || !isset($parsed['scheme']) || !isset($parsed['host'])) {
+                return $url; // Если не удалось распарсить, возвращаем как есть
+            }
+            
+            // Многократное декодирование пути для исправления двойного/тройного кодирования
+            $path = isset($parsed['path']) ? $parsed['path'] : '';
+            $previousPath = '';
+            $decodeAttempts = 0;
+            $maxDecodeAttempts = 5;
+            
+            while ($decodeAttempts < $maxDecodeAttempts && $path !== $previousPath) {
+                $previousPath = $path;
+                $path = urldecode($path);
+                $decodeAttempts++;
+            }
+            
+            // Нормализуем Unicode символы (NFD -> NFC)
+            // Это исправляет проблемы с комбинирующими диакритическими знаками (например, ĭ)
+            if (class_exists('Normalizer') && method_exists('Normalizer', 'normalize')) {
+                $path = \Normalizer::normalize($path, \Normalizer::FORM_C);
+            } elseif (function_exists('normalizer_normalize')) {
+                $path = normalizer_normalize($path, \Normalizer::FORM_C);
+            }
+            
+            // Правильно кодируем путь заново
+            $pathParts = explode('/', $path);
+            $encodedParts = array_map(function($part) {
+                if (empty($part)) {
+                    return $part;
+                }
+                // Кодируем каждый компонент пути отдельно
+                return rawurlencode($part);
+            }, $pathParts);
+            
+            $encodedPath = implode('/', $encodedParts);
+            
+            // Восстанавливаем двоеточие в пути (оно должно быть закодировано как %3A)
+            $encodedPath = str_replace(':', '%3A', $encodedPath);
+            
+            // Собираем URL обратно
+            $normalized = $parsed['scheme'] . '://' . $parsed['host'];
+            if (isset($parsed['port'])) {
+                $normalized .= ':' . $parsed['port'];
+            }
+            $normalized .= $encodedPath;
+            if (isset($parsed['query'])) {
+                $normalized .= '?' . $parsed['query'];
+            }
+            if (isset($parsed['fragment'])) {
+                $normalized .= '#' . $parsed['fragment'];
+            }
+            
+            return $normalized;
+        } catch (\Exception $e) {
+            // Если нормализация не удалась, возвращаем исходный URL
+            return $url;
         }
     }
 

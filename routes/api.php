@@ -1320,6 +1320,9 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::put('/{variationId}/demping', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'updateVariationDemping']);
                 });
                 
+                // Глобальное создание атрибутов вариаций (без привязки к товару)
+                Route::post('/variations/attributes/global', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'createAttributeGlobal']);
+                
                 // Глобальное массовое обновление вариаций (без привязки к товару)
                 Route::post('/variations/bulk-update', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'globalBulkUpdate']);
                 // Получить ID вариаций для списка товаров
@@ -3185,6 +3188,16 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/skip-batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logSkipBatch']);
             Route::post('/error/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logErrorBatch']);
             Route::post('/error-batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logErrorBatch']);
+            
+            // Пакетное логирование изображений
+            Route::post('/image-success/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logImageSuccessBatch']);
+            Route::post('/image-success-batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logImageSuccessBatch']);
+            Route::post('/image-error/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logImageErrorBatch']);
+            Route::post('/image-error-batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logImageErrorBatch']);
+            
+            // Пакетное логирование вариаций
+            Route::post('/variation/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logVariationBatch']);
+            Route::post('/variation-batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logVariationBatch']);
         });
 
         // Тестовый endpoint для проверки шаблонов импорта

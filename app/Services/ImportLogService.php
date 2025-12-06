@@ -23,7 +23,7 @@ class ImportLogService
      */
     public function clearAllLogs()
     {
-        $logTypes = ['import-load', 'import-skip', 'import-update', 'import-error'];
+        $logTypes = ['import-load', 'import-skip', 'import-update', 'import-error', 'import-variation'];
         
         foreach ($logTypes as $type) {
             $this->clearLog($type);
@@ -111,6 +111,120 @@ class ImportLogService
     }
     
     /**
+     * Записать успешную загрузку изображения
+     */
+    public function logImageLoadingSuccess($imageUrl, $filePath, $goodSku = null)
+    {
+        $imageUrl = $imageUrl ? " ({$imageUrl})" : '';
+        $filePath = $filePath ? " - Файл: {$filePath}" : '';
+        $goodSku = $goodSku ? " - Товар: {$goodSku}" : '';
+        $this->writeLog('import-load', "IMAGE_SUCCESS{$imageUrl}{$filePath}{$goodSku}");
+    }
+    
+    /**
+     * Пакетная запись успешных загрузок изображений
+     */
+    public function logImageLoadingSuccessBatch($items)
+    {
+        $lines = [];
+        foreach ($items as $item) {
+            $imageUrl = $item['imageUrl'] ?? '';
+            $filePath = $item['filePath'] ?? '';
+            $goodSku = $item['goodSku'] ?? '';
+            $lines[] = "IMAGE_SUCCESS ({$imageUrl}) - Файл: {$filePath}" . ($goodSku ? " - Товар: {$goodSku}" : '');
+        }
+        
+        if (!empty($lines)) {
+            $this->writeLog('import-load', implode("\n", $lines));
+        }
+    }
+    
+    /**
+     * Пакетная запись ошибок загрузки изображений
+     */
+    public function logImageLoadingErrorBatch($items)
+    {
+        $lines = [];
+        foreach ($items as $item) {
+            $error = $item['error'] ?? 'Неизвестная ошибка';
+            $imageUrl = $item['imageUrl'] ?? '';
+            $goodSku = $item['goodSku'] ?? '';
+            $lines[] = "IMAGE_ERROR ({$imageUrl})" . ($goodSku ? " - Товар: {$goodSku}" : '') . " - {$error}";
+        }
+        
+        if (!empty($lines)) {
+            $this->writeLog('import-error', implode("\n", $lines));
+        }
+    }
+    
+    /**
+     * Записать действие с вариацией
+     */
+    public function logVariation($action, $goodName, $goodSku, $variationAttributes, $variationId = null, $details = null)
+    {
+        $goodSkuStr = $goodSku ? " - SKU: {$goodSku}" : '';
+        $variationIdStr = $variationId ? " - ID вариации: {$variationId}" : '';
+        $detailsStr = $details ? " - {$details}" : '';
+        
+        // Формируем строку атрибутов
+        $attributesStr = '';
+        if (is_array($variationAttributes) && count($variationAttributes) > 0) {
+            $attrParts = [];
+            foreach ($variationAttributes as $attr) {
+                if (is_array($attr) && isset($attr['name']) && isset($attr['value'])) {
+                    $attrParts[] = "{$attr['name']}:{$attr['value']}";
+                } elseif (is_string($attr)) {
+                    $attrParts[] = $attr;
+                }
+            }
+            $attributesStr = ' - Атрибуты: ' . implode(', ', $attrParts);
+        }
+        
+        $message = "{$action} - Товар: {$goodName}{$goodSkuStr}{$variationIdStr}{$attributesStr}{$detailsStr}";
+        $this->writeLog('import-variation', $message);
+    }
+    
+    /**
+     * Пакетная запись действий с вариациями
+     */
+    public function logVariationBatch($items)
+    {
+        $lines = [];
+        foreach ($items as $item) {
+            $action = $item['action'] ?? 'Действие';
+            $goodName = $item['goodName'] ?? 'неизвестно';
+            $goodSku = $item['goodSku'] ?? '';
+            $variationAttributes = $item['variationAttributes'] ?? [];
+            $variationId = $item['variationId'] ?? null;
+            $details = $item['details'] ?? null;
+            
+            $goodSkuStr = $goodSku ? " - SKU: {$goodSku}" : '';
+            $variationIdStr = $variationId ? " - ID вариации: {$variationId}" : '';
+            $detailsStr = $details ? " - {$details}" : '';
+            
+            // Формируем строку атрибутов
+            $attributesStr = '';
+            if (is_array($variationAttributes) && count($variationAttributes) > 0) {
+                $attrParts = [];
+                foreach ($variationAttributes as $attr) {
+                    if (is_array($attr) && isset($attr['name']) && isset($attr['value'])) {
+                        $attrParts[] = "{$attr['name']}:{$attr['value']}";
+                    } elseif (is_string($attr)) {
+                        $attrParts[] = $attr;
+                    }
+                }
+                $attributesStr = ' - Атрибуты: ' . implode(', ', $attrParts);
+            }
+            
+            $lines[] = "{$action} - Товар: {$goodName}{$goodSkuStr}{$variationIdStr}{$attributesStr}{$detailsStr}";
+        }
+        
+        if (!empty($lines)) {
+            $this->writeLog('import-variation', implode("\n", $lines));
+        }
+    }
+    
+    /**
      * Записать в лог-файл
      */
     private function writeLog($type, $message)
@@ -163,7 +277,9 @@ class ImportLogService
         $lines = [];
         foreach ($items as $item) {
             $sheet = $item['sheet'] ?? 'неизвестно';
-            $lines[] = "{$item['count']} - {$item['sku']} - {$item['name']} - Лист: {$sheet}";
+            $goodId = $item['good_id'] ?? '';
+            $goodIdStr = $goodId ? " - ID: {$goodId}" : '';
+            $lines[] = "{$item['count']} - {$item['sku']} - {$item['name']}{$goodIdStr} - Лист: {$sheet}";
         }
         
         if (!empty($lines)) {
@@ -209,7 +325,7 @@ class ImportLogService
     public function getLogStats()
     {
         $stats = [];
-        $logTypes = ['import-load', 'import-skip', 'import-update', 'import-error'];
+        $logTypes = ['import-load', 'import-skip', 'import-update', 'import-error', 'import-variation'];
         
         try {
             // Убеждаемся, что директория существует
