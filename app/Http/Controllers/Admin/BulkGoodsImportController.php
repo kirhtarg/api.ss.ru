@@ -326,57 +326,32 @@ class BulkGoodsImportController extends Controller
                             $skipItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'reason' => 'Дубликат (настройка: пропустить)'];
                         }
                     } else {
-                        // Если есть вариация, но товар не найден - не создаем новый товар
-                        // Вариации можно добавлять только к существующим товарам
-                        if ($hasVariation) {
-                            $errorMessage = "Товар '{$name}' не найден. Невозможно добавить вариацию к несуществующему товару.";
-                            $this->importLogService->logVariation(
-                                'ОШИБКА ВАРИАЦИИ',
-                                $name,
-                                $sku ?? 'нет SKU',
-                                $goodData['variation']['attributes'] ?? [],
-                                null,
-                                $errorMessage
-                            );
-                            $results['failed']++;
-                            $results['errors'][] = [
-                                'row' => $count,
-                                'sku' => $sku,
-                                'name' => $name,
-                                'error' => $errorMessage
-                            ];
-                            
-                            // Добавляем в группу для ошибок
-                            $sheet = $goodData['_sheet'] ?? 'неизвестно';
-                            $errorItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'error' => $errorMessage];
-                        } else {
-                            // Создаем новый товар (только если нет вариации)
-                            $newGood = $this->createGood($goodData, $autoCreateCategories, $autoCreateBrands);
-                            $results['imported']++;
-                            
-                            // Сохраняем ID товара
-                            // Если SKU не пустой, сохраняем по SKU
-                            if (!empty($sku)) {
-                                $results['goodIds'][$sku] = $newGood->id;
-                            }
-
-                            // Также добавляем ID по _row для связи с изображениями
-                            if (isset($goodData['_row'])) {
-                                $results['goodIds'][$goodData['_row']] = $newGood->id;
-                            }
-                            
-                            // Сохраняем ID вариации, если она была создана
-                            if (isset($newGood->lastVariationId) && $newGood->lastVariationId) {
-                                // Используем _row как ключ для связи с изображениями (самый надежный способ)
-                                if (isset($goodData['_row'])) {
-                                    $results['variationIds'][$goodData['_row']] = $newGood->lastVariationId;
-                                }
-                            }
-                            
-                            // Добавляем в группу для загрузки
-                            $sheet = $goodData['_sheet'] ?? 'неизвестно';
-                            $loadItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet];
+                        // Создаем новый товар (с вариацией или без)
+                        $newGood = $this->createGood($goodData, $autoCreateCategories, $autoCreateBrands);
+                        $results['imported']++;
+                        
+                        // Сохраняем ID товара
+                        // Если SKU не пустой, сохраняем по SKU
+                        if (!empty($sku)) {
+                            $results['goodIds'][$sku] = $newGood->id;
                         }
+
+                        // Также добавляем ID по _row для связи с изображениями
+                        if (isset($goodData['_row'])) {
+                            $results['goodIds'][$goodData['_row']] = $newGood->id;
+                        }
+                        
+                        // Сохраняем ID вариации, если она была создана
+                        if (isset($newGood->lastVariationId) && $newGood->lastVariationId) {
+                            // Используем _row как ключ для связи с изображениями (самый надежный способ)
+                            if (isset($goodData['_row'])) {
+                                $results['variationIds'][$goodData['_row']] = $newGood->lastVariationId;
+                            }
+                        }
+                        
+                        // Добавляем в группу для загрузки
+                        $sheet = $goodData['_sheet'] ?? 'неизвестно';
+                        $loadItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet];
                     }
                 } catch (\Exception $e) {
                     // Проверяем, не является ли это ошибкой дублирования при создании товара с вариацией

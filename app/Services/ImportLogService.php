@@ -126,16 +126,36 @@ class ImportLogService
      */
     public function logImageLoadingSuccessBatch($items)
     {
-        $lines = [];
-        foreach ($items as $item) {
-            $imageUrl = $item['imageUrl'] ?? '';
-            $filePath = $item['filePath'] ?? '';
-            $goodSku = $item['goodSku'] ?? '';
-            $lines[] = "IMAGE_SUCCESS ({$imageUrl}) - Файл: {$filePath}" . ($goodSku ? " - Товар: {$goodSku}" : '');
+        if (empty($items)) {
+            return;
         }
         
-        if (!empty($lines)) {
-            $this->writeLog('import-load', implode("\n", $lines));
+        // Записываем построчно для больших пакетов, чтобы избежать проблем с памятью
+        $logPath = $this->getLogPath('import-load');
+        $timestamp = now()->format('Y-m-d H:i:s');
+        
+        // Убеждаемся, что директория существует
+        if (!File::exists($this->logDir)) {
+            \App\Helpers\StorageHelper::createDirectory($this->logDir);
+        }
+        
+        // Открываем файл для записи
+        $handle = fopen($logPath, 'a');
+        if (!$handle) {
+            \Log::error("Failed to open log file for writing: {$logPath}");
+            return;
+        }
+        
+        try {
+            foreach ($items as $item) {
+                $imageUrl = $item['imageUrl'] ?? '';
+                $filePath = $item['filePath'] ?? '';
+                $goodSku = $item['goodSku'] ?? '';
+                $logEntry = "[{$timestamp}] IMAGE_SUCCESS ({$imageUrl}) - Файл: {$filePath}" . ($goodSku ? " - Товар: {$goodSku}" : '') . PHP_EOL;
+                fwrite($handle, $logEntry);
+            }
+        } finally {
+            fclose($handle);
         }
     }
     
@@ -144,16 +164,36 @@ class ImportLogService
      */
     public function logImageLoadingErrorBatch($items)
     {
-        $lines = [];
-        foreach ($items as $item) {
-            $error = $item['error'] ?? 'Неизвестная ошибка';
-            $imageUrl = $item['imageUrl'] ?? '';
-            $goodSku = $item['goodSku'] ?? '';
-            $lines[] = "IMAGE_ERROR ({$imageUrl})" . ($goodSku ? " - Товар: {$goodSku}" : '') . " - {$error}";
+        if (empty($items)) {
+            return;
         }
         
-        if (!empty($lines)) {
-            $this->writeLog('import-error', implode("\n", $lines));
+        // Записываем построчно для больших пакетов, чтобы избежать проблем с памятью
+        $logPath = $this->getLogPath('import-error');
+        $timestamp = now()->format('Y-m-d H:i:s');
+        
+        // Убеждаемся, что директория существует
+        if (!File::exists($this->logDir)) {
+            \App\Helpers\StorageHelper::createDirectory($this->logDir);
+        }
+        
+        // Открываем файл для записи
+        $handle = fopen($logPath, 'a');
+        if (!$handle) {
+            \Log::error("Failed to open log file for writing: {$logPath}");
+            return;
+        }
+        
+        try {
+            foreach ($items as $item) {
+                $error = $item['error'] ?? 'Неизвестная ошибка';
+                $imageUrl = $item['imageUrl'] ?? '';
+                $goodSku = $item['goodSku'] ?? '';
+                $logEntry = "[{$timestamp}] IMAGE_ERROR ({$imageUrl})" . ($goodSku ? " - Товар: {$goodSku}" : '') . " - {$error}" . PHP_EOL;
+                fwrite($handle, $logEntry);
+            }
+        } finally {
+            fclose($handle);
         }
     }
     

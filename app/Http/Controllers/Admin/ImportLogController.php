@@ -229,11 +229,30 @@ class ImportLogController extends Controller
      */
     public function logImageSuccessBatch(Request $request)
     {
-        $items = $request->input('items', []);
-        
-        $this->importLogService->logImageLoadingSuccessBatch($items);
-        
-        return response()->json(['success' => true, 'count' => count($items)]);
+        try {
+            $items = $request->input('items', []);
+            
+            // Разбиваем большие пакеты на части по 1000 записей для избежания проблем с памятью
+            $chunkSize = 1000;
+            $chunks = array_chunk($items, $chunkSize);
+            
+            foreach ($chunks as $chunk) {
+                $this->importLogService->logImageLoadingSuccessBatch($chunk);
+            }
+            
+            return response()->json(['success' => true, 'count' => count($items)]);
+        } catch (\Exception $e) {
+            \Log::error('Ошибка пакетного логирования успешных изображений', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'items_count' => count($request->input('items', []))
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка логирования: ' . $e->getMessage()
+            ], 500);
+        }
     }
     
     /**
@@ -241,11 +260,30 @@ class ImportLogController extends Controller
      */
     public function logImageErrorBatch(Request $request)
     {
-        $items = $request->input('items', []);
-        
-        $this->importLogService->logImageLoadingErrorBatch($items);
-        
-        return response()->json(['success' => true, 'count' => count($items)]);
+        try {
+            $items = $request->input('items', []);
+            
+            // Разбиваем большие пакеты на части по 1000 записей для избежания проблем с памятью
+            $chunkSize = 1000;
+            $chunks = array_chunk($items, $chunkSize);
+            
+            foreach ($chunks as $chunk) {
+                $this->importLogService->logImageLoadingErrorBatch($chunk);
+            }
+            
+            return response()->json(['success' => true, 'count' => count($items)]);
+        } catch (\Exception $e) {
+            \Log::error('Ошибка пакетного логирования ошибок изображений', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'items_count' => count($request->input('items', []))
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка логирования: ' . $e->getMessage()
+            ], 500);
+        }
     }
     
     /**

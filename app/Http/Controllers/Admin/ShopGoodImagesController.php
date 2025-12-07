@@ -473,13 +473,17 @@ class ShopGoodImagesController extends Controller
                         
                         if ($result['status'] === 'skipped') {
                             $skipped[] = $result;
-                            // Логируем пропущенное изображение (файл уже существует)
+                            // Не логируем как ошибку, если связь уже существует - это нормальная ситуация
+                            // Логируем только если это реальная ошибка (например, файл не найден)
                             $message = $result['message'] ?? 'Изображение пропущено';
-                            $this->importLogService->logImageLoadingError(
-                                $message,
-                                $imageData['file_path'] ?? null,
-                                $good->sku ?? null
-                            );
+                            // Если сообщение указывает на то, что связь уже существует, это не ошибка
+                            if (strpos($message, 'уже существует') === false && strpos($message, 'пропущены') === false) {
+                                $this->importLogService->logImageLoadingError(
+                                    $message,
+                                    $imageData['file_path'] ?? null,
+                                    $good->sku ?? null
+                                );
+                            }
                         } else {
                             $results[] = $result;
                         }
@@ -520,13 +524,17 @@ class ShopGoodImagesController extends Controller
                         
                         if ($result['status'] === 'skipped') {
                             $skipped[] = $result;
-                            // Логируем пропущенное изображение (файл уже существует)
+                            // Не логируем как ошибку, если связь уже существует - это нормальная ситуация
+                            // Логируем только если это реальная ошибка (например, файл не найден)
                             $message = $result['message'] ?? 'Изображение пропущено';
-                            $this->importLogService->logImageLoadingError(
-                                $message,
-                                $imageData['file_path'] ?? null,
-                                $variation->sku ?? $variation->good->sku ?? null
-                            );
+                            // Если сообщение указывает на то, что связь уже существует, это не ошибка
+                            if (strpos($message, 'уже существует') === false && strpos($message, 'пропущены') === false) {
+                                $this->importLogService->logImageLoadingError(
+                                    $message,
+                                    $imageData['file_path'] ?? null,
+                                    $variation->sku ?? $variation->good->sku ?? null
+                                );
+                            }
                         } else {
                             $results[] = $result;
                         }
