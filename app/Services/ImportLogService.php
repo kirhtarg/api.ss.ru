@@ -131,7 +131,6 @@ class ImportLogService
         }
         
         try {
-            // Записываем построчно для больших пакетов, чтобы избежать проблем с памятью
             $logPath = $this->getLogPath('import-load');
             $timestamp = now()->format('Y-m-d H:i:s');
             
@@ -147,48 +146,34 @@ class ImportLogService
                 throw new \Exception("Директория для логов не доступна для записи: {$this->logDir}");
             }
             
-            // Открываем файл для записи
-            $handle = @fopen($logPath, 'a');
-            if (!$handle) {
-                $error = error_get_last();
-                throw new \Exception("Не удалось открыть файл лога для записи: {$logPath}. Ошибка: " . ($error['message'] ?? 'неизвестная ошибка'));
-            }
-            
-            // Устанавливаем блокировку файла для безопасной записи
-            if (!flock($handle, LOCK_EX)) {
-                fclose($handle);
-                throw new \Exception("Не удалось заблокировать файл лога: {$logPath}");
-            }
-            
-            try {
-                foreach ($items as $index => $item) {
-                    try {
-                        $imageUrl = $item['imageUrl'] ?? '';
-                        $filePath = $item['filePath'] ?? '';
-                        $goodSku = $item['goodSku'] ?? '';
-                        
-                        // Ограничиваем длину URL и пути для избежания проблем
-                        $imageUrl = mb_substr($imageUrl, 0, 500);
-                        $filePath = mb_substr($filePath, 0, 500);
-                        $goodSku = mb_substr($goodSku, 0, 100);
-                        
-                        $logEntry = "[{$timestamp}] IMAGE_SUCCESS ({$imageUrl}) - Файл: {$filePath}" . ($goodSku ? " - Товар: {$goodSku}" : '') . PHP_EOL;
-                        
-                        if (fwrite($handle, $logEntry) === false) {
-                            \Log::warning("Не удалось записать строку лога #{$index} в файл: {$logPath}");
-                        }
-                    } catch (\Exception $e) {
-                        \Log::warning("Ошибка при записи элемента #{$index} в лог успешных изображений", [
-                            'error' => $e->getMessage(),
-                            'item' => $item
-                        ]);
-                        // Продолжаем обработку остальных элементов
-                        continue;
-                    }
+            // Собираем все строки в буфер для пакетной записи (быстрее чем построчная запись)
+            $logEntries = [];
+            foreach ($items as $item) {
+                try {
+                    $imageUrl = $item['imageUrl'] ?? '';
+                    $filePath = $item['filePath'] ?? '';
+                    $goodSku = $item['goodSku'] ?? '';
+                    
+                    // Ограничиваем длину URL и пути для избежания проблем
+                    $imageUrl = mb_substr($imageUrl, 0, 500);
+                    $filePath = mb_substr($filePath, 0, 500);
+                    $goodSku = mb_substr($goodSku, 0, 100);
+                    
+                    $logEntries[] = "[{$timestamp}] IMAGE_SUCCESS ({$imageUrl}) - Файл: {$filePath}" . ($goodSku ? " - Товар: {$goodSku}" : '');
+                } catch (\Exception $e) {
+                    \Log::warning("Ошибка при подготовке элемента для лога успешных изображений", [
+                        'error' => $e->getMessage(),
+                        'item' => $item
+                    ]);
+                    // Продолжаем обработку остальных элементов
+                    continue;
                 }
-            } finally {
-                flock($handle, LOCK_UN);
-                fclose($handle);
+            }
+            
+            // Записываем все строки одним вызовом (намного быстрее)
+            if (!empty($logEntries)) {
+                $logContent = implode(PHP_EOL, $logEntries) . PHP_EOL;
+                File::append($logPath, $logContent);
             }
         } catch (\Exception $e) {
             \Log::error("Критическая ошибка при пакетной записи успешных изображений", [
@@ -211,7 +196,6 @@ class ImportLogService
         }
         
         try {
-            // Записываем построчно для больших пакетов, чтобы избежать проблем с памятью
             $logPath = $this->getLogPath('import-error');
             $timestamp = now()->format('Y-m-d H:i:s');
             
@@ -227,48 +211,34 @@ class ImportLogService
                 throw new \Exception("Директория для логов не доступна для записи: {$this->logDir}");
             }
             
-            // Открываем файл для записи
-            $handle = @fopen($logPath, 'a');
-            if (!$handle) {
-                $error = error_get_last();
-                throw new \Exception("Не удалось открыть файл лога для записи: {$logPath}. Ошибка: " . ($error['message'] ?? 'неизвестная ошибка'));
-            }
-            
-            // Устанавливаем блокировку файла для безопасной записи
-            if (!flock($handle, LOCK_EX)) {
-                fclose($handle);
-                throw new \Exception("Не удалось заблокировать файл лога: {$logPath}");
-            }
-            
-            try {
-                foreach ($items as $index => $item) {
-                    try {
-                        $error = $item['error'] ?? 'Неизвестная ошибка';
-                        $imageUrl = $item['imageUrl'] ?? '';
-                        $goodSku = $item['goodSku'] ?? '';
-                        
-                        // Ограничиваем длину для избежания проблем
-                        $error = mb_substr($error, 0, 500);
-                        $imageUrl = mb_substr($imageUrl, 0, 500);
-                        $goodSku = mb_substr($goodSku, 0, 100);
-                        
-                        $logEntry = "[{$timestamp}] IMAGE_ERROR ({$imageUrl})" . ($goodSku ? " - Товар: {$goodSku}" : '') . " - {$error}" . PHP_EOL;
-                        
-                        if (fwrite($handle, $logEntry) === false) {
-                            \Log::warning("Не удалось записать строку лога #{$index} в файл: {$logPath}");
-                        }
-                    } catch (\Exception $e) {
-                        \Log::warning("Ошибка при записи элемента #{$index} в лог ошибок изображений", [
-                            'error' => $e->getMessage(),
-                            'item' => $item
-                        ]);
-                        // Продолжаем обработку остальных элементов
-                        continue;
-                    }
+            // Собираем все строки в буфер для пакетной записи (быстрее чем построчная запись)
+            $logEntries = [];
+            foreach ($items as $item) {
+                try {
+                    $error = $item['error'] ?? 'Неизвестная ошибка';
+                    $imageUrl = $item['imageUrl'] ?? '';
+                    $goodSku = $item['goodSku'] ?? '';
+                    
+                    // Ограничиваем длину для избежания проблем
+                    $error = mb_substr($error, 0, 500);
+                    $imageUrl = mb_substr($imageUrl, 0, 500);
+                    $goodSku = mb_substr($goodSku, 0, 100);
+                    
+                    $logEntries[] = "[{$timestamp}] IMAGE_ERROR ({$imageUrl})" . ($goodSku ? " - Товар: {$goodSku}" : '') . " - {$error}";
+                } catch (\Exception $e) {
+                    \Log::warning("Ошибка при подготовке элемента для лога ошибок изображений", [
+                        'error' => $e->getMessage(),
+                        'item' => $item
+                    ]);
+                    // Продолжаем обработку остальных элементов
+                    continue;
                 }
-            } finally {
-                flock($handle, LOCK_UN);
-                fclose($handle);
+            }
+            
+            // Записываем все строки одним вызовом (намного быстрее)
+            if (!empty($logEntries)) {
+                $logContent = implode(PHP_EOL, $logEntries) . PHP_EOL;
+                File::append($logPath, $logContent);
             }
         } catch (\Exception $e) {
             \Log::error("Критическая ошибка при пакетной записи ошибок изображений", [

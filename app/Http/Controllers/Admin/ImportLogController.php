@@ -232,8 +232,9 @@ class ImportLogController extends Controller
         try {
             $items = $request->input('items', []);
             
-            // Разбиваем большие пакеты на части по 500 записей для избежания проблем с памятью и таймаутами
-            $chunkSize = 500;
+            // Разбиваем большие пакеты на части по 2000 записей для оптимизации
+            // Увеличено с 500, так как теперь используется пакетная запись через File::append
+            $chunkSize = 2000;
             $chunks = array_chunk($items, $chunkSize);
             
             foreach ($chunks as $chunk) {
@@ -263,8 +264,9 @@ class ImportLogController extends Controller
         try {
             $items = $request->input('items', []);
             
-            // Разбиваем большие пакеты на части по 500 записей для избежания проблем с памятью и таймаутами
-            $chunkSize = 500;
+            // Разбиваем большие пакеты на части по 2000 записей для оптимизации
+            // Увеличено с 500, так как теперь используется пакетная запись через File::append
+            $chunkSize = 2000;
             $chunks = array_chunk($items, $chunkSize);
             
             foreach ($chunks as $chunk) {
