@@ -247,6 +247,7 @@ class ShopGood extends Model
         return $query->where(function ($q) use ($search) {
             $q->where('name', 'like', "%{$search}%")
               ->orWhere('sku', 'like', "%{$search}%")
+              ->orWhere('slug', 'like', "%{$search}%")
               ->orWhere('description', 'like', "%{$search}%")
               ->orWhere('short_description', 'like', "%{$search}%");
         });
