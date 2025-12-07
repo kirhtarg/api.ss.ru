@@ -236,6 +236,14 @@ class BulkGoodsImportController extends Controller
                                     is_array($goodData['variation']['attributes']) && 
                                     count($goodData['variation']['attributes']) > 0;
                     
+                    \Log::info('Проверка наличия вариации', [
+                        'row' => $count,
+                        'sku' => $sku,
+                        'name' => $name,
+                        'has_variation' => $hasVariation,
+                        'variation_data' => $hasVariation ? $goodData['variation'] : null
+                    ]);
+                    
                     if ($hasVariation) {
                         // При наличии вариации ищем товар более тщательно
                         // Важно: для вариаций товар должен существовать, иначе будет ошибка дублирования
@@ -1531,15 +1539,26 @@ class BulkGoodsImportController extends Controller
      */
     private function processVariation($good, $variationData, $goodData)
     {
+        \Log::info('processVariation: ВХОД В МЕТОД', [
+            'good_id' => $good->id,
+            'good_name' => $good->name,
+            'variation_data_keys' => is_array($variationData) ? array_keys($variationData) : 'not_array',
+            'variation_data' => $variationData,
+            'good_data_keys' => array_keys($goodData)
+        ]);
+        
         try {
             // Проверяем наличие данных вариации
             if (!isset($variationData['attributes']) || !is_array($variationData['attributes']) || count($variationData['attributes']) === 0) {
                 \Log::warning('processVariation: Нет данных вариации', [
                     'good_id' => $good->id,
                     'good_name' => $good->name,
-                    'variation_data' => $variationData
+                    'variation_data' => $variationData,
+                    'has_attributes_key' => isset($variationData['attributes']),
+                    'attributes_is_array' => isset($variationData['attributes']) && is_array($variationData['attributes']),
+                    'attributes_count' => isset($variationData['attributes']) && is_array($variationData['attributes']) ? count($variationData['attributes']) : 0
                 ]);
-                return;
+                return null;
             }
             
             $attributes = $variationData['attributes'];
@@ -1630,32 +1649,54 @@ class BulkGoodsImportController extends Controller
             // Сортируем ID атрибутов для сравнения
             sort($attributeValueIds);
             
-            \Log::info('processVariation: Найдены значения атрибутов', [
-                'good_id' => $good->id,
-                'attribute_value_ids' => $attributeValueIds
-            ]);
-            
             // Ищем существующую вариацию с такой же комбинацией атрибутов
             $existingVariation = $this->findVariationByAttributes($good->id, $attributeValueIds);
             
-            \Log::info('processVariation: Поиск существующей вариации', [
-                'good_id' => $good->id,
-                'existing_variation_id' => $existingVariation ? $existingVariation->id : null
-            ]);
-            
             if ($existingVariation) {
-                // Вариация существует - обновляем цену, остатки и SKU
+                // Вариация существует - обновляем все поля из goodData
+                
+                // Обновляем цену
                 $existingVariation->price = $variationPrice;
-                $existingVariation->stock_quantity = $variationStockQuantity;
-                if ($variationRemoteStockQuantity !== null) {
-                    $existingVariation->remote_stock_quantity = $variationRemoteStockQuantity;
+                
+                // Обновляем акционную цену, если передана
+                if (isset($variationData['sale_price'])) {
+                    $existingVariation->sale_price = $variationData['sale_price'];
+                } elseif (isset($goodData['sale_price'])) {
+                    $existingVariation->sale_price = $goodData['sale_price'];
                 }
+                
+                // Обновляем остатки
+                $existingVariation->stock_quantity = $variationStockQuantity;
+                // Обновляем remote_stock_quantity всегда, даже если null (чтобы можно было сбросить значение)
+                $existingVariation->remote_stock_quantity = $variationRemoteStockQuantity;
+                
                 // Обновляем SKU вариации из данных товара или из goodData
                 // Дублирование SKU разрешено для вариаций, поэтому не проверяем уникальность
                 if (isset($goodData['sku']) && !empty($goodData['sku'])) {
                     $existingVariation->sku = $goodData['sku'];
                 } elseif ($good->sku) {
                     $existingVariation->sku = $good->sku;
+                }
+                
+                // Обновляем размеры и вес, если переданы
+                if (isset($goodData['weight'])) {
+                    $existingVariation->weight = $goodData['weight'];
+                }
+                if (isset($goodData['width'])) {
+                    $existingVariation->width = $goodData['width'];
+                }
+                if (isset($goodData['height'])) {
+                    $existingVariation->height = $goodData['height'];
+                }
+                if (isset($goodData['depth'])) {
+                    $existingVariation->length = $goodData['depth'];
+                } elseif (isset($goodData['length'])) {
+                    $existingVariation->length = $goodData['length'];
+                }
+                
+                // Обновляем флаг активности, если передан
+                if (isset($goodData['is_active'])) {
+                    $existingVariation->is_active = $goodData['is_active'];
                 }
                 
                 try {
@@ -1683,7 +1724,7 @@ class BulkGoodsImportController extends Controller
                     $good->sku ?? 'нет SKU',
                     $attributes,
                     $existingVariation->id,
-                    "Цена: {$variationPrice}, Остаток: {$variationStockQuantity}" . ($variationRemoteStockQuantity ? ", Удаленный склад: {$variationRemoteStockQuantity}" : '')
+                    "Цена: {$variationPrice}, Остаток: {$variationStockQuantity}" . ($variationRemoteStockQuantity !== null ? ", Удаленный склад: {$variationRemoteStockQuantity}" : '')
                 );
                 
                 // Возвращаем ID вариации для связи с изображениями
@@ -1732,11 +1773,39 @@ class BulkGoodsImportController extends Controller
                             ->first();
                         
                         if ($existingVariationBySku) {
-                            // Обновляем существующую вариацию
+                            // Обновляем существующую вариацию - все поля из goodData
                             $existingVariationBySku->price = $variationPrice;
+                            
+                            // Обновляем акционную цену, если передана
+                            if (isset($variationData['sale_price'])) {
+                                $existingVariationBySku->sale_price = $variationData['sale_price'];
+                            } elseif (isset($goodData['sale_price'])) {
+                                $existingVariationBySku->sale_price = $goodData['sale_price'];
+                            }
+                            
                             $existingVariationBySku->stock_quantity = $variationStockQuantity;
-                            if ($variationRemoteStockQuantity !== null) {
-                                $existingVariationBySku->remote_stock_quantity = $variationRemoteStockQuantity;
+                            // Обновляем remote_stock_quantity всегда, даже если null
+                            $existingVariationBySku->remote_stock_quantity = $variationRemoteStockQuantity;
+                            
+                            // Обновляем размеры и вес, если переданы
+                            if (isset($goodData['weight'])) {
+                                $existingVariationBySku->weight = $goodData['weight'];
+                            }
+                            if (isset($goodData['width'])) {
+                                $existingVariationBySku->width = $goodData['width'];
+                            }
+                            if (isset($goodData['height'])) {
+                                $existingVariationBySku->height = $goodData['height'];
+                            }
+                            if (isset($goodData['depth'])) {
+                                $existingVariationBySku->length = $goodData['depth'];
+                            } elseif (isset($goodData['length'])) {
+                                $existingVariationBySku->length = $goodData['length'];
+                            }
+                            
+                            // Обновляем флаг активности, если передан
+                            if (isset($goodData['is_active'])) {
+                                $existingVariationBySku->is_active = $goodData['is_active'];
                             }
                             
                             try {
@@ -1782,12 +1851,6 @@ class BulkGoodsImportController extends Controller
                     $variation->id,
                     "Цена: {$variationPrice}, Остаток: {$variationStockQuantity}" . ($variationRemoteStockQuantity ? ", Удаленный склад: {$variationRemoteStockQuantity}" : '')
                 );
-                
-                \Log::info('processVariation: Вариация успешно создана', [
-                    'good_id' => $good->id,
-                    'variation_id' => $variation->id,
-                    'variation_sku' => $variationSku
-                ]);
                 
                 // Возвращаем ID вариации для связи с изображениями
                 return $variation->id;
