@@ -28,7 +28,8 @@ class SiteInfoController extends Controller
                           ->orWhere('key', 'yandex_metrika') // Включаем параметр Яндекс.Метрики из любой группы
                           ->orWhere('key', 'show_counters') // Включаем параметр show_counters из любой группы
                           ->orWhere('key', 'absent_promocode_percent') // Включаем параметр процента промокода за отсутствие товара
-                          ->orWhere('key', 'absent_promocode_percent_days'); // Включаем параметр дней действия промокода
+                          ->orWhere('key', 'absent_promocode_percent_days') // Включаем параметр дней действия промокода
+                          ->orWhere('key', 'suff_support'); // Включаем параметр суффиксов для совместимости со старым сайтом
                 })
                 ->get();
 

@@ -3169,6 +3169,15 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::put('/{id}/set-default', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'setDefault']);
         });
 
+        // Автопарсинг Google Sheets
+        Route::prefix('google-sheets-auto-parsing')->group(function () {
+            Route::get('/', [\App\Http\Controllers\Admin\ShopGoogleSheetsAutoParsingController::class, 'index']);
+            Route::get('/{id}', [\App\Http\Controllers\Admin\ShopGoogleSheetsAutoParsingController::class, 'show']);
+            Route::post('/', [\App\Http\Controllers\Admin\ShopGoogleSheetsAutoParsingController::class, 'store']);
+            Route::put('/{id}', [\App\Http\Controllers\Admin\ShopGoogleSheetsAutoParsingController::class, 'update']);
+            Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopGoogleSheetsAutoParsingController::class, 'destroy']);
+        });
+
         // Логи импорта товаров
         Route::prefix('import-logs')->group(function () {
             Route::get('/stats', [\App\Http\Controllers\Admin\ImportLogController::class, 'getLogStats']);

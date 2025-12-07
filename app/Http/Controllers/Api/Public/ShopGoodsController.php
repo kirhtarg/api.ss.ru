@@ -1127,6 +1127,9 @@ class ShopGoodsController extends Controller
     public function getGoodBySlug($slug): JsonResponse
     {
         try {
+            // Обработка slug с учетом суффиксов из параметров сайта
+            $slug = $this->normalizeSlug($slug);
+            
             $good = ShopGood::with([
                 'variations' => function($query) {
                     $query->where('is_active', true)
@@ -1552,5 +1555,42 @@ class ShopGoodsController extends Controller
                 'message' => 'Ошибка получения медиа вариаций'
             ], 500);
         }
+    }
+
+    /**
+     * Нормализация slug с учетом суффиксов из параметров сайта
+     * 
+     * @param string $slug
+     * @return string
+     */
+    private function normalizeSlug($slug): string
+    {
+        if (empty($slug) || !is_string($slug)) {
+            return $slug;
+        }
+
+        // Получаем список суффиксов из параметров сайта
+        $suffSupport = Setting::where('key', 'suff_support')->first();
+        
+        if (!$suffSupport || empty($suffSupport->value)) {
+            return $slug;
+        }
+
+        // Разбираем суффиксы (могут быть через запятую)
+        $suffixes = array_filter(
+            array_map('trim', explode(',', $suffSupport->value)),
+            function($suffix) {
+                return !empty($suffix);
+            }
+        );
+
+        // Проверяем, заканчивается ли slug на любой из суффиксов
+        foreach ($suffixes as $suffix) {
+            if (str_ends_with($slug, $suffix)) {
+                return substr($slug, 0, -strlen($suffix));
+            }
+        }
+
+        return $slug;
     }
 }
