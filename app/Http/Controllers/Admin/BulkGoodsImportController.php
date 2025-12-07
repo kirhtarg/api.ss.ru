@@ -238,17 +238,32 @@ class BulkGoodsImportController extends Controller
                     
                     if ($hasVariation) {
                         // При наличии вариации ищем товар более тщательно
-                        // Сначала по имени (приоритет для вариаций)
-                        $existingGood = ShopGood::where('name', $name)->first();
+                        // Важно: для вариаций товар должен существовать, иначе будет ошибка дублирования
+                        // Проверяем все возможные варианты поиска
                         
-                        // Если не найден по имени, пробуем по SKU (если указан)
-                        if (!$existingGood && !empty($sku)) {
+                        // 1. Сначала по SKU (если указан) - самый надежный способ
+                        if (!empty($sku)) {
                             $existingGood = ShopGood::where('sku', $sku)->first();
                         }
                         
-                        // Если все еще не найден, пробуем по имени и пустому SKU
+                        // 2. Если не найден по SKU, ищем по имени (точное совпадение)
+                        if (!$existingGood) {
+                            $existingGood = ShopGood::where('name', $name)->first();
+                        }
+                        
+                        // 3. Если не найден, пробуем по имени с пустым SKU
                         if (!$existingGood) {
                             $existingGood = ShopGood::whereNull('sku')->where('name', $name)->first();
+                        }
+                        
+                        // 4. Если все еще не найден, пробуем поиск по имени без учета регистра и пробелов
+                        if (!$existingGood) {
+                            // Нормализуем имя для поиска (убираем лишние пробелы, приводим к нижнему регистру)
+                            $normalizedName = trim(preg_replace('/\s+/', ' ', mb_strtolower($name)));
+                            $allGoods = ShopGood::whereRaw('LOWER(TRIM(name)) = ?', [$normalizedName])->get();
+                            if ($allGoods->count() > 0) {
+                                $existingGood = $allGoods->first();
+                            }
                         }
                         
                     } else {
@@ -326,7 +341,60 @@ class BulkGoodsImportController extends Controller
                             $skipItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'reason' => 'Дубликат (настройка: пропустить)'];
                         }
                     } else {
-                        // Создаем новый товар (с вариацией или без)
+                        // Товар не найден при первоначальном поиске
+                        // Если есть вариация, делаем дополнительную проверку перед созданием товара
+                        // чтобы избежать ошибки дублирования SKU
+                        if ($hasVariation) {
+                            // Дополнительная проверка: ищем товар еще раз более тщательно
+                            // перед созданием, чтобы избежать дублирования
+                            $doubleCheckGood = null;
+                            
+                            // Проверяем по SKU (если указан)
+                            if (!empty($sku)) {
+                                $doubleCheckGood = ShopGood::where('sku', $sku)->first();
+                            }
+                            
+                            // Если не найден по SKU, проверяем по имени
+                            if (!$doubleCheckGood) {
+                                $doubleCheckGood = ShopGood::where('name', $name)->first();
+                            }
+                            
+                            // Если все еще не найден, проверяем по имени с пустым SKU
+                            if (!$doubleCheckGood && empty($sku)) {
+                                $doubleCheckGood = ShopGood::whereNull('sku')->where('name', $name)->first();
+                            }
+                            
+                            if ($doubleCheckGood) {
+                                // Товар найден при дополнительной проверке - обрабатываем только вариацию
+                                $variationId = $this->processVariation($doubleCheckGood, $goodData['variation'], $goodData);
+                                $results['updated']++; // Считаем как обновление (добавление вариации)
+                                
+                                // Сохраняем ID товара
+                                if (!empty($sku)) {
+                                    $results['goodIds'][$sku] = $doubleCheckGood->id;
+                                }
+                                
+                                if (isset($goodData['_row'])) {
+                                    $results['goodIds'][$goodData['_row']] = $doubleCheckGood->id;
+                                }
+                                
+                                // Сохраняем ID вариации для связи с изображениями
+                                if ($variationId) {
+                                    if (isset($goodData['_row'])) {
+                                        $results['variationIds'][$goodData['_row']] = $variationId;
+                                    }
+                                }
+                                
+                                // Добавляем в группу для обновления
+                                $sheet = $goodData['_sheet'] ?? 'неизвестно';
+                                $updateItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'good_id' => $doubleCheckGood->id];
+                                
+                                // Пропускаем создание товара, так как он уже существует
+                                continue;
+                            }
+                        }
+                        
+                        // Товар действительно не существует - создаем новый (с вариацией или без)
                         $newGood = $this->createGood($goodData, $autoCreateCategories, $autoCreateBrands);
                         $results['imported']++;
                         
@@ -560,12 +628,20 @@ class BulkGoodsImportController extends Controller
 
     private function updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands)
     {
+        // Обновляем все поля из goodData, которые переданы в импорте
+        // Это позволяет обновлять все поля, отмеченные для импорта, а не только те, что используются для поиска
+        
+        // Обновляем SKU (артикул) - если передан, обновляем
+        if (isset($goodData['sku'])) {
+            $existingGood->sku = !empty($goodData['sku']) ? $goodData['sku'] : null;
+        }
+        
         $existingGood->name = $goodData['name'];
         // Используем slug из данных, если он есть и не пустой, иначе генерируем автоматически
         if (!empty($goodData['slug']) && trim($goodData['slug']) !== '') {
             $existingGood->slug = trim($goodData['slug']);
         } else {
-            $existingGood->slug = $this->generateSlug($goodData['name'], $goodData['sku']);
+            $existingGood->slug = $this->generateSlug($goodData['name'], $goodData['sku'] ?? $existingGood->sku);
         }
 
         // Обновляем описание только если оно передано
@@ -580,8 +656,20 @@ class BulkGoodsImportController extends Controller
 
         // Применяем модификацию цены
         $priceModification = $goodData['price_modification'] ?? null;
-        $existingGood->price = $this->applyPriceModification($goodData['price'] ?? $existingGood->price, $priceModification['regular'] ?? null);
-        $existingGood->sale_price = $this->applySalePriceModification($goodData, $priceModification) ?? $existingGood->sale_price;
+        if (isset($goodData['price'])) {
+            $existingGood->price = $this->applyPriceModification($goodData['price'], $priceModification['regular'] ?? null);
+        }
+        if (isset($goodData['sale_price']) || isset($priceModification)) {
+            $existingGood->sale_price = $this->applySalePriceModification($goodData, $priceModification) ?? $existingGood->sale_price;
+        }
+        
+        // Обновляем демпинг цену, если передана
+        if (isset($goodData['demping_price'])) {
+            $existingGood->demping_price = $goodData['demping_price'];
+        }
+        if (isset($goodData['show_demping'])) {
+            $existingGood->show_demping = $goodData['show_demping'];
+        }
 
         // Обновляем остатки только если они переданы
         if (isset($goodData['stock_quantity']) || isset($goodData['stock'])) {
@@ -591,19 +679,86 @@ class BulkGoodsImportController extends Controller
         if (isset($goodData['remote_stock_quantity'])) {
             $existingGood->remote_stock_quantity = $goodData['remote_stock_quantity'];
         }
-        $existingGood->weight = $goodData['weight'] ?? $existingGood->weight;
-        $existingGood->width = $goodData['width'] ?? $existingGood->width;
-        $existingGood->height = $goodData['height'] ?? $existingGood->height;
+        
+        // Обновляем размеры и вес, если переданы
+        if (isset($goodData['weight'])) {
+            $existingGood->weight = $goodData['weight'];
+        }
+        if (isset($goodData['width'])) {
+            $existingGood->width = $goodData['width'];
+        }
+        if (isset($goodData['height'])) {
+            $existingGood->height = $goodData['height'];
+        }
         // Поддерживаем и depth, и length для обратной совместимости
         if (isset($goodData['depth'])) {
             $existingGood->depth = $goodData['depth'];
         } elseif (isset($goodData['length'])) {
             $existingGood->depth = $goodData['length'];
         }
-        $existingGood->is_active = $goodData['is_active'] ?? $existingGood->is_active;
-        $existingGood->is_featured = $goodData['is_featured'] ?? $existingGood->is_featured;
-        $existingGood->meta_title = $goodData['meta_title'] ?? $existingGood->meta_title;
-        $existingGood->meta_description = $goodData['meta_description'] ?? $existingGood->meta_description;
+        
+        // Обновляем флаги, если переданы
+        if (isset($goodData['is_active'])) {
+            $existingGood->is_active = $goodData['is_active'];
+        }
+        if (isset($goodData['is_featured'])) {
+            $existingGood->is_featured = $goodData['is_featured'];
+        }
+        if (isset($goodData['is_new'])) {
+            $existingGood->is_new = $goodData['is_new'];
+        }
+        if (isset($goodData['is_sale'])) {
+            $existingGood->is_sale = $goodData['is_sale'];
+        }
+        if (isset($goodData['is_preorder'])) {
+            $existingGood->is_preorder = $goodData['is_preorder'];
+        }
+        
+        // Обновляем мета-теги, если переданы
+        if (isset($goodData['meta_title'])) {
+            $existingGood->meta_title = $goodData['meta_title'];
+        }
+        if (isset($goodData['meta_description'])) {
+            $existingGood->meta_description = $goodData['meta_description'];
+        }
+        
+        // Обновляем label_id, если передан
+        if (isset($goodData['label_id'])) {
+            $existingGood->label_id = $goodData['label_id'];
+        }
+        
+        // Обновляем sort_order, если передан
+        if (isset($goodData['sort_order'])) {
+            $existingGood->sort_order = $goodData['sort_order'];
+        }
+        
+        // Обновляем все остальные поля из goodData, которые есть в fillable модели
+        // Это гарантирует, что все поля, отмеченные для импорта, будут обновлены
+        // Используем список fillable полей из модели ShopGood
+        $fillableFields = $existingGood->getFillable();
+        
+        // Список полей, которые уже обработаны выше (чтобы не дублировать)
+        $alreadyProcessed = [
+            'name', 'slug', 'sku', 'description', 'short_description',
+            'price', 'sale_price', 'demping_price', 'show_demping', 'label_id',
+            'stock_quantity', 'remote_stock_quantity', 'width', 'height', 'depth',
+            'weight', 'meta_title', 'meta_description',
+            'is_active', 'is_featured', 'is_new', 'is_sale', 'is_preorder', 'sort_order'
+        ];
+        
+        // Обновляем все поля из goodData, которые есть в fillable и не были обработаны выше
+        foreach ($fillableFields as $field) {
+            // Пропускаем поля, которые уже обработаны выше или являются служебными (начинаются с _)
+            if (in_array($field, $alreadyProcessed) || strpos($field, '_') === 0) {
+                continue;
+            }
+            
+            // Если поле есть в goodData, обновляем его
+            if (isset($goodData[$field])) {
+                $existingGood->$field = $goodData[$field];
+            }
+        }
+        
         $existingGood->save();
 
         // Обрабатываем категории
