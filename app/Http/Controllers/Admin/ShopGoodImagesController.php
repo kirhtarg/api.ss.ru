@@ -392,7 +392,7 @@ class ShopGoodImagesController extends Controller
     {
         // Валидация с поддержкой вариаций: либо good_id, либо variation_id должен быть указан
         $validator = Validator::make($request->all(), [
-            'images' => 'required|array|min:1|max:100', // Максимум 100 изображений за раз
+            'images' => 'required|array|min:1|max:1000', // Максимум 1000 изображений за раз
             'images.*.good_id' => 'nullable|exists:shop_goods,id',
             'images.*.variation_id' => 'nullable|exists:shop_good_variations,id',
             'images.*.file_path' => 'required|string',
@@ -469,7 +469,22 @@ class ShopGoodImagesController extends Controller
                 // Обрабатываем каждое изображение для товара
                 foreach ($goodImages as $imageData) {
                     try {
+                        // Логируем перед обработкой для отладки
+                        Log::debug('Обработка изображения для товара', [
+                            'good_id' => $goodId,
+                            'file_path' => $imageData['file_path'] ?? null,
+                            'image_action' => $imageData['image_action'] ?? 'add'
+                        ]);
+                        
                         $result = $this->processSingleImage($good, $imageData);
+                        
+                        // Логируем результат обработки
+                        Log::debug('Результат обработки изображения', [
+                            'good_id' => $goodId,
+                            'file_path' => $imageData['file_path'] ?? null,
+                            'status' => $result['status'] ?? 'unknown',
+                            'message' => $result['message'] ?? 'no message'
+                        ]);
                         
                         if ($result['status'] === 'skipped') {
                             $skipped[] = $result;
@@ -535,6 +550,9 @@ class ShopGoodImagesController extends Controller
                                     $variation->sku ?? $variation->good->sku ?? null
                                 );
                             }
+                        } elseif ($result['status'] === 'updated') {
+                            // Изображение обновлено (связь уже существовала, но метаданные обновлены)
+                            $results[] = $result;
                         } else {
                             $results[] = $result;
                         }
@@ -623,16 +641,50 @@ class ShopGoodImagesController extends Controller
         $existingImage = ShopGoodImage::where('good_id', $goodId)
             ->where('file_path', $filePath)
             ->first();
+        
+        // Логируем для диагностики
+        Log::debug('Проверка существования связи изображения', [
+            'good_id' => $goodId,
+            'file_path' => $filePath,
+            'existing_image_found' => $existingImage ? true : false,
+            'existing_image_id' => $existingImage->id ?? null
+        ]);
             
         if ($existingImage) {
+            // Связь уже существует - обновляем данные изображения (alt_text, is_main, sort_order)
+            // Это позволяет обновить метаданные даже если связь уже существует
+            $existingImage->alt_text = $altText;
+            $existingImage->is_main = $isMain;
+            $existingImage->sort_order = $sortOrder;
+            $existingImage->save();
+            
+            Log::debug('Связь уже существует, обновлены метаданные', [
+                'good_id' => $goodId,
+                'file_path' => $filePath,
+                'image_id' => $existingImage->id
+            ]);
+            
+            // Если это главное изображение, снимаем флаг с других
+            if ($existingImage->is_main) {
+                ShopGoodImage::where('good_id', $goodId)
+                    ->where('id', '!=', $existingImage->id)
+                    ->update(['is_main' => false]);
+            }
+            
             return [
                 'good_id' => $goodId,
                 'file_path' => $filePath,
                 'image_id' => $existingImage->id,
-                'status' => 'skipped',
-                'message' => 'Связь товар-изображение уже существует'
+                'status' => 'updated',
+                'message' => 'Связь товар-изображение обновлена'
             ];
         }
+        
+        // Если связи нет, но файл существует - создаем связь
+        Log::debug('Связь не найдена, создаем новую', [
+            'good_id' => $goodId,
+            'file_path' => $filePath
+        ]);
 
         // Обрабатываем действие с изображениями
         if ($imageAction === 'replace') {
@@ -645,26 +697,24 @@ class ShopGoodImagesController extends Controller
                 $existingImage->delete();
             }
         } elseif ($imageAction === 'skip') {
-            // Проверяем, есть ли уже изображения у товара
-            $existingCount = ShopGoodImage::where('good_id', $goodId)->count();
-            if ($existingCount > 0) {
-                return [
-                    'good_id' => $goodId,
-                    'file_path' => $filePath,
-                    'status' => 'skipped',
-                    'message' => 'Изображения пропущены (уже существуют)'
-                ];
-            }
+            // При 'skip' проверяем только конкретную связь для этого файла
+            // Если связь уже существует (проверено выше), пропускаем
+            // Если связи нет, но файл существует - создаем связь
+            // Это позволяет привязать существующие файлы к товарам при обновлении
         } elseif ($imageAction === 'unique') {
-            // Проверяем, есть ли уже изображение с таким же путем в базе
-            $existingImage = ShopGoodImage::where('file_path', $filePath)->first();
-            if ($existingImage) {
-                return [
-                    'good_id' => $goodId,
-                    'file_path' => $filePath,
-                    'status' => 'skipped',
-                    'message' => 'Изображение пропущено (уже существует в базе)'
-                ];
+            // Проверяем, есть ли уже изображение с таким же путем в базе (для любого товара)
+            $existingImageGlobal = ShopGoodImage::where('file_path', $filePath)->first();
+            if ($existingImageGlobal) {
+                // Если изображение уже привязано к другому товару, пропускаем
+                if ($existingImageGlobal->good_id != $goodId) {
+                    return [
+                        'good_id' => $goodId,
+                        'file_path' => $filePath,
+                        'status' => 'skipped',
+                        'message' => 'Изображение пропущено (уже привязано к другому товару)'
+                    ];
+                }
+                // Если изображение уже привязано к этому товару, это уже обработано выше
             }
         }
 
@@ -676,6 +726,12 @@ class ShopGoodImagesController extends Controller
             'is_main' => $isMain,
             'sort_order' => $sortOrder
         ];
+
+        Log::debug('Создание записи изображения в БД', [
+            'good_id' => $goodId,
+            'file_path' => $filePath,
+            'image_action' => $imageAction
+        ]);
 
         $goodImage = ShopGoodImage::create($imageRecord);
         
@@ -730,14 +786,38 @@ class ShopGoodImagesController extends Controller
             ->first();
             
         if ($existingImage) {
+            // Связь уже существует - обновляем данные изображения (alt_text, is_main, sort_order)
+            // Это позволяет обновить метаданные даже если связь уже существует
+            $existingImage->alt_text = $altText;
+            $existingImage->is_main = $isMain;
+            $existingImage->sort_order = $sortOrder;
+            $existingImage->save();
+            
+            Log::debug('Связь вариации уже существует, обновлены метаданные', [
+                'variation_id' => $variationId,
+                'file_path' => $filePath,
+                'image_id' => $existingImage->id
+            ]);
+            
+            // Если это главное изображение, снимаем флаг с других
+            if ($existingImage->is_main) {
+                ShopGoodImage::whereNull('good_id')
+                    ->where('variation_id', $variationId)
+                    ->where('id', '!=', $existingImage->id)
+                    ->update(['is_main' => false]);
+            }
+            
             return [
                 'variation_id' => $variationId,
                 'file_path' => $filePath,
                 'image_id' => $existingImage->id,
-                'status' => 'skipped',
-                'message' => 'Связь вариация-изображение уже существует'
+                'status' => 'updated',
+                'message' => 'Связь вариация-изображение обновлена'
             ];
         }
+        
+        // Если связи нет, но файл существует - создаем связь
+        // Это позволяет привязать существующие файлы к вариациям при обновлении
 
         // Обрабатываем действие с изображениями
         if ($imageAction === 'replace') {
@@ -752,28 +832,24 @@ class ShopGoodImagesController extends Controller
                 $existingImage->delete();
             }
         } elseif ($imageAction === 'skip') {
-            // Проверяем, есть ли уже изображения у вариации
-            $existingCount = ShopGoodImage::whereNull('good_id')
-                ->where('variation_id', $variationId)
-                ->count();
-            if ($existingCount > 0) {
-                return [
-                    'variation_id' => $variationId,
-                    'file_path' => $filePath,
-                    'status' => 'skipped',
-                    'message' => 'Изображения пропущены (уже существуют)'
-                ];
-            }
+            // При 'skip' проверяем только конкретную связь для этого файла
+            // Если связь уже существует (проверено выше), пропускаем
+            // Если связи нет, но файл существует - создаем связь
+            // Это позволяет привязать существующие файлы к вариациям при обновлении
         } elseif ($imageAction === 'unique') {
-            // Проверяем, есть ли уже изображение с таким же путем в базе
-            $existingImage = ShopGoodImage::where('file_path', $filePath)->first();
-            if ($existingImage) {
-                return [
-                    'variation_id' => $variationId,
-                    'file_path' => $filePath,
-                    'status' => 'skipped',
-                    'message' => 'Изображение пропущено (уже существует в базе)'
-                ];
+            // Проверяем, есть ли уже изображение с таким же путем в базе (для любой вариации)
+            $existingImageGlobal = ShopGoodImage::where('file_path', $filePath)->first();
+            if ($existingImageGlobal) {
+                // Если изображение уже привязано к другой вариации, пропускаем
+                if ($existingImageGlobal->variation_id != $variationId) {
+                    return [
+                        'variation_id' => $variationId,
+                        'file_path' => $filePath,
+                        'status' => 'skipped',
+                        'message' => 'Изображение пропущено (уже привязано к другой вариации)'
+                    ];
+                }
+                // Если изображение уже привязано к этой вариации, это уже обработано выше
             }
         }
 
