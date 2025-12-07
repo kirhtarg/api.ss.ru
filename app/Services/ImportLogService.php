@@ -402,14 +402,75 @@ class ImportLogService
      */
     public function logErrorBatch($items)
     {
-        $lines = [];
-        foreach ($items as $item) {
-            $sheet = $item['sheet'] ?? 'неизвестно';
-            $lines[] = "{$item['count']} - {$item['sku']} - {$item['name']} - Лист: {$sheet} - {$item['error']}";
+        if (empty($items)) {
+            return;
         }
         
-        if (!empty($lines)) {
-            $this->writeLog('import-error', implode("\n", $lines));
+        try {
+            $logPath = $this->getLogPath('import-error');
+            $timestamp = now()->format('Y-m-d H:i:s');
+            
+            // Убеждаемся, что директория существует
+            if (!File::exists($this->logDir)) {
+                if (!\App\Helpers\StorageHelper::createDirectory($this->logDir)) {
+                    throw new \Exception("Не удалось создать директорию для логов: {$this->logDir}");
+                }
+            }
+            
+            // Проверяем права на запись
+            if (!is_writable($this->logDir)) {
+                throw new \Exception("Директория для логов не доступна для записи: {$this->logDir}");
+            }
+            
+            // Собираем все строки в буфер для пакетной записи (быстрее чем построчная запись)
+            $logEntries = [];
+            foreach ($items as $item) {
+                try {
+                    // Поддерживаем разные форматы данных (для совместимости)
+                    if (isset($item['count']) && isset($item['sku']) && isset($item['name'])) {
+                        // Старый формат: ошибки импорта товаров
+                        $sheet = $item['sheet'] ?? 'неизвестно';
+                        $logEntries[] = "{$item['count']} - {$item['sku']} - {$item['name']} - Лист: {$sheet} - {$item['error']}";
+                    } elseif (isset($item['error'])) {
+                        // Новый формат: общие ошибки
+                        $imageUrl = $item['imageUrl'] ?? '';
+                        $goodSku = $item['goodSku'] ?? '';
+                        $type = $item['type'] ?? 'general';
+                        
+                        // Ограничиваем длину для избежания проблем
+                        $error = mb_substr($item['error'], 0, 500);
+                        $imageUrl = mb_substr($imageUrl, 0, 500);
+                        $goodSku = mb_substr($goodSku, 0, 100);
+                        
+                        if ($type === 'image_loading' && $imageUrl) {
+                            $logEntries[] = "IMAGE_ERROR ({$imageUrl})" . ($goodSku ? " - Товар: {$goodSku}" : '') . " - {$error}";
+                        } else {
+                            $logEntries[] = "ERROR - {$error}" . ($goodSku ? " - Товар: {$goodSku}" : '');
+                        }
+                    }
+                } catch (\Exception $e) {
+                    \Log::warning("Ошибка при подготовке элемента для лога ошибок", [
+                        'error' => $e->getMessage(),
+                        'item' => $item
+                    ]);
+                    // Продолжаем обработку остальных элементов
+                    continue;
+                }
+            }
+            
+            // Записываем все строки одним вызовом (намного быстрее)
+            if (!empty($logEntries)) {
+                $logContent = implode(PHP_EOL, $logEntries) . PHP_EOL;
+                File::append($logPath, "[{$timestamp}] " . $logContent);
+            }
+        } catch (\Exception $e) {
+            \Log::error("Критическая ошибка при пакетной записи ошибок", [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'items_count' => count($items)
+            ]);
+            // Пробрасываем исключение дальше, чтобы контроллер мог его обработать
+            throw $e;
         }
     }
 

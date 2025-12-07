@@ -217,11 +217,30 @@ class ImportLogController extends Controller
      */
     public function logErrorBatch(Request $request)
     {
-        $items = $request->input('items', []);
-        
-        $this->importLogService->logErrorBatch($items);
-        
-        return response()->json(['success' => true, 'count' => count($items)]);
+        try {
+            $items = $request->input('items', []) ?: $request->input('errors', []);
+            
+            // Разбиваем большие пакеты на части по 2000 записей для оптимизации
+            $chunkSize = 2000;
+            $chunks = array_chunk($items, $chunkSize);
+            
+            foreach ($chunks as $chunk) {
+                $this->importLogService->logErrorBatch($chunk);
+            }
+            
+            return response()->json(['success' => true, 'count' => count($items)]);
+        } catch (\Exception $e) {
+            \Log::error('Ошибка пакетного логирования ошибок', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'items_count' => count($request->input('items', []) ?: $request->input('errors', []))
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка логирования: ' . $e->getMessage()
+            ], 500);
+        }
     }
     
     /**
