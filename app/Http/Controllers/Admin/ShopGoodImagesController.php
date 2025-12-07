@@ -462,122 +462,62 @@ class ShopGoodImagesController extends Controller
                 }
             }
 
-            // Обрабатываем изображения для каждого товара
+            // Обрабатываем изображения для каждого товара пакетно
             foreach ($imagesByGood as $goodId => $goodImages) {
-                $good = ShopGood::findOrFail($goodId);
-                
-                // Обрабатываем каждое изображение для товара
-                foreach ($goodImages as $imageData) {
-                    try {
-                        // Логируем перед обработкой для отладки
-                        Log::debug('Обработка изображения для товара', [
-                            'good_id' => $goodId,
-                            'file_path' => $imageData['file_path'] ?? null,
-                            'image_action' => $imageData['image_action'] ?? 'add'
-                        ]);
-                        
-                        $result = $this->processSingleImage($good, $imageData);
-                        
-                        // Логируем результат обработки
-                        Log::debug('Результат обработки изображения', [
-                            'good_id' => $goodId,
-                            'file_path' => $imageData['file_path'] ?? null,
-                            'status' => $result['status'] ?? 'unknown',
-                            'message' => $result['message'] ?? 'no message'
-                        ]);
-                        
-                        if ($result['status'] === 'skipped') {
-                            $skipped[] = $result;
-                            // Не логируем как ошибку, если связь уже существует - это нормальная ситуация
-                            // Логируем только если это реальная ошибка (например, файл не найден)
-                            $message = $result['message'] ?? 'Изображение пропущено';
-                            // Если сообщение указывает на то, что связь уже существует, это не ошибка
-                            if (strpos($message, 'уже существует') === false && strpos($message, 'пропущены') === false) {
-                                $this->importLogService->logImageLoadingError(
-                                    $message,
-                                    $imageData['file_path'] ?? null,
-                                    $good->sku ?? null
-                                );
-                            }
-                        } else {
-                            $results[] = $result;
-                        }
-                    } catch (\Exception $e) {
-                        Log::error('Ошибка создания изображения', [
-                            'index' => $imageData['_index'],
-                            'good_id' => $goodId,
-                            'file_path' => $imageData['file_path'],
-                            'error' => $e->getMessage(),
-                            'trace' => $e->getTraceAsString()
-                        ]);
-                        
+                try {
+                    $good = ShopGood::findOrFail($goodId);
+                    $batchResults = $this->processImagesBatch($good, $goodImages);
+                    
+                    // Добавляем результаты в общие массивы
+                    $results = array_merge($results, $batchResults['created'] ?? []);
+                    $results = array_merge($results, $batchResults['updated'] ?? []);
+                    $skipped = array_merge($skipped, $batchResults['skipped'] ?? []);
+                    $errors = array_merge($errors, $batchResults['errors'] ?? []);
+                } catch (\Exception $e) {
+                    Log::error('Ошибка пакетной обработки изображений для товара', [
+                        'good_id' => $goodId,
+                        'error' => $e->getMessage(),
+                        'trace' => $e->getTraceAsString()
+                    ]);
+                    
+                    // Добавляем ошибку для всех изображений этого товара
+                    foreach ($goodImages as $imageData) {
                         $errors[] = [
-                            'index' => $imageData['_index'],
+                            'index' => $imageData['_index'] ?? null,
                             'good_id' => $goodId,
-                            'file_path' => $imageData['file_path'],
+                            'file_path' => $imageData['file_path'] ?? null,
                             'error' => $e->getMessage()
                         ];
-                        
-                        // Логируем ошибку загрузки изображения
-                        $this->importLogService->logImageLoadingError(
-                            $e->getMessage(),
-                            $imageData['file_path'] ?? null,
-                            $good->sku ?? null
-                        );
                     }
                 }
             }
             
-            // Обрабатываем изображения для каждой вариации
+            // Обрабатываем изображения для каждой вариации пакетно
             foreach ($imagesByVariation as $variationId => $variationImages) {
-                $variation = ShopGoodVariation::findOrFail($variationId);
-                
-                // Обрабатываем каждое изображение для вариации
-                foreach ($variationImages as $imageData) {
-                    try {
-                        $result = $this->processSingleVariationImage($variation, $imageData);
-                        
-                        if ($result['status'] === 'skipped') {
-                            $skipped[] = $result;
-                            // Не логируем как ошибку, если связь уже существует - это нормальная ситуация
-                            // Логируем только если это реальная ошибка (например, файл не найден)
-                            $message = $result['message'] ?? 'Изображение пропущено';
-                            // Если сообщение указывает на то, что связь уже существует, это не ошибка
-                            if (strpos($message, 'уже существует') === false && strpos($message, 'пропущены') === false) {
-                                $this->importLogService->logImageLoadingError(
-                                    $message,
-                                    $imageData['file_path'] ?? null,
-                                    $variation->sku ?? $variation->good->sku ?? null
-                                );
-                            }
-                        } elseif ($result['status'] === 'updated') {
-                            // Изображение обновлено (связь уже существовала, но метаданные обновлены)
-                            $results[] = $result;
-                        } else {
-                            $results[] = $result;
-                        }
-                    } catch (\Exception $e) {
-                        Log::error('Ошибка создания изображения вариации', [
-                            'index' => $imageData['_index'],
-                            'variation_id' => $variationId,
-                            'file_path' => $imageData['file_path'],
-                            'error' => $e->getMessage(),
-                            'trace' => $e->getTraceAsString()
-                        ]);
-                        
+                try {
+                    $variation = ShopGoodVariation::findOrFail($variationId);
+                    $batchResults = $this->processVariationImagesBatch($variation, $variationImages);
+                    
+                    // Добавляем результаты в общие массивы
+                    $results = array_merge($results, $batchResults['created'] ?? []);
+                    $results = array_merge($results, $batchResults['updated'] ?? []);
+                    $skipped = array_merge($skipped, $batchResults['skipped'] ?? []);
+                    $errors = array_merge($errors, $batchResults['errors'] ?? []);
+                } catch (\Exception $e) {
+                    Log::error('Ошибка пакетной обработки изображений для вариации', [
+                        'variation_id' => $variationId,
+                        'error' => $e->getMessage(),
+                        'trace' => $e->getTraceAsString()
+                    ]);
+                    
+                    // Добавляем ошибку для всех изображений этой вариации
+                    foreach ($variationImages as $imageData) {
                         $errors[] = [
-                            'index' => $imageData['_index'],
+                            'index' => $imageData['_index'] ?? null,
                             'variation_id' => $variationId,
-                            'file_path' => $imageData['file_path'],
+                            'file_path' => $imageData['file_path'] ?? null,
                             'error' => $e->getMessage()
                         ];
-                        
-                        // Логируем ошибку загрузки изображения
-                        $this->importLogService->logImageLoadingError(
-                            $e->getMessage(),
-                            $imageData['file_path'] ?? null,
-                            $variation->sku ?? $variation->good->sku ?? null
-                        );
                     }
                 }
             }
@@ -618,6 +558,195 @@ class ShopGoodImagesController extends Controller
         }
     }
 
+    /**
+     * Пакетная обработка изображений для товара (оптимизированный метод)
+     */
+    private function processImagesBatch(ShopGood $good, array $imagesData): array
+    {
+        $goodId = $good->id;
+        $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+        $results = ['created' => [], 'updated' => [], 'skipped' => [], 'errors' => []];
+        
+        // Проверяем существование всех файлов и валидируем данные
+        $validImages = [];
+        foreach ($imagesData as $imageData) {
+            $filePath = $imageData['file_path'] ?? '';
+            $fullFilePath = $frontendPublicPath . '/' . $filePath;
+            
+            if (!file_exists($fullFilePath)) {
+                $results['errors'][] = [
+                    'good_id' => $goodId,
+                    'file_path' => $filePath,
+                    'error' => 'Файл изображения не найден: ' . $filePath
+                ];
+                continue;
+            }
+            
+            $validImages[] = $imageData;
+        }
+        
+        if (empty($validImages)) {
+            return $results;
+        }
+        
+        // Получаем все существующие связи одним запросом
+        $filePaths = array_column($validImages, 'file_path');
+        $existingImages = ShopGoodImage::where('good_id', $goodId)
+            ->whereIn('file_path', $filePaths)
+            ->get()
+            ->keyBy('file_path');
+        
+        // Разделяем на те, что нужно обновить, и те, что нужно создать
+        $toUpdate = [];
+        $toCreate = [];
+        
+        foreach ($validImages as $imageData) {
+            $filePath = $imageData['file_path'];
+            $existingImage = $existingImages->get($filePath);
+            
+            if ($existingImage) {
+                // Обновляем существующую связь
+                $toUpdate[] = [
+                    'id' => $existingImage->id,
+                    'data' => $imageData
+                ];
+            } else {
+                // Создаем новую связь
+                $toCreate[] = $imageData;
+            }
+        }
+        
+        // Массовое обновление существующих связей
+        if (!empty($toUpdate)) {
+            foreach ($toUpdate as $updateItem) {
+                try {
+                    $existingImage = ShopGoodImage::find($updateItem['id']);
+                    if ($existingImage) {
+                        $imageData = $updateItem['data'];
+                        $existingImage->alt_text = $imageData['alt_text'] ?? '';
+                        $existingImage->is_main = $imageData['is_main'] ?? false;
+                        $existingImage->sort_order = $imageData['sort_order'] ?? 0;
+                        $existingImage->save();
+                        
+                        $results['updated'][] = [
+                            'good_id' => $goodId,
+                            'file_path' => $imageData['file_path'],
+                            'image_id' => $existingImage->id,
+                            'status' => 'updated',
+                            'message' => 'Связь товар-изображение обновлена'
+                        ];
+                    }
+                } catch (\Exception $e) {
+                    $results['errors'][] = [
+                        'good_id' => $goodId,
+                        'file_path' => $updateItem['data']['file_path'] ?? null,
+                        'error' => $e->getMessage()
+                    ];
+                }
+            }
+            
+            // Снимаем флаг is_main с других изображений, если есть новые главные
+            $hasMainImages = collect($toUpdate)->contains(function ($item) {
+                return ($item['data']['is_main'] ?? false) == true;
+            });
+            
+            if ($hasMainImages) {
+                $mainImageIds = collect($toUpdate)
+                    ->filter(function ($item) {
+                        return ($item['data']['is_main'] ?? false) == true;
+                    })
+                    ->pluck('id')
+                    ->toArray();
+                
+                ShopGoodImage::where('good_id', $goodId)
+                    ->whereNotIn('id', $mainImageIds)
+                    ->update(['is_main' => false]);
+            }
+        }
+        
+        // Массовое создание новых связей
+        if (!empty($toCreate)) {
+            $insertData = [];
+            foreach ($toCreate as $imageData) {
+                $insertData[] = [
+                    'good_id' => $goodId,
+                    'variation_id' => null,
+                    'file_path' => $imageData['file_path'],
+                    'alt_text' => $imageData['alt_text'] ?? '',
+                    'is_main' => $imageData['is_main'] ?? false ? 1 : 0,
+                    'sort_order' => $imageData['sort_order'] ?? 0,
+                    'created_at' => now(),
+                    'updated_at' => now()
+                ];
+            }
+            
+            try {
+                // Используем массовую вставку
+                ShopGoodImage::insert($insertData);
+                
+                // Получаем созданные записи для возврата результатов
+                $createdImages = ShopGoodImage::where('good_id', $goodId)
+                    ->whereIn('file_path', array_column($toCreate, 'file_path'))
+                    ->get();
+                
+                foreach ($createdImages as $createdImage) {
+                    $results['created'][] = [
+                        'good_id' => $goodId,
+                        'file_path' => $createdImage->file_path,
+                        'image_id' => $createdImage->id,
+                        'status' => 'created',
+                        'message' => 'Изображение успешно создано'
+                    ];
+                }
+                
+                // Снимаем флаг is_main с других изображений, если есть новые главные
+                $hasMainImages = collect($toCreate)->contains(function ($item) {
+                    return ($item['is_main'] ?? false) == true;
+                });
+                
+                if ($hasMainImages) {
+                    $mainImageIds = $createdImages->where('is_main', true)->pluck('id')->toArray();
+                    if (!empty($mainImageIds)) {
+                        ShopGoodImage::where('good_id', $goodId)
+                            ->whereNotIn('id', $mainImageIds)
+                            ->update(['is_main' => false]);
+                    }
+                }
+            } catch (\Exception $e) {
+                // Если массовая вставка не удалась, пробуем по одной
+                foreach ($toCreate as $imageData) {
+                    try {
+                        $imageRecord = [
+                            'good_id' => $goodId,
+                            'file_path' => $imageData['file_path'],
+                            'alt_text' => $imageData['alt_text'] ?? '',
+                            'is_main' => $imageData['is_main'] ?? false ? 1 : 0,
+                            'sort_order' => $imageData['sort_order'] ?? 0
+                        ];
+                        
+                        $goodImage = ShopGoodImage::create($imageRecord);
+                        
+                        $results['created'][] = [
+                            'good_id' => $goodId,
+                            'file_path' => $imageData['file_path'],
+                            'image_id' => $goodImage->id,
+                            'status' => 'created',
+                            'message' => 'Изображение успешно создано'
+                        ];
+                    } catch (\Exception $createError) {
+                        $results['errors'][] = [
+                            'good_id' => $goodId,
+                            'file_path' => $imageData['file_path'] ?? null,
+                            'error' => $createError->getMessage()
+                        ];
+                    }
+                }
+            }
+        }
+        
+        return $results;
+    }
+    
     /**
      * Обработка одного изображения (вспомогательный метод)
      */
@@ -758,6 +887,200 @@ class ShopGoodImagesController extends Controller
             'status' => 'created',
             'message' => 'Изображение успешно создано'
         ];
+    }
+    
+    /**
+     * Пакетная обработка изображений для вариации (оптимизированный метод)
+     */
+    private function processVariationImagesBatch(ShopGoodVariation $variation, array $imagesData): array
+    {
+        $variationId = $variation->id;
+        $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+        $results = ['created' => [], 'updated' => [], 'skipped' => [], 'errors' => []];
+        
+        // Проверяем существование всех файлов и валидируем данные
+        $validImages = [];
+        foreach ($imagesData as $imageData) {
+            $filePath = $imageData['file_path'] ?? '';
+            $fullFilePath = $frontendPublicPath . '/' . $filePath;
+            
+            if (!file_exists($fullFilePath)) {
+                $results['errors'][] = [
+                    'variation_id' => $variationId,
+                    'file_path' => $filePath,
+                    'error' => 'Файл изображения не найден: ' . $filePath
+                ];
+                continue;
+            }
+            
+            $validImages[] = $imageData;
+        }
+        
+        if (empty($validImages)) {
+            return $results;
+        }
+        
+        // Получаем все существующие связи одним запросом
+        $filePaths = array_column($validImages, 'file_path');
+        $existingImages = ShopGoodImage::whereNull('good_id')
+            ->where('variation_id', $variationId)
+            ->whereIn('file_path', $filePaths)
+            ->get()
+            ->keyBy('file_path');
+        
+        // Разделяем на те, что нужно обновить, и те, что нужно создать
+        $toUpdate = [];
+        $toCreate = [];
+        
+        foreach ($validImages as $imageData) {
+            $filePath = $imageData['file_path'];
+            $existingImage = $existingImages->get($filePath);
+            
+            if ($existingImage) {
+                // Обновляем существующую связь
+                $toUpdate[] = [
+                    'id' => $existingImage->id,
+                    'data' => $imageData
+                ];
+            } else {
+                // Создаем новую связь
+                $toCreate[] = $imageData;
+            }
+        }
+        
+        // Массовое обновление существующих связей
+        if (!empty($toUpdate)) {
+            foreach ($toUpdate as $updateItem) {
+                try {
+                    $existingImage = ShopGoodImage::find($updateItem['id']);
+                    if ($existingImage) {
+                        $imageData = $updateItem['data'];
+                        $existingImage->alt_text = $imageData['alt_text'] ?? '';
+                        $existingImage->is_main = $imageData['is_main'] ?? false;
+                        $existingImage->sort_order = $imageData['sort_order'] ?? 0;
+                        $existingImage->save();
+                        
+                        $results['updated'][] = [
+                            'variation_id' => $variationId,
+                            'file_path' => $imageData['file_path'],
+                            'image_id' => $existingImage->id,
+                            'status' => 'updated',
+                            'message' => 'Связь вариация-изображение обновлена'
+                        ];
+                    }
+                } catch (\Exception $e) {
+                    $results['errors'][] = [
+                        'variation_id' => $variationId,
+                        'file_path' => $updateItem['data']['file_path'] ?? null,
+                        'error' => $e->getMessage()
+                    ];
+                }
+            }
+            
+            // Снимаем флаг is_main с других изображений, если есть новые главные
+            $hasMainImages = collect($toUpdate)->contains(function ($item) {
+                return ($item['data']['is_main'] ?? false) == true;
+            });
+            
+            if ($hasMainImages) {
+                $mainImageIds = collect($toUpdate)
+                    ->filter(function ($item) {
+                        return ($item['data']['is_main'] ?? false) == true;
+                    })
+                    ->pluck('id')
+                    ->toArray();
+                
+                ShopGoodImage::whereNull('good_id')
+                    ->where('variation_id', $variationId)
+                    ->whereNotIn('id', $mainImageIds)
+                    ->update(['is_main' => false]);
+            }
+        }
+        
+        // Массовое создание новых связей
+        if (!empty($toCreate)) {
+            $insertData = [];
+            foreach ($toCreate as $imageData) {
+                $insertData[] = [
+                    'good_id' => null,
+                    'variation_id' => $variationId,
+                    'file_path' => $imageData['file_path'],
+                    'alt_text' => $imageData['alt_text'] ?? '',
+                    'is_main' => $imageData['is_main'] ?? false ? 1 : 0,
+                    'sort_order' => $imageData['sort_order'] ?? 0,
+                    'created_at' => now(),
+                    'updated_at' => now()
+                ];
+            }
+            
+            try {
+                // Используем массовую вставку
+                ShopGoodImage::insert($insertData);
+                
+                // Получаем созданные записи для возврата результатов
+                $createdImages = ShopGoodImage::whereNull('good_id')
+                    ->where('variation_id', $variationId)
+                    ->whereIn('file_path', array_column($toCreate, 'file_path'))
+                    ->get();
+                
+                foreach ($createdImages as $createdImage) {
+                    $results['created'][] = [
+                        'variation_id' => $variationId,
+                        'file_path' => $createdImage->file_path,
+                        'image_id' => $createdImage->id,
+                        'status' => 'created',
+                        'message' => 'Изображение вариации успешно создано'
+                    ];
+                }
+                
+                // Снимаем флаг is_main с других изображений, если есть новые главные
+                $hasMainImages = collect($toCreate)->contains(function ($item) {
+                    return ($item['is_main'] ?? false) == true;
+                });
+                
+                if ($hasMainImages) {
+                    $mainImageIds = $createdImages->where('is_main', true)->pluck('id')->toArray();
+                    if (!empty($mainImageIds)) {
+                        ShopGoodImage::whereNull('good_id')
+                            ->where('variation_id', $variationId)
+                            ->whereNotIn('id', $mainImageIds)
+                            ->update(['is_main' => false]);
+                    }
+                }
+            } catch (\Exception $e) {
+                // Если массовая вставка не удалась, пробуем по одной
+                foreach ($toCreate as $imageData) {
+                    try {
+                        $imageRecord = [
+                            'good_id' => null,
+                            'variation_id' => $variationId,
+                            'file_path' => $imageData['file_path'],
+                            'alt_text' => $imageData['alt_text'] ?? '',
+                            'is_main' => $imageData['is_main'] ?? false ? 1 : 0,
+                            'sort_order' => $imageData['sort_order'] ?? 0
+                        ];
+                        
+                        $goodImage = ShopGoodImage::create($imageRecord);
+                        
+                        $results['created'][] = [
+                            'variation_id' => $variationId,
+                            'file_path' => $imageData['file_path'],
+                            'image_id' => $goodImage->id,
+                            'status' => 'created',
+                            'message' => 'Изображение вариации успешно создано'
+                        ];
+                    } catch (\Exception $createError) {
+                        $results['errors'][] = [
+                            'variation_id' => $variationId,
+                            'file_path' => $imageData['file_path'] ?? null,
+                            'error' => $createError->getMessage()
+                        ];
+                    }
+                }
+            }
+        }
+        
+        return $results;
     }
     
     /**
