@@ -21,6 +21,14 @@ class ShopGoodsController extends Controller
         $shopRemoteQ = Setting::where('key', 'shop_remote_q')->first();
         $remoteQ = $shopRemoteQ ? (int)$shopRemoteQ->value : 1;
 
+        // Логируем режим для отладки
+        Log::info('ShopGoodsController::applyStockFilter - Режим показа товаров', [
+            'shop_show_good_mode' => $showGoodMode,
+            'will_apply_filter' => $showGoodMode === 1
+        ]);
+
+        // Фильтрация по остаткам применяется ТОЛЬКО при shop_show_good_mode = 1
+        // При других значениях (2, 3, 4 и т.д.) фильтрация не применяется - показываем все товары
         if ($showGoodMode === 1) {
             // Фильтрация по остаткам: показывать только товары с остатком
             // Для товаров БЕЗ вариаций: проверяем остатки основного товара
@@ -85,8 +93,9 @@ class ShopGoodsController extends Controller
                 });
             });
         }
-
+        
         // Фильтр для режима 4: показывать товары с остатком > 0 ИЛИ товары с остатком = 0 и is_preorder = 1
+        // НЕ показывать товары с остатком = 0 и is_preorder = 0
         if ($showGoodMode === 4) {
             $query->where(function($mainQuery) use ($remoteQ) {
                 // Условие 1: остаток на локальном складе товара > 0
@@ -102,13 +111,23 @@ class ShopGoodsController extends Controller
                     });
                 }
 
-                // Условие 3: товар с остатком = 0, но is_preorder = 1
-                $mainQuery->orWhere(function($preorderCondition) {
+                // Условие 3: товар с остатком = 0, но is_preorder = 1 (показываем предзаказы)
+                $mainQuery->orWhere(function($preorderCondition) use ($remoteQ) {
                     $preorderCondition->where('stock_quantity', '<=', 0)
                         ->where(function($preorderSubCondition) {
                             $preorderSubCondition->where('is_preorder', '=', 1)
                                 ->orWhere('is_preorder', '=', true);
                         });
+                    
+                    // Проверяем, что удаленный остаток тоже пустой (если учитываем удаленный склад)
+                    if ($remoteQ === 2 || $remoteQ === 3) {
+                        $preorderCondition->where(function($remoteEmptyCondition) {
+                            $remoteEmptyCondition->whereNull('remote_stock_quantity')
+                                ->orWhere('remote_stock_quantity', '=', '0')
+                                ->orWhere('remote_stock_quantity', '=', '')
+                                ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
+                        });
+                    }
                 });
 
                 // Условие 4: есть вариации с остатком
@@ -127,11 +146,14 @@ class ShopGoodsController extends Controller
                     });
                 });
 
-                // Условие 5: все вариации без остатка, но is_preorder = 1 у товара
+                // Условие 5: все вариации без остатка, но is_preorder = 1 у товара (показываем предзаказы)
                 $mainQuery->orWhere(function($preorderVarCondition) use ($remoteQ) {
                     $preorderVarCondition->where(function($preorderCheck) {
                         $preorderCheck->where('is_preorder', '=', 1)
                             ->orWhere('is_preorder', '=', true);
+                    })
+                    ->whereHas('variations', function($varQ) {
+                        $varQ->where('is_active', true);
                     })
                     ->whereDoesntHave('variations', function($varQ) use ($remoteQ) {
                         $varQ->where(function($subVarQ) use ($remoteQ) {
@@ -344,6 +366,11 @@ class ShopGoodsController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
+            // Логируем входящий запрос
+            Log::info('ShopGoodsController::index - Входящий запрос', [
+                'params' => $request->all(),
+                'url' => $request->fullUrl()
+            ]);
 
             $query = ShopGood::with([
                 'variations' => function($query) {
@@ -375,35 +402,64 @@ class ShopGoodsController extends Controller
             ])
             ->where('is_active', true);
 
-            // Фильтрация по категории
+            // Фильтрация по категории (с рекурсивным поиском в подкатегориях)
             if ($request->has('category_id')) {
-                $query->whereHas('categories', function($q) use ($request) {
-                    $q->where('shop_categories.id', $request->input('category_id'));
-                });
+                $categoryId = (int)$request->input('category_id');
+                if ($categoryId > 0) {
+                    // Получаем все дочерние категории рекурсивно
+                    $allCategoryIds = \App\Models\ShopCategory::getAllDescendantIds([$categoryId]);
+                    
+                    // Ищем товары во всех категориях (включая подкатегории)
+                    $query->whereHas('categories', function($q) use ($allCategoryIds) {
+                        $q->whereIn('shop_categories.id', $allCategoryIds);
+                    });
+                }
             }
 
-                // Фильтрация по множественным категориям
+                // Фильтрация по множественным категориям (с рекурсивным поиском в подкатегориях)
+                $categoryIds = null;
+                
+                // Проверяем все возможные варианты передачи категорий
                 if ($request->has('categories')) {
                     $categoryIds = $request->input('categories');
-
                     // Если передан строкой через запятую, преобразуем в массив
                     if (is_string($categoryIds)) {
                         $categoryIds = array_filter(explode(',', $categoryIds));
                     }
-
-                    if (is_array($categoryIds) && !empty($categoryIds)) {
-                        $query->whereHas('categories', function($q) use ($categoryIds) {
-                            $q->whereIn('shop_categories.id', $categoryIds);
-                        });
+                } 
+                
+                // Проверяем categories[] (может быть в query string как categories[]=1&categories[]=2)
+                if (!$categoryIds && $request->has('categories[]')) {
+                    $categoryIds = $request->input('categories[]');
+                }
+                
+                // Также проверяем все параметры запроса на наличие categories
+                if (!$categoryIds) {
+                    $allParams = $request->all();
+                    foreach ($allParams as $key => $value) {
+                        if (strpos($key, 'categories') !== false) {
+                            if (is_array($value)) {
+                                $categoryIds = $value;
+                            } elseif (is_string($value) && !empty($value)) {
+                                $categoryIds = array_filter(explode(',', $value));
+                            }
+                            break;
+                        }
                     }
                 }
 
-                // Фильтрация по множественным категориям (альтернативный формат categories[])
-                if ($request->has('categories[]')) {
-                    $categoryIds = $request->input('categories[]');
-                    if (is_array($categoryIds) && !empty($categoryIds)) {
-                        $query->whereHas('categories', function($q) use ($categoryIds) {
-                            $q->whereIn('shop_categories.id', $categoryIds);
+                if (is_array($categoryIds) && !empty($categoryIds)) {
+                    // Преобразуем в массив целых чисел
+                    $categoryIds = array_map('intval', $categoryIds);
+                    $categoryIds = array_filter($categoryIds);
+                    
+                    if (!empty($categoryIds)) {
+                        // Получаем все дочерние категории рекурсивно
+                        $allCategoryIds = \App\Models\ShopCategory::getAllDescendantIds($categoryIds);
+                        
+                        // Ищем товары во всех категориях (включая подкатегории)
+                        $query->whereHas('categories', function($q) use ($allCategoryIds) {
+                            $q->whereIn('shop_categories.id', $allCategoryIds);
                         });
                     }
                 }
@@ -432,6 +488,22 @@ class ShopGoodsController extends Controller
                         $query->whereHas('brands', function($q) use ($brandIds) {
                             $q->whereIn('shop_brands.id', $brandIds);
                         });
+                    }
+                }
+                
+                // Также проверяем все параметры запроса на наличие brands
+                if (!$request->has('brands') && !$request->has('brands[]')) {
+                    $allParams = $request->all();
+                    foreach ($allParams as $key => $value) {
+                        if (strpos($key, 'brands') !== false) {
+                            $brandIds = is_array($value) ? $value : (is_string($value) ? array_filter(explode(',', $value)) : []);
+                            if (!empty($brandIds)) {
+                                $query->whereHas('brands', function($q) use ($brandIds) {
+                                    $q->whereIn('shop_brands.id', $brandIds);
+                                });
+                            }
+                            break;
+                        }
                     }
                 }
 
@@ -622,18 +694,51 @@ class ShopGoodsController extends Controller
                 $query->orderBy($sortBy, $sortOrder);
             }
 
+            // Логируем количество товаров до применения фильтра по остаткам
+            $countBeforeStockFilter = $query->count();
+            Log::info('ShopGoodsController::index - Товаров до фильтра по остаткам', [
+                'count' => $countBeforeStockFilter
+            ]);
+            
             // Фильтрация по остаткам (shop_show_good_mode)
             // Если передан параметр stock_filter, используем его вместо автоматической фильтрации
             if ($request->has('stock_filter')) {
                 $stockFilter = $request->input('stock_filter');
-                $this->applyCustomStockFilter($query, $stockFilter);
+                // Если stock_filter = 'all', не применяем фильтрацию
+                if ($stockFilter !== 'all') {
+                    $this->applyCustomStockFilter($query, $stockFilter);
+                }
+                // Если stock_filter = 'all', фильтрация не применяется (показываем все товары)
             } else {
+                // Если stock_filter не передан, применяем автоматическую фильтрацию по настройкам
                 $this->applyStockFilter($query);
             }
+            
+            // Логируем количество товаров после применения фильтра по остаткам
+            $countAfterStockFilter = $query->count();
+            Log::info('ShopGoodsController::index - Товаров после фильтра по остаткам', [
+                'count' => $countAfterStockFilter,
+                'filtered_out' => $countBeforeStockFilter - $countAfterStockFilter
+            ]);
 
             // Пагинация
             $perPage = $request->input('limit', 20);
+            
+            // Логируем SQL запрос перед пагинацией
+            Log::info('ShopGoodsController::index - SQL запрос', [
+                'sql' => $query->toSql(),
+                'bindings' => $query->getBindings()
+            ]);
+            
             $goods = $query->paginate($perPage);
+            
+            // Логируем результат
+            Log::info('ShopGoodsController::index - Результат', [
+                'total' => $goods->total(),
+                'count' => $goods->count(),
+                'current_page' => $goods->currentPage(),
+                'per_page' => $goods->perPage()
+            ]);
 
             // Получаем информацию о пользователе для проверки избранного
             $token = request()->bearerToken();
@@ -694,10 +799,15 @@ class ShopGoodsController extends Controller
             ]);
 
         } catch (\Exception $e) {
+            Log::error('ShopGoodsController::index - Ошибка', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'request_params' => $request->all()
+            ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения списка товаров'
+                'message' => 'Ошибка получения списка товаров: ' . $e->getMessage()
             ], 500);
         }
     }
