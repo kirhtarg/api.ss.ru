@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Auth\AuthenticationException;
 
 class ShopGoodsController extends Controller
 {
@@ -3987,6 +3988,337 @@ class ShopGoodsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка обновления демпинга: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Прокси для загрузки YML фидов (обход CORS)
+     * 
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function proxyYMLFeed(Request $request): JsonResponse
+    {
+        try {
+            // Middleware auth:sanctum уже проверил авторизацию
+            // Если запрос дошел до этого метода, значит пользователь авторизован
+            $user = $request->user();
+
+            $validator = Validator::make($request->all(), [
+                'url' => 'required|url|max:2048'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $url = $request->input('url');
+            
+            // Валидация URL
+            if (empty($url)) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'URL не указан'
+                ], 400);
+            }
+            
+            if (!filter_var($url, FILTER_VALIDATE_URL)) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Некорректный URL'
+                ], 400);
+            }
+
+            // Загружаем YML фид через cURL (на сервере нет ограничений CORS)
+            $ch = curl_init();
+            curl_setopt($ch, CURLOPT_URL, $url);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+            
+            // Настройки SSL (аналогично методу downloadImage)
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+            curl_setopt($ch, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+            curl_setopt($ch, CURLOPT_SSL_CIPHER_LIST, 'DEFAULT@SECLEVEL=0');
+            curl_setopt($ch, CURLOPT_SSL_OPTIONS, CURLSSLOPT_ALLOW_BEAST | CURLSSLOPT_NO_REVOKE);
+            
+            curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+            curl_setopt($ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+            curl_setopt($ch, CURLOPT_TCP_KEEPALIVE, 1);
+            curl_setopt($ch, CURLOPT_TCP_KEEPIDLE, 10);
+            curl_setopt($ch, CURLOPT_TCP_KEEPINTVL, 1);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                'Accept: application/xml, text/xml, */*',
+                'Accept-Language: ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7'
+            ]);
+
+            $xmlContent = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curlError = curl_error($ch);
+            $curlErrno = curl_errno($ch);
+            curl_close($ch);
+
+            if ($xmlContent === false || $curlErrno !== 0) {
+                $errorMessage = $curlError ?: 'Неизвестная ошибка cURL';
+                if ($curlErrno) {
+                    $errorMessage .= ' (код ошибки: ' . $curlErrno . ')';
+                }
+                
+                Log::error('Ошибка cURL при загрузке YML фида', [
+                    'url' => $url,
+                    'curl_error' => $curlError,
+                    'curl_errno' => $curlErrno,
+                    'http_code' => $httpCode
+                ]);
+                
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Ошибка загрузки фида: ' . $errorMessage
+                ], 500);
+            }
+
+            if ($httpCode !== 200) {
+                return response()->json([
+                    'success' => false,
+                    'error' => "Ошибка загрузки фида: HTTP {$httpCode}"
+                ], $httpCode);
+            }
+
+            // Проверяем, что это действительно XML
+            if (empty($xmlContent)) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Фид пуст'
+                ], 400);
+            }
+
+            // Проверяем базовую структуру YML
+            if (strpos($xmlContent, 'yml_catalog') === false && strpos($xmlContent, '<?xml') === false) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Файл не является валидным YML фидом'
+                ], 400);
+            }
+
+            // Парсим YML на сервере
+            try {
+                // Отключаем ошибки libxml для более гибкого парсинга
+                libxml_use_internal_errors(true);
+                $xml = simplexml_load_string($xmlContent);
+                
+                if ($xml === false) {
+                    $errors = libxml_get_errors();
+                    libxml_clear_errors();
+                    $errorMessages = array_map(function($error) {
+                        return trim($error->message);
+                    }, $errors);
+                    
+                    return response()->json([
+                        'success' => false,
+                        'error' => 'Ошибка парсинга XML: ' . implode('; ', array_slice($errorMessages, 0, 3))
+                    ], 400);
+                }
+                
+                // Проверяем структуру
+                if (!isset($xml->shop)) {
+                    return response()->json([
+                        'success' => false,
+                        'error' => 'Не найден элемент shop в YML фиде'
+                    ], 400);
+                }
+                
+                // Извлекаем данные о магазине
+                $shopData = [
+                    'name' => (string)($xml->shop->name ?? ''),
+                    'company' => (string)($xml->shop->company ?? ''),
+                    'url' => (string)($xml->shop->url ?? '')
+                ];
+                
+                // Извлекаем валюты
+                $currencies = [];
+                if (isset($xml->shop->currencies->currency)) {
+                    foreach ($xml->shop->currencies->currency as $currency) {
+                        $currencies[] = [
+                            'id' => (string)$currency['id'],
+                            'rate' => (float)($currency['rate'] ?? 1)
+                        ];
+                    }
+                }
+                
+                // Извлекаем категории
+                $categories = [];
+                if (isset($xml->shop->categories->category)) {
+                    foreach ($xml->shop->categories->category as $category) {
+                        $categories[] = [
+                            'id' => (string)$category['id'],
+                            'name' => trim((string)$category),
+                            'parentId' => isset($category['parentId']) ? (string)$category['parentId'] : null
+                        ];
+                    }
+                }
+                
+                // Извлекаем товары (offers)
+                $offers = [];
+                if (isset($xml->shop->offers->offer)) {
+                    foreach ($xml->shop->offers->offer as $offer) {
+                        $offerData = [
+                            'id' => (string)$offer['id'],
+                            'available' => (string)($offer['available'] ?? 'false') === 'true'
+                        ];
+                        
+                        // Основные поля
+                        if (isset($offer->name) && (string)$offer->name !== '') {
+                            $offerData['name'] = trim((string)$offer->name);
+                        }
+                        if (isset($offer->price) && (string)$offer->price !== '') {
+                            $offerData['price'] = (float)$offer->price;
+                        }
+                        if (isset($offer->currencyId) && (string)$offer->currencyId !== '') {
+                            $offerData['currencyId'] = (string)$offer->currencyId;
+                        }
+                        if (isset($offer->categoryId) && (string)$offer->categoryId !== '') {
+                            $offerData['categoryId'] = (string)$offer->categoryId;
+                        }
+                        if (isset($offer->url) && (string)$offer->url !== '') {
+                            $offerData['url'] = (string)$offer->url;
+                        }
+                        if (isset($offer->vendor) && (string)$offer->vendor !== '') {
+                            $offerData['vendor'] = (string)$offer->vendor;
+                        }
+                        if (isset($offer->model) && (string)$offer->model !== '') {
+                            $offerData['model'] = (string)$offer->model;
+                        }
+                        if (isset($offer->description) && (string)$offer->description !== '') {
+                            $offerData['description'] = trim((string)$offer->description);
+                        }
+                        if (isset($offer->vendorCode) && (string)$offer->vendorCode !== '') {
+                            $offerData['vendorCode'] = (string)$offer->vendorCode;
+                        }
+                        if (isset($offer->barcode) && (string)$offer->barcode !== '') {
+                            $offerData['barcode'] = (string)$offer->barcode;
+                        }
+                        if (isset($offer->oldprice) && (string)$offer->oldprice !== '') {
+                            $offerData['oldprice'] = (float)$offer->oldprice;
+                        }
+                        if (isset($offer->sales_notes) && (string)$offer->sales_notes !== '') {
+                            $offerData['sales_notes'] = (string)$offer->sales_notes;
+                        }
+                        if (isset($offer->manufacturer_warranty)) {
+                            $offerData['manufacturer_warranty'] = (string)$offer->manufacturer_warranty === 'true';
+                        }
+                        if (isset($offer->country_of_origin) && (string)$offer->country_of_origin !== '') {
+                            $offerData['country_of_origin'] = (string)$offer->country_of_origin;
+                        }
+                        if (isset($offer->adult)) {
+                            $offerData['adult'] = (string)$offer->adult === 'true';
+                        }
+                        
+                        // Изображения (может быть несколько)
+                        $pictures = [];
+                        if (isset($offer->picture)) {
+                            // В SimpleXML picture может быть одним элементом или коллекцией
+                            // Используем count() для проверки количества элементов
+                            $pictureCount = count($offer->picture);
+                            if ($pictureCount > 1) {
+                                // Несколько изображений - итерируем
+                                foreach ($offer->picture as $picture) {
+                                    $pictureUrl = trim((string)$picture);
+                                    if ($pictureUrl) {
+                                        $pictures[] = $pictureUrl;
+                                    }
+                                }
+                            } else {
+                                // Одно изображение
+                                $pictureUrl = trim((string)$offer->picture);
+                                if ($pictureUrl) {
+                                    $pictures[] = $pictureUrl;
+                                }
+                            }
+                        }
+                        // Формируем поле picture согласно интерфейсу YMLOffer
+                        if (count($pictures) === 1) {
+                            $offerData['picture'] = $pictures[0];
+                        } elseif (count($pictures) > 1) {
+                            $offerData['picture'] = $pictures;
+                        }
+                        
+                        // Параметры (может быть несколько)
+                        $params = [];
+                        if (isset($offer->param)) {
+                            // В SimpleXML param может быть одним элементом или коллекцией
+                            $paramCount = count($offer->param);
+                            if ($paramCount > 1) {
+                                // Несколько параметров - итерируем
+                                foreach ($offer->param as $param) {
+                                    $paramName = (string)($param['name'] ?? '');
+                                    $paramValue = trim((string)$param);
+                                    if ($paramName && $paramValue) {
+                                        $params[] = [
+                                            'name' => $paramName,
+                                            'value' => $paramValue
+                                        ];
+                                    }
+                                }
+                            } else {
+                                // Один параметр
+                                $paramName = (string)($offer->param['name'] ?? '');
+                                $paramValue = trim((string)$offer->param);
+                                if ($paramName && $paramValue) {
+                                    $params[] = [
+                                        'name' => $paramName,
+                                        'value' => $paramValue
+                                    ];
+                                }
+                            }
+                        }
+                        if (!empty($params)) {
+                            $offerData['params'] = $params;
+                        }
+                        
+                        $offers[] = $offerData;
+                    }
+                }
+                
+                // Формируем результат
+                $ymlData = [
+                    'shop' => $shopData,
+                    'currencies' => $currencies,
+                    'categories' => $categories,
+                    'offers' => $offers,
+                    'date' => isset($xml['date']) ? (string)$xml['date'] : null
+                ];
+                
+                // Возвращаем распарсенные данные
+                return response()->json([
+                    'success' => true,
+                    'data' => $ymlData
+                ]);
+                
+            } catch (\Exception $parseError) {
+                // Если парсинг не удался, возвращаем XML для парсинга на клиенте
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'xml' => $xmlContent,
+                        'url' => $url,
+                        'size' => strlen($xmlContent)
+                    ]
+                ]);
+            }
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Ошибка при загрузке фида: ' . $e->getMessage(),
+                'message' => 'Ошибка при загрузке фида: ' . $e->getMessage()
             ], 500);
         }
     }

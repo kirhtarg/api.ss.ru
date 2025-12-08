@@ -1291,6 +1291,9 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/download-images-batch', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'downloadImagesBatch']);
                 Route::post('/save-image-to-frontend', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'saveImageToFrontend']);
 
+                // Прокси для загрузки YML фидов (обход CORS)
+                Route::post('/yml-feed-proxy', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'proxyYMLFeed']);
+
                 // Вариации товаров
                 Route::prefix('{goodId}/variations')->group(function () {
                     Route::get('/', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'index']);
@@ -1322,6 +1325,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 
                 // Глобальное создание атрибутов вариаций (без привязки к товару)
                 Route::post('/variations/attributes/global', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'createAttributeGlobal']);
+                // Получить список всех характеристик вариаций (без привязки к товару)
+                Route::get('/variations/attributes', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'listAttributes']);
                 
                 // Глобальное массовое обновление вариаций (без привязки к товару)
                 Route::post('/variations/bulk-update', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'globalBulkUpdate']);
@@ -3176,6 +3181,15 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/', [\App\Http\Controllers\Admin\ShopGoogleSheetsAutoParsingController::class, 'store']);
             Route::put('/{id}', [\App\Http\Controllers\Admin\ShopGoogleSheetsAutoParsingController::class, 'update']);
             Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopGoogleSheetsAutoParsingController::class, 'destroy']);
+        });
+
+        // Автопарсинг YML фидов
+        Route::prefix('yml-feed-auto-parsing')->group(function () {
+            Route::get('/', [\App\Http\Controllers\Admin\ShopYMLFeedAutoParsingController::class, 'index']);
+            Route::get('/{id}', [\App\Http\Controllers\Admin\ShopYMLFeedAutoParsingController::class, 'show']);
+            Route::post('/', [\App\Http\Controllers\Admin\ShopYMLFeedAutoParsingController::class, 'store']);
+            Route::put('/{id}', [\App\Http\Controllers\Admin\ShopYMLFeedAutoParsingController::class, 'update']);
+            Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopYMLFeedAutoParsingController::class, 'destroy']);
         });
 
         // Логи импорта товаров

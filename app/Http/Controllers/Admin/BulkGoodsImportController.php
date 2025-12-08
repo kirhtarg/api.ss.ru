@@ -981,13 +981,75 @@ class BulkGoodsImportController extends Controller
         foreach ($goods as $good) {
             // Собираем категории
             if (isset($good['category']) && is_string($good['category']) && !empty($good['category'])) {
-                $allCategories->push($good['category']);
+                // Сначала разделяем по запятым (если есть несколько категорий)
+                $categoryStrings = array_map('trim', explode(',', $good['category']));
+                
+                foreach ($categoryStrings as $categoryString) {
+                    if (empty($categoryString)) {
+                        continue;
+                    }
+                    
+                    // Если категория содержит иерархию (>), разбиваем и собираем все части отдельно
+                    // НО саму строку с > не добавляем в список для создания
+                    if (strpos($categoryString, '>') !== false) {
+                        $categoryParts = array_map('trim', explode('>', $categoryString));
+                        // Добавляем только отдельные части, не строку целиком
+                        foreach ($categoryParts as $part) {
+                            if (!empty($part)) {
+                                $allCategories->push($part);
+                            }
+                        }
+                    } else {
+                        // Обычная категория без иерархии
+                        $allCategories->push($categoryString);
+                    }
+                }
             } elseif (isset($good['categories'])) {
                 if (is_string($good['categories'])) {
+                    // Сначала разделяем по разделителям (запятая, точка с запятой и т.д.)
                     $categoryNames = $this->parseDelimitedString($good['categories']);
-                    $allCategories = $allCategories->merge($categoryNames);
+                    
+                    foreach ($categoryNames as $categoryName) {
+                        if (empty($categoryName)) {
+                            continue;
+                        }
+                        
+                        // Если категория содержит иерархию (>), разбиваем и собираем все части отдельно
+                        // НО саму строку с > не добавляем в список для создания
+                        if (strpos($categoryName, '>') !== false) {
+                            $categoryParts = array_map('trim', explode('>', $categoryName));
+                            // Добавляем только отдельные части, не строку целиком
+                            foreach ($categoryParts as $part) {
+                                if (!empty($part)) {
+                                    $allCategories->push($part);
+                                }
+                            }
+                        } else {
+                            // Обычная категория без иерархии
+                            $allCategories->push($categoryName);
+                        }
+                    }
                 } elseif (is_array($good['categories'])) {
-                    $allCategories = $allCategories->merge($good['categories']);
+                    foreach ($good['categories'] as $categoryName) {
+                        if (empty($categoryName) || !is_string($categoryName)) {
+                            continue;
+                        }
+                        
+                        // Если категория содержит иерархию (>), разбиваем и собираем все части отдельно
+                        // НО саму строку с > не добавляем в список для создания
+                        if (strpos($categoryName, '>') !== false) {
+                            $categoryParts = array_map('trim', explode('>', $categoryName));
+                            // Добавляем только отдельные части, не строку целиком
+                            foreach ($categoryParts as $part) {
+                                if (!empty($part)) {
+                                    $allCategories->push($part);
+                                }
+                            }
+                        } else {
+                            // Обычная категория без иерархии
+                            $allCategories->push($categoryName);
+                        }
+                    }
                 }
             }
 
@@ -1043,15 +1105,27 @@ class BulkGoodsImportController extends Controller
         }
 
         // Создаем недостающие категории
+        // ВАЖНО: Фильтруем категории, которые содержат > - такие категории не должны создаваться напрямую
+        // Они обрабатываются через processCategoryHierarchy в applyCategoryAndBrandIds
         $createdCategories = [];
         if ($autoCreate) {
             $categoriesToCreate = $allCategories->filter(function($name) use ($categoryMap) {
+                // Пропускаем категории, которые содержат > - это иерархия, а не название категории
+                if (strpos($name, '>') !== false) {
+                    return false;
+                }
+                
                 $nameLower = strtolower($name);
                 $slugLower = strtolower(Str::slug($name));
                 return !$categoryMap->has($nameLower) && !$categoryMap->has($slugLower);
             });
 
             foreach ($categoriesToCreate as $categoryName) {
+                // Дополнительная проверка на случай, если категория все еще содержит >
+                if (strpos($categoryName, '>') !== false) {
+                    continue;
+                }
+                
                 $categorySlug = Str::slug($categoryName);
 
                 // Дополнительная проверка на случай, если slug уже существует
@@ -1151,6 +1225,8 @@ class BulkGoodsImportController extends Controller
     private function applyCategoryAndBrandIds(&$goods, $autoCreateCategories = true, $autoCreateBrands = true)
     {
         $categoryMap = cache('category_map_' . auth()->id(), collect());
+        // Преобразуем коллекцию в массив для удобства работы
+        $categoryMapArray = $categoryMap instanceof \Illuminate\Support\Collection ? $categoryMap->toArray() : (array)$categoryMap;
         $brandMap = cache('brand_map_' . auth()->id(), collect());
 
         \Log::info('Applying category and brand IDs', [
@@ -1164,14 +1240,29 @@ class BulkGoodsImportController extends Controller
         foreach ($goods as &$good) {
             // Обрабатываем категории
             if (isset($good['category']) && is_string($good['category']) && !empty($good['category'])) {
-                $categoryId = $categoryMap[strtolower($good['category'])] ?? null;
-                if ($categoryId) {
-                    $good['category'] = $categoryId;
-                    \Log::info('Applied single category ID', ['category_name' => $good['category'], 'category_id' => $categoryId]);
+                // Проверяем, содержит ли строка символ > (иерархия категорий)
+                if (strpos($good['category'], '>') !== false) {
+                    // Разбиваем строку по символу > и обрабатываем иерархию
+                    $categoryPath = array_map('trim', explode('>', $good['category']));
+                    $categoryId = $this->processCategoryHierarchy($categoryPath, $categoryMap, $autoCreateCategories);
+                    if ($categoryId) {
+                        $good['category'] = $categoryId;
+                    } else {
+                        if (!$autoCreateCategories) {
+                            unset($good['category']);
+                        }
+                    }
                 } else {
-                    \Log::warning('Category not found in map', ['category_name' => $good['category']]);
-                    if (!$autoCreateCategories) {
-                        unset($good['category']);
+                    // Обычная обработка одной категории
+                    $categoryId = $categoryMap[strtolower($good['category'])] ?? null;
+                    if ($categoryId) {
+                        $good['category'] = $categoryId;
+                        \Log::info('Applied single category ID', ['category_name' => $good['category'], 'category_id' => $categoryId]);
+                    } else {
+                        \Log::warning('Category not found in map', ['category_name' => $good['category']]);
+                        if (!$autoCreateCategories) {
+                            unset($good['category']);
+                        }
                     }
                 }
             } elseif (isset($good['categories'])) {
@@ -1180,7 +1271,13 @@ class BulkGoodsImportController extends Controller
                     $categoryIds = [];
 
                     foreach ($categoryNames as $categoryName) {
-                        $categoryId = $categoryMap[strtolower($categoryName)] ?? null;
+                        // Проверяем, содержит ли категория иерархию
+                        if (strpos($categoryName, '>') !== false) {
+                            $categoryPath = array_map('trim', explode('>', $categoryName));
+                            $categoryId = $this->processCategoryHierarchy($categoryPath, $categoryMapArray, $autoCreateCategories);
+                        } else {
+                            $categoryId = $categoryMapArray[strtolower($categoryName)] ?? null;
+                        }
                         if ($categoryId) {
                             $categoryIds[] = $categoryId;
                         } else {
@@ -1257,6 +1354,9 @@ class BulkGoodsImportController extends Controller
             }
         }
 
+        // Сохраняем обновленную карту категорий обратно в кэш
+        cache(['category_map_' . auth()->id() => collect($categoryMapArray)], 300);
+
         \Log::info('Finished applying category and brand IDs', [
             'first_good_after' => $goods[0] ?? null
         ]);
@@ -1278,6 +1378,152 @@ class BulkGoodsImportController extends Controller
             })
             ->filter()
             ->toArray();
+    }
+
+    /**
+     * Обработка иерархии категорий (Категория>Подкатегория1>Подкатегория2)
+     * Создает категории с правильной иерархией, если их нет
+     */
+    private function processCategoryHierarchy($categoryPath, &$categoryMapArray, $autoCreate = true)
+    {
+        if (empty($categoryPath) || !is_array($categoryPath)) {
+            return null;
+        }
+
+        $parentId = null;
+        $lastCategoryId = null;
+
+        foreach ($categoryPath as $index => $categoryName) {
+            $categoryName = trim($categoryName);
+            if (empty($categoryName)) {
+                continue;
+            }
+            
+            // Пропускаем категории, которые содержат > - это не название категории, а ошибка парсинга
+            if (strpos($categoryName, '>') !== false) {
+                continue;
+            }
+
+            // Ищем категорию по имени и родителю
+            $categoryKey = $parentId 
+                ? strtolower($categoryName) . '_parent_' . $parentId 
+                : strtolower($categoryName);
+
+            // Сначала проверяем в карте
+            $categoryId = $categoryMapArray[$categoryKey] ?? null;
+
+            if (!$categoryId) {
+                // Ищем в базе данных по имени и родителю (приоритет - точное совпадение)
+                $query = ShopCategory::where('name', $categoryName);
+                if ($parentId) {
+                    $query->where('parent_id', $parentId);
+                } else {
+                    $query->whereNull('parent_id');
+                }
+                $existingCategory = $query->first();
+
+                if ($existingCategory) {
+                    $categoryId = $existingCategory->id;
+                    $categoryMapArray[$categoryKey] = $categoryId;
+                    // Также добавляем в карту по имени для обратной совместимости
+                    $categoryMapArray[strtolower($categoryName)] = $categoryId;
+                } elseif ($autoCreate) {
+                    // Создаем новую категорию
+                    $categoryNameSlug = \Illuminate\Support\Str::slug($categoryName);
+                    
+                    // Если есть родитель, формируем slug как slug_родителя-slug_категории
+                    if ($parentId) {
+                        $parentCategory = ShopCategory::find($parentId);
+                        if ($parentCategory && $parentCategory->slug) {
+                            $baseSlug = $parentCategory->slug . '-' . $categoryNameSlug;
+                        } else {
+                            $baseSlug = $categoryNameSlug;
+                        }
+                    } else {
+                        $baseSlug = $categoryNameSlug;
+                    }
+                    
+                    $categorySlug = $baseSlug;
+                    $slugCounter = 1;
+                    
+                    // Проверяем уникальность slug глобально (slug должен быть уникальным в таблице)
+                    while (ShopCategory::where('slug', $categorySlug)->exists()) {
+                        // Если slug уже существует, проверяем, подходит ли существующая категория
+                        $existingBySlug = ShopCategory::where('slug', $categorySlug)->first();
+                        
+                        // Если существующая категория имеет правильное имя и родителя - используем её
+                        if ($existingBySlug && 
+                            $existingBySlug->name === $categoryName && 
+                            $existingBySlug->parent_id == $parentId) {
+                            $categoryId = $existingBySlug->id;
+                            break;
+                        }
+                        
+                        // Если не подходит, создаем уникальный slug с суффиксом
+                        $categorySlug = $baseSlug . '-' . $slugCounter;
+                        $slugCounter++;
+                    }
+                    
+                    // Если не нашли подходящую категорию, создаем новую
+                    if (!$categoryId) {
+                        try {
+                            $newCategory = ShopCategory::create([
+                                'name' => $categoryName,
+                                'slug' => $categorySlug,
+                                'parent_id' => $parentId,
+                                'is_active' => true
+                            ]);
+                            $categoryId = $newCategory->id;
+                            
+                            // Добавляем в список созданных категорий
+                            $createdCategories = cache('created_categories_' . auth()->id(), []);
+                            if (!in_array($categoryId, $createdCategories)) {
+                                $createdCategories[] = $categoryId;
+                                cache(['created_categories_' . auth()->id() => $createdCategories], 300);
+                            }
+                        } catch (\Exception $e) {
+                            // Если ошибка при создании (например, дубликат slug), пытаемся найти существующую
+                            \Log::error('Ошибка создания категории', [
+                                'name' => $categoryName,
+                                'slug' => $categorySlug,
+                                'parent_id' => $parentId,
+                                'error' => $e->getMessage()
+                            ]);
+                            
+                            // Пытаемся найти категорию по имени и родителю еще раз
+                            $fallbackQuery = ShopCategory::where('name', $categoryName);
+                            if ($parentId) {
+                                $fallbackQuery->where('parent_id', $parentId);
+                            } else {
+                                $fallbackQuery->whereNull('parent_id');
+                            }
+                            $fallbackCategory = $fallbackQuery->first();
+                            
+                            if ($fallbackCategory) {
+                                $categoryId = $fallbackCategory->id;
+                            } else {
+                                // Если не нашли, пропускаем эту категорию
+                                continue;
+                            }
+                        }
+                    }
+
+                    if ($categoryId) {
+                        $categoryMapArray[$categoryKey] = $categoryId;
+                        // Также добавляем в карту по имени для обратной совместимости
+                        $categoryMapArray[strtolower($categoryName)] = $categoryId;
+                    }
+                } else {
+                    // Не создаем категорию, возвращаем null
+                    return null;
+                }
+            }
+
+            $lastCategoryId = $categoryId;
+            $parentId = $categoryId; // Следующая категория будет дочерней для текущей
+        }
+
+        return $lastCategoryId;
     }
 
     /**

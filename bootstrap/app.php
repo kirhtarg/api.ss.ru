@@ -36,12 +36,6 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (\Throwable $e, $request) {
             if ($request->is('api/*')) {
-                $response = response()->json([
-                    'success' => false,
-                    'message' => 'Внутренняя ошибка сервера',
-                    'error' => $e->getMessage()
-                ], 500);
-
                 // Получаем Origin и проверяем разрешенные домены
                 $origin = $request->header('Origin');
                 $allowedOrigins = [
@@ -56,15 +50,94 @@ return Application::configure(basePath: dirname(__DIR__))
                 ];
 
                 $allowOrigin = in_array($origin, $allowedOrigins) ? $origin : '*';
-
-                // Добавляем CORS заголовки
-                $response->headers->set('Access-Control-Allow-Origin', $allowOrigin);
-                $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-                $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN, X-Session-ID');
-                $response->headers->set('Access-Control-Allow-Credentials', 'true');
-                $response->headers->set('Access-Control-Max-Age', '86400');
-
-                return $response;
+                
+                // Функция для добавления CORS заголовков
+                $addCorsHeaders = function($response) use ($allowOrigin) {
+                    $response->headers->set('Access-Control-Allow-Origin', $allowOrigin);
+                    $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+                    $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN, X-Session-ID');
+                    $response->headers->set('Access-Control-Allow-Credentials', 'true');
+                    $response->headers->set('Access-Control-Max-Age', '86400');
+                    return $response;
+                };
+                
+                // Обработка ошибок авторизации
+                if ($e instanceof \Illuminate\Auth\AuthenticationException) {
+                    $authHeader = $request->header('Authorization');
+                    $bearerToken = $request->bearerToken();
+                    
+                    \Illuminate\Support\Facades\Log::info('Global exception handler: AuthenticationException caught', [
+                        'message' => $e->getMessage(),
+                        'url' => $request->fullUrl(),
+                        'method' => $request->method(),
+                        'has_auth_header' => $authHeader ? true : false,
+                        'auth_header_preview' => $authHeader ? substr($authHeader, 0, 20) . '...' : null,
+                        'has_bearer_token' => $bearerToken ? true : false,
+                        'bearer_token_length' => $bearerToken ? strlen($bearerToken) : 0,
+                        'bearer_token_preview' => $bearerToken ? substr($bearerToken, 0, 20) . '...' : null,
+                        'headers' => $request->headers->all()
+                    ]);
+                    $response = response()->json([
+                        'success' => false,
+                        'message' => 'Не авторизован',
+                        'error' => 'Unauthenticated.'
+                    ], 401);
+                    return $addCorsHeaders($response);
+                }
+                
+                // Обработка ошибок валидации
+                if ($e instanceof \Illuminate\Validation\ValidationException) {
+                    $response = response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка валидации',
+                        'error' => $e->getMessage(),
+                        'errors' => $e->errors()
+                    ], 422);
+                    return $addCorsHeaders($response);
+                }
+                
+                // Обработка HTTP исключений (404, 403 и т.д.)
+                if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpException) {
+                    $statusCode = $e->getStatusCode();
+                    $message = $e->getMessage() ?: 'Ошибка запроса';
+                    
+                    // Для ошибок авторизации возвращаем 401
+                    if ($statusCode === 401 || $statusCode === 403) {
+                        \Illuminate\Support\Facades\Log::info('Global exception handler: HttpException with 401/403', [
+                            'status_code' => $statusCode,
+                            'message' => $message,
+                            'url' => $request->fullUrl()
+                        ]);
+                        $response = response()->json([
+                            'success' => false,
+                            'message' => 'Не авторизован',
+                            'error' => 'Unauthenticated.'
+                        ], 401);
+                        return $addCorsHeaders($response);
+                    }
+                    
+                    $response = response()->json([
+                        'success' => false,
+                        'message' => $message,
+                        'error' => $message
+                    ], $statusCode);
+                    return $addCorsHeaders($response);
+                }
+                
+                // Логируем все остальные исключения для отладки
+                \Illuminate\Support\Facades\Log::error('Global exception handler: Unhandled exception', [
+                    'exception' => get_class($e),
+                    'message' => $e->getMessage(),
+                    'url' => $request->fullUrl(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+                
+                $response = response()->json([
+                    'success' => false,
+                    'message' => 'Внутренняя ошибка сервера',
+                    'error' => $e->getMessage()
+                ], 500);
+                return $addCorsHeaders($response);
             }
 
             // Обработка ошибок для веб-запросов (не API)
