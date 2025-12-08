@@ -645,12 +645,15 @@ class BulkGoodsImportController extends Controller
         }
         
         $existingGood->name = $goodData['name'];
-        // Используем slug из данных, если он есть и не пустой, иначе генерируем автоматически
-        if (!empty($goodData['slug']) && trim($goodData['slug']) !== '') {
-            $existingGood->slug = trim($goodData['slug']);
-        } else {
-            $existingGood->slug = $this->generateSlug($goodData['name'], $goodData['sku'] ?? $existingGood->sku);
+        // Обновляем slug только если он явно передан в данных (выбран в маппинге)
+        // При обновлении существующей записи не создаем slug автоматически
+        if (isset($goodData['slug'])) {
+            if (!empty($goodData['slug']) && trim($goodData['slug']) !== '') {
+                $existingGood->slug = trim($goodData['slug']);
+            }
+            // Если slug передан, но пустой, не обновляем существующий slug
         }
+        // Если slug не передан в данных (не выбран в маппинге), оставляем существующий slug без изменений
 
         // Обновляем описание только если оно передано
         if (isset($goodData['description'])) {

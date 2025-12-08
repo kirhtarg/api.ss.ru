@@ -288,6 +288,12 @@ Route::get('/test/oauth', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/categories/{id}/children', [App\Http\Controllers\Api\Public\ShopCategoriesController::class, 'getChildren']);
+    
+    // Batch endpoint для получения подкатегорий нескольких категорий одним запросом
+    Route::options('/public/shop/categories/children/batch', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/public/shop/categories/children/batch', [App\Http\Controllers\Api\Public\ShopCategoriesController::class, 'getChildrenBatch']);
 
     Route::options('/public/shop/categories/slug/{slug}', function () {
         return response()->json([], 200);

@@ -314,6 +314,71 @@ class ShopCategoriesController extends Controller
     }
 
     /**
+     * Получить подкатегории для нескольких категорий одним запросом (batch)
+     */
+    public function getChildrenBatch(Request $request): JsonResponse
+    {
+        try {
+            $categoryIds = $request->input('category_ids', []);
+            
+            if (empty($categoryIds) || !is_array($categoryIds)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Необходимо передать массив category_ids'
+                ], 400);
+            }
+            
+            // Преобразуем в массив целых чисел
+            $categoryIds = array_map('intval', $categoryIds);
+            $categoryIds = array_filter($categoryIds);
+            
+            if (empty($categoryIds)) {
+                return response()->json([
+                    'success' => true,
+                    'data' => []
+                ]);
+            }
+            
+            // Получаем все подкатегории для переданных категорий одним запросом
+            $children = ShopCategory::whereIn('parent_id', $categoryIds)
+                ->where('is_active', true)
+                ->orderBy('parent_id', 'asc')
+                ->orderBy('sort_order', 'asc')
+                ->orderBy('name', 'asc')
+                ->get(['id', 'name', 'slug', 'icon', 'description', 'parent_id']);
+            
+            // Вычисляем количество товаров для подкатегорий
+            foreach ($children as $child) {
+                $child->products_count = DB::table('shop_good_categories')
+                    ->join('shop_goods', 'shop_good_categories.good_id', '=', 'shop_goods.id')
+                    ->where('shop_good_categories.category_id', $child->id)
+                    ->where('shop_goods.is_active', true)
+                    ->count();
+            }
+            
+            // Группируем по parent_id для удобства на фронтенде
+            $grouped = [];
+            foreach ($children as $child) {
+                $parentId = $child->parent_id;
+                if (!isset($grouped[$parentId])) {
+                    $grouped[$parentId] = [];
+                }
+                $grouped[$parentId][] = $child;
+            }
+            
+            return response()->json([
+                'success' => true,
+                'data' => $grouped
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при получении подкатегорий: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Получить путь к изображению (относительный, без домена)
      */
     private function getImageUrl($filePath)
