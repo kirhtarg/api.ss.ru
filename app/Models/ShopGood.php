@@ -254,6 +254,18 @@ class ShopGood extends Model
     }
 
     /**
+     * Scope для поиска только по названию и артикулу (регистронезависимый)
+     */
+    public function scopeSearchNameSku($query, $search)
+    {
+        $searchLower = mb_strtolower($search);
+        return $query->where(function ($q) use ($searchLower) {
+            $q->whereRaw('LOWER(name) LIKE ?', ["%{$searchLower}%"])
+              ->orWhereRaw('LOWER(sku) LIKE ?', ["%{$searchLower}%"]);
+        });
+    }
+
+    /**
      * Scope для фильтрации по цене
      */
     public function scopePriceRange($query, $minPrice, $maxPrice)

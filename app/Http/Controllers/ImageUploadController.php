@@ -380,8 +380,12 @@ class ImageUploadController extends Controller
                 Log::info('Изображение растянуто до размеров: ' . $width . 'x' . $height);
             }
 
-            // Сохраняем изображение
-            $imageData = $image->toJpeg();
+            // Конвертируем в JPG если нужно или если указан белый фон для прозрачных изображений
+            if ($convertToJpg || $whiteBackground) {
+                $imageData = $image->toJpeg(90); // Качество 90%
+            } else {
+                $imageData = $image->toJpeg(90);
+            }
             Log::info('Изображение сконвертировано в JPEG, размер: ' . strlen($imageData) . ' байт');
             
             // Сохраняем файл на фронтенд
@@ -640,7 +644,10 @@ class ImageUploadController extends Controller
                 'image_url' => 'nullable|url',
                 'width' => 'nullable|integer|min:1|max:2000',
                 'height' => 'nullable|integer|min:1|max:2000',
-                'maintainAspectRatio' => 'boolean'
+                'maintainAspectRatio' => 'boolean',
+                'fit_with_white_background' => 'boolean',
+                'convert_to_jpg' => 'boolean',
+                'white_background' => 'boolean'
             ]);
 
             if ($validator->fails()) {
@@ -734,11 +741,17 @@ class ImageUploadController extends Controller
             $width = $request->input('width', $imageSettings['width']);
             $height = $request->input('height', $imageSettings['height']);
             $maintainAspectRatio = $request->input('maintainAspectRatio', true);
+            $fitWithWhiteBackground = $request->input('fit_with_white_background', false);
+            $convertToJpg = $request->input('convert_to_jpg', false);
+            $whiteBackground = $request->input('white_background', false);
             
             Log::info('Параметры обработки:', [
                 'width' => $width,
                 'height' => $height,
-                'maintainAspectRatio' => $maintainAspectRatio
+                'maintainAspectRatio' => $maintainAspectRatio,
+                'fit_with_white_background' => $fitWithWhiteBackground,
+                'convert_to_jpg' => $convertToJpg,
+                'white_background' => $whiteBackground
             ]);
 
             // Генерируем уникальное имя файла
@@ -770,8 +783,31 @@ class ImageUploadController extends Controller
             $image = $manager->read($file);
             Log::info('Изображение прочитано');
 
-            // Ресайзим изображение с обрезкой до точных размеров
-            if ($maintainAspectRatio) {
+            // Обработка изображения в зависимости от режима
+            if ($fitWithWhiteBackground) {
+                // Вписываем изображение в размеры с белым фоном (без обрезки)
+                // Создаем копию изображения для вписывания (читаем файл заново)
+                $fittedImage = $manager->read($file);
+                $fittedImage->contain($width, $height);
+                
+                // Получаем размеры вписанного изображения
+                $fittedWidth = $fittedImage->width();
+                $fittedHeight = $fittedImage->height();
+                
+                // Создаем новое изображение с белым фоном нужного размера
+                $canvas = $manager->create($width, $height);
+                $canvas->fill('ffffff'); // Белый фон
+                
+                // Вычисляем позицию для центрирования
+                $x = (int)(($width - $fittedWidth) / 2);
+                $y = (int)(($height - $fittedHeight) / 2);
+                
+                // Накладываем вписанное изображение на белый фон
+                $canvas->place($fittedImage, 'top-left', $x, $y);
+                $image = $canvas;
+                
+                Log::info('Изображение вписано в размеры: ' . $width . 'x' . $height . ' с белым фоном');
+            } elseif ($maintainAspectRatio) {
                 // Обрезаем изображение до точных размеров с сохранением пропорций
                 $image->cover($width, $height);
                 Log::info('Изображение обрезано до размеров: ' . $width . 'x' . $height . ' с сохранением пропорций');
@@ -781,8 +817,12 @@ class ImageUploadController extends Controller
                 Log::info('Изображение растянуто до размеров: ' . $width . 'x' . $height);
             }
 
-            // Сохраняем изображение
-            $imageData = $image->toJpeg();
+            // Конвертируем в JPG если нужно или если указан белый фон для прозрачных изображений
+            if ($convertToJpg || $whiteBackground) {
+                $imageData = $image->toJpeg(90); // Качество 90%
+            } else {
+                $imageData = $image->toJpeg(90);
+            }
             Log::info('Изображение сконвертировано в JPEG, размер: ' . strlen($imageData) . ' байт');
             
             // Сохраняем файл на фронтенд
@@ -817,6 +857,9 @@ class ImageUploadController extends Controller
         $width = $request->input('width', $imageSettings['width']);
         $height = $request->input('height', $imageSettings['height']);
         $maintainAspectRatio = $request->input('maintainAspectRatio', true);
+        $fitWithWhiteBackground = $request->input('fit_with_white_background', false);
+        $convertToJpg = $request->input('convert_to_jpg', false);
+        $whiteBackground = $request->input('white_background', false);
 
         try {
             Log::info('Обработка изображения бренда из URL: ' . $url);
@@ -862,8 +905,31 @@ class ImageUploadController extends Controller
             // Создаем изображение
             $image = $manager->read($imageContent);
 
-            // Ресайзим изображение с обрезкой до точных размеров
-            if ($maintainAspectRatio) {
+            // Обработка изображения в зависимости от режима
+            if ($fitWithWhiteBackground) {
+                // Вписываем изображение в размеры с белым фоном (без обрезки)
+                // Создаем копию изображения для вписывания (читаем из данных изображения)
+                $fittedImage = $manager->read($imageContent);
+                $fittedImage->contain($width, $height);
+                
+                // Получаем размеры вписанного изображения
+                $fittedWidth = $fittedImage->width();
+                $fittedHeight = $fittedImage->height();
+                
+                // Создаем новое изображение с белым фоном нужного размера
+                $canvas = $manager->create($width, $height);
+                $canvas->fill('ffffff'); // Белый фон
+                
+                // Вычисляем позицию для центрирования
+                $x = (int)(($width - $fittedWidth) / 2);
+                $y = (int)(($height - $fittedHeight) / 2);
+                
+                // Накладываем вписанное изображение на белый фон
+                $canvas->place($fittedImage, 'top-left', $x, $y);
+                $image = $canvas;
+                
+                Log::info('Изображение вписано в размеры: ' . $width . 'x' . $height . ' с белым фоном');
+            } elseif ($maintainAspectRatio) {
                 // Обрезаем изображение до точных размеров с сохранением пропорций
                 $image->cover($width, $height);
             } else {
@@ -871,8 +937,12 @@ class ImageUploadController extends Controller
                 $image->resize($width, $height);
             }
 
-            // Сохраняем изображение на фронтенд
-            $imageData = $image->toJpeg();
+            // Конвертируем в JPG если нужно или если указан белый фон для прозрачных изображений
+            if ($convertToJpg || $whiteBackground) {
+                $imageData = $image->toJpeg(90); // Качество 90%
+            } else {
+                $imageData = $image->toJpeg(90);
+            }
             file_put_contents($fullPath, $imageData);
             Log::info('Файл сохранен на фронтенд: ' . $fullPath);
 

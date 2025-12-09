@@ -84,7 +84,13 @@ class ShopGoodsController extends Controller
         // Поиск
         if ($request->filled('search')) {
             $search = $request->get('search');
-            $query->search($search);
+            // Если передан параметр search_only_name_sku, ищем только по названию и артикулу
+            $searchOnlyNameSku = $request->input('search_only_name_sku');
+            if ($searchOnlyNameSku && ($searchOnlyNameSku === '1' || $searchOnlyNameSku === 1 || $searchOnlyNameSku === true || $searchOnlyNameSku === 'true')) {
+                $query->searchNameSku($search);
+            } else {
+                $query->search($search);
+            }
         }
 
         // Фильтр по категории

@@ -24,6 +24,12 @@ class CategoryController extends Controller
                 $query->where('name', 'like', "%{$search}%");
             }
 
+            // Фильтр по slug (для проверки уникальности)
+            if ($request->filled('slug')) {
+                $slug = $request->get('slug');
+                $query->where('slug', $slug);
+            }
+
             // Фильтр по статусу
             if ($request->has('is_active')) {
                 $query->where('is_active', $request->boolean('is_active'));
