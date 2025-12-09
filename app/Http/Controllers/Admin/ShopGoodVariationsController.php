@@ -60,6 +60,73 @@ class ShopGoodVariationsController extends Controller
     }
 
     /**
+     * Получить атрибуты для множества вариаций (массовая загрузка)
+     */
+    public function getBulkAttributes(Request $request): JsonResponse
+    {
+        try {
+            $variationIds = $request->input('variation_ids', []);
+            
+            if (empty($variationIds) || !is_array($variationIds)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не указаны ID вариаций'
+                ], 400);
+            }
+
+            // Ограничиваем размер батча
+            $variationIds = array_slice($variationIds, 0, 5000);
+            $variationIds = array_map('intval', $variationIds);
+            $variationIds = array_filter($variationIds, function($id) { return $id > 0; });
+
+            if (empty($variationIds)) {
+                return response()->json([
+                    'success' => true,
+                    'data' => []
+                ]);
+            }
+
+            // Загружаем атрибуты для всех вариаций одним запросом
+            $rows = DB::table('shop_variation_attributes_values as vav')
+                ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                ->whereIn('vav.variation_id', $variationIds)
+                ->select(
+                    'vav.variation_id',
+                    'a.id as attribute_id', 
+                    'a.name as attribute_name',
+                    'av.id as value_id', 
+                    'av.value as value_value'
+                )
+                ->orderBy('a.name')
+                ->get();
+
+            // Группируем атрибуты по вариациям
+            $byVariation = [];
+            foreach ($rows as $r) {
+                if (!isset($byVariation[$r->variation_id])) {
+                    $byVariation[$r->variation_id] = [];
+                }
+                $byVariation[$r->variation_id][] = [
+                    'id' => (int)$r->attribute_id,
+                    'name' => $r->attribute_name,
+                    'value' => $r->value_value
+                ];
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $byVariation
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения атрибутов: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Справочник атрибутов вариаций
      */
     public function listAttributes(): JsonResponse

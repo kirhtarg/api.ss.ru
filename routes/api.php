@@ -1261,6 +1261,8 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::prefix('goods')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'index']);
                 Route::get('/filters', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'filters']);
+                Route::get('/categories-stats', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getCategoriesStats']);
+                Route::get('/characteristics/list', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getCharacteristicsList']);
                 Route::post('/categories', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'createCategory']);
                 Route::post('/brands', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'createBrand']);
                 Route::post('/labels', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'createLabel']);
@@ -1270,6 +1272,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::put('/{id}/properties', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'updateProperties']);
                 Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'destroy']);
                 Route::post('/bulk-update', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'bulkUpdate']);
+                Route::post('/transfer-data', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'transferData']);
                 Route::post('/check-duplicates', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'checkDuplicates']);
                 Route::post('/bulk-import', [\App\Http\Controllers\Admin\BulkGoodsImportController::class, 'bulkImport']);
                 Route::post('/mass-parse-properties', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'massParseProperties']);
@@ -1333,6 +1336,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/variations/attributes/global', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'createAttributeGlobal']);
                 // Получить список всех характеристик вариаций (без привязки к товару)
                 Route::get('/variations/attributes', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'listAttributes']);
+                // Массовая загрузка атрибутов вариаций
+                Route::post('/variations/attributes/bulk', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'getBulkAttributes']);
                 
                 // Глобальное массовое обновление вариаций (без привязки к товару)
                 Route::post('/variations/bulk-update', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'globalBulkUpdate']);

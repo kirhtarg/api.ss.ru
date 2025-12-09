@@ -10,6 +10,7 @@ use App\Models\ShopLabel;
 use App\Models\ShopProperty;
 use App\Models\ShopPropertyValue;
 use App\Models\ShopCategory;
+use App\Models\ShopGoodCharacteristic;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -560,11 +561,27 @@ class ShopGoodsController extends Controller
         // Пагинация (если не запрашиваются конкретные ID, используем пагинацию)
         if (!$request->has('ids')) {
             $perPage = $request->get('per_page', 20);
-            $perPage = in_array($perPage, [10, 20, 50, 100]) ? $perPage : 20;
+            $perPage = in_array($perPage, [10, 20, 50, 100, 5000]) ? $perPage : 20;
             $goods = $query->paginate($perPage);
             
-            // Добавляем вычисления для вариаций
+            // Загружаем значения свойств для всех товаров
+            $hasValueCol = Schema::hasColumn('shop_good_properties', 'value');
             foreach ($goods->items() as $good) {
+                foreach ($good->properties as $property) {
+                    if (isset($property->pivot) && $property->pivot->shop_property_value_id) {
+                        $propertyValue = \App\Models\Shop\PropertyValue::find($property->pivot->shop_property_value_id);
+                        $property->property_value = $propertyValue;
+                    } elseif ($hasValueCol && isset($property->pivot) && $property->pivot->value) {
+                        // Если свойство использует value напрямую
+                        $property->property_value = (object)[
+                            'id' => null,
+                            'value' => $property->pivot->value,
+                            'property_id' => $property->id
+                        ];
+                    }
+                }
+                
+                // Добавляем вычисления для вариаций
                 if ($good->variations_count > 0 && $good->variations) {
                     // Сумма остатков вариаций
                     $good->variations_stock_sum = $good->variations->sum('stock_quantity');
@@ -4319,6 +4336,397 @@ class ShopGoodsController extends Controller
                 'success' => false,
                 'error' => 'Ошибка при загрузке фида: ' . $e->getMessage(),
                 'message' => 'Ошибка при загрузке фида: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить статистику количества товаров по категориям
+     */
+    public function getCategoriesStats(Request $request): JsonResponse
+    {
+        try {
+            // Получаем количество товаров для каждой категории одним SQL запросом
+            $stats = DB::table('shop_good_categories')
+                ->join('shop_goods', 'shop_good_categories.good_id', '=', 'shop_goods.id')
+                ->where('shop_goods.is_active', true)
+                ->select('shop_good_categories.category_id', DB::raw('COUNT(*) as products_count'))
+                ->groupBy('shop_good_categories.category_id')
+                ->get()
+                ->pluck('products_count', 'category_id')
+                ->toArray();
+            
+            return response()->json([
+                'success' => true,
+                'data' => $stats
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения статистики: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить список всех уникальных названий характеристик
+     */
+    public function getCharacteristicsList(): JsonResponse
+    {
+        try {
+            // Получаем все уникальные названия характеристик из таблицы shop_properties
+            // через связь с shop_good_properties
+            $characteristics = DB::table('shop_properties')
+                ->join('shop_good_properties', 'shop_properties.id', '=', 'shop_good_properties.property_id')
+                ->select('shop_properties.name')
+                ->distinct()
+                ->whereNotNull('shop_properties.name')
+                ->where('shop_properties.name', '!=', '')
+                ->orderBy('shop_properties.name')
+                ->pluck('shop_properties.name')
+                ->map(function($name) {
+                    return [
+                        'id' => $name,
+                        'name' => $name
+                    ];
+                })
+                ->values()
+                ->toArray();
+
+            return response()->json([
+                'success' => true,
+                'data' => $characteristics
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения списка характеристик: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Перенос данных между товарами
+     */
+    public function transferData(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'source_good_id' => 'required|exists:shop_goods,id',
+            'target_good_id' => 'required|exists:shop_goods,id|different:source_good_id',
+            'transfer' => 'required|array',
+            'transfer.description' => 'nullable|boolean',
+            'transfer.short_description' => 'nullable|boolean',
+            'transfer.variations' => 'nullable|boolean',
+            'transfer.images' => 'nullable|boolean',
+            'delete_source' => 'nullable|boolean'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $sourceGood = ShopGood::with(['variations', 'images'])->findOrFail($request->source_good_id);
+            $targetGood = ShopGood::with(['variations', 'images'])->findOrFail($request->target_good_id);
+            $transfer = $request->transfer;
+            $deleteSource = $request->boolean('delete_source', false);
+
+            $transferredItems = [];
+
+            // Функция для сравнения характеристик вариаций (используется в нескольких местах)
+            $compareVariationAttributes = function($attrs1, $attrs2) {
+                if (count($attrs1) !== count($attrs2)) {
+                    return false;
+                }
+                
+                // Сортируем по attribute_id и value_id для сравнения
+                $sorted1 = collect($attrs1)->sortBy(function($attr) {
+                    return $attr['attribute_id'] . '_' . $attr['value_id'];
+                })->values()->toArray();
+                
+                $sorted2 = collect($attrs2)->sortBy(function($attr) {
+                    return $attr['attribute_id'] . '_' . $attr['value_id'];
+                })->values()->toArray();
+                
+                return json_encode($sorted1) === json_encode($sorted2);
+            };
+
+            // Перенос описания
+            if (!empty($transfer['description'])) {
+                $targetGood->description = $sourceGood->description;
+                $transferredItems[] = 'описание';
+            }
+
+            // Перенос краткого описания
+            if (!empty($transfer['short_description'])) {
+                $targetGood->short_description = $sourceGood->short_description;
+                $transferredItems[] = 'краткое описание';
+            }
+
+            // Сохраняем изменения в основных полях
+            if (!empty($transfer['description']) || !empty($transfer['short_description'])) {
+                $targetGood->save();
+            }
+
+            // Перенос вариаций
+            if (!empty($transfer['variations']) && $sourceGood->variations) {
+                $sourceVariations = $sourceGood->variations;
+                
+                // Загружаем атрибуты для всех вариаций источника
+                $sourceVariationIds = $sourceVariations->pluck('id')->toArray();
+                $sourceVariationAttributes = [];
+                
+                if (!empty($sourceVariationIds)) {
+                    $attrsRows = DB::table('shop_variation_attributes_values as vav')
+                        ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                        ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                        ->whereIn('vav.variation_id', $sourceVariationIds)
+                        ->select(
+                            'vav.variation_id',
+                            'a.id as attribute_id',
+                            'a.name as attribute_name',
+                            'av.id as value_id',
+                            'av.value as value_value'
+                        )
+                        ->get();
+
+                    foreach ($attrsRows as $row) {
+                        if (!isset($sourceVariationAttributes[$row->variation_id])) {
+                            $sourceVariationAttributes[$row->variation_id] = [];
+                        }
+                        $sourceVariationAttributes[$row->variation_id][] = [
+                            'attribute_id' => $row->attribute_id,
+                            'attribute_name' => $row->attribute_name,
+                            'value_id' => $row->value_id,
+                            'value' => $row->value_value
+                        ];
+                    }
+                }
+
+                // Загружаем атрибуты для всех вариаций получателя
+                $targetVariations = $targetGood->variations;
+                $targetVariationIds = $targetVariations->pluck('id')->toArray();
+                $targetVariationAttributes = [];
+                
+                if (!empty($targetVariationIds)) {
+                    $attrsRows = DB::table('shop_variation_attributes_values as vav')
+                        ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                        ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                        ->whereIn('vav.variation_id', $targetVariationIds)
+                        ->select(
+                            'vav.variation_id',
+                            'a.id as attribute_id',
+                            'a.name as attribute_name',
+                            'av.id as value_id',
+                            'av.value as value_value'
+                        )
+                        ->get();
+
+                    foreach ($attrsRows as $row) {
+                        if (!isset($targetVariationAttributes[$row->variation_id])) {
+                            $targetVariationAttributes[$row->variation_id] = [];
+                        }
+                        $targetVariationAttributes[$row->variation_id][] = [
+                            'attribute_id' => $row->attribute_id,
+                            'attribute_name' => $row->attribute_name,
+                            'value_id' => $row->value_id,
+                            'value' => $row->value_value
+                        ];
+                    }
+                }
+
+                $createdVariations = 0;
+                $skippedVariations = 0;
+
+                // Создаем вариации для получателя
+                foreach ($sourceVariations as $sourceVariation) {
+                    $sourceAttrs = $sourceVariationAttributes[$sourceVariation->id] ?? [];
+                    
+                    // Проверяем, есть ли уже вариация с такими же характеристиками
+                    $duplicateFound = false;
+                    foreach ($targetVariations as $targetVariation) {
+                        $targetAttrs = $targetVariationAttributes[$targetVariation->id] ?? [];
+                        if ($compareVariationAttributes($sourceAttrs, $targetAttrs)) {
+                            $duplicateFound = true;
+                            $skippedVariations++;
+                            break;
+                        }
+                    }
+
+                    if (!$duplicateFound) {
+                        // Создаем новую вариацию
+                        $newVariation = \App\Models\ShopGoodVariation::create([
+                            'good_id' => $targetGood->id,
+                            'name' => $sourceVariation->name,
+                            'sku' => $sourceVariation->sku,
+                            'price' => $sourceVariation->price,
+                            'sale_price' => $sourceVariation->sale_price,
+                            'demping_price' => $sourceVariation->demping_price,
+                            'show_demping' => $sourceVariation->show_demping,
+                            'stock_quantity' => $sourceVariation->stock_quantity,
+                            'remote_stock_quantity' => $sourceVariation->remote_stock_quantity,
+                            'is_active' => $sourceVariation->is_active
+                        ]);
+
+                        // Копируем атрибуты вариации
+                        if (!empty($sourceAttrs)) {
+                            foreach ($sourceAttrs as $attr) {
+                                DB::table('shop_variation_attributes_values')->insert([
+                                    'variation_id' => $newVariation->id,
+                                    'attribute_value_id' => $attr['value_id']
+                                ]);
+                            }
+                        }
+
+                        $createdVariations++;
+                    }
+                }
+
+                $transferredItems[] = "вариации (создано: {$createdVariations}, пропущено: {$skippedVariations})";
+            }
+
+            // Перенос изображений (после операций с вариациями)
+            if (!empty($transfer['images'])) {
+                // Загружаем все вариации с атрибутами для обоих товаров
+                $sourceVariations = ShopGood::with(['variations'])->find($sourceGood->id)->variations;
+                $targetVariations = ShopGood::with(['variations'])->find($targetGood->id)->variations;
+
+                // Загружаем атрибуты вариаций источника
+                $sourceVariationIds = $sourceVariations->pluck('id')->toArray();
+                $sourceVariationAttributesMap = [];
+                
+                if (!empty($sourceVariationIds)) {
+                    $attrsRows = DB::table('shop_variation_attributes_values as vav')
+                        ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                        ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                        ->whereIn('vav.variation_id', $sourceVariationIds)
+                        ->select(
+                            'vav.variation_id',
+                            'a.id as attribute_id',
+                            'av.id as value_id'
+                        )
+                        ->get();
+
+                    foreach ($attrsRows as $row) {
+                        if (!isset($sourceVariationAttributesMap[$row->variation_id])) {
+                            $sourceVariationAttributesMap[$row->variation_id] = [];
+                        }
+                        $sourceVariationAttributesMap[$row->variation_id][] = [
+                            'attribute_id' => $row->attribute_id,
+                            'value_id' => $row->value_id
+                        ];
+                    }
+                }
+
+                // Загружаем атрибуты вариаций получателя
+                $targetVariationIds = $targetVariations->pluck('id')->toArray();
+                $targetVariationAttributesMap = [];
+                
+                if (!empty($targetVariationIds)) {
+                    $attrsRows = DB::table('shop_variation_attributes_values as vav')
+                        ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                        ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                        ->whereIn('vav.variation_id', $targetVariationIds)
+                        ->select(
+                            'vav.variation_id',
+                            'a.id as attribute_id',
+                            'av.id as value_id'
+                        )
+                        ->get();
+
+                    foreach ($attrsRows as $row) {
+                        if (!isset($targetVariationAttributesMap[$row->variation_id])) {
+                            $targetVariationAttributesMap[$row->variation_id] = [];
+                        }
+                        $targetVariationAttributesMap[$row->variation_id][] = [
+                            'attribute_id' => $row->attribute_id,
+                            'value_id' => $row->value_id
+                        ];
+                    }
+                }
+
+                // Функция для поиска соответствующей вариации получателя по характеристикам
+                $findMatchingVariation = function($sourceAttrs, $targetVariations, $targetVariationAttributesMap) use ($compareVariationAttributes) {
+                    foreach ($targetVariations as $targetVariation) {
+                        $targetAttrs = $targetVariationAttributesMap[$targetVariation->id] ?? [];
+                        if ($compareVariationAttributes($sourceAttrs, $targetAttrs)) {
+                            return $targetVariation->id;
+                        }
+                    }
+                    return null;
+                };
+
+                // Переносим изображения основного товара
+                $sourceMainImages = DB::table('shop_good_images')
+                    ->where('good_id', $sourceGood->id)
+                    ->whereNull('variation_id')
+                    ->get();
+
+                foreach ($sourceMainImages as $image) {
+                    DB::table('shop_good_images')
+                        ->where('id', $image->id)
+                        ->update([
+                            'good_id' => $targetGood->id,
+                            'variation_id' => null
+                        ]);
+                }
+
+                // Переносим изображения вариаций
+                foreach ($sourceVariations as $sourceVariation) {
+                    $sourceAttrs = $sourceVariationAttributesMap[$sourceVariation->id] ?? [];
+                    $matchingTargetVariationId = $findMatchingVariation($sourceAttrs, $targetVariations, $targetVariationAttributesMap);
+
+                    $sourceVariationImages = DB::table('shop_good_images')
+                        ->where('variation_id', $sourceVariation->id)
+                        ->get();
+
+                    foreach ($sourceVariationImages as $image) {
+                        DB::table('shop_good_images')
+                            ->where('id', $image->id)
+                            ->update([
+                                'good_id' => $targetGood->id,
+                                'variation_id' => $matchingTargetVariationId
+                            ]);
+                    }
+                }
+
+                $transferredItems[] = 'изображения';
+            }
+
+            // Удаление исходного товара, если указано
+            if ($deleteSource) {
+                $this->logAudit($sourceGood, 'deleted', $sourceGood->toArray(), null);
+                $sourceGood->delete();
+            }
+
+            DB::commit();
+
+            $message = 'Данные успешно перенесены: ' . implode(', ', $transferredItems);
+            if ($deleteSource) {
+                $message .= '. Исходный товар удален.';
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => $message,
+                'data' => [
+                    'transferred' => $transferredItems,
+                    'delete_source' => $deleteSource
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Ошибка переноса данных товаров: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка переноса данных: ' . $e->getMessage()
             ], 500);
         }
     }

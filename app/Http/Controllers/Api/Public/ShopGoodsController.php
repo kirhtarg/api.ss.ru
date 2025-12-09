@@ -579,9 +579,17 @@ class ShopGoodsController extends Controller
                     }
                     
                     // Применяем поиск с логикой И (все слова) - БЕЗ фильтров по остаткам и цене
+                    // Ищем по названию, артикулу товара и артикулам вариаций
                     $testQuerySimple->where(function($q) use ($words) {
                         foreach ($words as $word) {
-                            $q->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($word) . '%']);
+                            $q->where(function($wordQuery) use ($word) {
+                                $wordQuery->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($word) . '%'])
+                                    ->orWhereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($word) . '%'])
+                                    ->orWhereHas('variations', function($varQuery) use ($word) {
+                                        $varQuery->where('is_active', true)
+                                            ->whereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($word) . '%']);
+                                    });
+                            });
                         }
                     });
                     
@@ -594,7 +602,14 @@ class ShopGoodsController extends Controller
                         // Если есть результаты с логикой И, используем её
                         $query->where(function($q) use ($words) {
                             foreach ($words as $word) {
-                                $q->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($word) . '%']);
+                                $q->where(function($wordQuery) use ($word) {
+                                    $wordQuery->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($word) . '%'])
+                                        ->orWhereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($word) . '%'])
+                                        ->orWhereHas('variations', function($varQuery) use ($word) {
+                                            $varQuery->where('is_active', true)
+                                                ->whereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($word) . '%']);
+                                        });
+                                });
                             }
                         });
                     } else {
@@ -602,16 +617,38 @@ class ShopGoodsController extends Controller
                         $query->where(function($q) use ($words) {
                             foreach ($words as $index => $word) {
                                 if ($index === 0) {
-                                    $q->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($word) . '%']);
+                                    $q->where(function($wordQuery) use ($word) {
+                                        $wordQuery->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($word) . '%'])
+                                            ->orWhereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($word) . '%'])
+                                            ->orWhereHas('variations', function($varQuery) use ($word) {
+                                                $varQuery->where('is_active', true)
+                                                    ->whereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($word) . '%']);
+                                            });
+                                    });
                                 } else {
-                                    $q->orWhereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($word) . '%']);
+                                    $q->orWhere(function($wordQuery) use ($word) {
+                                        $wordQuery->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($word) . '%'])
+                                            ->orWhereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($word) . '%'])
+                                            ->orWhereHas('variations', function($varQuery) use ($word) {
+                                                $varQuery->where('is_active', true)
+                                                    ->whereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($word) . '%']);
+                                            });
+                                    });
                                 }
                             }
                         });
                     }
                 } else {
                     // Если нет слов длиннее 2 символов, используем простой поиск
-                    $query->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($search) . '%']);
+                    // Ищем по названию, артикулу товара и артикулам вариаций
+                    $query->where(function($q) use ($search) {
+                        $q->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($search) . '%'])
+                            ->orWhereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($search) . '%'])
+                            ->orWhereHas('variations', function($varQuery) use ($search) {
+                                $varQuery->where('is_active', true)
+                                    ->whereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($search) . '%']);
+                            });
+                    });
                 }
             }
 
