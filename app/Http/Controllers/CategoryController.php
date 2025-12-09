@@ -529,4 +529,153 @@ class CategoryController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Батч-добавление категорий к родительской категории (только обновляет parent_id)
+     */
+    public function addToParent(Request $request): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'category_ids' => 'required|array|min:1',
+                'category_ids.*' => 'required|integer|exists:shop_categories,id',
+                'parent_id' => 'required|integer|exists:shop_categories,id'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $categoryIds = $request->input('category_ids');
+            $parentId = $request->input('parent_id');
+
+            // Проверяем, что родительская категория не находится среди обновляемых категорий
+            if (in_array($parentId, $categoryIds)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Родительская категория не может быть среди обновляемых категорий'
+                ], 422);
+            }
+
+            // Проверяем, что не создается циклическая зависимость
+            $parentCategory = ShopCategory::find($parentId);
+            if ($parentCategory) {
+                $parentPath = $this->getCategoryPath($parentCategory);
+                foreach ($categoryIds as $categoryId) {
+                    if (in_array($categoryId, $parentPath)) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Невозможно создать циклическую зависимость'
+                        ], 422);
+                    }
+                }
+            }
+
+            // Обновляем parent_id для всех категорий одним запросом
+            $updated = ShopCategory::whereIn('id', $categoryIds)
+                ->update(['parent_id' => $parentId]);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Успешно добавлено категорий к родительской категории: {$updated}",
+                'data' => [
+                    'updated' => $updated,
+                    'total' => count($categoryIds)
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при добавлении категорий к родительской категории: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Батч-обновление категорий
+     */
+    public function batchUpdate(Request $request): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'category_ids' => 'required|array|min:1',
+                'category_ids.*' => 'required|integer|exists:shop_categories,id',
+                'parent_id' => 'required|integer|exists:shop_categories,id'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $categoryIds = $request->input('category_ids');
+            $parentId = $request->input('parent_id');
+
+            // Проверяем, что родительская категория не находится среди обновляемых категорий
+            if (in_array($parentId, $categoryIds)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Родительская категория не может быть среди обновляемых категорий'
+                ], 422);
+            }
+
+            // Проверяем, что не создается циклическая зависимость
+            $parentCategory = ShopCategory::find($parentId);
+            if ($parentCategory) {
+                $parentPath = $this->getCategoryPath($parentCategory);
+                foreach ($categoryIds as $categoryId) {
+                    if (in_array($categoryId, $parentPath)) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Невозможно создать циклическую зависимость'
+                        ], 422);
+                    }
+                }
+            }
+
+            // Обновляем parent_id для всех категорий одним запросом
+            $updated = ShopCategory::whereIn('id', $categoryIds)
+                ->update(['parent_id' => $parentId]);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Успешно обновлено категорий: {$updated}",
+                'data' => [
+                    'updated' => $updated,
+                    'total' => count($categoryIds)
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при батч-обновлении категорий: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить путь категории (все родительские категории)
+     */
+    private function getCategoryPath(ShopCategory $category): array
+    {
+        $path = [$category->id];
+        $current = $category;
+
+        while ($current->parent_id) {
+            $current = ShopCategory::find($current->parent_id);
+            if (!$current) {
+                break;
+            }
+            $path[] = $current->id;
+        }
+
+        return $path;
+    }
 }

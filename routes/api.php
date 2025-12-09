@@ -1202,6 +1202,10 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Categories management (создание/редактирование/удаление для пользователей с доступом к shop)
         Route::middleware('shop.access')->prefix('categories')->group(function () {
+            // Батч-операции с категориями - должны быть ПЕРЕД маршрутом /{id}
+            Route::put('/add-to-parent', [\App\Http\Controllers\CategoryController::class, 'addToParent']);
+            Route::put('/batch-update', [\App\Http\Controllers\CategoryController::class, 'batchUpdate']);
+            
             Route::post('/', [\App\Http\Controllers\CategoryController::class, 'store']);
             Route::put('/{id}', [\App\Http\Controllers\CategoryController::class, 'update']);
             Route::delete('/{id}', [\App\Http\Controllers\CategoryController::class, 'destroy']);
