@@ -93,6 +93,18 @@ class ShopGoodsController extends Controller
             }
         }
 
+        // Фильтр по названию (точное вхождение текста)
+        if ($request->filled('name_search')) {
+            $nameSearch = $request->get('name_search');
+            $query->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($nameSearch) . '%']);
+        }
+
+        // Фильтр по артикулу (точное вхождение текста)
+        if ($request->filled('sku_search')) {
+            $skuSearch = $request->get('sku_search');
+            $query->whereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($skuSearch) . '%']);
+        }
+
         // Фильтр по категории
         if ($request->filled('category_id')) {
             $query->byCategory($request->get('category_id'));
