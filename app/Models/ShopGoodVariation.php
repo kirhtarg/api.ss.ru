@@ -22,6 +22,7 @@ class ShopGoodVariation extends Model
         'show_demping',
         'stock_quantity',
         'remote_stock_quantity',
+        'fast_remote_stock_quantity',
         'weight',
         'length',
         'height',

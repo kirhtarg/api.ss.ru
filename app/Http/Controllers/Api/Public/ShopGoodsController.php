@@ -47,6 +47,11 @@ class ShopGoodsController extends Controller
                                     $remoteCondition->whereNotNull('remote_stock_quantity')
                                         ->where('remote_stock_quantity', '!=', '0')
                                         ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                })
+                                ->orWhere(function($fastRemoteCondition) {
+                                    $fastRemoteCondition->whereNotNull('fast_remote_stock_quantity')
+                                        ->where('fast_remote_stock_quantity', '!=', '0')
+                                        ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
                                 });
                             }
                         });
@@ -108,6 +113,13 @@ class ShopGoodsController extends Controller
                             ->where('remote_stock_quantity', '!=', '0')
                             ->where('remote_stock_quantity', '!=', '')
                             ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                    })
+                    // Условие 2b: остаток на быстром удаленном складе товара
+                    ->orWhere(function($fastRemoteCondition) {
+                        $fastRemoteCondition->whereNotNull('fast_remote_stock_quantity')
+                            ->where('fast_remote_stock_quantity', '!=', '0')
+                            ->where('fast_remote_stock_quantity', '!=', '')
+                            ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
                     });
                 }
 
@@ -119,13 +131,19 @@ class ShopGoodsController extends Controller
                                 ->orWhere('is_preorder', '=', true);
                         });
                     
-                    // Проверяем, что удаленный остаток тоже пустой (если учитываем удаленный склад)
+                    // Проверяем, что удаленный остаток и быстрый удаленный остаток тоже пустые (если учитываем удаленный склад)
                     if ($remoteQ === 2 || $remoteQ === 3) {
                         $preorderCondition->where(function($remoteEmptyCondition) {
                             $remoteEmptyCondition->whereNull('remote_stock_quantity')
                                 ->orWhere('remote_stock_quantity', '=', '0')
                                 ->orWhere('remote_stock_quantity', '=', '')
                                 ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
+                        })
+                        ->where(function($fastRemoteEmptyCondition) {
+                            $fastRemoteEmptyCondition->whereNull('fast_remote_stock_quantity')
+                                ->orWhere('fast_remote_stock_quantity', '=', '0')
+                                ->orWhere('fast_remote_stock_quantity', '=', '')
+                                ->orWhereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) = 0');
                         });
                     }
                 });
@@ -141,6 +159,12 @@ class ShopGoodsController extends Controller
                                     ->where('remote_stock_quantity', '!=', '0')
                                     ->where('remote_stock_quantity', '!=', '')
                                     ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                            })
+                            ->orWhere(function($fastRemoteVarQ) {
+                                $fastRemoteVarQ->whereNotNull('fast_remote_stock_quantity')
+                                    ->where('fast_remote_stock_quantity', '!=', '0')
+                                    ->where('fast_remote_stock_quantity', '!=', '')
+                                    ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
                             });
                         }
                     });
@@ -164,6 +188,12 @@ class ShopGoodsController extends Controller
                                         ->where('remote_stock_quantity', '!=', '0')
                                         ->where('remote_stock_quantity', '!=', '')
                                         ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                })
+                                ->orWhere(function($fastRemoteVarQ) {
+                                    $fastRemoteVarQ->whereNotNull('fast_remote_stock_quantity')
+                                        ->where('fast_remote_stock_quantity', '!=', '0')
+                                        ->where('fast_remote_stock_quantity', '!=', '')
+                                        ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
                                 });
                             }
                         });
@@ -187,7 +217,7 @@ class ShopGoodsController extends Controller
             // 1. (Нет вариаций И остаток основного товара > 0) ИЛИ
             // 2. (Есть вариации И есть вариации с остатком)
             $query->where(function($mainQuery) use ($remoteQ) {
-                // Вариант 1: Нет вариаций И (остаток основного товара > 0 ИЛИ остаток на у/с не пустой)
+                // Вариант 1: Нет вариаций И (остаток основного товара > 0 ИЛИ остаток на у/с не пустой ИЛИ остаток на у/с быстрый не пустой)
                 $mainQuery->where(function($noVariationsQuery) {
                     $noVariationsQuery->whereDoesntHave('variations')
                         ->where(function($stockQuery) {
@@ -197,6 +227,12 @@ class ShopGoodsController extends Controller
                                         ->where('remote_stock_quantity', '!=', '0')
                                         ->where('remote_stock_quantity', '!=', '')
                                         ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                })
+                                ->orWhere(function($fastRemoteCondition) {
+                                    $fastRemoteCondition->whereNotNull('fast_remote_stock_quantity')
+                                        ->where('fast_remote_stock_quantity', '!=', '0')
+                                        ->where('fast_remote_stock_quantity', '!=', '')
+                                        ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
                                 });
                         });
                 });
@@ -213,6 +249,12 @@ class ShopGoodsController extends Controller
                                             ->where('remote_stock_quantity', '!=', '0')
                                             ->where('remote_stock_quantity', '!=', '')
                                             ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                    })
+                                    ->orWhere(function($fastRemoteVarQ) {
+                                        $fastRemoteVarQ->whereNotNull('fast_remote_stock_quantity')
+                                            ->where('fast_remote_stock_quantity', '!=', '0')
+                                            ->where('fast_remote_stock_quantity', '!=', '')
+                                            ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
                                     });
                                 }
                             });
@@ -226,7 +268,7 @@ class ShopGoodsController extends Controller
             // 1. (Нет вариаций И остаток основного товара = 0) ИЛИ
             // 2. (Есть вариации И нет вариаций с остатком)
             $query->where(function($mainQuery) use ($remoteQ) {
-                // Вариант 1: Нет вариаций И остаток основного товара = 0 И остаток на у/с пустой
+                // Вариант 1: Нет вариаций И остаток основного товара = 0 И остаток на у/с пустой И остаток на у/с быстрый пустой
                 $mainQuery->where(function($noVariationsQuery) {
                     $noVariationsQuery->whereDoesntHave('variations')
                         ->where('stock_quantity', '=', 0)
@@ -235,6 +277,12 @@ class ShopGoodsController extends Controller
                                 ->orWhere('remote_stock_quantity', '=', '0')
                                 ->orWhere('remote_stock_quantity', '=', '')
                                 ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
+                        })
+                        ->where(function($fastRemoteCondition) {
+                            $fastRemoteCondition->whereNull('fast_remote_stock_quantity')
+                                ->orWhere('fast_remote_stock_quantity', '=', '0')
+                                ->orWhere('fast_remote_stock_quantity', '=', '')
+                                ->orWhereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) = 0');
                         });
                 });
 
@@ -250,6 +298,12 @@ class ShopGoodsController extends Controller
                                             ->where('remote_stock_quantity', '!=', '0')
                                             ->where('remote_stock_quantity', '!=', '')
                                             ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                    })
+                                    ->orWhere(function($fastRemoteVarQ) {
+                                        $fastRemoteVarQ->whereNotNull('fast_remote_stock_quantity')
+                                            ->where('fast_remote_stock_quantity', '!=', '0')
+                                            ->where('fast_remote_stock_quantity', '!=', '')
+                                            ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
                                     });
                                 }
                             });
@@ -270,6 +324,12 @@ class ShopGoodsController extends Controller
                             ->orWhere('remote_stock_quantity', '=', '0')
                             ->orWhere('remote_stock_quantity', '=', '')
                             ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
+                    })
+                    ->where(function($fastRemoteCondition) {
+                        $fastRemoteCondition->whereNull('fast_remote_stock_quantity')
+                            ->orWhere('fast_remote_stock_quantity', '=', '0')
+                            ->orWhere('fast_remote_stock_quantity', '=', '')
+                            ->orWhereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) = 0');
                     });
                 }
                 $mainQuery->whereDoesntHave('variations', function($varQ) use ($remoteQ) {

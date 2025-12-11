@@ -30,7 +30,7 @@ class ShopGoodsController extends Controller
         $query = ShopGood::select([
             'id', 'name', 'slug', 'sku', 'description', 'short_description', 
             'price', 'sale_price', 'demping_price', 'show_demping', 'label_id',
-            'stock_quantity', 'remote_stock_quantity', 'rating', 'reviews_count',
+            'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity', 'rating', 'reviews_count',
             'width', 'height', 'depth', 'weight',
             'is_active', 'is_featured', 'is_new', 'is_sale', 'is_preorder', 'sort_order', 
             'created_at', 'updated_at'
@@ -41,7 +41,7 @@ class ShopGoodsController extends Controller
             'label:id,name,color',
             'properties:id,name,slug',
             'images:id,good_id,file_path,alt_text,is_main,sort_order',
-            'variations:id,good_id,name,sku,price,sale_price,demping_price,show_demping,stock_quantity,remote_stock_quantity,is_active'
+            'variations:id,good_id,name,sku,price,sale_price,demping_price,show_demping,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,is_active'
         ])->withCount('variations');
 
         // Загружаем pivot данные для свойств (поддерживаем разные схемы: value или shop_property_value_id)
@@ -500,12 +500,31 @@ class ShopGoodsController extends Controller
             $query->where('remote_stock_quantity', '=', $exactValue);
         }
 
+        // Фильтр по остатку у/с быстро (fast_remote_stock_quantity)
+        if ($request->filled('fast_remote_stock_quantity_not_empty')) {
+            $query->where(function($q) {
+                $q->whereNotNull('fast_remote_stock_quantity')
+                  ->where('fast_remote_stock_quantity', '!=', '')
+                  ->where('fast_remote_stock_quantity', '!=', '0');
+            });
+        } elseif ($request->filled('fast_remote_stock_quantity_empty')) {
+            $query->where(function($q) {
+                $q->whereNull('fast_remote_stock_quantity')
+                  ->orWhere('fast_remote_stock_quantity', '=', '')
+                  ->orWhere('fast_remote_stock_quantity', '=', '0');
+            });
+        } elseif ($request->filled('fast_remote_stock_quantity')) {
+            // Точное значение
+            $exactValue = $request->get('fast_remote_stock_quantity');
+            $query->where('fast_remote_stock_quantity', '=', $exactValue);
+        }
+
         // Фильтр по общему остатку (total_stock)
         // Если у товара есть вариации, остатки вариаций проверяются в приоритете
         if ($request->filled('total_stock_not_empty')) {
-            // В наличии: (нет вариаций И остаток основного товара > 0 или у/с не пустой) ИЛИ (есть вариации И есть вариации с остатком)
+            // В наличии: (нет вариаций И остаток основного товара > 0 или у/с не пустой или у/с быстрый не пустой) ИЛИ (есть вариации И есть вариации с остатком)
             $query->where(function($mainQuery) {
-                // Вариант 1: Нет вариаций И остаток основного товара > 0 или у/с не пустой
+                // Вариант 1: Нет вариаций И остаток основного товара > 0 или у/с не пустой или у/с быстрый не пустой
                 $mainQuery->where(function($noVariationsQuery) {
                     $noVariationsQuery->whereDoesntHave('variations')
                         ->where(function($stockQuery) {
@@ -515,6 +534,12 @@ class ShopGoodsController extends Controller
                                         ->where('remote_stock_quantity', '!=', '0')
                                         ->where('remote_stock_quantity', '!=', '')
                                         ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                })
+                                ->orWhere(function($fastRemoteCondition) {
+                                    $fastRemoteCondition->whereNotNull('fast_remote_stock_quantity')
+                                        ->where('fast_remote_stock_quantity', '!=', '0')
+                                        ->where('fast_remote_stock_quantity', '!=', '')
+                                        ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
                                 });
                         });
                 });
@@ -530,15 +555,21 @@ class ShopGoodsController extends Controller
                                             ->where('remote_stock_quantity', '!=', '0')
                                             ->where('remote_stock_quantity', '!=', '')
                                             ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                    })
+                                    ->orWhere(function($fastRemoteVarQ) {
+                                        $fastRemoteVarQ->whereNotNull('fast_remote_stock_quantity')
+                                            ->where('fast_remote_stock_quantity', '!=', '0')
+                                            ->where('fast_remote_stock_quantity', '!=', '')
+                                            ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
                                     });
                             });
                         });
                 });
             });
         } elseif ($request->filled('total_stock_both_empty')) {
-            // Нет в наличии: (нет вариаций И остаток основного товара = 0 и у/с пустой) ИЛИ (есть вариации И нет вариаций с остатком)
+            // Нет в наличии: (нет вариаций И остаток основного товара = 0 и у/с пустой и у/с быстрый пустой) ИЛИ (есть вариации И нет вариаций с остатком)
             $query->where(function($mainQuery) {
-                // Вариант 1: Нет вариаций И остаток основного товара = 0 и у/с пустой
+                // Вариант 1: Нет вариаций И остаток основного товара = 0 и у/с пустой и у/с быстрый пустой
                 $mainQuery->where(function($noVariationsQuery) {
                     $noVariationsQuery->whereDoesntHave('variations')
                         ->where('stock_quantity', '=', 0)
@@ -547,6 +578,12 @@ class ShopGoodsController extends Controller
                                 ->orWhere('remote_stock_quantity', '=', '0')
                                 ->orWhere('remote_stock_quantity', '=', '')
                                 ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
+                        })
+                        ->where(function($fastRemoteCondition) {
+                            $fastRemoteCondition->whereNull('fast_remote_stock_quantity')
+                                ->orWhere('fast_remote_stock_quantity', '=', '0')
+                                ->orWhere('fast_remote_stock_quantity', '=', '')
+                                ->orWhereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) = 0');
                         });
                 });
 
@@ -561,6 +598,12 @@ class ShopGoodsController extends Controller
                                             ->where('remote_stock_quantity', '!=', '0')
                                             ->where('remote_stock_quantity', '!=', '')
                                             ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                    })
+                                    ->orWhere(function($fastRemoteVarQ) {
+                                        $fastRemoteVarQ->whereNotNull('fast_remote_stock_quantity')
+                                            ->where('fast_remote_stock_quantity', '!=', '0')
+                                            ->where('fast_remote_stock_quantity', '!=', '')
+                                            ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
                                     });
                             });
                         });
@@ -755,6 +798,7 @@ class ShopGoodsController extends Controller
             'sale_price' => 'nullable|numeric|min:0',
             'stock_quantity' => 'integer|min:0',
             'remote_stock_quantity' => 'nullable|string|max:255',
+            'fast_remote_stock_quantity' => 'nullable|string|max:255',
             'width' => 'nullable|numeric|min:0',
             'height' => 'nullable|numeric|min:0',
             'depth' => 'nullable|numeric|min:0',
@@ -889,6 +933,7 @@ class ShopGoodsController extends Controller
             'label_id' => 'nullable|exists:shop_labels,id',
             'stock_quantity' => 'integer|min:0',
             'remote_stock_quantity' => 'nullable|string|max:255',
+            'fast_remote_stock_quantity' => 'nullable|string|max:255',
             'width' => 'nullable|numeric|min:0',
             'height' => 'nullable|numeric|min:0',
             'depth' => 'nullable|numeric|min:0',
@@ -939,6 +984,12 @@ class ShopGoodsController extends Controller
             if (isset($allRequestData['remote_stock_quantity'])) {
                 $remoteStockValue = $allRequestData['remote_stock_quantity'];
                 $updateData['remote_stock_quantity'] = ($remoteStockValue === '' || $remoteStockValue === null) ? null : (string)$remoteStockValue;
+            }
+            
+            // Явно обрабатываем fast_remote_stock_quantity - всегда обновляем, даже если null
+            if (isset($allRequestData['fast_remote_stock_quantity'])) {
+                $fastRemoteStockValue = $allRequestData['fast_remote_stock_quantity'];
+                $updateData['fast_remote_stock_quantity'] = ($fastRemoteStockValue === '' || $fastRemoteStockValue === null) ? null : (string)$fastRemoteStockValue;
             }
             
             // Обновляем товар

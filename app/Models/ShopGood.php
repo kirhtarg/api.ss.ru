@@ -28,6 +28,7 @@ class ShopGood extends Model
         'label_id',
         'stock_quantity',
         'remote_stock_quantity',
+        'fast_remote_stock_quantity',
         'width',
         'height',
         'depth', // В базе данных поле называется depth, но через accessor доступно как length
@@ -51,6 +52,7 @@ class ShopGood extends Model
         'show_demping' => 'boolean',
         'stock_quantity' => 'integer',
         'remote_stock_quantity' => 'string', // Может быть строкой типа ">10", поэтому не приводим к integer
+        'fast_remote_stock_quantity' => 'string', // Может быть строкой типа ">10", поэтому не приводим к integer
         'width' => 'decimal:2',
         'height' => 'decimal:2',
         'depth' => 'decimal:2', // В базе данных поле называется depth, но через accessor доступно как length
