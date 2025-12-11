@@ -4,12 +4,13 @@ namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopCategory;
+use App\Models\ShopCategoryExtraMenu;
 use Illuminate\Http\Request;
 
 class ShopCategoryController extends Controller
 {
     /**
-     * Получить главные категории с подкатегориями
+     * Получить главные категории с подкатегориями и экстра-меню
      */
     public function getMainCategories()
     {
@@ -18,6 +19,37 @@ class ShopCategoryController extends Controller
                 ->main()
                 ->ordered()
                 ->get();
+
+            // Получаем ID всех главных категорий для загрузки экстра-меню одним запросом
+            $categoryIds = $mainCategories->pluck('id')->toArray();
+            
+            // Загружаем все экстра-меню одним запросом
+            $extraMenus = [];
+            if (!empty($categoryIds) && \Schema::hasTable('shop_category_extra_menus')) {
+                $extraMenusData = ShopCategoryExtraMenu::with([
+                    'filters' => function($query) {
+                        $query->where('is_active', true)->orderBy('sort_order');
+                    },
+                    'sections' => function($query) {
+                        $query->orderBy('sort_order');
+                    },
+                    'sections.items' => function($query) {
+                        $query->orderBy('sort_order');
+                    },
+                    'sections.items.category' => function($query) {
+                        $query->where('is_active', true);
+                    }
+                ])
+                ->whereIn('category_id', $categoryIds)
+                ->where('is_active', true)
+                ->get()
+                ->keyBy('category_id');
+                
+                // Преобразуем в массив для быстрого доступа
+                foreach ($extraMenusData as $extraMenu) {
+                    $extraMenus[$extraMenu->category_id] = $extraMenu;
+                }
+            }
 
             // Загружаем подкатегории для каждой главной категории через SQL
             foreach($mainCategories as $category) {
@@ -36,6 +68,13 @@ class ShopCategoryController extends Controller
                 });
                 
                 $category->children = $children;
+                
+                // Добавляем экстра-меню к категории, если оно есть
+                if (isset($extraMenus[$category->id])) {
+                    $category->extra_menu = $extraMenus[$category->id];
+                } else {
+                    $category->extra_menu = null;
+                }
             }
 
             return response()->json([

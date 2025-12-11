@@ -59,6 +59,12 @@ class ShopCategory extends Model
         return $this->belongsToMany(\App\Models\ShopGood::class, 'shop_good_categories', 'category_id', 'good_id');
     }
 
+    // Отношение к экстра-меню
+    public function extraMenu()
+    {
+        return $this->hasOne(ShopCategoryExtraMenu::class, 'category_id');
+    }
+
     // Scope для активных категорий
     public function scopeActive($query)
     {

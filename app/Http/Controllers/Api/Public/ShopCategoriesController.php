@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopCategory;
+use App\Models\ShopCategoryExtraMenu;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -438,6 +439,99 @@ class ShopCategoriesController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка при получении главных категорий: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить экстра-меню категории
+     */
+    public function getExtraMenu($categoryId): JsonResponse
+    {
+        try {
+            Log::info('getExtraMenu: запрос для категории', ['categoryId' => $categoryId]);
+            
+            $category = ShopCategory::find($categoryId);
+            
+            if (!$category) {
+                Log::warning('getExtraMenu: категория не найдена', ['categoryId' => $categoryId]);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Категория не найдена'
+                ], 404);
+            }
+
+            $extraMenu = ShopCategoryExtraMenu::with([
+                'filters' => function($query) {
+                    $query->where('is_active', true)->orderBy('sort_order');
+                },
+                'sections' => function($query) {
+                    $query->orderBy('sort_order');
+                },
+                'sections.items' => function($query) {
+                    $query->orderBy('sort_order');
+                },
+                'sections.items.category' => function($query) {
+                    $query->where('is_active', true);
+                }
+            ])
+            ->where('category_id', $categoryId)
+            ->where('is_active', true)
+            ->first();
+
+            Log::info('getExtraMenu: результат запроса', [
+                'categoryId' => $categoryId,
+                'extraMenuFound' => $extraMenu !== null,
+                'extraMenuId' => $extraMenu ? $extraMenu->id : null,
+                'sectionsCount' => $extraMenu && $extraMenu->sections ? $extraMenu->sections->count() : 0
+            ]);
+
+            if (!$extraMenu) {
+                Log::info('getExtraMenu: экстра-меню не найдено для категории', ['categoryId' => $categoryId]);
+                return response()->json([
+                    'success' => true,
+                    'data' => null
+                ]);
+            }
+
+            // Логируем структуру данных перед отправкой
+            $sectionsData = $extraMenu->sections->map(function($section) {
+                return [
+                    'id' => $section->id,
+                    'title' => $section->title,
+                    'items_count' => $section->items ? $section->items->count() : 0,
+                    'items' => $section->items ? $section->items->map(function($item) {
+                        return [
+                            'id' => $item->id,
+                            'category_id' => $item->category_id,
+                            'category' => $item->category ? [
+                                'id' => $item->category->id,
+                                'name' => $item->category->name,
+                                'slug' => $item->category->slug
+                            ] : null
+                        ];
+                    })->toArray() : []
+                ];
+            })->toArray();
+
+            Log::info('getExtraMenu: структура секций', [
+                'categoryId' => $categoryId,
+                'sections' => $sectionsData
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $extraMenu
+            ]);
+        } catch (\Exception $e) {
+            Log::error('getExtraMenu: ошибка', [
+                'categoryId' => $categoryId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при получении экстра-меню: ' . $e->getMessage()
             ], 500);
         }
     }

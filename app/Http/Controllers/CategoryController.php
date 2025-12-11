@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Schema;
 
 class CategoryController extends Controller
 {
@@ -16,7 +17,11 @@ class CategoryController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $query = ShopCategory::with('parent');
+            $withRelations = ['parent'];
+            if (Schema::hasTable('shop_category_extra_menus')) {
+                $withRelations[] = 'extraMenu';
+            }
+            $query = ShopCategory::with($withRelations);
 
             // Поиск
             if ($request->filled('search')) {
@@ -65,7 +70,11 @@ class CategoryController extends Controller
     public function active(Request $request): JsonResponse
     {
         try {
-            $query = ShopCategory::with('parent')->active();
+            $withRelations = ['parent'];
+            if (Schema::hasTable('shop_category_extra_menus')) {
+                $withRelations[] = 'extraMenu';
+            }
+            $query = ShopCategory::with($withRelations)->active();
 
             // Поиск
             if ($request->filled('search')) {
@@ -93,7 +102,11 @@ class CategoryController extends Controller
     public function show($id): JsonResponse
     {
         try {
-            $category = ShopCategory::with(['parent', 'children'])->find($id);
+            $withRelations = ['parent', 'children'];
+            if (Schema::hasTable('shop_category_extra_menus')) {
+                $withRelations[] = 'extraMenu';
+            }
+            $category = ShopCategory::with($withRelations)->find($id);
 
             if (!$category) {
                 return response()->json([

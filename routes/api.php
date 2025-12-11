@@ -301,6 +301,11 @@ Route::get('/test/oauth', function () {
     Route::get('/public/shop/categories/slug/{slug}', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getCategoryBySlug']);
     Route::get('/public/shop/categories/slug/{slug}/with-relations', [App\Http\Controllers\Api\Public\ShopCategoriesController::class, 'getCategoryBySlugWithRelations']);
 
+    Route::options('/public/shop/categories/{id}/extra-menu', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/categories/{id}/extra-menu', [App\Http\Controllers\Api\Public\ShopCategoriesController::class, 'getExtraMenu']);
+
     // Публичные маршруты для брендов магазина
     Route::options('/public/shop/brands', function () {
         return response()->json([], 200);
@@ -1217,6 +1222,12 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/upload-image', [\App\Http\Controllers\CategoryController::class, 'uploadImage']);
             Route::post('/sort-alphabetically', [\App\Http\Controllers\CategoryController::class, 'sortAlphabetically']);
             Route::post('/import', [\App\Http\Controllers\CategoryController::class, 'import']);
+
+            // Экстра-меню категорий
+            Route::get('/{id}/extra-menu', [\App\Http\Controllers\CategoryExtraMenuController::class, 'show']);
+            Route::put('/{id}/extra-menu', [\App\Http\Controllers\CategoryExtraMenuController::class, 'update']);
+            Route::get('/{id}/extra-menu/characteristics', [\App\Http\Controllers\CategoryExtraMenuController::class, 'getCharacteristics']);
+            Route::get('/{id}/extra-menu/child-categories', [\App\Http\Controllers\CategoryExtraMenuController::class, 'getChildCategories']);
 
             // Изменить порядок категорий
             Route::post('/order', function (Request $request) {

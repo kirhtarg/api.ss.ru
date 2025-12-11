@@ -59,8 +59,6 @@ class BulkGoodsImportController extends Controller
             if (empty($sku) && empty($name)) {
                 $reason = 'Пустая строка';
 
-                // Логируем пропущенную строку с уникальным ID
-                \Log::info("Пропущенная строка {$itemId}: SKU='{$sku}', Name='{$name}', Reason={$reason}");
 
                 $skippedRows[] = [
                     'count' => $index + 1,
@@ -77,8 +75,6 @@ class BulkGoodsImportController extends Controller
             if (empty($name)) {
                 $reason = 'Отсутствует название';
 
-                // Логируем ошибку валидации с уникальным ID
-                \Log::info("Ошибка валидации {$itemId}: SKU='{$sku}', Name='{$name}', Reason={$reason}");
 
                 $skippedRows[] = [
                     'count' => $index + 1,
@@ -96,8 +92,6 @@ class BulkGoodsImportController extends Controller
             $good['name'] = $name;
             $goods[] = $good;
 
-            // Логируем валидный товар с уникальным ID
-            \Log::info("Валидный товар {$itemId}: SKU='{$sku}', Name='{$name}', Лист='{$sheet}'");
         }
 
         // Логируем пропущенные строки
@@ -149,12 +143,6 @@ class BulkGoodsImportController extends Controller
                 $errorMessages[] = $error;
             }
 
-            // Логируем первые несколько товаров для диагностики
-            $firstGoods = array_slice($goods, 0, 3);
-            \Log::info('Validation failed - sample goods data:', [
-                'first_goods' => $firstGoods,
-                'validation_errors' => $errors->toArray()
-            ]);
 
             $this->importLogService->logGeneralError('Ошибка валидации: ' . implode('; ', $errorMessages));
 
@@ -176,6 +164,29 @@ class BulkGoodsImportController extends Controller
         $autoCreateCategories = $request->input('auto_create_categories', false);
         $autoCreateBrands = $request->input('auto_create_brands', false);
         $processCategoriesAndBrands = $request->input('process_categories_and_brands', false);
+        $defaultCategory = $request->input('default_category', null);
+        $useDefaultCategory = $request->input('use_default_category', false);
+        $immutableFields = $request->input('immutable_fields', []);
+        
+        // Преобразуем immutable_fields в массив, если пришло как строка
+        if (is_string($immutableFields)) {
+            $immutableFields = json_decode($immutableFields, true) ?? [];
+        }
+        if (!is_array($immutableFields)) {
+            $immutableFields = [];
+        }
+        
+        // Преобразуем в boolean, если пришло как строка
+        if (is_string($useDefaultCategory)) {
+            $useDefaultCategory = in_array(strtolower($useDefaultCategory), ['true', '1', 'yes', 'on']);
+        }
+        $useDefaultCategory = (bool)$useDefaultCategory;
+        
+        // Преобразуем defaultCategory в integer, если это число
+        if ($defaultCategory !== null && is_numeric($defaultCategory)) {
+            $defaultCategory = (int)$defaultCategory;
+        }
+        
 
 
         // Получаем информацию о батче
@@ -196,13 +207,7 @@ class BulkGoodsImportController extends Controller
 
         // Пакетная обработка категорий и брендов
         if ($processCategoriesAndBrands && ($autoCreateCategories || $autoCreateBrands)) {
-            \Log::info('Starting batch processing', [
-                'goods_count' => count($goods),
-                'autoCreateCategories' => $autoCreateCategories,
-                'autoCreateBrands' => $autoCreateBrands
-            ]);
-            $this->processCategoriesAndBrandsBatch($goods, $autoCreateCategories, $autoCreateBrands);
-            \Log::info('Batch processing completed', ['first_good' => $goods[0] ?? null]);
+            $this->processCategoriesAndBrandsBatch($goods, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory);
 
             // Собираем информацию о новых категориях и брендах
             $this->collectNewCategoriesAndBrands($goods, $results);
@@ -236,13 +241,6 @@ class BulkGoodsImportController extends Controller
                                     is_array($goodData['variation']['attributes']) && 
                                     count($goodData['variation']['attributes']) > 0;
                     
-                    \Log::info('Проверка наличия вариации', [
-                        'row' => $count,
-                        'sku' => $sku,
-                        'name' => $name,
-                        'has_variation' => $hasVariation,
-                        'variation_data' => $hasVariation ? $goodData['variation'] : null
-                    ]);
                     
                     if ($hasVariation) {
                         // При наличии вариации ищем товар более тщательно
@@ -324,7 +322,7 @@ class BulkGoodsImportController extends Controller
                             $sheet = $goodData['_sheet'] ?? 'неизвестно';
                             $updateItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'good_id' => $existingGood->id];
                         } elseif ($duplicateAction === 'update') {
-                            $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands);
+                            $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields);
                             $results['updated']++;
                             
                             // Сохраняем ID товара
@@ -403,7 +401,7 @@ class BulkGoodsImportController extends Controller
                         }
                         
                         // Товар действительно не существует - создаем новый (с вариацией или без)
-                        $newGood = $this->createGood($goodData, $autoCreateCategories, $autoCreateBrands);
+                        $newGood = $this->createGood($goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory);
                         $results['imported']++;
                         
                         // Сохраняем ID товара
@@ -554,7 +552,7 @@ class BulkGoodsImportController extends Controller
     }
 
 
-    private function createGood($goodData, $autoCreateCategories, $autoCreateBrands)
+    private function createGood($goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory = null, $useDefaultCategory = false)
     {
         $good = new ShopGood();
         // Если SKU пустой, устанавливаем null вместо пустой строки
@@ -587,26 +585,38 @@ class BulkGoodsImportController extends Controller
         $good->save();
 
         // Обрабатываем категории
+        $categoryIds = [];
+        
         if (isset($goodData['category']) && is_numeric($goodData['category'])) {
             // Одиночная категория по ID
-            \Log::info('Syncing single category', ['good_id' => $good->id, 'category_id' => $goodData['category']]);
-            $good->categories()->sync([$goodData['category']]);
+            $categoryIds = [(int)$goodData['category']];
         } elseif (isset($goodData['categories']) && is_array($goodData['categories'])) {
             // Множественные категории - ID уже применены в applyCategoryAndBrandIds
-            $categoryIds = array_filter($goodData['categories'], 'is_numeric');
-            \Log::info('Syncing multiple categories', ['good_id' => $good->id, 'category_ids' => $categoryIds]);
+            $categoryIds = array_filter(array_map('intval', $goodData['categories']), function($id) {
+                return $id > 0;
+            });
+        }
+        
+        // Если категорий нет, но включена категория по умолчанию, применяем её
+        if (empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null) {
+            $categoryIds = [(int)$defaultCategory];
+        }
+        
+        // Синхронизируем категории
+        if (!empty($categoryIds)) {
             $good->categories()->sync($categoryIds);
+        } else {
+            // Если категорий нет, отвязываем все категории
+            $good->categories()->sync([]);
         }
 
         // Обрабатываем бренды
         if (isset($goodData['brand']) && is_numeric($goodData['brand'])) {
             // Одиночный бренд по ID
-            \Log::info('Syncing single brand', ['good_id' => $good->id, 'brand_id' => $goodData['brand']]);
             $good->brands()->sync([$goodData['brand']]);
         } elseif (isset($goodData['brands']) && is_array($goodData['brands'])) {
             // Множественные бренды - ID уже применены в applyCategoryAndBrandIds
             $brandIds = array_filter($goodData['brands'], 'is_numeric');
-            \Log::info('Syncing multiple brands', ['good_id' => $good->id, 'brand_ids' => $brandIds]);
             $good->brands()->sync($brandIds);
         }
 
@@ -634,20 +644,23 @@ class BulkGoodsImportController extends Controller
         return $good;
     }
 
-    private function updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands)
+    private function updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory = null, $useDefaultCategory = false, $immutableFields = [])
     {
         // Обновляем все поля из goodData, которые переданы в импорте
         // Это позволяет обновлять все поля, отмеченные для импорта, а не только те, что используются для поиска
         
-        // Обновляем SKU (артикул) - если передан, обновляем
-        if (isset($goodData['sku'])) {
+        // Обновляем SKU (артикул) - если передан и не в списке неизменяемых, обновляем
+        if (isset($goodData['sku']) && !in_array('sku', $immutableFields)) {
             $existingGood->sku = !empty($goodData['sku']) ? $goodData['sku'] : null;
         }
         
-        $existingGood->name = $goodData['name'];
-        // Обновляем slug только если он явно передан в данных (выбран в маппинге)
+        // Обновляем название только если оно не в списке неизменяемых полей
+        if (isset($goodData['name']) && !in_array('name', $immutableFields)) {
+            $existingGood->name = $goodData['name'];
+        }
+        // Обновляем slug только если он явно передан в данных (выбран в маппинге) и не в списке неизменяемых
         // При обновлении существующей записи не создаем slug автоматически
-        if (isset($goodData['slug'])) {
+        if (isset($goodData['slug']) && !in_array('slug', $immutableFields)) {
             if (!empty($goodData['slug']) && trim($goodData['slug']) !== '') {
                 $existingGood->slug = trim($goodData['slug']);
             }
@@ -655,91 +668,91 @@ class BulkGoodsImportController extends Controller
         }
         // Если slug не передан в данных (не выбран в маппинге), оставляем существующий slug без изменений
 
-        // Обновляем описание только если оно передано
-        if (isset($goodData['description'])) {
+        // Обновляем описание только если оно передано и не в списке неизменяемых
+        if (isset($goodData['description']) && !in_array('description', $immutableFields)) {
             $existingGood->description = $goodData['description'];
         }
 
-        // Обновляем короткое описание только если оно передано
-        if (isset($goodData['short_description'])) {
+        // Обновляем короткое описание только если оно передано и не в списке неизменяемых
+        if (isset($goodData['short_description']) && !in_array('short_description', $immutableFields)) {
             $existingGood->short_description = $goodData['short_description'];
         }
 
-        // Применяем модификацию цены
+        // Применяем модификацию цены (только если поле не в списке неизменяемых)
         $priceModification = $goodData['price_modification'] ?? null;
-        if (isset($goodData['price'])) {
+        if (isset($goodData['price']) && !in_array('price', $immutableFields)) {
             $existingGood->price = $this->applyPriceModification($goodData['price'], $priceModification['regular'] ?? null);
         }
-        if (isset($goodData['sale_price']) || isset($priceModification)) {
+        if ((isset($goodData['sale_price']) || isset($priceModification)) && !in_array('sale_price', $immutableFields)) {
             $existingGood->sale_price = $this->applySalePriceModification($goodData, $priceModification) ?? $existingGood->sale_price;
         }
         
-        // Обновляем демпинг цену, если передана
-        if (isset($goodData['demping_price'])) {
+        // Обновляем демпинг цену, если передана и не в списке неизменяемых
+        if (isset($goodData['demping_price']) && !in_array('demping_price', $immutableFields)) {
             $existingGood->demping_price = $goodData['demping_price'];
         }
-        if (isset($goodData['show_demping'])) {
+        if (isset($goodData['show_demping']) && !in_array('show_demping', $immutableFields)) {
             $existingGood->show_demping = $goodData['show_demping'];
         }
 
-        // Обновляем остатки только если они переданы
-        if (isset($goodData['stock_quantity']) || isset($goodData['stock'])) {
+        // Обновляем остатки только если они переданы и не в списке неизменяемых
+        if ((isset($goodData['stock_quantity']) || isset($goodData['stock'])) && !in_array('stock_quantity', $immutableFields)) {
             $existingGood->stock_quantity = $goodData['stock_quantity'] ?? $goodData['stock'] ?? $existingGood->stock_quantity;
         }
 
-        if (isset($goodData['remote_stock_quantity'])) {
+        if (isset($goodData['remote_stock_quantity']) && !in_array('remote_stock_quantity', $immutableFields)) {
             $existingGood->remote_stock_quantity = $goodData['remote_stock_quantity'];
         }
         
-        // Обновляем размеры и вес, если переданы
-        if (isset($goodData['weight'])) {
+        // Обновляем размеры и вес, если переданы и не в списке неизменяемых
+        if (isset($goodData['weight']) && !in_array('weight', $immutableFields)) {
             $existingGood->weight = $goodData['weight'];
         }
-        if (isset($goodData['width'])) {
+        if (isset($goodData['width']) && !in_array('width', $immutableFields)) {
             $existingGood->width = $goodData['width'];
         }
-        if (isset($goodData['height'])) {
+        if (isset($goodData['height']) && !in_array('height', $immutableFields)) {
             $existingGood->height = $goodData['height'];
         }
         // Поддерживаем и depth, и length для обратной совместимости
-        if (isset($goodData['depth'])) {
+        if (isset($goodData['depth']) && !in_array('depth', $immutableFields)) {
             $existingGood->depth = $goodData['depth'];
-        } elseif (isset($goodData['length'])) {
+        } elseif (isset($goodData['length']) && !in_array('depth', $immutableFields)) {
             $existingGood->depth = $goodData['length'];
         }
         
-        // Обновляем флаги, если переданы
-        if (isset($goodData['is_active'])) {
+        // Обновляем флаги, если переданы и не в списке неизменяемых
+        if (isset($goodData['is_active']) && !in_array('is_active', $immutableFields)) {
             $existingGood->is_active = $goodData['is_active'];
         }
-        if (isset($goodData['is_featured'])) {
+        if (isset($goodData['is_featured']) && !in_array('is_featured', $immutableFields)) {
             $existingGood->is_featured = $goodData['is_featured'];
         }
-        if (isset($goodData['is_new'])) {
+        if (isset($goodData['is_new']) && !in_array('is_new', $immutableFields)) {
             $existingGood->is_new = $goodData['is_new'];
         }
-        if (isset($goodData['is_sale'])) {
+        if (isset($goodData['is_sale']) && !in_array('is_sale', $immutableFields)) {
             $existingGood->is_sale = $goodData['is_sale'];
         }
-        if (isset($goodData['is_preorder'])) {
+        if (isset($goodData['is_preorder']) && !in_array('is_preorder', $immutableFields)) {
             $existingGood->is_preorder = $goodData['is_preorder'];
         }
         
-        // Обновляем мета-теги, если переданы
-        if (isset($goodData['meta_title'])) {
+        // Обновляем мета-теги, если переданы и не в списке неизменяемых
+        if (isset($goodData['meta_title']) && !in_array('meta_title', $immutableFields)) {
             $existingGood->meta_title = $goodData['meta_title'];
         }
-        if (isset($goodData['meta_description'])) {
+        if (isset($goodData['meta_description']) && !in_array('meta_description', $immutableFields)) {
             $existingGood->meta_description = $goodData['meta_description'];
         }
         
-        // Обновляем label_id, если передан
-        if (isset($goodData['label_id'])) {
+        // Обновляем label_id, если передан и не в списке неизменяемых
+        if (isset($goodData['label_id']) && !in_array('label_id', $immutableFields)) {
             $existingGood->label_id = $goodData['label_id'];
         }
         
-        // Обновляем sort_order, если передан
-        if (isset($goodData['sort_order'])) {
+        // Обновляем sort_order, если передан и не в списке неизменяемых
+        if (isset($goodData['sort_order']) && !in_array('sort_order', $immutableFields)) {
             $existingGood->sort_order = $goodData['sort_order'];
         }
         
@@ -764,6 +777,11 @@ class BulkGoodsImportController extends Controller
                 continue;
             }
             
+            // Пропускаем поля, которые находятся в списке неизменяемых
+            if (in_array($field, $immutableFields)) {
+                continue;
+            }
+            
             // Если поле есть в goodData, обновляем его
             if (isset($goodData[$field])) {
                 $existingGood->$field = $goodData[$field];
@@ -773,26 +791,38 @@ class BulkGoodsImportController extends Controller
         $existingGood->save();
 
         // Обрабатываем категории
+        $categoryIds = [];
+        
         if (isset($goodData['category']) && is_numeric($goodData['category'])) {
             // Одиночная категория по ID
-            \Log::info('Updating single category', ['good_id' => $existingGood->id, 'category_id' => $goodData['category']]);
-            $existingGood->categories()->sync([$goodData['category']]);
+            $categoryIds = [(int)$goodData['category']];
         } elseif (isset($goodData['categories']) && is_array($goodData['categories'])) {
             // Множественные категории - ID уже применены в applyCategoryAndBrandIds
-            $categoryIds = array_filter($goodData['categories'], 'is_numeric');
-            \Log::info('Updating multiple categories', ['good_id' => $existingGood->id, 'category_ids' => $categoryIds]);
+            $categoryIds = array_filter(array_map('intval', $goodData['categories']), function($id) {
+                return $id > 0;
+            });
+        }
+        
+        // Если категорий нет, но включена категория по умолчанию, применяем её
+        if (empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null) {
+            $categoryIds = [(int)$defaultCategory];
+        }
+        
+        // Синхронизируем категории
+        if (!empty($categoryIds)) {
             $existingGood->categories()->sync($categoryIds);
+        } else {
+            // Если категорий нет, отвязываем все категории
+            $existingGood->categories()->sync([]);
         }
 
         // Обрабатываем бренды
         if (isset($goodData['brand']) && is_numeric($goodData['brand'])) {
             // Одиночный бренд по ID
-            \Log::info('Updating single brand', ['good_id' => $existingGood->id, 'brand_id' => $goodData['brand']]);
             $existingGood->brands()->sync([$goodData['brand']]);
         } elseif (isset($goodData['brands']) && is_array($goodData['brands'])) {
             // Множественные бренды - ID уже применены в applyCategoryAndBrandIds
             $brandIds = array_filter($goodData['brands'], 'is_numeric');
-            \Log::info('Updating multiple brands', ['good_id' => $existingGood->id, 'brand_ids' => $brandIds]);
             $existingGood->brands()->sync($brandIds);
         }
 
@@ -855,13 +885,11 @@ class BulkGoodsImportController extends Controller
     {
         $brandIds = [];
 
-        \Log::info('Processing brands', ['brands' => $brands, 'autoCreate' => $autoCreate]);
 
         foreach ($brands as $brand) {
             if (is_numeric($brand)) {
                 // Это ID бренда
                 $brandIds[] = (int)$brand;
-                \Log::info('Added numeric brand ID', ['brand_id' => $brand]);
             } else {
                 // Это название бренда
                 $brandSlug = Str::slug($brand);
@@ -871,13 +899,11 @@ class BulkGoodsImportController extends Controller
 
                 if ($existingBrand) {
                     $brandIds[] = $existingBrand->id;
-                    \Log::info('Found existing brand', ['brand_name' => $brand, 'brand_id' => $existingBrand->id]);
                 } elseif ($autoCreate) {
                     // Проверяем, не существует ли уже бренд с таким slug
                     $existingBrandBySlug = ShopBrand::where('slug', $brandSlug)->first();
                     if ($existingBrandBySlug) {
                         $brandIds[] = $existingBrandBySlug->id;
-                        \Log::info('Found existing brand by slug', ['brand_name' => $brand, 'slug' => $brandSlug, 'brand_id' => $existingBrandBySlug->id]);
                     } else {
                         $newBrand = ShopBrand::create([
                             'name' => $brand,
@@ -885,15 +911,12 @@ class BulkGoodsImportController extends Controller
                             'is_active' => true
                         ]);
                         $brandIds[] = $newBrand->id;
-                        \Log::info('Created new brand', ['brand_name' => $brand, 'brand_id' => $newBrand->id]);
                     }
                 } else {
-                    \Log::warning('Brand not found and autoCreate disabled', ['brand_name' => $brand]);
                 }
             }
         }
 
-        \Log::info('Final brand IDs', ['brand_ids' => $brandIds]);
         return array_unique($brandIds);
     }
 
@@ -975,7 +998,7 @@ class BulkGoodsImportController extends Controller
     /**
      * Пакетная обработка категорий и брендов
      */
-    private function processCategoriesAndBrandsBatch(&$goods, $autoCreateCategories, $autoCreateBrands)
+    private function processCategoriesAndBrandsBatch(&$goods, $autoCreateCategories, $autoCreateBrands, $defaultCategory = null, $useDefaultCategory = false)
     {
         // Собираем все уникальные названия категорий и брендов
         $allCategories = collect();
@@ -1082,8 +1105,8 @@ class BulkGoodsImportController extends Controller
             $this->processBrandsBatch($allBrands, $autoCreateBrands);
         }
 
-        // Применяем найденные ID к товарам
-        $this->applyCategoryAndBrandIds($goods, $autoCreateCategories, $autoCreateBrands);
+            // Применяем найденные ID к товарам
+        $this->applyCategoryAndBrandIds($goods, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory);
     }
 
     /**
@@ -1135,7 +1158,6 @@ class BulkGoodsImportController extends Controller
                 $existingCategoryBySlug = ShopCategory::where('slug', $categorySlug)->first();
                 if ($existingCategoryBySlug) {
                     $categoryMap[strtolower($categoryName)] = $existingCategoryBySlug->id;
-                    \Log::info('Found existing category by slug during batch', ['category_name' => $categoryName, 'slug' => $categorySlug, 'category_id' => $existingCategoryBySlug->id]);
                     continue;
                 }
 
@@ -1187,7 +1209,6 @@ class BulkGoodsImportController extends Controller
                 return !$brandMap->has($nameLower) && !$brandMap->has($slugLower);
             });
 
-            \Log::info('Creating brands batch', ['brands_to_create' => $brandsToCreate->toArray()]);
 
             foreach ($brandsToCreate as $brandName) {
                 $brandSlug = Str::slug($brandName);
@@ -1196,7 +1217,6 @@ class BulkGoodsImportController extends Controller
                 $existingBrandBySlug = ShopBrand::where('slug', $brandSlug)->first();
                 if ($existingBrandBySlug) {
                     $brandMap[strtolower($brandName)] = $existingBrandBySlug->id;
-                    \Log::info('Found existing brand by slug during batch', ['brand_name' => $brandName, 'slug' => $brandSlug, 'brand_id' => $existingBrandBySlug->id]);
                     continue;
                 }
 
@@ -1209,14 +1229,12 @@ class BulkGoodsImportController extends Controller
                 $brandMap[strtolower($brandName)] = $brand->id;
                 $brandMap[strtolower($brandSlug)] = $brand->id;
                 $createdBrands[] = $brand->id;
-                \Log::info('Created brand', ['brand_name' => $brandName, 'brand_id' => $brand->id]);
             }
         }
 
         // Сохраняем информацию о созданных брендах в кэше
         cache(['created_brands_' . auth()->id() => $createdBrands], 300);
 
-        \Log::info('Final brand map', ['brand_map' => $brandMap->toArray()]);
 
         // Сохраняем карту в кэше для использования в applyCategoryAndBrandIds
         cache(['brand_map_' . auth()->id() => $brandMap], 300); // 5 минут
@@ -1225,20 +1243,13 @@ class BulkGoodsImportController extends Controller
     /**
      * Применение найденных ID к товарам
      */
-    private function applyCategoryAndBrandIds(&$goods, $autoCreateCategories = true, $autoCreateBrands = true)
+    private function applyCategoryAndBrandIds(&$goods, $autoCreateCategories = true, $autoCreateBrands = true, $defaultCategory = null, $useDefaultCategory = false)
     {
         $categoryMap = cache('category_map_' . auth()->id(), collect());
         // Преобразуем коллекцию в массив для удобства работы
         $categoryMapArray = $categoryMap instanceof \Illuminate\Support\Collection ? $categoryMap->toArray() : (array)$categoryMap;
         $brandMap = cache('brand_map_' . auth()->id(), collect());
 
-        \Log::info('Applying category and brand IDs', [
-            'category_map_size' => $categoryMap->count(),
-            'brand_map_size' => $brandMap->count(),
-            'goods_count' => count($goods),
-            'autoCreateCategories' => $autoCreateCategories,
-            'autoCreateBrands' => $autoCreateBrands
-        ]);
 
         foreach ($goods as &$good) {
             // Обрабатываем категории
@@ -1260,9 +1271,7 @@ class BulkGoodsImportController extends Controller
                     $categoryId = $categoryMap[strtolower($good['category'])] ?? null;
                     if ($categoryId) {
                         $good['category'] = $categoryId;
-                        \Log::info('Applied single category ID', ['category_name' => $good['category'], 'category_id' => $categoryId]);
                     } else {
-                        \Log::warning('Category not found in map', ['category_name' => $good['category']]);
                         if (!$autoCreateCategories) {
                             unset($good['category']);
                         }
@@ -1283,8 +1292,6 @@ class BulkGoodsImportController extends Controller
                         }
                         if ($categoryId) {
                             $categoryIds[] = $categoryId;
-                        } else {
-                            \Log::warning('Category not found in map', ['category_name' => $categoryName]);
                         }
                     }
 
@@ -1297,8 +1304,6 @@ class BulkGoodsImportController extends Controller
                             $categoryId = $categoryMap[strtolower($category)] ?? null;
                             if ($categoryId) {
                                 $categoryIds[] = $categoryId;
-                            } else {
-                                \Log::warning('Category not found in map', ['category_name' => $category]);
                             }
                         } elseif (is_numeric($category)) {
                             $categoryIds[] = (int)$category;
@@ -1308,15 +1313,71 @@ class BulkGoodsImportController extends Controller
                     $good['categories'] = $categoryIds;
                 }
             }
+            
+            // Применяем категорию по умолчанию, если категория отсутствует или пустая
+            if ($useDefaultCategory && $defaultCategory !== null) {
+                $hasCategory = false;
+                
+                // Проверяем, есть ли категория в товаре (проверяем и строковые значения, и массивы)
+                // Сначала проверяем category (может быть строка или число после обработки)
+                if (isset($good['category'])) {
+                    // Если category - это строка, проверяем что она не пустая
+                    if (is_string($good['category']) && trim($good['category']) !== '') {
+                        $hasCategory = true;
+                    } 
+                    // Если category - это число (ID), значит категория есть
+                    elseif (is_numeric($good['category']) && (int)$good['category'] > 0) {
+                        $hasCategory = true;
+                    }
+                }
+                
+                // Проверяем массив categories
+                if (!$hasCategory) {
+                    if (isset($good['categories'])) {
+                        if (is_array($good['categories'])) {
+                            // Фильтруем пустые значения и проверяем что массив не пустой
+                            $filteredCategories = array_filter($good['categories'], function($cat) {
+                                if (is_numeric($cat) && (int)$cat > 0) {
+                                    return true;
+                                }
+                                if (is_string($cat) && trim($cat) !== '') {
+                                    return true;
+                                }
+                                return false;
+                            });
+                            if (!empty($filteredCategories)) {
+                                $hasCategory = true;
+                            }
+                        } elseif (is_string($good['categories']) && trim($good['categories']) !== '') {
+                            $hasCategory = true;
+                        } elseif (is_numeric($good['categories']) && (int)$good['categories'] > 0) {
+                            $hasCategory = true;
+                        }
+                    }
+                }
+                
+                // Если категории нет (не установлена или пустая), применяем категорию по умолчанию
+                if (!$hasCategory) {
+                    // Инициализируем массив categories, если его нет
+                    if (!isset($good['categories']) || !is_array($good['categories'])) {
+                        $good['categories'] = [];
+                    }
+                    
+                    // Убеждаемся, что категория по умолчанию еще не добавлена
+                    $defaultCategoryId = (int)$defaultCategory;
+                    $existingIds = array_map('intval', $good['categories']);
+                    if (!in_array($defaultCategoryId, $existingIds)) {
+                        $good['categories'][] = $defaultCategoryId;
+                    }
+                }
+            }
 
             // Обрабатываем бренды
             if (isset($good['brand']) && is_string($good['brand']) && !empty($good['brand'])) {
                 $brandId = $brandMap[strtolower($good['brand'])] ?? null;
                 if ($brandId) {
                     $good['brand'] = $brandId;
-                    \Log::info('Applied single brand ID', ['brand_name' => $good['brand'], 'brand_id' => $brandId]);
                 } else {
-                    \Log::warning('Brand not found in map', ['brand_name' => $good['brand']]);
                     if (!$autoCreateBrands) {
                         unset($good['brand']);
                     }
@@ -1330,8 +1391,6 @@ class BulkGoodsImportController extends Controller
                         $brandId = $brandMap[strtolower($brandName)] ?? null;
                         if ($brandId) {
                             $brandIds[] = $brandId;
-                        } else {
-                            \Log::warning('Brand not found in map', ['brand_name' => $brandName]);
                         }
                     }
 
@@ -1344,8 +1403,6 @@ class BulkGoodsImportController extends Controller
                             $brandId = $brandMap[strtolower($brand)] ?? null;
                             if ($brandId) {
                                 $brandIds[] = $brandId;
-                            } else {
-                                \Log::warning('Brand not found in map', ['brand_name' => $brand]);
                             }
                         } elseif (is_numeric($brand)) {
                             $brandIds[] = (int)$brand;
@@ -1359,10 +1416,6 @@ class BulkGoodsImportController extends Controller
 
         // Сохраняем обновленную карту категорий обратно в кэш
         cache(['category_map_' . auth()->id() => collect($categoryMapArray)], 300);
-
-        \Log::info('Finished applying category and brand IDs', [
-            'first_good_after' => $goods[0] ?? null
-        ]);
     }
 
     /**
@@ -1486,12 +1539,6 @@ class BulkGoodsImportController extends Controller
                             }
                         } catch (\Exception $e) {
                             // Если ошибка при создании (например, дубликат slug), пытаемся найти существующую
-                            \Log::error('Ошибка создания категории', [
-                                'name' => $categoryName,
-                                'slug' => $categorySlug,
-                                'parent_id' => $parentId,
-                                'error' => $e->getMessage()
-                            ]);
                             
                             // Пытаемся найти категорию по имени и родителю еще раз
                             $fallbackQuery = ShopCategory::where('name', $categoryName);
@@ -1537,7 +1584,6 @@ class BulkGoodsImportController extends Controller
         $newCategories = [];
         $newBrands = [];
 
-        \Log::info('Collecting new categories and brands', ['goods_count' => count($goods), 'first_good' => $goods[0] ?? null]);
 
         // Получаем кэш карт для определения новых элементов
         $categoryMap = cache('category_map_' . auth()->id(), collect());
@@ -1548,7 +1594,6 @@ class BulkGoodsImportController extends Controller
         $createdBrands = cache('created_brands_' . auth()->id(), []);
 
         foreach ($goods as $index => $goodData) {
-            \Log::info("Processing good {$index}", ['good_data' => $goodData]);
 
             // Собираем только те категории, которые были созданы в этом сеансе
             if (isset($goodData['categories']) && is_array($goodData['categories'])) {
@@ -1561,7 +1606,6 @@ class BulkGoodsImportController extends Controller
 
                         if ($categoryName && !in_array($categoryName, $newCategories)) {
                             $newCategories[] = $categoryName;
-                            \Log::info("Added new category: {$categoryName} (ID: {$categoryId})");
                         }
                     }
                 }
@@ -1574,7 +1618,6 @@ class BulkGoodsImportController extends Controller
 
                 if ($categoryName && !in_array($categoryName, $newCategories)) {
                     $newCategories[] = $categoryName;
-                    \Log::info("Added new category: {$categoryName} (ID: {$goodData['category']})");
                 }
             }
 
@@ -1589,7 +1632,6 @@ class BulkGoodsImportController extends Controller
 
                         if ($brandName && !in_array($brandName, $newBrands)) {
                             $newBrands[] = $brandName;
-                            \Log::info("Added new brand: {$brandName} (ID: {$brandId})");
                         }
                     }
                 }
@@ -1602,19 +1644,10 @@ class BulkGoodsImportController extends Controller
 
                 if ($brandName && !in_array($brandName, $newBrands)) {
                     $newBrands[] = $brandName;
-                    \Log::info("Added new brand: {$brandName} (ID: {$goodData['brand']})");
                 }
             }
         }
 
-        \Log::info('Final collected data', [
-            'newCategories' => $newCategories,
-            'newBrands' => $newBrands,
-            'newCategoriesCount' => count($newCategories),
-            'newBrandsCount' => count($newBrands),
-            'createdCategories' => $createdCategories,
-            'createdBrands' => $createdBrands
-        ]);
 
         $results['newCategories'] = $newCategories;
         $results['newBrands'] = $newBrands;
@@ -1691,11 +1724,6 @@ class BulkGoodsImportController extends Controller
             return;
         }
 
-        \Log::info('Processing properties for good', [
-            'good_id' => $good->id,
-            'properties' => $properties
-        ]);
-
         // Получаем текущие свойства товара
         // Колонка variation_id была удалена из таблицы, поэтому фильтруем только по good_id
         $existingProperties = ShopGoodProperty::where('good_id', $good->id)
@@ -1738,19 +1766,8 @@ class BulkGoodsImportController extends Controller
                             $existingProperty->shop_property_value_id = $propertyValue->id;
                             $existingProperty->save();
                             
-                            \Log::info('Updated property value', [
-                                'good_id' => $good->id,
-                                'property_id' => $propertyId,
-                                'old_value_id' => $currentValueId,
-                                'new_value_id' => $propertyValue->id
-                            ]);
                         } else {
                             // Значение не изменилось - пропускаем
-                            \Log::info('Skipped unchanged property', [
-                                'good_id' => $good->id,
-                                'property_id' => $propertyId,
-                                'value_id' => $propertyValue->id
-                            ]);
                         }
                     } else {
                         // Свойства нет - создаем новое
@@ -1760,19 +1777,8 @@ class BulkGoodsImportController extends Controller
                             'shop_property_value_id' => $propertyValue->id
                         ]);
                         
-                        \Log::info('Created new property', [
-                            'good_id' => $good->id,
-                            'property_id' => $propertyId,
-                            'value_id' => $propertyValue->id
-                        ]);
                     }
                 } catch (\Exception $e) {
-                    \Log::error('Ошибка обработки свойства товара', [
-                        'good_id' => $good->id,
-                        'property_id' => $propertyId,
-                        'value' => $valueString,
-                        'error' => $e->getMessage()
-                    ]);
                     // Пропускаем это свойство при ошибке
                     continue;
                 }
@@ -1788,35 +1794,13 @@ class BulkGoodsImportController extends Controller
      */
     private function processVariation($good, $variationData, $goodData)
     {
-        \Log::info('processVariation: ВХОД В МЕТОД', [
-            'good_id' => $good->id,
-            'good_name' => $good->name,
-            'variation_data_keys' => is_array($variationData) ? array_keys($variationData) : 'not_array',
-            'variation_data' => $variationData,
-            'good_data_keys' => array_keys($goodData)
-        ]);
-        
         try {
             // Проверяем наличие данных вариации
             if (!isset($variationData['attributes']) || !is_array($variationData['attributes']) || count($variationData['attributes']) === 0) {
-                \Log::warning('processVariation: Нет данных вариации', [
-                    'good_id' => $good->id,
-                    'good_name' => $good->name,
-                    'variation_data' => $variationData,
-                    'has_attributes_key' => isset($variationData['attributes']),
-                    'attributes_is_array' => isset($variationData['attributes']) && is_array($variationData['attributes']),
-                    'attributes_count' => isset($variationData['attributes']) && is_array($variationData['attributes']) ? count($variationData['attributes']) : 0
-                ]);
                 return null;
             }
             
             $attributes = $variationData['attributes'];
-            \Log::info('processVariation: Начало обработки вариации', [
-                'good_id' => $good->id,
-                'good_name' => $good->name,
-                'attributes_count' => count($attributes),
-                'attributes' => $attributes
-            ]);
             $variationPrice = $variationData['price'] ?? $goodData['price'] ?? $good->price ?? 0;
             $variationStockQuantity = $variationData['stock_quantity'] ?? $goodData['stock_quantity'] ?? 0;
             $variationRemoteStockQuantity = $variationData['remote_stock_quantity'] ?? $goodData['remote_stock_quantity'] ?? null;
@@ -1876,11 +1860,6 @@ class BulkGoodsImportController extends Controller
                 // Находим или создаем значение атрибута
                 $attributeValueId = $this->findOrCreateAttributeValue($attribute->id, $attributeValue);
                 if (!$attributeValueId) {
-                    \Log::error('Не удалось найти или создать значение атрибута', [
-                        'good_id' => $good->id,
-                        'attribute_id' => $attribute->id,
-                        'value' => $attributeValue
-                    ]);
                     $hasErrors = true;
                     continue;
                 }
@@ -1956,10 +1935,6 @@ class BulkGoodsImportController extends Controller
                         strpos($e->getMessage(), 'UNIQUE constraint') !== false ||
                         $e->getCode() == 23000) {
                         // Пропускаем ошибку дублирования SKU - это разрешено для вариаций
-                        \Log::info('Пропущена ошибка дублирования SKU для вариации (разрешено)', [
-                            'variation_id' => $existingVariation->id,
-                            'sku' => $existingVariation->sku
-                        ]);
                     } else {
                         // Если это другая ошибка - пробрасываем дальше
                         throw $e;
@@ -2011,10 +1986,6 @@ class BulkGoodsImportController extends Controller
                         $e->getCode() == 23000) {
                         // Пропускаем ошибку дублирования SKU - это разрешено для вариаций
                         // Пробуем найти существующую вариацию с таким же SKU и обновить её
-                        \Log::info('Обнаружено дублирование SKU при создании вариации, ищем существующую', [
-                            'good_id' => $good->id,
-                            'sku' => $variationSku
-                        ]);
                         
                         // Ищем существующую вариацию с таким же SKU
                         $existingVariationBySku = ShopGoodVariation::where('good_id', $good->id)
@@ -2107,13 +2078,6 @@ class BulkGoodsImportController extends Controller
             
             return null;
         } catch (\Exception $e) {
-            \Log::error('Ошибка обработки вариации при импорте', [
-                'good_id' => $good->id,
-                'good_name' => $good->name ?? 'неизвестно',
-                'variation_data' => $variationData,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
             
             // Логируем ошибку
             $this->importLogService->logVariation(

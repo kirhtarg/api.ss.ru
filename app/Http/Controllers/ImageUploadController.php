@@ -333,15 +333,28 @@ class ImageUploadController extends Controller
             $width = $request->input('width', $imageSettings['width']);
             $height = $request->input('height', $imageSettings['height']);
             $maintainAspectRatio = $request->input('maintainAspectRatio', true);
+            $convertToJpg = $request->input('convert_to_jpg', false);
+            $whiteBackground = $request->input('white_background', false);
             
             Log::info('Параметры обработки:', [
                 'width' => $width,
                 'height' => $height,
-                'maintainAspectRatio' => $maintainAspectRatio
+                'maintainAspectRatio' => $maintainAspectRatio,
+                'convert_to_jpg' => $convertToJpg,
+                'white_background' => $whiteBackground
             ]);
 
+            // Определяем расширение файла в зависимости от параметров конвертации
+            $fileExtension = 'jpg'; // По умолчанию JPG
+            if (!$convertToJpg && !$whiteBackground) {
+                $originalExtension = strtolower($file->getClientOriginalExtension());
+                if ($originalExtension === 'png' || $originalExtension === 'gif') {
+                    $fileExtension = $originalExtension;
+                }
+            }
+            
             // Генерируем уникальное имя файла
-            $fileName = Str::uuid() . '.' . $file->getClientOriginalExtension();
+            $fileName = Str::uuid() . '.' . $fileExtension;
             $relativePath = 'images/shop/categories/' . $fileName;
             
             // Получаем путь к фронтенду из переменной окружения
@@ -383,10 +396,21 @@ class ImageUploadController extends Controller
             // Конвертируем в JPG если нужно или если указан белый фон для прозрачных изображений
             if ($convertToJpg || $whiteBackground) {
                 $imageData = $image->toJpeg(90); // Качество 90%
+                Log::info('Изображение сконвертировано в JPEG, размер: ' . strlen($imageData) . ' байт');
             } else {
-                $imageData = $image->toJpeg(90);
+                // Сохраняем в оригинальном формате, если это возможно
+                $extension = strtolower($file->getClientOriginalExtension());
+                if ($extension === 'png') {
+                    $imageData = $image->toPng();
+                    Log::info('Изображение сохранено в PNG, размер: ' . strlen($imageData) . ' байт');
+                } elseif ($extension === 'gif') {
+                    $imageData = $image->toGif();
+                    Log::info('Изображение сохранено в GIF, размер: ' . strlen($imageData) . ' байт');
+                } else {
+                    $imageData = $image->toJpeg(90); // По умолчанию JPEG
+                    Log::info('Изображение сконвертировано в JPEG, размер: ' . strlen($imageData) . ' байт');
+                }
             }
-            Log::info('Изображение сконвертировано в JPEG, размер: ' . strlen($imageData) . ' байт');
             
             // Сохраняем файл на фронтенд
             file_put_contents($fullPath, $imageData);
