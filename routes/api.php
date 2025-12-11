@@ -1202,7 +1202,10 @@ Route::middleware('auth:sanctum')->group(function () {
             // Просмотр категорий доступен менеджерам и админам
             Route::get('/', [\App\Http\Controllers\CategoryController::class, 'index']);
             Route::get('/active', [\App\Http\Controllers\CategoryController::class, 'active']);
+            Route::get('/tree', [\App\Http\Controllers\CategoryController::class, 'tree']);
             Route::get('/{id}', [\App\Http\Controllers\CategoryController::class, 'show']);
+            Route::get('/{id}/properties', [\App\Http\Controllers\CategoryController::class, 'getProperties']);
+            Route::put('/{id}/properties', [\App\Http\Controllers\CategoryController::class, 'syncProperties']);
         });
 
         // Categories management (создание/редактирование/удаление для пользователей с доступом к shop)
@@ -1213,6 +1216,7 @@ Route::middleware('auth:sanctum')->group(function () {
             
             Route::post('/', [\App\Http\Controllers\CategoryController::class, 'store']);
             Route::put('/{id}', [\App\Http\Controllers\CategoryController::class, 'update']);
+            Route::put('/{id}/properties', [\App\Http\Controllers\CategoryController::class, 'syncProperties']);
             Route::delete('/{id}', [\App\Http\Controllers\CategoryController::class, 'destroy']);
             Route::post('/{id}/image', [\App\Http\Controllers\ImageUploadController::class, 'uploadCategoryImage']);
             Route::delete('/{id}/image', [\App\Http\Controllers\ImageUploadController::class, 'deleteCategoryImage']);
@@ -1405,6 +1409,13 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::prefix('properties')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'index']);
                 Route::post('/', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'store']);
+                
+                // Специфичные маршруты должны быть перед общими с параметрами
+                Route::get('/{property}/goods-count', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'getGoodsCount']);
+                Route::get('/{property}/categories', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'getCategories']);
+                Route::put('/{property}/categories', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'syncCategories']);
+                Route::delete('/{property}/force', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'forceDestroy']);
+                
                 Route::put('/{property}', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'update']);
                 Route::delete('/{property}', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'destroy']);
 
@@ -1413,6 +1424,11 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::get('/', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'index']);
                     Route::post('/', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'store']);
                     Route::post('/check', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'check']);
+                    
+                    // Специфичные маршруты должны быть перед общими с параметрами
+                    Route::get('/{valueId}/goods-count', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'getGoodsCount']);
+                    Route::delete('/{valueId}/force', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'forceDestroy']);
+                    
                     Route::put('/{valueId}', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'update']);
                     Route::delete('/{valueId}', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'destroy']);
                 });

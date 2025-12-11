@@ -5,6 +5,7 @@ namespace App\Models\Shop;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Support\Str;
 
 class Property extends Model
@@ -86,5 +87,14 @@ class Property extends Model
     public function getPropertyValueById($id)
     {
         return $this->values()->find($id);
+    }
+
+    /**
+     * Связь с категориями (многие-ко-многим)
+     */
+    public function categories(): BelongsToMany
+    {
+        return $this->belongsToMany(\App\Models\ShopCategory::class, 'shop_category_property', 'property_id', 'category_id')
+            ->withTimestamps();
     }
 }

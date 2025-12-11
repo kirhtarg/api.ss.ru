@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin\Shop;
 use App\Http\Controllers\Controller;
 use App\Models\Shop\Property;
 use App\Models\Shop\PropertyValue;
+use App\Models\ShopCategory;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -21,6 +22,41 @@ class PropertyController extends Controller
             $properties = Property::with('values')
                 ->orderBy('name')
                 ->get();
+
+            // Добавляем счетчики товаров для каждой характеристики
+            $properties = $properties->map(function ($property) {
+                $goodsCount = DB::table('shop_good_properties')
+                    ->where('property_id', $property->id)
+                    ->whereNotNull('good_id')
+                    ->distinct('good_id')
+                    ->count('good_id');
+                
+                $property->goods_count = $goodsCount;
+                
+                // Добавляем счетчик привязанных категорий
+                $categoriesCount = DB::table('shop_category_property')
+                    ->where('property_id', $property->id)
+                    ->count();
+                
+                $property->categories_count = $categoriesCount;
+                
+                // Добавляем счетчики для значений
+                if ($property->values) {
+                    $property->values = $property->values->map(function ($value) {
+                        $valueGoodsCount = DB::table('shop_good_properties')
+                            ->where('property_id', $value->property_id)
+                            ->where('shop_property_value_id', $value->id)
+                            ->whereNotNull('good_id')
+                            ->distinct('good_id')
+                            ->count('good_id');
+                        
+                        $value->goods_count = $valueGoodsCount;
+                        return $value;
+                    });
+                }
+                
+                return $property;
+            });
 
             return response()->json([
                 'success' => true,
@@ -227,12 +263,92 @@ class PropertyController extends Controller
     }
 
     /**
+     * Получить количество товаров с данной характеристикой
+     */
+    public function getGoodsCount(Property $property): JsonResponse
+    {
+        try {
+            $goodsCount = DB::table('shop_good_properties')
+                ->where('property_id', $property->id)
+                ->whereNotNull('good_id')
+                ->distinct('good_id')
+                ->count('good_id');
+
+            return response()->json([
+                'success' => true,
+                'count' => $goodsCount
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения количества товаров: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Удалить свойство
      */
     public function destroy(Property $property): JsonResponse
     {
         try {
+            // Проверяем, есть ли товары с этой характеристикой
+            $goodsCount = DB::table('shop_good_properties')
+                ->where('property_id', $property->id)
+                ->whereNotNull('good_id')
+                ->distinct('good_id')
+                ->count('good_id');
+
+            if ($goodsCount > 0) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Невозможно удалить характеристику',
+                    'has_goods' => true,
+                    'goods_count' => $goodsCount,
+                    'error' => "У характеристики есть привязанные товары ({$goodsCount}). При удалении характеристика будет удалена у всех этих товаров."
+                ], 422);
+            }
+
             DB::beginTransaction();
+
+            // Удаляем все значения свойства
+            $property->values()->delete();
+            
+            // Удаляем связи с товарами (если есть)
+            DB::table('shop_good_properties')
+                ->where('property_id', $property->id)
+                ->delete();
+            
+            // Удаляем само свойство
+            $property->delete();
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Свойство успешно удалено'
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка удаления свойства: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Принудительно удалить свойство (даже если есть привязанные товары)
+     */
+    public function forceDestroy(Property $property): JsonResponse
+    {
+        try {
+            DB::beginTransaction();
+
+            // Удаляем связи с товарами
+            DB::table('shop_good_properties')
+                ->where('property_id', $property->id)
+                ->delete();
 
             // Удаляем все значения свойства
             $property->values()->delete();
@@ -251,6 +367,62 @@ class PropertyController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка удаления свойства: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить категории характеристики
+     */
+    public function getCategories(Property $property): JsonResponse
+    {
+        try {
+            $categories = $property->categories()->get();
+            
+            return response()->json([
+                'success' => true,
+                'categories' => $categories
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения категорий: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Привязать категории к характеристике
+     */
+    public function syncCategories(Request $request, Property $property): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'category_ids' => 'required|array',
+            'category_ids.*' => 'required|integer|exists:shop_categories,id'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $property->categories()->sync($request->category_ids);
+            
+            $categories = $property->categories()->get();
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Категории успешно привязаны',
+                'categories' => $categories
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка привязки категорий: ' . $e->getMessage()
             ], 500);
         }
     }

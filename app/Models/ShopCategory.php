@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class ShopCategory extends Model
 {
@@ -63,6 +64,13 @@ class ShopCategory extends Model
     public function extraMenu()
     {
         return $this->hasOne(ShopCategoryExtraMenu::class, 'category_id');
+    }
+
+    // Отношение к характеристикам (многие-ко-многим)
+    public function properties(): BelongsToMany
+    {
+        return $this->belongsToMany(\App\Models\Shop\Property::class, 'shop_category_property', 'category_id', 'property_id')
+            ->withTimestamps();
     }
 
     // Scope для активных категорий

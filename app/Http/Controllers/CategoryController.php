@@ -3,11 +3,13 @@
 namespace App\Http\Controllers;
 
 use App\Models\ShopCategory;
+use App\Models\Shop\Property;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 
 class CategoryController extends Controller
 {
@@ -40,6 +42,16 @@ class CategoryController extends Controller
                 $query->where('is_active', $request->boolean('is_active'));
             }
 
+            // Фильтр по parent_id (для получения только корневых категорий)
+            if ($request->has('parent_id')) {
+                $parentId = $request->get('parent_id');
+                if ($parentId === 'null' || $parentId === null) {
+                    $query->whereNull('parent_id');
+                } else {
+                    $query->where('parent_id', $parentId);
+                }
+            }
+
             // Сортировка
             $sortBy = $request->get('sort_by', 'sort_order');
             $sortDirection = $request->get('sort_direction', 'asc');
@@ -51,6 +63,16 @@ class CategoryController extends Controller
             }
 
             $categories = $query->get();
+
+            // Добавляем счетчики характеристик для каждой категории
+            $categories = $categories->map(function ($category) {
+                $propertiesCount = DB::table('shop_category_property')
+                    ->where('category_id', $category->id)
+                    ->count();
+                
+                $category->properties_count = $propertiesCount;
+                return $category;
+            });
 
             return response()->json([
                 'success' => true,
@@ -84,6 +106,16 @@ class CategoryController extends Controller
 
             $categories = $query->ordered()->get();
 
+            // Добавляем счетчики характеристик для каждой категории
+            $categories = $categories->map(function ($category) {
+                $propertiesCount = DB::table('shop_category_property')
+                    ->where('category_id', $category->id)
+                    ->count();
+                
+                $category->properties_count = $propertiesCount;
+                return $category;
+            });
+
             return response()->json([
                 'success' => true,
                 'data' => $categories
@@ -114,6 +146,11 @@ class CategoryController extends Controller
                     'message' => 'Категория не найдена'
                 ], 404);
             }
+
+            // Добавляем счетчик характеристик
+            $category->properties_count = DB::table('shop_category_property')
+                ->where('category_id', $category->id)
+                ->count();
 
             return response()->json([
                 'success' => true,
@@ -696,5 +733,112 @@ class CategoryController extends Controller
         }
 
         return $path;
+    }
+
+    /**
+     * Получить дерево категорий
+     */
+    public function tree(): JsonResponse
+    {
+        try {
+            $categories = ShopCategory::with('children')
+                ->whereNull('parent_id')
+                ->active()
+                ->ordered()
+                ->get();
+
+            // Рекурсивно строим дерево
+            $buildTree = function ($categories) use (&$buildTree) {
+                return $categories->map(function ($category) use ($buildTree) {
+                    $children = ShopCategory::where('parent_id', $category->id)
+                        ->active()
+                        ->ordered()
+                        ->get();
+                    
+                    $category->children = $children->isEmpty() ? [] : $buildTree($children);
+                    
+                    // Добавляем счетчик характеристик
+                    $category->properties_count = DB::table('shop_category_property')
+                        ->where('category_id', $category->id)
+                        ->count();
+                    
+                    return $category;
+                });
+            };
+
+            $tree = $buildTree($categories);
+
+            return response()->json([
+                'success' => true,
+                'categories' => $tree
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения дерева категорий: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить характеристики категории
+     */
+    public function getProperties($id): JsonResponse
+    {
+        try {
+            $category = ShopCategory::findOrFail($id);
+            $properties = $category->properties()->get();
+            
+            return response()->json([
+                'success' => true,
+                'properties' => $properties
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения характеристик: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Привязать характеристики к категории
+     */
+    public function syncProperties(Request $request, $id): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'property_ids' => 'required|array',
+            'property_ids.*' => 'required|integer|exists:shop_properties,id'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $category = ShopCategory::findOrFail($id);
+            $category->properties()->sync($request->property_ids);
+            
+            $properties = $category->properties()->get();
+            
+            // Обновляем счетчик характеристик
+            $category->properties_count = $properties->count();
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Характеристики успешно привязаны',
+                'properties' => $properties,
+                'properties_count' => $category->properties_count
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка привязки характеристик: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }

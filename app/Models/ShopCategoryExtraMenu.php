@@ -52,3 +52,4 @@ class ShopCategoryExtraMenu extends Model
     }
 }
 
+
