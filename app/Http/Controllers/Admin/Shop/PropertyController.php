@@ -221,6 +221,9 @@ class PropertyController extends Controller
             $normalizedName = mb_strtolower($request->name);
             $normalizedName = mb_strtoupper(mb_substr($normalizedName, 0, 1)) . mb_substr($normalizedName, 1);
             
+            // Сохраняем старый тип для проверки изменения
+            $oldPropertyType = $property->property_type;
+            
             $property->update([
                 'name' => $normalizedName,
                 'description' => $request->description,
@@ -241,10 +244,12 @@ class PropertyController extends Controller
                         'sort_order' => $index,
                     ]);
                 }
-            } else {
-                // Если тип изменился с "выбор" на другой, удаляем значения
+            } elseif ($oldPropertyType !== $request->property_type) {
+                // Удаляем значения только если тип действительно изменился
+                // (например, было "select", стало "string" или "color")
                 $property->values()->delete();
             }
+            // Если тип не изменился и это не "select", значения не трогаем
 
             DB::commit();
 

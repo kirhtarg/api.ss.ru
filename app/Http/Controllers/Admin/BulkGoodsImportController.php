@@ -350,8 +350,29 @@ class BulkGoodsImportController extends Controller
                         // Товар существует
                         // Если у строки есть вариация, обрабатываем её независимо от duplicateAction
                         if ($hasVariation) {
-                            // Обрабатываем только вариацию, не обновляя сам товар
+                            // Обрабатываем только вариацию, но также обновляем категории товара, если нужно
                             $variationId = $this->processVariation($existingGood, $goodData['variation'], $goodData);
+                            
+                            // Обрабатываем категории товара (даже если обрабатывается только вариация)
+                            $categoryIds = [];
+                            if (isset($goodData['category']) && is_numeric($goodData['category'])) {
+                                $categoryIds = [(int)$goodData['category']];
+                            } elseif (isset($goodData['categories']) && is_array($goodData['categories'])) {
+                                $categoryIds = array_filter(array_map('intval', $goodData['categories']), function($id) {
+                                    return $id > 0;
+                                });
+                            }
+                            
+                            // Если категорий нет, но включена категория по умолчанию, применяем её
+                            if (empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null) {
+                                $categoryIds = [(int)$defaultCategory];
+                            }
+                            
+                            // Синхронизируем категории
+                            if (!empty($categoryIds)) {
+                                $existingGood->categories()->sync($categoryIds);
+                            }
+                            
                             $results['updated']++; // Считаем как обновление (добавление вариации)
                             
                             // Сохраняем ID товара
@@ -426,6 +447,27 @@ class BulkGoodsImportController extends Controller
                             if ($doubleCheckGood) {
                                 // Товар найден при дополнительной проверке - обрабатываем только вариацию
                                 $variationId = $this->processVariation($doubleCheckGood, $goodData['variation'], $goodData);
+                                
+                                // Обрабатываем категории товара (даже если обрабатывается только вариация)
+                                $categoryIds = [];
+                                if (isset($goodData['category']) && is_numeric($goodData['category'])) {
+                                    $categoryIds = [(int)$goodData['category']];
+                                } elseif (isset($goodData['categories']) && is_array($goodData['categories'])) {
+                                    $categoryIds = array_filter(array_map('intval', $goodData['categories']), function($id) {
+                                        return $id > 0;
+                                    });
+                                }
+                                
+                                // Если категорий нет, но включена категория по умолчанию, применяем её
+                                if (empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null) {
+                                    $categoryIds = [(int)$defaultCategory];
+                                }
+                                
+                                // Синхронизируем категории
+                                if (!empty($categoryIds)) {
+                                    $doubleCheckGood->categories()->sync($categoryIds);
+                                }
+                                
                                 $results['updated']++; // Считаем как обновление (добавление вариации)
                                 
                                 // Сохраняем ID товара
@@ -623,7 +665,12 @@ class BulkGoodsImportController extends Controller
         // Применяем модификацию цены
         $priceModification = $goodData['price_modification'] ?? null;
         $good->price = $this->applyPriceModification($goodData['price'] ?? 0, $priceModification['regular'] ?? null);
-        $good->sale_price = $this->applySalePriceModification($goodData, $priceModification);
+        // Применяем модификацию акционной цены (даже если sale_price не передана в файле, но есть модификация)
+        if (isset($priceModification) && isset($priceModification['sale'])) {
+            $good->sale_price = $this->applySalePriceModification($goodData, $priceModification);
+        } else {
+            $good->sale_price = $goodData['sale_price'] ?? null;
+        }
         $good->stock_quantity = $goodData['stock_quantity'] ?? $goodData['stock'] ?? 0;
         $good->remote_stock_quantity = $goodData['remote_stock_quantity'] ?? null;
         $good->weight = $goodData['weight'] ?? 0;
@@ -664,10 +711,14 @@ class BulkGoodsImportController extends Controller
         $good->save();
 
         // Обрабатываем категории
+        // ВАЖНО: категории уже обработаны в applyCategoryAndBrandIds, где:
+        // - Категории из файла найдены/созданы и преобразованы в ID
+        // - Категория по умолчанию применена, если нужно
+        // Здесь мы просто извлекаем уже обработанные категории
         $categoryIds = [];
         
         if (isset($goodData['category']) && is_numeric($goodData['category'])) {
-            // Одиночная категория по ID
+            // Одиночная категория по ID (уже обработана в applyCategoryAndBrandIds)
             $categoryIds = [(int)$goodData['category']];
         } elseif (isset($goodData['categories']) && is_array($goodData['categories'])) {
             // Множественные категории - ID уже применены в applyCategoryAndBrandIds
@@ -676,12 +727,7 @@ class BulkGoodsImportController extends Controller
             });
         }
         
-        // Если категорий нет, но включена категория по умолчанию, применяем её
-        if (empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null) {
-            $categoryIds = [(int)$defaultCategory];
-        }
-        
-        // Синхронизируем категории
+        // Синхронизируем категории (уже обработанные, включая категорию по умолчанию, если она была применена)
         if (!empty($categoryIds)) {
             $good->categories()->sync($categoryIds);
         } else {
@@ -764,7 +810,14 @@ class BulkGoodsImportController extends Controller
             $existingGood->price = $this->applyPriceModification($goodData['price'], $priceModification['regular'] ?? null);
         }
         if ((isset($goodData['sale_price']) || isset($priceModification)) && !in_array('sale_price', $immutableFields)) {
-            $existingGood->sale_price = $this->applySalePriceModification($goodData, $priceModification) ?? $existingGood->sale_price;
+            $newSalePrice = $this->applySalePriceModification($goodData, $priceModification);
+            // Если есть модификация акционной цены, всегда применяем результат (даже если null)
+            if (isset($priceModification) && isset($priceModification['sale'])) {
+                $existingGood->sale_price = $newSalePrice;
+            } else {
+                // Если модификации нет, используем значение из файла или оставляем существующее
+                $existingGood->sale_price = $newSalePrice ?? $existingGood->sale_price;
+            }
         }
         
         // Обновляем демпинг цену, если передана и не в списке неизменяемых
@@ -900,10 +953,14 @@ class BulkGoodsImportController extends Controller
         $existingGood->save();
 
         // Обрабатываем категории
+        // ВАЖНО: категории уже обработаны в applyCategoryAndBrandIds, где:
+        // - Категории из файла найдены/созданы и преобразованы в ID
+        // - Категория по умолчанию применена, если нужно
+        // Здесь мы просто извлекаем уже обработанные категории
         $categoryIds = [];
         
         if (isset($goodData['category']) && is_numeric($goodData['category'])) {
-            // Одиночная категория по ID
+            // Одиночная категория по ID (уже обработана в applyCategoryAndBrandIds)
             $categoryIds = [(int)$goodData['category']];
         } elseif (isset($goodData['categories']) && is_array($goodData['categories'])) {
             // Множественные категории - ID уже применены в applyCategoryAndBrandIds
@@ -912,12 +969,7 @@ class BulkGoodsImportController extends Controller
             });
         }
         
-        // Если категорий нет, но включена категория по умолчанию, применяем её
-        if (empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null) {
-            $categoryIds = [(int)$defaultCategory];
-        }
-        
-        // Синхронизируем категории
+        // Синхронизируем категории (уже обработанные, включая категорию по умолчанию, если она была применена)
         if (!empty($categoryIds)) {
             $existingGood->categories()->sync($categoryIds);
         } else {
@@ -1361,6 +1413,20 @@ class BulkGoodsImportController extends Controller
 
 
         foreach ($goods as &$good) {
+            // Запоминаем, была ли категория в исходных данных (до обработки)
+            $hadCategoryInFile = false;
+            if (isset($good['category']) && !empty($good['category'])) {
+                $hadCategoryInFile = true;
+            } elseif (isset($good['categories'])) {
+                if (is_array($good['categories']) && !empty($good['categories'])) {
+                    $hadCategoryInFile = true;
+                } elseif (is_string($good['categories']) && trim($good['categories']) !== '') {
+                    $hadCategoryInFile = true;
+                } elseif (is_numeric($good['categories']) && (int)$good['categories'] > 0) {
+                    $hadCategoryInFile = true;
+                }
+            }
+            
             // Обрабатываем категории
             if (isset($good['category']) && is_string($good['category']) && !empty($good['category'])) {
                 // Проверяем, содержит ли строка символ > (иерархия категорий)
@@ -1377,11 +1443,51 @@ class BulkGoodsImportController extends Controller
                     }
                 } else {
                     // Обычная обработка одной категории
-                    $categoryId = $categoryMap[strtolower($good['category'])] ?? null;
+                    $categoryId = $categoryMapArray[strtolower($good['category'])] ?? null;
                     if ($categoryId) {
                         $good['category'] = $categoryId;
                     } else {
-                        if (!$autoCreateCategories) {
+                        if ($autoCreateCategories) {
+                            // Создаем новую категорию, если она не найдена
+                            $categoryName = trim($good['category']);
+                            $categorySlug = \Illuminate\Support\Str::slug($categoryName);
+                            
+                            // Проверяем уникальность slug
+                            $slugCounter = 1;
+                            $baseSlug = $categorySlug;
+                            while (ShopCategory::where('slug', $categorySlug)->exists()) {
+                                $categorySlug = $baseSlug . '-' . $slugCounter;
+                                $slugCounter++;
+                            }
+                            
+                            try {
+                                $newCategory = ShopCategory::create([
+                                    'name' => $categoryName,
+                                    'slug' => $categorySlug,
+                                    'parent_id' => null,
+                                    'is_active' => true
+                                ]);
+                                $categoryId = $newCategory->id;
+                                
+                                // Добавляем в карту
+                                $categoryMapArray[strtolower($categoryName)] = $categoryId;
+                                
+                                // Обновляем кеш карты
+                                cache(['category_map_' . auth()->id() => $categoryMapArray], 300);
+                                
+                                // Добавляем в список созданных категорий
+                                $createdCategories = cache('created_categories_' . auth()->id(), []);
+                                if (!in_array($categoryId, $createdCategories)) {
+                                    $createdCategories[] = $categoryId;
+                                    cache(['created_categories_' . auth()->id() => $createdCategories], 300);
+                                }
+                                
+                                $good['category'] = $categoryId;
+                            } catch (\Exception $e) {
+                                // Если ошибка при создании, удаляем категорию
+                                unset($good['category']);
+                            }
+                        } else {
                             unset($good['category']);
                         }
                     }
@@ -1398,6 +1504,46 @@ class BulkGoodsImportController extends Controller
                             $categoryId = $this->processCategoryHierarchy($categoryPath, $categoryMapArray, $autoCreateCategories);
                         } else {
                             $categoryId = $categoryMapArray[strtolower($categoryName)] ?? null;
+                            
+                            // Если категория не найдена и разрешено создание, создаем её
+                            if (!$categoryId && $autoCreateCategories) {
+                                $categoryNameTrimmed = trim($categoryName);
+                                $categorySlug = \Illuminate\Support\Str::slug($categoryNameTrimmed);
+                                
+                                // Проверяем уникальность slug
+                                $slugCounter = 1;
+                                $baseSlug = $categorySlug;
+                                while (ShopCategory::where('slug', $categorySlug)->exists()) {
+                                    $categorySlug = $baseSlug . '-' . $slugCounter;
+                                    $slugCounter++;
+                                }
+                                
+                                try {
+                                    $newCategory = ShopCategory::create([
+                                        'name' => $categoryNameTrimmed,
+                                        'slug' => $categorySlug,
+                                        'parent_id' => null,
+                                        'is_active' => true
+                                    ]);
+                                    $categoryId = $newCategory->id;
+                                    
+                                    // Добавляем в карту
+                                    $categoryMapArray[strtolower($categoryNameTrimmed)] = $categoryId;
+                                    
+                                    // Обновляем кеш карты
+                                    cache(['category_map_' . auth()->id() => $categoryMapArray], 300);
+                                    
+                                    // Добавляем в список созданных категорий
+                                    $createdCategories = cache('created_categories_' . auth()->id(), []);
+                                    if (!in_array($categoryId, $createdCategories)) {
+                                        $createdCategories[] = $categoryId;
+                                        cache(['created_categories_' . auth()->id() => $createdCategories], 300);
+                                    }
+                                } catch (\Exception $e) {
+                                    // Если ошибка при создании, пропускаем категорию
+                                    $categoryId = null;
+                                }
+                            }
                         }
                         if ($categoryId) {
                             $categoryIds[] = $categoryId;
@@ -1410,7 +1556,48 @@ class BulkGoodsImportController extends Controller
 
                     foreach ($good['categories'] as $category) {
                         if (is_string($category)) {
-                            $categoryId = $categoryMap[strtolower($category)] ?? null;
+                            $categoryId = $categoryMapArray[strtolower($category)] ?? null;
+                            
+                            // Если категория не найдена и разрешено создание, создаем её
+                            if (!$categoryId && $autoCreateCategories) {
+                                $categoryNameTrimmed = trim($category);
+                                $categorySlug = \Illuminate\Support\Str::slug($categoryNameTrimmed);
+                                
+                                // Проверяем уникальность slug
+                                $slugCounter = 1;
+                                $baseSlug = $categorySlug;
+                                while (ShopCategory::where('slug', $categorySlug)->exists()) {
+                                    $categorySlug = $baseSlug . '-' . $slugCounter;
+                                    $slugCounter++;
+                                }
+                                
+                                try {
+                                    $newCategory = ShopCategory::create([
+                                        'name' => $categoryNameTrimmed,
+                                        'slug' => $categorySlug,
+                                        'parent_id' => null,
+                                        'is_active' => true
+                                    ]);
+                                    $categoryId = $newCategory->id;
+                                    
+                                    // Добавляем в карту
+                                    $categoryMapArray[strtolower($categoryNameTrimmed)] = $categoryId;
+                                    
+                                    // Обновляем кеш карты
+                                    cache(['category_map_' . auth()->id() => $categoryMapArray], 300);
+                                    
+                                    // Добавляем в список созданных категорий
+                                    $createdCategories = cache('created_categories_' . auth()->id(), []);
+                                    if (!in_array($categoryId, $createdCategories)) {
+                                        $createdCategories[] = $categoryId;
+                                        cache(['created_categories_' . auth()->id() => $createdCategories], 300);
+                                    }
+                                } catch (\Exception $e) {
+                                    // Если ошибка при создании, пропускаем категорию
+                                    $categoryId = null;
+                                }
+                            }
+                            
                             if ($categoryId) {
                                 $categoryIds[] = $categoryId;
                             }
@@ -1423,50 +1610,47 @@ class BulkGoodsImportController extends Controller
                 }
             }
             
-            // Применяем категорию по умолчанию, если категория отсутствует или пустая
+            // Применяем категорию по умолчанию ТОЛЬКО если после обработки нет валидной категории
+            // ВАЖНО: категория по умолчанию НЕ должна применяться, если в файле была категория и она найдена/создана
             if ($useDefaultCategory && $defaultCategory !== null) {
-                $hasCategory = false;
+                $hasValidCategory = false;
                 
-                // Проверяем, есть ли категория в товаре (проверяем и строковые значения, и массивы)
-                // Сначала проверяем category (может быть строка или число после обработки)
+                // Проверяем category (после обработки это должен быть ID или null)
                 if (isset($good['category'])) {
-                    // Если category - это строка, проверяем что она не пустая
-                    if (is_string($good['category']) && trim($good['category']) !== '') {
-                        $hasCategory = true;
-                    } 
-                    // Если category - это число (ID), значит категория есть
-                    elseif (is_numeric($good['category']) && (int)$good['category'] > 0) {
-                        $hasCategory = true;
+                    // Если category - это число (ID) и больше 0, значит категория найдена/создана из файла
+                    if (is_numeric($good['category']) && (int)$good['category'] > 0) {
+                        $hasValidCategory = true;
+                    }
+                    // Если category - это строка (не обработана), проверяем что она не пустая
+                    elseif (is_string($good['category']) && trim($good['category']) !== '') {
+                        $hasValidCategory = true;
                     }
                 }
                 
-                // Проверяем массив categories
-                if (!$hasCategory) {
-                    if (isset($good['categories'])) {
-                        if (is_array($good['categories'])) {
-                            // Фильтруем пустые значения и проверяем что массив не пустой
-                            $filteredCategories = array_filter($good['categories'], function($cat) {
-                                if (is_numeric($cat) && (int)$cat > 0) {
-                                    return true;
-                                }
-                                if (is_string($cat) && trim($cat) !== '') {
-                                    return true;
-                                }
-                                return false;
-                            });
-                            if (!empty($filteredCategories)) {
-                                $hasCategory = true;
-                            }
-                        } elseif (is_string($good['categories']) && trim($good['categories']) !== '') {
-                            $hasCategory = true;
-                        } elseif (is_numeric($good['categories']) && (int)$good['categories'] > 0) {
-                            $hasCategory = true;
+                // Проверяем массив categories (после обработки должны быть только ID)
+                if (!$hasValidCategory && isset($good['categories'])) {
+                    if (is_array($good['categories'])) {
+                        // Фильтруем только валидные ID (числа > 0)
+                        $validCategoryIds = array_filter($good['categories'], function($cat) {
+                            return is_numeric($cat) && (int)$cat > 0;
+                        });
+                        if (!empty($validCategoryIds)) {
+                            $hasValidCategory = true;
                         }
+                    } elseif (is_numeric($good['categories']) && (int)$good['categories'] > 0) {
+                        $hasValidCategory = true;
+                    } elseif (is_string($good['categories']) && trim($good['categories']) !== '') {
+                        $hasValidCategory = true;
                     }
                 }
                 
-                // Если категории нет (не установлена или пустая), применяем категорию по умолчанию
-                if (!$hasCategory) {
+                // Применяем категорию по умолчанию ТОЛЬКО если:
+                // - В файле НЕ было категории (hadCategoryInFile = false), ИЛИ
+                // - В файле была категория, но она не найдена/не создана (hasValidCategory = false И hadCategoryInFile = true)
+                // НО НЕ применяем, если в файле была категория и она найдена/создана (hasValidCategory = true)
+                // Главное правило: если категория из файла найдена или создана, она имеет приоритет над категорией по умолчанию
+                // Если категория была в файле, но не найдена/не создана - НЕ применяем категорию по умолчанию
+                if (!$hasValidCategory && !$hadCategoryInFile) {
                     // Инициализируем массив categories, если его нет
                     if (!isset($good['categories']) || !is_array($good['categories'])) {
                         $good['categories'] = [];
@@ -1474,7 +1658,7 @@ class BulkGoodsImportController extends Controller
                     
                     // Убеждаемся, что категория по умолчанию еще не добавлена
                     $defaultCategoryId = (int)$defaultCategory;
-                    $existingIds = array_map('intval', $good['categories']);
+                    $existingIds = array_map('intval', array_filter($good['categories'], 'is_numeric'));
                     if (!in_array($defaultCategoryId, $existingIds)) {
                         $good['categories'][] = $defaultCategoryId;
                     }

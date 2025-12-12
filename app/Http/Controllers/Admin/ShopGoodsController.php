@@ -1367,7 +1367,7 @@ class ShopGoodsController extends Controller
         $validator = Validator::make($request->all(), [
             'ids' => 'required|array',
             'ids.*' => 'exists:shop_goods,id',
-            'action' => 'required|in:activate,deactivate,delete,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_price,update_sale_price,update_demping_price,toggle_show_demping,update_label,remove_after_symbol,update_dimensions,enable_preorder,disable_preorder',
+            'action' => 'required|in:activate,deactivate,delete,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_price,update_sale_price,update_demping_price,toggle_show_demping,update_label,remove_after_symbol,replace_text,update_dimensions,enable_preorder,disable_preorder',
             'data' => 'nullable|array'
         ]);
 
@@ -1851,6 +1851,20 @@ class ShopGoodsController extends Controller
                             if ($position !== false) {
                                 // Удаляем символ и всё после него
                                 $newName = mb_substr($name, 0, $position);
+                                $good->update(['name' => $newName]);
+                            }
+                        }
+                        break;
+                    case 'replace_text':
+                        if (isset($data['search']) && !empty($data['search'])) {
+                            $search = $data['search'];
+                            $replace = $data['replace'] ?? '';
+                            $name = $good->name;
+                            
+                            // Заменяем все вхождения текста
+                            $newName = str_replace($search, $replace, $name);
+                            
+                            if ($newName !== $name) {
                                 $good->update(['name' => $newName]);
                             }
                         }
