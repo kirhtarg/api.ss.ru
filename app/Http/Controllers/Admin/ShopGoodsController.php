@@ -29,10 +29,10 @@ class ShopGoodsController extends Controller
     {
         $query = ShopGood::select([
             'id', 'name', 'slug', 'sku', 'description', 'short_description', 
-            'price', 'sale_price', 'demping_price', 'show_demping', 'label_id',
+            'price', 'sale_price', 'demping_price', 'show_demping', 'label_id', 'supplier',
             'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity', 'rating', 'reviews_count',
             'width', 'height', 'depth', 'weight',
-            'is_active', 'is_featured', 'is_new', 'is_sale', 'is_preorder', 'sort_order', 
+            'is_active', 'is_featured', 'is_new', 'is_sale', 'is_preorder', 'is_show', 'sort_order', 
             'created_at', 'updated_at'
         ])->with([
             'categories:id,name',
@@ -148,6 +148,12 @@ class ShopGoodsController extends Controller
                     $q->whereIn('shop_tags.id', $tagIds);
                 });
             }
+        }
+
+        // Фильтр по поставщику (текстовое поле)
+        if ($request->filled('supplier')) {
+            $supplier = $request->get('supplier');
+            $query->where('supplier', $supplier);
         }
 
         // Фильтр по лейблам
@@ -436,6 +442,11 @@ class ShopGoodsController extends Controller
             $query->where('is_preorder', $request->boolean('is_preorder'));
         }
 
+        // Фильтр по is_show
+        if ($request->filled('is_show')) {
+            $query->where('is_show', $request->boolean('is_show'));
+        }
+
         // Фильтр по характеристикам (properties[property_id][])
         if ($request->has('properties')) {
             $properties = $request->input('properties');
@@ -647,13 +658,22 @@ class ShopGoodsController extends Controller
                     // Сумма остатков вариаций
                     $good->variations_stock_sum = $good->variations->sum('stock_quantity');
                     
-                    // Проверка наличия непустых remote_stock_quantity
+                    // Проверка наличия непустых remote_stock_quantity или fast_remote_stock_quantity
                     $hasRemoteStock = $good->variations->filter(function($variation) {
                         $remoteStock = $variation->remote_stock_quantity;
-                        return $remoteStock !== null 
+                        $fastRemoteStock = $variation->fast_remote_stock_quantity;
+                        
+                        $hasRemote = $remoteStock !== null 
                             && $remoteStock !== '' 
                             && $remoteStock !== '0'
                             && trim($remoteStock) !== '';
+                            
+                        $hasFastRemote = $fastRemoteStock !== null 
+                            && $fastRemoteStock !== '' 
+                            && $fastRemoteStock !== '0'
+                            && trim($fastRemoteStock) !== '';
+                            
+                        return $hasRemote || $hasFastRemote;
                     })->count() > 0;
                     
                     $good->variations_has_remote_stock = $hasRemoteStock;
@@ -709,13 +729,22 @@ class ShopGoodsController extends Controller
                     // Сумма остатков вариаций
                     $good->variations_stock_sum = $good->variations->sum('stock_quantity');
                     
-                    // Проверка наличия непустых remote_stock_quantity
+                    // Проверка наличия непустых remote_stock_quantity или fast_remote_stock_quantity
                     $hasRemoteStock = $good->variations->filter(function($variation) {
                         $remoteStock = $variation->remote_stock_quantity;
-                        return $remoteStock !== null 
+                        $fastRemoteStock = $variation->fast_remote_stock_quantity;
+                        
+                        $hasRemote = $remoteStock !== null 
                             && $remoteStock !== '' 
                             && $remoteStock !== '0'
                             && trim($remoteStock) !== '';
+                            
+                        $hasFastRemote = $fastRemoteStock !== null 
+                            && $fastRemoteStock !== '' 
+                            && $fastRemoteStock !== '0'
+                            && trim($fastRemoteStock) !== '';
+                            
+                        return $hasRemote || $hasFastRemote;
                     })->count() > 0;
                     
                     $good->variations_has_remote_stock = $hasRemoteStock;
@@ -752,7 +781,7 @@ class ShopGoodsController extends Controller
             'properties:id,name,slug',
             'images:id,good_id,variation_id,file_path,alt_text,is_main,sort_order',
             'videos:id,good_id,variation_id,video_path,external_url,title,sort_order',
-            'variations:id,good_id,name,description,price,sale_price,demping_price,show_demping,stock_quantity,remote_stock_quantity,sku,is_active',
+            'variations:id,good_id,name,description,price,sale_price,demping_price,show_demping,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,sku,is_active',
             'stock:id,good_id,warehouse_id,quantity,reserved_quantity,min_quantity',
             'stock.warehouse:id,name',
             'prices:id,good_id,price_type_id,price,sale_price',
@@ -945,6 +974,7 @@ class ShopGoodsController extends Controller
             'is_new' => 'boolean',
             'is_sale' => 'boolean',
             'is_preorder' => 'boolean',
+            'is_show' => 'boolean',
             'sort_order' => 'integer',
             'category_ids' => 'array',
             'category_ids.*' => 'exists:shop_categories,id',
@@ -975,7 +1005,7 @@ class ShopGoodsController extends Controller
                 'price', 'sale_price', 'demping_price', 'show_demping', 'label_id',
                 'stock_quantity', 'width', 'height',
                 'depth', 'weight', 'meta_title', 'meta_description',
-                'is_active', 'is_featured', 'is_new', 'is_sale', 'is_preorder', 'sort_order'
+                'is_active', 'is_featured', 'is_new', 'is_sale', 'is_preorder', 'is_show', 'sort_order'
             ]);
             
             // Явно обрабатываем remote_stock_quantity - всегда обновляем, даже если null
@@ -3991,6 +4021,48 @@ class ShopGoodsController extends Controller
     }
 
     /**
+     * Обновить быстрый остаток на у/с вариации
+     */
+    public function updateVariationFastRemoteStock(Request $request, $goodId, $variationId): JsonResponse
+    {
+        try {
+            $variation = \App\Models\ShopGoodVariation::where('good_id', $goodId)
+                ->where('id', $variationId)
+                ->firstOrFail();
+
+            $validator = Validator::make($request->all(), [
+                'fast_remote_stock_quantity' => 'nullable|string|max:255'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $fastRemoteStockValue = $request->get('fast_remote_stock_quantity');
+            $variation->fast_remote_stock_quantity = ($fastRemoteStockValue === '' || $fastRemoteStockValue === null) ? null : (string)$fastRemoteStockValue;
+            $variation->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Быстрый остаток на у/с обновлен',
+                'data' => [
+                    'id' => $variation->id,
+                    'fast_remote_stock_quantity' => $variation->fast_remote_stock_quantity
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка обновления быстрого остатка на у/с: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Обновить цены вариации
      */
     public function updateVariationPrice(Request $request, $goodId, $variationId): JsonResponse
@@ -4796,6 +4868,33 @@ class ShopGoodsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка переноса данных: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить список уникальных поставщиков из товаров
+     */
+    public function getSuppliers(): JsonResponse
+    {
+        try {
+            $suppliers = ShopGood::whereNotNull('supplier')
+                ->where('supplier', '!=', '')
+                ->distinct()
+                ->orderBy('supplier')
+                ->pluck('supplier')
+                ->filter()
+                ->values()
+                ->toArray();
+
+            return response()->json([
+                'success' => true,
+                'data' => $suppliers
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения списка поставщиков: ' . $e->getMessage()
             ], 500);
         }
     }

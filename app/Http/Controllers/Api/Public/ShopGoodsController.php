@@ -458,7 +458,7 @@ class ShopGoodsController extends Controller
                 },
                 'brands' => function($query) {
                     $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug', 'shop_brands.logo');
-                }
+                },
             ])
             ->where('is_active', true);
 
@@ -529,6 +529,14 @@ class ShopGoodsController extends Controller
                 $query->whereHas('brands', function($q) use ($request) {
                     $q->where('shop_brands.id', $request->input('brand_id'));
                 });
+            }
+
+            // Фильтрация по поставщику (текстовое поле)
+            if ($request->has('supplier')) {
+                $supplier = $request->input('supplier');
+                if ($supplier && trim($supplier) !== '') {
+                    $query->where('supplier', trim($supplier));
+                }
             }
 
                 // Фильтрация по множественным брендам
@@ -998,12 +1006,13 @@ class ShopGoodsController extends Controller
                             return $fields;
                         })());
                 },
+,
                 'categories' => function($query) {
                     $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug', 'shop_categories.image', 'shop_categories.icon');
                 },
                 'brands' => function($query) {
                     $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug', 'shop_brands.logo');
-                }
+                },
             ])
             ->whereIn('id', $goodIds)
             ->where('is_active', true)
@@ -1230,6 +1239,7 @@ class ShopGoodsController extends Controller
                             return $fields;
                         })());
                 },
+,
                 'categories' => function($query) {
                     $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug', 'shop_categories.image', 'shop_categories.icon');
                 },
@@ -1238,11 +1248,11 @@ class ShopGoodsController extends Controller
                 },
                 'label' => function($query) {
                     $query->select('id', 'name', 'color');
-                }
+                },
             ])
             ->where('id', $id)
-            ->where('is_active', true)
-            ->first();
+                ->where('is_active', true)
+                ->first();
 
             if (!$good) {
                 return response()->json([
@@ -1572,7 +1582,7 @@ class ShopGoodsController extends Controller
                 },
                 'brands' => function($query) {
                     $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug', 'shop_brands.logo');
-                }
+                },
             ])
             ->whereIn('id', $goodIds)
             ->where('is_active', true)

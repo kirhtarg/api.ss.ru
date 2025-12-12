@@ -437,6 +437,7 @@ class ShopGoodVariationsController extends Controller
             'sale_price' => 'nullable|numeric|min:0',
             'stock_quantity' => 'nullable|integer|min:0',
             'remote_stock_quantity' => 'nullable|string|max:255',
+            'fast_remote_stock_quantity' => 'nullable|string|max:255',
             'weight' => 'nullable|numeric|min:0',
             'length' => 'nullable|numeric|min:0',
             'height' => 'nullable|numeric|min:0',
@@ -483,6 +484,12 @@ class ShopGoodVariationsController extends Controller
             if ($request->has('remote_stock_quantity')) {
                 $remoteStockValue = $request->get('remote_stock_quantity');
                 $variationData['remote_stock_quantity'] = ($remoteStockValue === '' || $remoteStockValue === null) ? null : (string)$remoteStockValue;
+            }
+            
+            // Явно обрабатываем fast_remote_stock_quantity
+            if ($request->has('fast_remote_stock_quantity')) {
+                $fastRemoteStockValue = $request->get('fast_remote_stock_quantity');
+                $variationData['fast_remote_stock_quantity'] = ($fastRemoteStockValue === '' || $fastRemoteStockValue === null) ? null : (string)$fastRemoteStockValue;
             }
 
             // Проверяем на дубликаты вариаций по комбинации атрибутов
@@ -709,6 +716,7 @@ class ShopGoodVariationsController extends Controller
             'sale_price' => 'nullable|numeric|min:0',
             'stock_quantity' => 'nullable|integer|min:0',
             'remote_stock_quantity' => 'nullable|string|max:255',
+            'fast_remote_stock_quantity' => 'nullable|string|max:255',
             'weight' => 'nullable|numeric|min:0',
             'length' => 'nullable|numeric|min:0',
             'height' => 'nullable|numeric|min:0',
@@ -735,6 +743,12 @@ class ShopGoodVariationsController extends Controller
         if (isset($allRequestData['remote_stock_quantity'])) {
             $remoteStockValue = $allRequestData['remote_stock_quantity'];
             $updateData['remote_stock_quantity'] = ($remoteStockValue === '' || $remoteStockValue === null) ? null : (string)$remoteStockValue;
+        }
+        
+        // Явно обрабатываем fast_remote_stock_quantity - всегда обновляем, даже если null
+        if (isset($allRequestData['fast_remote_stock_quantity'])) {
+            $fastRemoteStockValue = $allRequestData['fast_remote_stock_quantity'];
+            $updateData['fast_remote_stock_quantity'] = ($fastRemoteStockValue === '' || $fastRemoteStockValue === null) ? null : (string)$fastRemoteStockValue;
         }
         
         $variation->update($updateData);

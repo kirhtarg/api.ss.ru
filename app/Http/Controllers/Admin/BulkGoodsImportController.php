@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\ShopGood;
 use App\Models\ShopCategory;
 use App\Models\ShopBrand;
+use App\Models\ShopSupplier;
 use App\Models\ShopGoodImage;
 use App\Models\ShopPropertyValue;
 use App\Models\ShopGoodProperty;
@@ -30,6 +31,13 @@ class BulkGoodsImportController extends Controller
 
     public function bulkImport(Request $request)
     {
+        // Логируем полученный supplier_name для отладки
+        $supplierNameFromRequest = $request->input('supplier_name', null);
+        Log::info('Получен supplier_name в bulkImport', [
+            'supplier_name' => $supplierNameFromRequest,
+            'is_first_batch' => $request->input('is_first_batch', false)
+        ]);
+        
         // Получаем информацию о батче для очистки логов
         $isFirstBatch = $request->input('is_first_batch', false);
 
@@ -71,11 +79,9 @@ class BulkGoodsImportController extends Controller
                 continue;
             }
 
-            // SKU необязателен, но название обязательно
-            if (empty($name)) {
-                $reason = 'Отсутствует название';
-
-
+            // Если нет ни SKU, ни названия - пропускаем строку
+            if (empty($sku) && empty($name)) {
+                $reason = 'Отсутствует SKU и название';
                 $skippedRows[] = [
                     'count' => $index + 1,
                     'sku' => $sku,
@@ -86,10 +92,26 @@ class BulkGoodsImportController extends Controller
                 continue;
             }
 
-            // Нормализуем данные для непустых товаров
-            // SKU может быть пустым
+            // Если есть только SKU без названия - это валидно для обновления существующего товара
+            // Если есть только название без SKU - это валидно для создания нового товара
+            // Если есть и SKU, и название - это валидно для создания или обновления
+            
+            // Нормализуем данные
             $good['sku'] = $sku;
-            $good['name'] = $name;
+            $good['name'] = $name; // Может быть пустым, если есть только SKU
+            
+            // Добавляем supplier_name из запроса, если указан
+            $supplierName = $request->input('supplier_name', null);
+            if ($supplierName !== null && $supplierName !== '') {
+                $good['supplier_name'] = trim($supplierName);
+                Log::debug('Добавлен supplier_name к товару', [
+                    'index' => $index,
+                    'sku' => $sku,
+                    'name' => $name,
+                    'supplier_name' => trim($supplierName)
+                ]);
+            }
+            
             $goods[] = $good;
 
         }
@@ -109,7 +131,7 @@ class BulkGoodsImportController extends Controller
         ], [
             'goods' => 'required|array',
             'goods.*.sku' => 'nullable|string|max:255',
-            'goods.*.name' => 'required|string|min:1',
+            'goods.*.name' => 'nullable|string|min:1', // name теперь необязателен, если есть SKU
             'duplicate_action' => 'required|in:skip,update',
             'auto_create_categories' => 'boolean',
             'auto_create_brands' => 'boolean',
@@ -167,6 +189,7 @@ class BulkGoodsImportController extends Controller
         $defaultCategory = $request->input('default_category', null);
         $useDefaultCategory = $request->input('use_default_category', false);
         $immutableFields = $request->input('immutable_fields', []);
+        $supplierName = $request->input('supplier_name', null);
         
         // Преобразуем immutable_fields в массив, если пришло как строка
         if (is_string($immutableFields)) {
@@ -182,9 +205,34 @@ class BulkGoodsImportController extends Controller
         }
         $useDefaultCategory = (bool)$useDefaultCategory;
         
-        // Преобразуем defaultCategory в integer, если это число
-        if ($defaultCategory !== null && is_numeric($defaultCategory)) {
+        // Обрабатываем defaultCategory: если это строка (название), находим или создаем категорию
+        // Если это число (ID), используем как есть
+        if ($defaultCategory !== null && is_string($defaultCategory) && trim($defaultCategory) !== '') {
+            $categoryName = trim($defaultCategory);
+            // Ищем категорию по названию
+            $foundCategory = \App\Models\ShopCategory::where('name', $categoryName)->first();
+            
+            if ($foundCategory) {
+                $defaultCategory = $foundCategory->id;
+            } else {
+                // Если категория не найдена, создаем её
+                $newCategory = \App\Models\ShopCategory::create([
+                    'name' => $categoryName,
+                    'slug' => \Illuminate\Support\Str::slug($categoryName),
+                    'parent_id' => null,
+                    'is_active' => true,
+                    'is_main' => false,
+                    'in_catalog' => false,
+                    'in_figure' => false
+                ]);
+                $defaultCategory = $newCategory->id;
+            }
+        } elseif ($defaultCategory !== null && is_numeric($defaultCategory)) {
+            // Если это число, используем как ID
             $defaultCategory = (int)$defaultCategory;
+        } else {
+            // Если пустое или null, устанавливаем null
+            $defaultCategory = null;
         }
         
 
@@ -192,6 +240,11 @@ class BulkGoodsImportController extends Controller
         // Получаем информацию о батче
         $batchNumber = $request->input('batch_number', 1);
         $totalBatches = $request->input('total_batches', 1);
+
+        // Если указан поставщик и это первый батч, обнуляем остатки у всех товаров этого поставщика
+        if ($isFirstBatch && $supplierName !== null && $supplierName !== '') {
+            $this->resetSupplierStockByName(trim($supplierName));
+        }
 
         $results = [
             'imported' => 0,
@@ -582,6 +635,32 @@ class BulkGoodsImportController extends Controller
         $good->is_featured = $goodData['is_featured'] ?? false;
         $good->meta_title = $goodData['meta_title'] ?? null;
         $good->meta_description = $goodData['meta_description'] ?? null;
+        
+        // Устанавливаем поставщика (текстовое поле), если передан в запросе
+        // И создаем запись в таблице shop_suppliers, если её нет
+        if (isset($goodData['supplier_name']) && $goodData['supplier_name'] !== null && trim($goodData['supplier_name']) !== '') {
+            $supplierName = trim($goodData['supplier_name']);
+            $good->supplier = $supplierName;
+            
+            // Находим или создаем поставщика в таблице shop_suppliers
+            $supplier = ShopSupplier::firstOrCreate(
+                ['name' => $supplierName],
+                [
+                    'slug' => \Illuminate\Support\Str::slug($supplierName),
+                    'is_active' => true,
+                    'sort_order' => 0
+                ]
+            );
+            
+            Log::info('Установлен поставщик для товара', [
+                'good_id' => $good->id ?? 'new',
+                'good_name' => $good->name ?? 'unknown',
+                'supplier' => $supplierName,
+                'supplier_id' => $supplier->id,
+                'supplier_created' => $supplier->wasRecentlyCreated
+            ]);
+        }
+        
         $good->save();
 
         // Обрабатываем категории
@@ -655,7 +734,8 @@ class BulkGoodsImportController extends Controller
         }
         
         // Обновляем название только если оно не в списке неизменяемых полей
-        if (isset($goodData['name']) && !in_array('name', $immutableFields)) {
+        // Обновляем название только если оно передано, не пустое и не в списке неизменяемых
+        if (isset($goodData['name']) && !empty(trim($goodData['name'])) && !in_array('name', $immutableFields)) {
             $existingGood->name = $goodData['name'];
         }
         // Обновляем slug только если он явно передан в данных (выбран в маппинге) и не в списке неизменяемых
@@ -754,6 +834,35 @@ class BulkGoodsImportController extends Controller
         // Обновляем sort_order, если передан и не в списке неизменяемых
         if (isset($goodData['sort_order']) && !in_array('sort_order', $immutableFields)) {
             $existingGood->sort_order = $goodData['sort_order'];
+        }
+        
+        // Обновляем supplier (текстовое поле), если передан supplier_name и не в списке неизменяемых
+        if (isset($goodData['supplier_name']) && !in_array('supplier', $immutableFields)) {
+            $supplierName = trim($goodData['supplier_name'] ?? '');
+            if ($supplierName !== '') {
+                // Находим или создаем поставщика в таблице shop_suppliers
+                $supplier = ShopSupplier::firstOrCreate(
+                    ['name' => $supplierName],
+                    [
+                        'slug' => \Illuminate\Support\Str::slug($supplierName),
+                        'is_active' => true,
+                        'sort_order' => 0
+                    ]
+                );
+                
+                // Обновляем текстовое поле supplier в товаре
+                $existingGood->supplier = $supplierName;
+                
+                Log::info('Обновлен поставщик для товара', [
+                    'good_id' => $existingGood->id,
+                    'good_name' => $existingGood->name ?? 'unknown',
+                    'supplier' => $supplierName,
+                    'supplier_id' => $supplier->id,
+                    'supplier_created' => $supplier->wasRecentlyCreated
+                ]);
+            } else {
+                $existingGood->supplier = null;
+            }
         }
         
         // Обновляем все остальные поля из goodData, которые есть в fillable модели
@@ -1804,6 +1913,7 @@ class BulkGoodsImportController extends Controller
             $variationPrice = $variationData['price'] ?? $goodData['price'] ?? $good->price ?? 0;
             $variationStockQuantity = $variationData['stock_quantity'] ?? $goodData['stock_quantity'] ?? 0;
             $variationRemoteStockQuantity = $variationData['remote_stock_quantity'] ?? $goodData['remote_stock_quantity'] ?? null;
+            $variationFastRemoteStockQuantity = $variationData['fast_remote_stock_quantity'] ?? $goodData['fast_remote_stock_quantity'] ?? null;
             
             // Проверяем, есть ли у товара существующие вариации
             $hasExistingVariations = ShopGoodVariation::where('good_id', $good->id)->exists();
@@ -1897,6 +2007,8 @@ class BulkGoodsImportController extends Controller
                 $existingVariation->stock_quantity = $variationStockQuantity;
                 // Обновляем remote_stock_quantity всегда, даже если null (чтобы можно было сбросить значение)
                 $existingVariation->remote_stock_quantity = $variationRemoteStockQuantity;
+                // Обновляем fast_remote_stock_quantity всегда, даже если null (чтобы можно было сбросить значение)
+                $existingVariation->fast_remote_stock_quantity = $variationFastRemoteStockQuantity;
                 
                 // Обновляем SKU вариации из данных товара или из goodData
                 // Дублирование SKU разрешено для вариаций, поэтому не проверяем уникальность
@@ -1972,6 +2084,7 @@ class BulkGoodsImportController extends Controller
                         'sale_price' => null,
                         'stock_quantity' => $variationStockQuantity,
                         'remote_stock_quantity' => $variationRemoteStockQuantity,
+                        'fast_remote_stock_quantity' => $variationFastRemoteStockQuantity,
                         'weight' => $good->weight ?? null,
                         'length' => $good->length ?? null,
                         'height' => $good->height ?? null,
@@ -2006,6 +2119,8 @@ class BulkGoodsImportController extends Controller
                             $existingVariationBySku->stock_quantity = $variationStockQuantity;
                             // Обновляем remote_stock_quantity всегда, даже если null
                             $existingVariationBySku->remote_stock_quantity = $variationRemoteStockQuantity;
+                            // Обновляем fast_remote_stock_quantity всегда, даже если null
+                            $existingVariationBySku->fast_remote_stock_quantity = $variationFastRemoteStockQuantity;
                             
                             // Обновляем размеры и вес, если переданы
                             if (isset($goodData['weight'])) {
@@ -2168,5 +2283,57 @@ class BulkGoodsImportController extends Controller
         }
         
         return null;
+    }
+
+    /**
+     * Обнулить остатки у всех товаров указанного поставщика
+     */
+    private function resetSupplierStock($supplierId)
+    {
+        try {
+            // Обнуляем остатки на удаленном складе и остатки у/с быстро у товаров с указанным поставщиком
+            ShopGood::where('supplier_id', $supplierId)
+                ->update([
+                    'remote_stock_quantity' => null,
+                    'fast_remote_stock_quantity' => null
+                ]);
+
+            // Также обнуляем остатки у вариаций товаров с указанным поставщиком
+            ShopGoodVariation::whereHas('good', function($query) use ($supplierId) {
+                $query->where('supplier_id', $supplierId);
+            })->update([
+                'remote_stock_quantity' => null,
+                'fast_remote_stock_quantity' => null
+            ]);
+        } catch (\Exception $e) {
+            // Логируем ошибку, но не прерываем импорт
+            Log::error('Ошибка при обнулении остатков поставщика: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Обнуляет остатки товаров поставщика по имени (текстовое поле)
+     */
+    private function resetSupplierStockByName($supplierName)
+    {
+        try {
+            // Обнуляем остатки на удаленном складе и остатки у/с быстро у товаров с указанным поставщиком
+            ShopGood::where('supplier', $supplierName)
+                ->update([
+                    'remote_stock_quantity' => null,
+                    'fast_remote_stock_quantity' => null
+                ]);
+
+            // Также обнуляем остатки у вариаций товаров с указанным поставщиком
+            ShopGoodVariation::whereHas('good', function($query) use ($supplierName) {
+                $query->where('supplier', $supplierName);
+            })->update([
+                'remote_stock_quantity' => null,
+                'fast_remote_stock_quantity' => null
+            ]);
+        } catch (\Exception $e) {
+            // Логируем ошибку, но не прерываем импорт
+            Log::error('Ошибка при обнулении остатков поставщика по имени: ' . $e->getMessage());
+        }
     }
 }

@@ -802,6 +802,106 @@ class CategoryController extends Controller
     }
 
     /**
+     * Получить характеристики нескольких категорий с их значениями (оптимизированный запрос)
+     * Принимает массив ID категорий через параметр ids[] или ids
+     */
+    public function getCategoriesProperties(Request $request): JsonResponse
+    {
+        try {
+            // Получаем ID категорий из запроса
+            $categoryIds = [];
+            if ($request->has('ids')) {
+                $ids = $request->input('ids');
+                if (is_array($ids)) {
+                    $categoryIds = array_map('intval', $ids);
+                } else {
+                    $categoryIds = [intval($ids)];
+                }
+            } elseif ($request->has('ids[]')) {
+                $ids = $request->input('ids[]');
+                if (is_array($ids)) {
+                    $categoryIds = array_map('intval', $ids);
+                } else {
+                    $categoryIds = [intval($ids)];
+                }
+            }
+
+            if (empty($categoryIds)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не указаны ID категорий'
+                ], 400);
+            }
+
+            // Фильтруем только валидные ID
+            $categoryIds = array_filter($categoryIds, function($id) {
+                return $id > 0;
+            });
+
+            if (empty($categoryIds)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Некорректные ID категорий'
+                ], 400);
+            }
+
+            // Оптимизированный запрос: получаем все уникальные характеристики категорий одним запросом
+            // с eager loading значений
+            $properties = Property::whereHas('categories', function($query) use ($categoryIds) {
+                $query->whereIn('shop_categories.id', $categoryIds);
+            })
+            ->with(['activeValues' => function($query) {
+                $query->orderBy('sort_order')->orderBy('value');
+            }])
+            ->orderBy('name')
+            ->get();
+
+            // Формируем результат с информацией о категориях, к которым привязана каждая характеристика
+            $result = $properties->map(function($property) use ($categoryIds) {
+                // Получаем ID категорий, к которым привязана эта характеристика
+                $propertyCategoryIds = DB::table('shop_category_property')
+                    ->where('property_id', $property->id)
+                    ->whereIn('category_id', $categoryIds)
+                    ->pluck('category_id')
+                    ->toArray();
+
+                // Получаем названия категорий
+                $categoryNames = ShopCategory::whereIn('id', $propertyCategoryIds)
+                    ->pluck('name')
+                    ->toArray();
+
+                return [
+                    'id' => $property->id,
+                    'name' => $property->name,
+                    'slug' => $property->slug,
+                    'property_type' => $property->property_type,
+                    'description' => $property->description,
+                    'category_ids' => $propertyCategoryIds,
+                    'category_names' => $categoryNames,
+                    'values' => $property->activeValues->map(function($value) {
+                        return [
+                            'id' => $value->id,
+                            'value' => $value->value,
+                            'color' => $value->color,
+                            'sort_order' => $value->sort_order
+                        ];
+                    })->toArray()
+                ];
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => $result
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения характеристик категорий: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Привязать характеристики к категории
      */
     public function syncProperties(Request $request, $id): JsonResponse

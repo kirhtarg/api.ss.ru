@@ -26,6 +26,7 @@ class ShopGood extends Model
         'demping_price',
         'show_demping',
         'label_id',
+        'supplier',
         'stock_quantity',
         'remote_stock_quantity',
         'fast_remote_stock_quantity',
@@ -42,6 +43,7 @@ class ShopGood extends Model
         'is_new',
         'is_sale',
         'is_preorder',
+        'is_show',
         'sort_order'
     ];
 
@@ -64,6 +66,7 @@ class ShopGood extends Model
         'is_new' => 'boolean',
         'is_sale' => 'boolean',
         'is_preorder' => 'boolean',
+        'is_show' => 'boolean',
         'sort_order' => 'integer'
     ];
 
@@ -115,6 +118,7 @@ class ShopGood extends Model
     {
         return $this->belongsTo(ShopLabel::class, 'label_id');
     }
+
 
     /**
      * Свойства товара

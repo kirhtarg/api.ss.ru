@@ -596,6 +596,12 @@ Route::get('/test/oauth', function () {
     });
     Route::get('/public/shop/brands/slug/{slug}', [App\Http\Controllers\Api\Public\ShopBrandsController::class, 'getBySlug']);
 
+    // Публичные маршруты для поставщиков
+    Route::options('/public/shop/suppliers', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/suppliers', [App\Http\Controllers\Api\Public\ShopSuppliersController::class, 'index']);
+
     // Публичные маршруты для свойств товаров
     Route::options('/public/shop/properties', function () {
         return response()->json([], 200);
@@ -1203,6 +1209,8 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/', [\App\Http\Controllers\CategoryController::class, 'index']);
             Route::get('/active', [\App\Http\Controllers\CategoryController::class, 'active']);
             Route::get('/tree', [\App\Http\Controllers\CategoryController::class, 'tree']);
+            // Оптимизированный endpoint для получения характеристик нескольких категорий (должен быть перед /{id})
+            Route::get('/properties/batch', [\App\Http\Controllers\CategoryController::class, 'getCategoriesProperties']);
             Route::get('/{id}', [\App\Http\Controllers\CategoryController::class, 'show']);
             Route::get('/{id}/properties', [\App\Http\Controllers\CategoryController::class, 'getProperties']);
             Route::put('/{id}/properties', [\App\Http\Controllers\CategoryController::class, 'syncProperties']);
@@ -1280,6 +1288,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::prefix('goods')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'index']);
                 Route::get('/filters', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'filters']);
+            Route::get('/suppliers', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getSuppliers']);
                 Route::get('/categories-stats', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getCategoriesStats']);
                 Route::get('/characteristics/list', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getCharacteristicsList']);
                 Route::post('/categories', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'createCategory']);
@@ -1347,6 +1356,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::get('/{variationId}/attributes', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getVariationAttributes']);
                     Route::put('/{variationId}/stock', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'updateVariationStock']);
                     Route::put('/{variationId}/remote-stock', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'updateVariationRemoteStock']);
+                    Route::put('/{variationId}/fast-remote-stock', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'updateVariationFastRemoteStock']);
                     Route::put('/{variationId}/price', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'updateVariationPrice']);
                     Route::put('/{variationId}/demping', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'updateVariationDemping']);
                 });
@@ -1403,6 +1413,15 @@ Route::middleware('auth:sanctum')->group(function () {
             // Изображения вариаций
             Route::prefix('variations/{variationId}/images')->group(function () {
                 Route::post('/reorder', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'reorderVariation']);
+            });
+
+            // Поставщики
+            Route::prefix('suppliers')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Admin\ShopSuppliersController::class, 'index']);
+                Route::get('/{id}', [\App\Http\Controllers\Admin\ShopSuppliersController::class, 'show']);
+                Route::post('/', [\App\Http\Controllers\Admin\ShopSuppliersController::class, 'store']);
+                Route::put('/{id}', [\App\Http\Controllers\Admin\ShopSuppliersController::class, 'update']);
+                Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopSuppliersController::class, 'destroy']);
             });
 
             // Свойства товаров
