@@ -775,6 +775,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Загрузка изображений для rich editor
     Route::post('/admin/upload/good-text-image', [\App\Http\Controllers\Admin\UploadController::class, 'uploadGoodTextImage']);
+    Route::post('/admin/upload/color-image', [\App\Http\Controllers\Admin\UploadController::class, 'uploadColorImage']);
 
     // Контакты (доступны админам и пользователям с ролью site)
     Route::middleware(['auth:sanctum', 'role:admin,site'])->prefix('contacts')->group(function () {
@@ -1443,11 +1444,15 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::get('/', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'index']);
                     Route::post('/', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'store']);
                     Route::post('/check', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'check']);
-                    
+
                     // Специфичные маршруты должны быть перед общими с параметрами
                     Route::get('/{valueId}/goods-count', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'getGoodsCount']);
                     Route::delete('/{valueId}/force', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'forceDestroy']);
-                    
+
+                    // Загрузка изображений для значений характеристик
+                    Route::post('/{valueId}/image', [\App\Http\Controllers\Admin\ShopPropertiesController::class, 'uploadPropertyValueImage']);
+                    Route::delete('/{valueId}/image', [\App\Http\Controllers\Admin\ShopPropertiesController::class, 'deletePropertyValueImage']);
+
                     Route::put('/{valueId}', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'update']);
                     Route::delete('/{valueId}', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'destroy']);
                 });

@@ -16,6 +16,7 @@ class PropertyValue extends Model
         'property_id',
         'value',
         'color',
+        'image_path',
         'sort_order',
         'is_active',
     ];

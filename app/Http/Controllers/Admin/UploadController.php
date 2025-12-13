@@ -75,4 +75,146 @@ class UploadController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Временная загрузка изображения цвета для значения характеристики
+     * Используется когда valueId еще не известен (при добавлении нового значения)
+     */
+    public function uploadColorImage(Request $request)
+    {
+        try {
+            // Валидация
+            $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
+                'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:5120', // 5MB
+                'image_url' => 'nullable|url',
+                'width' => 'nullable|integer|min:1|max:2000',
+                'height' => 'nullable|integer|min:1|max:2000',
+                'maintainAspectRatio' => 'boolean',
+                'fit_with_white_background' => 'boolean',
+                'convert_to_jpg' => 'boolean',
+                'white_background' => 'boolean',
+                'value_id' => 'nullable|integer' // Если указан, используется для имени файла
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            // Настройки по умолчанию
+            $width = $request->input('width', 30);
+            $height = $request->input('height', 30);
+            $maintainAspectRatio = $request->input('maintainAspectRatio', true);
+            $fitWithWhiteBackground = $request->input('fit_with_white_background', true);
+            $convertToJpg = $request->input('convert_to_jpg', true);
+            $whiteBackground = $request->input('white_background', true);
+            $valueId = $request->input('value_id');
+
+            // Генерируем имя файла
+            $fileExtension = 'jpg';
+            if ($valueId) {
+                $fileName = 'color-image' . $valueId . '.' . $fileExtension;
+            } else {
+                // Временное имя файла с UUID
+                $fileName = 'color-image-temp-' . Str::uuid() . '.' . $fileExtension;
+            }
+            $relativePath = 'color-images/' . $fileName;
+
+            // Получаем путь к фронтенду
+            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+            $frontendPublicPath = base_path($frontendPath . '/public');
+            $fullPath = $frontendPublicPath . '/' . $relativePath;
+            $dir = dirname($fullPath);
+
+            // Создаем директорию если не существует
+            if (!is_dir($dir)) {
+                mkdir($dir, 0755, true);
+            }
+
+            // Создаем менеджер изображений
+            $manager = new ImageManager(new Driver());
+            $image = null;
+            $sourceFile = null;
+            $imageContent = null;
+
+            // Обработка загруженного файла
+            if ($request->hasFile('image')) {
+                $sourceFile = $request->file('image');
+                $image = $manager->read($sourceFile);
+            }
+            // Обработка URL
+            elseif ($request->has('image_url')) {
+                $imageContent = file_get_contents($request->image_url);
+                if (!$imageContent) {
+                    throw new \Exception('Не удалось загрузить изображение из URL');
+                }
+                $image = $manager->read($imageContent);
+            }
+
+            if (!$image) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не удалось обработать изображение'
+                ], 400);
+            }
+
+            // Обработка изображения в зависимости от режима
+            if ($fitWithWhiteBackground) {
+                // Вписываем изображение в размеры с белым фоном (без обрезки)
+                // Создаем копию изображения для вписывания (читаем файл заново)
+                $fittedImage = $sourceFile ? $manager->read($sourceFile) : $manager->read($imageContent);
+                $fittedImage->contain($width, $height);
+
+                // Получаем размеры вписанного изображения
+                $fittedWidth = $fittedImage->width();
+                $fittedHeight = $fittedImage->height();
+
+                // Создаем новое изображение с белым фоном нужного размера
+                $canvas = $manager->create($width, $height);
+                $canvas->fill('ffffff'); // Белый фон
+
+                // Вычисляем позицию для центрирования
+                $x = (int)(($width - $fittedWidth) / 2);
+                $y = (int)(($height - $fittedHeight) / 2);
+
+                // Накладываем вписанное изображение на белый фон
+                $canvas->place($fittedImage, 'top-left', $x, $y);
+                $image = $canvas;
+            } elseif ($maintainAspectRatio) {
+                // Обрезаем изображение до точных размеров с сохранением пропорций
+                $image->cover($width, $height);
+            } else {
+                // Растягиваем изображение до точных размеров
+                $image->resize($width, $height);
+            }
+
+            // Конвертируем в JPG
+            $imageData = $image->toJpeg(90); // Качество 90%
+
+            // Сохраняем файл на фронтенд
+            file_put_contents($fullPath, $imageData);
+
+            // Возвращаем путь относительно корня фронтенда
+            $relativePath = '/' . $relativePath;
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Изображение успешно загружено',
+                'path' => $relativePath,
+                'image_url' => $relativePath
+            ]);
+
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Ошибка загрузки изображения цвета: ' . $e->getMessage());
+            \Illuminate\Support\Facades\Log::error('Стек вызовов: ' . $e->getTraceAsString());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка загрузки изображения: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }

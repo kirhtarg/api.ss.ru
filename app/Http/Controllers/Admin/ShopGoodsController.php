@@ -625,17 +625,55 @@ class ShopGoodsController extends Controller
         // Сортировка
         $sortBy = $request->get('sort_by', 'sort_order');
         $sortDirection = $request->get('sort_direction', 'asc');
-        
-        if (in_array($sortBy, ['name', 'sku', 'price', 'rating', 'stock_quantity', 'created_at', 'sort_order'])) {
+
+        $allowedSortFields = [
+            'id', 'name', 'sku', 'price', 'rating', 'stock_quantity', 'remote_stock_quantity',
+            'fast_remote_stock_quantity', 'created_at', 'sort_order', 'supplier', 'slug',
+            'categories', 'brands'
+        ];
+
+        // Специальная обработка для полей отношений - используем подзапросы для сортировки
+        if (in_array($sortBy, ['categories', 'brands', 'label', 'tags'])) {
+            switch ($sortBy) {
+                case 'categories':
+                    // Сортировка по первой категории товара (по алфавиту)
+                    $query->leftJoin('shop_good_categories', 'shop_goods.id', '=', 'shop_good_categories.good_id')
+                          ->leftJoin('shop_categories', 'shop_good_categories.category_id', '=', 'shop_categories.id')
+                          ->orderByRaw('(SELECT MIN(sc.name) FROM shop_good_categories sgc INNER JOIN shop_categories sc ON sgc.category_id = sc.id WHERE sgc.good_id = shop_goods.id) ' . $sortDirection)
+                          ->select('shop_goods.*')
+                          ->groupBy('shop_goods.id');
+                    break;
+                case 'brands':
+                    // Сортировка по первой марке товара (по алфавиту)
+                    $query->leftJoin('shop_good_brands', 'shop_goods.id', '=', 'shop_good_brands.good_id')
+                          ->leftJoin('shop_brands', 'shop_good_brands.brand_id', '=', 'shop_brands.id')
+                          ->orderByRaw('(SELECT MIN(sb.name) FROM shop_good_brands sgb INNER JOIN shop_brands sb ON sgb.brand_id = sb.id WHERE sgb.good_id = shop_goods.id) ' . $sortDirection)
+                          ->select('shop_goods.*')
+                          ->groupBy('shop_goods.id');
+                    break;
+                case 'label':
+                    $query->leftJoin('shop_labels', 'shop_goods.label_id', '=', 'shop_labels.id')
+                          ->orderBy('shop_labels.name', $sortDirection)
+                          ->select('shop_goods.*');
+                    break;
+                case 'tags':
+                    // Сортировка по количеству тегов
+                    $query->withCount('tags')->orderBy('tags_count', $sortDirection);
+                    break;
+            }
+        } elseif (in_array($sortBy, $allowedSortFields)) {
+            // Обычная сортировка для простых полей
             $query->orderBy($sortBy, $sortDirection);
         }
 
         // Пагинация (если не запрашиваются конкретные ID, используем пагинацию)
         if (!$request->has('ids')) {
+            // Определяем параметры пагинации
             $perPage = $request->get('per_page', 20);
             $perPage = in_array($perPage, [10, 20, 50, 100, 5000]) ? $perPage : 20;
+
             $goods = $query->paginate($perPage);
-            
+
             // Загружаем значения свойств для всех товаров
             $hasValueCol = Schema::hasColumn('shop_good_properties', 'value');
             foreach ($goods->items() as $good) {
@@ -652,37 +690,37 @@ class ShopGoodsController extends Controller
                         ];
                     }
                 }
-                
+
                 // Добавляем вычисления для вариаций
                 if ($good->variations_count > 0 && $good->variations) {
                     // Сумма остатков вариаций
                     $good->variations_stock_sum = $good->variations->sum('stock_quantity');
-                    
+
                     // Проверка наличия непустых remote_stock_quantity или fast_remote_stock_quantity
                     $hasRemoteStock = $good->variations->filter(function($variation) {
                         $remoteStock = $variation->remote_stock_quantity;
                         $fastRemoteStock = $variation->fast_remote_stock_quantity;
-                        
-                        $hasRemote = $remoteStock !== null 
-                            && $remoteStock !== '' 
+
+                        $hasRemote = $remoteStock !== null
+                            && $remoteStock !== ''
                             && $remoteStock !== '0'
                             && trim($remoteStock) !== '';
-                            
-                        $hasFastRemote = $fastRemoteStock !== null 
-                            && $fastRemoteStock !== '' 
+
+                        $hasFastRemote = $fastRemoteStock !== null
+                            && $fastRemoteStock !== ''
                             && $fastRemoteStock !== '0'
                             && trim($fastRemoteStock) !== '';
-                            
+
                         return $hasRemote || $hasFastRemote;
                     })->count() > 0;
-                    
+
                     $good->variations_has_remote_stock = $hasRemoteStock;
-                    
+
                     // Проверка наличия активного демпинга
                     $hasDemping = $good->variations->filter(function($variation) {
                         return $variation->show_demping === true || $variation->show_demping === 1;
                     })->count() > 0;
-                    
+
                     $good->variations_has_demping = $hasDemping;
                 } else {
                     $good->variations_stock_sum = 0;
@@ -690,7 +728,7 @@ class ShopGoodsController extends Controller
                     $good->variations_has_demping = false;
                 }
             }
-            
+
             return response()->json([
                 'success' => true,
                 'data' => $goods->items(),
@@ -1545,22 +1583,20 @@ class ShopGoodsController extends Controller
                         if (!isset($data['clear_all']) || !$data['clear_all']) {
                             if (isset($data['properties']) && is_array($data['properties'])) {
                                 $incoming = $data['properties'];
-                                
-                                // Объединяем текущие свойства с новыми (убираем дубликаты)
-                                // Проверяем каждое новое свойство - если у товара уже есть такая характеристика с таким значением, пропускаем
-                                $allProperties = array_values($currentProperties);
+
+                                // Добавляем только новые свойства, которые еще не существуют у товара
                                 foreach ($incoming as $property) {
                                     if (empty($property['property_id'])) {
                                         continue;
                                     }
-                                    
+
                                     $propertyId = (int) $property['property_id'];
                                     $newShopPropertyValueId = isset($property['shop_property_value_id']) ? (int) $property['shop_property_value_id'] : null;
                                     $newValue = $property['value'] ?? null;
-                                    
+
                                     // Проверяем, нет ли уже такого свойства с таким значением
                                     $exists = false;
-                                    foreach ($allProperties as $existing) {
+                                    foreach ($currentProperties as $existing) {
                                         if ($existing['property_id'] == $propertyId) {
                                             // Если используется shop_property_value_id
                                             if ($hasShopValueIdCol) {
@@ -1580,80 +1616,31 @@ class ShopGoodsController extends Controller
                                             }
                                         }
                                     }
-                                    
+
                                     // Если свойство с таким значением уже есть, пропускаем добавление
                                     if (!$exists) {
-                                        $allProperties[] = $property;
-                                    }
-                                }
-                                
-                                // Очистим существующие свойства товара (только базовые, если есть колонка variation_id)
-                                $deleteQuery = DB::table('shop_good_properties')->where('good_id', $good->id);
-                                if ($hasVariationIdCol) {
-                                    $deleteQuery->whereNull('variation_id');
-                                }
-                                $deleteQuery->delete();
-                                
-                                // Добавляем все свойства (текущие после удаления + новые)
-                                foreach ($allProperties as $property) {
-                                    if (empty($property['property_id'])) {
-                                        continue;
-                                    }
-                                    
-                                    $propertyId = (int) $property['property_id'];
-                                    
-                                    // Режим через справочник значений
-                                    if ($hasShopValueIdCol) {
-                                        $propertyValueId = null;
-                                        if (!empty($property['shop_property_value_id'])) {
-                                            $propertyValueId = (int) $property['shop_property_value_id'];
-                                        } elseif (!empty($property['value'])) {
-                                            $valueToSave = trim($property['value']);
-                                            $valueToSave = preg_replace('/^:\s*/', '', $valueToSave);
-                                            $valueToSave = preg_replace('/\s*:\s*$/', '', $valueToSave);
-                                            $valueToSave = trim($valueToSave);
-                                            
-                                            $pv = \App\Models\Shop\PropertyValue::firstOrCreate([
-                                                'property_id' => $propertyId,
-                                                'value' => $valueToSave
-                                            ], [
-                                                'is_active' => true,
-                                                'sort_order' => 0
-                                            ]);
-                                            $propertyValueId = (int) $pv->id;
+                                        // Добавляем свойство напрямую в базу данных
+                                        $insertData = [
+                                            'good_id' => $good->id,
+                                            'property_id' => $propertyId
+                                        ];
+
+                                        if ($hasShopValueIdCol && $newShopPropertyValueId !== null) {
+                                            $insertData['shop_property_value_id'] = $newShopPropertyValueId;
                                         }
-                                        
-                                        if ($propertyValueId) {
-                                            DB::table('shop_good_properties')->updateOrInsert(
-                                                ['good_id' => $good->id, 'property_id' => $propertyId],
-                                                [
-                                                    'shop_property_value_id' => $propertyValueId,
-                                                    'updated_at' => now(),
-                                                    'created_at' => now(),
-                                                ]
-                                            );
+
+                                        if ($hasValueCol && $newValue !== null) {
+                                            $insertData['value'] = $newValue;
                                         }
-                                    }
-                                    // Режим хранения прямого текста значения
-                                    elseif ($hasValueCol) {
-                                        $textValue = null;
-                                        if (!empty($property['value'])) {
-                                            $textValue = trim($property['value']);
-                                        } elseif (!empty($property['shop_property_value_id'])) {
-                                            $found = \App\Models\Shop\PropertyValue::find((int) $property['shop_property_value_id']);
-                                            $textValue = $found ? $found->value : null;
+
+                                        if ($hasVariationIdCol) {
+                                            $insertData['variation_id'] = null;
                                         }
-                                        
-                                        if ($textValue !== null && $textValue !== '') {
-                                            DB::table('shop_good_properties')->updateOrInsert(
-                                                ['good_id' => $good->id, 'property_id' => $propertyId],
-                                                [
-                                                    'value' => $textValue,
-                                                    'updated_at' => now(),
-                                                    'created_at' => now(),
-                                                ]
-                                            );
-                                        }
+
+                                        DB::table('shop_good_properties')->insert($insertData);
+
+                                        // Добавляем в текущие свойства для будущих проверок
+                                        $currentProperties[] = $property;
                                     }
                                 }
                             }
@@ -4912,4 +4899,5 @@ class ShopGoodsController extends Controller
             ], 500);
         }
     }
+
 }

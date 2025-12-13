@@ -1006,7 +1006,6 @@ class ShopGoodsController extends Controller
                             return $fields;
                         })());
                 },
-,
                 'categories' => function($query) {
                     $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug', 'shop_categories.image', 'shop_categories.icon');
                 },
@@ -1239,7 +1238,6 @@ class ShopGoodsController extends Controller
                             return $fields;
                         })());
                 },
-,
                 'categories' => function($query) {
                     $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug', 'shop_categories.image', 'shop_categories.icon');
                 },

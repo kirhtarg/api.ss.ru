@@ -355,14 +355,14 @@ class BulkGoodsImportController extends Controller
                             
                             // Обрабатываем категории товара (даже если обрабатывается только вариация)
                             $categoryIds = [];
-                            if (isset($goodData['category']) && !empty($goodData['category'])) {
+                            if (isset($goodData['category']) && is_numeric($goodData['category'])) {
                                 $categoryIds = [(int)$goodData['category']];
                             } elseif (isset($goodData['categories']) && is_array($goodData['categories'])) {
                                 $categoryIds = array_filter(array_map('intval', $goodData['categories']), function($id) {
                                     return $id > 0;
                                 });
                             }
-
+                            
                             // Если категорий нет, но включена категория по умолчанию, применяем её
                             if (empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null) {
                                 $categoryIds = [(int)$defaultCategory];
@@ -450,14 +450,14 @@ class BulkGoodsImportController extends Controller
                                 
                                 // Обрабатываем категории товара (даже если обрабатывается только вариация)
                                 $categoryIds = [];
-                                if (isset($goodData['category']) && !empty($goodData['category'])) {
+                                if (isset($goodData['category']) && is_numeric($goodData['category'])) {
                                     $categoryIds = [(int)$goodData['category']];
                                 } elseif (isset($goodData['categories']) && is_array($goodData['categories'])) {
                                     $categoryIds = array_filter(array_map('intval', $goodData['categories']), function($id) {
                                         return $id > 0;
                                     });
                                 }
-
+                                
                                 // Если категорий нет, но включена категория по умолчанию, применяем её
                                 if (empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null) {
                                     $categoryIds = [(int)$defaultCategory];
@@ -716,17 +716,17 @@ class BulkGoodsImportController extends Controller
         // - Категория по умолчанию применена, если нужно
         // Здесь мы просто извлекаем уже обработанные категории
         $categoryIds = [];
-
-        if (isset($goodData['category']) && !empty($goodData['category'])) {
-            // Одиночная категория - значение уже должно быть ID после applyCategoryAndBrandIds
+        
+        if (isset($goodData['category']) && is_numeric($goodData['category'])) {
+            // Одиночная категория по ID (уже обработана в applyCategoryAndBrandIds)
             $categoryIds = [(int)$goodData['category']];
         } elseif (isset($goodData['categories']) && is_array($goodData['categories'])) {
-            // Множественные категории - значения уже должны быть ID после applyCategoryAndBrandIds
+            // Множественные категории - ID уже применены в applyCategoryAndBrandIds
             $categoryIds = array_filter(array_map('intval', $goodData['categories']), function($id) {
                 return $id > 0;
             });
         }
-
+        
         // Синхронизируем категории (уже обработанные, включая категорию по умолчанию, если она была применена)
         if (!empty($categoryIds)) {
             $good->categories()->sync($categoryIds);
@@ -958,17 +958,17 @@ class BulkGoodsImportController extends Controller
         // - Категория по умолчанию применена, если нужно
         // Здесь мы просто извлекаем уже обработанные категории
         $categoryIds = [];
-
-        if (isset($goodData['category']) && !empty($goodData['category'])) {
-            // Одиночная категория - значение уже должно быть ID после applyCategoryAndBrandIds
+        
+        if (isset($goodData['category']) && is_numeric($goodData['category'])) {
+            // Одиночная категория по ID (уже обработана в applyCategoryAndBrandIds)
             $categoryIds = [(int)$goodData['category']];
         } elseif (isset($goodData['categories']) && is_array($goodData['categories'])) {
-            // Множественные категории - значения уже должны быть ID после applyCategoryAndBrandIds
+            // Множественные категории - ID уже применены в applyCategoryAndBrandIds
             $categoryIds = array_filter(array_map('intval', $goodData['categories']), function($id) {
                 return $id > 0;
             });
         }
-
+        
         // Синхронизируем категории (уже обработанные, включая категорию по умолчанию, если она была применена)
         if (!empty($categoryIds)) {
             $existingGood->categories()->sync($categoryIds);
@@ -1428,14 +1428,13 @@ class BulkGoodsImportController extends Controller
             }
             
             // Обрабатываем категории
-            if (isset($good['category']) && !empty($good['category'])) {
-                // Если категория - строка или число, преобразуем в строку для обработки
-                $categoryValue = (string)$good['category'];
-                if (!empty($categoryValue)) {
-                    // Проверяем, содержит ли строка символ > (иерархия категорий)
-                    if (strpos($categoryValue, '>') !== false) {
-                        // Разбиваем строку по символу > и обрабатываем иерархию
-                        $categoryPath = array_map('trim', explode('>', $categoryValue));
+            if (isset($good['category'])) {
+                // Если категория - строка
+                if (is_string($good['category']) && !empty($good['category'])) {
+                // Проверяем, содержит ли строка символ > (иерархия категорий)
+                if (strpos($good['category'], '>') !== false) {
+                    // Разбиваем строку по символу > и обрабатываем иерархию
+                    $categoryPath = array_map('trim', explode('>', $good['category']));
                     $categoryId = $this->processCategoryHierarchy($categoryPath, $categoryMap, $autoCreateCategories);
                     if ($categoryId) {
                         $good['category'] = $categoryId;
@@ -1444,15 +1443,15 @@ class BulkGoodsImportController extends Controller
                             unset($good['category']);
                         }
                     }
+                } else {
+                    // Обычная обработка одной категории
+                    $categoryId = $categoryMapArray[strtolower($good['category'])] ?? null;
+                    if ($categoryId) {
+                        $good['category'] = $categoryId;
                     } else {
-                        // Обычная обработка одной категории
-                        $categoryId = $categoryMapArray[strtolower($categoryValue)] ?? null;
-                        if ($categoryId) {
-                            $good['category'] = $categoryId;
-                        } else {
-                            if ($autoCreateCategories) {
-                                // Создаем новую категорию, если она не найдена
-                                $categoryName = trim($categoryValue);
+                        if ($autoCreateCategories) {
+                            // Создаем новую категорию, если она не найдена
+                            $categoryName = trim($good['category']);
                             $categorySlug = \Illuminate\Support\Str::slug($categoryName);
                             
                             // Проверяем уникальность slug
@@ -1493,18 +1492,65 @@ class BulkGoodsImportController extends Controller
                         } else {
                             unset($good['category']);
                         }
+                    }
+                }
+                // Если категория - число, преобразуем его в строку и обрабатываем как название категории
+                elseif (is_numeric($good['category'])) {
+                    $categoryName = (string)$good['category'];
+                    $categoryId = $categoryMapArray[strtolower($categoryName)] ?? null;
+                    if ($categoryId) {
+                        $good['category'] = $categoryId;
+                    } else {
+                        if ($autoCreateCategories) {
+                            // Создаем новую категорию
+                            $categorySlug = \Illuminate\Support\Str::slug($categoryName);
+
+                            // Проверяем уникальность slug
+                            $slugCounter = 1;
+                            $baseSlug = $categorySlug;
+                            while (ShopCategory::where('slug', $categorySlug)->exists()) {
+                                $categorySlug = $baseSlug . '-' . $slugCounter;
+                                $slugCounter++;
+                            }
+
+                            try {
+                                $newCategory = ShopCategory::create([
+                                    'name' => $categoryName,
+                                    'slug' => $categorySlug,
+                                    'parent_id' => null,
+                                    'is_active' => true
+                                ]);
+                                $categoryId = $newCategory->id;
+
+                                // Добавляем в карту
+                                $categoryMapArray[strtolower($categoryName)] = $categoryId;
+
+                                // Обновляем кеш карты
+                                cache(['category_map_' . auth()->id() => $categoryMapArray], 300);
+
+                                // Добавляем в список созданных категорий
+                                $createdCategories = cache('created_categories_' . auth()->id(), []);
+                                if (!in_array($categoryId, $createdCategories)) {
+                                    $createdCategories[] = $categoryId;
+                                    cache(['created_categories_' . auth()->id() => $createdCategories], 300);
+                                }
+
+                                $good['category'] = $categoryId;
+                            } catch (\Exception $e) {
+                                // Если ошибка при создании, удаляем категорию
+                                unset($good['category']);
+                            }
+                        } else {
+                            unset($good['category']);
                         }
                     }
                 }
-            }
-            elseif (isset($good['categories'])) {
+            } elseif (isset($good['categories'])) {
                 if (is_string($good['categories'])) {
                     $categoryNames = $this->parseDelimitedString($good['categories']);
                     $categoryIds = [];
 
                     foreach ($categoryNames as $categoryName) {
-                        // Преобразуем в строку на всякий случай
-                        $categoryName = (string)$categoryName;
                         // Проверяем, содержит ли категория иерархию
                         if (strpos($categoryName, '>') !== false) {
                             $categoryPath = array_map('trim', explode('>', $categoryName));
@@ -1548,6 +1594,49 @@ class BulkGoodsImportController extends Controller
                                     }
                                 } catch (\Exception $e) {
                                     // Если ошибка при создании, пропускаем категорию
+                                    $categoryId = null;
+                                }
+                            }
+                        }
+                        elseif (is_numeric($category)) {
+                            // Преобразуем число в строку и обрабатываем как название категории
+                            $categoryName = (string)$category;
+                            $categoryId = $categoryMapArray[strtolower($categoryName)] ?? null;
+
+                            // Если категория не найдена и разрешено создание, создаем её
+                            if (!$categoryId && $autoCreateCategories) {
+                                $categorySlug = \Illuminate\Support\Str::slug($categoryName);
+
+                                // Проверяем уникальность slug
+                                $slugCounter = 1;
+                                $baseSlug = $categorySlug;
+                                while (ShopCategory::where('slug', $categorySlug)->exists()) {
+                                    $categorySlug = $baseSlug . '-' . $slugCounter;
+                                    $slugCounter++;
+                                }
+
+                                try {
+                                    $newCategory = ShopCategory::create([
+                                        'name' => $categoryName,
+                                        'slug' => $categorySlug,
+                                        'parent_id' => null,
+                                        'is_active' => true
+                                    ]);
+                                    $categoryId = $newCategory->id;
+
+                                    // Добавляем в карту
+                                    $categoryMapArray[strtolower($categoryName)] = $categoryId;
+
+                                    // Обновляем кеш карты
+                                    cache(['category_map_' . auth()->id() => $categoryMapArray], 300);
+
+                                    // Добавляем в список созданных категорий
+                                    $createdCategories = cache('created_categories_' . auth()->id(), []);
+                                    if (!in_array($categoryId, $createdCategories)) {
+                                        $createdCategories[] = $categoryId;
+                                        cache(['created_categories_' . auth()->id() => $createdCategories], 300);
+                                    }
+                                } catch (\Exception $e) {
                                     $categoryId = null;
                                 }
                             }
@@ -1609,6 +1698,8 @@ class BulkGoodsImportController extends Controller
                             if ($categoryId) {
                                 $categoryIds[] = $categoryId;
                             }
+                        } elseif (is_numeric($category)) {
+                            $categoryIds[] = (int)$category;
                         }
                     }
 
