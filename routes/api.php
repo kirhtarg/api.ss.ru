@@ -228,6 +228,18 @@ Route::get('/test/oauth', function () {
     });
     Route::get('/public/shop/goods/main-blocks', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getMainBlocks']);
 
+    // Диапазон цен - должен быть ПЕРЕД маршрутом {id}, чтобы не перехватывался
+    Route::options('/public/shop/goods/price-range', function () {
+        return response('', 200);
+    });
+    Route::get('/public/shop/goods/price-range', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getPriceRange']);
+
+    // Пакетная загрузка товаров - должен быть ПЕРЕД маршрутом {id}
+    Route::options('/public/shop/goods/batch', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/public/shop/goods/batch', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getBatch']);
+
     Route::options('/public/shop/goods/{id}', function () {
         return response()->json([], 200);
     });

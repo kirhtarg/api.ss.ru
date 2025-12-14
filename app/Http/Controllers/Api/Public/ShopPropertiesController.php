@@ -4,11 +4,11 @@ namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
 use App\Models\Shop\Property;
+use App\Models\ShopCategory;
 use App\Models\ShopGood;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 
 class ShopPropertiesController extends Controller
 {
@@ -20,8 +20,6 @@ class ShopPropertiesController extends Controller
         try {
             // Получаем базовый запрос товаров с учетом фильтров
             $goodsQuery = $this->buildGoodsQuery($request);
-            
-            // Получаем ID товаров, которые соответствуют фильтрам
             $goodsIds = $goodsQuery->pluck('id');
             
             if ($goodsIds->isEmpty()) {
@@ -31,11 +29,42 @@ class ShopPropertiesController extends Controller
                 ]);
             }
             
-            // Получаем свойства, которые есть у отфильтрованных товаров
-            $properties = Property::where('is_active', true)
+            // Проверяем, нужно ли возвращать только свойства, привязанные к категории через shop_category_property
+            $onlyCategoryProperties = $request->filled('only_category_properties') 
+                && ($request->get('only_category_properties') == '1' || $request->get('only_category_properties') === true);
+            
+            // Строим запрос свойств
+            $propertiesQuery = Property::where('is_active', true)
                 ->whereHas('goodProperties', function ($query) use ($goodsIds) {
                     $query->whereIn('good_id', $goodsIds);
-                })
+                });
+            
+            // Если запрашиваются только свойства категории, фильтруем по shop_category_property
+            if ($onlyCategoryProperties && $request->filled('categories')) {
+                $categoryIds = is_array($request->categories) 
+                    ? $request->categories 
+                    : explode(',', $request->categories);
+                
+                // Получаем только свойства, привязанные к категории через shop_category_property
+                $propertyIds = DB::table('shop_category_property')
+                    ->whereIn('category_id', $categoryIds)
+                    ->pluck('property_id')
+                    ->unique()
+                    ->toArray();
+                
+                if (empty($propertyIds)) {
+                    return response()->json([
+                        'success' => true,
+                        'data' => []
+                    ]);
+                }
+                
+                // Фильтруем только привязанные свойства
+                $propertiesQuery->whereIn('id', $propertyIds);
+            }
+            
+            // Получаем свойства
+            $properties = $propertiesQuery
                 ->orderBy('sort_order')
                 ->orderBy('name')
                 ->get()
@@ -83,6 +112,8 @@ class ShopPropertiesController extends Controller
     
     /**
      * Получить значения конкретного свойства с учетом фильтров
+     * Возвращает все значения свойства для категории, даже если нет товаров с такими значениями
+     * С счетчиками товаров для каждого значения
      */
     public function getValues(Request $request, Property $property): JsonResponse
     {
@@ -93,6 +124,51 @@ class ShopPropertiesController extends Controller
             // Получаем ID товаров, которые соответствуют фильтрам
             $goodsIds = $goodsQuery->pluck('id');
             
+            // Проверяем, нужно ли возвращать все значения для категории
+            $onlyCategoryProperties = $request->filled('only_category_properties') 
+                && ($request->get('only_category_properties') == '1' || $request->get('only_category_properties') === true);
+            
+            // Если запрашиваются значения для категории, получаем все значения свойства
+            if ($onlyCategoryProperties && $request->filled('categories')) {
+                $categoryIds = is_array($request->categories) 
+                    ? $request->categories 
+                    : explode(',', $request->categories);
+                
+                // Получаем все значения свойства, которые используются в товарах этой категории
+                // или могут быть использованы (из shop_property_values)
+                $allValues = DB::table('shop_property_values')
+                    ->where('property_id', $property->id)
+                    ->whereNotNull('value')
+                    ->where('value', '<>', '')
+                    ->orderBy('value')
+                    ->get();
+                
+                // Для каждого значения считаем количество товаров с учетом фильтров
+                $valuesWithCounts = $allValues->map(function ($propertyValue) use ($property, $goodsIds) {
+                    $count = 0;
+                    
+                    if ($goodsIds->isNotEmpty()) {
+                        $count = DB::table('shop_good_properties')
+                            ->where('property_id', $property->id)
+                            ->where('shop_property_value_id', $propertyValue->id)
+                            ->whereIn('good_id', $goodsIds)
+                            ->distinct('good_id')
+                            ->count('good_id');
+                    }
+                    
+                    return [
+                        'value' => $propertyValue->value,
+                        'count' => $count
+                    ];
+                })->toArray();
+                
+                return response()->json([
+                    'success' => true,
+                    'data' => $valuesWithCounts
+                ]);
+            }
+            
+            // Старая логика: возвращаем только значения, которые есть в товарах
             if ($goodsIds->isEmpty()) {
                 return response()->json([
                     'success' => true,
@@ -101,21 +177,29 @@ class ShopPropertiesController extends Controller
             }
             
             // Получаем уникальные значения для этого свойства из связанной таблицы shop_property_values
-            $values = DB::table('shop_good_properties')
+            // с подсчетом количества товаров для каждого значения
+            $valuesWithCounts = DB::table('shop_good_properties')
                 ->join('shop_property_values', 'shop_property_values.id', '=', 'shop_good_properties.shop_property_value_id')
                 ->where('shop_good_properties.property_id', $property->id)
                 ->whereIn('shop_good_properties.good_id', $goodsIds)
                 ->whereNotNull('shop_good_properties.shop_property_value_id')
                 ->whereNotNull('shop_property_values.value')
                 ->where('shop_property_values.value', '<>', '')
-                ->distinct()
+                ->select('shop_property_values.value', DB::raw('COUNT(DISTINCT shop_good_properties.good_id) as count'))
+                ->groupBy('shop_property_values.value')
                 ->orderBy('shop_property_values.value')
-                ->pluck('shop_property_values.value')
+                ->get()
+                ->map(function ($item) {
+                    return [
+                        'value' => $item->value,
+                        'count' => $item->count
+                    ];
+                })
                 ->toArray();
             
             return response()->json([
                 'success' => true,
-                'data' => $values
+                'data' => $valuesWithCounts
             ]);
             
         } catch (\Exception $e) {
@@ -146,7 +230,6 @@ class ShopPropertiesController extends Controller
         // Фильтр по одной категории (для совместимости)
         if ($request->filled('category_id')) {
             $categoryId = $request->get('category_id');
-            Log::info('Filtering properties by category_id: ' . $categoryId);
             $query->whereHas('categories', function ($q) use ($categoryId) {
                 $q->where('shop_categories.id', $categoryId);
             });
@@ -165,7 +248,6 @@ class ShopPropertiesController extends Controller
         // Фильтр по одному бренду (для совместимости)
         if ($request->filled('brand_id')) {
             $brandId = $request->get('brand_id');
-            Log::info('Filtering properties by brand_id: ' . $brandId);
             $query->whereHas('brands', function ($q) use ($brandId) {
                 $q->where('shop_brands.id', $brandId);
             });

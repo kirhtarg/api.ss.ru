@@ -906,9 +906,10 @@ class CategoryController extends Controller
      */
     public function syncProperties(Request $request, $id): JsonResponse
     {
+        // Разрешаем пустой массив - это означает удаление всех характеристик
         $validator = Validator::make($request->all(), [
-            'property_ids' => 'required|array',
-            'property_ids.*' => 'required|integer|exists:shop_properties,id'
+            'property_ids' => 'nullable|array',
+            'property_ids.*' => 'required_with:property_ids|integer|exists:shop_properties,id'
         ]);
 
         if ($validator->fails()) {
@@ -921,7 +922,9 @@ class CategoryController extends Controller
 
         try {
             $category = ShopCategory::findOrFail($id);
-            $category->properties()->sync($request->property_ids);
+            // Если property_ids не передан или null, используем пустой массив (удаление всех связей)
+            $propertyIds = $request->input('property_ids', []);
+            $category->properties()->sync($propertyIds);
             
             $properties = $category->properties()->get();
             

@@ -8,6 +8,7 @@ use App\Models\ShopGood;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 
 class ShopGoodsController extends Controller
 {
@@ -720,20 +721,124 @@ class ShopGoodsController extends Controller
                 }
             }
 
-            // Фильтрация по цене
-            if ($request->has('min_price')) {
-                $query->where('price', '>=', $request->input('min_price'));
-            }
-            if ($request->has('max_price')) {
-                $query->where('price', '<=', $request->input('max_price'));
+            // Фильтрация по цене (с учетом минимальной цены вариаций)
+            if ($request->has('min_price') || $request->has('max_price')) {
+                $minPrice = $request->has('min_price') ? (float)$request->input('min_price') : null;
+                $maxPrice = $request->has('max_price') ? (float)$request->input('max_price') : null;
+                $includeZeroPrice = $request->has('include_zero_price') && $request->input('include_zero_price');
+                
+                // Если min_price = 0 и include_zero_price не выбран, устанавливаем min_price = 0.01
+                // чтобы исключить товары с ценой 0
+                if ($minPrice !== null && $minPrice == 0 && !$includeZeroPrice) {
+                    $minPrice = 0.01;
+                }
+                
+                $query->where(function($priceQuery) use ($minPrice, $maxPrice, $includeZeroPrice) {
+                    // Логика фильтрации по цене:
+                    // 1. Для товаров с вариациями: используем минимальную и максимальную цену вариаций
+                    // 2. Для товаров без вариаций: используем цену основного товара
+                    // 3. Если include_zero_price не выбран, исключаем товары с ценой 0
+                    
+                    // Проверка минимальной цены
+                    if ($minPrice !== null) {
+                        $priceQuery->whereRaw('(
+                            CASE 
+                                WHEN EXISTS (
+                                    SELECT 1 FROM shop_good_variations 
+                                    WHERE shop_good_variations.good_id = shop_goods.id 
+                                    AND shop_good_variations.is_active = 1
+                                ) THEN
+                                    -- Для товаров с вариациями: минимальная цена среди вариаций с ценой > 0
+                                    COALESCE((
+                                        SELECT MIN(COALESCE(sale_price, price, 999999999))
+                                        FROM shop_good_variations
+                                        WHERE shop_good_variations.good_id = shop_goods.id
+                                        AND shop_good_variations.is_active = 1
+                                        AND (COALESCE(sale_price, price, 0) > 0)
+                                    ), 999999999)
+                                ELSE
+                                    -- Для товаров без вариаций: цена основного товара
+                                    COALESCE(shop_goods.sale_price, shop_goods.price, 999999999)
+                            END
+                        ) >= ?', [$minPrice]);
+                    }
+                    
+                    // Проверка максимальной цены
+                    if ($maxPrice !== null) {
+                        $priceQuery->whereRaw('(
+                            CASE 
+                                WHEN EXISTS (
+                                    SELECT 1 FROM shop_good_variations 
+                                    WHERE shop_good_variations.good_id = shop_goods.id 
+                                    AND shop_good_variations.is_active = 1
+                                ) THEN
+                                    -- Для товаров с вариациями: максимальная цена среди вариаций с ценой > 0
+                                    COALESCE((
+                                        SELECT MAX(COALESCE(sale_price, price, 0))
+                                        FROM shop_good_variations
+                                        WHERE shop_good_variations.good_id = shop_goods.id
+                                        AND shop_good_variations.is_active = 1
+                                        AND (COALESCE(sale_price, price, 0) > 0)
+                                    ), 0)
+                                ELSE
+                                    -- Для товаров без вариаций: цена основного товара
+                                    COALESCE(shop_goods.sale_price, shop_goods.price, 0)
+                            END
+                        ) <= ?', [$maxPrice]);
+                    }
+                    
+                    // Если include_zero_price не выбран, исключаем товары с ценой 0
+                    if (!$includeZeroPrice) {
+                        $priceQuery->whereRaw('(
+                            CASE 
+                                WHEN EXISTS (
+                                    SELECT 1 FROM shop_good_variations 
+                                    WHERE shop_good_variations.good_id = shop_goods.id 
+                                    AND shop_good_variations.is_active = 1
+                                ) THEN
+                                    -- Для товаров с вариациями: должна быть хотя бы одна вариация с ценой > 0
+                                    EXISTS (
+                                        SELECT 1 FROM shop_good_variations
+                                        WHERE shop_good_variations.good_id = shop_goods.id
+                                        AND shop_good_variations.is_active = 1
+                                        AND (COALESCE(sale_price, price, 0) > 0)
+                                    )
+                                ELSE
+                                    -- Для товаров без вариаций: цена основного товара должна быть > 0
+                                    (COALESCE(shop_goods.sale_price, shop_goods.price, 0) > 0)
+                            END
+                        )');
+                    }
+                });
             }
             
             // Фильтрация по товарам с неопределенной ценой (цена = 0)
-            // Если передан параметр include_zero_price и он true, показываем товары с ценой 0
+            // Если передан параметр include_zero_price и он true, показываем ТОЛЬКО товары с ценой 0
             // Иначе проверяем параметр hidden_0_price из настроек сайта
             $includeZeroPrice = $request->has('include_zero_price') && $request->input('include_zero_price');
             
-            if (!$includeZeroPrice) {
+            if ($includeZeroPrice) {
+                // Показываем ТОЛЬКО товары с ценой 0
+                $query->where(function($q) {
+                    // Товары, у которых и price = 0, и sale_price = 0 (или null)
+                    $q->where(function($priceQ) {
+                        $priceQ->where('price', '<=', 0)
+                               ->where(function($salePriceQ) {
+                                   $salePriceQ->where('sale_price', '<=', 0)
+                                             ->orWhereNull('sale_price');
+                               });
+                    })
+                    // И нет активных вариаций с ценой > 0
+                    // (если есть вариации, они все должны иметь цену <= 0)
+                    ->whereDoesntHave('variations', function($varQ) {
+                        $varQ->where('is_active', true)
+                             ->where(function($varPriceQ) {
+                                 $varPriceQ->where('price', '>', 0)
+                                           ->orWhere('sale_price', '>', 0);
+                             });
+                    });
+                });
+            } else {
                 // Получаем параметр hidden_0_price из настроек
                 $hidden0PriceSetting = Setting::where('key', 'hidden_0_price')->first();
                 $hidden0Price = $hidden0PriceSetting ? (int)$hidden0PriceSetting->value : 0;
@@ -1807,5 +1912,268 @@ class ShopGoodsController extends Controller
         }
 
         return $slug;
+    }
+
+    /**
+     * Получить диапазон цен для категорий с учетом вариаций
+     */
+    public function getPriceRange(Request $request): JsonResponse
+    {
+        try {
+            $categoryIds = [];
+            
+            if ($request->filled('categories') && is_array($request->get('categories'))) {
+                $categoryIds = array_filter(array_map('intval', $request->get('categories')));
+            } elseif ($request->filled('category_id')) {
+                $categoryIds = [(int)$request->get('category_id')];
+            }
+            
+            // Если нужно включить подкатегории
+            $includeSubcategories = $request->filled('include_subcategories') 
+                && ($request->get('include_subcategories') == '1' || $request->get('include_subcategories') === true);
+            
+            if ($includeSubcategories && !empty($categoryIds)) {
+                $categoryIds = \App\Models\ShopCategory::getAllDescendantIds($categoryIds);
+            }
+            
+            // Получаем настройки
+            $settings = $this->getStockSettings();
+            $hidden0Price = $settings['hidden0Price'];
+            $showGoodMode = $settings['showGoodMode'];
+            $remoteQ = $settings['remoteQ'];
+            
+            // Используем более простой подход через DB::table с whereHas/whereDoesntHave
+            // Но для SQL-запроса используем упрощенную версию без сложных условий по остаткам
+            // (остатки будут учитываться через фильтрацию товаров)
+            
+            $prices = [];
+            
+            if (!empty($categoryIds)) {
+                // Товары БЕЗ вариаций
+                $goodsQuery = DB::table('shop_goods')
+                    ->select('shop_goods.price', 'shop_goods.sale_price')
+                    ->join('shop_good_categories', 'shop_goods.id', '=', 'shop_good_categories.good_id')
+                    ->where('shop_goods.is_active', true)
+                    ->whereIn('shop_good_categories.category_id', $categoryIds)
+                    ->whereNotExists(function($query) {
+                        $query->select(DB::raw(1))
+                            ->from('shop_good_variations')
+                            ->whereColumn('shop_good_variations.good_id', 'shop_goods.id')
+                            ->where('shop_good_variations.is_active', true);
+                    });
+                
+                // Применяем фильтры по остаткам на уровне SQL
+                if ($showGoodMode === 1) {
+                    $goodsQuery->where(function($q) use ($remoteQ) {
+                        $q->where('shop_goods.stock_quantity', '>', 0);
+                        if ($remoteQ === 2 || $remoteQ === 3) {
+                            $q->orWhere(function($remoteQ) {
+                                $remoteQ->whereNotNull('shop_goods.remote_stock_quantity')
+                                    ->where('shop_goods.remote_stock_quantity', '!=', '0')
+                                    ->whereRaw('LENGTH(TRIM(shop_goods.remote_stock_quantity)) > 0');
+                            })
+                            ->orWhere(function($fastRemoteQ) {
+                                $fastRemoteQ->whereNotNull('shop_goods.fast_remote_stock_quantity')
+                                    ->where('shop_goods.fast_remote_stock_quantity', '!=', '0')
+                                    ->whereRaw('LENGTH(TRIM(shop_goods.fast_remote_stock_quantity)) > 0');
+                            });
+                        }
+                    });
+                }
+                
+                // Применяем фильтр по цене
+                if ($hidden0Price === 1) {
+                    $goodsQuery->where(function($q) {
+                        $q->where('shop_goods.price', '>', 0)
+                          ->orWhere('shop_goods.sale_price', '>', 0);
+                    });
+                }
+                
+                $goodsWithoutVariations = $goodsQuery->get();
+                
+                foreach ($goodsWithoutVariations as $good) {
+                    $price = $good->sale_price > 0 && $good->sale_price < $good->price ? $good->sale_price : $good->price;
+                    if ($price > 0) {
+                        $prices[] = (float)$price;
+                    }
+                }
+                
+                // Товары С вариациями - только цены вариаций
+                $variationsQuery = DB::table('shop_good_variations')
+                    ->select('shop_good_variations.price', 'shop_good_variations.sale_price', 
+                             'shop_good_variations.stock_quantity', 'shop_good_variations.remote_stock_quantity')
+                    ->join('shop_goods', 'shop_good_variations.good_id', '=', 'shop_goods.id')
+                    ->join('shop_good_categories', 'shop_goods.id', '=', 'shop_good_categories.good_id')
+                    ->where('shop_good_variations.is_active', true)
+                    ->where('shop_goods.is_active', true)
+                    ->whereIn('shop_good_categories.category_id', $categoryIds);
+                
+                // Применяем фильтры по остаткам для вариаций
+                if ($showGoodMode === 1) {
+                    $variationsQuery->where(function($q) use ($remoteQ) {
+                        $q->where('shop_good_variations.stock_quantity', '>', 0);
+                        if ($remoteQ === 2 || $remoteQ === 3) {
+                            $q->orWhere(function($remoteQ) {
+                                $remoteQ->whereNotNull('shop_good_variations.remote_stock_quantity')
+                                    ->where('shop_good_variations.remote_stock_quantity', '!=', '0')
+                                    ->whereRaw('LENGTH(TRIM(shop_good_variations.remote_stock_quantity)) > 0');
+                            });
+                        }
+                    });
+                }
+                
+                // Применяем фильтр по цене для вариаций
+                if ($hidden0Price === 1) {
+                    $variationsQuery->where(function($q) {
+                        $q->where('shop_good_variations.price', '>', 0)
+                          ->orWhere('shop_good_variations.sale_price', '>', 0);
+                    });
+                }
+                
+                $variations = $variationsQuery->get();
+                
+                foreach ($variations as $variation) {
+                    $price = $variation->sale_price > 0 && $variation->sale_price < $variation->price ? $variation->sale_price : $variation->price;
+                    if ($price > 0) {
+                        $prices[] = (float)$price;
+                    }
+                }
+            } else {
+                // Без категорий - аналогично, но без join с категориями
+                $goodsQuery = DB::table('shop_goods')
+                    ->select('shop_goods.price', 'shop_goods.sale_price')
+                    ->where('shop_goods.is_active', true)
+                    ->whereNotExists(function($query) {
+                        $query->select(DB::raw(1))
+                            ->from('shop_good_variations')
+                            ->whereColumn('shop_good_variations.good_id', 'shop_goods.id')
+                            ->where('shop_good_variations.is_active', true);
+                    });
+                
+                // Применяем фильтры по остаткам на уровне SQL
+                if ($showGoodMode === 1) {
+                    $goodsQuery->where(function($q) use ($remoteQ) {
+                        $q->where('shop_goods.stock_quantity', '>', 0);
+                        if ($remoteQ === 2 || $remoteQ === 3) {
+                            $q->orWhere(function($remoteQ) {
+                                $remoteQ->whereNotNull('shop_goods.remote_stock_quantity')
+                                    ->where('shop_goods.remote_stock_quantity', '!=', '0')
+                                    ->whereRaw('LENGTH(TRIM(shop_goods.remote_stock_quantity)) > 0');
+                            })
+                            ->orWhere(function($fastRemoteQ) {
+                                $fastRemoteQ->whereNotNull('shop_goods.fast_remote_stock_quantity')
+                                    ->where('shop_goods.fast_remote_stock_quantity', '!=', '0')
+                                    ->whereRaw('LENGTH(TRIM(shop_goods.fast_remote_stock_quantity)) > 0');
+                            });
+                        }
+                    });
+                }
+                
+                // Применяем фильтр по цене
+                if ($hidden0Price === 1) {
+                    $goodsQuery->where(function($q) {
+                        $q->where('shop_goods.price', '>', 0)
+                          ->orWhere('shop_goods.sale_price', '>', 0);
+                    });
+                }
+                
+                $goodsWithoutVariations = $goodsQuery->get();
+                
+                foreach ($goodsWithoutVariations as $good) {
+                    $price = $good->sale_price > 0 && $good->sale_price < $good->price ? $good->sale_price : $good->price;
+                    if ($price > 0) {
+                        $prices[] = (float)$price;
+                    }
+                }
+                
+                $variationsQuery = DB::table('shop_good_variations')
+                    ->select('shop_good_variations.price', 'shop_good_variations.sale_price', 
+                             'shop_good_variations.stock_quantity', 'shop_good_variations.remote_stock_quantity')
+                    ->join('shop_goods', 'shop_good_variations.good_id', '=', 'shop_goods.id')
+                    ->where('shop_good_variations.is_active', true)
+                    ->where('shop_goods.is_active', true);
+                
+                // Применяем фильтры по остаткам для вариаций
+                if ($showGoodMode === 1) {
+                    $variationsQuery->where(function($q) use ($remoteQ) {
+                        $q->where('shop_good_variations.stock_quantity', '>', 0);
+                        if ($remoteQ === 2 || $remoteQ === 3) {
+                            $q->orWhere(function($remoteQ) {
+                                $remoteQ->whereNotNull('shop_good_variations.remote_stock_quantity')
+                                    ->where('shop_good_variations.remote_stock_quantity', '!=', '0')
+                                    ->whereRaw('LENGTH(TRIM(shop_good_variations.remote_stock_quantity)) > 0');
+                            });
+                        }
+                    });
+                }
+                
+                // Применяем фильтр по цене для вариаций
+                if ($hidden0Price === 1) {
+                    $variationsQuery->where(function($q) {
+                        $q->where('shop_good_variations.price', '>', 0)
+                          ->orWhere('shop_good_variations.sale_price', '>', 0);
+                    });
+                }
+                
+                $variations = $variationsQuery->get();
+                
+                foreach ($variations as $variation) {
+                    $price = $variation->sale_price > 0 && $variation->sale_price < $variation->price ? $variation->sale_price : $variation->price;
+                    if ($price > 0) {
+                        $prices[] = (float)$price;
+                    }
+                }
+            }
+            
+            $priceValues = array_unique($prices);
+            
+            if (empty($priceValues)) {
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'min' => 0,
+                        'max' => 0
+                    ]
+                ]);
+            }
+            
+            $minPrice = (int)min($priceValues);
+            $maxPrice = (int)max($priceValues);
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'min' => $minPrice,
+                    'max' => $maxPrice
+                ]
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::error('Error getting price range: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения диапазона цен',
+                'data' => [
+                    'min' => 0,
+                    'max' => 100000
+                ]
+            ], 500);
+        }
+    }
+    
+    /**
+     * Получить настройки остатков
+     */
+    private function getStockSettings(): array
+    {
+        $shopShowGoodMode = Setting::where('key', 'shop_show_good_mode')->first();
+        $shopRemoteQ = Setting::where('key', 'shop_remote_q')->first();
+        $hidden0PriceSetting = Setting::where('key', 'hidden_0_price')->first();
+        
+        return [
+            'showGoodMode' => $shopShowGoodMode ? (int)$shopShowGoodMode->value : 2,
+            'remoteQ' => $shopRemoteQ ? (int)$shopRemoteQ->value : 1,
+            'hidden0Price' => $hidden0PriceSetting ? (int)$hidden0PriceSetting->value : 0
+        ];
     }
 }
