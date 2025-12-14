@@ -463,67 +463,116 @@ class ShopGoodsController extends Controller
             ])
             ->where('is_active', true);
 
-            // Фильтрация по категории (с рекурсивным поиском в подкатегориях)
-            if ($request->has('category_id')) {
+            // Переменная для хранения информации о категориях для отладки
+            $debugCategories = [
+                'request_categories' => null,
+                'expanded_categories' => null,
+                'categories_count' => 0
+            ];
+            
+            // Переменная для хранения расширенных категорий для проверки товаров
+            $allCategoryIds = [];
+
+            // Фильтрация по категориям (с рекурсивным поиском в подкатегориях)
+            // Приоритет: если есть categories[] или categories, используем их (игнорируем category_id)
+            // Если есть только category_id, используем его
+            $categoryIds = null;
+            
+            // Проверяем все возможные варианты передачи категорий
+            // Сначала проверяем categories[] (может быть в query string как categories[]=1&categories[]=2)
+            if ($request->has('categories[]')) {
+                $categoryIds = $request->input('categories[]');
+            }
+            
+            // Затем проверяем categories (может быть строкой через запятую или массивом)
+            if (!$categoryIds && $request->has('categories')) {
+                $categoryIds = $request->input('categories');
+                // Если передан строкой через запятую, преобразуем в массив
+                if (is_string($categoryIds)) {
+                    $categoryIds = array_filter(explode(',', $categoryIds));
+                }
+            }
+            
+            // Также проверяем все параметры запроса на наличие categories
+            if (!$categoryIds) {
+                $allParams = $request->all();
+                foreach ($allParams as $key => $value) {
+                    if (strpos($key, 'categories') !== false && $key !== 'category_id') {
+                        if (is_array($value)) {
+                            $categoryIds = $value;
+                        } elseif (is_string($value) && !empty($value)) {
+                            $categoryIds = array_filter(explode(',', $value));
+                        }
+                        break;
+                    }
+                }
+            }
+
+            // Если есть множественные категории, используем их
+            if (is_array($categoryIds) && !empty($categoryIds)) {
+                // Преобразуем в массив целых чисел
+                $categoryIds = array_map('intval', $categoryIds);
+                $categoryIds = array_filter($categoryIds);
+                
+                if (!empty($categoryIds)) {
+                    // Получаем все дочерние категории рекурсивно
+                    $allCategoryIds = \App\Models\ShopCategory::getAllDescendantIds($categoryIds);
+                    // Сохраняем для использования в отладке
+                    $expandedCategoryIds = $allCategoryIds;
+                    
+                    // Сохраняем информацию для отладки
+                    $debugCategories = [
+                        'request_categories' => $categoryIds,
+                        'expanded_categories' => $allCategoryIds,
+                        'categories_count' => count($allCategoryIds)
+                    ];
+                    
+                    // ОТЛАДКА: Выводим список категорий для поиска
+                    Log::info('ShopGoodsController: Фильтрация по множественным категориям', [
+                        'request_categories' => $categoryIds,
+                        'expanded_categories' => $allCategoryIds,
+                        'categories_count' => count($allCategoryIds),
+                        'request_params' => $request->all()
+                    ]);
+                    
+                    // Ищем товары, у которых есть хотя бы одна категория из списка (включая подкатегории)
+                    // whereHas с whereIn находит товары, у которых есть хотя бы одна категория из списка
+                    $query->whereHas('categories', function($q) use ($allCategoryIds) {
+                        $q->whereIn('shop_categories.id', $allCategoryIds);
+                    });
+                    
+                }
+            } 
+            // Если нет множественных категорий, проверяем category_id
+            elseif ($request->has('category_id')) {
                 $categoryId = (int)$request->input('category_id');
                 if ($categoryId > 0) {
                     // Получаем все дочерние категории рекурсивно
                     $allCategoryIds = \App\Models\ShopCategory::getAllDescendantIds([$categoryId]);
+                    // Сохраняем для использования в отладке
+                    $expandedCategoryIds = $allCategoryIds;
                     
-                    // Ищем товары во всех категориях (включая подкатегории)
+                    // Сохраняем информацию для отладки
+                    $debugCategories = [
+                        'request_categories' => [$categoryId],
+                        'expanded_categories' => $allCategoryIds,
+                        'categories_count' => count($allCategoryIds)
+                    ];
+                    
+                    // ОТЛАДКА: Выводим список категорий для поиска
+                    Log::info('ShopGoodsController: Фильтрация по category_id', [
+                        'request_category_id' => $categoryId,
+                        'expanded_categories' => $allCategoryIds,
+                        'categories_count' => count($allCategoryIds),
+                        'request_params' => $request->all()
+                    ]);
+                    
+                    // Ищем товары, у которых есть хотя бы одна категория из списка (включая подкатегории)
                     $query->whereHas('categories', function($q) use ($allCategoryIds) {
                         $q->whereIn('shop_categories.id', $allCategoryIds);
                     });
                 }
             }
-
-                // Фильтрация по множественным категориям (с рекурсивным поиском в подкатегориях)
-                $categoryIds = null;
-                
-                // Проверяем все возможные варианты передачи категорий
-                if ($request->has('categories')) {
-                    $categoryIds = $request->input('categories');
-                    // Если передан строкой через запятую, преобразуем в массив
-                    if (is_string($categoryIds)) {
-                        $categoryIds = array_filter(explode(',', $categoryIds));
-                    }
-                } 
-                
-                // Проверяем categories[] (может быть в query string как categories[]=1&categories[]=2)
-                if (!$categoryIds && $request->has('categories[]')) {
-                    $categoryIds = $request->input('categories[]');
-                }
-                
-                // Также проверяем все параметры запроса на наличие categories
-                if (!$categoryIds) {
-                    $allParams = $request->all();
-                    foreach ($allParams as $key => $value) {
-                        if (strpos($key, 'categories') !== false) {
-                            if (is_array($value)) {
-                                $categoryIds = $value;
-                            } elseif (is_string($value) && !empty($value)) {
-                                $categoryIds = array_filter(explode(',', $value));
-                            }
-                            break;
-                        }
-                    }
-                }
-
-                if (is_array($categoryIds) && !empty($categoryIds)) {
-                    // Преобразуем в массив целых чисел
-                    $categoryIds = array_map('intval', $categoryIds);
-                    $categoryIds = array_filter($categoryIds);
-                    
-                    if (!empty($categoryIds)) {
-                        // Получаем все дочерние категории рекурсивно
-                        $allCategoryIds = \App\Models\ShopCategory::getAllDescendantIds($categoryIds);
-                        
-                        // Ищем товары во всех категориях (включая подкатегории)
-                        $query->whereHas('categories', function($q) use ($allCategoryIds) {
-                            $q->whereIn('shop_categories.id', $allCategoryIds);
-                        });
-                    }
-                }
 
             // Фильтрация по бренду
             if ($request->has('brand_id')) {
@@ -949,6 +998,82 @@ class ShopGoodsController extends Controller
                 'current_page' => $goods->currentPage(),
                 'per_page' => $goods->perPage()
             ]);
+            
+            // ОТЛАДКА: Проверяем товар с ID 21476 и подкатегории категории 15
+            // Это поможет понять, почему товар не отображается
+            $good21476 = \App\Models\ShopGood::find(21476);
+            if ($good21476) {
+                $goodCategories = $good21476->categories->pluck('id')->toArray();
+                $goodCategoryNames = $good21476->categories->pluck('name', 'id')->toArray();
+                $isActive = $good21476->is_active;
+                
+                // Получаем информацию о подкатегориях категории 15
+                $category15 = \App\Models\ShopCategory::find(15);
+                $category15Children = [];
+                $category15AllDescendants = [];
+                if ($category15) {
+                    // Прямые дочерние категории
+                    $category15Children = \App\Models\ShopCategory::where('parent_id', 15)
+                        ->where('is_active', true)
+                        ->get(['id', 'name', 'slug', 'parent_id'])
+                        ->toArray();
+                    
+                    // Все дочерние категории рекурсивно
+                    $category15AllDescendants = \App\Models\ShopCategory::getAllDescendantIds([15]);
+                }
+                
+                // Проверяем, проходит ли товар через фильтры
+                $passesCategoryFilter = false;
+                if (!empty($expandedCategoryIds ?? [])) {
+                    $passesCategoryFilter = !empty(array_intersect($goodCategories, $expandedCategoryIds));
+                }
+                
+                // Проверяем, находится ли товар в результатах запроса ДО пагинации
+                $testQuery = clone $query;
+                $inQueryResults = $testQuery->where('shop_goods.id', 21476)->exists();
+                
+                // Проверяем, находится ли товар в результатах после пагинации
+                $inPaginatedResults = $goods->getCollection()->contains('id', 21476);
+                
+                // Определяем, на какой странице находится товар
+                $testQueryForPage = clone $query;
+                $allGoodsIds = $testQueryForPage->orderBy('name', 'asc')->pluck('id')->toArray();
+                $goodPosition = array_search(21476, $allGoodsIds);
+                $goodPage = $goodPosition !== false ? (int)floor($goodPosition / $goods->perPage()) + 1 : null;
+                
+                Log::info('ShopGoodsController: Детальная отладка товара ID 21476 и категории 15', [
+                    'good_id' => 21476,
+                    'good_name' => $good21476->name ?? null,
+                    'is_active' => $isActive,
+                    'good_categories' => $goodCategories,
+                    'good_category_names' => $goodCategoryNames,
+                    'category_15_info' => $category15 ? [
+                        'id' => $category15->id,
+                        'name' => $category15->name,
+                        'slug' => $category15->slug,
+                        'parent_id' => $category15->parent_id
+                    ] : null,
+                    'category_15_direct_children_count' => count($category15Children),
+                    'category_15_direct_children' => $category15Children,
+                    'category_15_all_descendants_count' => count($category15AllDescendants),
+                    'category_15_all_descendants_sample' => array_slice($category15AllDescendants, 0, 50),
+                    'expanded_categories_count' => count($expandedCategoryIds ?? []),
+                    'passes_category_filter' => $passesCategoryFilter,
+                    'in_query_results_before_pagination' => $inQueryResults,
+                    'in_paginated_results' => $inPaginatedResults,
+                    'request_categories' => $debugCategories['request_categories'] ?? null,
+                    'category_15_in_good_categories' => in_array(15, $goodCategories),
+                    'any_good_category_in_expanded' => !empty($expandedCategoryIds) ? !empty(array_intersect($goodCategories, $expandedCategoryIds)) : false,
+                    'good_categories_in_expanded' => !empty($expandedCategoryIds) ? array_intersect($goodCategories, $expandedCategoryIds) : [],
+                    'total_in_results' => $goods->total(),
+                    'current_page' => $goods->currentPage(),
+                    'per_page' => $goods->perPage(),
+                    'good_position_in_list' => $goodPosition !== false ? $goodPosition + 1 : null,
+                    'good_page_number' => $goodPage
+                ]);
+            } else {
+                Log::warning('ShopGoodsController: Товар с ID 21476 не найден в базе данных');
+            }
 
             // Получаем информацию о пользователе для проверки избранного
             $token = request()->bearerToken();
@@ -1000,11 +1125,16 @@ class ShopGoodsController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $goods->items(),
-                    'pagination' => [
-                        'current_page' => $goods->currentPage(),
-                        'last_page' => $goods->lastPage(),
-                        'per_page' => $goods->perPage(),
+                'pagination' => [
+                    'current_page' => $goods->currentPage(),
+                    'last_page' => $goods->lastPage(),
+                    'per_page' => $goods->perPage(),
                     'total' => $goods->total()
+                ],
+                // ОТЛАДКА: Информация о категориях для поиска
+                'debug' => [
+                    'categories' => $debugCategories,
+                    'request_params' => $request->only(['category_id', 'categories', 'categories[]'])
                 ]
             ]);
 
