@@ -700,6 +700,12 @@ Route::get('/test/oauth', function () {
     });
     Route::get('/public/sliders/{id}', [App\Http\Controllers\Api\Public\SliderController::class, 'show']);
 
+    // Публичные маршруты для текстовых блоков
+    Route::options('/public/site/textblocks/{id}', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/site/textblocks/{id}', [App\Http\Controllers\Api\Public\TextblockController::class, 'show']);
+
     // Публичные маршруты для согласий на куки
     Route::options('/public/cookie-consent/check', function () {
         return response()->json([], 200);
@@ -2546,6 +2552,15 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/{sliderId}/images', [\App\Http\Controllers\Api\Admin\SliderController::class, 'uploadImage']);
                 Route::put('/{sliderId}/images/{imageId}', [\App\Http\Controllers\Api\Admin\SliderController::class, 'updateImage']);
                 Route::delete('/{sliderId}/images/{imageId}', [\App\Http\Controllers\Api\Admin\SliderController::class, 'deleteImage']);
+            });
+
+            // Текстовые блоки (доступны админам и пользователям с ролью site)
+            Route::prefix('textblocks')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Api\Admin\TextblockController::class, 'index']);
+                Route::post('/', [\App\Http\Controllers\Api\Admin\TextblockController::class, 'store']);
+                Route::get('/{id}', [\App\Http\Controllers\Api\Admin\TextblockController::class, 'show']);
+                Route::put('/{id}', [\App\Http\Controllers\Api\Admin\TextblockController::class, 'update']);
+                Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\TextblockController::class, 'destroy']);
             });
         });
 
