@@ -1151,7 +1151,11 @@ class ShopGoodsController extends Controller
                     'weight' => $good->weight,
                     'length' => $good->depth, // В базе данных поле называется depth, но в API возвращаем как length
                     'width' => $good->width,
-                    'height' => $good->height
+                    'height' => $good->height,
+                    // Добавляем информацию об остатках
+                    'stock_quantity' => $good->stock_quantity ?? 0,
+                    'remote_stock_quantity' => $good->remote_stock_quantity ?? '',
+                    'fast_remote_stock_quantity' => $good->fast_remote_stock_quantity ?? ''
                 ];
 
                 // Добавляем вариации с атрибутами
@@ -1194,7 +1198,11 @@ class ShopGoodsController extends Controller
                         'weight' => $variation->weight,
                         'length' => $variation->length,
                         'width' => $variation->width,
-                        'height' => $variation->height
+                        'height' => $variation->height,
+                        // Добавляем информацию об остатках для вариаций
+                        'stock_quantity' => $variation->stock_quantity ?? 0,
+                        'remote_stock_quantity' => $variation->remote_stock_quantity ?? '',
+                        'fast_remote_stock_quantity' => $variation->fast_remote_stock_quantity ?? ''
                     ];
                 }
 

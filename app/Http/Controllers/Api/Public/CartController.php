@@ -103,6 +103,36 @@ class CartController extends Controller
     }
 
     /**
+     * Проверить, есть ли быстрый остаток на удаленном складе
+     */
+    private function hasFastRemoteStock(?string $fastRemoteStockQuantity, int $shopRemoteQ): bool
+    {
+        // Если shop_remote_q = 1, не учитываем удаленный склад
+        if ($shopRemoteQ === 1) {
+            return false;
+        }
+
+        // Если значение пустое, null или "0"
+        if (empty($fastRemoteStockQuantity) || $fastRemoteStockQuantity === '0' || $fastRemoteStockQuantity === '') {
+            return false;
+        }
+
+        // Если значение - число больше 0
+        $parsed = $this->parseRemoteStock($fastRemoteStockQuantity);
+        if ($parsed > 0) {
+            return true;
+        }
+
+        // Если строка содержит что-то (например, ">10"), считаем что есть остаток
+        $trimmed = trim($fastRemoteStockQuantity);
+        if ($trimmed !== '' && $trimmed !== '0') {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * Получить максимальное количество для обновления корзины
      */
     private function getMaxQuantityForUpdate(int $localStock, int $remoteStock, int $shopRemoteQ, int $showGoodMode): int
@@ -213,6 +243,7 @@ class CartController extends Controller
                 // Проверяем остатки в зависимости от режима
                 $stockQuantity = $variation->stock_quantity ?? 0;
                 $remoteStockQuantity = $variation->remote_stock_quantity ?? '';
+                $fastRemoteStockQuantity = $variation->fast_remote_stock_quantity ?? '';
                 
                 // Проверяем наличие удаленного остатка ПЕРВЫМ
                 $hasRemoteStock = $this->hasRemoteStock($remoteStockQuantity, $shopRemoteQ);
@@ -221,7 +252,15 @@ class CartController extends Controller
                     // Если есть удаленный остаток, разрешаем добавление независимо от локального остатка
                     // Продолжаем выполнение функции
                 } else {
-                    // Если нет удаленного остатка, проверяем локальный остаток
+                    // Проверяем быстрый остаток на удаленном складе
+                    // Используем ту же функцию hasRemoteStock, что и для remote_stock_quantity, но передаем shop_remote_q = 2, чтобы обойти проверку shop_remote_q = 1
+                    $hasFastRemoteStock = $this->hasRemoteStock($fastRemoteStockQuantity, 2);
+                    
+                    if ($hasFastRemoteStock) {
+                        // Если есть быстрый остаток, разрешаем добавление независимо от локального остатка
+                        // Продолжаем выполнение функции
+                    } else {
+                        // Если нет ни удаленного, ни быстрого остатка, проверяем локальный остаток
                     if ($showGoodMode === 1 && $stockQuantity <= 0) {
                         return response()->json([
                             'success' => false,
@@ -267,11 +306,13 @@ class CartController extends Controller
                             ], 400);
                         }
                     }
+                    }
                 }
             } else {
                 // Проверяем остатки основного товара в зависимости от режима
                 $stockQuantity = $good->stock_quantity ?? 0;
                 $remoteStockQuantity = $good->remote_stock_quantity ?? '';
+                $fastRemoteStockQuantity = $good->fast_remote_stock_quantity ?? '';
                 
                 // Проверяем наличие удаленного остатка ПЕРВЫМ
                 $hasRemoteStock = $this->hasRemoteStock($remoteStockQuantity, $shopRemoteQ);
@@ -280,7 +321,15 @@ class CartController extends Controller
                     // Если есть удаленный остаток, разрешаем добавление независимо от локального остатка
                     // Продолжаем выполнение функции
                 } else {
-                    // Если нет удаленного остатка, проверяем локальный остаток
+                    // Проверяем быстрый остаток на удаленном складе
+                    // Используем ту же функцию hasRemoteStock, что и для remote_stock_quantity, но передаем shop_remote_q = 2, чтобы обойти проверку shop_remote_q = 1
+                    $hasFastRemoteStock = $this->hasRemoteStock($fastRemoteStockQuantity, 2);
+                    
+                    if ($hasFastRemoteStock) {
+                        // Если есть быстрый остаток, разрешаем добавление независимо от локального остатка
+                        // Продолжаем выполнение функции
+                    } else {
+                        // Если нет ни удаленного, ни быстрого остатка, проверяем локальный остаток
                     if ($showGoodMode === 1 && $stockQuantity <= 0) {
                         return response()->json([
                             'success' => false,
@@ -325,6 +374,7 @@ class CartController extends Controller
                                 'message' => 'Недостаточно товара на складе'
                             ], 400);
                         }
+                    }
                     }
                 }
             }
@@ -475,6 +525,7 @@ class CartController extends Controller
 
                 // Получаем остатки в зависимости от режима shop_remote_q
                 $remoteStockQuantity = null;
+                $fastRemoteStockQuantity = null;
                 if ($variationId) {
                     $variation = ShopGoodVariation::find($variationId);
                     if (!$variation) {
@@ -485,9 +536,11 @@ class CartController extends Controller
                     }
                     $localStock = $variation->stock_quantity ?? 0;
                     $remoteStockQuantity = $variation->remote_stock_quantity;
+                    $fastRemoteStockQuantity = $variation->fast_remote_stock_quantity ?? '';
                 } else {
                     $localStock = $good->stock_quantity ?? 0;
                     $remoteStockQuantity = $good->remote_stock_quantity;
+                    $fastRemoteStockQuantity = $good->fast_remote_stock_quantity ?? '';
                 }
 
                 // Проверяем наличие удаленного остатка ПЕРВЫМ
@@ -501,6 +554,18 @@ class CartController extends Controller
                         $quantity = $maxQuantity; // Ограничиваем до 99
                     }
                 } else {
+                    // Проверяем быстрый остаток на удаленном складе
+                    // Используем ту же функцию hasRemoteStock, что и для remote_stock_quantity, но передаем shop_remote_q = 2, чтобы обойти проверку shop_remote_q = 1
+                    $hasFastRemote = $this->hasRemoteStock($fastRemoteStockQuantity, 2);
+                    
+                    if ($hasFastRemote) {
+                        // Если есть быстрый остаток, разрешаем обновление до 99
+                        // Максимальное количество для быстрого удаленного склада - 99
+                        $maxQuantity = 99;
+                        if ($quantity > $maxQuantity) {
+                            $quantity = $maxQuantity; // Ограничиваем до 99
+                        }
+                    } else {
                     // Если нет удаленного остатка, используем стандартную логику
                     $remoteStock = $this->parseRemoteStock($remoteStockQuantity ?? '');
                     $maxQuantity = $this->getMaxQuantityForUpdate($localStock, $remoteStock, $shopRemoteQ, $showGoodMode);
@@ -531,6 +596,7 @@ class CartController extends Controller
                                 'message' => 'Недостаточно товара на складе. Доступно: ' . $maxQuantity . ' шт.'
                             ], 400);
                         }
+                    }
                     }
                 }
 
@@ -1116,9 +1182,9 @@ class CartController extends Controller
     private function getCartItems(?User $user, string $sessionId)
     {
         $query = ShopCartItem::active()->with([
-            'good:id,slug,stock_quantity,remote_stock_quantity,demping_price,show_demping',
+            'good:id,slug,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,demping_price,show_demping',
             // Загружаем только саму вариацию; атрибуты подтянем отдельно при форматировании, если нужно
-            'variation:id,name,sku,stock_quantity,remote_stock_quantity,demping_price,show_demping'
+            'variation:id,name,sku,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,demping_price,show_demping'
         ]);
 
         if ($user) {
@@ -1238,12 +1304,15 @@ class CartController extends Controller
             // Получаем остатки товара
             $stockQuantity = 0;
             $remoteStockQuantity = '';
+            $fastRemoteStockQuantity = '';
             if ($item->variation_id && $item->relationLoaded('variation') && $item->variation) {
                 $stockQuantity = $item->variation->stock_quantity ?? 0;
                 $remoteStockQuantity = $item->variation->remote_stock_quantity ?? '';
+                $fastRemoteStockQuantity = $item->variation->fast_remote_stock_quantity ?? '';
             } elseif ($item->relationLoaded('good') && $item->good) {
                 $stockQuantity = $item->good->stock_quantity ?? 0;
                 $remoteStockQuantity = $item->good->remote_stock_quantity ?? '';
+                $fastRemoteStockQuantity = $item->good->fast_remote_stock_quantity ?? '';
             }
 
             $items[$cartKey] = [
@@ -1261,7 +1330,8 @@ class CartController extends Controller
                 'good_image' => $item->good_image,
                 'good_slug' => $item->good ? $item->good->slug : '',
                 'stock_quantity' => $stockQuantity,
-                'remote_stock_quantity' => $remoteStockQuantity
+                'remote_stock_quantity' => $remoteStockQuantity,
+                'fast_remote_stock_quantity' => $fastRemoteStockQuantity
             ];
 
             $subtotal += $item->total;
