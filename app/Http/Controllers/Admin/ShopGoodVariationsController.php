@@ -250,7 +250,7 @@ class ShopGoodVariationsController extends Controller
 
         $values = \Illuminate\Support\Facades\DB::table('shop_variation_attribute_values')
             ->where('attribute_id', (int)$attributeId)
-            ->select('id', 'value')
+            ->select('id', 'value', 'color', 'image_path')
             ->orderBy('value')
             ->get();
 

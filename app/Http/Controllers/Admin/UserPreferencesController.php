@@ -27,11 +27,13 @@ class UserPreferencesController extends Controller
 
             $additionalInfo = $user->additional_info ?? [];
             $preferences = $additionalInfo['goods_table_columns'] ?? null;
+            $bulkActionsVisibility = $additionalInfo['bulk_actions_visibility'] ?? null;
 
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'goods_table_columns' => $preferences
+                    'goods_table_columns' => $preferences,
+                    'bulk_actions_visibility' => $bulkActionsVisibility
                 ]
             ]);
         } catch (\Exception $e) {
@@ -59,7 +61,9 @@ class UserPreferencesController extends Controller
 
             $validator = Validator::make($request->all(), [
                 'goods_table_columns' => 'nullable|array',
-                'goods_table_columns.*' => 'boolean'
+                'goods_table_columns.*' => 'boolean',
+                'bulk_actions_visibility' => 'nullable|array',
+                'bulk_actions_visibility.*' => 'boolean'
             ]);
 
             if ($validator->fails()) {
@@ -75,6 +79,10 @@ class UserPreferencesController extends Controller
             if ($request->has('goods_table_columns')) {
                 $additionalInfo['goods_table_columns'] = $request->input('goods_table_columns');
             }
+            
+            if ($request->has('bulk_actions_visibility')) {
+                $additionalInfo['bulk_actions_visibility'] = $request->input('bulk_actions_visibility');
+            }
 
             $user->additional_info = $additionalInfo;
             $user->save();
@@ -83,7 +91,8 @@ class UserPreferencesController extends Controller
                 'success' => true,
                 'message' => 'Настройки успешно сохранены',
                 'data' => [
-                    'goods_table_columns' => $additionalInfo['goods_table_columns'] ?? null
+                    'goods_table_columns' => $additionalInfo['goods_table_columns'] ?? null,
+                    'bulk_actions_visibility' => $additionalInfo['bulk_actions_visibility'] ?? null
                 ]
             ]);
         } catch (\Exception $e) {

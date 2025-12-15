@@ -1319,6 +1319,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::put('/{id}/properties', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'updateProperties']);
                 Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'destroy']);
                 Route::post('/bulk-update', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'bulkUpdate']);
+                Route::post('/bulk/create-variations', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'bulkCreateVariations']);
                 Route::post('/transfer-data', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'transferData']);
                 Route::post('/check-duplicates', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'checkDuplicates']);
                 Route::post('/bulk-import', [\App\Http\Controllers\Admin\BulkGoodsImportController::class, 'bulkImport']);

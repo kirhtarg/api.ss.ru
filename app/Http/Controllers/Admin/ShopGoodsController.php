@@ -1848,8 +1848,8 @@ class ShopGoodsController extends Controller
                             $replace = $data['replace'] ?? '';
                             $name = $good->name;
                             
-                            // Заменяем все вхождения текста
-                            $newName = str_replace($search, $replace, $name);
+                            // Заменяем все вхождения текста (регистронезависимый поиск)
+                            $newName = str_ireplace($search, $replace, $name);
                             
                             if ($newName !== $name) {
                                 $good->update(['name' => $newName]);
@@ -4898,6 +4898,231 @@ class ShopGoodsController extends Controller
                 'message' => 'Ошибка получения списка поставщиков: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Массовое создание вариаций из товаров
+     * Преобразует несколько товаров в вариации одного главного товара
+     */
+    public function bulkCreateVariations(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'main_good_id' => 'required|exists:shop_goods,id',
+            'main_good_name' => 'nullable|string|max:255',
+            'selected_attributes' => 'required|array|min:1',
+            'selected_attributes.*' => 'exists:shop_variation_attributes,id',
+            'goods_mapping' => 'required|array|min:1',
+            'goods_mapping.*.good_id' => 'required|exists:shop_goods,id',
+            'goods_mapping.*.attribute_values' => 'required|array',
+            'goods_mapping.*.attribute_values.*.attribute_id' => 'required|exists:shop_variation_attributes,id',
+            'goods_mapping.*.attribute_values.*.value_id' => 'required|exists:shop_variation_attribute_values,id'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $mainGoodId = $request->main_good_id;
+            $mainGoodName = $request->main_good_name;
+            $selectedAttributes = $request->selected_attributes;
+            $goodsMapping = $request->goods_mapping;
+
+            // Загружаем главный товар
+            $mainGood = ShopGood::with(['variations'])->findOrFail($mainGoodId);
+
+            // Обновляем название главного товара, если указано
+            if ($mainGoodName && trim($mainGoodName) !== '') {
+                $mainGood->name = trim($mainGoodName);
+                $mainGood->save();
+            }
+
+            // Проверяем, что все товары в списке существуют
+            $goodsToConvert = array_column($goodsMapping, 'good_id');
+            // Теперь главный товар может быть в списке - для него тоже создадим вариацию
+
+            // Проверяем, что главный товар не имеет вариаций (опционально, можно разрешить)
+            // if ($mainGood->variations()->count() > 0) {
+            //     return response()->json([
+            //         'success' => false,
+            //         'message' => 'Главный товар уже имеет вариации'
+            //     ], 422);
+            // }
+
+            $createdVariations = 0;
+            $skippedVariations = 0;
+            $errors = [];
+
+            // Получаем максимальный sort_order для вариаций главного товара
+            $maxSortOrder = $mainGood->variations()->max('sort_order') ?? 0;
+
+            // Обрабатываем каждый товар
+            foreach ($goodsMapping as $mapping) {
+                $sourceGoodId = $mapping['good_id'];
+                $attributeValues = $mapping['attribute_values'];
+                $isMainGood = ($sourceGoodId == $mainGoodId);
+
+                // Проверяем, что все выбранные атрибуты присутствуют
+                $mappingAttributeIds = array_column($attributeValues, 'attribute_id');
+                $missingAttributes = array_diff($selectedAttributes, $mappingAttributeIds);
+                if (!empty($missingAttributes)) {
+                    $errors[] = "Товар ID {$sourceGoodId}: не указаны значения для всех выбранных атрибутов";
+                    continue;
+                }
+
+                // Загружаем исходный товар
+                $sourceGood = ShopGood::findOrFail($sourceGoodId);
+
+                // Проверяем, нет ли уже вариации с такими же атрибутами
+                $existingVariation = $this->findVariationByAttributes($mainGoodId, $attributeValues);
+                if ($existingVariation) {
+                    $skippedVariations++;
+                    $errors[] = "Товар ID {$sourceGoodId}: вариация с такими атрибутами уже существует";
+                    // Если это не главный товар, удаляем его
+                    if (!$isMainGood) {
+                        $sourceGood->delete();
+                    }
+                    continue;
+                }
+
+                // Создаем вариацию
+                $variation = \App\Models\ShopGoodVariation::create([
+                    'good_id' => $mainGoodId,
+                    'name' => $mainGood->name, // Используем название главного товара
+                    'sku' => $sourceGood->sku,
+                    'price' => $sourceGood->price,
+                    'sale_price' => $sourceGood->sale_price,
+                    'demping_price' => $sourceGood->demping_price,
+                    'show_demping' => $sourceGood->show_demping,
+                    'stock_quantity' => $sourceGood->stock_quantity,
+                    'remote_stock_quantity' => $sourceGood->remote_stock_quantity,
+                    'fast_remote_stock_quantity' => $sourceGood->fast_remote_stock_quantity,
+                    'weight' => $sourceGood->weight,
+                    'length' => $sourceGood->length,
+                    'height' => $sourceGood->height,
+                    'width' => $sourceGood->width,
+                    'is_active' => $sourceGood->is_active,
+                    'sort_order' => ++$maxSortOrder
+                ]);
+
+                // Привязываем значения атрибутов к вариации
+                foreach ($attributeValues as $attrValue) {
+                    DB::table('shop_variation_attributes_values')->insert([
+                        'variation_id' => $variation->id,
+                        'attribute_value_id' => $attrValue['value_id'],
+                        'created_at' => now(),
+                        'updated_at' => now()
+                    ]);
+                }
+
+                // Переносим изображения от исходного товара к вариации
+                DB::table('shop_good_images')
+                    ->where('good_id', $sourceGoodId)
+                    ->whereNull('variation_id')
+                    ->update([
+                        'good_id' => null,
+                        'variation_id' => $variation->id
+                    ]);
+
+                // Удаляем исходный товар только если это не главный товар
+                if (!$isMainGood) {
+                    $sourceGood->delete();
+                }
+
+                $createdVariations++;
+            }
+
+            DB::commit();
+
+            $message = "Успешно создано вариаций: {$createdVariations}";
+            if ($skippedVariations > 0) {
+                $message .= ", пропущено: {$skippedVariations}";
+            }
+            if (!empty($errors)) {
+                $message .= ". Ошибки: " . implode('; ', array_slice($errors, 0, 5));
+                if (count($errors) > 5) {
+                    $message .= " и еще " . (count($errors) - 5) . " ошибок";
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => $message,
+                'data' => [
+                    'created_variations' => $createdVariations,
+                    'skipped_variations' => $skippedVariations,
+                    'errors' => $errors
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Error in bulkCreateVariations: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка создания вариаций: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Поиск вариации по атрибутам
+     */
+    private function findVariationByAttributes($goodId, $attributeValues): ?\App\Models\ShopGoodVariation
+    {
+        // Получаем все вариации товара
+        $variations = \App\Models\ShopGoodVariation::where('good_id', $goodId)->get();
+        
+        if ($variations->isEmpty()) {
+            return null;
+        }
+
+        // Сортируем значения атрибутов для сравнения
+        $searchAttributeIds = array_column($attributeValues, 'attribute_id');
+        $searchValueIds = array_column($attributeValues, 'value_id');
+        sort($searchAttributeIds);
+        sort($searchValueIds);
+
+        // Проверяем каждую вариацию
+        foreach ($variations as $variation) {
+            $variationAttributeValues = DB::table('shop_variation_attributes_values')
+                ->where('variation_id', $variation->id)
+                ->pluck('attribute_value_id')
+                ->toArray();
+
+            if (empty($variationAttributeValues)) {
+                continue;
+            }
+
+            // Получаем attribute_id для каждого value_id
+            $variationAttributes = DB::table('shop_variation_attributes_values as vav')
+                ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                ->where('vav.variation_id', $variation->id)
+                ->select('av.attribute_id', 'vav.attribute_value_id')
+                ->get();
+
+            $variationAttributeIds = $variationAttributes->pluck('attribute_id')->toArray();
+            $variationValueIds = $variationAttributes->pluck('attribute_value_id')->toArray();
+
+            sort($variationAttributeIds);
+            sort($variationValueIds);
+
+            // Сравниваем атрибуты и значения
+            if ($searchAttributeIds === $variationAttributeIds && $searchValueIds === $variationValueIds) {
+                return $variation;
+            }
+        }
+
+        return null;
     }
 
 }
