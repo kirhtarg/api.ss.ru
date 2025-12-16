@@ -5129,4 +5129,33 @@ class ShopGoodsController extends Controller
         return null;
     }
 
+    /**
+     * Проверить уникальность слага
+     */
+    public function checkSlug(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'slug' => 'required|string|max:255',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $slug = $request->input('slug');
+        
+        // Простая проверка существования товара со слагом (только проверка, без загрузки данных)
+        $exists = ShopGood::where('slug', $slug)->exists();
+
+        return response()->json([
+            'success' => true,
+            'available' => !$exists,
+            'message' => $exists ? 'Слаг уже используется' : 'Слаг доступен'
+        ]);
+    }
+
 }
