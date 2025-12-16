@@ -1903,9 +1903,8 @@ class ShopGoodsController extends Controller
      */
     public function filters(): JsonResponse
     {
-        $categories = ShopCategory::active()->ordered()->with(['children' => function($query) {
-            $query->where('is_active', true)
-                  ->orderBy('sort_order', 'asc')
+        $categories = ShopCategory::ordered()->with(['children' => function($query) {
+            $query->orderBy('sort_order', 'asc')
                   ->orderBy('name', 'asc')
                   ->select('id', 'name', 'parent_id');
         }])->get(['id', 'name', 'parent_id']);
@@ -4992,9 +4991,14 @@ class ShopGoodsController extends Controller
                 }
 
                 // Создаем вариацию
+                // Используем название из goods_mapping, если передано, иначе название исходного товара
+                $variationName = isset($mapping['name']) && !empty($mapping['name']) 
+                    ? trim($mapping['name']) 
+                    : $sourceGood->name;
+                
                 $variation = \App\Models\ShopGoodVariation::create([
                     'good_id' => $mainGoodId,
-                    'name' => $mainGood->name, // Используем название главного товара
+                    'name' => $variationName, // Используем название исходного товара из goods_mapping
                     'sku' => $sourceGood->sku,
                     'price' => $sourceGood->price,
                     'sale_price' => $sourceGood->sale_price,

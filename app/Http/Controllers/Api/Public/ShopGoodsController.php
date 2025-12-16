@@ -1086,6 +1086,9 @@ class ShopGoodsController extends Controller
                 'brands' => function($query) {
                     $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug', 'shop_brands.logo');
                 },
+                'tags' => function($query) {
+                    $query->select('shop_tags.id', 'shop_tags.name', 'shop_tags.color', 'shop_tags.slug');
+                },
             ])
             ->whereIn('id', $goodIds)
             ->where('is_active', true)
@@ -1145,6 +1148,7 @@ class ShopGoodsController extends Controller
                     'properties' => $good->properties ? $good->properties->toArray() : [],
                     'categories' => $good->categories ? $good->categories->toArray() : [],
                     'brands' => $good->brands ? $good->brands->toArray() : [],
+                    'tags' => $good->tags ? $good->tags->toArray() : [],
                     'variations' => [],
                     'is_favorite' => $isFavorite,
                     // Добавляем поля размеров и веса
@@ -1326,6 +1330,9 @@ class ShopGoodsController extends Controller
                 'brands' => function($query) {
                     $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug', 'shop_brands.logo');
                 },
+                'tags' => function($query) {
+                    $query->select('shop_tags.id', 'shop_tags.name', 'shop_tags.color', 'shop_tags.slug');
+                },
                 'label' => function($query) {
                     $query->select('id', 'name', 'color');
                 },
@@ -1453,6 +1460,9 @@ class ShopGoodsController extends Controller
                 },
                 'brands' => function($query) {
                     $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug', 'shop_brands.logo');
+                },
+                'tags' => function($query) {
+                    $query->select('shop_tags.id', 'shop_tags.name', 'shop_tags.color', 'shop_tags.slug');
                 },
                 'label' => function($query) {
                     $query->select('id', 'name', 'color');
