@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopGood;
+use App\Models\ShopGoodVariation;
+use App\Models\ShopGoodImage;
 use App\Models\ShopBrand;
 use App\Models\ShopTag;
 use App\Models\ShopLabel;
@@ -674,6 +676,51 @@ class ShopGoodsController extends Controller
 
             $goods = $query->paginate($perPage);
 
+            // Получаем URL фронтенда для изображений
+            $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
+            
+            // Проверяем, нужно ли загружать изображения вариаций
+            $withVariationImages = $request->boolean('with_variation_images', false);
+            if ($withVariationImages) {
+                $goods->load('variations.images');
+            }
+            
+            // Проверяем, нужно ли загружать атрибуты вариаций
+            $withVariationAttributes = $request->boolean('with_variation_attributes', false);
+            if ($withVariationAttributes) {
+                // Загружаем атрибуты для всех вариаций
+                foreach ($goods->items() as $good) {
+                    if ($good->variations) {
+                        foreach ($good->variations as $variation) {
+                            $variation->attributes = DB::table('shop_variation_attributes_values as vav')
+                                ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                                ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                                ->where('vav.variation_id', $variation->id)
+                                ->select('a.id as attribute_id', 'a.name as attribute_name', 'av.id as value_id', 'av.value as value_value')
+                                ->get()
+                                ->map(function ($row) {
+                                    return [
+                                        'attribute' => [
+                                            'id' => $row->attribute_id,
+                                            'name' => $row->attribute_name
+                                        ],
+                                        'value' => [
+                                            'id' => $row->value_id,
+                                            'value' => $row->value_value
+                                        ],
+                                        'attribute_id' => $row->attribute_id,
+                                        'attribute_name' => $row->attribute_name,
+                                        'value_id' => $row->value_id,
+                                        'value_value' => $row->value_value,
+                                        'value' => $row->value_value
+                                    ];
+                                })
+                                ->toArray();
+                        }
+                    }
+                }
+            }
+
             // Загружаем значения свойств для всех товаров
             $hasValueCol = Schema::hasColumn('shop_good_properties', 'value');
             foreach ($goods->items() as $good) {
@@ -690,31 +737,96 @@ class ShopGoodsController extends Controller
                         ];
                     }
                 }
+                
+                // Обрабатываем изображения товара - добавляем полный URL фронтенда
+                if ($good->images) {
+                    foreach ($good->images as $image) {
+                        if ($image->file_path) {
+                            // Если путь уже полный URL, оставляем как есть
+                            if (str_starts_with($image->file_path, 'http')) {
+                                $image->url = $image->file_path;
+                            } else {
+                                // Нормализуем путь (заменяем обратные слеши на прямые)
+                                $normalizedPath = str_replace('\\', '/', $image->file_path);
+                                $cleanPath = ltrim($normalizedPath, '/');
+                                
+                                // Убираем префикс cms/shop/ если он есть в пути
+                                if (str_starts_with($cleanPath, 'cms/shop/')) {
+                                    $cleanPath = substr($cleanPath, strlen('cms/shop/'));
+                                }
+                                
+                                // Формируем полный URL - просто добавляем базовый URL фронтенда к file_path
+                                $image->url = rtrim($frontendUrl, '/') . '/' . $cleanPath;
+                            }
+                        }
+                    }
+                }
+                
+                // Обрабатываем изображения вариаций - добавляем полный URL фронтенда
+                if ($good->variations) {
+                    foreach ($good->variations as $variation) {
+                        // Загружаем изображения вариации, если они не загружены
+                        if (!$variation->relationLoaded('images')) {
+                            $variation->load('images');
+                        }
+                        
+                        if ($variation->images) {
+                            foreach ($variation->images as $image) {
+                                if ($image->file_path) {
+                                    // Если путь уже полный URL, оставляем как есть
+                                    if (str_starts_with($image->file_path, 'http')) {
+                                        $image->url = $image->file_path;
+                                    } else {
+                                        // Нормализуем путь (заменяем обратные слеши на прямые)
+                                        $normalizedPath = str_replace('\\', '/', $image->file_path);
+                                        $cleanPath = ltrim($normalizedPath, '/');
+                                        
+                                        // Убираем префикс cms/shop/ если он есть в пути
+                                        if (str_starts_with($cleanPath, 'cms/shop/')) {
+                                            $cleanPath = substr($cleanPath, strlen('cms/shop/'));
+                                        }
+                                        
+                                        // Формируем полный URL - просто добавляем базовый URL фронтенда к file_path
+                                        $image->url = rtrim($frontendUrl, '/') . '/' . $cleanPath;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
 
                 // Добавляем вычисления для вариаций
                 if ($good->variations_count > 0 && $good->variations) {
                     // Сумма остатков вариаций
                     $good->variations_stock_sum = $good->variations->sum('stock_quantity');
 
-                    // Проверка наличия непустых remote_stock_quantity или fast_remote_stock_quantity
+                    // Проверка наличия непустых remote_stock_quantity
                     $hasRemoteStock = $good->variations->filter(function($variation) {
                         $remoteStock = $variation->remote_stock_quantity;
-                        $fastRemoteStock = $variation->fast_remote_stock_quantity;
 
                         $hasRemote = $remoteStock !== null
                             && $remoteStock !== ''
                             && $remoteStock !== '0'
                             && trim($remoteStock) !== '';
 
+                        return $hasRemote;
+                    })->count() > 0;
+
+                    $good->variations_has_remote_stock = $hasRemoteStock;
+
+                    // Проверка наличия непустых fast_remote_stock_quantity
+                    $hasFastRemoteStock = $good->variations->filter(function($variation) {
+                        $fastRemoteStock = $variation->fast_remote_stock_quantity;
+
                         $hasFastRemote = $fastRemoteStock !== null
                             && $fastRemoteStock !== ''
                             && $fastRemoteStock !== '0'
                             && trim($fastRemoteStock) !== '';
 
-                        return $hasRemote || $hasFastRemote;
+                        return $hasFastRemote;
                     })->count() > 0;
 
-                    $good->variations_has_remote_stock = $hasRemoteStock;
+                    $good->variations_has_fast_remote_stock = $hasFastRemoteStock;
 
                     // Проверка наличия активного демпинга
                     $hasDemping = $good->variations->filter(function($variation) {
@@ -745,6 +857,51 @@ class ShopGoodsController extends Controller
             // Если запрашиваются конкретные ID, возвращаем все без пагинации
             $goods = $query->get();
             
+            // Получаем URL фронтенда для изображений
+            $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
+            
+            // Проверяем, нужно ли загружать изображения вариаций
+            $withVariationImages = $request->boolean('with_variation_images', false);
+            if ($withVariationImages) {
+                $goods->load('variations.images');
+            }
+            
+            // Проверяем, нужно ли загружать атрибуты вариаций
+            $withVariationAttributes = $request->boolean('with_variation_attributes', false);
+            if ($withVariationAttributes) {
+                // Загружаем атрибуты для всех вариаций
+                foreach ($goods as $good) {
+                    if ($good->variations) {
+                        foreach ($good->variations as $variation) {
+                            $variation->attributes = DB::table('shop_variation_attributes_values as vav')
+                                ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                                ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                                ->where('vav.variation_id', $variation->id)
+                                ->select('a.id as attribute_id', 'a.name as attribute_name', 'av.id as value_id', 'av.value as value_value')
+                                ->get()
+                                ->map(function ($row) {
+                                    return [
+                                        'attribute' => [
+                                            'id' => $row->attribute_id,
+                                            'name' => $row->attribute_name
+                                        ],
+                                        'value' => [
+                                            'id' => $row->value_id,
+                                            'value' => $row->value_value
+                                        ],
+                                        'attribute_id' => $row->attribute_id,
+                                        'attribute_name' => $row->attribute_name,
+                                        'value_id' => $row->value_id,
+                                        'value_value' => $row->value_value,
+                                        'value' => $row->value_value
+                                    ];
+                                })
+                                ->toArray();
+                        }
+                    }
+                }
+            }
+            
             // Загружаем значения свойств для всех товаров
             $hasValueCol = Schema::hasColumn('shop_good_properties', 'value');
             foreach ($goods as $good) {
@@ -762,30 +919,85 @@ class ShopGoodsController extends Controller
                     }
                 }
                 
+                // Обрабатываем изображения товара - добавляем полный URL фронтенда
+                if ($good->images) {
+                    foreach ($good->images as $image) {
+                        if ($image->file_path) {
+                            // Если путь уже полный URL, оставляем как есть
+                            if (str_starts_with($image->file_path, 'http')) {
+                                $image->url = $image->file_path;
+                            } else {
+                                // Нормализуем путь (заменяем обратные слеши на прямые)
+                                $normalizedPath = str_replace('\\', '/', $image->file_path);
+                                $cleanPath = ltrim($normalizedPath, '/');
+                                
+                                // Формируем полный URL - просто добавляем базовый URL фронтенда к file_path
+                                $image->url = rtrim($frontendUrl, '/') . '/' . $cleanPath;
+                            }
+                        }
+                    }
+                }
+                
+                // Обрабатываем изображения вариаций - добавляем полный URL фронтенда
+                if ($good->variations) {
+                    foreach ($good->variations as $variation) {
+                        // Загружаем изображения вариации, если они не загружены
+                        if (!$variation->relationLoaded('images')) {
+                            $variation->load('images');
+                        }
+                        
+                        if ($variation->images) {
+                            foreach ($variation->images as $image) {
+                                if ($image->file_path) {
+                                    // Если путь уже полный URL, оставляем как есть
+                                    if (str_starts_with($image->file_path, 'http')) {
+                                        $image->url = $image->file_path;
+                                    } else {
+                                        // Нормализуем путь (заменяем обратные слеши на прямые)
+                                        $normalizedPath = str_replace('\\', '/', $image->file_path);
+                                        $cleanPath = ltrim($normalizedPath, '/');
+                                        
+                                        // Формируем полный URL - просто добавляем базовый URL фронтенда к file_path
+                                        $image->url = rtrim($frontendUrl, '/') . '/' . $cleanPath;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
                 // Добавляем вычисления для вариаций
                 if ($good->variations_count > 0 && $good->variations) {
                     // Сумма остатков вариаций
                     $good->variations_stock_sum = $good->variations->sum('stock_quantity');
                     
-                    // Проверка наличия непустых remote_stock_quantity или fast_remote_stock_quantity
+                    // Проверка наличия непустых remote_stock_quantity
                     $hasRemoteStock = $good->variations->filter(function($variation) {
                         $remoteStock = $variation->remote_stock_quantity;
-                        $fastRemoteStock = $variation->fast_remote_stock_quantity;
                         
                         $hasRemote = $remoteStock !== null 
                             && $remoteStock !== '' 
                             && $remoteStock !== '0'
                             && trim($remoteStock) !== '';
                             
+                        return $hasRemote;
+                    })->count() > 0;
+                    
+                    $good->variations_has_remote_stock = $hasRemoteStock;
+
+                    // Проверка наличия непустых fast_remote_stock_quantity
+                    $hasFastRemoteStock = $good->variations->filter(function($variation) {
+                        $fastRemoteStock = $variation->fast_remote_stock_quantity;
+                        
                         $hasFastRemote = $fastRemoteStock !== null 
                             && $fastRemoteStock !== '' 
                             && $fastRemoteStock !== '0'
                             && trim($fastRemoteStock) !== '';
                             
-                        return $hasRemote || $hasFastRemote;
+                        return $hasFastRemote;
                     })->count() > 0;
                     
-                    $good->variations_has_remote_stock = $hasRemoteStock;
+                    $good->variations_has_fast_remote_stock = $hasFastRemoteStock;
                     
                     // Проверка наличия активного демпинга
                     $hasDemping = $good->variations->filter(function($variation) {
@@ -796,6 +1008,7 @@ class ShopGoodsController extends Controller
                 } else {
                     $good->variations_stock_sum = 0;
                     $good->variations_has_remote_stock = false;
+                    $good->variations_has_fast_remote_stock = false;
                     $good->variations_has_demping = false;
                 }
             }
@@ -4868,6 +5081,181 @@ class ShopGoodsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка переноса данных: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Изменить вариацию - перенос данных из товаров без вариаций в вариации товара с вариациями
+     */
+    public function changeVariation(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'good_with_variations_id' => 'required|exists:shop_goods,id',
+            'goods_without_variations' => 'required|array|min:1',
+            'goods_without_variations.*.id' => 'required|exists:shop_goods,id',
+            'goods_without_variations.*.variation_id' => 'required|exists:shop_good_variations,id',
+            'goods_without_variations.*.update_description' => 'nullable|boolean'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $goodWithVariations = ShopGood::with(['variations'])->findOrFail($request->good_with_variations_id);
+            $goodsWithoutVariations = $request->goods_without_variations;
+            
+            // Проверяем, что товар действительно имеет вариации
+            if ($goodWithVariations->variations->isEmpty()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Выбранный товар не имеет вариаций'
+                ], 422);
+            }
+
+            $updatedVariations = [];
+            $descriptionUpdateGoodId = null;
+            $transferredImagesInfo = []; // Информация о перенесенных изображениях
+
+            // Обрабатываем каждый товар без вариаций
+            foreach ($goodsWithoutVariations as $goodData) {
+                $goodId = $goodData['id'];
+                $variationId = $goodData['variation_id'];
+                $updateDescription = $goodData['update_description'] ?? false;
+
+                // Проверяем, что вариация принадлежит товару с вариациями
+                $variation = ShopGoodVariation::where('id', $variationId)
+                    ->where('good_id', $goodWithVariations->id)
+                    ->firstOrFail();
+
+                // Загружаем товар без вариаций
+                $goodWithoutVariations = ShopGood::with(['images'])->findOrFail($goodId);
+
+                // Проверяем, что товар действительно без вариаций
+                if ($goodWithoutVariations->variations()->count() > 0) {
+                    continue; // Пропускаем товары с вариациями
+                }
+
+                // Обновляем данные вариации
+                $variation->update([
+                    'name' => $goodWithoutVariations->name,
+                    'sku' => $goodWithoutVariations->sku,
+                    'price' => $goodWithoutVariations->price,
+                    'sale_price' => $goodWithoutVariations->sale_price,
+                    'demping_price' => $goodWithoutVariations->demping_price,
+                    'stock_quantity' => $goodWithoutVariations->stock_quantity,
+                    'remote_stock_quantity' => $goodWithoutVariations->remote_stock_quantity,
+                    'fast_remote_stock_quantity' => $goodWithoutVariations->fast_remote_stock_quantity,
+                ]);
+
+                // Переносим изображения товара в вариацию
+                // Важно: делаем это ДО удаления товара, чтобы избежать каскадного удаления
+                // Используем тот же подход, что и в bulkCreateVariations - good_id устанавливаем в null
+                // Это правильный способ привязки изображений к вариациям
+                
+                // Сначала считаем, сколько изображений найдено
+                $imagesFound = DB::table('shop_good_images')
+                    ->where('good_id', $goodWithoutVariations->id)
+                    ->whereNull('variation_id')
+                    ->count();
+                
+                // Затем обновляем их
+                $imagesCount = DB::table('shop_good_images')
+                    ->where('good_id', $goodWithoutVariations->id)
+                    ->whereNull('variation_id')
+                    ->update([
+                        'good_id' => null,
+                        'variation_id' => $variation->id
+                    ]);
+                
+                // Сохраняем информацию о перенесенных изображениях
+                $transferredImagesInfo[] = [
+                    'good_id' => $goodWithoutVariations->id,
+                    'variation_id' => $variation->id,
+                    'images_found' => $imagesFound,
+                    'images_updated' => $imagesCount
+                ];
+
+                $updatedVariations[] = $variation->id;
+
+                // Запоминаем товар для обновления описания
+                if ($updateDescription) {
+                    $descriptionUpdateGoodId = $goodWithoutVariations->id;
+                }
+            }
+
+            // Обновляем описание основного товара, если указано
+            if ($descriptionUpdateGoodId) {
+                $descriptionGood = ShopGood::findOrFail($descriptionUpdateGoodId);
+                $goodWithVariations->update([
+                    'description' => $descriptionGood->description
+                ]);
+            }
+
+            // Проверяем изображения вариаций перед удалением товаров
+            $variationImagesBeforeDelete = [];
+            foreach ($updatedVariations as $varId) {
+                $variationImagesBeforeDelete[$varId] = DB::table('shop_good_images')
+                    ->where('variation_id', $varId)
+                    ->count();
+            }
+
+            // Удаляем товары без вариаций после переноса
+            $goodIdsToDelete = array_column($goodsWithoutVariations, 'id');
+            foreach ($goodIdsToDelete as $goodId) {
+                $goodToDelete = ShopGood::find($goodId);
+                if ($goodToDelete) {
+                    $this->logAudit($goodToDelete, 'deleted', $goodToDelete->toArray(), null);
+                    $goodToDelete->delete();
+                }
+            }
+
+            // Финальная проверка изображений вариаций после удаления товаров
+            $variationImagesAfterDelete = [];
+            foreach ($updatedVariations as $varId) {
+                $variationImagesAfterDelete[$varId] = DB::table('shop_good_images')
+                    ->where('variation_id', $varId)
+                    ->count();
+            }
+
+            DB::commit();
+
+            // Формируем детальную информацию об изображениях
+            $imagesSummary = [];
+            foreach ($transferredImagesInfo as $info) {
+                $imagesSummary[] = [
+                    'good_id' => $info['good_id'],
+                    'variation_id' => $info['variation_id'],
+                    'images_found' => $info['images_found'],
+                    'images_updated' => $info['images_updated'],
+                    'images_before_delete' => $variationImagesBeforeDelete[$info['variation_id']] ?? 0,
+                    'images_after_delete' => $variationImagesAfterDelete[$info['variation_id']] ?? 0
+                ];
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Данные успешно перенесены в вариации. Обновлено вариаций: ' . count($updatedVariations) . '. Удалено товаров: ' . count($goodIdsToDelete),
+                'data' => [
+                    'updated_variations' => $updatedVariations,
+                    'deleted_goods' => $goodIdsToDelete,
+                    'images_transfer' => $imagesSummary
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Ошибка изменения вариации: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка изменения вариации: ' . $e->getMessage()
             ], 500);
         }
     }

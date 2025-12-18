@@ -1322,6 +1322,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/bulk-update', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'bulkUpdate']);
                 Route::post('/bulk/create-variations', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'bulkCreateVariations']);
                 Route::post('/transfer-data', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'transferData']);
+                Route::post('/change-variation', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'changeVariation']);
                 Route::post('/check-duplicates', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'checkDuplicates']);
                 Route::post('/bulk-import', [\App\Http\Controllers\Admin\BulkGoodsImportController::class, 'bulkImport']);
                 Route::post('/mass-parse-properties', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'massParseProperties']);
@@ -1710,6 +1711,15 @@ Route::middleware('auth:sanctum')->group(function () {
                     'message' => 'Statistics retrieved successfully'
                 ]);
             });
+
+            // Резервные копии товаров - временно отключены
+            // Route::middleware('shop.access')->prefix('backups')->group(function () {
+            //     Route::get('/', [\App\Http\Controllers\Admin\GoodsBackupController::class, 'index']);
+            //     Route::post('/', [\App\Http\Controllers\Admin\GoodsBackupController::class, 'store']);
+            //     Route::get('/{backup}', [\App\Http\Controllers\Admin\GoodsBackupController::class, 'show']);
+            //     Route::post('/{backup}/restore', [\App\Http\Controllers\Admin\GoodsBackupController::class, 'restore']);
+            //     Route::delete('/{backup}', [\App\Http\Controllers\Admin\GoodsBackupController::class, 'destroy']);
+            // });
         });
 
         // Pages management

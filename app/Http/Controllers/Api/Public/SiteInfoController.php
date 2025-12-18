@@ -91,6 +91,9 @@ class SiteInfoController extends Controller
                               ]);
                     })
                     ->orWhere('key', 'show_counters') // Включаем параметр show_counters из любой группы
+                    ->orWhere('key', 'tag_max_bonus') // Включаем параметр повышенного бонуса
+                    ->orWhere('key', 'tag_max_bonus_tax') // Включаем процент повышенного бонуса
+                    ->orWhere('key', 'tag_no_bonus') // Включаем параметр тега без бонусов
                     ->get();
 
                 $publicSettings = [];

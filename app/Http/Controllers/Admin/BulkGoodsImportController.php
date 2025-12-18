@@ -12,6 +12,7 @@ use App\Models\ShopPropertyValue;
 use App\Models\ShopGoodProperty;
 use App\Models\ShopGoodVariation;
 use App\Services\ImportLogService;
+use App\Services\GoodsBackupService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -23,10 +24,12 @@ use Illuminate\Database\QueryException;
 class BulkGoodsImportController extends Controller
 {
     private $importLogService;
+    private $backupService;
 
-    public function __construct(ImportLogService $importLogService)
+    public function __construct(ImportLogService $importLogService, GoodsBackupService $backupService)
     {
         $this->importLogService = $importLogService;
+        $this->backupService = $backupService;
     }
 
     public function bulkImport(Request $request)
@@ -45,6 +48,36 @@ class BulkGoodsImportController extends Controller
         if ($isFirstBatch) {
             $this->importLogService->clearAllLogs();
         }
+
+        // Создаем резервную копию перед импортом (только для первого батча) - временно отключено
+        // $backupId = null;
+        // $createBackup = $request->input('create_backup_before_import', false);
+        // if ($isFirstBatch && $createBackup) {
+        //     try {
+        //         Log::info('Создание резервной копии перед импортом', [
+        //             'user_id' => auth()->id()
+        //         ]);
+
+        //         $backup = $this->backupService->createBackup(
+        //             'Резервная копия перед импортом ' . now()->format('d.m.Y H:i'),
+        //             auth()->id()
+        //         );
+
+        //         $backupId = $backup->id;
+
+        //         Log::info('Резервная копия создана перед импортом', [
+        //             'backup_id' => $backupId
+        //         ]);
+
+        //     } catch (\Exception $e) {
+        //         Log::error('Ошибка создания резервной копии перед импортом', [
+        //             'error' => $e->getMessage(),
+        //             'user_id' => auth()->id()
+        //         ]);
+
+        //         // Продолжаем импорт, но логируем ошибку
+        //     }
+        // }
 
         // Получаем данные товаров
         $allGoods = $request->input('goods', []);
@@ -846,6 +879,7 @@ class BulkGoodsImportController extends Controller
                 'success' => true,
                 'message' => 'Импорт завершен',
                 'results' => $results
+                // 'backup_id' => $backupId // временно отключено
             ]);
 
         } catch (\Exception $e) {

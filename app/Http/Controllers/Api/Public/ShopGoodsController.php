@@ -435,19 +435,16 @@ class ShopGoodsController extends Controller
                 'properties' => function($query) {
                     // Поддержка обеих схем pivot: shop_property_value_id и/или value
                     $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug')
-                        ->withPivot((function () {
-                            $fields = ['shop_property_value_id'];
-                            if (\Illuminate\Support\Facades\Schema::hasColumn('shop_good_properties', 'value')) {
-                                $fields[] = 'value';
-                            }
-                            return $fields;
-                        })());
+                        ->withPivot(['shop_property_value_id']);
                 },
                 'categories' => function($query) {
                     $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug', 'shop_categories.image', 'shop_categories.icon');
                 },
                 'brands' => function($query) {
                     $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug', 'shop_brands.logo');
+                },
+                'label' => function($query) {
+                    $query->select('shop_labels.id', 'shop_labels.name', 'shop_labels.color');
                 },
             ])
             ->where('is_active', true);
@@ -1672,6 +1669,9 @@ class ShopGoodsController extends Controller
                 },
                 'brands' => function($query) {
                     $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug', 'shop_brands.logo');
+                },
+                'label' => function($query) {
+                    $query->select('shop_labels.id', 'shop_labels.name', 'shop_labels.color');
                 },
             ])
             ->whereIn('id', $goodIds)
