@@ -4913,8 +4913,10 @@ class ShopGoodsController extends Controller
             'goods_mapping' => 'required|array|min:1',
             'goods_mapping.*.good_id' => 'required|exists:shop_goods,id',
             'goods_mapping.*.attribute_values' => 'required|array',
-            'goods_mapping.*.attribute_values.*.attribute_id' => 'required|exists:shop_variation_attributes,id',
-            'goods_mapping.*.attribute_values.*.value_id' => 'required|exists:shop_variation_attribute_values,id'
+            'goods_mapping.*.attribute_values.*.attribute_id' => 'nullable|exists:shop_variation_attributes,id',
+            'goods_mapping.*.attribute_values.*.value_id' => 'nullable|exists:shop_variation_attribute_values,id',
+            'goods_mapping.*.attribute_values.*.value' => 'nullable|string|max:255',
+            'goods_mapping.*.attribute_values.*.attribute_name' => 'nullable|string|max:255'
         ]);
 
         if ($validator->fails()) {
@@ -4923,6 +4925,24 @@ class ShopGoodsController extends Controller
                 'message' => 'Ошибка валидации',
                 'errors' => $validator->errors()
             ], 422);
+        }
+        
+        // Дополнительная валидация: каждый attribute_value должен иметь либо attribute_id, либо attribute_name
+        foreach ($request->goods_mapping as $index => $mapping) {
+            foreach ($mapping['attribute_values'] as $valueIndex => $attrValue) {
+                if (!isset($attrValue['attribute_id']) && !isset($attrValue['attribute_name'])) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Ошибка валидации: goods_mapping[{$index}].attribute_values[{$valueIndex}] должен содержать либо attribute_id, либо attribute_name"
+                    ], 422);
+                }
+                if (!isset($attrValue['value_id']) && !isset($attrValue['value'])) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Ошибка валидации: goods_mapping[{$index}].attribute_values[{$valueIndex}] должен содержать либо value_id, либо value"
+                    ], 422);
+                }
+            }
         }
 
         try {
@@ -4968,7 +4988,20 @@ class ShopGoodsController extends Controller
                 $isMainGood = ($sourceGoodId == $mainGoodId);
 
                 // Проверяем, что все выбранные атрибуты присутствуют
-                $mappingAttributeIds = array_column($attributeValues, 'attribute_id');
+                $mappingAttributeIds = [];
+                foreach ($attributeValues as $attrValue) {
+                    if (isset($attrValue['attribute_id'])) {
+                        $mappingAttributeIds[] = $attrValue['attribute_id'];
+                    } elseif (isset($attrValue['attribute_name'])) {
+                        // Для временных атрибутов находим ID по имени
+                        $attribute = DB::table('shop_variation_attributes')
+                            ->where('name', $attrValue['attribute_name'])
+                            ->first();
+                        if ($attribute) {
+                            $mappingAttributeIds[] = $attribute->id;
+                        }
+                    }
+                }
                 $missingAttributes = array_diff($selectedAttributes, $mappingAttributeIds);
                 if (!empty($missingAttributes)) {
                     $errors[] = "Товар ID {$sourceGoodId}: не указаны значения для всех выбранных атрибутов";
@@ -5017,12 +5050,76 @@ class ShopGoodsController extends Controller
 
                 // Привязываем значения атрибутов к вариации
                 foreach ($attributeValues as $attrValue) {
+                    $attributeValueId = null;
+                    
+                    // Если есть value_id, используем его
+                    if (isset($attrValue['value_id']) && $attrValue['value_id']) {
+                        $attributeValueId = $attrValue['value_id'];
+                    } 
+                    // Если есть value (новое значение), создаем или находим значение атрибута
+                    elseif (isset($attrValue['value']) && trim($attrValue['value']) !== '') {
+                        $attributeId = $attrValue['attribute_id'] ?? null;
+                        $valueText = trim($attrValue['value']);
+                        
+                        if ($attributeId) {
+                            // Ищем существующее значение по тексту
+                            $existingValue = DB::table('shop_variation_attribute_values')
+                                ->where('attribute_id', $attributeId)
+                                ->where('value', $valueText)
+                                ->first();
+                            
+                            if ($existingValue) {
+                                $attributeValueId = $existingValue->id;
+                            } else {
+                                // Создаем новое значение атрибута
+                                $attributeValueId = DB::table('shop_variation_attribute_values')->insertGetId([
+                                    'attribute_id' => $attributeId,
+                                    'value' => $valueText,
+                                    'created_at' => now(),
+                                    'updated_at' => now()
+                                ]);
+                            }
+                        }
+                    }
+                    // Если есть attribute_name (для временных атрибутов из вариаций)
+                    elseif (isset($attrValue['attribute_name']) && isset($attrValue['value']) && trim($attrValue['value']) !== '') {
+                        $attributeName = trim($attrValue['attribute_name']);
+                        $valueText = trim($attrValue['value']);
+                        
+                        // Находим атрибут по имени
+                        $attribute = DB::table('shop_variation_attributes')
+                            ->where('name', $attributeName)
+                            ->first();
+                        
+                        if ($attribute) {
+                            // Ищем существующее значение по тексту
+                            $existingValue = DB::table('shop_variation_attribute_values')
+                                ->where('attribute_id', $attribute->id)
+                                ->where('value', $valueText)
+                                ->first();
+                            
+                            if ($existingValue) {
+                                $attributeValueId = $existingValue->id;
+                            } else {
+                                // Создаем новое значение атрибута
+                                $attributeValueId = DB::table('shop_variation_attribute_values')->insertGetId([
+                                    'attribute_id' => $attribute->id,
+                                    'value' => $valueText,
+                                    'created_at' => now(),
+                                    'updated_at' => now()
+                                ]);
+                            }
+                        }
+                    }
+                    
+                    if ($attributeValueId) {
                     DB::table('shop_variation_attributes_values')->insert([
                         'variation_id' => $variation->id,
-                        'attribute_value_id' => $attrValue['value_id'],
+                            'attribute_value_id' => $attributeValueId,
                         'created_at' => now(),
                         'updated_at' => now()
                     ]);
+                    }
                 }
 
                 // Переносим изображения от исходного товара к вариации
@@ -5091,8 +5188,48 @@ class ShopGoodsController extends Controller
         }
 
         // Сортируем значения атрибутов для сравнения
-        $searchAttributeIds = array_column($attributeValues, 'attribute_id');
-        $searchValueIds = array_column($attributeValues, 'value_id');
+        $searchAttributeIds = [];
+        $searchValueIds = [];
+        foreach ($attributeValues as $attrValue) {
+            if (isset($attrValue['attribute_id'])) {
+                $searchAttributeIds[] = $attrValue['attribute_id'];
+            } elseif (isset($attrValue['attribute_name'])) {
+                // Для временных атрибутов находим ID по имени
+                $attribute = DB::table('shop_variation_attributes')
+                    ->where('name', $attrValue['attribute_name'])
+                    ->first();
+                if ($attribute) {
+                    $searchAttributeIds[] = $attribute->id;
+                }
+            }
+            
+            if (isset($attrValue['value_id']) && $attrValue['value_id']) {
+                $searchValueIds[] = $attrValue['value_id'];
+            } elseif (isset($attrValue['value']) && trim($attrValue['value']) !== '') {
+                // Для новых значений нужно найти value_id по тексту
+                $attributeId = null;
+                if (isset($attrValue['attribute_id'])) {
+                    $attributeId = $attrValue['attribute_id'];
+                } elseif (isset($attrValue['attribute_name'])) {
+                    $attribute = DB::table('shop_variation_attributes')
+                        ->where('name', $attrValue['attribute_name'])
+                        ->first();
+                    if ($attribute) {
+                        $attributeId = $attribute->id;
+                    }
+                }
+                
+                if ($attributeId) {
+                    $value = DB::table('shop_variation_attribute_values')
+                        ->where('attribute_id', $attributeId)
+                        ->where('value', trim($attrValue['value']))
+                        ->first();
+                    if ($value) {
+                        $searchValueIds[] = $value->id;
+                    }
+                }
+            }
+        }
         sort($searchAttributeIds);
         sort($searchValueIds);
 

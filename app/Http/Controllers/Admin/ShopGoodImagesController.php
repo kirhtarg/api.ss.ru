@@ -12,6 +12,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
+use Intervention\Image\ImageManager;
+use Intervention\Image\Drivers\Gd\Driver;
 
 class ShopGoodImagesController extends Controller
 {
@@ -114,12 +116,30 @@ class ShopGoodImagesController extends Controller
         $good = ShopGood::findOrFail($goodId);
 
         $validator = Validator::make($request->all(), [
-            'image' => 'required|image|mimes:jpeg,png,jpg,gif,webp|max:51200', // 50MB
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:51200', // 50MB
+            'images' => 'nullable|array',
+            'images.*' => 'image|mimes:jpeg,png,jpg,gif,webp|max:51200',
             'variation_id' => 'nullable|exists:shop_good_variations,id',
             'alt_text' => 'nullable|string|max:255',
             'is_main' => 'boolean',
-            'sort_order' => 'integer'
+            'sort_order' => 'integer',
+            'upload_type' => 'nullable|string|in:system_fit,system_crop,original,custom_fit',
+            'custom_width' => 'nullable|integer|min:1|max:5000',
+            'custom_height' => 'nullable|integer|min:1|max:5000',
+            'white_background' => 'nullable|boolean',
+            'fit_with_white_background' => 'nullable|boolean'
         ]);
+        
+        // Дополнительная валидация: должно быть либо image, либо images
+        $validator->after(function ($validator) use ($request) {
+            $hasImage = $request->hasFile('image');
+            $hasImages = $request->hasFile('images') || !empty($request->allFiles()['images'] ?? []);
+            $hasImagesArray = !empty($request->allFiles()['images'] ?? []);
+            
+            if (!$hasImage && !$hasImages && !$hasImagesArray) {
+                $validator->errors()->add('image', 'Необходимо указать хотя бы одно изображение');
+            }
+        });
 
         if ($validator->fails()) {
             return response()->json([
@@ -130,24 +150,100 @@ class ShopGoodImagesController extends Controller
         }
 
         try {
-            $image = $request->file('image');
-            
-            // Создаем уникальное имя файла
-            $filename = uniqid() . '.' . $image->getClientOriginalExtension();
-            $path = "images/shop/goods/{$goodId}/{$filename}";
-            
-            // Путь к папке public фронтенда
-            $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
-            $fullPath = $frontendPublicPath . '/' . $path;
-            $dir = dirname($fullPath);
-
-            // Создаем директорию, если её нет
-            if (!is_dir($dir)) {
-                mkdir($dir, 0755, true);
+            // Определяем, есть ли множественные изображения
+            // Для массива файлов images[] используем file('images')
+            $images = [];
+            if ($request->hasFile('images')) {
+                $imagesFiles = $request->file('images');
+                // Если это массив, используем его, иначе оборачиваем в массив
+                if (is_array($imagesFiles)) {
+                    $images = $imagesFiles;
+                } elseif ($imagesFiles) {
+                    $images = [$imagesFiles];
+                }
             }
-
-            // Сохраняем файл на фронтенд
-            $image->move($dir, $filename);
+            $singleImage = $request->hasFile('image') ? $request->file('image') : null;
+            
+            // Если есть множественные изображения, обрабатываем их
+            if (!empty($images) && is_array($images)) {
+                $uploadedImages = [];
+                $uploadType = $request->input('upload_type', 'system_fit');
+                // Читаем параметры как строки и конвертируем в boolean
+                $whiteBackground = filter_var($request->input('white_background', '1'), FILTER_VALIDATE_BOOLEAN);
+                $fitWithWhiteBackground = filter_var($request->input('fit_with_white_background', '1'), FILTER_VALIDATE_BOOLEAN);
+                
+                foreach ($images as $image) {
+                    $uploadedImage = $this->processAndSaveImage(
+                        $image, 
+                        $goodId, 
+                        $uploadType,
+                        $request->input('custom_width'),
+                        $request->input('custom_height'),
+                        $whiteBackground,
+                        $fitWithWhiteBackground
+                    );
+                    
+                    if ($uploadedImage) {
+                        $imageData = [
+                            'file_path' => $uploadedImage['path'],
+                            'alt_text' => $request->get('alt_text'),
+                            'is_main' => false,
+                            'sort_order' => count($uploadedImages)
+                        ];
+                        
+                        if ($request->filled('variation_id')) {
+                            $variation = ShopGoodVariation::where('good_id', $goodId)
+                                ->findOrFail($request->get('variation_id'));
+                            $imageData['variation_id'] = $variation->id;
+                            $imageData['good_id'] = null;
+                        } else {
+                            $imageData['good_id'] = $goodId;
+                            $imageData['variation_id'] = null;
+                        }
+                        
+                        $goodImage = ShopGoodImage::create($imageData);
+                        $uploadedImages[] = $goodImage;
+                    }
+                }
+                
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Изображения успешно загружены',
+                    'data' => $uploadedImages
+                ], 201);
+            }
+            
+            // Обработка одного изображения
+            if (!$singleImage) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не указано изображение для загрузки'
+                ], 422);
+            }
+            
+            $uploadType = $request->input('upload_type', 'system_fit');
+            // Читаем параметры как строки и конвертируем в boolean
+            $whiteBackground = filter_var($request->input('white_background', '1'), FILTER_VALIDATE_BOOLEAN);
+            $fitWithWhiteBackground = filter_var($request->input('fit_with_white_background', '1'), FILTER_VALIDATE_BOOLEAN);
+            
+            $uploadedImage = $this->processAndSaveImage(
+                $singleImage, 
+                $goodId, 
+                $uploadType,
+                $request->input('custom_width'),
+                $request->input('custom_height'),
+                $whiteBackground,
+                $fitWithWhiteBackground
+            );
+            
+            if (!$uploadedImage) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка обработки изображения'
+                ], 500);
+            }
+            
+            $path = $uploadedImage['path'];
 
             $imageData = [
                 'file_path' => $path,
@@ -317,6 +413,56 @@ class ShopGoodImagesController extends Controller
             'success' => true,
             'message' => 'Главное изображение установлено'
         ]);
+    }
+
+    /**
+     * Привязать изображение товара к вариации
+     */
+    public function linkVariation(Request $request, $goodId, $imageId): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'variation_id' => 'required|exists:shop_good_variations,id'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            // Проверяем, что товар существует
+            $good = ShopGood::findOrFail($goodId);
+            
+            // Проверяем, что изображение существует и принадлежит товару
+            $image = ShopGoodImage::where('good_id', $goodId)
+                ->whereNull('variation_id')
+                ->findOrFail($imageId);
+            
+            // Проверяем, что вариация существует и принадлежит товару
+            $variation = ShopGoodVariation::where('good_id', $goodId)
+                ->findOrFail($request->get('variation_id'));
+            
+            // Обновляем изображение: привязываем к вариации
+            $image->update([
+                'good_id' => null,
+                'variation_id' => $variation->id
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Изображение успешно привязано к вариации',
+                'data' => $image
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка привязки изображения к вариации: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     /**
@@ -1321,6 +1467,179 @@ class ShopGoodImagesController extends Controller
                 'success' => false,
                 'message' => 'Ошибка создания связанного изображения: ' . $e->getMessage()
             ], 500);
+        }
+    }
+    
+    /**
+     * Обработка и сохранение изображения с поддержкой белого фона
+     */
+    private function processAndSaveImage($image, $goodId, $uploadType = 'system_fit', $customWidth = null, $customHeight = null, $whiteBackground = true, $fitWithWhiteBackground = true)
+    {
+        try {
+            // Создаем уникальное имя файла
+            $extension = $image->getClientOriginalExtension();
+            $filename = uniqid() . '.' . $extension;
+            $path = "images/shop/goods/{$goodId}/{$filename}";
+            
+            // Путь к папке public фронтенда
+            $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+            $fullPath = $frontendPublicPath . '/' . $path;
+            $dir = dirname($fullPath);
+
+            // Создаем директорию, если её нет
+            if (!is_dir($dir)) {
+                mkdir($dir, 0755, true);
+            }
+            
+            // Всегда обрабатываем изображения с белым фоном для PNG/GIF/WebP
+            $isTransparentFormat = in_array(strtolower($extension), ['png', 'gif', 'webp']);
+            
+            // Для PNG/GIF/WebP ВСЕГДА обрабатываем через Intervention Image для применения белого фона
+            // Для других форматов обрабатываем только если не original
+            $needsProcessing = $isTransparentFormat || ($uploadType !== 'original' && ($whiteBackground || $fitWithWhiteBackground));
+            
+            Log::info('Processing image', [
+                'extension' => $extension,
+                'isTransparentFormat' => $isTransparentFormat,
+                'whiteBackground' => $whiteBackground,
+                'fitWithWhiteBackground' => $fitWithWhiteBackground,
+                'uploadType' => $uploadType,
+                'needsProcessing' => $needsProcessing
+            ]);
+            
+            // ВСЕГДА обрабатываем PNG/GIF/WebP через Intervention Image
+            if ($isTransparentFormat || $needsProcessing) {
+                $manager = new ImageManager(new Driver());
+                $processedImage = $manager->read($image);
+                
+                // Определяем размеры
+                $width = null;
+                $height = null;
+                
+                if ($uploadType === 'custom_fit' && $customWidth && $customHeight) {
+                    $width = $customWidth;
+                    $height = $customHeight;
+                } elseif ($uploadType === 'system_fit' || $uploadType === 'system_crop') {
+                    // Получаем системные размеры (можно из настроек или использовать дефолтные)
+                    $width = 500;
+                    $height = 500;
+                } elseif ($uploadType === 'original' && $isTransparentFormat) {
+                    // Для original используем оригинальные размеры изображения
+                    $width = $processedImage->width();
+                    $height = $processedImage->height();
+                }
+                
+                // Для PNG/GIF/WebP с прозрачностью ВСЕГДА применяем белый фон
+                if ($isTransparentFormat) {
+                    // Если размеры не определены (original без изменения размера), используем оригинальные
+                    if (!$width || !$height) {
+                        $width = $processedImage->width();
+                        $height = $processedImage->height();
+                    }
+                    
+                    // Создаем новое изображение с белым фоном
+                    $canvas = $manager->create($width, $height);
+                    $canvas->fill('ffffff'); // Белый фон
+                    
+                    // Если нужно изменить размер, вписываем изображение
+                    if ($uploadType !== 'original' && $fitWithWhiteBackground && $width && $height) {
+                        $processedImage->contain($width, $height);
+                    }
+                    
+                    // Вычисляем позицию для центрирования
+                    $fittedWidth = $processedImage->width();
+                    $fittedHeight = $processedImage->height();
+                    $x = (int)(($width - $fittedWidth) / 2);
+                    $y = (int)(($height - $fittedHeight) / 2);
+                    
+                    // Накладываем изображение на белый фон
+                    $canvas->place($processedImage, 'top-left', $x, $y);
+                    $processedImage = $canvas;
+                    
+                    // ВСЕГДА конвертируем в JPG для удаления прозрачности
+                    $imageData = $processedImage->toJpeg(90);
+                    $fullPath = str_replace('.' . $extension, '.jpg', $fullPath);
+                    $path = str_replace('.' . $extension, '.jpg', $path);
+                    
+                    // Сохраняем обработанное изображение
+                    file_put_contents($fullPath, $imageData);
+                    
+                    return ['path' => $path];
+                } elseif ($uploadType !== 'original' && $fitWithWhiteBackground) {
+                    // Вписываем изображение в размеры с белым фоном
+                    $processedImage->contain($width, $height);
+                    
+                    // Создаем новое изображение с белым фоном
+                    $canvas = $manager->create($width, $height);
+                    $canvas->fill('ffffff'); // Белый фон
+                    
+                    // Вычисляем позицию для центрирования
+                    $fittedWidth = $processedImage->width();
+                    $fittedHeight = $processedImage->height();
+                    $x = (int)(($width - $fittedWidth) / 2);
+                    $y = (int)(($height - $fittedHeight) / 2);
+                    
+                    // Накладываем вписанное изображение на белый фон
+                    $canvas->place($processedImage, 'top-left', $x, $y);
+                    $processedImage = $canvas;
+                } elseif ($uploadType === 'system_crop') {
+                    // Обрезка с сохранением пропорций
+                    $processedImage->cover($width, $height);
+                }
+                
+                // Сохраняем в оригинальном формате (для не-прозрачных форматов)
+                // PNG/GIF/WebP уже обработаны выше и сохранены
+                if (strtolower($extension) === 'jpg' || strtolower($extension) === 'jpeg') {
+                    $imageData = $processedImage->toJpeg(90);
+                } elseif (strtolower($extension) === 'webp') {
+                    $imageData = $processedImage->toWebp(90);
+                } else {
+                    $imageData = $processedImage->toJpeg(90);
+                }
+                
+                // Сохраняем обработанное изображение
+                file_put_contents($fullPath, $imageData);
+            } else {
+                // Для PNG/GIF/WebP даже при original нужно обработать для белого фона
+                if ($isTransparentFormat) {
+                    $manager = new ImageManager(new Driver());
+                    $processedImage = $manager->read($image);
+                    
+                    $width = $processedImage->width();
+                    $height = $processedImage->height();
+                    
+                    // Создаем новое изображение с белым фоном
+                    $canvas = $manager->create($width, $height);
+                    $canvas->fill('ffffff'); // Белый фон
+                    
+                    // Накладываем изображение на белый фон
+                    $canvas->place($processedImage, 'top-left', 0, 0);
+                    
+                    // Конвертируем в JPG для удаления прозрачности
+                    $imageData = $canvas->toJpeg(90);
+                    $fullPath = str_replace('.' . $extension, '.jpg', $fullPath);
+                    $path = str_replace('.' . $extension, '.jpg', $path);
+                    
+                    // Сохраняем обработанное изображение
+                    file_put_contents($fullPath, $imageData);
+                    
+                    Log::info('PNG processed with white background', [
+                        'original_path' => $path,
+                        'new_path' => $path,
+                        'width' => $width,
+                        'height' => $height
+                    ]);
+                } else {
+                    // Сохраняем файл без обработки (только для не-прозрачных форматов)
+                    $image->move($dir, $filename);
+                }
+            }
+            
+            return ['path' => $path];
+            
+        } catch (\Exception $e) {
+            Log::error('Error processing image: ' . $e->getMessage());
+            return null;
         }
     }
 }

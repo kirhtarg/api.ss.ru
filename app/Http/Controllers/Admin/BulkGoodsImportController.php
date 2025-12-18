@@ -463,24 +463,46 @@ class BulkGoodsImportController extends Controller
                         }
                         
                         // Обрабатываем категории товара
+                        // ВАЖНО: При обновлении товара нужно проверить существующие категории ПЕРЕД применением категорий из файла
+                        // Если категория была применена по умолчанию в applyCategoryAndBrandIds, но у товара уже есть категории - не перезаписываем
+                        $existingCategoryIds = $existingGood->categories()->pluck('shop_categories.id')->toArray();
                         $categoryIds = [];
+                        
                         if (isset($goodData['category']) && !empty($goodData['category'])) {
                             $categoryIds = [(int)$goodData['category']];
-                        } elseif (isset($goodData['categories']) && is_array($goodData['categories'])) {
+                        } elseif (isset($goodData['categories']) && is_array($goodData['categories']) && !empty($goodData['categories'])) {
                             $categoryIds = array_filter(array_map('intval', $goodData['categories']), function($id) {
                                 return $id > 0;
                             });
                         }
 
-                        // Если категорий нет, но включена категория по умолчанию, применяем её
-                        if (empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null) {
-                            $categoryIds = [(int)$defaultCategory];
+                        // Если категории есть в $goodData, проверяем, не была ли это категория по умолчанию
+                        // Если единственная категория совпадает с defaultCategory, и у товара уже есть другие категории - не перезаписываем
+                        if (!empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null && !empty($existingCategoryIds)) {
+                            $defaultCategoryId = (int)$defaultCategory;
+                            // Если единственная категория - это defaultCategory, и у товара уже есть другие категории
+                            if (count($categoryIds) === 1 && $categoryIds[0] === $defaultCategoryId) {
+                                // Вероятно, категория была применена по умолчанию - оставляем существующие категории
+                                $categoryIds = $existingCategoryIds;
+                            }
+                        } elseif (empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null) {
+                            // Если категорий нет в файле, но включена категория по умолчанию
+                            // При обновлении товара: применяем категорию по умолчанию только если у товара нет категорий
+                            if (empty($existingCategoryIds)) {
+                                // У товара нет категорий - применяем категорию по умолчанию
+                                $categoryIds = [(int)$defaultCategory];
+                            } else {
+                                // У товара уже есть категории - оставляем их без изменений
+                                $categoryIds = $existingCategoryIds;
+                            }
                         }
                         
-                        // Синхронизируем категории
+                        // Синхронизируем категории только если они были указаны в файле или применена категория по умолчанию
+                        // Если категорий нет и категория по умолчанию не применялась - не трогаем существующие категории
                         if (!empty($categoryIds)) {
                             $existingGood->categories()->sync($categoryIds);
                         }
+                        // Если $categoryIds пустой и категория по умолчанию не применялась - не вызываем sync, оставляем существующие категории
                         
                         $results['updated']++;
                         
@@ -524,15 +546,36 @@ class BulkGoodsImportController extends Controller
                                 });
                             }
 
-                            // Если категорий нет, но включена категория по умолчанию, применяем её
-                            if (empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null) {
-                                $categoryIds = [(int)$defaultCategory];
+                            // Обрабатываем категории товара при обновлении через вариацию
+                            // ВАЖНО: Проверяем существующие категории ПЕРЕД применением категорий из файла
+                            $existingCategoryIds = $existingGood->categories()->pluck('shop_categories.id')->toArray();
+                            
+                            // Если категории есть в $goodData, проверяем, не была ли это категория по умолчанию
+                            if (!empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null && !empty($existingCategoryIds)) {
+                                $defaultCategoryId = (int)$defaultCategory;
+                                // Если единственная категория - это defaultCategory, и у товара уже есть другие категории
+                                if (count($categoryIds) === 1 && $categoryIds[0] === $defaultCategoryId) {
+                                    // Вероятно, категория была применена по умолчанию - оставляем существующие категории
+                                    $categoryIds = $existingCategoryIds;
+                                }
+                            } elseif (empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null) {
+                                // Если категорий нет в файле, но включена категория по умолчанию
+                                // При обновлении товара: применяем категорию по умолчанию только если у товара нет категорий
+                                if (empty($existingCategoryIds)) {
+                                    // У товара нет категорий - применяем категорию по умолчанию
+                                    $categoryIds = [(int)$defaultCategory];
+                                } else {
+                                    // У товара уже есть категории - оставляем их без изменений
+                                    $categoryIds = $existingCategoryIds;
+                                }
                             }
                             
-                            // Синхронизируем категории
+                            // Синхронизируем категории только если они были указаны в файле или применена категория по умолчанию
+                            // Если категорий нет и категория по умолчанию не применялась - не трогаем существующие категории
                             if (!empty($categoryIds)) {
                                 $existingGood->categories()->sync($categoryIds);
                             }
+                            // Если $categoryIds пустой и категория по умолчанию не применялась - не вызываем sync, оставляем существующие категории
                             
                             $results['updated']++; // Считаем как обновление (добавление вариации)
                             
@@ -619,15 +662,36 @@ class BulkGoodsImportController extends Controller
                                     });
                                 }
 
-                                // Если категорий нет, но включена категория по умолчанию, применяем её
-                                if (empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null) {
-                                    $categoryIds = [(int)$defaultCategory];
+                                // Обрабатываем категории товара при двойной проверке
+                                // ВАЖНО: Проверяем существующие категории ПЕРЕД применением категорий из файла
+                                $existingCategoryIds = $doubleCheckGood->categories()->pluck('shop_categories.id')->toArray();
+                                
+                                // Если категории есть в $goodData, проверяем, не была ли это категория по умолчанию
+                                if (!empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null && !empty($existingCategoryIds)) {
+                                    $defaultCategoryId = (int)$defaultCategory;
+                                    // Если единственная категория - это defaultCategory, и у товара уже есть другие категории
+                                    if (count($categoryIds) === 1 && $categoryIds[0] === $defaultCategoryId) {
+                                        // Вероятно, категория была применена по умолчанию - оставляем существующие категории
+                                        $categoryIds = $existingCategoryIds;
+                                    }
+                                } elseif (empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null) {
+                                    // Если категорий нет в файле, но включена категория по умолчанию
+                                    // При обновлении товара: применяем категорию по умолчанию только если у товара нет категорий
+                                    if (empty($existingCategoryIds)) {
+                                        // У товара нет категорий - применяем категорию по умолчанию
+                                        $categoryIds = [(int)$defaultCategory];
+                                    } else {
+                                        // У товара уже есть категории - оставляем их без изменений
+                                        $categoryIds = $existingCategoryIds;
+                                    }
                                 }
                                 
-                                // Синхронизируем категории
+                                // Синхронизируем категории только если они были указаны в файле или применена категория по умолчанию
+                                // Если категорий нет и категория по умолчанию не применялась - не трогаем существующие категории
                                 if (!empty($categoryIds)) {
                                     $doubleCheckGood->categories()->sync($categoryIds);
                                 }
+                                // Если $categoryIds пустой и категория по умолчанию не применялась - не вызываем sync, оставляем существующие категории
                                 
                                 $results['updated']++; // Считаем как обновление (добавление вариации)
                                 
@@ -1115,29 +1179,52 @@ class BulkGoodsImportController extends Controller
         $existingGood->save();
 
         // Обрабатываем категории
-        // ВАЖНО: категории уже обработаны в applyCategoryAndBrandIds, где:
+        // ВАЖНО: категории уже обработаны в processCategoriesAndBrandsBatch, где:
         // - Категории из файла найдены/созданы и преобразованы в ID
-        // - Категория по умолчанию применена, если нужно
-        // Здесь мы просто извлекаем уже обработанные категории
+        // Здесь мы извлекаем уже обработанные категории
         $categoryIds = [];
 
         if (isset($goodData['category']) && !empty($goodData['category'])) {
-            // Одиночная категория - значение уже должно быть ID после applyCategoryAndBrandIds
+            // Одиночная категория - значение уже должно быть ID после processCategoriesAndBrandsBatch
             $categoryIds = [(int)$goodData['category']];
         } elseif (isset($goodData['categories']) && is_array($goodData['categories'])) {
-            // Множественные категории - значения уже должны быть ID после applyCategoryAndBrandIds
+            // Множественные категории - значения уже должны быть ID после processCategoriesAndBrandsBatch
             $categoryIds = array_filter(array_map('intval', $goodData['categories']), function($id) {
                 return $id > 0;
             });
         }
 
-        // Синхронизируем категории (уже обработанные, включая категорию по умолчанию, если она была применена)
+        // Обрабатываем категории в функции updateGood
+        // ВАЖНО: Проверяем существующие категории ПЕРЕД применением категорий из файла
+        $existingCategoryIds = $existingGood->categories()->pluck('shop_categories.id')->toArray();
+        
+        // Если категории есть в $goodData, проверяем, не была ли это категория по умолчанию
+        if (!empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null && !empty($existingCategoryIds)) {
+            $defaultCategoryId = (int)$defaultCategory;
+            // Если единственная категория - это defaultCategory, и у товара уже есть другие категории
+            if (count($categoryIds) === 1 && $categoryIds[0] === $defaultCategoryId) {
+                // Вероятно, категория была применена по умолчанию - оставляем существующие категории
+                $categoryIds = $existingCategoryIds;
+            }
+        } elseif (empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null) {
+            // Если категорий нет в файле, но включена категория по умолчанию
+            // При обновлении товара: применяем категорию по умолчанию только если у товара нет категорий
+            if (empty($existingCategoryIds)) {
+                // У товара нет категорий - применяем категорию по умолчанию
+                $categoryIds = [(int)$defaultCategory];
+            } else {
+                // У товара уже есть категории - оставляем их без изменений
+                $categoryIds = $existingCategoryIds;
+            }
+        }
+
+        // Синхронизируем категории только если они были указаны в файле или применена категория по умолчанию
+        // ВАЖНО: При обновлении товара, если категорий нет в файле и категория по умолчанию не применялась,
+        // не отвязываем существующие категории - оставляем их без изменений
         if (!empty($categoryIds)) {
             $existingGood->categories()->sync($categoryIds);
-        } else {
-            // Если категорий нет, отвязываем все категории
-            $existingGood->categories()->sync([]);
         }
+        // Если $categoryIds пустой и категория по умолчанию не применялась - не вызываем sync, оставляем существующие категории
 
         // Обрабатываем бренды
         if (isset($goodData['brand']) && is_numeric($goodData['brand'])) {
