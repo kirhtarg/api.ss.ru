@@ -65,14 +65,23 @@ class ShopGoodsController extends Controller
                         // Для каждой вариации суммируем локальный и удаленный остатки
                         $hasVariationsQuery->whereRaw('(
                             SELECT COALESCE(SUM(
-                                COALESCE(stock_quantity, 0) + 
-                                CASE 
-                                    WHEN remote_stock_quantity IS NOT NULL 
-                                         AND remote_stock_quantity != "0" 
+                                COALESCE(stock_quantity, 0) +
+                                CASE
+                                    WHEN remote_stock_quantity IS NOT NULL
+                                         AND remote_stock_quantity != "0"
                                          AND LENGTH(TRIM(remote_stock_quantity)) > 0
                                          AND remote_stock_quantity REGEXP "^[0-9]+$"
                                          AND CAST(remote_stock_quantity AS UNSIGNED) > 0
                                     THEN CAST(remote_stock_quantity AS UNSIGNED)
+                                    ELSE 0
+                                END +
+                                CASE
+                                    WHEN fast_remote_stock_quantity IS NOT NULL
+                                         AND fast_remote_stock_quantity != "0"
+                                         AND LENGTH(TRIM(fast_remote_stock_quantity)) > 0
+                                         AND fast_remote_stock_quantity REGEXP "^[0-9]+$"
+                                         AND CAST(fast_remote_stock_quantity AS UNSIGNED) > 0
+                                    THEN CAST(fast_remote_stock_quantity AS UNSIGNED)
                                     ELSE 0
                                 END
                             ), 0)
@@ -336,6 +345,12 @@ class ShopGoodsController extends Controller
                                     ->where('remote_stock_quantity', '!=', '0')
                                     ->where('remote_stock_quantity', '!=', '')
                                     ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                            })
+                            ->orWhere(function($fastRemoteVarQ) {
+                                $fastRemoteVarQ->whereNotNull('fast_remote_stock_quantity')
+                                    ->where('fast_remote_stock_quantity', '!=', '0')
+                                    ->where('fast_remote_stock_quantity', '!=', '')
+                                    ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
                             });
                         }
                     });
@@ -1987,14 +2002,14 @@ class ShopGoodsController extends Controller
                 
                 // Товары С вариациями - только цены вариаций
                 $variationsQuery = DB::table('shop_good_variations')
-                    ->select('shop_good_variations.price', 'shop_good_variations.sale_price', 
-                             'shop_good_variations.stock_quantity', 'shop_good_variations.remote_stock_quantity')
+                    ->select('shop_good_variations.price', 'shop_good_variations.sale_price',
+                             'shop_good_variations.stock_quantity', 'shop_good_variations.remote_stock_quantity', 'shop_good_variations.fast_remote_stock_quantity')
                     ->join('shop_goods', 'shop_good_variations.good_id', '=', 'shop_goods.id')
                     ->join('shop_good_categories', 'shop_goods.id', '=', 'shop_good_categories.good_id')
                     ->where('shop_good_variations.is_active', true)
                     ->where('shop_goods.is_active', true)
                     ->whereIn('shop_good_categories.category_id', $categoryIds);
-                
+
                 // Применяем фильтры по остаткам для вариаций
                 if ($showGoodMode === 1) {
                     $variationsQuery->where(function($q) use ($remoteQ) {
@@ -2004,6 +2019,11 @@ class ShopGoodsController extends Controller
                                 $remoteQ->whereNotNull('shop_good_variations.remote_stock_quantity')
                                     ->where('shop_good_variations.remote_stock_quantity', '!=', '0')
                                     ->whereRaw('LENGTH(TRIM(shop_good_variations.remote_stock_quantity)) > 0');
+                            })
+                            ->orWhere(function($fastRemoteQ) {
+                                $fastRemoteQ->whereNotNull('shop_good_variations.fast_remote_stock_quantity')
+                                    ->where('shop_good_variations.fast_remote_stock_quantity', '!=', '0')
+                                    ->whereRaw('LENGTH(TRIM(shop_good_variations.fast_remote_stock_quantity)) > 0');
                             });
                         }
                     });
@@ -2074,12 +2094,12 @@ class ShopGoodsController extends Controller
                 }
                 
                 $variationsQuery = DB::table('shop_good_variations')
-                    ->select('shop_good_variations.price', 'shop_good_variations.sale_price', 
-                             'shop_good_variations.stock_quantity', 'shop_good_variations.remote_stock_quantity')
+                    ->select('shop_good_variations.price', 'shop_good_variations.sale_price',
+                             'shop_good_variations.stock_quantity', 'shop_good_variations.remote_stock_quantity', 'shop_good_variations.fast_remote_stock_quantity')
                     ->join('shop_goods', 'shop_good_variations.good_id', '=', 'shop_goods.id')
                     ->where('shop_good_variations.is_active', true)
                     ->where('shop_goods.is_active', true);
-                
+
                 // Применяем фильтры по остаткам для вариаций
                 if ($showGoodMode === 1) {
                     $variationsQuery->where(function($q) use ($remoteQ) {
@@ -2089,6 +2109,11 @@ class ShopGoodsController extends Controller
                                 $remoteQ->whereNotNull('shop_good_variations.remote_stock_quantity')
                                     ->where('shop_good_variations.remote_stock_quantity', '!=', '0')
                                     ->whereRaw('LENGTH(TRIM(shop_good_variations.remote_stock_quantity)) > 0');
+                            })
+                            ->orWhere(function($fastRemoteQ) {
+                                $fastRemoteQ->whereNotNull('shop_good_variations.fast_remote_stock_quantity')
+                                    ->where('shop_good_variations.fast_remote_stock_quantity', '!=', '0')
+                                    ->whereRaw('LENGTH(TRIM(shop_good_variations.fast_remote_stock_quantity)) > 0');
                             });
                         }
                     });

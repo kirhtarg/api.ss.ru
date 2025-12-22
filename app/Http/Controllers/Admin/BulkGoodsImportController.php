@@ -82,6 +82,9 @@ class BulkGoodsImportController extends Controller
         // Получаем данные товаров
         $allGoods = $request->input('goods', []);
 
+        // Получаем параметры импорта
+        $nameTrimSymbol = $request->input('name_trim_symbol');
+
         // Фильтруем пустые строки - оставляем только товары с заполненными SKU и названием
         $goods = [];
         $skippedRows = [];
@@ -325,65 +328,52 @@ class BulkGoodsImportController extends Controller
                         $searchByNameInVariations = in_array(strtolower($searchByNameInVariations), ['true', '1', 'yes', 'on']);
                     }
                     $searchByNameInVariations = (bool)$searchByNameInVariations;
+
+                    // Поле для поиска в вариациях ('name' или 'sku')
+                    $searchByFieldInVariations = $request->input('search_by_field_in_variations', 'name');
+                    if (!in_array($searchByFieldInVariations, ['name', 'sku'])) {
+                        $searchByFieldInVariations = 'name'; // значение по умолчанию
+                    }
+
                     
                     $existingGood = null;
                     $existingVariation = null;
-                    
+
+                    // Инициализируем переменную hasVariation
+                    $hasVariation = false;
+
                     // Если есть поле variation, всегда ищем товар по имени
-                    $hasVariation = isset($goodData['variation']) && is_array($goodData['variation']) && 
-                                    isset($goodData['variation']['attributes']) && 
-                                    is_array($goodData['variation']['attributes']) && 
+                    $hasVariation = isset($goodData['variation']) && is_array($goodData['variation']) &&
+                                    isset($goodData['variation']['attributes']) &&
+                                    is_array($goodData['variation']['attributes']) &&
                                     count($goodData['variation']['attributes']) > 0;
-                    
-                    // Если включен поиск по именам в вариациях
-                    if ($searchByNameInVariations && !empty($name)) {
-                        // 1. Сначала ищем товар по имени
-                        $existingGood = ShopGood::where('name', $name)->first();
-                        
-                        // 2. Если не найден, пробуем поиск по имени без учета регистра и пробелов
-                        if (!$existingGood) {
-                            $normalizedName = trim(preg_replace('/\s+/', ' ', mb_strtolower($name)));
-                            $allGoods = ShopGood::whereRaw('LOWER(TRIM(name)) = ?', [$normalizedName])->get();
-                            if ($allGoods->count() > 0) {
-                                $existingGood = $allGoods->first();
-                            }
-                        }
-                        
-                        // 3. Если товар найден, ищем вариацию по имени
+
+                    // Приоритет поиска: если duplicateFields содержит SKU, ищем по SKU в первую очередь
+                    $searchBySkuFirst = in_array('sku', $duplicateFields) && !empty($sku);
+
+                    if ($searchBySkuFirst) {
+                        $existingGood = ShopGood::where('sku', $sku)->first();
+
+                        // Если найден по SKU, пропускаем остальные поиски
                         if ($existingGood) {
-                            $existingVariation = ShopGoodVariation::where('good_id', $existingGood->id)
-                                ->where('name', $name)
-                                ->first();
-                            
-                            // 4. Если не найдена, пробуем поиск по имени без учета регистра и пробелов
-                            if (!$existingVariation) {
-                                $normalizedName = trim(preg_replace('/\s+/', ' ', mb_strtolower($name)));
-                                $allVariations = ShopGoodVariation::where('good_id', $existingGood->id)
-                                    ->whereRaw('LOWER(TRIM(name)) = ?', [$normalizedName])
-                                    ->get();
-                                if ($allVariations->count() > 0) {
-                                    $existingVariation = $allVariations->first();
-                                }
-                            }
+                            // Продолжаем с найденным товаром
                         }
-                        
-                        // 5. Если товар не найден, ищем вариацию по имени во всех товарах
-                        if (!$existingGood && !empty($name)) {
-                            $existingVariation = ShopGoodVariation::with('good')->where('name', $name)->first();
-                            
-                            // 6. Если не найдена, пробуем поиск по имени без учета регистра и пробелов
-                            if (!$existingVariation) {
-                                $normalizedName = trim(preg_replace('/\s+/', ' ', mb_strtolower($name)));
-                                $allVariations = ShopGoodVariation::with('good')->whereRaw('LOWER(TRIM(name)) = ?', [$normalizedName])->get();
-                                if ($allVariations->count() > 0) {
-                                    $existingVariation = $allVariations->first();
-                                    if ($existingVariation && $existingVariation->good) {
-                                        $existingGood = $existingVariation->good;
-                                    }
-                                }
+                    }
+                    // Если включен поиск по именам в вариациях, ищем вариацию по выбранному полю
+                    elseif ($searchByNameInVariations) {
+                        // Определяем значение для поиска в вариациях
+                        $searchValue = ($searchByFieldInVariations === 'sku') ? $sku : $name;
+
+                        if (!empty($searchValue)) {
+                            // Ищем вариацию по выбранному полю
+                            $existingVariation = ShopGoodVariation::where($searchByFieldInVariations, $searchValue)->first();
+
+                            if ($existingVariation) {
+                                $existingGood = $existingVariation->good;
                             } else {
-                                if ($existingVariation->good) {
-                                    $existingGood = $existingVariation->good;
+                                // Если вариация не найдена, ищем товар по SKU для добавления новой вариации
+                                if (!empty($sku)) {
+                                    $existingGood = ShopGood::where('sku', $sku)->first();
                                 }
                             }
                         }
@@ -393,10 +383,17 @@ class BulkGoodsImportController extends Controller
                         // При наличии вариации ищем товар более тщательно
                         // Важно: для вариаций товар должен существовать, иначе будет ошибка дублирования
                         // Проверяем все возможные варианты поиска
-                        
+
+                        Log::info("Searching for good with variation data", [
+                            'sku' => $sku,
+                            'name' => $name,
+                            'hasVariation' => $hasVariation
+                        ]);
+
                         // 1. Сначала по SKU (если указан) - самый надежный способ
                         if (!empty($sku)) {
                             $existingGood = ShopGood::where('sku', $sku)->first();
+                            Log::info("Searched good by SKU '{$sku}' with variation: " . ($existingGood ? 'found' : 'not found'));
                         }
                         
                         // 2. Если не найден по SKU, ищем по имени (точное совпадение)
@@ -490,9 +487,58 @@ class BulkGoodsImportController extends Controller
                             $details
                         );
                         
+                        // Применяем обрезку названия к существующему товару, если указан символ обрезки
+                        if ($nameTrimSymbol && !empty(trim($nameTrimSymbol)) && $existingGood->name && !in_array('name', $immutableFields) && !$searchByNameInVariations) {
+                            $trimSymbol = trim($nameTrimSymbol);
+                            $currentName = $existingGood->name;
+                            $trimIndex = strpos($currentName, $trimSymbol);
+                            if ($trimIndex !== false) {
+                                $trimmedName = trim(substr($currentName, 0, $trimIndex));
+                                if (!empty($trimmedName) && $trimmedName !== $currentName) {
+                                    $goodData['name'] = $trimmedName;
+                                    Log::info('Применена обрезка названия к существующему товару', [
+                                        'good_id' => $existingGood->id,
+                                        'old_name' => $currentName,
+                                        'new_name' => $trimmedName,
+                                        'trim_symbol' => $trimSymbol
+                                    ]);
+                                }
+                            }
+                        }
+
                         // Обновляем товар, если нужно
                         if ($duplicateAction === 'update') {
-                            $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations);
+                            $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation);
+
+                            // Для логики "Изменить вариацию" также обновляем остатки сопоставленных вариаций
+                            if (isset($goodData['variation_ids']) && is_array($goodData['variation_ids'])) {
+                                foreach ($goodData['variation_ids'] as $variationId) {
+                                    $variation = ShopGoodVariation::where('id', $variationId)
+                                        ->where('good_id', $existingGood->id)
+                                        ->first();
+
+                                    if ($variation) {
+                                        // Обновляем остатки вариации данными из товара
+                                        if (isset($goodData['stock_quantity']) && !in_array('stock_quantity', $immutableFields)) {
+                                            $variation->stock_quantity = $goodData['stock_quantity'];
+                                        }
+                                        if (isset($goodData['remote_stock_quantity']) && !in_array('remote_stock_quantity', $immutableFields)) {
+                                            $variation->remote_stock_quantity = $goodData['remote_stock_quantity'];
+                                        }
+                                        if (isset($goodData['fast_remote_stock_quantity']) && !in_array('fast_remote_stock_quantity', $immutableFields)) {
+                                            $variation->fast_remote_stock_quantity = $goodData['fast_remote_stock_quantity'];
+                                        }
+
+                                        $variation->save();
+
+                                        Log::info("Updated stock for variation {$variationId} with data from good {$existingGood->id}", [
+                                            'variation_id' => $variationId,
+                                            'stock_quantity' => $variation->stock_quantity,
+                                            'remote_stock_quantity' => $variation->remote_stock_quantity
+                                        ]);
+                                    }
+                                }
+                            }
                         }
                         
                         // Обрабатываем категории товара
@@ -633,7 +679,57 @@ class BulkGoodsImportController extends Controller
                             $sheet = $goodData['_sheet'] ?? 'неизвестно';
                             $updateItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'good_id' => $existingGood->id];
                         } elseif ($duplicateAction === 'update') {
-                            $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations);
+                            // Применяем обрезку названия к существующему товару, если указан символ обрезки
+                            if ($nameTrimSymbol && !empty(trim($nameTrimSymbol)) && $existingGood->name && !in_array('name', $immutableFields) && !$searchByNameInVariations) {
+                                $trimSymbol = trim($nameTrimSymbol);
+                                $currentName = $existingGood->name;
+                                $trimIndex = strpos($currentName, $trimSymbol);
+                                if ($trimIndex !== false) {
+                                    $trimmedName = trim(substr($currentName, 0, $trimIndex));
+                                    if (!empty($trimmedName) && $trimmedName !== $currentName) {
+                                        $goodData['name'] = $trimmedName;
+                                        Log::info('Применена обрезка названия к существующему товару (вариант 2)', [
+                                            'good_id' => $existingGood->id,
+                                            'old_name' => $currentName,
+                                            'new_name' => $trimmedName,
+                                            'trim_symbol' => $trimSymbol
+                                        ]);
+                                    }
+                                }
+                            }
+
+                            $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation);
+
+                            // Для логики "Изменить вариацию" также обновляем остатки сопоставленных вариаций
+                            if (isset($goodData['variation_ids']) && is_array($goodData['variation_ids'])) {
+                                foreach ($goodData['variation_ids'] as $variationId) {
+                                    $variation = ShopGoodVariation::where('id', $variationId)
+                                        ->where('good_id', $existingGood->id)
+                                        ->first();
+
+                                    if ($variation) {
+                                        // Обновляем остатки вариации данными из товара
+                                        if (isset($goodData['stock_quantity']) && !in_array('stock_quantity', $immutableFields)) {
+                                            $variation->stock_quantity = $goodData['stock_quantity'];
+                                        }
+                                        if (isset($goodData['remote_stock_quantity']) && !in_array('remote_stock_quantity', $immutableFields)) {
+                                            $variation->remote_stock_quantity = $goodData['remote_stock_quantity'];
+                                        }
+                                        if (isset($goodData['fast_remote_stock_quantity']) && !in_array('fast_remote_stock_quantity', $immutableFields)) {
+                                            $variation->fast_remote_stock_quantity = $goodData['fast_remote_stock_quantity'];
+                                        }
+
+                                        $variation->save();
+
+                                        Log::info("Updated stock for variation {$variationId} with data from good {$existingGood->id} (variant 2)", [
+                                            'variation_id' => $variationId,
+                                            'stock_quantity' => $variation->stock_quantity,
+                                            'remote_stock_quantity' => $variation->remote_stock_quantity
+                                        ]);
+                                    }
+                                }
+                            }
+
                             $results['updated']++;
                             
                             // Сохраняем ID товара
@@ -921,17 +1017,28 @@ class BulkGoodsImportController extends Controller
         $good->description = $goodData['description'] ?? null;
         $good->short_description = $goodData['short_description'] ?? null;
 
-        // Применяем модификацию цены
-        $priceModification = $goodData['price_modification'] ?? null;
-        $good->price = $this->applyPriceModification($goodData['price'] ?? 0, $priceModification['regular'] ?? null);
-        // Применяем модификацию акционной цены (даже если sale_price не передана в файле, но есть модификация)
-        if (isset($priceModification) && isset($priceModification['sale'])) {
-            $good->sale_price = $this->applySalePriceModification($goodData, $priceModification);
+        // Для товаров с вариациями устанавливаем временные значения цен и остатков перед сохранением
+        // После обработки вариаций значения будут обновлены
+        if (!isset($goodData['variation']) || !is_array($goodData['variation'])) {
+            // Применяем модификацию цены
+            $priceModification = $goodData['price_modification'] ?? null;
+            $good->price = $this->applyPriceModification($goodData['price'] ?? 0, $priceModification['regular'] ?? null);
+            // Применяем модификацию акционной цены (даже если sale_price не передана в файле, но есть модификация)
+            if (isset($priceModification) && isset($priceModification['sale'])) {
+                $good->sale_price = $this->applySalePriceModification($goodData, $priceModification);
+            } else {
+                $good->sale_price = $goodData['sale_price'] ?? null;
+            }
+            $good->stock_quantity = $goodData['stock_quantity'] ?? $goodData['stock'] ?? 0;
+            $good->remote_stock_quantity = $goodData['remote_stock_quantity'] ?? null;
         } else {
-            $good->sale_price = $goodData['sale_price'] ?? null;
+            // Для товаров с вариациями устанавливаем временные значения (будут обновлены после создания вариации)
+            $good->price = 0; // Временное значение, будет обновлено после обработки вариации
+            $good->sale_price = null;
+            $good->stock_quantity = 0;
+            $good->remote_stock_quantity = null;
         }
-        $good->stock_quantity = $goodData['stock_quantity'] ?? $goodData['stock'] ?? 0;
-        $good->remote_stock_quantity = $goodData['remote_stock_quantity'] ?? null;
+
         $good->weight = $goodData['weight'] ?? 0;
         $good->width = $goodData['width'] ?? 0;
         $good->height = $goodData['height'] ?? 0;
@@ -1017,7 +1124,25 @@ class BulkGoodsImportController extends Controller
         // Обрабатываем вариации товара
         $variationId = null;
         if (isset($goodData['variation']) && is_array($goodData['variation'])) {
+            Log::info('Обрабатываем вариацию для товара', ['name' => $good->name, 'variation' => $goodData['variation']]);
             $variationId = $this->processVariation($good, $goodData['variation'], $goodData);
+
+            if ($variationId) {
+                // Для товаров с вариациями устанавливаем цены и остатки из вариации
+                // Обычно берем данные из первой вариации или оставляем пустыми (null)
+                $good->price = $goodData['variation']['price'] ?? 0;
+                $good->sale_price = $goodData['variation']['sale_price'] ?? null;
+                $good->stock_quantity = $goodData['variation']['stock_quantity'] ?? 0;
+                $good->remote_stock_quantity = $goodData['variation']['remote_stock_quantity'] ?? null;
+                $good->save(); // Сохраняем обновленные данные после обработки вариации
+                Log::info('Обновлены цена и остатки товара после создания вариации', [
+                    'good_id' => $good->id,
+                    'price' => $good->price,
+                    'stock_quantity' => $good->stock_quantity
+                ]);
+            }
+        } else {
+            Log::info('Вариация не найдена в goodData', ['name' => $good->name, 'has_variation' => isset($goodData['variation']), 'variation_type' => gettype($goodData['variation'] ?? null)]);
         }
 
         // Сохраняем ID вариации в объекте товара для последующего использования
@@ -1028,7 +1153,7 @@ class BulkGoodsImportController extends Controller
         return $good;
     }
 
-    private function updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory = null, $useDefaultCategory = false, $immutableFields = [], $searchByNameInVariations = false)
+    private function updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory = null, $useDefaultCategory = false, $immutableFields = [], $searchByNameInVariations = false, $hasVariation = false)
     {
         // Обновляем все поля из goodData, которые переданы в импорте
         // Это позволяет обновлять все поля, отмеченные для импорта, а не только те, что используются для поиска
@@ -1042,7 +1167,29 @@ class BulkGoodsImportController extends Controller
         // Обновляем название только если оно передано, не пустое и не в списке неизменяемых
         // Если включен поиск по именам в вариациях, поле name нельзя изменять
         if (isset($goodData['name']) && !empty(trim($goodData['name'])) && !in_array('name', $immutableFields) && !$searchByNameInVariations) {
-            $existingGood->name = $goodData['name'];
+            $nameToSet = $goodData['name'];
+
+            // Применяем обрезку названия к существующему товару, если указан символ обрезки
+            // Это применяется ко всем товарам, а не только к тем, которые имеют variation_ids
+            if (!empty($nameTrimSymbol) && !in_array('name', $immutableFields) && !$searchByNameInVariations) {
+                $trimSymbol = trim($nameTrimSymbol);
+                $currentName = $existingGood->name;
+                $trimIndex = strpos($currentName, $trimSymbol);
+                if ($trimIndex !== false) {
+                    $trimmedName = trim(substr($currentName, 0, $trimIndex));
+                    if (!empty($trimmedName) && $trimmedName !== $currentName) {
+                        $nameToSet = $trimmedName;
+                        Log::info('Применена обрезка названия к существующему товару (updateGood)', [
+                            'good_id' => $existingGood->id,
+                            'old_name' => $currentName,
+                            'new_name' => $trimmedName,
+                            'trim_symbol' => $trimSymbol
+                        ]);
+                    }
+                }
+            }
+
+            $existingGood->name = $nameToSet;
         }
         // Обновляем slug только если он явно передан в данных (выбран в маппинге) и не в списке неизменяемых
         // При обновлении существующей записи не создаем slug автоматически
@@ -1066,17 +1213,38 @@ class BulkGoodsImportController extends Controller
 
         // Применяем модификацию цены (только если поле не в списке неизменяемых)
         $priceModification = $goodData['price_modification'] ?? null;
-        if (isset($goodData['price']) && !in_array('price', $immutableFields)) {
-            $existingGood->price = $this->applyPriceModification($goodData['price'], $priceModification['regular'] ?? null);
-        }
-        if ((isset($goodData['sale_price']) || isset($priceModification)) && !in_array('sale_price', $immutableFields)) {
-            $newSalePrice = $this->applySalePriceModification($goodData, $priceModification);
-            // Если есть модификация акционной цены, всегда применяем результат (даже если null)
-            if (isset($priceModification) && isset($priceModification['sale'])) {
-                $existingGood->sale_price = $newSalePrice;
-            } else {
-                // Если модификации нет, используем значение из файла или оставляем существующее
-                $existingGood->sale_price = $newSalePrice ?? $existingGood->sale_price;
+
+        // Для товаров с вариациями цены берутся из вариации
+        if (isset($goodData['variation']) && is_array($goodData['variation'])) {
+            // Обновляем цены из вариации
+            if (isset($goodData['variation']['price']) && !in_array('price', $immutableFields)) {
+                $existingGood->price = $this->applyPriceModification($goodData['variation']['price'], $priceModification['regular'] ?? null);
+            }
+            if ((isset($goodData['variation']['sale_price']) || isset($priceModification)) && !in_array('sale_price', $immutableFields)) {
+                $goodData['sale_price'] = $goodData['variation']['sale_price'] ?? null;
+                $newSalePrice = $this->applySalePriceModification($goodData, $priceModification);
+                // Если есть модификация акционной цены, всегда применяем результат (даже если null)
+                if (isset($priceModification) && isset($priceModification['sale'])) {
+                    $existingGood->sale_price = $newSalePrice;
+                } else {
+                    // Если модификации нет, используем значение из файла или оставляем существующее
+                    $existingGood->sale_price = $newSalePrice ?? $existingGood->sale_price;
+                }
+            }
+        } else {
+            // Для товаров без вариаций обновляем цены из goodData
+            if (isset($goodData['price']) && !in_array('price', $immutableFields)) {
+                $existingGood->price = $this->applyPriceModification($goodData['price'], $priceModification['regular'] ?? null);
+            }
+            if ((isset($goodData['sale_price']) || isset($priceModification)) && !in_array('sale_price', $immutableFields)) {
+                $newSalePrice = $this->applySalePriceModification($goodData, $priceModification);
+                // Если есть модификация акционной цены, всегда применяем результат (даже если null)
+                if (isset($priceModification) && isset($priceModification['sale'])) {
+                    $existingGood->sale_price = $newSalePrice;
+                } else {
+                    // Если модификации нет, используем значение из файла или оставляем существующее
+                    $existingGood->sale_price = $newSalePrice ?? $existingGood->sale_price;
+                }
             }
         }
         
@@ -1089,12 +1257,24 @@ class BulkGoodsImportController extends Controller
         }
 
         // Обновляем остатки только если они переданы и не в списке неизменяемых
-        if ((isset($goodData['stock_quantity']) || isset($goodData['stock'])) && !in_array('stock_quantity', $immutableFields)) {
-            $existingGood->stock_quantity = $goodData['stock_quantity'] ?? $goodData['stock'] ?? $existingGood->stock_quantity;
-        }
+        if (isset($goodData['variation']) && is_array($goodData['variation'])) {
+            // Для товаров с вариациями остатки берутся из вариации
+            if ((isset($goodData['variation']['stock_quantity']) || isset($goodData['variation']['stock'])) && !in_array('stock_quantity', $immutableFields)) {
+                $existingGood->stock_quantity = $goodData['variation']['stock_quantity'] ?? $goodData['variation']['stock'] ?? $existingGood->stock_quantity;
+            }
 
-        if (isset($goodData['remote_stock_quantity']) && !in_array('remote_stock_quantity', $immutableFields)) {
-            $existingGood->remote_stock_quantity = $goodData['remote_stock_quantity'];
+            if (isset($goodData['variation']['remote_stock_quantity']) && !in_array('remote_stock_quantity', $immutableFields)) {
+                $existingGood->remote_stock_quantity = $goodData['variation']['remote_stock_quantity'];
+            }
+        } else {
+            // Для товаров без вариаций остатки берутся из goodData
+            if ((isset($goodData['stock_quantity']) || isset($goodData['stock'])) && !in_array('stock_quantity', $immutableFields)) {
+                $existingGood->stock_quantity = $goodData['stock_quantity'] ?? $goodData['stock'] ?? $existingGood->stock_quantity;
+            }
+
+            if (isset($goodData['remote_stock_quantity']) && !in_array('remote_stock_quantity', $immutableFields)) {
+                $existingGood->remote_stock_quantity = $goodData['remote_stock_quantity'];
+            }
         }
         
         // Обновляем размеры и вес, если переданы и не в списке неизменяемых
@@ -1283,6 +1463,49 @@ class BulkGoodsImportController extends Controller
         // Обрабатываем вариации товара
         if (isset($goodData['variation']) && is_array($goodData['variation'])) {
             $this->processVariation($existingGood, $goodData['variation'], $goodData);
+        }
+
+        // Если товар имеет вариации, обновляем все его вариации данными из товара
+        // Это применяется когда товар найден по артикулу и обновляется, но вариации тоже должны получить обновленные данные
+        // НЕ применяется когда включен поиск в вариациях - в этом случае обновляется конкретная вариация
+        if (!$hasVariation && !$searchByNameInVariations && $existingGood->variations()->count() > 0) {
+            $variations = $existingGood->variations;
+
+            foreach ($variations as $variation) {
+                // Обновляем цены вариации данными из товара (если они переданы)
+                if (isset($goodData['price']) && !in_array('price', $immutableFields)) {
+                    $variation->price = $this->applyPriceModification($goodData['price'], $priceModification['regular'] ?? null);
+                }
+
+                // Обновляем акционную цену
+                if ((isset($goodData['sale_price']) || isset($priceModification)) && !in_array('sale_price', $immutableFields)) {
+                    if (isset($priceModification) && isset($priceModification['sale'])) {
+                        $variation->sale_price = $this->applySalePriceModification($goodData, $priceModification);
+                    } else {
+                        $variation->sale_price = $goodData['sale_price'] ?? $variation->sale_price;
+                    }
+                }
+
+                // Обновляем остатки вариации данными из товара
+                if (isset($goodData['stock_quantity']) && !in_array('stock_quantity', $immutableFields)) {
+                    $variation->stock_quantity = $goodData['stock_quantity'];
+                }
+                if (isset($goodData['remote_stock_quantity']) && !in_array('remote_stock_quantity', $immutableFields)) {
+                    $variation->remote_stock_quantity = $goodData['remote_stock_quantity'];
+                }
+                if (isset($goodData['fast_remote_stock_quantity']) && !in_array('fast_remote_stock_quantity', $immutableFields)) {
+                    $variation->fast_remote_stock_quantity = $goodData['fast_remote_stock_quantity'];
+                }
+
+                $variation->save();
+
+                Log::info("Updated variation with good data during import", [
+                    'variation_id' => $variation->id,
+                    'good_id' => $existingGood->id,
+                    'price' => $variation->price,
+                    'stock_quantity' => $variation->stock_quantity
+                ]);
+            }
         }
 
         return $existingGood;
@@ -2377,8 +2600,11 @@ class BulkGoodsImportController extends Controller
     private function processVariation($good, $variationData, $goodData)
     {
         try {
+            Log::info('processVariation called', ['good_id' => $good->id, 'good_name' => $good->name, 'variationData_keys' => array_keys($variationData)]);
+
             // Проверяем наличие данных вариации
             if (!isset($variationData['attributes']) || !is_array($variationData['attributes']) || count($variationData['attributes']) === 0) {
+                Log::info('processVariation: Нет атрибутов вариации или атрибуты пустые', ['variationData' => $variationData]);
                 return null;
             }
             
@@ -2415,27 +2641,56 @@ class BulkGoodsImportController extends Controller
             // Находим или создаем атрибуты и их значения
             $attributeValueIds = [];
             $hasErrors = false;
-            foreach ($attributes as $attr) {
+            Log::info('processVariation: Обработка атрибутов', [
+                'attributes_count' => count($attributes),
+                'attributes' => $attributes,
+                'hasExistingVariations' => $hasExistingVariations,
+                'existingAttributeIds' => $existingAttributeIds
+            ]);
+
+            foreach ($attributes as $index => $attr) {
+                Log::info('processVariation: Обработка атрибута ' . $index, ['attr' => $attr]);
+
                 if (!isset($attr['name']) || !isset($attr['value'])) {
+                    Log::info('processVariation: Атрибут пропущен - отсутствует name или value', ['attr' => $attr]);
                     continue;
                 }
-                
+
                 $attributeName = trim($attr['name']);
                 $attributeValue = trim($attr['value']);
-                
+
                 if (empty($attributeName) || empty($attributeValue)) {
+                    Log::info('processVariation: Атрибут пропущен - пустое имя или значение', [
+                        'attributeName' => $attributeName,
+                        'attributeValue' => $attributeValue
+                    ]);
                     continue;
                 }
                 
                 // Находим атрибут (не создаем новые)
                 $attribute = $this->findOrCreateVariationAttribute($attributeName, $hasExistingVariations, $existingAttributeIds);
                 if (!$attribute) {
+                    Log::info('processVariation: Атрибут не найден', [
+                        'attributeName' => $attributeName,
+                        'hasExistingVariations' => $hasExistingVariations,
+                        'existingAttributeIds' => $existingAttributeIds
+                    ]);
                     // Атрибут не найден - пропускаем эту характеристику
                     continue;
                 }
-                
+
+                Log::info('processVariation: Атрибут найден', [
+                    'attributeName' => $attributeName,
+                    'attribute_id' => $attribute->id,
+                    'attribute_name' => $attribute->name
+                ]);
+
                 // Проверяем, что атрибут используется в существующих вариациях (если они есть)
                 if ($hasExistingVariations && !in_array($attribute->id, $existingAttributeIds)) {
+                    Log::info('processVariation: Атрибут не используется в существующих вариациях', [
+                        'attribute_id' => $attribute->id,
+                        'existingAttributeIds' => $existingAttributeIds
+                    ]);
                     // Атрибут не используется в существующих вариациях - пропускаем
                     continue;
                 }
@@ -2452,16 +2707,31 @@ class BulkGoodsImportController extends Controller
             
             // Если были ошибки или нет валидных атрибутов - не создаем вариацию
             if ($hasErrors || empty($attributeValueIds)) {
+                Log::info('processVariation: Ошибки при обработке атрибутов или нет валидных атрибутов', [
+                    'hasErrors' => $hasErrors,
+                    'attributeValueIds_count' => count($attributeValueIds),
+                    'attributeValueIds' => $attributeValueIds
+                ]);
                 // Если нет валидных атрибутов - просто пропускаем вариацию без логирования
                 // (характеристики не найдены, это нормальное поведение)
                 return null;
             }
-            
+
             // Сортируем ID атрибутов для сравнения
             sort($attributeValueIds);
-            
+
+            Log::info('processVariation: Ищем существующую вариацию', [
+                'good_id' => $good->id,
+                'attributeValueIds' => $attributeValueIds
+            ]);
+
             // Ищем существующую вариацию с такой же комбинацией атрибутов
             $existingVariation = $this->findVariationByAttributes($good->id, $attributeValueIds);
+
+            Log::info('processVariation: Результат поиска вариации', [
+                'existingVariation_found' => $existingVariation ? true : false,
+                'existingVariation_id' => $existingVariation ? $existingVariation->id : null
+            ]);
             
             if ($existingVariation) {
                 // Вариация существует - обновляем все поля из goodData

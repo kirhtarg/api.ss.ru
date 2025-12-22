@@ -158,6 +158,14 @@ class ShopGoodsController extends Controller
             $query->where('supplier', $supplier);
         }
 
+        // Фильтр по множественным поставщикам
+        if ($request->has('suppliers')) {
+            $supplierIds = $request->input('suppliers');
+            if (is_array($supplierIds) && !empty($supplierIds)) {
+                $query->whereIn('supplier', $supplierIds);
+            }
+        }
+
         // Фильтр по лейблам
         if ($request->has('labels')) {
             $labelIds = $request->input('labels');
@@ -1618,7 +1626,7 @@ class ShopGoodsController extends Controller
         $validator = Validator::make($request->all(), [
             'ids' => 'required|array',
             'ids.*' => 'exists:shop_goods,id',
-            'action' => 'required|in:activate,deactivate,delete,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_price,update_sale_price,update_demping_price,toggle_show_demping,update_label,remove_after_symbol,replace_text,update_dimensions,enable_preorder,disable_preorder',
+            'action' => 'required|in:activate,deactivate,delete,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_price,update_sale_price,update_demping_price,toggle_show_demping,update_label,remove_after_symbol,replace_text,update_dimensions,enable_preorder,disable_preorder,clear_by_tags,clear_by_suppliers',
             'data' => 'nullable|array'
         ]);
 
@@ -1637,9 +1645,25 @@ class ShopGoodsController extends Controller
             $action = $request->get('action');
             $data = $request->get('data', []);
 
+            // Для массового удаления по меткам/поставщикам делаем прямые запросы
+            if (in_array($action, ['clear_by_tags', 'clear_by_suppliers'])) {
+                $deletedCount = ShopGood::whereIn('id', $ids)->delete();
+
+                DB::commit();
+
+                return response()->json([
+                    'success' => true,
+                    'message' => "Удалено {$deletedCount} товаров",
+                    'deleted_count' => $deletedCount
+                ]);
+            }
+
             $goods = ShopGood::whereIn('id', $ids)->get();
 
             foreach ($goods as $good) {
+                if (!$good) {
+                    continue; // Пропускаем null товары
+                }
                 $oldValues = $good->toArray();
 
                 // Для удаления сначала создаем запись аудита, потом удаляем товар
@@ -5090,18 +5114,82 @@ class ShopGoodsController extends Controller
      */
     public function changeVariation(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+
+        // Сначала проверим основные поля
+        $basicValidator = Validator::make($request->all(), [
             'good_with_variations_id' => 'required|exists:shop_goods,id',
             'goods_without_variations' => 'required|array|min:1',
-            'goods_without_variations.*.id' => 'required|exists:shop_goods,id',
-            'goods_without_variations.*.variation_id' => 'required|exists:shop_good_variations,id',
             'goods_without_variations.*.update_description' => 'nullable|boolean'
         ]);
+
+        if ($basicValidator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации основных полей',
+                'errors' => $basicValidator->errors()
+            ], 422);
+        }
+
+        // Теперь проверим существование товаров и вариаций
+        $validator = Validator::make($request->all(), [
+            'goods_without_variations.*.id' => 'required|exists:shop_goods,id',
+        ]);
+
+        // Дополнительная валидация для variation_ids или variation_id
+        $validator->after(function ($validator) use ($request) {
+            $goodsWithoutVariations = $request->input('goods_without_variations', []);
+
+            foreach ($goodsWithoutVariations as $index => $goodData) {
+                if (!isset($goodData['variation_ids']) && !isset($goodData['variation_id'])) {
+                    $validator->errors()->add("goods_without_variations.{$index}.variation_ids", 'Поле variation_ids или variation_id обязательно для заполнения.');
+                }
+
+                if (isset($goodData['variation_ids'])) {
+                    if (!is_array($goodData['variation_ids']) || empty($goodData['variation_ids'])) {
+                        $validator->errors()->add("goods_without_variations.{$index}.variation_ids", 'Поле variation_ids должно быть непустым массивом.');
+                    } else {
+                        foreach ($goodData['variation_ids'] as $varIndex => $variationId) {
+                            if (!is_numeric($variationId) || !\App\Models\ShopGoodVariation::where('id', $variationId)->exists()) {
+                                $validator->errors()->add("goods_without_variations.{$index}.variation_ids.{$varIndex}", 'Указанная вариация не существует.');
+                            }
+                        }
+                    }
+                }
+
+                if (isset($goodData['variation_id']) && !isset($goodData['variation_ids'])) {
+                    if (!is_numeric($goodData['variation_id']) || !\App\Models\ShopGoodVariation::where('id', $goodData['variation_id'])->exists()) {
+                        $validator->errors()->add("goods_without_variations.{$index}.variation_id", 'Указанная вариация не существует.');
+                    }
+                }
+            }
+        });
+
+        // Фильтруем только существующие товары
+        $goodsWithoutVariations = $request->input('goods_without_variations', []);
+        $validGoodsWithoutVariations = [];
+
+        foreach ($goodsWithoutVariations as $goodData) {
+            $goodId = $goodData['id'];
+            if (\App\Models\ShopGood::where('id', $goodId)->exists()) {
+                $validGoodsWithoutVariations[] = $goodData;
+            }
+        }
+
+        // Проверяем, остались ли товары после фильтрации
+        if (empty($validGoodsWithoutVariations)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ни один из указанных товаров не найден'
+            ], 422);
+        }
+
+        // Обновляем данные запроса отфильтрованными товарами
+        $request->merge(['goods_without_variations' => $validGoodsWithoutVariations]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка валидации',
+                'message' => 'Ошибка валидации после фильтрации товаров',
                 'errors' => $validator->errors()
             ], 422);
         }
@@ -5110,7 +5198,7 @@ class ShopGoodsController extends Controller
             DB::beginTransaction();
 
             $goodWithVariations = ShopGood::with(['variations'])->findOrFail($request->good_with_variations_id);
-            $goodsWithoutVariations = $request->goods_without_variations;
+            $goodsWithoutVariations = $validGoodsWithoutVariations; // Используем отфильтрованный массив
             
             // Проверяем, что товар действительно имеет вариации
             if ($goodWithVariations->variations->isEmpty()) {
@@ -5125,15 +5213,20 @@ class ShopGoodsController extends Controller
             $transferredImagesInfo = []; // Информация о перенесенных изображениях
 
             // Обрабатываем каждый товар без вариаций
-            foreach ($goodsWithoutVariations as $goodData) {
-                $goodId = $goodData['id'];
-                $variationId = $goodData['variation_id'];
-                $updateDescription = $goodData['update_description'] ?? false;
+            foreach ($goodsWithoutVariations as $index => $goodData) {
 
-                // Проверяем, что вариация принадлежит товару с вариациями
-                $variation = ShopGoodVariation::where('id', $variationId)
-                    ->where('good_id', $goodWithVariations->id)
-                    ->firstOrFail();
+                // Проверяем наличие variation_ids (новый формат) или variation_id (старый формат для обратной совместимости)
+                if (isset($goodData['variation_ids']) && is_array($goodData['variation_ids'])) {
+                    $variationIds = $goodData['variation_ids'];
+                } elseif (isset($goodData['variation_id'])) {
+                    // Обратная совместимость со старым форматом
+                    $variationIds = [$goodData['variation_id']];
+                } else {
+                    continue;
+                }
+                $goodId = $goodData['id'];
+                $variationIds = $goodData['variation_ids']; // Теперь массив вариаций
+                $updateDescription = $goodData['update_description'] ?? false;
 
                 // Загружаем товар без вариаций
                 $goodWithoutVariations = ShopGood::with(['images'])->findOrFail($goodId);
@@ -5143,47 +5236,83 @@ class ShopGoodsController extends Controller
                     continue; // Пропускаем товары с вариациями
                 }
 
-                // Обновляем данные вариации
-                $variation->update([
-                    'name' => $goodWithoutVariations->name,
-                    'sku' => $goodWithoutVariations->sku,
-                    'price' => $goodWithoutVariations->price,
-                    'sale_price' => $goodWithoutVariations->sale_price,
-                    'demping_price' => $goodWithoutVariations->demping_price,
-                    'stock_quantity' => $goodWithoutVariations->stock_quantity,
-                    'remote_stock_quantity' => $goodWithoutVariations->remote_stock_quantity,
-                    'fast_remote_stock_quantity' => $goodWithoutVariations->fast_remote_stock_quantity,
-                ]);
+                // Обрабатываем каждую вариацию
+                foreach ($variationIds as $variationId) {
+                    try {
+                        // Проверяем, что вариация принадлежит товару с вариациями
+                        $variation = ShopGoodVariation::where('id', $variationId)
+                            ->where('good_id', $goodWithVariations->id)
+                            ->firstOrFail();
 
-                // Переносим изображения товара в вариацию
-                // Важно: делаем это ДО удаления товара, чтобы избежать каскадного удаления
-                // Используем тот же подход, что и в bulkCreateVariations - good_id устанавливаем в null
-                // Это правильный способ привязки изображений к вариациям
-                
-                // Сначала считаем, сколько изображений найдено
-                $imagesFound = DB::table('shop_good_images')
-                    ->where('good_id', $goodWithoutVariations->id)
-                    ->whereNull('variation_id')
-                    ->count();
-                
-                // Затем обновляем их
-                $imagesCount = DB::table('shop_good_images')
-                    ->where('good_id', $goodWithoutVariations->id)
-                    ->whereNull('variation_id')
-                    ->update([
-                        'good_id' => null,
-                        'variation_id' => $variation->id
+                    // Сохраняем оригинальное название вариации для истории
+                    $originalVariationName = $variation->name;
+
+                    // Обновляем данные вариации данными из товара без вариаций
+                    $variation->update([
+                        'name' => $goodWithoutVariations->name,
+                        'sku' => $goodWithoutVariations->sku,
+                        'price' => $goodWithoutVariations->price,
+                        'sale_price' => $goodWithoutVariations->sale_price,
+                        'demping_price' => $goodWithoutVariations->demping_price,
+                        'stock_quantity' => $goodWithoutVariations->stock_quantity,
+                        'remote_stock_quantity' => $goodWithoutVariations->remote_stock_quantity,
+                        'fast_remote_stock_quantity' => $goodWithoutVariations->fast_remote_stock_quantity,
                     ]);
-                
-                // Сохраняем информацию о перенесенных изображениях
-                $transferredImagesInfo[] = [
-                    'good_id' => $goodWithoutVariations->id,
-                    'variation_id' => $variation->id,
-                    'images_found' => $imagesFound,
-                    'images_updated' => $imagesCount
-                ];
 
-                $updatedVariations[] = $variation->id;
+                    // Добавляем информацию о товаре-источнике в логи
+                    Log::info('Вариация обновлена данными из товара', [
+                        'variation_id' => $variation->id,
+                        'variation_name' => $variation->name,
+                        'source_good_id' => $goodWithoutVariations->id,
+                        'source_good_name' => $goodWithoutVariations->name,
+                        'source_good_sku' => $goodWithoutVariations->sku
+                    ]);
+
+                        $updatedVariations[] = $variation->id;
+                    } catch (\Exception $e) {
+                        // Продолжаем обработку других вариаций
+                        continue;
+                    }
+                }
+
+                // Копируем изображения товара в каждую вариацию
+                // Это позволяет каждой вариации иметь свои собственные изображения
+                if (!empty($variationIds)) {
+                    // Получаем все изображения товара
+                    $sourceImages = DB::table('shop_good_images')
+                        ->where('good_id', $goodWithoutVariations->id)
+                        ->whereNull('variation_id')
+                        ->get();
+
+                    $imagesFound = $sourceImages->count();
+                    $totalImagesCopied = 0;
+
+                    // Копируем каждое изображение в каждую вариацию
+                    foreach ($variationIds as $variationId) {
+                        foreach ($sourceImages as $sourceImage) {
+                            DB::table('shop_good_images')->insert([
+                                'good_id' => null, // Убираем связь с товаром
+                                'variation_id' => $variationId, // Привязываем к вариации
+                                'file_path' => $sourceImage->file_path,
+                                'alt_text' => $sourceImage->alt_text,
+                                'is_main' => $sourceImage->is_main,
+                                'sort_order' => $sourceImage->sort_order,
+                                'created_at' => now(),
+                                'updated_at' => now()
+                            ]);
+                            $totalImagesCopied++;
+                        }
+                    }
+
+                    // Сохраняем информацию о скопированных изображениях
+                    $transferredImagesInfo[] = [
+                        'good_id' => $goodWithoutVariations->id,
+                        'variation_ids' => $variationIds,
+                        'images_found' => $imagesFound,
+                        'images_copied' => $totalImagesCopied,
+                        'note' => 'Изображения скопированы в каждую вариацию'
+                    ];
+                }
 
                 // Запоминаем товар для обновления описания
                 if ($updateDescription) {
@@ -5199,6 +5328,15 @@ class ShopGoodsController extends Controller
                 ]);
             }
 
+            // Удаляем оригинальные изображения товара-источника (они уже скопированы в вариации)
+            $goodIdsToDelete = array_column($goodsWithoutVariations, 'id');
+            foreach ($goodIdsToDelete as $goodId) {
+                // Удаляем изображения товара-источника, поскольку они скопированы в вариации
+                DB::table('shop_good_images')
+                    ->where('good_id', $goodId)
+                    ->delete();
+            }
+
             // Проверяем изображения вариаций перед удалением товаров
             $variationImagesBeforeDelete = [];
             foreach ($updatedVariations as $varId) {
@@ -5207,8 +5345,7 @@ class ShopGoodsController extends Controller
                     ->count();
             }
 
-            // Удаляем товары без вариаций после переноса
-            $goodIdsToDelete = array_column($goodsWithoutVariations, 'id');
+            // Удаляем товары без вариаций после переноса изображений
             foreach ($goodIdsToDelete as $goodId) {
                 $goodToDelete = ShopGood::find($goodId);
                 if ($goodToDelete) {
@@ -5217,10 +5354,10 @@ class ShopGoodsController extends Controller
                 }
             }
 
-            // Финальная проверка изображений вариаций после удаления товаров
-            $variationImagesAfterDelete = [];
+            // Финальная проверка изображений вариаций после копирования
+            $variationImagesAfterCopy = [];
             foreach ($updatedVariations as $varId) {
-                $variationImagesAfterDelete[$varId] = DB::table('shop_good_images')
+                $variationImagesAfterCopy[$varId] = DB::table('shop_good_images')
                     ->where('variation_id', $varId)
                     ->count();
             }
@@ -5231,13 +5368,23 @@ class ShopGoodsController extends Controller
             $imagesSummary = [];
             foreach ($transferredImagesInfo as $info) {
                 $imagesSummary[] = [
-                    'good_id' => $info['good_id'],
-                    'variation_id' => $info['variation_id'],
+                    'source_good_id' => $info['good_id'],
+                    'variation_ids' => $info['variation_ids'] ?? [],
                     'images_found' => $info['images_found'],
-                    'images_updated' => $info['images_updated'],
-                    'images_before_delete' => $variationImagesBeforeDelete[$info['variation_id']] ?? 0,
-                    'images_after_delete' => $variationImagesAfterDelete[$info['variation_id']] ?? 0
+                    'images_copied' => $info['images_copied'] ?? 0,
+                    'note' => $info['note'] ?? ''
                 ];
+
+                // Добавляем информацию о финальном количестве изображений для каждой вариации
+                if (!empty($info['variation_ids'])) {
+                    foreach ($info['variation_ids'] as $varId) {
+                        $imagesSummary[] = [
+                            'variation_id' => $varId,
+                            'images_after_copy' => $variationImagesAfterCopy[$varId] ?? 0,
+                            'note' => 'Финальное количество изображений в вариации'
+                        ];
+                    }
+                }
             }
 
             return response()->json([
