@@ -527,6 +527,86 @@ class BulkGoodsImportController extends Controller
 
                         // Обновляем товар, если нужно
                         if ($duplicateAction === 'update') {
+                            // Проверяем поле для удаления дубликатов
+                            $duplicateCheckField = $request->input('duplicate_check_field');
+                            Log::info("Проверка дубликатов при обновлении товара", [
+                                'good_id' => $existingGood->id,
+                                'existing_sku' => $existingGood->sku,
+                                'existing_name' => $existingGood->name,
+                                'import_sku' => $sku,
+                                'import_name' => $name,
+                                'duplicate_check_field' => $duplicateCheckField,
+                                'field_value_in_data' => isset($goodData[$duplicateCheckField]) ? $goodData[$duplicateCheckField] : 'NOT_SET'
+                            ]);
+
+                            // Проверяем уникальность значения, которое будет установлено товару
+                            if (!empty($duplicateCheckField) && isset($goodData[$duplicateCheckField])) {
+                                $fieldValue = $goodData[$duplicateCheckField];
+
+                                // Проверяем, есть ли уже товар с таким значением поля (включая текущий товар)
+                                $existingGoodWithField = ShopGood::where($duplicateCheckField, $fieldValue)->first();
+
+                                Log::info("Проверяем уникальность значения '{$fieldValue}' по полю {$duplicateCheckField}", [
+                                    'existing_good_with_field' => $existingGoodWithField ? $existingGoodWithField->id : null,
+                                    'current_good_id' => $existingGood->id
+                                ]);
+
+                                // Если найден товар с таким значением поля, и это НЕ текущий товар
+                                if ($existingGoodWithField && $existingGoodWithField->id !== $existingGood->id) {
+                                    Log::info("Найден дубликат товара с таким же значением поля", [
+                                        'duplicate_good_id' => $existingGoodWithField->id,
+                                        'duplicate_good_sku' => $existingGoodWithField->sku,
+                                        'duplicate_good_name' => $existingGoodWithField->name,
+                                        'field_value' => $fieldValue
+                                    ]);
+
+                                    // Удаляем дубликат товара
+                                    try {
+                                        Log::info("Удаление дубликата товара перед обновлением", [
+                                            'duplicate_good_id' => $existingGoodWithField->id,
+                                            'duplicate_field' => $duplicateCheckField,
+                                            'duplicate_value' => $fieldValue,
+                                            'current_good_id' => $existingGood->id
+                                        ]);
+
+                                        // Удаляем связанные данные
+                                        $existingGoodWithField->categories()->detach();
+                                        $existingGoodWithField->brands()->detach();
+                                        $existingGoodWithField->tags()->detach();
+                                        $existingGoodWithField->properties()->detach();
+                                        $existingGoodWithField->images()->delete();
+                                        $existingGoodWithField->variations()->delete();
+
+                                        // Удаляем сам товар
+                                        $existingGoodWithField->delete();
+
+                                        Log::info("Дубликат товара успешно удален", [
+                                            'deleted_good_id' => $existingGoodWithField->id
+                                        ]);
+                                    } catch (\Exception $deleteException) {
+                                        Log::error("Ошибка при удалении дубликата товара", [
+                                            'duplicate_good_id' => $existingGoodWithField->id,
+                                            'error' => $deleteException->getMessage()
+                                        ]);
+                                        // Продолжаем импорт, но логируем ошибку
+                                    }
+                                } else {
+                                    Log::info("Дубликат товара не найден - значение '{$fieldValue}' уникально", [
+                                        'field' => $duplicateCheckField,
+                                        'value' => $fieldValue
+                                    ]);
+                                }
+                            }
+
+                            Log::info("Обновляем товар после проверки дубликатов (вариант 1)", [
+                                'good_id' => $existingGood->id,
+                                'old_sku' => $existingGood->sku,
+                                'old_name' => $existingGood->name,
+                                'new_sku' => isset($goodData['sku']) ? $goodData['sku'] : 'NOT_SET',
+                                'new_name' => isset($goodData['name']) ? $goodData['name'] : 'NOT_SET',
+                                'duplicate_check_field' => $duplicateCheckField
+                            ]);
+
                             $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation);
 
                             // Для логики "Изменить вариацию" также обновляем остатки сопоставленных вариаций
@@ -717,6 +797,86 @@ class BulkGoodsImportController extends Controller
                                 }
                             }
 
+                            // Проверяем поле для удаления дубликатов (для варианта 2)
+                            $duplicateCheckField = $request->input('duplicate_check_field');
+                            Log::info("Проверка дубликатов при обновлении товара (вариант 2)", [
+                                'good_id' => $existingGood->id,
+                                'existing_sku' => $existingGood->sku,
+                                'existing_name' => $existingGood->name,
+                                'import_sku' => $sku,
+                                'import_name' => $name,
+                                'duplicate_check_field' => $duplicateCheckField,
+                                'field_value_in_data' => isset($goodData[$duplicateCheckField]) ? $goodData[$duplicateCheckField] : 'NOT_SET'
+                            ]);
+
+                            // Проверяем уникальность значения, которое будет установлено товару
+                            if (!empty($duplicateCheckField) && isset($goodData[$duplicateCheckField])) {
+                                $fieldValue = $goodData[$duplicateCheckField];
+
+                                // Проверяем, есть ли уже товар с таким значением поля (включая текущий товар)
+                                $existingGoodWithField = ShopGood::where($duplicateCheckField, $fieldValue)->first();
+
+                                Log::info("Проверяем уникальность значения '{$fieldValue}' по полю {$duplicateCheckField} (вариант 2)", [
+                                    'existing_good_with_field' => $existingGoodWithField ? $existingGoodWithField->id : null,
+                                    'current_good_id' => $existingGood->id
+                                ]);
+
+                                // Если найден товар с таким значением поля, и это НЕ текущий товар
+                                if ($existingGoodWithField && $existingGoodWithField->id !== $existingGood->id) {
+                                    Log::info("Найден дубликат товара с таким же значением поля (вариант 2)", [
+                                        'duplicate_good_id' => $existingGoodWithField->id,
+                                        'duplicate_good_sku' => $existingGoodWithField->sku,
+                                        'duplicate_good_name' => $existingGoodWithField->name,
+                                        'field_value' => $fieldValue
+                                    ]);
+
+                                    // Удаляем дубликат товара
+                                    try {
+                                        Log::info("Удаление дубликата товара перед обновлением (вариант 2)", [
+                                            'duplicate_good_id' => $existingGoodWithField->id,
+                                            'duplicate_field' => $duplicateCheckField,
+                                            'duplicate_value' => $fieldValue,
+                                            'current_good_id' => $existingGood->id
+                                        ]);
+
+                                        // Удаляем связанные данные
+                                        $existingGoodWithField->categories()->detach();
+                                        $existingGoodWithField->brands()->detach();
+                                        $existingGoodWithField->tags()->detach();
+                                        $existingGoodWithField->properties()->detach();
+                                        $existingGoodWithField->images()->delete();
+                                        $existingGoodWithField->variations()->delete();
+
+                                        // Удаляем сам товар
+                                        $existingGoodWithField->delete();
+
+                                        Log::info("Дубликат товара успешно удален (вариант 2)", [
+                                            'deleted_good_id' => $existingGoodWithField->id
+                                        ]);
+                                    } catch (\Exception $deleteException) {
+                                        Log::error("Ошибка при удалении дубликата товара (вариант 2)", [
+                                            'duplicate_good_id' => $existingGoodWithField->id,
+                                            'error' => $deleteException->getMessage()
+                                        ]);
+                                        // Продолжаем импорт, но логируем ошибку
+                                    }
+                                } else {
+                                    Log::info("Дубликат товара не найден - значение '{$fieldValue}' уникально (вариант 2)", [
+                                        'field' => $duplicateCheckField,
+                                        'value' => $fieldValue
+                                    ]);
+                                }
+                            }
+
+                            Log::info("Обновляем товар после проверки дубликатов (вариант 2)", [
+                                'good_id' => $existingGood->id,
+                                'old_sku' => $existingGood->sku,
+                                'old_name' => $existingGood->name,
+                                'new_sku' => isset($goodData['sku']) ? $goodData['sku'] : 'NOT_SET',
+                                'new_name' => isset($goodData['name']) ? $goodData['name'] : 'NOT_SET',
+                                'duplicate_check_field' => $duplicateCheckField
+                            ]);
+
                             $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation);
 
                             // Для логики "Изменить вариацию" также обновляем остатки сопоставленных вариаций
@@ -867,7 +1027,17 @@ class BulkGoodsImportController extends Controller
                                 continue;
                             }
                         }
-                        
+
+                        // Проверяем режим "Только обновлять"
+                        $onlyUpdateMode = $request->input('only_update_mode', false);
+                        if ($onlyUpdateMode) {
+                            // В режиме "Только обновлять" пропускаем создание новых товаров
+                            $results['skipped']++;
+                            $sheet = $goodData['_sheet'] ?? 'неизвестно';
+                            $skipItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'reason' => 'Только обновлять (товар не найден)'];
+                            continue;
+                        }
+
                         // Товар действительно не существует - создаем новый (с вариацией или без)
                         $newGood = $this->createGood($goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory);
                         $results['imported']++;
