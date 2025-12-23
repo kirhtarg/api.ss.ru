@@ -1325,6 +1325,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/change-variation', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'changeVariation']);
                 Route::post('/check-duplicates', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'checkDuplicates']);
                 Route::post('/bulk-import', [\App\Http\Controllers\Admin\BulkGoodsImportController::class, 'bulkImport']);
+                Route::post('/test-reset-supplier-stocks', [\App\Http\Controllers\Admin\BulkGoodsImportController::class, 'testResetSupplierStocks']);
+                Route::post('/test-reset-all-stocks', [\App\Http\Controllers\Admin\BulkGoodsImportController::class, 'testResetAllStocks']);
                 Route::post('/mass-parse-properties', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'massParseProperties']);
 
                 // Управление изображениями товаров
@@ -1352,6 +1354,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
                 // Прокси для загрузки YML фидов (обход CORS)
                 Route::post('/yml-feed-proxy', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'proxyYMLFeed']);
+                Route::post('/upload-yml-file', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'uploadYMLFile']);
+                Route::get('/temp-yml-file/{filename}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getTempYMLFile']);
+                Route::delete('/temp-yml-file/{filename}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'deleteTempYMLFile']);
 
                 // Вариации товаров
                 Route::prefix('{goodId}/variations')->group(function () {

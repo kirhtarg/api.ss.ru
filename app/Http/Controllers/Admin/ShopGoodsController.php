@@ -13,6 +13,7 @@ use App\Models\ShopProperty;
 use App\Models\ShopPropertyValue;
 use App\Models\ShopCategory;
 use App\Models\ShopGoodCharacteristic;
+use Illuminate\Support\Str;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -4719,6 +4720,138 @@ class ShopGoodsController extends Controller
     }
 
     /**
+     * Загрузка YML/XML файла на сервер для последующего парсинга
+     */
+    public function uploadYMLFile(Request $request): JsonResponse
+    {
+        try {
+            $request->validate([
+                'file' => 'required|file|mimes:xml,yml|max:51200' // 50MB max
+            ]);
+
+            $file = $request->file('file');
+            $originalName = $file->getClientOriginalName();
+            $extension = $file->getClientOriginalExtension();
+
+            // Проверяем расширение
+            if (!in_array(strtolower($extension), ['xml', 'yml'])) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Файл должен иметь расширение .xml или .yml'
+                ], 400);
+            }
+
+            // Генерируем уникальное имя файла
+            $fileName = 'yml_upload_' . time() . '_' . Str::random(8) . '.' . $extension;
+            $filePath = storage_path('app/temp/' . $fileName);
+
+            // Создаем директорию если не существует
+            $directory = dirname($filePath);
+            if (!is_dir($directory)) {
+                mkdir($directory, 0755, true);
+            }
+
+            // Сохраняем файл
+            $file->move($directory, basename($filePath));
+
+            // Проверяем, что файл сохранен
+            if (!file_exists($filePath)) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Не удалось сохранить файл'
+                ], 500);
+            }
+
+            // Возвращаем URL для доступа к файлу
+            $fileUrl = url('/api/admin/shop/goods/temp-yml-file/' . $fileName);
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'url' => $fileUrl,
+                    'filename' => $fileName,
+                    'original_name' => $originalName,
+                    'size' => filesize($filePath)
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Ошибка при загрузке файла: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Удаление временного YML файла
+     */
+    public function deleteTempYMLFile(Request $request, string $filename): JsonResponse
+    {
+        try {
+            // Проверяем формат имени файла для безопасности
+            if (!preg_match('/^yml_upload_\d+_[a-zA-Z0-9]+\.(xml|yml)$/', $filename)) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Некорректное имя файла'
+                ], 400);
+            }
+
+            $filePath = storage_path('app/temp/' . $filename);
+
+            if (file_exists($filePath)) {
+                unlink($filePath);
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Файл удален'
+                ]);
+            }
+
+            return response()->json([
+                'success' => false,
+                'error' => 'Файл не найден'
+            ], 404);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Ошибка при удалении файла: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить временный YML файл
+     */
+    public function getTempYMLFile(Request $request, string $filename)
+    {
+        // Проверяем, что пользователь авторизован через токен (для API запросов)
+        if (!$request->user()) {
+            abort(403, 'Unauthorized');
+        }
+
+        // Проверяем формат имени файла для безопасности
+        if (!preg_match('/^yml_upload_\d+_[a-zA-Z0-9]+\.(xml|yml)$/', $filename)) {
+            abort(404, 'File not found');
+        }
+
+        $filePath = storage_path('app/temp/' . $filename);
+
+        if (!file_exists($filePath)) {
+            abort(404, 'File not found');
+        }
+
+        // Читаем файл и возвращаем как текст
+        $content = file_get_contents($filePath);
+
+        return response($content, 200, [
+            'Content-Type' => 'application/xml',
+            'Content-Disposition' => 'inline; filename="' . $filename . '"'
+        ]);
+    }
+
+    /**
      * Получить статистику количества товаров по категориям
      */
     public function getCategoriesStats(Request $request): JsonResponse
@@ -5248,15 +5381,13 @@ class ShopGoodsController extends Controller
                     $originalVariationName = $variation->name;
 
                     // Обновляем данные вариации данными из товара без вариаций
+                    // НЕ переносим остатки - только основные данные и цены
                     $variation->update([
                         'name' => $goodWithoutVariations->name,
                         'sku' => $goodWithoutVariations->sku,
                         'price' => $goodWithoutVariations->price,
                         'sale_price' => $goodWithoutVariations->sale_price,
                         'demping_price' => $goodWithoutVariations->demping_price,
-                        'stock_quantity' => $goodWithoutVariations->stock_quantity,
-                        'remote_stock_quantity' => $goodWithoutVariations->remote_stock_quantity,
-                        'fast_remote_stock_quantity' => $goodWithoutVariations->fast_remote_stock_quantity,
                     ]);
 
                     // Добавляем информацию о товаре-источнике в логи

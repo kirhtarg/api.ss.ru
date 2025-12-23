@@ -36,11 +36,36 @@ class BulkGoodsImportController extends Controller
     {
         // Логируем полученный supplier_name для отладки
         $supplierNameFromRequest = $request->input('supplier_name', null);
-        Log::info('Получен supplier_name в bulkImport', [
-            'supplier_name' => $supplierNameFromRequest,
-            'is_first_batch' => $request->input('is_first_batch', false)
-        ]);
-        
+        $resetSupplierStocksRaw = $request->input('reset_supplier_stocks', false);
+        $resetSupplierStocks = filter_var($resetSupplierStocksRaw, FILTER_VALIDATE_BOOLEAN);
+        $resetAllStocks = $request->input('reset_all_stocks', false);
+
+
+        // Обнуляем остатки перед импортом (только для первого батча)
+
+        if (($resetSupplierStocks || $resetAllStocks) && $request->input('is_first_batch', false)) {
+            $targetSupplier = $resetAllStocks ? null : $supplierNameFromRequest;
+
+
+            try {
+                if ($resetAllStocks) {
+                    $resetResult = $this->resetAllStocks();
+                } else {
+                    $resetResult = $this->resetSupplierStocks($supplierNameFromRequest);
+                }
+                Log::info('Остатки успешно обнулены', $resetResult);
+            } catch (\Exception $e) {
+                Log::error('Ошибка при обнулении остатков', [
+                    'supplier_name' => $targetSupplier,
+                    'reset_all' => $resetAllStocks,
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+                // Продолжаем импорт, но логируем ошибку
+            }
+        } else {
+        }
+
         // Получаем информацию о батче для очистки логов
         $isFirstBatch = $request->input('is_first_batch', false);
 
@@ -140,12 +165,6 @@ class BulkGoodsImportController extends Controller
             $supplierName = $request->input('supplier_name', null);
             if ($supplierName !== null && $supplierName !== '') {
                 $good['supplier_name'] = trim($supplierName);
-                Log::debug('Добавлен supplier_name к товару', [
-                    'index' => $index,
-                    'sku' => $sku,
-                    'name' => $name,
-                    'supplier_name' => trim($supplierName)
-                ]);
             }
             
             $goods[] = $good;
@@ -1493,8 +1512,9 @@ class BulkGoodsImportController extends Controller
                 if (isset($goodData['remote_stock_quantity']) && !in_array('remote_stock_quantity', $immutableFields)) {
                     $variation->remote_stock_quantity = $goodData['remote_stock_quantity'];
                 }
-                if (isset($goodData['fast_remote_stock_quantity']) && !in_array('fast_remote_stock_quantity', $immutableFields)) {
-                    $variation->fast_remote_stock_quantity = $goodData['fast_remote_stock_quantity'];
+                // Обновляем fast_remote_stock_quantity всегда, даже если null (чтобы можно было сбросить значение)
+                if (!in_array('fast_remote_stock_quantity', $immutableFields)) {
+                    $variation->fast_remote_stock_quantity = $goodData['fast_remote_stock_quantity'] ?? null;
                 }
 
                 $variation->save();
@@ -2746,12 +2766,14 @@ class BulkGoodsImportController extends Controller
                     $existingVariation->sale_price = $goodData['sale_price'];
                 }
                 
-                // Обновляем остатки
+                // Обновляем остатки - только те поля, которые присутствуют в данных импорта
                 $existingVariation->stock_quantity = $variationStockQuantity;
-                // Обновляем remote_stock_quantity всегда, даже если null (чтобы можно было сбросить значение)
-                $existingVariation->remote_stock_quantity = $variationRemoteStockQuantity;
-                // Обновляем fast_remote_stock_quantity всегда, даже если null (чтобы можно было сбросить значение)
-                $existingVariation->fast_remote_stock_quantity = $variationFastRemoteStockQuantity;
+                if (isset($variationData['remote_stock_quantity']) || isset($goodData['remote_stock_quantity'])) {
+                    $existingVariation->remote_stock_quantity = $variationRemoteStockQuantity;
+                }
+                if (isset($variationData['fast_remote_stock_quantity']) || isset($goodData['fast_remote_stock_quantity'])) {
+                    $existingVariation->fast_remote_stock_quantity = $variationFastRemoteStockQuantity;
+                }
                 
                 // Обновляем SKU вариации из данных товара или из goodData
                 // Дублирование SKU разрешено для вариаций, поэтому не проверяем уникальность
@@ -2826,8 +2848,8 @@ class BulkGoodsImportController extends Controller
                         'price' => $variationPrice,
                         'sale_price' => null,
                         'stock_quantity' => $variationStockQuantity,
-                        'remote_stock_quantity' => $variationRemoteStockQuantity,
-                        'fast_remote_stock_quantity' => $variationFastRemoteStockQuantity,
+                        'remote_stock_quantity' => isset($variationData['remote_stock_quantity']) || isset($goodData['remote_stock_quantity']) ? $variationRemoteStockQuantity : null,
+                        'fast_remote_stock_quantity' => isset($variationData['fast_remote_stock_quantity']) || isset($goodData['fast_remote_stock_quantity']) ? $variationFastRemoteStockQuantity : null,
                         'weight' => $good->weight ?? null,
                         'length' => $good->length ?? null,
                         'height' => $good->height ?? null,
@@ -2860,10 +2882,12 @@ class BulkGoodsImportController extends Controller
                             }
                             
                             $existingVariationBySku->stock_quantity = $variationStockQuantity;
-                            // Обновляем remote_stock_quantity всегда, даже если null
-                            $existingVariationBySku->remote_stock_quantity = $variationRemoteStockQuantity;
-                            // Обновляем fast_remote_stock_quantity всегда, даже если null
-                            $existingVariationBySku->fast_remote_stock_quantity = $variationFastRemoteStockQuantity;
+                            if (isset($variationData['remote_stock_quantity']) || isset($goodData['remote_stock_quantity'])) {
+                                $existingVariationBySku->remote_stock_quantity = $variationRemoteStockQuantity;
+                            }
+                            if (isset($variationData['fast_remote_stock_quantity']) || isset($goodData['fast_remote_stock_quantity'])) {
+                                $existingVariationBySku->fast_remote_stock_quantity = $variationFastRemoteStockQuantity;
+                            }
                             
                             // Обновляем размеры и вес, если переданы
                             if (isset($goodData['weight'])) {
@@ -3129,6 +3153,177 @@ class BulkGoodsImportController extends Controller
         } catch (\Exception $e) {
             // Логируем ошибку, но не прерываем импорт
             Log::error('Ошибка при обнулении остатков поставщика: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Обнуляет остатки товаров и вариаций поставщика
+     */
+    private function resetSupplierStocks($supplierName)
+    {
+        $updatedGoods = 0;
+        $updatedVariations = 0;
+
+
+        try {
+            // Сначала проверим, сколько товаров у поставщика
+            $goodsCount = ShopGood::where('supplier', $supplierName)->count();
+
+            // Получаем товары перед обновлением для проверки
+            $goodsBefore = ShopGood::where('supplier', $supplierName)
+                ->select('id', 'name', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity')
+                ->limit(5)
+                ->get()
+                ->toArray();
+
+
+            // Обнуляем остатки товаров поставщика
+            $goodsUpdated = ShopGood::where('supplier', $supplierName)
+                ->update([
+                    'stock_quantity' => 0,
+                    'remote_stock_quantity' => null,
+                    'fast_remote_stock_quantity' => null
+                ]);
+
+            $updatedGoods = $goodsUpdated;
+
+            // Проверяем товары после обновления
+            $goodsAfter = ShopGood::where('supplier', $supplierName)
+                ->select('id', 'name', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity')
+                ->limit(5)
+                ->get()
+                ->toArray();
+
+
+            // Проверяем вариации
+            $variationsCount = ShopGoodVariation::whereHas('good', function($query) use ($supplierName) {
+                $query->where('supplier', $supplierName);
+            })->count();
+
+            // Обнуляем остатки вариаций товаров поставщика
+            $variationsUpdated = ShopGoodVariation::whereHas('good', function($query) use ($supplierName) {
+                $query->where('supplier', $supplierName);
+            })->update([
+                'stock_quantity' => 0,
+                'remote_stock_quantity' => null,
+                'fast_remote_stock_quantity' => null
+            ]);
+
+            $updatedVariations = $variationsUpdated;
+
+
+        } catch (\Exception $e) {
+            Log::error('Ошибка при обнулении остатков поставщика', [
+                'supplier_name' => $supplierName,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            throw $e;
+        }
+
+        return [
+            'supplier_name' => $supplierName,
+            'updated_goods' => $updatedGoods,
+            'updated_variations' => $updatedVariations
+        ];
+    }
+
+    /**
+     * Обнуляет остатки всех товаров и вариаций
+     */
+    private function resetAllStocks()
+    {
+        $updatedGoods = 0;
+        $updatedVariations = 0;
+
+
+        try {
+            // Обнуляем остатки всех товаров
+            $goodsUpdated = ShopGood::query()->update([
+                'stock_quantity' => 0,
+                'remote_stock_quantity' => null,
+                'fast_remote_stock_quantity' => null
+            ]);
+
+            $updatedGoods = $goodsUpdated;
+
+            // Обнуляем остатки всех вариаций
+            $variationsUpdated = ShopGoodVariation::query()->update([
+                'stock_quantity' => 0,
+                'remote_stock_quantity' => null,
+                'fast_remote_stock_quantity' => null
+            ]);
+
+            $updatedVariations = $variationsUpdated;
+
+
+        } catch (\Exception $e) {
+            Log::error('Ошибка при обнулении остатков всех товаров', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            throw $e;
+        }
+
+        return [
+            'reset_all' => true,
+            'updated_goods' => $updatedGoods,
+            'updated_variations' => $updatedVariations
+        ];
+    }
+
+    /**
+     * Тестовый метод для проверки обнуления остатков поставщика
+     */
+    public function testResetSupplierStocks(Request $request)
+    {
+        $supplierName = $request->input('supplier_name');
+
+        if (!$supplierName) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Не указан supplier_name'
+            ], 400);
+        }
+
+        try {
+            $result = $this->resetSupplierStocks($supplierName);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Остатки поставщика успешно обнулены',
+                'data' => $result
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при обнулении остатков: ' . $e->getMessage(),
+                'error' => $e->getTraceAsString()
+            ], 500);
+        }
+    }
+
+    /**
+     * Тестовый метод для проверки обнуления остатков всех товаров
+     */
+    public function testResetAllStocks(Request $request)
+    {
+        try {
+            $result = $this->resetAllStocks();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Остатки всех товаров успешно обнулены',
+                'data' => $result
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при обнулении остатков: ' . $e->getMessage(),
+                'error' => $e->getTraceAsString()
+            ], 500);
         }
     }
 
