@@ -22,8 +22,7 @@ class ShopGoodsController extends Controller
         $shopRemoteQ = Setting::where('key', 'shop_remote_q')->first();
         $remoteQ = $shopRemoteQ ? (int)$shopRemoteQ->value : 1;
 
-        // Фильтрация по остаткам применяется ТОЛЬКО при shop_show_good_mode = 1
-        // При других значениях (2, 3, 4 и т.д.) фильтрация не применяется - показываем все товары
+        // Фильтрация по остаткам применяется при shop_show_good_mode = 1
         if ($showGoodMode === 1) {
             // Фильтрация по остаткам: показывать только товары с остатком
             // Для товаров БЕЗ вариаций: проверяем остатки основного товара
@@ -35,7 +34,7 @@ class ShopGoodsController extends Controller
                         ->where(function($stockQuery) use ($remoteQ) {
                             // Локальный остаток > 0
                             $stockQuery->where('stock_quantity', '>', 0);
-                            
+
                             // ИЛИ удаленный остаток не пустой (если учитываем удаленный склад)
                             if ($remoteQ === 2 || $remoteQ === 3) {
                                 $stockQuery->orWhere(function($remoteCondition) {
@@ -51,14 +50,14 @@ class ShopGoodsController extends Controller
                             }
                         });
                 });
-                
+
                 // Вариант 2: Товары С вариациями, у которых сумма остатков всех вариаций > 0
                 $mainQuery->orWhere(function($hasVariationsQuery) use ($remoteQ) {
                     // Товар должен иметь вариации
                     $hasVariationsQuery->whereHas('variations', function($varQ) {
                         $varQ->where('is_active', true);
                     });
-                    
+
                     // Проверяем что сумма остатков всех вариаций > 0
                     if ($remoteQ === 2 || $remoteQ === 3) {
                         // Если учитываем удаленный склад, проверяем сумму локальных и удаленных остатков
@@ -86,7 +85,7 @@ class ShopGoodsController extends Controller
                                 END
                             ), 0)
                             FROM shop_good_variations
-                            WHERE shop_good_variations.good_id = shop_goods.id 
+                            WHERE shop_good_variations.good_id = shop_goods.id
                             AND shop_good_variations.is_active = 1
                         ) > 0');
                     } else {
@@ -94,7 +93,7 @@ class ShopGoodsController extends Controller
                         $hasVariationsQuery->whereRaw('(
                             SELECT COALESCE(SUM(stock_quantity), 0)
                             FROM shop_good_variations
-                            WHERE shop_good_variations.good_id = shop_goods.id 
+                            WHERE shop_good_variations.good_id = shop_goods.id
                             AND shop_good_variations.is_active = 1
                             AND stock_quantity > 0
                         ) > 0');
@@ -102,104 +101,145 @@ class ShopGoodsController extends Controller
                 });
             });
         }
-        
-        // Фильтр для режима 4: показывать товары с остатком > 0 ИЛИ товары с остатком = 0 и is_preorder = 1
-        // НЕ показывать товары с остатком = 0 и is_preorder = 0
+
+        // Фильтр для режима 4: показывать только товары с остатком или специальные товары
         if ($showGoodMode === 4) {
             $query->where(function($mainQuery) use ($remoteQ) {
-                // Условие 1: остаток на локальном складе товара > 0
-                $mainQuery->where('stock_quantity', '>', 0);
+                // Условие 1: Товары БЕЗ вариаций
+                $mainQuery->where(function($noVariationsQuery) use ($remoteQ) {
+                    $noVariationsQuery->whereDoesntHave('variations')
+                        ->where(function($stockQuery) use ($remoteQ) {
+                            // Локальный остаток > 0
+                            $stockQuery->where('stock_quantity', '>', 0);
 
-                if ($remoteQ === 2 || $remoteQ === 3) {
-                    // Условие 2: остаток на удаленном складе товара (не null, не пустая строка, не "0")
-                    $mainQuery->orWhere(function($remoteCondition) {
-                        $remoteCondition->whereNotNull('remote_stock_quantity')
-                            ->where('remote_stock_quantity', '!=', '0')
-                            ->where('remote_stock_quantity', '!=', '')
-                            ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
-                    })
-                    // Условие 2b: остаток на быстром удаленном складе товара
-                    ->orWhere(function($fastRemoteCondition) {
-                        $fastRemoteCondition->whereNotNull('fast_remote_stock_quantity')
-                            ->where('fast_remote_stock_quantity', '!=', '0')
-                            ->where('fast_remote_stock_quantity', '!=', '')
-                            ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
-                    });
-                }
-
-                // Условие 3: товар с остатком = 0, но is_preorder = 1 (показываем предзаказы)
-                $mainQuery->orWhere(function($preorderCondition) use ($remoteQ) {
-                    $preorderCondition->where('stock_quantity', '<=', 0)
-                        ->where(function($preorderSubCondition) {
-                            $preorderSubCondition->where('is_preorder', '=', 1)
-                                ->orWhere('is_preorder', '=', true);
-                        });
-                    
-                    // Проверяем, что удаленный остаток и быстрый удаленный остаток тоже пустые (если учитываем удаленный склад)
-                    if ($remoteQ === 2 || $remoteQ === 3) {
-                        $preorderCondition->where(function($remoteEmptyCondition) {
-                            $remoteEmptyCondition->whereNull('remote_stock_quantity')
-                                ->orWhere('remote_stock_quantity', '=', '0')
-                                ->orWhere('remote_stock_quantity', '=', '')
-                                ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
-                        })
-                        ->where(function($fastRemoteEmptyCondition) {
-                            $fastRemoteEmptyCondition->whereNull('fast_remote_stock_quantity')
-                                ->orWhere('fast_remote_stock_quantity', '=', '0')
-                                ->orWhere('fast_remote_stock_quantity', '=', '')
-                                ->orWhereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) = 0');
-                        });
-                    }
-                });
-
-                // Условие 4: есть вариации с остатком
-                $mainQuery->orWhereHas('variations', function($varQ) use ($remoteQ) {
-                    $varQ->where(function($subVarQ) use ($remoteQ) {
-                        $subVarQ->where('stock_quantity', '>', 0);
-
-                        if ($remoteQ === 2 || $remoteQ === 3) {
-                            $subVarQ->orWhere(function($remoteVarQ) {
-                                $remoteVarQ->whereNotNull('remote_stock_quantity')
-                                    ->where('remote_stock_quantity', '!=', '0')
-                                    ->where('remote_stock_quantity', '!=', '')
-                                    ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
-                            })
-                            ->orWhere(function($fastRemoteVarQ) {
-                                $fastRemoteVarQ->whereNotNull('fast_remote_stock_quantity')
-                                    ->where('fast_remote_stock_quantity', '!=', '0')
-                                    ->where('fast_remote_stock_quantity', '!=', '')
-                                    ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
-                            });
-                        }
-                    });
-                });
-
-                // Условие 5: все вариации без остатка, но is_preorder = 1 у товара (показываем предзаказы)
-                $mainQuery->orWhere(function($preorderVarCondition) use ($remoteQ) {
-                    $preorderVarCondition->where(function($preorderCheck) {
-                        $preorderCheck->where('is_preorder', '=', 1)
-                            ->orWhere('is_preorder', '=', true);
-                    })
-                    ->whereHas('variations', function($varQ) {
-                        $varQ->where('is_active', true);
-                    })
-                    ->whereDoesntHave('variations', function($varQ) use ($remoteQ) {
-                        $varQ->where(function($subVarQ) use ($remoteQ) {
-                            $subVarQ->where('stock_quantity', '>', 0);
+                            // ИЛИ удаленный остаток (если учитываем)
                             if ($remoteQ === 2 || $remoteQ === 3) {
-                                $subVarQ->orWhere(function($remoteVarQ) {
-                                    $remoteVarQ->whereNotNull('remote_stock_quantity')
+                                $stockQuery->orWhere(function($remoteCondition) {
+                                    $remoteCondition->whereNotNull('remote_stock_quantity')
                                         ->where('remote_stock_quantity', '!=', '0')
                                         ->where('remote_stock_quantity', '!=', '')
                                         ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
                                 })
-                                ->orWhere(function($fastRemoteVarQ) {
-                                    $fastRemoteVarQ->whereNotNull('fast_remote_stock_quantity')
+                                ->orWhere(function($fastRemoteCondition) {
+                                    $fastRemoteCondition->whereNotNull('fast_remote_stock_quantity')
                                         ->where('fast_remote_stock_quantity', '!=', '0')
                                         ->where('fast_remote_stock_quantity', '!=', '')
                                         ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
                                 });
                             }
+
+                            // ИЛИ предзаказы (is_preorder = 1) с нулевым остатком
+                            $stockQuery->orWhere(function($preorderCondition) use ($remoteQ) {
+                                $preorderCondition->where('stock_quantity', '<=', 0)
+                                    ->where(function($preorderSubCondition) {
+                                        $preorderSubCondition->where('is_preorder', '=', 1)
+                                            ->orWhere('is_preorder', '=', true);
+                                    });
+
+                                // Проверяем, что удаленный остаток тоже пустой (если учитываем)
+                                if ($remoteQ === 2 || $remoteQ === 3) {
+                                    $preorderCondition->where(function($remoteEmptyCondition) {
+                                        $remoteEmptyCondition->whereNull('remote_stock_quantity')
+                                            ->orWhere('remote_stock_quantity', '=', '0')
+                                            ->orWhere('remote_stock_quantity', '=', '')
+                                            ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
+                                    })
+                                    ->where(function($fastRemoteEmptyCondition) {
+                                        $fastRemoteEmptyCondition->whereNull('fast_remote_stock_quantity')
+                                            ->orWhere('fast_remote_stock_quantity', '=', '0')
+                                            ->orWhere('fast_remote_stock_quantity', '=', '')
+                                            ->orWhereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) = 0');
+                                    });
+                                }
+                            });
+
+                            // ИЛИ товары с is_show = 1 (независимо от остатка)
+                            $stockQuery->orWhere('is_show', '=', 1);
+                        });
+                });
+
+                // Условие 2: Товары С вариациями
+                $mainQuery->orWhere(function($hasVariationsQuery) use ($remoteQ) {
+                    $hasVariationsQuery->whereHas('variations', function($varQ) {
+                        $varQ->where('is_active', true);
+                    })
+                    ->where(function($variationsStockQuery) use ($remoteQ) {
+                        // Вариант 2a: Есть хотя бы одна вариация с остатком
+                        $variationsStockQuery->whereHas('variations', function($varQ) use ($remoteQ) {
+                            $varQ->where('is_active', true)
+                                ->where(function($subVarQ) use ($remoteQ) {
+                                    $subVarQ->where('stock_quantity', '>', 0);
+
+                                    if ($remoteQ === 2 || $remoteQ === 3) {
+                                        $subVarQ->orWhere(function($remoteVarQ) {
+                                            $remoteVarQ->whereNotNull('remote_stock_quantity')
+                                                ->where('remote_stock_quantity', '!=', '0')
+                                                ->where('remote_stock_quantity', '!=', '')
+                                                ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                        })
+                                        ->orWhere(function($fastRemoteVarQ) {
+                                            $fastRemoteVarQ->whereNotNull('fast_remote_stock_quantity')
+                                                ->where('fast_remote_stock_quantity', '!=', '0')
+                                                ->where('fast_remote_stock_quantity', '!=', '')
+                                                ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
+                                        });
+                                    }
+                                });
+                        });
+
+                        // Вариант 2b: Все вариации без остатка, но товар имеет is_preorder = 1
+                        $variationsStockQuery->orWhere(function($preorderVariationsQuery) use ($remoteQ) {
+                            $preorderVariationsQuery->where(function($preorderCheck) {
+                                $preorderCheck->where('is_preorder', '=', 1)
+                                    ->orWhere('is_preorder', '=', true);
+                            })
+                            ->whereDoesntHave('variations', function($varQ) use ($remoteQ) {
+                                $varQ->where('is_active', true)
+                                    ->where(function($subVarQ) use ($remoteQ) {
+                                        $subVarQ->where('stock_quantity', '>', 0);
+
+                                        if ($remoteQ === 2 || $remoteQ === 3) {
+                                            $subVarQ->orWhere(function($remoteVarQ) {
+                                                $remoteVarQ->whereNotNull('remote_stock_quantity')
+                                                    ->where('remote_stock_quantity', '!=', '0')
+                                                    ->where('remote_stock_quantity', '!=', '')
+                                                    ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                            })
+                                            ->orWhere(function($fastRemoteVarQ) {
+                                                $fastRemoteVarQ->whereNotNull('fast_remote_stock_quantity')
+                                                    ->where('fast_remote_stock_quantity', '!=', '0')
+                                                    ->where('fast_remote_stock_quantity', '!=', '')
+                                                    ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
+                                            });
+                                        }
+                                    });
+                            });
+                        });
+
+                        // Вариант 2c: Все вариации без остатка, но товар имеет is_show = 1
+                        $variationsStockQuery->orWhere(function($showVariationsQuery) use ($remoteQ) {
+                            $showVariationsQuery->where('is_show', '=', 1)
+                                ->whereDoesntHave('variations', function($varQ) use ($remoteQ) {
+                                    $varQ->where('is_active', true)
+                                        ->where(function($subVarQ) use ($remoteQ) {
+                                            $subVarQ->where('stock_quantity', '>', 0);
+
+                                            if ($remoteQ === 2 || $remoteQ === 3) {
+                                                $subVarQ->orWhere(function($remoteVarQ) {
+                                                    $remoteVarQ->whereNotNull('remote_stock_quantity')
+                                                        ->where('remote_stock_quantity', '!=', '0')
+                                                        ->where('remote_stock_quantity', '!=', '')
+                                                        ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                                })
+                                                ->orWhere(function($fastRemoteVarQ) {
+                                                    $fastRemoteVarQ->whereNotNull('fast_remote_stock_quantity')
+                                                        ->where('fast_remote_stock_quantity', '!=', '0')
+                                                        ->where('fast_remote_stock_quantity', '!=', '')
+                                                        ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
+                                                });
+                                            }
+                                        });
+                                });
                         });
                     });
                 });
@@ -263,6 +303,148 @@ class ShopGoodsController extends Controller
                                 }
                             });
                         });
+                });
+            });
+        } elseif ($stockFilter === 'with_stock') {
+            // Фильтр для режима 4: показывать только товары с остатком или специальные товары
+            $query->where(function($mainQuery) use ($remoteQ) {
+                // Условие 1: Товары БЕЗ вариаций
+                $mainQuery->where(function($noVariationsQuery) use ($remoteQ) {
+                    $noVariationsQuery->whereDoesntHave('variations')
+                        ->where(function($stockQuery) use ($remoteQ) {
+                            // Локальный остаток > 0
+                            $stockQuery->where('stock_quantity', '>', 0);
+
+                            // ИЛИ удаленный остаток (если учитываем)
+                            if ($remoteQ === 2 || $remoteQ === 3) {
+                                $stockQuery->orWhere(function($remoteCondition) {
+                                    $remoteCondition->whereNotNull('remote_stock_quantity')
+                                        ->where('remote_stock_quantity', '!=', '0')
+                                        ->where('remote_stock_quantity', '!=', '')
+                                        ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                })
+                                ->orWhere(function($fastRemoteCondition) {
+                                    $fastRemoteCondition->whereNotNull('fast_remote_stock_quantity')
+                                        ->where('fast_remote_stock_quantity', '!=', '0')
+                                        ->where('fast_remote_stock_quantity', '!=', '')
+                                        ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
+                                });
+                            }
+
+                            // ИЛИ предзаказы (is_preorder = 1) с нулевым остатком
+                            $stockQuery->orWhere(function($preorderCondition) {
+                                $preorderCondition->where('stock_quantity', '<=', 0)
+                                    ->where(function($preorderSubCondition) {
+                                        $preorderSubCondition->where('is_preorder', '=', 1)
+                                            ->orWhere('is_preorder', '=', true);
+                                    });
+
+                                // Проверяем, что удаленный остаток тоже пустой (если учитываем)
+                                if ($remoteQ === 2 || $remoteQ === 3) {
+                                    $preorderCondition->where(function($remoteEmptyCondition) {
+                                        $remoteEmptyCondition->whereNull('remote_stock_quantity')
+                                            ->orWhere('remote_stock_quantity', '=', '0')
+                                            ->orWhere('remote_stock_quantity', '=', '')
+                                            ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
+                                    })
+                                    ->where(function($fastRemoteEmptyCondition) {
+                                        $fastRemoteEmptyCondition->whereNull('fast_remote_stock_quantity')
+                                            ->orWhere('fast_remote_stock_quantity', '=', '0')
+                                            ->orWhere('fast_remote_stock_quantity', '=', '')
+                                            ->orWhereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) = 0');
+                                    });
+                                }
+                            });
+
+                            // ИЛИ товары с is_show = 1 (независимо от остатка)
+                            $stockQuery->orWhere('is_show', '=', 1);
+                        });
+                });
+
+                // Условие 2: Товары С вариациями
+                $mainQuery->orWhere(function($hasVariationsQuery) use ($remoteQ) {
+                    $hasVariationsQuery->whereHas('variations', function($varQ) {
+                        $varQ->where('is_active', true);
+                    })
+                    ->where(function($variationsStockQuery) use ($remoteQ) {
+                        // Вариант 2a: Есть хотя бы одна вариация с остатком
+                        $variationsStockQuery->whereHas('variations', function($varQ) use ($remoteQ) {
+                            $varQ->where('is_active', true)
+                                ->where(function($subVarQ) use ($remoteQ) {
+                                    $subVarQ->where('stock_quantity', '>', 0);
+
+                                    if ($remoteQ === 2 || $remoteQ === 3) {
+                                        $subVarQ->orWhere(function($remoteVarQ) {
+                                            $remoteVarQ->whereNotNull('remote_stock_quantity')
+                                                ->where('remote_stock_quantity', '!=', '0')
+                                                ->where('remote_stock_quantity', '!=', '')
+                                                ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                        })
+                                        ->orWhere(function($fastRemoteVarQ) {
+                                            $fastRemoteVarQ->whereNotNull('fast_remote_stock_quantity')
+                                                ->where('fast_remote_stock_quantity', '!=', '0')
+                                                ->where('fast_remote_stock_quantity', '!=', '')
+                                                ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
+                                        });
+                                    }
+                                });
+                        });
+
+                        // Вариант 2b: Все вариации без остатка, но товар имеет is_preorder = 1
+                        $variationsStockQuery->orWhere(function($preorderVariationsQuery) use ($remoteQ) {
+                            $preorderVariationsQuery->where(function($preorderCheck) {
+                                $preorderCheck->where('is_preorder', '=', 1)
+                                    ->orWhere('is_preorder', '=', true);
+                            })
+                            ->whereDoesntHave('variations', function($varQ) use ($remoteQ) {
+                                $varQ->where('is_active', true)
+                                    ->where(function($subVarQ) use ($remoteQ) {
+                                        $subVarQ->where('stock_quantity', '>', 0);
+
+                                        if ($remoteQ === 2 || $remoteQ === 3) {
+                                            $subVarQ->orWhere(function($remoteVarQ) {
+                                                $remoteVarQ->whereNotNull('remote_stock_quantity')
+                                                    ->where('remote_stock_quantity', '!=', '0')
+                                                    ->where('remote_stock_quantity', '!=', '')
+                                                    ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                            })
+                                            ->orWhere(function($fastRemoteVarQ) {
+                                                $fastRemoteVarQ->whereNotNull('fast_remote_stock_quantity')
+                                                    ->where('fast_remote_stock_quantity', '!=', '0')
+                                                    ->where('fast_remote_stock_quantity', '!=', '')
+                                                    ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
+                                            });
+                                        }
+                                    });
+                            });
+                        });
+
+                        // Вариант 2c: Все вариации без остатка, но товар имеет is_show = 1
+                        $variationsStockQuery->orWhere(function($showVariationsQuery) use ($remoteQ) {
+                            $showVariationsQuery->where('is_show', '=', 1)
+                                ->whereDoesntHave('variations', function($varQ) use ($remoteQ) {
+                                    $varQ->where('is_active', true)
+                                        ->where(function($subVarQ) use ($remoteQ) {
+                                            $subVarQ->where('stock_quantity', '>', 0);
+
+                                            if ($remoteQ === 2 || $remoteQ === 3) {
+                                                $subVarQ->orWhere(function($remoteVarQ) {
+                                                    $remoteVarQ->whereNotNull('remote_stock_quantity')
+                                                        ->where('remote_stock_quantity', '!=', '0')
+                                                        ->where('remote_stock_quantity', '!=', '')
+                                                        ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                                })
+                                                ->orWhere(function($fastRemoteVarQ) {
+                                                    $fastRemoteVarQ->whereNotNull('fast_remote_stock_quantity')
+                                                        ->where('fast_remote_stock_quantity', '!=', '0')
+                                                        ->where('fast_remote_stock_quantity', '!=', '')
+                                                        ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
+                                                });
+                                            }
+                                        });
+                                });
+                        });
+                    });
                 });
             });
         } elseif ($stockFilter === 'out_of_stock') {
