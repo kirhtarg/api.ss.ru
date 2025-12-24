@@ -354,9 +354,10 @@ class BulkGoodsImportController extends Controller
                         $searchByFieldInVariations = 'name'; // значение по умолчанию
                     }
 
-                    
+
                     $existingGood = null;
                     $existingVariation = null;
+                    $foundByFields = []; // Массив для хранения информации о том, по каким полям найден товар
 
                     // Инициализируем переменную hasVariation
                     $hasVariation = false;
@@ -392,12 +393,21 @@ class BulkGoodsImportController extends Controller
                                 // Если SKU пустой, ищем товары с NULL в поле SKU
                                 if (!empty($sku)) {
                                     $existingGood = ShopGood::where('sku', $sku)->first();
+                                    if ($existingGood) {
+                                        $foundByFields[] = "SKU: '{$sku}'";
+                                    }
                                 } else {
                                     // Ищем товары с пустым SKU
                                     $existingGood = ShopGood::whereNull('sku')->where('name', $name)->first();
+                                    if ($existingGood) {
+                                        $foundByFields[] = "пустой SKU + название: '{$name}'";
+                                    }
                                 }
                             } elseif ($field === 'name') {
                                 $existingGood = ShopGood::where('name', $name)->first();
+                                if ($existingGood) {
+                                    $foundByFields[] = "название: '{$name}'";
+                                }
                             }
 
                             if ($existingGood) {
@@ -421,16 +431,25 @@ class BulkGoodsImportController extends Controller
                         if (!empty($sku)) {
                             $existingGood = ShopGood::where('sku', $sku)->first();
                             Log::info("Searched good by SKU '{$sku}' with variation: " . ($existingGood ? 'found' : 'not found'));
+                            if ($existingGood) {
+                                $foundByFields[] = "SKU: '{$sku}' (для вариации)";
+                            }
                         }
-                        
+
                         // 2. Если не найден по SKU, ищем по имени (точное совпадение)
                         if (!$existingGood) {
                             $existingGood = ShopGood::where('name', $name)->first();
+                            if ($existingGood) {
+                                $foundByFields[] = "название: '{$name}' (для вариации)";
+                            }
                         }
-                        
+
                         // 3. Если не найден, пробуем по имени с пустым SKU
                         if (!$existingGood) {
                             $existingGood = ShopGood::whereNull('sku')->where('name', $name)->first();
+                            if ($existingGood) {
+                                $foundByFields[] = "пустой SKU + название: '{$name}' (для вариации)";
+                            }
                         }
                         
                         // 4. Если все еще не найден, пробуем поиск по имени без учета регистра и пробелов
@@ -475,7 +494,8 @@ class BulkGoodsImportController extends Controller
                         if (!$existingGood) {
                             $results['skipped']++;
                             $sheet = $goodData['_sheet'] ?? 'неизвестно';
-                            $skipItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'reason' => 'Вариация найдена, но товар не найден'];
+                            $reason = 'Вариация найдена по имени "' . $searchValue . '" (поле: ' . $searchByFieldInVariations . '), но связанный товар не найден в базе данных. Вариация ID: ' . $existingVariation->id;
+                            $skipItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'reason' => $reason];
                             continue;
                         }
                         
@@ -719,7 +739,9 @@ class BulkGoodsImportController extends Controller
                     if ($searchByNameInVariations && !$existingVariation && !$existingGood) {
                         $results['skipped']++;
                         $sheet = $goodData['_sheet'] ?? 'неизвестно';
-                        $skipItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'reason' => 'Вариация и товар не найдены при поиске в вариациях'];
+                        $searchValue = ($searchByFieldInVariations === 'sku') ? $sku : $name;
+                        $reason = 'Включен поиск в вариациях по полю "' . $searchByFieldInVariations . '" со значением "' . $searchValue . '", но ни вариация, ни товар не найдены в базе данных';
+                        $skipItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'reason' => $reason];
                         continue;
                     }
 
@@ -946,7 +968,9 @@ class BulkGoodsImportController extends Controller
                             
                             // Добавляем в группу для пропуска
                             $sheet = $goodData['_sheet'] ?? 'неизвестно';
-                            $skipItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'reason' => 'Дубликат (настройка: пропустить)'];
+                            $foundByText = !empty($foundByFields) ? ' (найден по: ' . implode(', ', $foundByFields) . ')' : '';
+                            $reason = 'Дубликат (настройка: пропустить)' . $foundByText . '. Найденный товар ID: ' . $existingGood->id . ', SKU: "' . ($existingGood->sku ?? 'пустой') . '", название: "' . $existingGood->name . '"';
+                            $skipItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'reason' => $reason];
                         }
                     } else {
                         // Товар не найден при первоначальном поиске
@@ -1050,7 +1074,19 @@ class BulkGoodsImportController extends Controller
                             // В режиме "Только обновлять" пропускаем создание новых товаров
                             $results['skipped']++;
                             $sheet = $goodData['_sheet'] ?? 'неизвестно';
-                            $skipItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'reason' => 'Только обновлять (товар не найден)'];
+                            $searchDetails = [];
+                            if (!empty($duplicateFields)) {
+                                $searchDetails[] = 'поля поиска: ' . implode(', ', $duplicateFields);
+                            }
+                            if (!empty($sku)) {
+                                $searchDetails[] = 'SKU: "' . $sku . '"';
+                            }
+                            if (!empty($name)) {
+                                $searchDetails[] = 'название: "' . $name . '"';
+                            }
+                            $searchText = !empty($searchDetails) ? ' (' . implode(', ', $searchDetails) . ')' : '';
+                            $reason = 'Режим "только обновлять" - товар не найден в базе данных' . $searchText . '. Включен поиск по полям: ' . implode(', ', $duplicateFields);
+                            $skipItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'reason' => $reason];
                             continue;
                         }
 
