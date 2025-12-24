@@ -367,19 +367,8 @@ class BulkGoodsImportController extends Controller
                                     is_array($goodData['variation']['attributes']) &&
                                     count($goodData['variation']['attributes']) > 0;
 
-                    // Приоритет поиска: если duplicateFields содержит SKU, ищем по SKU в первую очередь
-                    $searchBySkuFirst = in_array('sku', $duplicateFields) && !empty($sku);
-
-                    if ($searchBySkuFirst) {
-                        $existingGood = ShopGood::where('sku', $sku)->first();
-
-                        // Если найден по SKU, пропускаем остальные поиски
-                        if ($existingGood) {
-                            // Продолжаем с найденным товаром
-                        }
-                    }
-                    // Если включен поиск по именам в вариациях, ищем вариацию по выбранному полю
-                    elseif ($searchByNameInVariations) {
+                    // Сначала проверяем режим поиска в вариациях (если включен)
+                    if ($searchByNameInVariations) {
                         // Определяем значение для поиска в вариациях
                         $searchValue = ($searchByFieldInVariations === 'sku') ? $sku : $name;
 
@@ -389,15 +378,34 @@ class BulkGoodsImportController extends Controller
 
                             if ($existingVariation) {
                                 $existingGood = $existingVariation->good;
-                            } else {
-                                // Если вариация не найдена, ищем товар по SKU для добавления новой вариации
+                            }
+                            // Если вариация не найдена, existingVariation остается null
+                            // и existingGood тоже null, что приведет к обычному поиску товара ниже
+                        }
+                    }
+
+                    // Если вариация не найдена (или поиск в вариациях отключен), ищем товар обычным способом
+                    if (!$existingVariation) {
+                        // Обычный поиск товара по duplicateFields
+                        foreach ($duplicateFields as $field) {
+                            if ($field === 'sku') {
+                                // Если SKU пустой, ищем товары с NULL в поле SKU
                                 if (!empty($sku)) {
                                     $existingGood = ShopGood::where('sku', $sku)->first();
+                                } else {
+                                    // Ищем товары с пустым SKU
+                                    $existingGood = ShopGood::whereNull('sku')->where('name', $name)->first();
                                 }
+                            } elseif ($field === 'name') {
+                                $existingGood = ShopGood::where('name', $name)->first();
+                            }
+
+                            if ($existingGood) {
+                                break; // Найден товар, прекращаем поиск
                             }
                         }
                     }
-                    
+
                     if ($hasVariation) {
                         // При наличии вариации ищем товар более тщательно
                         // Важно: для вариаций товар должен существовать, иначе будет ошибка дублирования
@@ -617,15 +625,15 @@ class BulkGoodsImportController extends Controller
                                         ->first();
 
                                     if ($variation) {
-                                        // Обновляем остатки вариации данными из товара
+                                        // Обновляем остатки вариации данными из товара с конвертацией типов
                                         if (isset($goodData['stock_quantity']) && !in_array('stock_quantity', $immutableFields)) {
-                                            $variation->stock_quantity = $goodData['stock_quantity'];
+                                            $variation->stock_quantity = is_numeric($goodData['stock_quantity']) ? (float)$goodData['stock_quantity'] : 0;
                                         }
                                         if (isset($goodData['remote_stock_quantity']) && !in_array('remote_stock_quantity', $immutableFields)) {
-                                            $variation->remote_stock_quantity = $goodData['remote_stock_quantity'];
+                                            $variation->remote_stock_quantity = $goodData['remote_stock_quantity'] !== null && is_numeric($goodData['remote_stock_quantity']) ? (string)$goodData['remote_stock_quantity'] : $goodData['remote_stock_quantity'];
                                         }
                                         if (isset($goodData['fast_remote_stock_quantity']) && !in_array('fast_remote_stock_quantity', $immutableFields)) {
-                                            $variation->fast_remote_stock_quantity = $goodData['fast_remote_stock_quantity'];
+                                            $variation->fast_remote_stock_quantity = $goodData['fast_remote_stock_quantity'] !== null && is_numeric($goodData['fast_remote_stock_quantity']) ? (string)$goodData['fast_remote_stock_quantity'] : $goodData['fast_remote_stock_quantity'];
                                         }
 
                                         $variation->save();
@@ -706,7 +714,15 @@ class BulkGoodsImportController extends Controller
                         
                         continue; // Пропускаем дальнейшую обработку
                     }
-                    
+
+                    // Если включен поиск в вариациях, вариация не найдена и товар тоже не найден - пропускаем строку
+                    if ($searchByNameInVariations && !$existingVariation && !$existingGood) {
+                        $results['skipped']++;
+                        $sheet = $goodData['_sheet'] ?? 'неизвестно';
+                        $skipItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'reason' => 'Вариация и товар не найдены при поиске в вариациях'];
+                        continue;
+                    }
+
                     if ($existingGood) {
                         // Товар существует
                         // Если у строки есть вариация, обрабатываем её независимо от duplicateAction
@@ -887,15 +903,15 @@ class BulkGoodsImportController extends Controller
                                         ->first();
 
                                     if ($variation) {
-                                        // Обновляем остатки вариации данными из товара
+                                        // Обновляем остатки вариации данными из товара с конвертацией типов
                                         if (isset($goodData['stock_quantity']) && !in_array('stock_quantity', $immutableFields)) {
-                                            $variation->stock_quantity = $goodData['stock_quantity'];
+                                            $variation->stock_quantity = is_numeric($goodData['stock_quantity']) ? (float)$goodData['stock_quantity'] : 0;
                                         }
                                         if (isset($goodData['remote_stock_quantity']) && !in_array('remote_stock_quantity', $immutableFields)) {
-                                            $variation->remote_stock_quantity = $goodData['remote_stock_quantity'];
+                                            $variation->remote_stock_quantity = $goodData['remote_stock_quantity'] !== null && is_numeric($goodData['remote_stock_quantity']) ? (string)$goodData['remote_stock_quantity'] : $goodData['remote_stock_quantity'];
                                         }
                                         if (isset($goodData['fast_remote_stock_quantity']) && !in_array('fast_remote_stock_quantity', $immutableFields)) {
-                                            $variation->fast_remote_stock_quantity = $goodData['fast_remote_stock_quantity'];
+                                            $variation->fast_remote_stock_quantity = $goodData['fast_remote_stock_quantity'] !== null && is_numeric($goodData['fast_remote_stock_quantity']) ? (string)$goodData['fast_remote_stock_quantity'] : $goodData['fast_remote_stock_quantity'];
                                         }
 
                                         $variation->save();
@@ -1218,8 +1234,9 @@ class BulkGoodsImportController extends Controller
             } else {
                 $good->sale_price = $goodData['sale_price'] ?? null;
             }
-            $good->stock_quantity = $goodData['stock_quantity'] ?? $goodData['stock'] ?? 0;
-            $good->remote_stock_quantity = $goodData['remote_stock_quantity'] ?? null;
+            $good->stock_quantity = is_numeric($goodData['stock_quantity'] ?? $goodData['stock'] ?? 0) ? (float)($goodData['stock_quantity'] ?? $goodData['stock'] ?? 0) : 0;
+            $good->remote_stock_quantity = ($goodData['remote_stock_quantity'] ?? null) !== null && is_numeric($goodData['remote_stock_quantity'] ?? null) ? (string)($goodData['remote_stock_quantity'] ?? null) : ($goodData['remote_stock_quantity'] ?? null);
+            $good->fast_remote_stock_quantity = ($goodData['fast_remote_stock_quantity'] ?? null) !== null && is_numeric($goodData['fast_remote_stock_quantity'] ?? null) ? (string)($goodData['fast_remote_stock_quantity'] ?? null) : ($goodData['fast_remote_stock_quantity'] ?? null);
         } else {
             // Для товаров с вариациями устанавливаем временные значения (будут обновлены после создания вариации)
             $good->price = 0; // Временное значение, будет обновлено после обработки вариации
@@ -1321,8 +1338,9 @@ class BulkGoodsImportController extends Controller
                 // Обычно берем данные из первой вариации или оставляем пустыми (null)
                 $good->price = $goodData['variation']['price'] ?? 0;
                 $good->sale_price = $goodData['variation']['sale_price'] ?? null;
-                $good->stock_quantity = $goodData['variation']['stock_quantity'] ?? 0;
-                $good->remote_stock_quantity = $goodData['variation']['remote_stock_quantity'] ?? null;
+                $good->stock_quantity = is_numeric($goodData['variation']['stock_quantity'] ?? 0) ? (float)($goodData['variation']['stock_quantity'] ?? 0) : 0;
+                $remoteValue = $goodData['variation']['remote_stock_quantity'] ?? null;
+                $good->remote_stock_quantity = $remoteValue !== null && is_numeric($remoteValue) ? (string)$remoteValue : $remoteValue;
                 $good->save(); // Сохраняем обновленные данные после обработки вариации
                 Log::info('Обновлены цена и остатки товара после создания вариации', [
                     'good_id' => $good->id,
@@ -1449,20 +1467,41 @@ class BulkGoodsImportController extends Controller
         if (isset($goodData['variation']) && is_array($goodData['variation'])) {
             // Для товаров с вариациями остатки берутся из вариации
             if ((isset($goodData['variation']['stock_quantity']) || isset($goodData['variation']['stock'])) && !in_array('stock_quantity', $immutableFields)) {
-                $existingGood->stock_quantity = $goodData['variation']['stock_quantity'] ?? $goodData['variation']['stock'] ?? $existingGood->stock_quantity;
+                $stockValue = $goodData['variation']['stock_quantity'] ?? $goodData['variation']['stock'] ?? $existingGood->stock_quantity;
+                $existingGood->stock_quantity = is_numeric($stockValue) ? (float)$stockValue : $existingGood->stock_quantity;
             }
 
-            if (isset($goodData['variation']['remote_stock_quantity']) && !in_array('remote_stock_quantity', $immutableFields)) {
-                $existingGood->remote_stock_quantity = $goodData['variation']['remote_stock_quantity'];
+            if (!in_array('remote_stock_quantity', $immutableFields)) {
+                $remoteValue = $goodData['variation']['remote_stock_quantity'] ?? null;
+                $existingGood->remote_stock_quantity = $remoteValue !== null && is_numeric($remoteValue) ? (string)$remoteValue : $remoteValue;
+            }
+
+            if (!in_array('fast_remote_stock_quantity', $immutableFields)) {
+                $fastRemoteValue = $goodData['variation']['fast_remote_stock_quantity'] ?? null;
+                $existingGood->fast_remote_stock_quantity = $fastRemoteValue !== null && is_numeric($fastRemoteValue) ? (string)$fastRemoteValue : $fastRemoteValue;
             }
         } else {
-            // Для товаров без вариаций остатки берутся из goodData
+            // Для товаров без вариаций остатки берутся из goodData с конвертацией типов
             if ((isset($goodData['stock_quantity']) || isset($goodData['stock'])) && !in_array('stock_quantity', $immutableFields)) {
-                $existingGood->stock_quantity = $goodData['stock_quantity'] ?? $goodData['stock'] ?? $existingGood->stock_quantity;
+                $stockValue = $goodData['stock_quantity'] ?? $goodData['stock'] ?? $existingGood->stock_quantity;
+                $existingGood->stock_quantity = is_numeric($stockValue) ? (float)$stockValue : $existingGood->stock_quantity;
             }
 
-            if (isset($goodData['remote_stock_quantity']) && !in_array('remote_stock_quantity', $immutableFields)) {
-                $existingGood->remote_stock_quantity = $goodData['remote_stock_quantity'];
+            if (!in_array('remote_stock_quantity', $immutableFields)) {
+                $remoteValue = $goodData['remote_stock_quantity'] ?? null;
+                Log::info('Processing remote_stock_quantity for good', [
+                    'good_id' => $existingGood->id,
+                    'raw_value' => $remoteValue,
+                    'type' => gettype($remoteValue),
+                    'is_numeric' => is_numeric($remoteValue),
+                    'has_field' => isset($goodData['remote_stock_quantity'])
+                ]);
+                $existingGood->remote_stock_quantity = $remoteValue !== null && is_numeric($remoteValue) ? (string)$remoteValue : $remoteValue;
+            }
+
+            if (!in_array('fast_remote_stock_quantity', $immutableFields)) {
+                $fastRemoteValue = $goodData['fast_remote_stock_quantity'] ?? null;
+                $existingGood->fast_remote_stock_quantity = $fastRemoteValue !== null && is_numeric($fastRemoteValue) ? (string)$fastRemoteValue : $fastRemoteValue;
             }
         }
         
@@ -1581,6 +1620,39 @@ class BulkGoodsImportController extends Controller
         
         $existingGood->save();
 
+        // Если товар имеет вариации, не обрабатывается конкретная вариация и были обновлены остатки,
+        // обновляем остатки всех активных вариаций данными из товара
+        if (!$hasVariation && $existingGood->variations()->where('is_active', true)->exists()) {
+            $variationsUpdated = false;
+
+            // Проверяем, были ли обновлены остатки товара
+            $stockFields = ['stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'];
+            foreach ($stockFields as $field) {
+                if (isset($goodData[$field]) && !in_array($field, $immutableFields)) {
+                    $variationsUpdated = true;
+                    break;
+                }
+            }
+
+            if ($variationsUpdated) {
+                // Обновляем остатки всех активных вариаций данными из товара
+                $existingGood->variations()->where('is_active', true)->update([
+                    'stock_quantity' => $existingGood->stock_quantity,
+                    'remote_stock_quantity' => $existingGood->remote_stock_quantity,
+                    'fast_remote_stock_quantity' => $existingGood->fast_remote_stock_quantity,
+                ]);
+
+                Log::info('Обновлены остатки вариаций при обновлении товара', [
+                    'good_id' => $existingGood->id,
+                    'good_name' => $existingGood->name,
+                    'stock_quantity' => $existingGood->stock_quantity,
+                    'remote_stock_quantity' => $existingGood->remote_stock_quantity,
+                    'fast_remote_stock_quantity' => $existingGood->fast_remote_stock_quantity,
+                    'variations_count' => $existingGood->variations()->where('is_active', true)->count()
+                ]);
+            }
+        }
+
         // Обрабатываем категории
         // ВАЖНО: категории уже обработаны в processCategoriesAndBrandsBatch, где:
         // - Категории из файла найдены/созданы и преобразованы в ID
@@ -1675,12 +1747,13 @@ class BulkGoodsImportController extends Controller
                     }
                 }
 
-                // Обновляем остатки вариации данными из товара
+                // Обновляем остатки вариации данными из товара с конвертацией типов
                 if (isset($goodData['stock_quantity']) && !in_array('stock_quantity', $immutableFields)) {
-                    $variation->stock_quantity = $goodData['stock_quantity'];
+                    $variation->stock_quantity = is_numeric($goodData['stock_quantity']) ? (float)$goodData['stock_quantity'] : 0;
                 }
-                if (isset($goodData['remote_stock_quantity']) && !in_array('remote_stock_quantity', $immutableFields)) {
-                    $variation->remote_stock_quantity = $goodData['remote_stock_quantity'];
+                if (!in_array('remote_stock_quantity', $immutableFields)) {
+                    $remoteValue = $goodData['remote_stock_quantity'] ?? null;
+                    $variation->remote_stock_quantity = $remoteValue !== null && is_numeric($remoteValue) ? (string)$remoteValue : $remoteValue;
                 }
                 // Обновляем fast_remote_stock_quantity всегда, даже если null (чтобы можно было сбросить значение)
                 if (!in_array('fast_remote_stock_quantity', $immutableFields)) {
@@ -2800,9 +2873,16 @@ class BulkGoodsImportController extends Controller
             
             $attributes = $variationData['attributes'];
             $variationPrice = $variationData['price'] ?? $goodData['price'] ?? $good->price ?? 0;
+
+            // Конвертируем остатки из строк в числа
             $variationStockQuantity = $variationData['stock_quantity'] ?? $goodData['stock_quantity'] ?? 0;
+            $variationStockQuantity = is_numeric($variationStockQuantity) ? (float)$variationStockQuantity : 0;
+
             $variationRemoteStockQuantity = $variationData['remote_stock_quantity'] ?? $goodData['remote_stock_quantity'] ?? null;
+            $variationRemoteStockQuantity = $variationRemoteStockQuantity !== null && is_numeric($variationRemoteStockQuantity) ? (string)$variationRemoteStockQuantity : $variationRemoteStockQuantity;
+
             $variationFastRemoteStockQuantity = $variationData['fast_remote_stock_quantity'] ?? $goodData['fast_remote_stock_quantity'] ?? null;
+            $variationFastRemoteStockQuantity = $variationFastRemoteStockQuantity !== null && is_numeric($variationFastRemoteStockQuantity) ? (string)$variationFastRemoteStockQuantity : $variationFastRemoteStockQuantity;
             
             // Проверяем, есть ли у товара существующие вариации
             $hasExistingVariations = ShopGoodVariation::where('good_id', $good->id)->exists();
@@ -3163,15 +3243,15 @@ class BulkGoodsImportController extends Controller
             $variation->sale_price = $goodData['sale_price'];
         }
         
-        // Обновляем остатки
+        // Обновляем остатки с конвертацией типов
         if (isset($goodData['stock_quantity'])) {
-            $variation->stock_quantity = $goodData['stock_quantity'];
+            $variation->stock_quantity = is_numeric($goodData['stock_quantity']) ? (float)$goodData['stock_quantity'] : 0;
         }
         if (isset($goodData['remote_stock_quantity'])) {
-            $variation->remote_stock_quantity = $goodData['remote_stock_quantity'];
+            $variation->remote_stock_quantity = $goodData['remote_stock_quantity'] !== null && is_numeric($goodData['remote_stock_quantity']) ? (string)$goodData['remote_stock_quantity'] : $goodData['remote_stock_quantity'];
         }
         if (isset($goodData['fast_remote_stock_quantity'])) {
-            $variation->fast_remote_stock_quantity = $goodData['fast_remote_stock_quantity'];
+            $variation->fast_remote_stock_quantity = $goodData['fast_remote_stock_quantity'] !== null && is_numeric($goodData['fast_remote_stock_quantity']) ? (string)$goodData['fast_remote_stock_quantity'] : $goodData['fast_remote_stock_quantity'];
         }
         
         // Обновляем SKU вариации из данных товара или из goodData

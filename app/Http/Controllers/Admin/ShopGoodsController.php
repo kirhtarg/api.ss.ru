@@ -2726,11 +2726,35 @@ class ShopGoodsController extends Controller
             // Проверка размера файла (максимум 30MB)
             if (strlen($imageData) > 30 * 1024 * 1024) {
                 $cleanUrl = mb_convert_encoding($imageUrl, 'UTF-8', 'UTF-8');
-                
+
                 return [
                     'success' => false,
                     'originalUrl' => $cleanUrl,
                     'error' => 'Файл слишком большой (максимум 30MB)'
+                ];
+            }
+
+            // Проверка MIME типа - убеждаемся, что это действительно изображение
+            $mimeType = $this->getMimeTypeFromData($imageData);
+            $allowedMimeTypes = [
+                'image/jpeg',
+                'image/jpg',
+                'image/png',
+                'image/gif',
+                'image/webp',
+                'image/bmp',
+                'image/svg+xml',
+                'image/tiff',
+                'image/x-icon'
+            ];
+
+            if (!in_array($mimeType, $allowedMimeTypes)) {
+                $cleanUrl = mb_convert_encoding($imageUrl, 'UTF-8', 'UTF-8');
+
+                return [
+                    'success' => false,
+                    'originalUrl' => $cleanUrl,
+                    'error' => 'Скачанный контент не является изображением (MIME: ' . $mimeType . ')'
                 ];
             }
 
@@ -2951,7 +2975,18 @@ class ShopGoodsController extends Controller
             ];
         }
     }
-    
+
+    /**
+     * Получение MIME типа из бинарных данных изображения
+     */
+    private function getMimeTypeFromData($data)
+    {
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        $mimeType = finfo_buffer($finfo, $data);
+        finfo_close($finfo);
+        return $mimeType;
+    }
+
     /**
      * Нормализация URL изображения для правильной обработки Unicode символов
      */
