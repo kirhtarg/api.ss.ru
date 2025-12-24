@@ -735,11 +735,39 @@ class BulkGoodsImportController extends Controller
                         continue; // Пропускаем дальнейшую обработку
                     }
 
+                    // Логируем текущие значения переменных для отладки
+                    Log::info("Проверка условий создания вариации", [
+                        'count' => $count,
+                        'sku' => $sku,
+                        'name' => $name,
+                        'searchByNameInVariations' => $searchByNameInVariations,
+                        'hasVariation' => $hasVariation,
+                        'existingVariation' => $existingVariation ? 'найдена (ID: ' . $existingVariation->id . ')' : 'не найдена',
+                        'existingGood' => $existingGood ? 'найден (ID: ' . $existingGood->id . ', SKU: ' . ($existingGood->sku ?? 'null') . ', name: ' . $existingGood->name . ')' : 'не найден',
+                        'searchByFieldInVariations' => $searchByFieldInVariations,
+                        'condition_result' => ($searchByNameInVariations && $hasVariation && !$existingVariation && $existingGood) ? 'TRUE - будет создана вариация' : 'FALSE - вариация не будет создана'
+                    ]);
+
                     // Если включен поиск в вариациях и товар имеет вариации, но вариация не найдена,
                     // а товар найден - создаем новую вариацию для существующего товара
                     if ($searchByNameInVariations && $hasVariation && !$existingVariation && $existingGood) {
+                        Log::info("Создание новой вариации для существующего товара", [
+                            'count' => $count,
+                            'sku' => $sku,
+                            'name' => $name,
+                            'existingGood_id' => $existingGood->id,
+                            'existingGood_sku' => $existingGood->sku,
+                            'existingGood_name' => $existingGood->name,
+                            'variation_data' => $goodData['variation'] ?? 'нет данных вариации'
+                        ]);
+
                         // Создаем новую вариацию для найденного товара
                         $variationId = $this->processVariation($existingGood, $goodData['variation'], $goodData);
+
+                        Log::info("Вариация создана", [
+                            'variationId' => $variationId,
+                            'good_id' => $existingGood->id
+                        ]);
 
                         // Обрабатываем категории товара (даже если обрабатывается только вариация)
                         $categoryIds = [];
@@ -1037,6 +1065,15 @@ class BulkGoodsImportController extends Controller
                         }
                     } else {
                         // Товар не найден при первоначальном поиске
+                        Log::info("Товар не найден при первоначальном поиске, переходим к созданию нового", [
+                            'count' => $count,
+                            'sku' => $sku,
+                            'name' => $name,
+                            'hasVariation' => $hasVariation,
+                            'searchByNameInVariations' => $searchByNameInVariations,
+                            'duplicateFields' => $duplicateFields
+                        ]);
+
                         // Если есть вариация, делаем дополнительную проверку перед созданием товара
                         // чтобы избежать ошибки дублирования SKU
                         if ($hasVariation) {
@@ -1133,6 +1170,12 @@ class BulkGoodsImportController extends Controller
 
                         // Проверяем режим "Только обновлять"
                         $onlyUpdateMode = $request->input('only_update_mode', false);
+                        Log::info("Проверка режима 'только обновлять'", [
+                            'count' => $count,
+                            'onlyUpdateMode' => $onlyUpdateMode,
+                            'will_create_new_good' => !$onlyUpdateMode
+                        ]);
+
                         if ($onlyUpdateMode) {
                             // В режиме "Только обновлять" пропускаем создание новых товаров
                             $results['skipped']++;
@@ -1154,8 +1197,24 @@ class BulkGoodsImportController extends Controller
                         }
 
                         // Товар действительно не существует - создаем новый (с вариацией или без)
+                        Log::info("Создание нового товара", [
+                            'count' => $count,
+                            'sku' => $sku,
+                            'name' => $name,
+                            'hasVariation' => $hasVariation,
+                            'autoCreateCategories' => $autoCreateCategories,
+                            'autoCreateBrands' => $autoCreateBrands
+                        ]);
+
                         $newGood = $this->createGood($goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory);
                         $results['imported']++;
+
+                        Log::info("Новый товар создан успешно", [
+                            'count' => $count,
+                            'newGood_id' => $newGood->id,
+                            'newGood_sku' => $newGood->sku,
+                            'newGood_name' => $newGood->name
+                        ]);
                         
                         // Сохраняем ID товара
                         // Если SKU не пустой, сохраняем по SKU
