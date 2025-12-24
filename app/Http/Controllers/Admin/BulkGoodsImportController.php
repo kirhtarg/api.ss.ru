@@ -735,14 +735,77 @@ class BulkGoodsImportController extends Controller
                         continue; // Пропускаем дальнейшую обработку
                     }
 
-                    // Если включен поиск в вариациях, вариация не найдена и товар тоже не найден - пропускаем строку
-                    if ($searchByNameInVariations && !$existingVariation && !$existingGood) {
-                        $results['skipped']++;
+                    // Если включен поиск в вариациях и товар имеет вариации, но вариация не найдена,
+                    // а товар найден - создаем новую вариацию для существующего товара
+                    if ($searchByNameInVariations && $hasVariation && !$existingVariation && $existingGood) {
+                        // Создаем новую вариацию для найденного товара
+                        $variationId = $this->processVariation($existingGood, $goodData['variation'], $goodData);
+
+                        // Обрабатываем категории товара (даже если обрабатывается только вариация)
+                        $categoryIds = [];
+                        if (isset($goodData['category']) && !empty($goodData['category'])) {
+                            $categoryIds = [(int)$goodData['category']];
+                        } elseif (isset($goodData['categories']) && is_array($goodData['categories'])) {
+                            $categoryIds = array_filter(array_map('intval', $goodData['categories']), function($id) {
+                                return $id > 0;
+                            });
+                        }
+
+                        // Обрабатываем категории товара при обновлении через вариацию
+                        // ВАЖНО: Проверяем существующие категории ПЕРЕД применением категорий из файла
+                        $existingCategoryIds = $existingGood->categories()->pluck('shop_categories.id')->toArray();
+
+                        // Если категории есть в $goodData, проверяем, не была ли это категория по умолчанию
+                        if (!empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null && !empty($existingCategoryIds)) {
+                            $defaultCategoryId = (int)$defaultCategory;
+                            // Если единственная категория - это defaultCategory, и у товара уже есть другие категории
+                            if (count($categoryIds) === 1 && $categoryIds[0] === $defaultCategoryId) {
+                                // Вероятно, категория была применена по умолчанию - оставляем существующие категории
+                                $categoryIds = $existingCategoryIds;
+                            }
+                        } elseif (empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null) {
+                            // Если категорий нет в файле, но включена категория по умолчанию
+                            // При обновлении товара: применяем категорию по умолчанию только если у товара нет категорий
+                            if (empty($existingCategoryIds)) {
+                                // У товара нет категорий - применяем категорию по умолчанию
+                                $categoryIds = [(int)$defaultCategory];
+                            } else {
+                                // У товара уже есть категории - оставляем их без изменений
+                                $categoryIds = $existingCategoryIds;
+                            }
+                        }
+
+                        // Синхронизируем категории только если они были указаны в файле или применена категория по умолчанию
+                        // Если категорий нет и категория по умолчанию не применялась - не трогаем существующие категории
+                        if (!empty($categoryIds)) {
+                            $existingGood->categories()->sync($categoryIds);
+                        }
+                        // Если $categoryIds пустой и категория по умолчанию не применялась - не вызываем sync, оставляем существующие категории
+
+                        $results['updated']++; // Считаем как обновление (добавление вариации)
+
+                        // Сохраняем ID товара
+                        if (!empty($sku)) {
+                            $results['goodIds'][$sku] = $existingGood->id;
+                        }
+
+                        if (isset($goodData['_row'])) {
+                            $results['goodIds'][$goodData['_row']] = $existingGood->id;
+                        }
+
+                        // Сохраняем ID вариации для связи с изображениями
+                        if ($variationId) {
+                            // Используем _row как ключ для связи с изображениями (самый надежный способ)
+                            if (isset($goodData['_row'])) {
+                                $results['variationIds'][$goodData['_row']] = $variationId;
+                            }
+                        }
+
+                        // Добавляем в группу для обновления
                         $sheet = $goodData['_sheet'] ?? 'неизвестно';
-                        $searchValue = ($searchByFieldInVariations === 'sku') ? $sku : $name;
-                        $reason = 'Включен поиск в вариациях по полю "' . $searchByFieldInVariations . '" со значением "' . $searchValue . '", но ни вариация, ни товар не найдены в базе данных';
-                        $skipItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'reason' => $reason];
-                        continue;
+                        $updateItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'good_id' => $existingGood->id];
+
+                        continue; // Пропускаем дальнейшую обработку
                     }
 
                     if ($existingGood) {
