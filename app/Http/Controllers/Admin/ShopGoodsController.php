@@ -1627,8 +1627,9 @@ class ShopGoodsController extends Controller
         $validator = Validator::make($request->all(), [
             'ids' => 'required|array',
             'ids.*' => 'exists:shop_goods,id',
-            'action' => 'required|in:activate,deactivate,delete,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_price,update_sale_price,update_demping_price,toggle_show_demping,update_label,remove_after_symbol,replace_text,update_dimensions,enable_preorder,disable_preorder,clear_by_tags,clear_by_suppliers',
-            'data' => 'nullable|array'
+            'action' => 'required|in:activate,deactivate,delete,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_price,update_sale_price,update_demping_price,toggle_show_demping,update_label,remove_after_symbol,replace_text,update_dimensions,enable_preorder,disable_preorder,clear_by_tags,clear_by_suppliers,delete_images',
+            'data' => 'nullable|array',
+            'data.delete_type' => 'nullable|in:goods,variations,goods_and_variations'
         ]);
 
         if ($validator->fails()) {
@@ -2111,6 +2112,32 @@ class ShopGoodsController extends Controller
                         }
                         if (!empty($updateData)) {
                             $good->update($updateData);
+                        }
+                        break;
+                    case 'delete_images':
+                        if (isset($data['delete_type'])) {
+                            $deleteType = $data['delete_type'];
+
+                            if ($deleteType === 'goods') {
+                                // Удаляем только изображения товаров (не вариаций)
+                                ShopGoodImage::where('good_id', $good->id)
+                                    ->whereNull('variation_id')
+                                    ->delete();
+                            } elseif ($deleteType === 'variations') {
+                                // Удаляем изображения вариаций этого товара
+                                $variationIds = $good->variations()->pluck('id')->toArray();
+                                if (!empty($variationIds)) {
+                                    ShopGoodImage::whereIn('variation_id', $variationIds)->delete();
+                                }
+                            } elseif ($deleteType === 'goods_and_variations') {
+                                // Удаляем все изображения товара и его вариаций
+                                ShopGoodImage::where('good_id', $good->id)->delete();
+
+                                $variationIds = $good->variations()->pluck('id')->toArray();
+                                if (!empty($variationIds)) {
+                                    ShopGoodImage::whereIn('variation_id', $variationIds)->delete();
+                                }
+                            }
                         }
                         break;
                 }
