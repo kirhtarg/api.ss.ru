@@ -4464,7 +4464,9 @@ class ShopGoodsController extends Controller
             $user = $request->user();
 
             $validator = Validator::make($request->all(), [
-                'url' => 'required|url|max:2048'
+                'url' => 'required|url|max:2048',
+                'username' => 'nullable|string|max:255',
+                'password' => 'nullable|string|max:255'
             ]);
 
             if ($validator->fails()) {
@@ -4476,7 +4478,9 @@ class ShopGoodsController extends Controller
             }
 
             $url = $request->input('url');
-            
+            $username = $request->input('username');
+            $password = $request->input('password');
+
             // Валидация URL
             if (empty($url)) {
                 return response()->json([
@@ -4508,6 +4512,12 @@ class ShopGoodsController extends Controller
             curl_setopt($ch, CURLOPT_SSL_CIPHER_LIST, 'DEFAULT@SECLEVEL=0');
             curl_setopt($ch, CURLOPT_SSL_OPTIONS, CURLSSLOPT_ALLOW_BEAST | CURLSSLOPT_NO_REVOKE);
             
+            // HTTP Basic Authentication, если указаны учетные данные
+            if (!empty($username) && !empty($password)) {
+                curl_setopt($ch, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
+                curl_setopt($ch, CURLOPT_USERPWD, $username . ':' . $password);
+            }
+
             curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
             curl_setopt($ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
             curl_setopt($ch, CURLOPT_TCP_KEEPALIVE, 1);

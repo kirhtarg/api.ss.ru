@@ -4132,4 +4132,450 @@ class BulkGoodsImportController extends Controller
             ];
         })->toArray();
     }
+
+    /**
+     * Парсит загруженный YML файл по имени файла
+     */
+    public function parseUploadedYMLFile(Request $request)
+    {
+        try {
+            $request->validate([
+                'filename' => 'required|string'
+            ]);
+
+            $filename = $request->input('filename');
+
+            // Валидация имени файла для безопасности
+            if (!preg_match('/^temp_[a-f0-9\-]+\.(xml|yml|txt)$/i', $filename)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Неверное имя файла'
+                ], 400);
+            }
+
+            $filePath = storage_path('app/temp/' . $filename);
+
+            if (!file_exists($filePath)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Файл не найден'
+                ], 404);
+            }
+
+            // Читаем содержимое файла
+            $fileContent = file_get_contents($filePath);
+            if ($fileContent === false) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не удалось прочитать файл'
+                ], 500);
+            }
+
+            // Парсим YML/XML
+            $ymlData = $this->parseYMLContent($fileContent);
+
+
+            return response()->json([
+                'success' => true,
+                'ymlData' => $ymlData
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Ошибка парсинга загруженного YML файла: ' . $e->getMessage());
+            \Log::error('Стек вызовов: ' . $e->getTraceAsString());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка парсинга файла: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Парсит содержимое YML/XML строки
+     */
+    private function parseYMLContent($content)
+    {
+        try {
+            // Загружаем XML
+            $xml = simplexml_load_string($content);
+            if ($xml === false) {
+                throw new \Exception('Не удалось загрузить XML');
+            }
+
+            // Определяем структуру файла
+            $isStandardYML = isset($xml->shop) && isset($xml->shop->offers);
+            $isCustomFormat = isset($xml->shop) && isset($xml->shop->items);
+            $alternativeStructure = false;
+
+
+            if (!$isStandardYML && !$isCustomFormat) {
+                // Попробуем найти другие возможные структуры
+                $alternativeStructure = $this->detectAlternativeXMLStructure($xml);
+                if (!$alternativeStructure) {
+                    throw new \Exception('Файл не содержит корректную структуру YML или поддерживаемого формата XML');
+                }
+            }
+
+            // Парсим товары и категории
+            $categories = [];
+            $offers = [];
+            $shop = null;
+
+            if ($isStandardYML) {
+                // Стандартный YML формат
+                $shop = $xml->shop;
+
+                // Парсим категории
+                if (isset($shop->categories) && isset($shop->categories->category)) {
+                    foreach ($shop->categories->category as $category) {
+                        $categories[] = [
+                            'id' => (string)$category['id'],
+                            'parentId' => (string)($category['parentId'] ?? null),
+                            'name' => (string)$category
+                        ];
+                    }
+                }
+
+                // Парсим товары
+                if (isset($shop->offers) && isset($shop->offers->offer)) {
+                    foreach ($shop->offers->offer as $offer) {
+                        $offers[] = $this->parseStandardYMLOffer($offer);
+                    }
+                }
+            } elseif ($isCustomFormat) {
+                // Кастомный формат (типа ВЕЛО_2025-12-22.xml)
+                $shop = $xml->shop;
+
+                if (isset($shop->items) && isset($shop->items->item)) {
+                    foreach ($shop->items->item as $item) {
+                        $offerData = $this->parseCustomFormatItem($item, $categories);
+                        if ($offerData) {
+                            $offers[] = $offerData;
+                        }
+                    }
+                }
+            } elseif ($alternativeStructure) {
+                // Альтернативная структура XML
+                [$categories, $offers] = $this->parseAlternativeXMLStructure($xml, $alternativeStructure);
+                // Для альтернативных структур shop может быть в другом месте или отсутствовать
+                $shop = isset($xml->shop) ? $xml->shop : null;
+            }
+
+            return [
+                'shop' => [
+                    'name' => $shop ? (string)($shop->name ?? 'Unknown Shop') : 'Unknown Shop',
+                    'company' => $shop ? (string)($shop->company ?? 'Unknown Company') : 'Unknown Company',
+                    'url' => $shop ? (string)($shop->url ?? null) : null
+                ],
+                'categories' => $categories,
+                'offers' => $offers
+            ];
+
+        } catch (\Exception $e) {
+            throw new \Exception('Ошибка парсинга YML: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Парсит товар в стандартном YML формате
+     */
+    private function parseStandardYMLOffer($offer)
+    {
+        return [
+            'id' => (string)$offer['id'],
+            'name' => (string)$offer->name,
+            'categoryId' => (string)($offer->categoryId ?? null),
+            'price' => (float)($offer->price ?? 0),
+            'currencyId' => (string)($offer->currencyId ?? 'RUB'),
+            'available' => (string)($offer['available'] ?? 'true') === 'true',
+            'url' => (string)($offer->url ?? null),
+            'picture' => isset($offer->picture) ? (string)$offer->picture : null,
+            'description' => isset($offer->description) ? (string)$offer->description : null,
+            'vendor' => isset($offer->vendor) ? (string)$offer->vendor : null,
+            'vendorCode' => isset($offer->vendorCode) ? (string)$offer->vendorCode : null,
+            'params' => $this->parseYMLParams($offer)
+        ];
+    }
+
+    /**
+     * Парсит товар в кастомном формате (ВЕЛО_2025-12-22.xml)
+     */
+    private function parseCustomFormatItem($item, &$categories)
+    {
+        // Извлекаем данные товара
+        $offerData = [
+            'id' => (string)$item->id,
+            'name' => (string)$item->name,
+            'categoryId' => (string)($item->level_id_3 ?? $item->level_id_2 ?? $item->level_id_1 ?? null),
+            'price' => (float)str_replace([' ', 'руб.', 'руб'], '', (string)$item->price),
+            'currencyId' => 'RUB',
+            'available' => (string)$item->available === 'true',
+            'url' => null,
+            'picture' => isset($item->picture) ? (string)$item->picture : null,
+            'description' => isset($item->description) && !empty((string)$item->description) ? (string)$item->description : null,
+            'vendor' => null,
+            'vendorCode' => (string)($item->code ?? null),
+            'params' => []
+        ];
+
+        // Парсим параметры
+        if (isset($item->param)) {
+            foreach ($item->param as $param) {
+                $paramName = (string)$param['name'];
+                $paramValue = (string)$param;
+
+                $offerData['params'][] = [
+                    'name' => $paramName,
+                    'value' => $paramValue
+                ];
+
+                // Извлекаем производителя из параметров
+                if ($paramName === 'Производитель') {
+                    $offerData['vendor'] = $paramValue;
+                }
+            }
+        }
+
+        // Создаем категории из level данных
+        $this->extractCategoriesFromItem($item, $categories);
+
+        return $offerData;
+    }
+
+    /**
+     * Парсит параметры YML товара
+     */
+    private function parseYMLParams($offer)
+    {
+        $params = [];
+        if (isset($offer->param)) {
+            foreach ($offer->param as $param) {
+                $params[] = [
+                    'name' => (string)$param['name'],
+                    'value' => (string)$param
+                ];
+            }
+        }
+        return $params;
+    }
+
+    /**
+     * Извлекает категории из level полей товара
+     */
+    private function extractCategoriesFromItem($item, &$categories)
+    {
+        // Проходим по всем level полям (от 0 до 3)
+        for ($level = 0; $level <= 3; $level++) {
+            $idField = "level_id_$level";
+            $nameField = "level_name_$level";
+
+            if (isset($item->$idField) && isset($item->$nameField)) {
+                $categoryId = (string)$item->$idField;
+                $categoryName = (string)$item->$nameField;
+
+                // Проверяем, не добавлена ли уже эта категория
+                $existingCategory = array_filter($categories, function($cat) use ($categoryId) {
+                    return $cat['id'] === $categoryId;
+                });
+
+                if (empty($existingCategory)) {
+                    // Определяем parentId (предыдущий уровень)
+                    $parentId = null;
+                    if ($level > 0) {
+                        $parentField = "level_id_" . ($level - 1);
+                        if (isset($item->$parentField)) {
+                            $parentId = (string)$item->$parentField;
+                        }
+                    }
+
+                    $categories[] = [
+                        'id' => $categoryId,
+                        'parentId' => $parentId,
+                        'name' => $categoryName
+                    ];
+                }
+            }
+        }
+    }
+
+    /**
+     * Определяет альтернативные структуры XML файлов
+     */
+    private function detectAlternativeXMLStructure($xml)
+    {
+        // Проверяем различные возможные структуры
+
+        // Структура: <yml_catalog><shop><items><item>...</item></items></shop></yml_catalog>
+        if ($xml->getName() === 'yml_catalog' && isset($xml->shop) && isset($xml->shop->items)) {
+            return 'yml_catalog_custom';
+        }
+
+        // Структура: <offers><offer>...</offer></offers> (без shop)
+        if ($xml->getName() === 'offers' && isset($xml->offer)) {
+            return 'offers_only';
+        }
+
+        // Структура: <items><item>...</item></items> (без shop)
+        if ($xml->getName() === 'items' && isset($xml->item)) {
+            return 'items_only';
+        }
+
+        // Другие возможные структуры можно добавить здесь
+
+        return false;
+    }
+
+    /**
+     * Парсит товары из альтернативных структур XML
+     */
+    private function parseAlternativeXMLStructure($xml, $structureType)
+    {
+        $categories = [];
+        $offers = [];
+
+
+        switch ($structureType) {
+            case 'yml_catalog_custom':
+                // Структура: <yml_catalog><shop><items><item>...</item></items></shop></yml_catalog>
+                if (isset($xml->shop->items->item)) {
+                    foreach ($xml->shop->items->item as $item) {
+                        $offerData = $this->parseCustomFormatItem($item, $categories);
+                        if ($offerData) {
+                            $offers[] = $offerData;
+                        }
+                    }
+                }
+                break;
+
+            case 'offers_only':
+                // Структура: <offers><offer>...</offer></offers>
+                if (isset($xml->offer)) {
+                    foreach ($xml->offer as $offer) {
+                        $offers[] = $this->parseStandardYMLOffer($offer);
+                    }
+                }
+                break;
+
+            case 'items_only':
+                // Структура: <items><item>...</item></items>
+                if (isset($xml->item)) {
+                    foreach ($xml->item as $item) {
+                        $offerData = $this->parseCustomFormatItem($item, $categories);
+                        if ($offerData) {
+                            $offers[] = $offerData;
+                        }
+                    }
+                }
+                break;
+        }
+
+        return [$categories, $offers];
+    }
+
+    /**
+     * Парсит YML/XML по URL
+     */
+    public function parseYMLFromUrl(Request $request)
+    {
+        try {
+            $request->validate([
+                'url' => 'required|url|max:2048',
+                'username' => 'nullable|string|max:255',
+                'password' => 'nullable|string|max:255'
+            ]);
+
+            $url = $request->input('url');
+            $username = $request->input('username');
+            $password = $request->input('password');
+
+            // Загружаем XML по URL
+            $ch = curl_init();
+            curl_setopt($ch, CURLOPT_URL, $url);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+
+            // HTTP Basic Authentication, если указаны учетные данные
+            if (!empty($username) && !empty($password)) {
+                curl_setopt($ch, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
+                curl_setopt($ch, CURLOPT_USERPWD, $username . ':' . $password);
+            }
+
+            // Настройки SSL (аналогично методу proxyYMLFeed)
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+            curl_setopt($ch, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+            curl_setopt($ch, CURLOPT_SSL_CIPHER_LIST, 'DEFAULT@SECLEVEL=0');
+            curl_setopt($ch, CURLOPT_SSL_OPTIONS, CURLSSLOPT_ALLOW_BEAST | CURLSSLOPT_NO_REVOKE);
+
+            curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+            curl_setopt($ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+            curl_setopt($ch, CURLOPT_TCP_KEEPALIVE, 1);
+            curl_setopt($ch, CURLOPT_TCP_KEEPIDLE, 10);
+            curl_setopt($ch, CURLOPT_TCP_KEEPINTVL, 1);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                'Accept: application/xml, text/xml, */*',
+                'Accept-Language: ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7'
+            ]);
+
+            $xmlContent = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curlError = curl_error($ch);
+            $curlErrno = curl_errno($ch);
+            curl_close($ch);
+
+            if ($xmlContent === false || $curlErrno !== 0) {
+                $errorMessage = $curlError ?: 'Неизвестная ошибка cURL';
+                if ($curlErrno) {
+                    $errorMessage .= ' (код ошибки: ' . $curlErrno . ')';
+                }
+
+                \Log::error('Ошибка cURL при загрузке YML по URL', [
+                    'url' => $url,
+                    'curl_error' => $curlError,
+                    'curl_errno' => $curlErrno,
+                    'http_code' => $httpCode
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Ошибка загрузки фида: ' . $errorMessage
+                ], 500);
+            }
+
+            if ($httpCode !== 200) {
+                return response()->json([
+                    'success' => false,
+                    'error' => "Ошибка загрузки фида: HTTP {$httpCode}"
+                ], $httpCode);
+            }
+
+            if (empty($xmlContent)) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Фид пуст'
+                ], 400);
+            }
+
+            // Парсим XML содержимое
+            $ymlData = $this->parseYMLContent($xmlContent);
+
+            return response()->json([
+                'success' => true,
+                'ymlData' => $ymlData
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Ошибка парсинга YML по URL: ' . $e->getMessage());
+            \Log::error('Стек вызовов: ' . $e->getTraceAsString());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка парсинга файла: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }

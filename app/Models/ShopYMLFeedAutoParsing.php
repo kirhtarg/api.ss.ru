@@ -15,6 +15,8 @@ class ShopYMLFeedAutoParsing extends Model
         'name',
         'description',
         'yml_feed_url',
+        'auth_username',
+        'auth_password',
         'field_mapping',
         'parse_options',
         'settings'

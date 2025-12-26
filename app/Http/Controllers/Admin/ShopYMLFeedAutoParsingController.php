@@ -64,15 +64,20 @@ class ShopYMLFeedAutoParsingController extends Controller
                 'name' => 'required|string|max:255',
                 'description' => 'nullable|string',
                 'yml_feed_url' => 'required|string|url',
+                'auth_username' => 'nullable|string|max:255',
+                'auth_password' => 'nullable|string|max:255',
                 'field_mapping' => 'nullable|array',
                 'parse_options' => 'nullable|array',
                 'settings' => 'nullable|array'
             ]);
 
+
             $dataToSave = [
                 'name' => $validated['name'],
                 'description' => isset($validated['description']) && $validated['description'] !== '' ? $validated['description'] : null,
                 'yml_feed_url' => $validated['yml_feed_url'],
+                'auth_username' => isset($validated['auth_username']) && $validated['auth_username'] !== '' ? $validated['auth_username'] : null,
+                'auth_password' => isset($validated['auth_password']) && $validated['auth_password'] !== '' ? $validated['auth_password'] : null,
                 'field_mapping' => isset($validated['field_mapping']) ? $validated['field_mapping'] : null,
                 'parse_options' => isset($validated['parse_options']) ? $validated['parse_options'] : null,
                 'settings' => isset($validated['settings']) ? $validated['settings'] : null
@@ -113,10 +118,13 @@ class ShopYMLFeedAutoParsingController extends Controller
                 'name' => 'sometimes|required|string|max:255',
                 'description' => 'nullable|string',
                 'yml_feed_url' => 'sometimes|required|string|url',
+                'auth_username' => 'nullable|string|max:255',
+                'auth_password' => 'nullable|string|max:255',
                 'field_mapping' => 'nullable|array',
                 'parse_options' => 'nullable|array',
                 'settings' => 'nullable|array'
             ]);
+
             
             $allRequestData = $request->all();
             $dataToUpdate = [];
@@ -129,6 +137,12 @@ class ShopYMLFeedAutoParsingController extends Controller
             }
             if (isset($allRequestData['yml_feed_url'])) {
                 $dataToUpdate['yml_feed_url'] = $allRequestData['yml_feed_url'];
+            }
+            if (array_key_exists('auth_username', $allRequestData)) {
+                $dataToUpdate['auth_username'] = $allRequestData['auth_username'] !== '' ? $allRequestData['auth_username'] : null;
+            }
+            if (array_key_exists('auth_password', $allRequestData)) {
+                $dataToUpdate['auth_password'] = $allRequestData['auth_password'] !== '' ? $allRequestData['auth_password'] : null;
             }
             if (array_key_exists('field_mapping', $allRequestData)) {
                 $dataToUpdate['field_mapping'] = $allRequestData['field_mapping'];

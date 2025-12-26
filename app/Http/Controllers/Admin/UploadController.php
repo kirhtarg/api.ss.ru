@@ -217,4 +217,84 @@ class UploadController extends Controller
             ], 500);
         }
     }
+
+    public function uploadTempFile(Request $request)
+    {
+        try {
+            // Validate request
+            $request->validate([
+                'file' => 'required|file|mimes:xml,yml,txt|max:51200', // 50MB max for XML/YML files
+                'type' => 'required|string|in:yml'
+            ]);
+
+            // Get uploaded file
+            $file = $request->file('file');
+
+            // Generate unique filename
+            $extension = $file->getClientOriginalExtension();
+            $filename = 'temp_' . Str::uuid() . '.' . $extension;
+
+            // Create temp directory if it doesn't exist
+            $tempDir = storage_path('app/temp');
+            if (!file_exists($tempDir)) {
+                mkdir($tempDir, 0755, true);
+            }
+
+            // Save file to temp directory
+            $filePath = $tempDir . '/' . $filename;
+            $file->move($tempDir, $filename);
+
+            // Generate URL for frontend
+            $url = route('temp-file', ['filename' => $filename]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Файл успешно загружен',
+                'filename' => $filename,
+                'url' => $url,
+                'path' => $filePath
+            ]);
+
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Ошибка загрузки временного файла: ' . $e->getMessage());
+            \Illuminate\Support\Facades\Log::error('Стек вызовов: ' . $e->getTraceAsString());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка загрузки файла: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function deleteTempFile(Request $request, $filename)
+    {
+        try {
+            // Validate filename to prevent directory traversal
+            if (!preg_match('/^temp_[a-f0-9\-]+\.(xml|yml|txt)$/i', $filename)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Неверное имя файла'
+                ], 400);
+            }
+
+            $filePath = storage_path('app/temp/' . $filename);
+
+            if (file_exists($filePath)) {
+                unlink($filePath);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Файл успешно удален'
+            ]);
+
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Ошибка удаления временного файла: ' . $e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка удаления файла: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }

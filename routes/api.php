@@ -791,9 +791,15 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/check-multiple', [\App\Http\Controllers\Api\Public\ComparisonController::class, 'checkMultiple']);
     });
 
-    // Загрузка изображений для rich editor
-    Route::post('/admin/upload/good-text-image', [\App\Http\Controllers\Admin\UploadController::class, 'uploadGoodTextImage']);
-    Route::post('/admin/upload/color-image', [\App\Http\Controllers\Admin\UploadController::class, 'uploadColorImage']);
+    // Загрузка изображений для rich editor (требует аутентификации)
+    Route::middleware(['auth:sanctum', 'role:admin,manager'])->group(function () {
+        Route::post('/admin/upload/good-text-image', [\App\Http\Controllers\Admin\UploadController::class, 'uploadGoodTextImage']);
+        Route::post('/admin/upload/color-image', [\App\Http\Controllers\Admin\UploadController::class, 'uploadColorImage']);
+        Route::post('/admin/upload-temp-file', [\App\Http\Controllers\Admin\UploadController::class, 'uploadTempFile']);
+        Route::delete('/admin/upload-temp-file/{filename}', [\App\Http\Controllers\Admin\UploadController::class, 'deleteTempFile']);
+        Route::post('/admin/parse-uploaded-yml-file', [\App\Http\Controllers\Admin\BulkGoodsImportController::class, 'parseUploadedYMLFile']);
+        Route::post('/admin/parse-yml-from-url', [\App\Http\Controllers\Admin\BulkGoodsImportController::class, 'parseYMLFromUrl']);
+    });
 
     // Контакты (доступны админам и пользователям с ролью site)
     Route::middleware(['auth:sanctum', 'role:admin,site'])->prefix('contacts')->group(function () {
