@@ -381,7 +381,9 @@ class BulkGoodsImportController extends Controller
                                     count($goodData['variation']['attributes']) > 0;
 
                     // Сначала проверяем режим поиска в вариациях (если включен)
-                    if ($searchByNameInVariations) {
+                    if ($searchByNameInVariations && !$hasVariation) {
+                        // Поиск вариаций по имени отключаем для товаров с вариациями,
+                        // потому что может быть несколько вариаций с одинаковым SKU
                         // Определяем значение для поиска в вариациях
                         $searchValue = ($searchByFieldInVariations === 'sku') ? $sku : $name;
 
@@ -433,16 +435,10 @@ class BulkGoodsImportController extends Controller
                         // Важно: для вариаций товар должен существовать, иначе будет ошибка дублирования
                         // Проверяем все возможные варианты поиска
 
-                        Log::info("Searching for good with variation data", [
-                            'sku' => $sku,
-                            'name' => $name,
-                            'hasVariation' => $hasVariation
-                        ]);
 
                         // 1. Сначала по SKU (если указан) - самый надежный способ
                         if (!empty($sku)) {
                             $existingGood = ShopGood::where('sku', $sku)->first();
-                            Log::info("Searched good by SKU '{$sku}' with variation: " . ($existingGood ? 'found' : 'not found'));
                             if ($existingGood) {
                                 $foundByFields[] = "SKU: '{$sku}' (для вариации)";
                             }
@@ -513,7 +509,7 @@ class BulkGoodsImportController extends Controller
                         
                         // Обновляем вариацию найденную по имени
                         $variationId = $this->updateVariationFromGoodData($existingVariation, $goodData, $searchByNameInVariations);
-                        
+
                         // Логируем действие с вариацией
                         $sheet = $goodData['_sheet'] ?? 'неизвестно';
                         $variationAttributes = [];
@@ -524,19 +520,19 @@ class BulkGoodsImportController extends Controller
                             ->where('vav.variation_id', $existingVariation->id)
                             ->select('a.name as attribute_name', 'av.value as value_value')
                             ->get();
-                        
+
                         foreach ($variationAttributeRows as $row) {
                             $variationAttributes[] = [
                                 'name' => $row->attribute_name,
                                 'value' => $row->value_value
                             ];
                         }
-                        
+
                         $details = "Найдена по имени: {$name}";
                         if ($sheet !== 'неизвестно') {
                             $details .= ", Лист: {$sheet}, Строка: {$count}";
                         }
-                        
+
                         $this->importLogService->logVariation(
                             'ОБНОВЛЕНА ВАРИАЦИЯ ПО ИМЕНИ',
                             $existingGood->name ?? $name,
@@ -624,7 +620,7 @@ class BulkGoodsImportController extends Controller
                             }
 
 
-                            $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation);
+                            $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation, $supplierStockFields);
 
                             // Для логики "Изменить вариацию" также обновляем остатки сопоставленных вариаций
                             if (isset($goodData['variation_ids']) && is_array($goodData['variation_ids'])) {
@@ -715,6 +711,26 @@ class BulkGoodsImportController extends Controller
                             if (isset($goodData['_row'])) {
                                 $results['variationIds'][$goodData['_row']] = $variationId;
                             }
+
+                            // Также сохраняем по ключу на основе SKU + атрибутов вариации для случаев,
+                            // когда несколько вариаций имеют одинаковый SKU
+                            if (isset($goodData['sku']) && !empty($goodData['sku']) &&
+                                isset($goodData['variation']) && isset($goodData['variation']['attributes']) &&
+                                is_array($goodData['variation']['attributes']) && count($goodData['variation']['attributes']) > 0) {
+
+                                $sku = trim($goodData['sku']);
+                                $attributes = $goodData['variation']['attributes'];
+
+                                // Сортируем атрибуты для консистентности ключа
+                                $sortedAttributes = collect($attributes)->sortBy(function($attr) {
+                                    return $attr['name'] ?? '';
+                                })->map(function($attr) {
+                                    return ($attr['name'] ?? '') . ':' . ($attr['value'] ?? '');
+                                })->join('|');
+
+                                $variationKey = $sku . ':::' . $sortedAttributes;
+                                $results['variationIds'][$variationKey] = $variationId;
+                            }
                         }
                         
                         // Добавляем в группу для обновления
@@ -731,7 +747,34 @@ class BulkGoodsImportController extends Controller
                     if ($searchByNameInVariations && $hasVariation && !$existingVariation && $existingGood) {
 
                         // Создаем новую вариацию для найденного товара
-                        $variationId = $this->processVariation($existingGood, $goodData['variation'], $goodData);
+                        $variationId = $this->processVariation($existingGood, $goodData['variation'], $goodData, $supplierStockFields);
+
+                        // Сохраняем ID вариации для связи с изображениями
+                        if ($variationId) {
+                            if (isset($goodData['_row'])) {
+                                $results['variationIds'][$goodData['_row']] = $variationId;
+                            }
+
+                            // Также сохраняем по ключу на основе SKU + атрибутов вариации для случаев,
+                            // когда несколько вариаций имеют одинаковый SKU
+                            if (isset($goodData['sku']) && !empty($goodData['sku']) &&
+                                isset($goodData['variation']) && isset($goodData['variation']['attributes']) &&
+                                is_array($goodData['variation']['attributes']) && count($goodData['variation']['attributes']) > 0) {
+
+                                $sku = trim($goodData['sku']);
+                                $attributes = $goodData['variation']['attributes'];
+
+                                // Сортируем атрибуты для консистентности ключа
+                                $sortedAttributes = collect($attributes)->sortBy(function($attr) {
+                                    return $attr['name'] ?? '';
+                                })->map(function($attr) {
+                                    return ($attr['name'] ?? '') . ':' . ($attr['value'] ?? '');
+                                })->join('|');
+
+                                $variationKey = $sku . ':::' . $sortedAttributes;
+                                $results['variationIds'][$variationKey] = $variationId;
+                            }
+                        }
 
 
                         // Обрабатываем категории товара (даже если обрабатывается только вариация)
@@ -792,6 +835,26 @@ class BulkGoodsImportController extends Controller
                             if (isset($goodData['_row'])) {
                                 $results['variationIds'][$goodData['_row']] = $variationId;
                             }
+
+                            // Также сохраняем по ключу на основе SKU + атрибутов вариации для случаев,
+                            // когда несколько вариаций имеют одинаковый SKU
+                            if (isset($goodData['sku']) && !empty($goodData['sku']) &&
+                                isset($goodData['variation']) && isset($goodData['variation']['attributes']) &&
+                                is_array($goodData['variation']['attributes']) && count($goodData['variation']['attributes']) > 0) {
+
+                                $sku = trim($goodData['sku']);
+                                $attributes = $goodData['variation']['attributes'];
+
+                                // Сортируем атрибуты для консистентности ключа
+                                $sortedAttributes = collect($attributes)->sortBy(function($attr) {
+                                    return $attr['name'] ?? '';
+                                })->map(function($attr) {
+                                    return ($attr['name'] ?? '') . ':' . ($attr['value'] ?? '');
+                                })->join('|');
+
+                                $variationKey = $sku . ':::' . $sortedAttributes;
+                                $results['variationIds'][$variationKey] = $variationId;
+                            }
                         }
 
                         // Добавляем в группу для обновления
@@ -806,7 +869,7 @@ class BulkGoodsImportController extends Controller
                         // Если у строки есть вариация, обрабатываем её независимо от duplicateAction
                         if ($hasVariation) {
                             // Обрабатываем только вариацию, но также обновляем категории товара, если нужно
-                            $variationId = $this->processVariation($existingGood, $goodData['variation'], $goodData);
+                            $variationId = $this->processVariation($existingGood, $goodData['variation'], $goodData, $supplierStockFields);
                             
                             // Обрабатываем категории товара (даже если обрабатывается только вариация)
                             $categoryIds = [];
@@ -865,6 +928,26 @@ class BulkGoodsImportController extends Controller
                                 // Используем _row как ключ для связи с изображениями (самый надежный способ)
                                 if (isset($goodData['_row'])) {
                                     $results['variationIds'][$goodData['_row']] = $variationId;
+                                }
+
+                                // Также сохраняем по ключу на основе SKU + атрибутов вариации для случаев,
+                                // когда несколько вариаций имеют одинаковый SKU
+                                if (isset($goodData['sku']) && !empty($goodData['sku']) &&
+                                    isset($goodData['variation']) && isset($goodData['variation']['attributes']) &&
+                                    is_array($goodData['variation']['attributes']) && count($goodData['variation']['attributes']) > 0) {
+
+                                    $sku = trim($goodData['sku']);
+                                    $attributes = $goodData['variation']['attributes'];
+
+                                    // Сортируем атрибуты для консистентности ключа
+                                    $sortedAttributes = collect($attributes)->sortBy(function($attr) {
+                                        return $attr['name'] ?? '';
+                                    })->map(function($attr) {
+                                        return ($attr['name'] ?? '') . ':' . ($attr['value'] ?? '');
+                                    })->join('|');
+
+                                    $variationKey = $sku . ':::' . $sortedAttributes;
+                                    $results['variationIds'][$variationKey] = $variationId;
                                 }
                             }
                             
@@ -954,7 +1037,7 @@ class BulkGoodsImportController extends Controller
                             }
 
 
-                            $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation);
+                            $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation, $supplierStockFields);
 
                             // Для логики "Изменить вариацию" также обновляем остатки сопоставленных вариаций
                             if (isset($goodData['variation_ids']) && is_array($goodData['variation_ids'])) {
@@ -1101,14 +1184,34 @@ class BulkGoodsImportController extends Controller
                                 if (isset($goodData['_row'])) {
                                     $results['goodIds'][$goodData['_row']] = $doubleCheckGood->id;
                                 }
-                                
+
                                 // Сохраняем ID вариации для связи с изображениями
                                 if ($variationId) {
                                     if (isset($goodData['_row'])) {
                                         $results['variationIds'][$goodData['_row']] = $variationId;
                                     }
+
+                                    // Также сохраняем по ключу на основе SKU + атрибутов вариации для случаев,
+                                    // когда несколько вариаций имеют одинаковый SKU
+                                    if (isset($goodData['sku']) && !empty($goodData['sku']) &&
+                                        isset($goodData['variation']) && isset($goodData['variation']['attributes']) &&
+                                        is_array($goodData['variation']['attributes']) && count($goodData['variation']['attributes']) > 0) {
+
+                                        $sku = trim($goodData['sku']);
+                                        $attributes = $goodData['variation']['attributes'];
+
+                                        // Сортируем атрибуты для консистентности ключа
+                                        $sortedAttributes = collect($attributes)->sortBy(function($attr) {
+                                            return $attr['name'] ?? '';
+                                        })->map(function($attr) {
+                                            return ($attr['name'] ?? '') . ':' . ($attr['value'] ?? '');
+                                        })->join('|');
+
+                                        $variationKey = $sku . ':::' . $sortedAttributes;
+                                        $results['variationIds'][$variationKey] = $variationId;
+                                    }
                                 }
-                                
+
                                 // Добавляем в группу для обновления
                                 $sheet = $goodData['_sheet'] ?? 'неизвестно';
                                 $updateItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'good_id' => $doubleCheckGood->id];
@@ -1183,6 +1286,26 @@ class BulkGoodsImportController extends Controller
                             if (isset($goodData['_row'])) {
                                 $results['variationIds'][$goodData['_row']] = $newGood->lastVariationId;
                             }
+
+                            // Также сохраняем по ключу на основе SKU + атрибутов вариации для случаев,
+                            // когда несколько вариаций имеют одинаковый SKU
+                            if (isset($goodData['sku']) && !empty($goodData['sku']) &&
+                                isset($goodData['variation']) && isset($goodData['variation']['attributes']) &&
+                                is_array($goodData['variation']['attributes']) && count($goodData['variation']['attributes']) > 0) {
+
+                                $sku = trim($goodData['sku']);
+                                $attributes = $goodData['variation']['attributes'];
+
+                                // Сортируем атрибуты для консистентности ключа
+                                $sortedAttributes = collect($attributes)->sortBy(function($attr) {
+                                    return $attr['name'] ?? '';
+                                })->map(function($attr) {
+                                    return ($attr['name'] ?? '') . ':' . ($attr['value'] ?? '');
+                                })->join('|');
+
+                                $variationKey = $sku . ':::' . $sortedAttributes;
+                                $results['variationIds'][$variationKey] = $newGood->lastVariationId;
+                            }
                         }
                         
                         // Добавляем в группу для загрузки
@@ -1213,7 +1336,7 @@ class BulkGoodsImportController extends Controller
                         if ($existingGood) {
                             // Товар найден - обрабатываем только вариацию
                             try {
-                                $variationId = $this->processVariation($existingGood, $goodData['variation'], $goodData);
+                                $variationId = $this->processVariation($existingGood, $goodData['variation'], $goodData, $supplierStockFields);
                                 $results['updated']++; // Считаем как обновление (добавление вариации)
                                 
                                 // Сохраняем ID товара
@@ -1224,11 +1347,31 @@ class BulkGoodsImportController extends Controller
                                 if (isset($goodData['_row'])) {
                                     $results['goodIds'][$goodData['_row']] = $existingGood->id;
                                 }
-                                
+
                                 // Сохраняем ID вариации для связи с изображениями
                                 if ($variationId) {
                                     if (isset($goodData['_row'])) {
                                         $results['variationIds'][$goodData['_row']] = $variationId;
+                                    }
+
+                                    // Также сохраняем по ключу на основе SKU + атрибутов вариации для случаев,
+                                    // когда несколько вариаций имеют одинаковый SKU
+                                    if (isset($goodData['sku']) && !empty($goodData['sku']) &&
+                                        isset($goodData['variation']) && isset($goodData['variation']['attributes']) &&
+                                        is_array($goodData['variation']['attributes']) && count($goodData['variation']['attributes']) > 0) {
+
+                                        $sku = trim($goodData['sku']);
+                                        $attributes = $goodData['variation']['attributes'];
+
+                                        // Сортируем атрибуты для консистентности ключа
+                                        $sortedAttributes = collect($attributes)->sortBy(function($attr) {
+                                            return $attr['name'] ?? '';
+                                        })->map(function($attr) {
+                                            return ($attr['name'] ?? '') . ':' . ($attr['value'] ?? '');
+                                        })->join('|');
+
+                                        $variationKey = $sku . ':::' . $sortedAttributes;
+                                        $results['variationIds'][$variationKey] = $variationId;
                                     }
                                 }
                                 
@@ -1509,7 +1652,7 @@ class BulkGoodsImportController extends Controller
         return $good;
     }
 
-    private function updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory = null, $useDefaultCategory = false, $immutableFields = [], $searchByNameInVariations = false, $hasVariation = false)
+    private function updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory = null, $useDefaultCategory = false, $immutableFields = [], $searchByNameInVariations = false, $hasVariation = false, $supplierStockFields = null)
     {
 
         // Обновляем все поля из goodData, которые переданы в импорте
@@ -1844,7 +1987,7 @@ class BulkGoodsImportController extends Controller
 
         // Обрабатываем вариации товара
         if (isset($goodData['variation']) && is_array($goodData['variation'])) {
-            $this->processVariation($existingGood, $goodData['variation'], $goodData);
+            $this->processVariation($existingGood, $goodData['variation'], $goodData, $supplierStockFields);
         }
 
         // Если товар имеет вариации, обновляем все его вариации данными из товара
@@ -2991,7 +3134,7 @@ class BulkGoodsImportController extends Controller
      * Обработка вариации товара при импорте
      * @return int|null ID вариации или null, если вариация не была создана/обновлена
      */
-    private function processVariation($good, $variationData, $goodData)
+    private function processVariation($good, $variationData, $goodData, $supplierStockFields = null)
     {
         try {
             Log::info('processVariation called', ['good_id' => $good->id, 'good_name' => $good->name, 'variationData_keys' => array_keys($variationData)]);
@@ -3214,6 +3357,7 @@ class BulkGoodsImportController extends Controller
                 );
                 
                 // Возвращаем ID вариации для связи с изображениями
+                Log::info('processVariation returning existingVariation->id', ['id' => $existingVariation->id]);
                 return $existingVariation->id;
             } else {
                 // Вариация не существует - создаем новую
@@ -3358,6 +3502,7 @@ class BulkGoodsImportController extends Controller
                 );
                 
                 // Возвращаем ID вариации для связи с изображениями
+                Log::info('processVariation returning variation->id', ['id' => $variation->id]);
                 return $variation->id;
             }
             
@@ -3374,8 +3519,11 @@ class BulkGoodsImportController extends Controller
                 "Ошибка: {$e->getMessage()}"
             );
         }
+
+
+        return $results;
     }
-    
+
     /**
      * Обновить вариацию из данных goodData
      * 
@@ -3438,7 +3586,56 @@ class BulkGoodsImportController extends Controller
         if (isset($goodData['name']) && !empty($goodData['name']) && !$searchByNameInVariations) {
             $variation->name = $goodData['name'];
         }
-        
+
+        // Обновляем атрибуты вариации, если они переданы
+        if (isset($goodData['variation']) && isset($goodData['variation']['attributes']) && is_array($goodData['variation']['attributes'])) {
+            $newAttributes = $goodData['variation']['attributes'];
+
+            // Удаляем существующие связи с атрибутами
+            DB::table('shop_variation_attributes_values')->where('variation_id', $variation->id)->delete();
+
+            // Добавляем новые связи с атрибутами
+            foreach ($newAttributes as $attr) {
+                if (isset($attr['name']) && isset($attr['value'])) {
+                    $attributeName = trim($attr['name']);
+                    $attributeValue = trim($attr['value']);
+
+                    if (!empty($attributeName) && !empty($attributeValue)) {
+                        // Находим или создаем атрибут
+                        $attribute = DB::table('shop_variation_attributes')
+                            ->where('name', $attributeName)
+                            ->first();
+
+                        if ($attribute) {
+                            // Находим или создаем значение атрибута
+                            $attributeValueRecord = DB::table('shop_variation_attribute_values')
+                                ->where('attribute_id', $attribute->id)
+                                ->where('value', $attributeValue)
+                                ->first();
+
+                            if (!$attributeValueRecord) {
+                                $attributeValueRecord = DB::table('shop_variation_attribute_values')->insertGetId([
+                                    'attribute_id' => $attribute->id,
+                                    'value' => $attributeValue,
+                                    'created_at' => now(),
+                                    'updated_at' => now()
+                                ]);
+                                $attributeValueRecord = (object)['id' => $attributeValueRecord];
+                            }
+
+                            // Добавляем связь вариации с значением атрибута
+                            DB::table('shop_variation_attributes_values')->insert([
+                                'variation_id' => $variation->id,
+                                'attribute_value_id' => $attributeValueRecord->id,
+                                'created_at' => now(),
+                                'updated_at' => now()
+                            ]);
+                        }
+                    }
+                }
+            }
+        }
+
         try {
             $variation->save();
         } catch (QueryException $e) {
@@ -3885,5 +4082,54 @@ class BulkGoodsImportController extends Controller
             // Логируем ошибку, но не прерываем импорт
             Log::error('Ошибка при обнулении остатков поставщика по имени: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Проверяет, совпадают ли атрибуты вариации с атрибутами в goodData
+     */
+    private function checkVariationAttributesMatch($variation, $goodData)
+    {
+        if (!isset($goodData['variation']) || !isset($goodData['variation']['attributes'])) {
+            return false;
+        }
+
+        $newAttributes = $goodData['variation']['attributes'];
+        $existingAttributes = $this->getVariationAttributes($variation);
+
+        if (count($newAttributes) !== count($existingAttributes)) {
+            return false;
+        }
+
+        // Сортируем оба массива для сравнения
+        $newAttrsSorted = collect($newAttributes)->sortBy(function($attr) {
+            return $attr['name'] ?? '';
+        })->map(function($attr) {
+            return ($attr['name'] ?? '') . ':' . ($attr['value'] ?? '');
+        })->values()->toArray();
+
+        $existingAttrsSorted = collect($existingAttributes)->sortBy(function($attr) {
+            return $attr['name'] ?? '';
+        })->map(function($attr) {
+            return ($attr['name'] ?? '') . ':' . ($attr['value'] ?? '');
+        })->values()->toArray();
+
+        return $newAttrsSorted === $existingAttrsSorted;
+    }
+
+    /**
+     * Получает атрибуты вариации в формате массива
+     */
+    private function getVariationAttributes($variation)
+    {
+        if (!$variation->attributes) {
+            return [];
+        }
+
+        return $variation->attributes->map(function($attr) {
+            return [
+                'name' => $attr->attribute->name,
+                'value' => $attr->value
+            ];
+        })->toArray();
     }
 }
