@@ -332,7 +332,7 @@ class ShopGoodsController extends Controller
                             }
 
                             // ИЛИ предзаказы (is_preorder = 1) с нулевым остатком
-                            $stockQuery->orWhere(function($preorderCondition) {
+                            $stockQuery->orWhere(function($preorderCondition) use ($remoteQ) {
                                 $preorderCondition->where('stock_quantity', '<=', 0)
                                     ->where(function($preorderSubCondition) {
                                         $preorderSubCondition->where('is_preorder', '=', 1)
