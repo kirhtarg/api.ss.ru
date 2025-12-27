@@ -54,7 +54,7 @@ class ShopGoodsController extends Controller
                 // Вариант 2: Товары С вариациями, у которых сумма остатков всех вариаций > 0
                 $mainQuery->orWhere(function($hasVariationsQuery) use ($remoteQ) {
                     // Товар должен иметь вариации
-                    $hasVariationsQuery->whereHas('variations', function($varQ) {
+                    $hasVariationsQuery->whereHas('variations', function($varQ) use ($remoteQ) {
                         $varQ->where('is_active', true);
                     });
 
