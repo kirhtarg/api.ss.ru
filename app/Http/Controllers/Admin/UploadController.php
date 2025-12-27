@@ -297,4 +297,328 @@ class UploadController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Загрузка встроенных изображений из Excel файлов
+     */
+    public function uploadEmbeddedImage(Request $request)
+    {
+
+        try {
+            $request->validate([
+                'image' => 'required|image|mimes:jpeg,png,jpg,gif,webp,bmp|max:10240', // 10MB max для изображений из Excel
+                'imageId' => 'required|string|max:100'
+            ]);
+
+            $file = $request->file('image');
+            $imageId = $request->input('imageId');
+
+            // Генерируем уникальное имя файла (как для обычных изображений товаров)
+            $extension = $file->getClientOriginalExtension();
+            $filename = 'excel_' . $imageId . '_' . Str::uuid() . '.' . $extension;
+
+            // Используем тот же путь, что и для обычных изображений товаров
+            $storagePath = '/images/shop/goods';
+            $fullPath = $storagePath . '/' . $filename;
+
+            // Получаем путь к фронтенду из переменной окружения FRONTEND_PATH
+            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+            $frontendPublicPath = base_path($frontendPath . '/public');
+            $storageFullPath = $frontendPublicPath . $fullPath;
+
+            // Создаем директорию если не существует
+            $directory = dirname($storageFullPath);
+            if (!file_exists($directory)) {
+                mkdir($directory, 0755, true);
+            }
+
+            // Сохраняем файл
+            $file->move($directory, $filename);
+
+            // Оптимизируем изображение если нужно
+            try {
+                $manager = new ImageManager(new Driver());
+                $image = $manager->read($storageFullPath);
+
+                // Ограничиваем размер до 1920x1920, сохраняя пропорции
+                $image->scaleDown(1920, 1920);
+
+                // Сохраняем оптимизированное изображение
+                $image->save($storageFullPath, quality: 85);
+            } catch (\Exception $e) {
+                // Если оптимизация не удалась, продолжаем с оригинальным файлом
+            }
+
+            // Используем тот же формат пути, что и для обычных изображений товаров
+            $publicUrl = $fullPath;
+
+            return response()->json([
+                'success' => true,
+                'url' => $publicUrl,
+                'imageId' => $imageId,
+                'filename' => $filename
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('UploadController::uploadEmbeddedImage - Error: ' . $e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при загрузке встроенного изображения: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Обработка встроенного изображения аналогично обычным изображениям товаров
+     * Применяет fit_with_white, добавляет белый фон для PNG, не оптимизирует
+     */
+    private function processEmbeddedImage($file, $goodId, $variationId, $filename, $frontendPublicPath, $storagePath)
+    {
+        try {
+            $manager = new ImageManager(new Driver());
+            $image = $manager->read($file);
+
+            // Получаем расширение файла
+            $extension = strtolower($file->getClientOriginalExtension());
+
+            // Используем системные размеры (500x500 по умолчанию, как для обычных изображений)
+            $width = 500;
+            $height = 500;
+
+            // Проверяем, является ли формат прозрачным (нуждается в белом фоне)
+            $isTransparentFormat = in_array($extension, ['png', 'gif', 'webp']);
+
+            // Создаем уникальное имя файла с учетом товара/вариации
+            $goodPart = $goodId ? "good_{$goodId}" : 'good_0';
+            $varPart = $variationId ? "var_{$variationId}" : 'var_0';
+            $baseFilename = "excel_{$goodPart}_{$varPart}_" . pathinfo($filename, PATHINFO_FILENAME);
+
+            // Всегда обрабатываем изображения с белым фоном для PNG/GIF/WebP
+            if ($isTransparentFormat) {
+                // Создаем новое изображение с белым фоном
+                $canvas = $manager->create($width, $height);
+                $canvas->fill('ffffff'); // Белый фон
+
+                // Вписываем изображение в размеры (fit_with_white)
+                $image->contain($width, $height);
+
+                // Вычисляем позицию для центрирования
+                $fittedWidth = $image->width();
+                $fittedHeight = $image->height();
+                $x = (int)(($width - $fittedWidth) / 2);
+                $y = (int)(($height - $fittedHeight) / 2);
+
+                // Накладываем изображение на белый фон
+                $canvas->place($image, 'top-left', $x, $y);
+
+                // ВСЕГДА конвертируем в JPG для удаления прозрачности (не оптимизируем)
+                $imageData = $canvas->toJpeg(100); // 100% качество, без оптимизации
+
+                // Меняем расширение на jpg
+                $newFilename = $baseFilename . '.jpg';
+                $fullPath = $storagePath . '/' . $newFilename;
+                $storageFullPath = $frontendPublicPath . $fullPath;
+
+                // Создаем директорию если не существует
+                $directory = dirname($storageFullPath);
+                if (!file_exists($directory)) {
+                    mkdir($directory, 0755, true);
+                }
+
+                // Сохраняем обработанное изображение
+                file_put_contents($storageFullPath, $imageData);
+
+                return $fullPath;
+            } else {
+                // Для обычных форматов (JPEG) применяем fit_with_white без оптимизации
+                // Создаем новое изображение с белым фоном
+                $canvas = $manager->create($width, $height);
+                $canvas->fill('ffffff'); // Белый фон
+
+                // Вписываем изображение в размеры
+                $image->contain($width, $height);
+
+                // Вычисляем позицию для центрирования
+                $fittedWidth = $image->width();
+                $fittedHeight = $image->height();
+                $x = (int)(($width - $fittedWidth) / 2);
+                $y = (int)(($height - $fittedHeight) / 2);
+
+                // Накладываем изображение на белый фон
+                $canvas->place($image, 'top-left', $x, $y);
+
+                // Сохраняем в оригинальном формате без оптимизации
+                if (strtolower($extension) === 'jpg' || strtolower($extension) === 'jpeg') {
+                    $imageData = $canvas->toJpeg(100); // 100% качество, без оптимизации
+                } elseif (strtolower($extension) === 'webp') {
+                    $imageData = $canvas->toWebp(100); // 100% качество, без оптимизации
+                } else {
+                    $imageData = $canvas->toJpeg(100); // Fallback to JPEG
+                }
+
+                $newFilename = $baseFilename . '.' . $extension;
+                $fullPath = $storagePath . '/' . $newFilename;
+                $storageFullPath = $frontendPublicPath . $fullPath;
+
+                // Создаем директорию если не существует
+                $directory = dirname($storageFullPath);
+                if (!file_exists($directory)) {
+                    mkdir($directory, 0755, true);
+                }
+
+                // Сохраняем обработанное изображение
+                file_put_contents($storageFullPath, $imageData);
+
+                return $fullPath;
+            }
+
+        } catch (\Exception $e) {
+            \Log::error('Error processing embedded image: ' . $e->getMessage());
+            return null; // Возвращаем null, чтобы использовать fallback логику
+        }
+    }
+
+    public function uploadEmbeddedImagesBatch(Request $request)
+    {
+        try {
+            // Получаем все файлы и данные из FormData
+            $allFiles = $request->allFiles();
+            $allInput = $request->all();
+
+            // Группируем файлы и данные по индексу
+            $images = [];
+            $imagesData = [];
+
+            foreach ($allFiles as $key => $file) {
+                if (preg_match('/^images_(\d+)_image$/', $key, $matches)) {
+                    $index = $matches[1];
+                    $images[$index] = $file;
+                }
+            }
+
+            foreach ($allInput as $key => $value) {
+                if (preg_match('/^images_(\d+)_imageId$/', $key, $matches)) {
+                    $index = $matches[1];
+                    if (!isset($imagesData[$index])) {
+                        $imagesData[$index] = [];
+                    }
+                    $imagesData[$index]['imageId'] = $value;
+                } elseif (preg_match('/^images_(\d+)_good_id$/', $key, $matches)) {
+                    $index = $matches[1];
+                    if (!isset($imagesData[$index])) {
+                        $imagesData[$index] = [];
+                    }
+                    $imagesData[$index]['good_id'] = $value ?: null;
+                } elseif (preg_match('/^images_(\d+)_variation_id$/', $key, $matches)) {
+                    $index = $matches[1];
+                    if (!isset($imagesData[$index])) {
+                        $imagesData[$index] = [];
+                    }
+                    $imagesData[$index]['variation_id'] = $value ?: null;
+                }
+            }
+
+            if (empty($images) || count($images) > 50) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid number of images (1-50 required)'
+                ], 400);
+            }
+            $results = [];
+            $errors = [];
+
+            // Получаем путь к фронтенду
+            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+            $frontendPublicPath = base_path($frontendPath . '/public');
+
+            foreach ($images as $index => $file) {
+                try {
+                    // Валидация файла
+                    if (!$file || !$file->isValid()) {
+                        $errors[] = [
+                            'index' => $index,
+                            'error' => 'Invalid file'
+                        ];
+                        continue;
+                    }
+
+                    // Проверка размера файла (10MB)
+                    if ($file->getSize() > 10240 * 1024) {
+                        $errors[] = [
+                            'index' => $index,
+                            'error' => 'File too large (max 10MB)'
+                        ];
+                        continue;
+                    }
+
+                    // Проверка типа файла
+                    $allowedMimes = ['image/jpeg', 'image/png', 'image/jpg', 'image/gif', 'image/webp', 'image/bmp'];
+                    if (!in_array($file->getMimeType(), $allowedMimes)) {
+                        $errors[] = [
+                            'index' => $index,
+                            'error' => 'Invalid file type'
+                        ];
+                        continue;
+                    }
+
+                    $imageData = $imagesData[$index] ?? [];
+                    $imageId = $imageData['imageId'] ?? null;
+                    $goodId = $imageData['good_id'] ?? null;
+                    $variationId = $imageData['variation_id'] ?? null;
+
+                    if (!$imageId) {
+                        $errors[] = [
+                            'index' => $index,
+                            'error' => 'Missing imageId'
+                        ];
+                        continue;
+                    }
+
+                    // Используем тот же путь, что и для обычных изображений товаров
+                    $storagePath = '/images/shop/goods';
+
+                    // Обрабатываем изображение аналогично обычным изображениям товаров
+                    $processedImagePath = $this->processEmbeddedImage($file, $goodId, $variationId, $imageId, $frontendPublicPath, $storagePath);
+
+                    // Если обработка удалась, используем новый путь, иначе возвращаем ошибку
+                    if (!$processedImagePath) {
+                        $errors[] = [
+                            'index' => $index,
+                            'error' => 'Failed to process image'
+                        ];
+                        continue;
+                    }
+
+                    $publicUrl = $processedImagePath;
+                    $results[] = [
+                        'imageId' => $imageId,
+                        'url' => $publicUrl
+                    ];
+
+                } catch (\Exception $e) {
+                    $errors[] = [
+                        'index' => $index,
+                        'error' => $e->getMessage()
+                    ];
+                }
+            }
+
+            return response()->json([
+                'success' => count($errors) === 0,
+                'results' => $results,
+                'errors' => $errors,
+                'total_processed' => count($results),
+                'total_errors' => count($errors)
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('UploadController::uploadEmbeddedImagesBatch - Error: ' . $e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при пакетной загрузке встроенных изображений: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }

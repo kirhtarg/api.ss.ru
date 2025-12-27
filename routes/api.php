@@ -795,6 +795,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::middleware(['auth:sanctum', 'role:admin,manager'])->group(function () {
         Route::post('/admin/upload/good-text-image', [\App\Http\Controllers\Admin\UploadController::class, 'uploadGoodTextImage']);
         Route::post('/admin/upload/color-image', [\App\Http\Controllers\Admin\UploadController::class, 'uploadColorImage']);
+        Route::post('/admin/upload-embedded-image', [\App\Http\Controllers\Admin\UploadController::class, 'uploadEmbeddedImage']);
+        Route::post('/admin/upload-embedded-images-batch', [\App\Http\Controllers\Admin\UploadController::class, 'uploadEmbeddedImagesBatch']);
         Route::post('/admin/upload-temp-file', [\App\Http\Controllers\Admin\UploadController::class, 'uploadTempFile']);
         Route::delete('/admin/upload-temp-file/{filename}', [\App\Http\Controllers\Admin\UploadController::class, 'deleteTempFile']);
         Route::post('/admin/parse-uploaded-yml-file', [\App\Http\Controllers\Admin\BulkGoodsImportController::class, 'parseUploadedYMLFile']);
@@ -1424,6 +1426,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::post('/', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'store']);
                     Route::put('/{imageId}', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'update']);
                     Route::delete('/{imageId}', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'destroy']);
+                    Route::delete('/batch', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'destroyBatch']);
                     Route::put('/{imageId}/main', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'setMain']);
                     Route::post('/{imageId}/link-variation', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'linkVariation']);
                     Route::post('/reorder', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'reorder']);

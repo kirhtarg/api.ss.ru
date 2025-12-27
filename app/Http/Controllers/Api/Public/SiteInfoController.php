@@ -94,6 +94,7 @@ class SiteInfoController extends Controller
                     ->orWhere('key', 'tag_max_bonus') // Включаем параметр повышенного бонуса
                     ->orWhere('key', 'tag_max_bonus_tax') // Включаем процент повышенного бонуса
                     ->orWhere('key', 'tag_no_bonus') // Включаем параметр тега без бонусов
+                    ->orWhere('key', 'delivery_only_info') // Включаем параметр режима доставки только для информации
                     ->get();
 
                 $publicSettings = [];

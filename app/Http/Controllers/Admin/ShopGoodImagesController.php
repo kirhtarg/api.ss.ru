@@ -385,6 +385,52 @@ class ShopGoodImagesController extends Controller
     }
 
     /**
+     * Пакетное удаление изображений
+     */
+    public function destroyBatch(Request $request, $goodId): JsonResponse
+    {
+        $request->validate([
+            'image_ids' => 'required|array|min:1|max:100', // Максимум 100 изображений за раз
+            'image_ids.*' => 'required|integer|exists:shop_good_images,id'
+        ]);
+
+        $imageIds = $request->input('image_ids', []);
+        $deleted = [];
+        $errors = [];
+
+        $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+
+        foreach ($imageIds as $imageId) {
+            try {
+                $image = ShopGoodImage::findOrFail($imageId);
+
+                // Удаляем файл с фронтенда
+                $filePath = $frontendPublicPath . '/' . $image->file_path;
+                if (file_exists($filePath)) {
+                    unlink($filePath);
+                }
+
+                $image->delete();
+                $deleted[] = $imageId;
+
+            } catch (\Exception $e) {
+                $errors[] = [
+                    'image_id' => $imageId,
+                    'error' => $e->getMessage()
+                ];
+            }
+        }
+
+        return response()->json([
+            'success' => count($errors) === 0,
+            'deleted' => $deleted,
+            'errors' => $errors,
+            'total_deleted' => count($deleted),
+            'total_errors' => count($errors)
+        ]);
+    }
+
+    /**
      * Установить главное изображение
      */
     public function setMain($goodId, $imageId): JsonResponse
