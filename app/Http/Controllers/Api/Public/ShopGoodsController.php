@@ -2151,8 +2151,8 @@ class ShopGoodsController extends Controller
                     $goodsQuery->where(function($q) use ($remoteQ) {
                         $q->where('shop_goods.stock_quantity', '>', 0);
                         if ($remoteQ === 2 || $remoteQ === 3) {
-                            $q->orWhere(function($remoteQ) {
-                                $remoteQ->whereNotNull('shop_goods.remote_stock_quantity')
+                            $q->orWhere(function($remoteQuery) {
+                                $remoteQuery->whereNotNull('shop_goods.remote_stock_quantity')
                                     ->where('shop_goods.remote_stock_quantity', '!=', '0')
                                     ->whereRaw('LENGTH(TRIM(shop_goods.remote_stock_quantity)) > 0');
                             })
@@ -2197,8 +2197,8 @@ class ShopGoodsController extends Controller
                     $variationsQuery->where(function($q) use ($remoteQ) {
                         $q->where('shop_good_variations.stock_quantity', '>', 0);
                         if ($remoteQ === 2 || $remoteQ === 3) {
-                            $q->orWhere(function($remoteQ) {
-                                $remoteQ->whereNotNull('shop_good_variations.remote_stock_quantity')
+                            $q->orWhere(function($remoteQuery) {
+                                $remoteQuery->whereNotNull('shop_good_variations.remote_stock_quantity')
                                     ->where('shop_good_variations.remote_stock_quantity', '!=', '0')
                                     ->whereRaw('LENGTH(TRIM(shop_good_variations.remote_stock_quantity)) > 0');
                             })
@@ -2244,8 +2244,8 @@ class ShopGoodsController extends Controller
                     $goodsQuery->where(function($q) use ($remoteQ) {
                         $q->where('shop_goods.stock_quantity', '>', 0);
                         if ($remoteQ === 2 || $remoteQ === 3) {
-                            $q->orWhere(function($remoteQ) {
-                                $remoteQ->whereNotNull('shop_goods.remote_stock_quantity')
+                            $q->orWhere(function($remoteQuery) {
+                                $remoteQuery->whereNotNull('shop_goods.remote_stock_quantity')
                                     ->where('shop_goods.remote_stock_quantity', '!=', '0')
                                     ->whereRaw('LENGTH(TRIM(shop_goods.remote_stock_quantity)) > 0');
                             })
@@ -2287,8 +2287,8 @@ class ShopGoodsController extends Controller
                     $variationsQuery->where(function($q) use ($remoteQ) {
                         $q->where('shop_good_variations.stock_quantity', '>', 0);
                         if ($remoteQ === 2 || $remoteQ === 3) {
-                            $q->orWhere(function($remoteQ) {
-                                $remoteQ->whereNotNull('shop_good_variations.remote_stock_quantity')
+                            $q->orWhere(function($remoteQuery) {
+                                $remoteQuery->whereNotNull('shop_good_variations.remote_stock_quantity')
                                     ->where('shop_good_variations.remote_stock_quantity', '!=', '0')
                                     ->whereRaw('LENGTH(TRIM(shop_good_variations.remote_stock_quantity)) > 0');
                             })
