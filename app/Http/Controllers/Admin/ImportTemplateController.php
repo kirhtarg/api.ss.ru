@@ -126,6 +126,7 @@ class ImportTemplateController extends Controller
         try {
             $template = ImportTemplate::findOrFail($id);
 
+
             $validated = $request->validate([
                 'name' => 'required|string|max:255|unique:import_templates,name,' . $id,
                 'description' => 'nullable|string|max:1000',
