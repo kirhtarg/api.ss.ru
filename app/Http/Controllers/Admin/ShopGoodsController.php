@@ -2499,7 +2499,7 @@ class ShopGoodsController extends Controller
 
             $results = [];
             $errors = [];
-            $skipped = [];
+            // $skipped = [];
 
             // Обрабатываем изображения последовательно (для стабильности)
             foreach ($imageUrls as $index => $imageUrl) {
@@ -2521,10 +2521,11 @@ class ShopGoodsController extends Controller
                     
                     $results[$cleanUrl] = $cleanPath;
                     
-                    if (isset($response['skipped']) && $response['skipped']) {
-                        $skipped[] = $cleanUrl;
-                    } else {
-                    }
+                    // Больше не пропускаем файлы
+                    // if (isset($response['skipped']) && $response['skipped']) {
+                    //     $skipped[] = $cleanUrl;
+                    // } else {
+                    // }
                 } else {
                     // Очищаем URL и сообщение об ошибке от невалидных UTF-8 символов
                     $cleanUrl = isset($response['originalUrl']) ? mb_convert_encoding($response['originalUrl'], 'UTF-8', 'UTF-8') : '';
@@ -2547,19 +2548,17 @@ class ShopGoodsController extends Controller
                 $cleanResults[$cleanUrl] = $cleanPath;
             }
             
-            $cleanSkipped = array_map(function($url) {
-                return mb_convert_encoding($url, 'UTF-8', 'UTF-8');
-            }, $skipped);
+            // $cleanSkipped = array_map(function($url) {
+            //     return mb_convert_encoding($url, 'UTF-8', 'UTF-8');
+            // }, $skipped);
             
             return response()->json([
                 'success' => true,
                 'data' => [
                     'paths' => $cleanResults,
                     'errors' => $errors,
-                    'skipped' => $cleanSkipped,
                     'total' => count($imageUrls),
                     'successful' => count($cleanResults),
-                    'skipped_count' => count($cleanSkipped),
                     'failed' => count($errors)
                 ]
             ], 200, [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -2701,22 +2700,23 @@ class ShopGoodsController extends Controller
             $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
             $frontendPublicPath = base_path($frontendPath . '/public');
             $storageFullPath = $frontendPublicPath . $fullPath;
+            $normalizedStorageFullPath = realpath($storageFullPath) ?: $storageFullPath;
             
-            // Проверяем, существует ли файл уже
-            if (file_exists($storageFullPath)) {
-                $cleanUrl = mb_convert_encoding($imageUrl, 'UTF-8', 'UTF-8');
-                $cleanPath = mb_convert_encoding($fullPath, 'UTF-8', 'UTF-8');
-                
-                return [
-                    'success' => true,
-                    'originalUrl' => $cleanUrl,
-                    'path' => $cleanPath,
-                    'skipped' => true // Флаг, что файл был пропущен
-                ];
-            }
+            // Всегда скачиваем файл заново (не пропускаем существующие)
+            // if (file_exists($normalizedStorageFullPath)) {
+            //     $cleanUrl = mb_convert_encoding($imageUrl, 'UTF-8', 'UTF-8');
+            //     $cleanPath = mb_convert_encoding($fullPath, 'UTF-8', 'UTF-8');
+            //
+            //     return [
+            //         'success' => true,
+            //         'originalUrl' => $cleanUrl,
+            //         'path' => $cleanPath,
+            //         'skipped' => true // Флаг, что файл был пропущен
+            //     ];
+            // }
             
             // Создаем директорию если не существует
-            $directory = dirname($storageFullPath);
+            $directory = dirname($normalizedStorageFullPath);
             if (!\App\Helpers\StorageHelper::createDirectory($directory)) {
                 $cleanUrl = mb_convert_encoding($imageUrl, 'UTF-8', 'UTF-8');
                 
@@ -2786,11 +2786,11 @@ class ShopGoodsController extends Controller
             }
 
             // Сохраняем файл
-            file_put_contents($storageFullPath, $imageData);
+            file_put_contents($normalizedStorageFullPath, $imageData);
 
             // Обработка изображения
             if ($optimize || $resize !== 'no_change') {
-                $this->processImage($storageFullPath, $resize, $width, $height);
+                $this->processImage($normalizedStorageFullPath, $resize, $width, $height);
             }
 
 
@@ -2812,6 +2812,7 @@ class ShopGoodsController extends Controller
             
             $cleanUrl = mb_convert_encoding($imageUrl, 'UTF-8', 'UTF-8');
             
+            \Log::error("downloadSingleImage error: {$cleanUrl} - {$errorMessage}");
             return [
                 'success' => false,
                 'originalUrl' => $cleanUrl,

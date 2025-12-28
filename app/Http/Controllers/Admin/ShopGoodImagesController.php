@@ -585,8 +585,8 @@ class ShopGoodImagesController extends Controller
         // Валидация с поддержкой вариаций: либо good_id, либо variation_id должен быть указан
         $validator = Validator::make($request->all(), [
             'images' => 'required|array|min:1|max:1000', // Максимум 1000 изображений за раз
-            'images.*.good_id' => 'nullable|exists:shop_goods,id',
-            'images.*.variation_id' => 'nullable|exists:shop_good_variations,id',
+            'images.*.good_id' => 'nullable|integer',
+            'images.*.variation_id' => 'nullable|integer',
             'images.*.file_path' => 'required|string',
             'images.*.alt_text' => 'nullable|string|max:255',
             'images.*.is_main' => 'boolean',
@@ -595,11 +595,17 @@ class ShopGoodImagesController extends Controller
         ]);
         
         // Дополнительная валидация: либо good_id, либо variation_id должен быть указан
-        $validator->after(function ($validator) use ($request) {
+        $imagesToSkip = []; // Индексы изображений, которые нужно пропустить
+
+        $validator->after(function ($validator) use ($request, &$imagesToSkip) {
             $images = $request->input('images', []);
             foreach ($images as $index => $image) {
                 $hasGoodId = !empty($image['good_id']);
                 $hasVariationId = !empty($image['variation_id']);
+
+                if ($index < 5) { // Логируем только первые 5 для отладки
+                    \Log::info("Изображение {$index}: good_id=" . ($image['good_id'] ?? 'null') . ", variation_id=" . ($image['variation_id'] ?? 'null'));
+                }
                 
                 if (!$hasGoodId && !$hasVariationId) {
                     $validator->errors()->add("images.{$index}.good_id", 'Необходимо указать либо good_id, либо variation_id');
@@ -608,10 +614,58 @@ class ShopGoodImagesController extends Controller
                 if ($hasGoodId && $hasVariationId) {
                     $validator->errors()->add("images.{$index}.good_id", 'Нельзя указывать одновременно good_id и variation_id');
                 }
+
+                // Проверяем, что good_id является положительным целым числом
+                if ($hasGoodId && (!is_numeric($image['good_id']) || $image['good_id'] <= 0)) {
+                    $validator->errors()->add("images.{$index}.good_id", 'good_id должен быть положительным целым числом');
+                }
+
+                // Проверяем, что variation_id является положительным целым числом
+                if ($hasVariationId && (!is_numeric($image['variation_id']) || $image['variation_id'] <= 0)) {
+                    $validator->errors()->add("images.{$index}.variation_id", 'variation_id должен быть положительным целым числом');
+                }
+
+                // Проверяем существование файла (ищем в директории фронтенда)
+                if (!empty($image['file_path'])) {
+                    // Сначала проверяем в public_path API
+                    $apiPath = realpath(public_path($image['file_path'])) ?: public_path($image['file_path']);
+                    // Затем проверяем в директории фронтенда
+                    $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
+                    $frontendFullPath = realpath(base_path($frontendPath . '/public' . $image['file_path'])) ?: base_path($frontendPath . '/public' . $image['file_path']);
+
+                    $fileExists = file_exists($apiPath) || file_exists($frontendFullPath);
+
+                    if (!$fileExists) {
+                        $validator->errors()->add("images.{$index}.file_path", 'Файл не найден: ' . $image['file_path']);
+                        \Log::error("Файл изображения не найден ни в API ({$apiPath}), ни во фронтенде ({$frontendFullPath})", ['image' => $image]);
+                    }
+                }
+
+                // Проверяем существование товара или вариации
+                // Если товар/вариация не существует, добавляем в список для пропуска
+                if ($hasGoodId) {
+                    if (!\DB::table('shop_goods')->where('id', $image['good_id'])->exists()) {
+                        \Log::warning("Товар не найден в БД - пропускаем изображение", ['good_id' => $image['good_id'], 'image' => $image]);
+                        $imagesToSkip[] = $index;
+                        continue;
+                    }
+                } elseif ($hasVariationId) {
+                    if (!\DB::table('shop_good_variations')->where('id', $image['variation_id'])->exists()) {
+                        \Log::warning("Вариация не найдена в БД - пропускаем изображение", ['variation_id' => $image['variation_id'], 'image' => $image]);
+                        $imagesToSkip[] = $index;
+                        continue;
+                    }
+                }
             }
         });
 
         if ($validator->fails()) {
+            // Логируем ошибки валидации для отладки
+            Log::error('ShopGoodImagesController::createFromImportBatch - Ошибки валидации', [
+                'errors' => $validator->errors()->toArray(),
+                'first_image' => $request->input('images.0', null)
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
@@ -619,8 +673,17 @@ class ShopGoodImagesController extends Controller
             ], 422);
         }
 
+        // Удаляем пропущенные изображения из массива
+        $images = $request->input('images', []);
+        if (!empty($imagesToSkip)) {
+            $filteredImages = array_filter($images, function($image, $index) use ($imagesToSkip) {
+                return !in_array($index, $imagesToSkip);
+            }, ARRAY_FILTER_USE_BOTH);
+
+            $images = array_values($filteredImages);
+        }
+
         try {
-            $images = $request->input('images');
             $results = [];
             $errors = [];
             $skipped = [];
@@ -653,6 +716,7 @@ class ShopGoodImagesController extends Controller
                     $imagesByGood[$goodId][] = array_merge($imageData, ['_index' => $index]);
                 }
             }
+
 
             // Обрабатываем изображения для каждого товара пакетно
             foreach ($imagesByGood as $goodId => $goodImages) {

@@ -3464,6 +3464,16 @@ Route::middleware('auth:sanctum')->get('/test-auth', function (Request $request)
 });
 
 
+// Получение конфигурации для фронтенда
+Route::middleware(['auth:sanctum', 'role:admin'])->get('/admin/config', function (Request $request) {
+    return response()->json([
+        'success' => true,
+        'data' => [
+            'frontend_path' => env('FRONTEND_PATH', '../admin.skateandsnow.ru')
+        ]
+    ]);
+});
+
 // Тестовый маршрут для проверки роли админа
 Route::middleware(['auth:sanctum', 'role:admin'])->get('/test-admin-role', function (Request $request) {
     try {

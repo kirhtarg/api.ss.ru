@@ -34,6 +34,7 @@ class BulkGoodsImportController extends Controller
 
     public function bulkImport(Request $request)
     {
+
         // Определяем имя поставщика
         $supplierNameFromRequest = $request->input('supplier_name');
         if ($supplierNameFromRequest && $supplierNameFromRequest !== '__reset_all__') {
@@ -642,18 +643,19 @@ class BulkGoodsImportController extends Controller
                         // Если $categoryIds пустой и категория по умолчанию не применялась - не вызываем sync, оставляем существующие категории
                         
                         $results['updated']++;
-                        
+
                         // Сохраняем ID товара
                         if (!empty($sku)) {
                             $results['goodIds'][$sku] = $existingGood->id;
                         }
-                        
+
                         if (isset($goodData['_row'])) {
                             $results['goodIds'][$goodData['_row']] = $existingGood->id;
                         }
-                        
+
                         // Сохраняем ID вариации для связи с изображениями
                         if ($variationId) {
+
                             if (isset($goodData['_row'])) {
                                 $results['variationIds'][$goodData['_row']] = $variationId;
                             }
@@ -676,6 +678,7 @@ class BulkGoodsImportController extends Controller
 
                                 $variationKey = $sku . ':::' . $sortedAttributes;
                                 $results['variationIds'][$variationKey] = $variationId;
+
                             }
                         }
                         
