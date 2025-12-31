@@ -170,7 +170,34 @@ class CartController extends Controller
             $sessionId = $this->getSessionId($request);
 
             $cartItems = $this->getCartItems($user, $sessionId);
-            $cart = $this->formatCartData($cartItems);
+
+            // Обновляем цены товаров из актуальных данных перед фильтрацией
+            $updatedCartItems = $cartItems->map(function ($item) {
+                $this->updateCartItemPrice($item);
+                return $item;
+            });
+
+            // Фильтруем товары с нулевыми или некорректными ценами
+            $validCartItems = $updatedCartItems->filter(function ($item) {
+                $price = $item->price;
+                $isValid = is_numeric($price) && $price > 0;
+
+                // Логируем фильтрацию
+                if (!$isValid) {
+                    Log::info('Filtering cart item with invalid price after update', [
+                        'good_id' => $item->good_id,
+                        'variation_id' => $item->variation_id,
+                        'price' => $price,
+                        'price_type' => gettype($price),
+                        'is_numeric' => is_numeric($price),
+                        'is_greater_than_zero' => $price > 0
+                    ]);
+                }
+
+                return $isValid;
+            });
+
+            $cart = $this->formatCartData($validCartItems);
 
             return response()->json([
                 'success' => true,
@@ -385,7 +412,15 @@ class CartController extends Controller
             // Определяем цены - сохраняем и акционную, и обычную
             $regularPrice = $variationId ? $variation->price : $good->price;
             $salePrice = $variationId ? $variation->sale_price : $good->sale_price;
-            
+
+            // Проверяем, что базовая цена не равна 0 (товары с ценой 0 не должны добавляться в корзину)
+            if (!$regularPrice || $regularPrice <= 0) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Невозможно добавить товар с нулевой ценой в корзину'
+                ], 400);
+            }
+
             // Определяем финальную цену с учетом демпинга
             // Приоритет: демпинговая (если show_demping = 1 или true) > акционная > базовая
             if ($variationId) {
@@ -502,6 +537,17 @@ class CartController extends Controller
                     'success' => false,
                     'message' => 'Товар не найден в корзине'
                 ], 404);
+            }
+
+            // Обновляем цену товара перед проверкой
+            $this->updateCartItemPrice($cartItem);
+
+            // Проверяем, что товар имеет корректную цену
+            if (!$cartItem->price || $cartItem->price <= 0) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Невозможно обновить товар с некорректной ценой'
+                ], 400);
             }
 
             if ($quantity <= 0) {
@@ -1182,9 +1228,9 @@ class CartController extends Controller
     private function getCartItems(?User $user, string $sessionId)
     {
         $query = ShopCartItem::active()->with([
-            'good:id,slug,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,demping_price,show_demping',
+            'good:id,slug,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,demping_price,show_demping,price,sale_price',
             // Загружаем только саму вариацию; атрибуты подтянем отдельно при форматировании, если нужно
-            'variation:id,name,sku,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,demping_price,show_demping'
+            'variation:id,name,sku,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,demping_price,show_demping,price,sale_price'
         ]);
 
         if ($user) {
@@ -1255,6 +1301,37 @@ class CartController extends Controller
             // В случае ошибки возвращаем название вариации или пустую строку
             return $variation->name ?? '';
         }
+    }
+
+    /**
+     * Обновить цену товара в корзине актуальной ценой из каталога
+     */
+    private function updateCartItemPrice($cartItem): void
+    {
+        $currentPrice = null;
+        $currentSalePrice = null;
+
+        if ($cartItem->variation_id && $cartItem->relationLoaded('variation') && $cartItem->variation) {
+            $currentPrice = $cartItem->variation->price;
+            $currentSalePrice = $cartItem->variation->sale_price;
+        } elseif ($cartItem->relationLoaded('good') && $cartItem->good) {
+            $currentPrice = $cartItem->good->price;
+            $currentSalePrice = $cartItem->good->sale_price;
+        }
+
+        // Обновляем цену в базе данных корзины, если актуальная цена товара существует и отличается от null
+        // Важно: если актуальная цена товара существует (> 0), всегда обновляем, даже если она совпадает
+        if ($currentPrice !== null && $currentPrice > 0) {
+            $cartItem->price = $currentPrice;
+            $cartItem->sale_price = $currentSalePrice ?: $currentPrice; // Если sale_price null, используем regular price
+            $cartItem->save();
+        } elseif ($currentPrice !== null && $currentPrice == 0) {
+            // Если актуальная цена товара = 0, устанавливаем цену товара в корзине в 0
+            $cartItem->price = 0;
+            $cartItem->sale_price = 0;
+            $cartItem->save();
+        }
+        // Если currentPrice === null, оставляем существующую цену в корзине без изменений
     }
 
     /**

@@ -147,7 +147,7 @@ class SettingSeeder extends Seeder
                 'id' => 13,
                 'key' => 'site_color2',
                 'name' => 'Цвет сайта 2',
-                'value' => '#EAB308',
+                'value' => '#000000',
                 'type' => 'color',
                 'group' => 'site',
                 'description' => 'Цвет tailwind сайта 2',
