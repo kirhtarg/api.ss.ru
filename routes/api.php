@@ -39,6 +39,7 @@ Route::get('/debug/php-info', function () {
     ]);
 });
 
+
 // Обработка OPTIONS запросов для CORS - должна быть первой
 Route::match(['OPTIONS'], '/{any}', function (Request $request) {
     $origin = $request->header('Origin');
