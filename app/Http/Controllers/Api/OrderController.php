@@ -49,6 +49,12 @@ class OrderController extends Controller
                     'shipping_method' => $order->shipping_method,
                     'shipping_address' => $order->shipping_address,
                     'notes' => $order->notes,
+                    // Скидки
+                    'sale_discount_amount' => $order->sale_discount_amount,
+                    'registered_user_discount_amount' => $order->registered_user_discount_amount,
+                    'promo_code_discount_amount' => $order->promo_code_discount_amount,
+                    'birthday_discount_amount' => $order->birthday_discount_amount,
+                    'total_discount_amount' => $order->total_discount_amount,
                     'customer' => [
                         'name' => $order->customer_name ?? '',
                         'email' => $order->customer_email ?? '',

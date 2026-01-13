@@ -133,7 +133,30 @@ class UserOrdersController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $order
+                'data' => [
+                    'order_number' => $order->order_number,
+                    'status' => $order->status ? $order->status->name : 'Обрабатывается',
+                    'created_at' => $order->created_at,
+                    'subtotal' => $order->subtotal,
+                    'delivery_cost' => $order->delivery_cost,
+                    'total' => $order->total_amount,
+                    'payment_method' => $order->payment_method,
+                    'shipping_method' => $order->shipping_method,
+                    'shipping_address' => $order->shipping_address,
+                    'notes' => $order->notes,
+                    // Скидки
+                    'sale_discount_amount' => $order->sale_discount_amount,
+                    'registered_user_discount_amount' => $order->registered_user_discount_amount,
+                    'promo_code_discount_amount' => $order->promo_code_discount_amount,
+                    'birthday_discount_amount' => $order->birthday_discount_amount,
+                    'total_discount_amount' => $order->total_discount_amount,
+                    'customer' => [
+                        'name' => $order->customer_name ?? '',
+                        'email' => $order->customer_email ?? '',
+                        'phone' => $order->customer_phone ?? ''
+                    ],
+                    'items' => $items
+                ]
             ]);
 
         } catch (\Exception $e) {

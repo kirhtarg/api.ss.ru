@@ -322,6 +322,7 @@ class NotificationService
             'order_cancelled' => $this->formatOrderCancelledTelegram($data['order']),
             'preorder_created' => $this->formatPreorderCreatedTelegram($data['preorder']),
             'site_message' => $this->formatSiteMessageTelegram($data['message']),
+            'payment_received' => $this->formatPaymentReceivedTelegram($data['order'], $data['transaction'], $data['payment_object']),
             default => "Уведомление о событии: {$eventType}"
         };
     }
@@ -338,6 +339,18 @@ class NotificationService
         $message .= "Телефон: " . $this->formatPhoneForEmail($order->customer_phone) . "\n\n";
         $message .= "Сумма: " . number_format($order->total_amount, 0, ',', ' ') . " ₽\n";
         $message .= "Товаров: {$order->total_quantity} шт.\n\n";
+
+        // Добавляем список товаров
+        $itemsList = $this->formatOrderItems($order, false);
+        if (!empty($itemsList)) {
+            $message .= "Состав заказа:\n";
+            $message .= $itemsList . "\n\n";
+        }
+
+        // Добавляем комментарий пользователя, если есть
+        if ($order->notes) {
+            $message .= "Комментарий: {$order->notes}\n\n";
+        }
         
         if ($order->shipping_method) {
             $message .= "Доставка: {$order->shipping_method}\n";
@@ -347,9 +360,6 @@ class NotificationService
         }
         if ($order->shipping_address) {
             $message .= "Адрес: {$order->shipping_address}\n";
-        }
-        if ($order->notes) {
-            $message .= "Комментарий: {$order->notes}\n";
         }
         
         $message .= "\nВремя создания: " . $order->created_at->format('d.m.Y H:i');
@@ -380,6 +390,18 @@ class NotificationService
         $message .= "📞 <b>Телефон:</b> " . $this->formatPhoneForTelegram($order->customer_phone) . "\n\n";
         $message .= "💰 <b>Сумма:</b> " . number_format($order->total_amount, 0, ',', ' ') . " ₽\n";
         $message .= "📦 <b>Товаров:</b> {$order->total_quantity} шт.\n\n";
+
+        // Добавляем список товаров
+        $itemsList = $this->formatOrderItems($order, true);
+        if (!empty($itemsList)) {
+            $message .= "🛒 <b>Состав заказа:</b>\n";
+            $message .= $itemsList . "\n\n";
+        }
+
+        // Добавляем комментарий пользователя, если есть
+        if ($order->notes) {
+            $message .= "💬 <b>Комментарий:</b> {$order->notes}\n\n";
+        }
         
         if ($order->shipping_method) {
             $message .= "🚚 <b>Способ доставки:</b> {$order->shipping_method}\n";
@@ -391,9 +413,6 @@ class NotificationService
         
         if ($order->shipping_address) {
             $message .= "📍 <b>Адрес:</b> {$order->shipping_address}\n";
-        }
-        if ($order->notes) {
-            $message .= "📝 <b>Комментарий:</b> {$order->notes}\n";
         }
         
         // Проверяем, включена ли двухэтапная оплата и требуется ли одобрение
@@ -407,6 +426,81 @@ class NotificationService
         }
         
         return $message;
+    }
+
+    /**
+     * Форматировать сообщение об успешной оплате заказа для Telegram
+     */
+    protected function formatPaymentReceivedTelegram(ShopOrder $order, $transaction, array $paymentObject): string
+    {
+        $message = "💰 <b>Заказ оплачен!</b>\n\n";
+        $message .= "📋 <b>Заказ #{$order->order_number}</b>\n";
+        $message .= "📅 <b>Дата оплаты:</b> " . now()->format('d.m.Y H:i') . "\n";
+        $message .= "👤 <b>Клиент:</b> {$order->customer_name}\n";
+        $message .= "📧 <b>Email:</b> {$order->customer_email}\n";
+        $message .= "📞 <b>Телефон:</b> " . $this->formatPhoneForTelegram($order->customer_phone) . "\n\n";
+        $message .= "💰 <b>Сумма оплаты:</b> " . number_format($paymentObject['amount']['value'] ?? $order->total_amount, 0, ',', ' ') . " ₽\n";
+        $message .= "💳 <b>Способ оплаты:</b> " . ($paymentObject['payment_method'] ?? $order->payment_method ?? 'Неизвестен') . "\n";
+        $message .= "🆔 <b>ID платежа:</b> " . ($paymentObject['id'] ?? 'Неизвестен') . "\n\n";
+
+        $message .= "✅ <b>Заказ готов к обработке!</b>\n";
+        $message .= "📦 Можно приступать к сборке и отправке товара.";
+
+        return $message;
+    }
+
+    /**
+     * Форматировать список товаров для уведомлений
+     */
+    protected function formatOrderItems(ShopOrder $order, bool $forTelegram = false): string
+    {
+        // Получаем товары напрямую из поля items заказа
+        $items = $order->items;
+
+        if (!$items) {
+            return '';
+        }
+
+        // Если items - строка JSON, декодируем её
+        if (is_string($items)) {
+            $items = json_decode($items, true);
+        }
+
+        if (!is_array($items) || empty($items)) {
+            return '';
+        }
+
+        $formattedItems = [];
+
+        foreach ($items as $item) {
+            $itemName = $item['good_name'] ?? $item['name'] ?? 'Товар';
+            if (!empty($item['variation_name'])) {
+                $itemName .= ' (' . $item['variation_name'] . ')';
+            }
+
+            $quantity = $item['quantity'] ?? 1;
+            $price = $item['price'] ?? 0;
+            $total = $item['total'] ?? ($price * $quantity);
+
+            if ($forTelegram) {
+                // Для Telegram используем жирный текст и эмодзи
+                $formattedItems[] = "• <b>{$itemName}</b> - {$quantity} шт. × " . number_format($price, 0, ',', ' ') . " ₽ = " . number_format($total, 0, ',', ' ') . " ₽";
+            } else {
+                // Для Email обычный текст
+                $formattedItems[] = "• {$itemName} - {$quantity} шт. × " . number_format($price, 0, ',', ' ') . " ₽ = " . number_format($total, 0, ',', ' ') . " ₽";
+            }
+        }
+
+        // Добавляем доставку, если есть
+        if ($order->delivery_cost > 0) {
+            if ($forTelegram) {
+                $formattedItems[] = "🚚 <b>Доставка</b> - " . number_format($order->delivery_cost, 0, ',', ' ') . " ₽";
+            } else {
+                $formattedItems[] = "• Доставка - " . number_format($order->delivery_cost, 0, ',', ' ') . " ₽";
+            }
+        }
+
+        return implode("\n", $formattedItems);
     }
 
     /**
@@ -728,6 +822,18 @@ class NotificationService
         }
         
         return $message;
+    }
+
+    /**
+     * Уведомление об успешной оплате заказа
+     */
+    public function notifyPaymentReceived(ShopOrder $order, $transaction, array $paymentObject): void
+    {
+        $this->sendNotification('payment_received', [
+            'order' => $order,
+            'transaction' => $transaction,
+            'payment_object' => $paymentObject
+        ]);
     }
 }
 

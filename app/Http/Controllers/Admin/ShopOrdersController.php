@@ -262,6 +262,7 @@ class ShopOrdersController extends Controller
                     'total_discount_amount' => (float) ($order->total_discount_amount ?? 0),
                     'delivery_cost' => (float) ($order->delivery_cost ?? 0),
                     'payment_method' => $order->payment_method,
+                    'payment_url' => $order->payment_url,
                     'shipping_method' => $order->shipping_method,
                     'shipping_method_id' => $order->shipping_method_id,
                     'deliveryMethod' => $order->deliveryMethod ? [

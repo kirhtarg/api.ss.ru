@@ -798,9 +798,6 @@ class CartController extends Controller
      */
     public function createOrder(Request $request): JsonResponse
     {
-        Log::info('=== НАЧАЛО СОЗДАНИЯ ЗАКАЗА ===');
-        Log::info('Request data:', $request->all());
-
         try {
             $validator = Validator::make($request->all(), [
                 'customer_name' => 'required|string|max:255',
@@ -818,6 +815,7 @@ class CartController extends Controller
                 'sale_discount_amount' => 'nullable|numeric',
                 'registered_user_discount_amount' => 'nullable|numeric',
                 'promo_code_discount_amount' => 'nullable|numeric',
+                'birthday_discount_amount' => 'nullable|numeric',
                 'total_discount_amount' => 'nullable|numeric',
                 'promo_code' => 'nullable|string|max:50',
                 'promo_code_id' => 'nullable|integer',
@@ -828,7 +826,6 @@ class CartController extends Controller
             ]);
 
             if ($validator->fails()) {
-                Log::error('Ошибка валидации заказа:', $validator->errors()->toArray());
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
@@ -845,11 +842,6 @@ class CartController extends Controller
             // Если корзина в БД пуста, но есть items в запросе, используем их
             $requestItems = $request->get('items', []);
             if (empty($cart['items']) && !empty($requestItems)) {
-                Log::info('Корзина в БД пуста, но есть items в запросе. Используем items из запроса.', [
-                    'items_count' => count($requestItems),
-                    'session_id' => $sessionId,
-                    'user_id' => $user ? $user->id : null
-                ]);
                 // Используем items из запроса
                 $cart['items'] = $requestItems;
             }
@@ -973,6 +965,7 @@ class CartController extends Controller
                 'sale_discount_amount' => $request->get('sale_discount_amount', 0),
                 'registered_user_discount_amount' => $request->get('registered_user_discount_amount', 0),
                 'promo_code_discount_amount' => $request->get('promo_code_discount_amount', 0),
+                'birthday_discount_amount' => $request->get('birthday_discount_amount', 0),
                 'total_discount_amount' => $request->get('total_discount_amount', 0),
                 'promo_code' => $request->get('promo_code'),
                 'promo_code_id' => $request->get('promo_code_id'),
@@ -1113,15 +1106,7 @@ class CartController extends Controller
                 // Обогащаем данные товаров названиями
                 $enrichedOrder = $this->enrichOrderItems($order);
 
-                // Отладочная информация о товарах в заказе
-                Log::info('Order items for email:', [
-                    'order_id' => $order->id,
-                    'items' => $enrichedOrder->items,
-                    'items_count' => is_array($enrichedOrder->items) ? count($enrichedOrder->items) : 'not array'
-                ]);
-
                 Mail::to($order->customer_email)->send(new OrderInvoiceMail($enrichedOrder, $contacts, $siteInfo));
-                Log::info('Invoice email sent to: ' . $order->customer_email);
             } catch (\Exception $e) {
                 // Логируем ошибку, но не прерываем создание заказа
                 Log::error('Email notification error: ' . $e->getMessage());
@@ -1150,7 +1135,13 @@ class CartController extends Controller
                 'message' => 'Заказ создан успешно',
                 'data' => [
                     'order_id' => $order->id,
-                    'order_number' => $order->order_number
+                    'order_number' => $order->order_number,
+                    // Скидки
+                    'sale_discount_amount' => $order->sale_discount_amount,
+                    'registered_user_discount_amount' => $order->registered_user_discount_amount,
+                    'promo_code_discount_amount' => $order->promo_code_discount_amount,
+                    'birthday_discount_amount' => $order->birthday_discount_amount,
+                    'total_discount_amount' => $order->total_discount_amount,
                 ]
             ];
             

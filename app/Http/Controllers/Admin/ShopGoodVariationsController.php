@@ -1734,4 +1734,79 @@ class ShopGoodVariationsController extends Controller
         }
     }
 
+    /**
+     * Найти вариации с нулевым остатком и без медиа
+     */
+    public function findZeroStockNoMediaVariations(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'good_ids' => 'required|array',
+            'good_ids.*' => 'exists:shop_goods,id'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $goodIds = $request->get('good_ids');
+
+            // Находим вариации с условиями:
+            // - stock_quantity = 0
+            // - remote_stock_quantity IS NULL OR remote_stock_quantity = 0
+            // - fast_remote_stock_quantity IS NULL OR fast_remote_stock_quantity = 0
+            // Убираем условие "без медиа" для упрощения
+            $variations = ShopGoodVariation::whereIn('good_id', $goodIds)
+                ->where('stock_quantity', 0)
+                ->where(function($query) {
+                    $query->whereNull('remote_stock_quantity')
+                          ->orWhere('remote_stock_quantity', 0);
+                })
+                ->where(function($query) {
+                    $query->whereNull('fast_remote_stock_quantity')
+                          ->orWhere('fast_remote_stock_quantity', 0);
+                })
+                ->with(['good:id,name,sku']) // Загружаем данные товара для отображения
+                ->select([
+                    'id',
+                    'good_id',
+                    'name',
+                    'sku',
+                    'stock_quantity',
+                    'remote_stock_quantity',
+                    'fast_remote_stock_quantity'
+                ])
+                ->get();
+
+            $result = [
+                'variations' => $variations->map(function ($variation) {
+                    return [
+                        'id' => $variation->id,
+                        'good_id' => $variation->good_id,
+                        'good_name' => $variation->good->name ?? '—',
+                        'sku' => $variation->sku,
+                        'stock' => $variation->stock_quantity,
+                        'remote_stock' => $variation->remote_stock_quantity,
+                        'fast_remote_stock' => $variation->fast_remote_stock_quantity
+                    ];
+                }),
+                'count' => $variations->count()
+            ];
+
+            return response()->json([
+                'success' => true,
+                'data' => $result
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка поиска вариаций: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
 }

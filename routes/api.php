@@ -1408,6 +1408,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/variations/bulk-update', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'globalBulkUpdate']);
                 // Получить ID вариаций для списка товаров
                 Route::post('/variations/get-ids', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'getVariationIdsByGoods']);
+                Route::post('/variations/find-zero-stock-no-media', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'findZeroStockNoMediaVariations']);
 
                 // Видео товаров
                 Route::prefix('{goodId}/videos')->group(function () {

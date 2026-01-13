@@ -837,6 +837,21 @@ class YandexPayController extends Controller
     private function handlePaymentSucceeded(ShopOrder $order, ShopPaymentTransaction $transaction, array $paymentObject): void
     {
         try {
+            // Проверяем двухэтапную оплату
+            $twoStagePay = \App\Models\Setting::where('key', 'two_stage_pay')->first();
+            $isTwoStagePay = $twoStagePay && ($twoStagePay->value === '1' || $twoStagePay->value === true);
+
+            // Если включена двухэтапная оплата и заказ не одобрен, не обрабатываем платеж
+            if ($isTwoStagePay && !$order->pay_agree) {
+                \Illuminate\Support\Facades\Log::warning('YandexPay payment received for unapproved order in two-stage mode', [
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                    'payment_id' => $paymentObject['id'] ?? null,
+                    'pay_agree' => $order->pay_agree
+                ]);
+                return;
+            }
+
             // Обновляем заказ: помечаем как оплаченный и активный
             $updateData = [
                 'payed' => true, // Основной статус оплаты заказа
@@ -858,7 +873,10 @@ class YandexPayController extends Controller
             
             // Обновляем остатки товаров
             $this->updateStockQuantities($order);
-            
+
+            // Отправляем уведомления об успешной оплате
+            $this->sendPaymentNotifications($order, $transaction, $paymentObject);
+
             Log::info('YandexPay order payment successful via webhook', [
                 'order_id' => $order->id,
                 'order_number' => $order->order_number,
@@ -1091,5 +1109,133 @@ class YandexPayController extends Controller
             'waiting_for_capture' => 'pending',
             default => 'pending'
         };
+    }
+
+    /**
+     * Отправить уведомления об успешной оплате заказа
+     */
+    private function sendPaymentNotifications(ShopOrder $order, ShopPaymentTransaction $transaction, array $paymentObject): void
+    {
+        try {
+            // Отправляем уведомления через систему оповещений (администраторам)
+            $notificationService = app(\App\Services\NotificationService::class);
+            $notificationService->notifyPaymentReceived($order, $transaction, $paymentObject);
+
+            // Отправляем уведомление клиенту через email
+            try {
+                $contacts = $this->getShopContacts();
+                $siteInfo = \App\Services\SiteInfoService::getSiteInfoForEmail();
+
+                // Обогащаем данные товаров названиями
+                $enrichedOrder = $this->enrichOrderItems($order);
+
+                // Отправляем email с подтверждением оплаты
+                \Illuminate\Support\Facades\Mail::to($order->customer_email)->send(new \App\Mail\OrderPaymentConfirmedMail($enrichedOrder, $contacts, $siteInfo));
+
+                Log::info('YandexPay payment confirmation email sent', [
+                    'order_id' => $order->id,
+                    'customer_email' => $order->customer_email
+                ]);
+            } catch (\Exception $e) {
+                Log::error('YandexPay payment confirmation email error', [
+                    'order_id' => $order->id,
+                    'customer_email' => $order->customer_email,
+                    'error' => $e->getMessage()
+                ]);
+            }
+
+        } catch (\Exception $e) {
+            Log::error('YandexPay payment notification error: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Получить контакты магазина
+     */
+    private function getShopContacts()
+    {
+        try {
+            $contact = \App\Models\Contact::with(['addresses', 'phones', 'socials'])
+                ->where('is_main', 1)
+                ->first();
+
+            if (!$contact) {
+                return null;
+            }
+
+            // Получаем основные данные
+            $mainAddress = $contact->mainAddress();
+            $mainPhone = $contact->mainPhone();
+
+            // Формируем данные для email
+            return [
+                'name' => $contact->name,
+                'short_name' => $contact->short_name,
+                'legal_name' => $contact->legal_name,
+                'inn' => $contact->inn,
+                'ogrn' => $contact->ogrnip,
+                'kpp' => null,
+                'address' => $mainAddress ? $mainAddress->address : null,
+                'phone' => $mainPhone ? $mainPhone->phone : null,
+                'email' => null,
+                'legal_address' => $contact->legal_address,
+            ];
+
+        } catch (\Exception $e) {
+            Log::error('Error getting shop contacts: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Обогатить данные товаров заказа названиями
+     */
+    private function enrichOrderItems($order)
+    {
+        $items = $order->items;
+
+        if (is_string($items)) {
+            $items = json_decode($items, true);
+        }
+
+        if (!$items || !is_array($items)) {
+            return $order;
+        }
+
+        $enrichedItems = [];
+        foreach ($items as $item) {
+            $enrichedItem = $item;
+
+            if (isset($item['good_id'])) {
+                try {
+                    $good = \App\Models\ShopGood::find($item['good_id']);
+                    if ($good) {
+                        $enrichedItem['name'] = $good->name;
+                        $enrichedItem['good_name'] = $good->name;
+
+                        if (isset($item['variation_id']) && $item['variation_id']) {
+                            $variation = \App\Models\ShopGoodVariation::find($item['variation_id']);
+                            if ($variation && $variation->name) {
+                                $enrichedItem['name'] = $good->name . ' (' . $variation->name . ')';
+                                $enrichedItem['good_name'] = $good->name . ' (' . $variation->name . ')';
+                            }
+                        }
+                    }
+                } catch (\Exception $e) {
+                    Log::error('Error enriching item in YandexPayController: ' . $e->getMessage());
+                }
+            }
+
+            $quantity = $item['quantity'] ?? 1;
+            $price = $item['price'] ?? 0;
+            $enrichedItem['total'] = $price * $quantity;
+
+            $enrichedItems[] = $enrichedItem;
+        }
+
+        $enrichedOrder = clone $order;
+        $enrichedOrder->items = $enrichedItems;
+
+        return $enrichedOrder;
     }
 }

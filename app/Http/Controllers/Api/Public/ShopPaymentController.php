@@ -973,6 +973,21 @@ class ShopPaymentController extends Controller
     private function handlePaymentSucceeded(ShopOrder $order, ShopPaymentTransaction $transaction, array $paymentObject): void
     {
         try {
+            // Проверяем двухэтапную оплату
+            $twoStagePay = \App\Models\Setting::where('key', 'two_stage_pay')->first();
+            $isTwoStagePay = $twoStagePay && ($twoStagePay->value === '1' || $twoStagePay->value === true);
+
+            // Если включена двухэтапная оплата и заказ не одобрен, не обрабатываем платеж
+            if ($isTwoStagePay && !$order->pay_agree) {
+                Log::warning('Payment received for unapproved order in two-stage mode', [
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                    'payment_id' => $paymentObject['id'] ?? null,
+                    'pay_agree' => $order->pay_agree
+                ]);
+                return;
+            }
+
             $yookassaPaymentId = $paymentObject['id'] ?? null;
             
             // Обновляем заказ: помечаем как оплаченный и активный
@@ -1005,7 +1020,10 @@ class ShopPaymentController extends Controller
             
             // Обновляем остатки товаров
             $this->updateStockQuantities($order);
-            
+
+            // Отправляем уведомления об успешной оплате
+            $this->sendPaymentNotifications($order, $transaction, $paymentObject);
+
             Log::info('Order payment successful via webhook', [
                 'order_id' => $order->id,
                 'order_number' => $order->order_number,
@@ -1727,6 +1745,43 @@ class ShopPaymentController extends Controller
                 'error_message' => $e->getMessage(),
                 'error_trace' => $e->getTraceAsString()
             ]);
+        }
+    }
+
+    /**
+     * Отправить уведомления об успешной оплате заказа
+     */
+    private function sendPaymentNotifications(ShopOrder $order, ShopPaymentTransaction $transaction, array $paymentObject): void
+    {
+        try {
+            // Отправляем уведомления через систему оповещений (администраторам)
+            $notificationService = app(NotificationService::class);
+            $notificationService->notifyPaymentReceived($order, $transaction, $paymentObject);
+
+            // Отправляем уведомление клиенту через email
+            $contacts = $this->getShopContacts();
+            $siteInfo = \App\Services\SiteInfoService::getSiteInfoForEmail();
+
+            // Обогащаем данные товаров названиями
+            $enrichedOrder = $this->enrichOrderItems($order);
+
+            // Отправляем email с подтверждением оплаты
+            try {
+                Mail::to($order->customer_email)->send(new \App\Mail\OrderPaymentConfirmedMail($enrichedOrder, $contacts, $siteInfo));
+                Log::info('Payment confirmation email sent', [
+                    'order_id' => $order->id,
+                    'customer_email' => $order->customer_email
+                ]);
+            } catch (\Exception $e) {
+                Log::error('Payment confirmation email error', [
+                    'order_id' => $order->id,
+                    'customer_email' => $order->customer_email,
+                    'error' => $e->getMessage()
+                ]);
+            }
+
+        } catch (\Exception $e) {
+            Log::error('Payment notification error in ShopPaymentController: ' . $e->getMessage());
         }
     }
 

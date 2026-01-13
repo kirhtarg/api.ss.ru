@@ -101,10 +101,12 @@ class InvoicePdfService
         $itemsCount = count($orderItems) + ($deliveryAmount > 0 ? 1 : 0);
         $promoCodeDiscount = $data['promo_code_discount_amount'] ?? 0;
         $bonusDiscount = $data['bonus_points_to_use'] ?? 0; // Скидка от списанных бонусов (1 бонус = 1 рубль)
-        $y = $this->fillTotals($pdf, $itemsTotal, $totalSum, $discountAmount, $withVat, $itemsCount, $y, $promoCodeDiscount, $bonusDiscount, $deliveryAmount);
-        
-        // Сумма прописью
-        $y = $this->fillAmountInWords($pdf, $totalSum, $withVat, $y);
+        $birthdayDiscount = $data['birthday_discount_amount'] ?? 0; // Скидка на день рождения
+        $y = $this->fillTotals($pdf, $itemsTotal, $totalSum, $discountAmount, $withVat, $itemsCount, $y, $promoCodeDiscount, $bonusDiscount, $deliveryAmount, $birthdayDiscount);
+
+        // Сумма прописью (с учетом всех скидок)
+        $finalAmount = $totalSum - $promoCodeDiscount - $bonusDiscount - $birthdayDiscount;
+        $y = $this->fillAmountInWords($pdf, $finalAmount, $withVat, $y);
         
         // Подписи
         $this->fillSignatures($pdf, $y, $withVat);
@@ -488,7 +490,7 @@ class InvoicePdfService
     /**
      * Итоги
      */
-    private function fillTotals(TCPDF $pdf, float $itemsTotal, float $totalSum, float $discountAmount, bool $withVat, int $itemsCount, float $y, float $promoCodeDiscount = 0, float $bonusDiscount = 0, float $deliveryAmount = 0): float
+    private function fillTotals(TCPDF $pdf, float $itemsTotal, float $totalSum, float $discountAmount, bool $withVat, int $itemsCount, float $y, float $promoCodeDiscount = 0, float $bonusDiscount = 0, float $deliveryAmount = 0, float $birthdayDiscount = 0): float
     {
         $pdf->SetFont('dejavusans', '', 10);
         $colWidths = [15, 80, 20, 15, 25, 30];
@@ -529,6 +531,17 @@ class InvoicePdfService
             $pdf->SetTextColor(0, 0, 0); // Возвращаем черный цвет
             $y += $rowHeight;
         }
+
+        // Скидка на день рождения (если есть)
+        if ($birthdayDiscount > 0) {
+            $pdf->SetXY($xLabel, $y);
+            $pdf->Cell($labelWidth, $rowHeight, 'Скидка ко дню рождения:', 0, 0, 'R');
+            $pdf->SetXY($xValue, $y);
+            $pdf->SetTextColor(255, 0, 0); // Красный цвет для скидки
+            $pdf->Cell($valueWidth, $rowHeight, '-' . \App\Helpers\PriceHelper::formatPrice($birthdayDiscount), 0, 0, 'R');
+            $pdf->SetTextColor(0, 0, 0); // Возвращаем черный цвет
+            $y += $rowHeight;
+        }
         
         // В том числе НДС (только если с НДС)
         if ($withVat) {
@@ -540,18 +553,19 @@ class InvoicePdfService
             $y += $rowHeight;
         }
         
-        // Всего к оплате
+        // Всего к оплате (учитываем все скидки)
+        $finalAmount = $totalWithDelivery - $promoCodeDiscount - $bonusDiscount - $birthdayDiscount;
         $pdf->SetFont('dejavusans', 'B', 10);
         $pdf->SetXY($xLabel, $y);
         $pdf->Cell($labelWidth, $rowHeight, 'Всего к оплате:', 0, 0, 'R');
         $pdf->SetXY($xValue, $y);
-        $pdf->Cell($valueWidth, $rowHeight, \App\Helpers\PriceHelper::formatPrice($totalSum), 0, 0, 'R');
+        $pdf->Cell($valueWidth, $rowHeight, \App\Helpers\PriceHelper::formatPrice($finalAmount), 0, 0, 'R');
         $y += $rowHeight;
         
         // Всего наименований
         $pdf->SetFont('dejavusans', '', 10);
         $pdf->SetXY(15, $y);
-        $pdf->Cell(0, 7, "Всего наименований {$itemsCount}, на сумму " . \App\Helpers\PriceHelper::formatPrice($totalSum) . " руб.", 0, 1, 'L');
+        $pdf->Cell(0, 7, "Всего наименований {$itemsCount}, на сумму " . \App\Helpers\PriceHelper::formatPrice($finalAmount) . " руб.", 0, 1, 'L');
         
         return $y + 7;
     }

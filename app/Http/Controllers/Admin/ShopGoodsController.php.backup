@@ -1629,9 +1629,7 @@ class ShopGoodsController extends Controller
             'ids.*' => 'exists:shop_goods,id',
             'action' => 'required|in:activate,deactivate,delete,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_price,update_sale_price,update_demping_price,toggle_show_demping,update_label,remove_after_symbol,replace_text,update_dimensions,enable_preorder,disable_preorder,clear_by_tags,clear_by_suppliers,delete_images,delete_zero_stock_no_media',
             'data' => 'nullable|array',
-            'data.delete_type' => 'nullable|in:goods,variations,goods_and_variations',
-            'data.variation_ids' => 'nullable|array',
-            'data.variation_ids.*' => 'exists:shop_good_variations,id'
+            'data.delete_type' => 'nullable|in:goods,variations,goods_and_variations'
         ]);
 
         if ($validator->fails()) {
@@ -1659,44 +1657,6 @@ class ShopGoodsController extends Controller
                     'success' => true,
                     'message' => "Удалено {$deletedCount} товаров",
                     'deleted_count' => $deletedCount
-                ]);
-            }
-
-            // Специальная обработка для удаления выбранных вариаций с нулевым остатком и без медиа
-            if ($action === 'delete_zero_stock_no_media') {
-                $variationIds = $data['variation_ids'] ?? [];
-
-                if (empty($variationIds)) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Не указаны ID вариаций для удаления'
-                    ], 400);
-                }
-
-                // Удаляем только указанные вариации (дополнительная проверка безопасности)
-                $variationsQuery = ShopGoodVariation::whereIn('id', $variationIds)
-                    ->whereIn('good_id', $ids) // Дополнительная проверка, что вариации принадлежат выбранным товарам
-                    ->where('stock_quantity', 0)
-                    ->where(function($query) {
-                        $query->whereNull('remote_stock_quantity')
-                              ->orWhere('remote_stock_quantity', 0);
-                    })
-                    ->where(function($query) {
-                        $query->whereNull('fast_remote_stock_quantity')
-                              ->orWhere('fast_remote_stock_quantity', 0);
-                    })
-                    ->whereDoesntHave('images') // Нет изображений
-                    ->whereDoesntHave('videos'); // Нет видео
-
-                $deletedCount = $variationsQuery->delete();
-
-                DB::commit();
-
-                return response()->json([
-                    'success' => true,
-                    'message' => "Удалено {$deletedCount} вариаций с нулевым остатком и без медиа",
-                    'deleted_count' => $deletedCount,
-                    'variation_ids' => $variationIds
                 ]);
             }
 
@@ -2178,6 +2138,39 @@ class ShopGoodsController extends Controller
                                     ShopGoodImage::whereIn('variation_id', $variationIds)->delete();
                                 }
                             }
+                        }
+                        break;
+                    case 'delete_zero_stock_no_media':
+                        // Удаление вариаций с 0 остатком и без медиа
+                        $variationIds = ShopGoodVariation::where('good_id', $good->id)
+                            ->where('stock_quantity', 0)
+                            ->where(function ($query) {
+                                $query->whereNull('remote_stock_quantity')
+                                      ->orWhere('remote_stock_quantity', 0);
+                            })
+                            ->where(function ($query) {
+                                $query->whereNull('fast_remote_stock_quantity')
+                                      ->orWhere('fast_remote_stock_quantity', 0);
+                            })
+                            ->whereDoesntHave('images')
+                            ->pluck('id')
+                            ->toArray();
+
+                        if (!empty($variationIds)) {
+                            // Получаем информацию об удаляемых вариациях для аудита
+                            $deletedVariations = ShopGoodVariation::whereIn('id', $variationIds)
+                                ->select('id', 'name', 'sku', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity')
+                                ->get()
+                                ->toArray();
+
+                            // Логируем удаление вариаций в аудите основного товара
+                            $this->logAudit($good, 'bulk_deleted_zero_stock_no_media', null, [
+                                'deleted_variations_count' => count($deletedVariations),
+                                'deleted_variations' => $deletedVariations
+                            ]);
+
+                            // Удаляем вариации
+                            ShopGoodVariation::whereIn('id', $variationIds)->delete();
                         }
                         break;
                 }

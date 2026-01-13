@@ -150,10 +150,12 @@ class TransferInvoiceController extends Controller
             // Получаем данные о скидках и доставке из заказа, если он передан
             $promoCodeDiscount = 0;
             $bonusDiscount = 0;
+            $birthdayDiscount = 0;
             $deliveryCost = 0;
             if ($order) {
                 $promoCodeDiscount = (float)($order->promo_code_discount_amount ?? 0);
                 $bonusDiscount = (float)($order->bonus_points_to_use ?? 0); // Скидка от списанных бонусов (1 бонус = 1 рубль)
+                $birthdayDiscount = (float)($order->birthday_discount_amount ?? 0);
                 // Получаем стоимость доставки из заказа
                 $deliveryCost = isset($order->delivery_cost) ? (float)$order->delivery_cost : 0;
                 if ($deliveryCost < 0) {
@@ -166,10 +168,10 @@ class TransferInvoiceController extends Controller
             // Используем шаблон ООО с НДС только для случаев с НДС
             if (!$withVat) {
                 // Без НДС (ИП или ООО на УСН)
-                $html = $this->generateInvoiceHtmlIP($orderId, $amount, $settings, $contact, $mainAddress, $mainPhone, $orderItems, $customerName, $customerInn, $customerAddress, $customerPhone, $promoCodeDiscount, $bonusDiscount, $deliveryCost);
+                $html = $this->generateInvoiceHtmlIP($orderId, $amount, $settings, $contact, $mainAddress, $mainPhone, $orderItems, $customerName, $customerInn, $customerAddress, $customerPhone, $promoCodeDiscount, $bonusDiscount, $deliveryCost, $birthdayDiscount);
             } else {
                 // С НДС (ООО с НДС)
-                $html = $this->generateInvoiceHtmlOOO($orderId, $amount, $settings, $contact, $mainAddress, $mainPhone, $orderItems, $customerName, $customerInn, $customerAddress, $customerPhone, $promoCodeDiscount, $bonusDiscount, $deliveryCost);
+                $html = $this->generateInvoiceHtmlOOO($orderId, $amount, $settings, $contact, $mainAddress, $mainPhone, $orderItems, $customerName, $customerInn, $customerAddress, $customerPhone, $promoCodeDiscount, $bonusDiscount, $deliveryCost, $birthdayDiscount);
             }
             
             // Возвращаем HTML, который можно распечатать как PDF
@@ -192,20 +194,21 @@ class TransferInvoiceController extends Controller
      * Генерация HTML для счета ООО с НДС
      */
     private function generateInvoiceHtmlOOO(
-        $orderId, 
-        $amount, 
-        $settings, 
-        $contact, 
-        $mainAddress, 
+        $orderId,
+        $amount,
+        $settings,
+        $contact,
+        $mainAddress,
         $mainPhone,
-        $orderItems = [], 
+        $orderItems = [],
         $customerName = 'Покупатель (данные будут заполнены при оформлении заказа)',
         $customerInn = '',
         $customerAddress = '',
         $customerPhone = '',
         $promoCodeDiscount = 0,
         $bonusPointsToUse = 0,
-        $deliveryCost = 0
+        $deliveryCost = 0,
+        $birthdayDiscount = 0
     ) {
         $legalName = $settings['legal_name'] ?? ($contact->legal_name ?? 'Не указано');
         $inn = $settings['inn'] ?? ($contact->inn ?? 'Не указано');
@@ -248,9 +251,9 @@ class TransferInvoiceController extends Controller
         $currentDateFull = date('d.m.Y H:i');
         
         // Сумма прописью (используем итоговую сумму с учетом скидок)
-        $finalAmount = $totalSum - $promoCodeDiscount - $bonusPointsToUse;
+        $finalAmount = $totalSum - $promoCodeDiscount - $bonusPointsToUse - $birthdayDiscount;
         $amountInWords = $this->numberToWords($finalAmount);
-        
+
         // Количество наименований
         $itemsCount = count($orderItems);
         if ($itemsCount == 0) {
@@ -603,12 +606,22 @@ HTML;
             </div>
 HTML;
         }
-        
+
         if ($bonusPointsToUse > 0) {
             $html .= <<<HTML
             <div class="total-line" style="color: #dc2626;">
                 <span class="total-label">Скидка по списанию бонусов:</span>
                 <span class="total-value">-{$formattedBonusDiscount}</span>
+            </div>
+HTML;
+        }
+
+        if ($birthdayDiscount > 0) {
+            $formattedBirthdayDiscount = \App\Helpers\PriceHelper::formatPrice($birthdayDiscount);
+            $html .= <<<HTML
+            <div class="total-line" style="color: #dc2626;">
+                <span class="total-label">Скидка ко дню рождения:</span>
+                <span class="total-value">-{$formattedBirthdayDiscount}</span>
             </div>
 HTML;
         }
@@ -661,20 +674,21 @@ HTML;
      * Генерация HTML для счета ИП без НДС
      */
     private function generateInvoiceHtmlIP(
-        $orderId, 
-        $amount, 
-        $settings, 
-        $contact, 
-        $mainAddress, 
+        $orderId,
+        $amount,
+        $settings,
+        $contact,
+        $mainAddress,
         $mainPhone,
-        $orderItems = [], 
+        $orderItems = [],
         $customerName = 'Покупатель (данные будут заполнены при оформлении заказа)',
         $customerInn = '',
         $customerAddress = '',
         $customerPhone = '',
         $promoCodeDiscount = 0,
         $bonusPointsToUse = 0,
-        $deliveryCost = 0
+        $deliveryCost = 0,
+        $birthdayDiscount = 0
     ) {
         $legalName = $settings['legal_name'] ?? ($contact->legal_name ?? 'Не указано');
         $inn = $settings['inn'] ?? ($contact->inn ?? 'Не указано');
@@ -709,9 +723,9 @@ HTML;
         $currentDate = date('d.m.Y');
         
         // Сумма прописью (используем итоговую сумму с учетом скидок)
-        $finalAmount = $totalSum - $promoCodeDiscount - $bonusPointsToUse;
+        $finalAmount = $totalSum - $promoCodeDiscount - $bonusPointsToUse - $birthdayDiscount;
         $amountInWords = $this->numberToWords($finalAmount);
-        
+
         // Количество наименований
         $itemsCount = count($orderItems);
         if ($itemsCount == 0) {
@@ -1054,7 +1068,7 @@ HTML;
                 </tr>
 HTML;
         }
-        
+
         if ($bonusPointsToUse > 0) {
             $html .= <<<HTML
                 <tr>
@@ -1063,8 +1077,18 @@ HTML;
                 </tr>
 HTML;
         }
+
+        if ($birthdayDiscount > 0) {
+            $formattedBirthdayDiscount = \App\Helpers\PriceHelper::formatPrice($birthdayDiscount);
+            $html .= <<<HTML
+                <tr>
+                    <td colspan="5" style="text-align: right; padding-right: 10px; color: #dc2626;">Скидка ко дню рождения:</td>
+                    <td style="text-align: right; color: #dc2626;">-{$formattedBirthdayDiscount}</td>
+                </tr>
+HTML;
+        }
         
-        // Итоговая сумма к оплате
+        // Итоговая сумма к оплате (с учетом всех скидок)
         $formattedFinalAmount = \App\Helpers\PriceHelper::formatPrice($finalAmount);
         $html .= <<<HTML
                 <tr>
@@ -1501,9 +1525,11 @@ HTML;
             // Получаем данные о скидках из заказа, если он передан
             $promoCodeDiscount = 0;
             $bonusDiscount = 0;
+            $birthdayDiscount = 0;
             if ($order) {
                 $promoCodeDiscount = $order->promo_code_discount_amount ?? 0;
                 $bonusDiscount = $order->bonus_points_to_use ?? 0; // Скидка от списанных бонусов (1 бонус = 1 рубль)
+                $birthdayDiscount = $order->birthday_discount_amount ?? 0;
             }
             
             $data = [
@@ -1522,6 +1548,7 @@ HTML;
                 'customer_phone' => $customerPhone,
                 'promo_code_discount_amount' => $promoCodeDiscount,
                 'bonus_points_to_use' => $bonusDiscount,
+                'birthday_discount_amount' => $birthdayDiscount,
             ];
             
             // Генерируем PDF напрямую
