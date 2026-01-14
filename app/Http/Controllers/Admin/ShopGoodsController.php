@@ -1627,11 +1627,16 @@ class ShopGoodsController extends Controller
         $validator = Validator::make($request->all(), [
             'ids' => 'required|array',
             'ids.*' => 'exists:shop_goods,id',
-            'action' => 'required|in:activate,deactivate,delete,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_price,update_sale_price,update_demping_price,toggle_show_demping,update_label,remove_after_symbol,replace_text,update_dimensions,enable_preorder,disable_preorder,clear_by_tags,clear_by_suppliers,delete_images,delete_zero_stock_no_media',
+            'action' => 'required|in:activate,deactivate,delete,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_price,update_sale_price,update_demping_price,toggle_show_demping,toggle_fields,update_label,remove_after_symbol,replace_text,update_dimensions,enable_preorder,disable_preorder,clear_by_tags,clear_by_suppliers,delete_images,delete_zero_stock_no_media',
             'data' => 'nullable|array',
             'data.delete_type' => 'nullable|in:goods,variations,goods_and_variations',
             'data.variation_ids' => 'nullable|array',
-            'data.variation_ids.*' => 'exists:shop_good_variations,id'
+            'data.variation_ids.*' => 'exists:shop_good_variations,id',
+            'data.show_demping' => 'nullable|boolean',
+            'data.is_sale' => 'nullable|boolean',
+            'data.is_new' => 'nullable|boolean',
+            'data.is_featured' => 'nullable|boolean',
+            'data.is_show' => 'nullable|boolean'
         ]);
 
         if ($validator->fails()) {
@@ -2099,6 +2104,27 @@ class ShopGoodsController extends Controller
                     case 'toggle_show_demping':
                         if (isset($data['show_demping'])) {
                             $good->update(['show_demping' => (bool) $data['show_demping']]);
+                        }
+                        break;
+                    case 'toggle_fields':
+                        $updateData = [];
+                        if (isset($data['show_demping'])) {
+                            $updateData['show_demping'] = (bool) $data['show_demping'];
+                        }
+                        if (isset($data['is_sale'])) {
+                            $updateData['is_sale'] = (bool) $data['is_sale'];
+                        }
+                        if (isset($data['is_new'])) {
+                            $updateData['is_new'] = (bool) $data['is_new'];
+                        }
+                        if (isset($data['is_featured'])) {
+                            $updateData['is_featured'] = (bool) $data['is_featured'];
+                        }
+                        if (isset($data['is_show'])) {
+                            $updateData['is_show'] = (bool) $data['is_show'];
+                        }
+                        if (!empty($updateData)) {
+                            $good->update($updateData);
                         }
                         break;
                     case 'update_label':
