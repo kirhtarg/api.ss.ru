@@ -2146,6 +2146,7 @@ Route::middleware('auth:sanctum')->group(function () {
                             'roles' => $user->roles->pluck('name'),
                             'email_verified_at' => $user->email_verified_at ? 1 : 0, // 1 если есть дата, 0 если null
                             'is_active' => $user->is_active,
+                            'tech_acc' => $user->tech_acc,
                             'created_at' => $user->created_at,
                             'updated_at' => $user->updated_at,
                             'last_login_at' => $user->last_login_at,
@@ -2187,6 +2188,7 @@ Route::middleware('auth:sanctum')->group(function () {
                         'roles.*' => 'string|exists:roles,name',
                         'email_verified_at' => 'nullable|date', // Статус активности на основе email_verified_at
                         'is_active' => 'boolean', // Статус блокировки пользователя
+                        'tech_acc' => 'boolean', // Статус технического аккаунта
                     ]);
 
                     if ($validator->fails()) {
@@ -2212,6 +2214,11 @@ Route::middleware('auth:sanctum')->group(function () {
                     // Добавляем статус блокировки, если передан
                     if ($request->has('is_active')) {
                         $userData['is_active'] = $request->boolean('is_active');
+                    }
+
+                    // Добавляем статус технического аккаунта, если передан
+                    if ($request->has('tech_acc')) {
+                        $userData['tech_acc'] = $request->boolean('tech_acc');
                     }
 
                     $user = \App\Models\User::create($userData);
@@ -2250,6 +2257,7 @@ Route::middleware('auth:sanctum')->group(function () {
                             'roles' => $user->roles->pluck('name'),
                             'email_verified_at' => $user->email_verified_at,
                             'is_active' => $user->is_active,
+                            'tech_acc' => $user->tech_acc,
                             'created_at' => $user->created_at,
                             'updated_at' => $user->updated_at,
                         ]
@@ -2284,6 +2292,7 @@ Route::middleware('auth:sanctum')->group(function () {
                         'roles.*' => 'string|exists:roles,name',
                         'email_verified_at' => 'nullable|date', // Статус активности на основе email_verified_at
                         'is_active' => 'boolean', // Статус блокировки пользователя
+                        'tech_acc' => 'boolean', // Статус технического аккаунта
                     ]);
 
                     if ($validator->fails()) {
@@ -2318,6 +2327,11 @@ Route::middleware('auth:sanctum')->group(function () {
                         $updateData['is_active'] = $request->boolean('is_active');
                     }
 
+                    // Добавляем статус технического аккаунта, если передан
+                    if ($request->has('tech_acc')) {
+                        $updateData['tech_acc'] = $request->boolean('tech_acc');
+                    }
+
                     $user->update($updateData);
 
                     // Обновляем роли
@@ -2344,6 +2358,7 @@ Route::middleware('auth:sanctum')->group(function () {
                             'roles' => $user->roles->pluck('name'),
                             'email_verified_at' => $user->email_verified_at,
                             'is_active' => $user->is_active,
+                            'tech_acc' => $user->tech_acc,
                             'created_at' => $user->created_at,
                             'updated_at' => $user->updated_at,
                         ]
@@ -2422,6 +2437,38 @@ Route::middleware('auth:sanctum')->group(function () {
                     return response()->json([
                         'success' => false,
                         'message' => 'Ошибка изменения статуса блокировки: ' . $e->getMessage()
+                    ], 500);
+                }
+            });
+
+            // Быстрое изменение статуса технического аккаунта (tech_acc)
+            Route::put('/{id}/toggle-tech-acc', function (Request $request, $id) {
+                try {
+                    $user = \App\Models\User::find($id);
+
+                    if (!$user) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Пользователь не найден'
+                        ], 404);
+                    }
+
+                    // Переключаем статус технического аккаунта
+                    $user->tech_acc = $user->tech_acc ? false : true;
+                    $user->save();
+
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Статус технического аккаунта изменен',
+                        'data' => [
+                            'id' => $user->id,
+                            'tech_acc' => $user->tech_acc
+                        ]
+                    ]);
+                } catch (\Exception $e) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка изменения статуса технического аккаунта: ' . $e->getMessage()
                     ], 500);
                 }
             });

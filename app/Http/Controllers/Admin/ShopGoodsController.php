@@ -5365,7 +5365,9 @@ class ShopGoodsController extends Controller
         $basicValidator = Validator::make($request->all(), [
             'good_with_variations_id' => 'required|exists:shop_goods,id',
             'goods_without_variations' => 'required|array|min:1',
-            'goods_without_variations.*.update_description' => 'nullable|boolean'
+            'goods_without_variations.*.update_description' => 'nullable|boolean',
+            'goods_without_variations.*.update_short_description' => 'nullable|boolean',
+            'goods_without_variations.*.update_slug' => 'nullable|boolean'
         ]);
 
         if ($basicValidator->fails()) {
@@ -5456,7 +5458,23 @@ class ShopGoodsController extends Controller
 
             $updatedVariations = [];
             $descriptionUpdateGoodId = null;
+            $shortDescriptionUpdateGoodId = null;
+            $slugUpdateGoodId = null;
             $transferredImagesInfo = []; // Информация о перенесенных изображениях
+
+            // Сохраняем данные товаров-источников перед их удалением
+            $sourceGoodsData = [];
+            foreach ($goodsWithoutVariations as $goodData) {
+                $goodId = $goodData['id'];
+                $good = ShopGood::find($goodId);
+                if ($good) {
+                    $sourceGoodsData[$goodId] = [
+                        'description' => $good->description,
+                        'short_description' => $good->short_description,
+                        'slug' => $good->slug
+                    ];
+                }
+            }
 
             // Обрабатываем каждый товар без вариаций
             foreach ($goodsWithoutVariations as $index => $goodData) {
@@ -5473,6 +5491,8 @@ class ShopGoodsController extends Controller
                 $goodId = $goodData['id'];
                 $variationIds = $goodData['variation_ids']; // Теперь массив вариаций
                 $updateDescription = $goodData['update_description'] ?? false;
+                $updateShortDescription = $goodData['update_short_description'] ?? false;
+                $updateSlug = $goodData['update_slug'] ?? false;
 
                 // Загружаем товар без вариаций
                 $goodWithoutVariations = ShopGood::with(['images'])->findOrFail($goodId);
@@ -5558,18 +5578,16 @@ class ShopGoodsController extends Controller
                     ];
                 }
 
-                // Запоминаем товар для обновления описания
+                // Запоминаем товары для обновления полей основного товара
                 if ($updateDescription) {
                     $descriptionUpdateGoodId = $goodWithoutVariations->id;
                 }
-            }
-
-            // Обновляем описание основного товара, если указано
-            if ($descriptionUpdateGoodId) {
-                $descriptionGood = ShopGood::findOrFail($descriptionUpdateGoodId);
-                $goodWithVariations->update([
-                    'description' => $descriptionGood->description
-                ]);
+                if ($updateShortDescription) {
+                    $shortDescriptionUpdateGoodId = $goodWithoutVariations->id;
+                }
+                if ($updateSlug) {
+                    $slugUpdateGoodId = $goodWithoutVariations->id;
+                }
             }
 
             // Удаляем оригинальные изображения товара-источника (они уже скопированы в вариации)
@@ -5596,6 +5614,37 @@ class ShopGoodsController extends Controller
                     $this->logAudit($goodToDelete, 'deleted', $goodToDelete->toArray(), null);
                     $goodToDelete->delete();
                 }
+            }
+
+            // Теперь обновляем поля основного товара (после удаления товаров-источников)
+            $updateFields = [];
+            $skippedFields = []; // Поля, которые не удалось обновить
+
+            if ($descriptionUpdateGoodId && isset($sourceGoodsData[$descriptionUpdateGoodId])) {
+                $updateFields['description'] = $sourceGoodsData[$descriptionUpdateGoodId]['description'];
+            }
+
+            if ($shortDescriptionUpdateGoodId && isset($sourceGoodsData[$shortDescriptionUpdateGoodId])) {
+                $updateFields['short_description'] = $sourceGoodsData[$shortDescriptionUpdateGoodId]['short_description'];
+            }
+
+            if ($slugUpdateGoodId && isset($sourceGoodsData[$slugUpdateGoodId])) {
+                $slug = $sourceGoodsData[$slugUpdateGoodId]['slug'];
+                // Проверяем уникальность slug (теперь товары-источники удалены, так что slug должен быть свободен)
+                $existingSlug = ShopGood::where('slug', $slug)
+                    ->where('id', '!=', $goodWithVariations->id)
+                    ->exists();
+
+                if ($existingSlug) {
+                    $skippedFields['slug'] = 'Slug "' . $slug . '" уже используется другим товаром';
+                } else {
+                    $updateFields['slug'] = $slug;
+                }
+            }
+
+            // Обновляем основной товар, если есть поля для обновления
+            if (!empty($updateFields)) {
+                $goodWithVariations->update($updateFields);
             }
 
             // Финальная проверка изображений вариаций после копирования
@@ -5631,13 +5680,21 @@ class ShopGoodsController extends Controller
                 }
             }
 
+            // Формируем сообщение с учетом пропущенных полей
+            $message = 'Данные успешно перенесены в вариации. Обновлено вариаций: ' . count($updatedVariations) . '. Удалено товаров: ' . count($goodIdsToDelete);
+
+            if (!empty($skippedFields)) {
+                $message .= '. Некоторые поля не удалось обновить: ' . implode(', ', array_values($skippedFields));
+            }
+
             return response()->json([
                 'success' => true,
-                'message' => 'Данные успешно перенесены в вариации. Обновлено вариаций: ' . count($updatedVariations) . '. Удалено товаров: ' . count($goodIdsToDelete),
+                'message' => $message,
                 'data' => [
                     'updated_variations' => $updatedVariations,
                     'deleted_goods' => $goodIdsToDelete,
-                    'images_transfer' => $imagesSummary
+                    'images_transfer' => $imagesSummary,
+                    'skipped_fields' => $skippedFields
                 ]
             ]);
 

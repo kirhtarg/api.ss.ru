@@ -29,6 +29,7 @@ class User extends Authenticatable
         'email_verified_at',
         'phone_verified_at',
         'is_active',
+        'tech_acc',
     ];
 
     protected $hidden = [
@@ -44,6 +45,7 @@ class User extends Authenticatable
         'birthday' => 'date',
         'additional_info' => 'array',
         'is_active' => 'boolean',
+        'tech_acc' => 'boolean',
     ];
 
     /**
