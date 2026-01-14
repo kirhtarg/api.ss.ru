@@ -56,6 +56,7 @@ class UserProfileController extends Controller
                 'yandex_id' => $user->yandex_id, // Для определения соц-аккаунта
                 'vk_id' => $user->vk_id, // Для определения соц-аккаунта
                 'is_active' => $user->is_active,
+                'tech_acc' => $user->tech_acc,
                 'role' => $roles[0] ?? 'user',
                 'created_at' => $user->created_at,
                 'updated_at' => $user->updated_at

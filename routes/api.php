@@ -2508,6 +2508,69 @@ Route::middleware('auth:sanctum')->group(function () {
                 }
             });
 
+            // Войти как пользователь (для админов)
+            Route::post('/{id}/login-as', function (Request $request, $id) {
+                try {
+                    $user = \App\Models\User::find($id);
+
+                    if (!$user) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Пользователь не найден'
+                        ], 404);
+                    }
+
+                    // Проверяем, что текущий пользователь - админ
+                    $currentUser = $request->user();
+                    if (!$currentUser || !$currentUser->hasRole('admin')) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Недостаточно прав доступа'
+                        ], 403);
+                    }
+
+                    // Создаем токен для пользователя
+                    $token = $user->createToken('login-as-token')->plainTextToken;
+
+                    // Получаем роли пользователя
+                    $roles = $user->roles->pluck('name')->toArray();
+
+                    // Формируем данные пользователя для фронтенда
+                    $userData = [
+                        'id' => $user->id,
+                        'name' => $user->name,
+                        'email' => $user->email,
+                        'phone' => $user->phone,
+                        'phone_verified_at' => $user->phone_verified_at,
+                        'birthday' => $user->birthday?->format('Y-m-d'),
+                        'avatar_url' => $user->avatar_url,
+                        'google_id' => $user->google_id,
+                        'yandex_id' => $user->yandex_id,
+                        'vk_id' => $user->vk_id,
+                        'is_active' => $user->is_active,
+                        'tech_acc' => $user->tech_acc,
+                        'role' => $roles[0] ?? 'user',
+                        'created_at' => $user->created_at,
+                        'updated_at' => $user->updated_at,
+                        'last_login_at' => $user->last_login_at
+                    ];
+
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Успешный вход как пользователь',
+                        'data' => [
+                            'token' => $token,
+                            'user' => $userData
+                        ]
+                    ]);
+                } catch (\Exception $e) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка входа как пользователь: ' . $e->getMessage()
+                    ], 500);
+                }
+            });
+
             // Управление бонусами пользователя
             Route::get('/{id}/bonuses', [\App\Http\Controllers\Admin\UserBonusController::class, 'show']);
             Route::put('/{id}/bonuses', [\App\Http\Controllers\Admin\UserBonusController::class, 'update']);
