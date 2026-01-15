@@ -342,6 +342,8 @@ class BulkGoodsImportController extends Controller
                         $searchByFieldInVariations = 'name'; // значение по умолчанию
                     }
 
+                    // Получаем поставщика из данных товара
+                    $supplierName = isset($goodData['supplier_name']) && trim($goodData['supplier_name']) !== '' ? trim($goodData['supplier_name']) : null;
 
                     $existingGood = null;
                     $existingVariation = null;
@@ -365,7 +367,16 @@ class BulkGoodsImportController extends Controller
 
                         if (!empty($searchValue)) {
                             // Ищем вариацию по выбранному полю
-                            $existingVariation = ShopGoodVariation::where($searchByFieldInVariations, $searchValue)->first();
+                            $variationQuery = ShopGoodVariation::where($searchByFieldInVariations, $searchValue);
+
+                            // Если указан поставщик, ищем только вариации этого поставщика
+                            if ($supplierName) {
+                                $variationQuery->whereHas('good', function($query) use ($supplierName) {
+                                    $query->where('supplier', $supplierName);
+                                });
+                            }
+
+                            $existingVariation = $variationQuery->first();
 
                             if ($existingVariation) {
                                 $existingGood = $existingVariation->good;
@@ -382,21 +393,47 @@ class BulkGoodsImportController extends Controller
                             if ($field === 'sku') {
                                 // Если SKU пустой, ищем товары с NULL в поле SKU
                                 if (!empty($sku)) {
-                                    $existingGood = ShopGood::where('sku', $sku)->first();
-                                    if ($existingGood) {
-                                        $foundByFields[] = "SKU: '{$sku}'";
+                                    // Если указан поставщик, сначала ищем товар этого поставщика
+                                    if ($supplierName) {
+                                        $existingGood = ShopGood::where('sku', $sku)->where('supplier', $supplierName)->first();
+                                        if ($existingGood) {
+                                            $foundByFields[] = "SKU: '{$sku}' (поставщик: {$supplierName})";
+                                        } else {
+                                            // Если не найден товар этого поставщика, проверяем есть ли товар с таким SKU вообще
+                                            $existingGoodAnySupplier = ShopGood::where('sku', $sku)->first();
+                                            if ($existingGoodAnySupplier) {
+                                                // Найден товар с таким SKU, но другого поставщика
+                                                // Это специальный случай - нужно обновить остатки и изменить привязку к поставщику
+                                                $existingGood = $existingGoodAnySupplier;
+                                                $foundByFields[] = "SKU: '{$sku}' (изменение поставщика с '{$existingGood->supplier}' на '{$supplierName}')";
+                                            }
+                                        }
+                                    } else {
+                                        // Поставщик не указан - обычный поиск
+                                        $existingGood = ShopGood::where('sku', $sku)->first();
+                                        if ($existingGood) {
+                                            $foundByFields[] = "SKU: '{$sku}'";
+                                        }
                                     }
                                 } else {
                                     // Ищем товары с пустым SKU
-                                    $existingGood = ShopGood::whereNull('sku')->where('name', $name)->first();
+                                    $goodQuery = ShopGood::whereNull('sku')->where('name', $name);
+                                    if ($supplierName) {
+                                        $goodQuery->where('supplier', $supplierName);
+                                    }
+                                    $existingGood = $goodQuery->first();
                                     if ($existingGood) {
-                                        $foundByFields[] = "пустой SKU + название: '{$name}'";
+                                        $foundByFields[] = $supplierName ? "пустой SKU + название: '{$name}' (поставщик: {$supplierName})" : "пустой SKU + название: '{$name}'";
                                     }
                                 }
                             } elseif ($field === 'name') {
-                                $existingGood = ShopGood::where('name', $name)->first();
+                                $goodQuery = ShopGood::where('name', $name);
+                                if ($supplierName) {
+                                    $goodQuery->where('supplier', $supplierName);
+                                }
+                                $existingGood = $goodQuery->first();
                                 if ($existingGood) {
-                                    $foundByFields[] = "название: '{$name}'";
+                                    $foundByFields[] = $supplierName ? "название: '{$name}' (поставщик: {$supplierName})" : "название: '{$name}'";
                                 }
                             }
 
@@ -411,36 +448,61 @@ class BulkGoodsImportController extends Controller
                         // Важно: для вариаций товар должен существовать, иначе будет ошибка дублирования
                         // Проверяем все возможные варианты поиска
 
-
                         // 1. Сначала по SKU (если указан) - самый надежный способ
                         if (!empty($sku)) {
-                            $existingGood = ShopGood::where('sku', $sku)->first();
-                            if ($existingGood) {
-                                $foundByFields[] = "SKU: '{$sku}' (для вариации)";
+                            if ($supplierName) {
+                                // Если указан поставщик, сначала ищем товар этого поставщика
+                                $existingGood = ShopGood::where('sku', $sku)->where('supplier', $supplierName)->first();
+                                if ($existingGood) {
+                                    $foundByFields[] = "SKU: '{$sku}' (для вариации, поставщик: {$supplierName})";
+                                } else {
+                                    // Если не найден товар этого поставщика, ищем любой товар с таким SKU
+                                    $existingGood = ShopGood::where('sku', $sku)->first();
+                                    if ($existingGood) {
+                                        $foundByFields[] = "SKU: '{$sku}' (для вариации, существующий товар другого поставщика)";
+                                    }
+                                }
+                            } else {
+                                $existingGood = ShopGood::where('sku', $sku)->first();
+                                if ($existingGood) {
+                                    $foundByFields[] = "SKU: '{$sku}' (для вариации)";
+                                }
                             }
                         }
 
                         // 2. Если не найден по SKU, ищем по имени (точное совпадение)
                         if (!$existingGood) {
-                            $existingGood = ShopGood::where('name', $name)->first();
+                            $goodQuery = ShopGood::where('name', $name);
+                            if ($supplierName) {
+                                $goodQuery->where('supplier', $supplierName);
+                            }
+                            $existingGood = $goodQuery->first();
                             if ($existingGood) {
-                                $foundByFields[] = "название: '{$name}' (для вариации)";
+                                $foundByFields[] = $supplierName ? "название: '{$name}' (для вариации, поставщик: {$supplierName})" : "название: '{$name}' (для вариации)";
                             }
                         }
 
                         // 3. Если не найден, пробуем по имени с пустым SKU
                         if (!$existingGood) {
-                            $existingGood = ShopGood::whereNull('sku')->where('name', $name)->first();
+                            $goodQuery = ShopGood::whereNull('sku')->where('name', $name);
+                            if ($supplierName) {
+                                $goodQuery->where('supplier', $supplierName);
+                            }
+                            $existingGood = $goodQuery->first();
                             if ($existingGood) {
-                                $foundByFields[] = "пустой SKU + название: '{$name}' (для вариации)";
+                                $foundByFields[] = $supplierName ? "пустой SKU + название: '{$name}' (для вариации, поставщик: {$supplierName})" : "пустой SKU + название: '{$name}' (для вариации)";
                             }
                         }
-                        
+
                         // 4. Если все еще не найден, пробуем поиск по имени без учета регистра и пробелов
                         if (!$existingGood) {
                             // Нормализуем имя для поиска (убираем лишние пробелы, приводим к нижнему регистру)
                             $normalizedName = trim(preg_replace('/\s+/', ' ', mb_strtolower($name)));
-                            $allGoods = ShopGood::whereRaw('LOWER(TRIM(name)) = ?', [$normalizedName])->get();
+                            $goodQuery = ShopGood::whereRaw('LOWER(TRIM(name)) = ?', [$normalizedName]);
+                            if ($supplierName) {
+                                $goodQuery->where('supplier', $supplierName);
+                            }
+                            $allGoods = $goodQuery->get();
                             if ($allGoods->count() > 0) {
                                 $existingGood = $allGoods->first();
                             }
@@ -452,13 +514,48 @@ class BulkGoodsImportController extends Controller
                             if ($field === 'sku') {
                                 // Если SKU пустой, ищем товары с NULL в поле SKU
                                 if (!empty($sku)) {
-                                    $existingGood = ShopGood::where('sku', $sku)->first();
+                                    // Если указан поставщик, сначала ищем товар этого поставщика
+                                    if ($supplierName) {
+                                        $existingGood = ShopGood::where('sku', $sku)->where('supplier', $supplierName)->first();
+                                        if ($existingGood) {
+                                            $foundByFields[] = "SKU: '{$sku}' (поставщик: {$supplierName})";
+                                        } else {
+                                            // Если не найден товар этого поставщика, проверяем есть ли товар с таким SKU вообще
+                                            $existingGoodAnySupplier = ShopGood::where('sku', $sku)->first();
+                                            if ($existingGoodAnySupplier) {
+                                                // Найден товар с таким SKU, но другого поставщика
+                                                // Это специальный случай - нужно обновить остатки и изменить привязку к поставщику
+                                                $existingGood = $existingGoodAnySupplier;
+                                                $foundByFields[] = "SKU: '{$sku}' (изменение поставщика с '{$existingGood->supplier}' на '{$supplierName}')";
+                                            }
+                                        }
+                                    } else {
+                                        // Поставщик не указан - обычный поиск
+                                        $existingGood = ShopGood::where('sku', $sku)->first();
+                                        if ($existingGood) {
+                                            $foundByFields[] = "SKU: '{$sku}'";
+                                        }
+                                    }
                                 } else {
                                     // Ищем товары с пустым SKU
-                                    $existingGood = ShopGood::whereNull('sku')->where('name', $name)->first();
+                                    $goodQuery = ShopGood::whereNull('sku')->where('name', $name);
+                                    if ($supplierName) {
+                                        $goodQuery->where('supplier', $supplierName);
+                                    }
+                                    $existingGood = $goodQuery->first();
+                                    if ($existingGood) {
+                                        $foundByFields[] = $supplierName ? "пустой SKU + название: '{$name}' (поставщик: {$supplierName})" : "пустой SKU + название: '{$name}'";
+                                    }
                                 }
                             } elseif ($field === 'name') {
-                                $existingGood = ShopGood::where('name', $name)->first();
+                                $goodQuery = ShopGood::where('name', $name);
+                                if ($supplierName) {
+                                    $goodQuery->where('supplier', $supplierName);
+                                }
+                                $existingGood = $goodQuery->first();
+                                if ($existingGood) {
+                                    $foundByFields[] = $supplierName ? "название: '{$name}' (поставщик: {$supplierName})" : "название: '{$name}'";
+                                }
                             }
 
                             if ($existingGood) {
