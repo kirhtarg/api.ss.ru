@@ -3076,7 +3076,6 @@ class ShopOrdersController extends Controller
     public function regeneratePaymentLink(Request $request, $orderId): JsonResponse
     {
         try {
-            \Log::info('Regenerate payment link started', ['order_id' => $orderId]);
 
             $order = ShopOrder::findOrFail($orderId);
 
@@ -3138,11 +3137,6 @@ class ShopOrdersController extends Controller
             // Создаем платеж напрямую через API для получения redirect ссылки
             $result = null;
 
-            \Log::info('Creating payment for regeneration', [
-                'payment_method_type' => $paymentMethod->type,
-                'order_id' => $order->id,
-                'payment_method_id' => $paymentMethod->id
-            ]);
 
             switch ($paymentMethod->type) {
                 case 'yookassa':
@@ -3160,14 +3154,8 @@ class ShopOrdersController extends Controller
                     ], 400);
             }
 
-            \Log::info('Payment regeneration result', [
-                'payment_method' => $paymentMethod->type,
-                'result_type' => gettype($result),
-                'has_result' => !is_null($result)
-            ]);
 
             if (!$result) {
-                \Log::error('Payment creation returned null result');
                 return response()->json([
                     'success' => false,
                     'message' => 'Не удалось создать новый платеж - пустой ответ'
@@ -3178,17 +3166,8 @@ class ShopOrdersController extends Controller
             $content = $result->getContent();
             $resultData = json_decode($content, true);
 
-            \Log::info('Payment creation result', [
-                'has_result' => !is_null($result),
-                'content_length' => strlen($content),
-                'result_data' => $resultData
-            ]);
 
             if (!$resultData || !isset($resultData['success']) || !$resultData['success']) {
-                \Log::error('Regenerate payment link failed', [
-                    'result_content' => $content,
-                    'result_data' => $resultData
-                ]);
                 return response()->json([
                     'success' => false,
                     'message' => 'Не удалось создать новый платеж'
@@ -3219,12 +3198,6 @@ class ShopOrdersController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Ошибка перегенерации платежной ссылки: ' . $e->getMessage(), [
-                'order_id' => $orderId,
-                'payment_method' => $order->paymentMethod->type ?? 'unknown',
-                'trace' => $e->getTraceAsString()
-            ]);
-
             $userMessage = 'Ошибка при создании новой платежной ссылки';
             if (str_contains($e->getMessage(), 'connection') || str_contains($e->getMessage(), 'timeout')) {
                 $userMessage = 'Ошибка подключения к платежной системе. Попробуйте позже.';
@@ -3291,11 +3264,6 @@ class ShopOrdersController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Ошибка отправки email с платежной ссылкой: ' . $e->getMessage(), [
-                'order_id' => $orderId,
-                'trace' => $e->getTraceAsString()
-            ]);
-
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка отправки email: ' . $e->getMessage()
@@ -3323,12 +3291,6 @@ class ShopOrdersController extends Controller
                 ? 'https://api.yookassa.ru/v3/payments'
                 : 'https://api.yookassa.ru/v3/payments';
 
-            \Log::info('Making YooKassa API request', [
-                'api_url' => $apiUrl,
-                'shop_id' => $settings['shop_id'],
-                'amount' => $order->total_amount,
-                'order_number' => $order->order_number
-            ]);
 
             $paymentData = [
                 'amount' => [
@@ -3359,10 +3321,8 @@ class ShopOrdersController extends Controller
                     ->withOptions(['verify' => false]) // Отключаем SSL верификацию для локальной разработки
                     ->post($apiUrl, $paymentData);
             } catch (\Illuminate\Http\Client\ConnectionException $e) {
-                \Log::error('YooKassa connection error: ' . $e->getMessage());
                 throw new \Exception('Ошибка подключения к YooKassa API: ' . $e->getMessage());
             } catch (\Exception $e) {
-                \Log::error('YooKassa HTTP error: ' . $e->getMessage());
                 throw $e;
             }
 
@@ -3376,20 +3336,9 @@ class ShopOrdersController extends Controller
                     $paymentUrl = $responseData['confirmation']['confirmation_url'];
                 }
 
-                \Log::info('YooKassa API response processed', [
-                    'yookassa_payment_id' => $yookassaPaymentId,
-                    'payment_url' => $paymentUrl,
-                    'confirmation_type' => $responseData['confirmation']['type'] ?? null,
-                    'response_keys' => array_keys($responseData)
-                ]);
 
                 // Проверяем, что получили payment_url
                 if (!$paymentUrl) {
-                    \Log::error('YooKassa API did not return payment_url', [
-                        'response_data' => $responseData,
-                        'order_id' => $order->id
-                    ]);
-
                     // Обновляем транзакцию как failed
                     $transaction->update([
                         'status' => 'failed',
@@ -3422,10 +3371,6 @@ class ShopOrdersController extends Controller
                     'yookassa_payment_id' => $yookassaPaymentId
                 ]);
             } else {
-                \Log::error('YooKassa regeneration failed', [
-                    'status' => $response->status(),
-                    'response' => $response->body()
-                ]);
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка создания платежа в YooKassa'
@@ -3433,12 +3378,6 @@ class ShopOrdersController extends Controller
             }
 
         } catch (\Exception $e) {
-            \Log::error('YooKassa regeneration exception: ' . $e->getMessage(), [
-                'exception_class' => get_class($e),
-                'api_url' => $apiUrl,
-                'shop_id' => $settings['shop_id'],
-                'mode' => $settings['mode']
-            ]);
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка при перегенерации платежа YooKassa: ' . $e->getMessage()
@@ -3501,11 +3440,6 @@ class ShopOrdersController extends Controller
             // Для Yandex Pay используем правильные заголовки как в оригинальном методе
             $apiKey = ($settings['mode'] === 'test' || $settings['mode'] === 'sandbox') ? $settings['merchant_id'] : $settings['secret_key'];
 
-            \Log::info('Yandex Pay API key selected', [
-                'mode' => $settings['mode'],
-                'api_key_length' => strlen($apiKey ?? ''),
-                'using_merchant_id' => ($settings['mode'] === 'test' || $settings['mode'] === 'sandbox')
-            ]);
 
             try {
                 $response = \Illuminate\Support\Facades\Http::withHeaders([
@@ -3519,10 +3453,8 @@ class ShopOrdersController extends Controller
                 ->withOptions(['verify' => false]) // Отключаем SSL верификацию для локальной разработки
                 ->post($apiUrl, $orderData);
             } catch (\Illuminate\Http\Client\ConnectionException $e) {
-                \Log::error('Yandex Pay connection error: ' . $e->getMessage());
                 throw new \Exception('Ошибка подключения к Yandex Pay API: ' . $e->getMessage());
             } catch (\Exception $e) {
-                \Log::error('Yandex Pay HTTP error: ' . $e->getMessage());
                 throw $e;
             }
 
@@ -3532,20 +3464,9 @@ class ShopOrdersController extends Controller
                 $yandexOrderId = $responseData['data']['orderId'] ?? $responseData['orderId'] ?? null;
                 $paymentUrl = $responseData['data']['paymentUrl'] ?? $responseData['paymentUrl'] ?? null;
 
-                \Log::info('Yandex Pay API response processed', [
-                    'yandex_order_id' => $yandexOrderId,
-                    'payment_url' => $paymentUrl,
-                    'response_structure' => $responseData,
-                    'data_keys' => isset($responseData['data']) ? array_keys($responseData['data']) : []
-                ]);
 
                 // Проверяем, что получили payment_url
                 if (!$paymentUrl) {
-                    \Log::error('Yandex Pay API did not return payment_url', [
-                        'response_data' => $responseData,
-                        'order_id' => $order->id
-                    ]);
-
                     // Обновляем транзакцию как failed
                     $transaction->update([
                         'status' => 'failed',
@@ -3578,10 +3499,6 @@ class ShopOrdersController extends Controller
                     'yandex_order_id' => $yandexOrderId
                 ]);
             } else {
-                \Log::error('Yandex Pay regeneration failed', [
-                    'status' => $response->status(),
-                    'response' => $response->body()
-                ]);
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка создания платежа в Yandex Pay'
@@ -3589,7 +3506,6 @@ class ShopOrdersController extends Controller
             }
 
         } catch (\Exception $e) {
-            \Log::error('Yandex Pay regeneration exception: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка при перегенерации платежа Yandex Pay'
@@ -3642,16 +3558,8 @@ class ShopOrdersController extends Controller
                         ->subject("Новая ссылка для оплаты заказа №{$order->order_number} - {$siteName}");
             });
 
-            Log::info('New payment link email sent', [
-                'order_id' => $order->id,
-                'customer_email' => $order->customer_email
-            ]);
-
         } catch (\Exception $e) {
-            Log::error('Failed to send new payment link email: ' . $e->getMessage(), [
-                'order_id' => $order->id,
-                'customer_email' => $order->customer_email
-            ]);
+            // Silent fail for email sending
         }
     }
 }

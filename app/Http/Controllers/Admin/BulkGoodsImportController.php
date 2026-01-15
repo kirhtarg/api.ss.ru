@@ -3211,10 +3211,11 @@ class BulkGoodsImportController extends Controller
                 }
 
                 // Проверяем, что атрибут используется в существующих вариациях (если они есть)
-                if ($hasExistingVariations && !in_array($attribute->id, $existingAttributeIds)) {
-                    // Атрибут не используется в существующих вариациях - пропускаем
-                    continue;
-                }
+                // Временно отключено для отладки проблемы поиска вариаций без поставщика
+                // if ($hasExistingVariations && !in_array($attribute->id, $existingAttributeIds)) {
+                //     // Атрибут не используется в существующих вариациях - пропускаем
+                //     continue;
+                // }
                 
                 // Находим или создаем значение атрибута
                 $attributeValueId = $this->findOrCreateAttributeValue($attribute->id, $attributeValue);
@@ -3684,14 +3685,48 @@ class BulkGoodsImportController extends Controller
      */
     private function findVariationByAttributes($goodId, $attributeValueIds, $supplier = null)
     {
-        // Получаем вариации товара, фильтруя по поставщику если он указан
-        $query = ShopGoodVariation::where('good_id', $goodId);
-        if ($supplier !== null) {
-            $query->where('supplier', $supplier);
+        // Проверяем, что массив атрибутов не пустой
+        if (empty($attributeValueIds)) {
+            return null;
         }
-        $variations = $query->get();
-        
-        foreach ($variations as $variation) {
+
+        sort($attributeValueIds); // Сортируем для консистентности
+
+        // Сначала ищем вариацию среди вариаций указанного поставщика (если поставщик указан)
+        if ($supplier !== null) {
+            $supplierVariations = ShopGoodVariation::where('good_id', $goodId)
+                ->where('supplier', $supplier)
+                ->get();
+
+            foreach ($supplierVariations as $variation) {
+                // Получаем атрибуты существующей вариации
+                $existingAttributeValueIds = DB::table('shop_variation_attributes_values')
+                    ->where('variation_id', $variation->id)
+                    ->pluck('attribute_value_id')
+                    ->map(function($id) {
+                        return (int)$id;
+                    })
+                    ->toArray();
+
+                sort($existingAttributeValueIds);
+
+                // Сравниваем комбинации атрибутов
+                if ($existingAttributeValueIds === $attributeValueIds) {
+                    return $variation;
+                }
+            }
+        }
+
+        // Если не найдена вариация поставщика или поставщик не указан,
+        // ищем среди вариаций без привязанного поставщика (null или пустая строка)
+        $nullSupplierVariations = ShopGoodVariation::where('good_id', $goodId)
+            ->where(function($query) {
+                $query->whereNull('supplier')
+                      ->orWhere('supplier', '');
+            })
+            ->get();
+
+        foreach ($nullSupplierVariations as $variation) {
             // Получаем атрибуты существующей вариации
             $existingAttributeValueIds = DB::table('shop_variation_attributes_values')
                 ->where('variation_id', $variation->id)
@@ -3700,15 +3735,15 @@ class BulkGoodsImportController extends Controller
                     return (int)$id;
                 })
                 ->toArray();
-            
+
             sort($existingAttributeValueIds);
-            
+
             // Сравниваем комбинации атрибутов
             if ($existingAttributeValueIds === $attributeValueIds) {
                 return $variation;
             }
         }
-        
+
         return null;
     }
 
