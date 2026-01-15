@@ -38,10 +38,15 @@ class AppServiceProvider extends ServiceProvider
 
             // Определяем адрес отправителя
             if ($domain && !in_array($domain, ['localhost', '127.0.0.1', '::1'])) {
-                config(['mail.from.address' => 'noreply@' . $domain]);
+                // Используем info@ для доменов skateandsnow.ru
+                if (str_contains($domain, 'skateandsnow.ru')) {
+                    config(['mail.from.address' => 'info@skateandsnow.ru']);
+                } else {
+                    config(['mail.from.address' => 'noreply@' . $domain]);
+                }
             } else {
-                // Для localhost или некорректных доменов используем адрес skateandsnow.ru
-                config(['mail.from.address' => 'noreply@skateandsnow.ru']);
+                // Для localhost используем info@skateandsnow.ru как fallback
+                config(['mail.from.address' => 'info@skateandsnow.ru']);
             }
         }
 
