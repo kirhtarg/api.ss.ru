@@ -3376,6 +3376,32 @@ class ShopOrdersController extends Controller
                     $paymentUrl = $responseData['confirmation']['confirmation_url'];
                 }
 
+                \Log::info('YooKassa API response processed', [
+                    'yookassa_payment_id' => $yookassaPaymentId,
+                    'payment_url' => $paymentUrl,
+                    'confirmation_type' => $responseData['confirmation']['type'] ?? null,
+                    'response_keys' => array_keys($responseData)
+                ]);
+
+                // Проверяем, что получили payment_url
+                if (!$paymentUrl) {
+                    \Log::error('YooKassa API did not return payment_url', [
+                        'response_data' => $responseData,
+                        'order_id' => $order->id
+                    ]);
+
+                    // Обновляем транзакцию как failed
+                    $transaction->update([
+                        'status' => 'failed',
+                        'error_message' => 'YooKassa API не вернул ссылку на оплату'
+                    ]);
+
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Платежная система не вернула ссылку на оплату. Попробуйте позже или обратитесь в поддержку.'
+                    ], 500);
+                }
+
                 // Обновляем транзакцию
                 $transaction->update([
                     'transaction_id' => $yookassaPaymentId,
@@ -3506,6 +3532,31 @@ class ShopOrdersController extends Controller
 
                 // Получаем payment_url
                 $paymentUrl = $responseData['paymentUrl'] ?? null;
+
+                \Log::info('Yandex Pay API response processed', [
+                    'yandex_order_id' => $yandexOrderId,
+                    'payment_url' => $paymentUrl,
+                    'response_keys' => array_keys($responseData)
+                ]);
+
+                // Проверяем, что получили payment_url
+                if (!$paymentUrl) {
+                    \Log::error('Yandex Pay API did not return payment_url', [
+                        'response_data' => $responseData,
+                        'order_id' => $order->id
+                    ]);
+
+                    // Обновляем транзакцию как failed
+                    $transaction->update([
+                        'status' => 'failed',
+                        'error_message' => 'Yandex Pay API не вернул ссылку на оплату'
+                    ]);
+
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Платежная система не вернула ссылку на оплату. Попробуйте позже или обратитесь в поддержку.'
+                    ], 500);
+                }
 
                 // Обновляем транзакцию
                 $transaction->update([
