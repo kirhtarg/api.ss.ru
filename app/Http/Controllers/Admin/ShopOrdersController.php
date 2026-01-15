@@ -3473,7 +3473,13 @@ class ShopOrdersController extends Controller
             ];
 
             // Для Yandex Pay используем правильные заголовки как в оригинальном методе
-            $apiKey = ($settings['mode'] === 'test') ? $settings['merchant_id'] : $settings['secret_key'];
+            $apiKey = ($settings['mode'] === 'test' || $settings['mode'] === 'sandbox') ? $settings['merchant_id'] : $settings['secret_key'];
+
+            \Log::info('Yandex Pay API key selected', [
+                'mode' => $settings['mode'],
+                'api_key_length' => strlen($apiKey ?? ''),
+                'using_merchant_id' => ($settings['mode'] === 'test' || $settings['mode'] === 'sandbox')
+            ]);
 
             try {
                 $response = \Illuminate\Support\Facades\Http::withHeaders([
@@ -3545,7 +3551,18 @@ class ShopOrdersController extends Controller
      */
     private function validateYandexPaySettings($settings)
     {
-        return !empty($settings['api_key']) && !empty($settings['mode']);
+        if (empty($settings['mode'])) {
+            return false;
+        }
+
+        // В test режиме нужен merchant_id, в live режиме нужен secret_key
+        if ($settings['mode'] === 'test' || $settings['mode'] === 'sandbox') {
+            return !empty($settings['merchant_id']);
+        } elseif ($settings['mode'] === 'live') {
+            return !empty($settings['secret_key']);
+        }
+
+        return false;
     }
 
     /**
