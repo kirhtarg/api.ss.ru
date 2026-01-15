@@ -3528,15 +3528,15 @@ class ShopOrdersController extends Controller
 
             if ($response->successful()) {
                 $responseData = $response->json();
-                $yandexOrderId = $responseData['orderId'] ?? null;
-
-                // Получаем payment_url
-                $paymentUrl = $responseData['paymentUrl'] ?? null;
+                // Yandex Pay возвращает данные в структуре {code, status, data: {...}}
+                $yandexOrderId = $responseData['data']['orderId'] ?? $responseData['orderId'] ?? null;
+                $paymentUrl = $responseData['data']['paymentUrl'] ?? $responseData['paymentUrl'] ?? null;
 
                 \Log::info('Yandex Pay API response processed', [
                     'yandex_order_id' => $yandexOrderId,
                     'payment_url' => $paymentUrl,
-                    'response_keys' => array_keys($responseData)
+                    'response_structure' => $responseData,
+                    'data_keys' => isset($responseData['data']) ? array_keys($responseData['data']) : []
                 ]);
 
                 // Проверяем, что получили payment_url
