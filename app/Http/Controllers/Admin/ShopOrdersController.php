@@ -3160,6 +3160,12 @@ class ShopOrdersController extends Controller
                     ], 400);
             }
 
+            \Log::info('Payment regeneration result', [
+                'payment_method' => $paymentMethod->type,
+                'result_type' => gettype($result),
+                'has_result' => !is_null($result)
+            ]);
+
             if (!$result) {
                 \Log::error('Payment creation returned null result');
                 return response()->json([
@@ -3215,12 +3221,20 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             Log::error('Ошибка перегенерации платежной ссылки: ' . $e->getMessage(), [
                 'order_id' => $orderId,
+                'payment_method' => $order->paymentMethod->type ?? 'unknown',
                 'trace' => $e->getTraceAsString()
             ]);
 
+            $userMessage = 'Ошибка при создании новой платежной ссылки';
+            if (str_contains($e->getMessage(), 'connection') || str_contains($e->getMessage(), 'timeout')) {
+                $userMessage = 'Ошибка подключения к платежной системе. Попробуйте позже.';
+            } elseif (str_contains($e->getMessage(), 'authentication') || str_contains($e->getMessage(), '401')) {
+                $userMessage = 'Ошибка авторизации в платежной системе. Проверьте настройки.';
+            }
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка перегенерации платежной ссылки: ' . $e->getMessage()
+                'message' => $userMessage
             ], 500);
         }
     }
@@ -3305,7 +3319,16 @@ class ShopOrdersController extends Controller
                 ], 400);
             }
 
-            $apiUrl = 'https://api.yookassa.ru/v3/payments';
+            $apiUrl = $settings['mode'] === 'test'
+                ? 'https://api.yookassa.ru/v3/payments'
+                : 'https://api.yookassa.ru/v3/payments';
+
+            \Log::info('Making YooKassa API request', [
+                'api_url' => $apiUrl,
+                'shop_id' => $settings['shop_id'],
+                'amount' => $order->total_amount,
+                'order_number' => $order->order_number
+            ]);
 
             $paymentData = [
                 'amount' => [
@@ -3325,13 +3348,23 @@ class ShopOrdersController extends Controller
                 ]
             ];
 
-            $response = \Illuminate\Support\Facades\Http::withBasicAuth($settings['shop_id'], $settings['secret_key'])
-                ->withHeaders([
-                    'Content-Type' => 'application/json',
-                    'Idempotence-Key' => uniqid('regenerate_', true)
-                ])
-                ->withOptions(['verify' => false])
-                ->post($apiUrl, $paymentData);
+            try {
+                $response = \Illuminate\Support\Facades\Http::withBasicAuth($settings['shop_id'], $settings['secret_key'])
+                    ->withHeaders([
+                        'Content-Type' => 'application/json',
+                        'Idempotence-Key' => uniqid('regenerate_', true)
+                    ])
+                    ->timeout(30) // Увеличиваем timeout до 30 секунд
+                    ->retry(2, 100) // Повторяем запрос 2 раза с задержкой 100мс
+                    ->withOptions(['verify' => false]) // Отключаем SSL верификацию для локальной разработки
+                    ->post($apiUrl, $paymentData);
+            } catch (\Illuminate\Http\Client\ConnectionException $e) {
+                \Log::error('YooKassa connection error: ' . $e->getMessage());
+                throw new \Exception('Ошибка подключения к YooKassa API: ' . $e->getMessage());
+            } catch (\Exception $e) {
+                \Log::error('YooKassa HTTP error: ' . $e->getMessage());
+                throw $e;
+            }
 
             if ($response->successful()) {
                 $responseData = $response->json();
@@ -3374,10 +3407,15 @@ class ShopOrdersController extends Controller
             }
 
         } catch (\Exception $e) {
-            \Log::error('YooKassa regeneration exception: ' . $e->getMessage());
+            \Log::error('YooKassa regeneration exception: ' . $e->getMessage(), [
+                'exception_class' => get_class($e),
+                'api_url' => $apiUrl,
+                'shop_id' => $settings['shop_id'],
+                'mode' => $settings['mode']
+            ]);
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при перегенерации платежа YooKassa'
+                'message' => 'Ошибка при перегенерации платежа YooKassa: ' . $e->getMessage()
             ], 500);
         }
     }
@@ -3437,16 +3475,24 @@ class ShopOrdersController extends Controller
             // Для Yandex Pay используем правильные заголовки как в оригинальном методе
             $apiKey = ($settings['mode'] === 'test') ? $settings['merchant_id'] : $settings['secret_key'];
 
-            $response = \Illuminate\Support\Facades\Http::withOptions([
-                'verify' => false,
-                'timeout' => 30
-            ])->withHeaders([
-                'Authorization' => 'Api-Key ' . $apiKey,
-                'Content-Type' => 'application/json',
-                'X-Request-Id' => uniqid('regenerate_', true),
-                'X-Request-Timeout' => '30000',
-                'X-Request-Attempt' => '0'
-            ])->post($apiUrl, $orderData);
+            try {
+                $response = \Illuminate\Support\Facades\Http::withHeaders([
+                    'Authorization' => 'Api-Key ' . $apiKey,
+                    'Content-Type' => 'application/json',
+                    'X-Request-Id' => uniqid('regenerate_', true),
+                    'X-Request-Timeout' => '30000',
+                    'X-Request-Attempt' => '0'
+                ])
+                ->timeout(30)
+                ->withOptions(['verify' => false]) // Отключаем SSL верификацию для локальной разработки
+                ->post($apiUrl, $orderData);
+            } catch (\Illuminate\Http\Client\ConnectionException $e) {
+                \Log::error('Yandex Pay connection error: ' . $e->getMessage());
+                throw new \Exception('Ошибка подключения к Yandex Pay API: ' . $e->getMessage());
+            } catch (\Exception $e) {
+                \Log::error('Yandex Pay HTTP error: ' . $e->getMessage());
+                throw $e;
+            }
 
             if ($response->successful()) {
                 $responseData = $response->json();
