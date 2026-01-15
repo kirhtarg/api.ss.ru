@@ -1041,7 +1041,7 @@ class ShopGoodsController extends Controller
             'properties:id,name,slug',
             'images:id,good_id,variation_id,file_path,alt_text,is_main,sort_order',
             'videos:id,good_id,variation_id,video_path,external_url,title,sort_order',
-            'variations:id,good_id,name,description,price,sale_price,demping_price,show_demping,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,sku,is_active',
+            'variations:id,good_id,supplier,name,description,price,sale_price,demping_price,show_demping,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,sku,is_active',
             'stock:id,good_id,warehouse_id,quantity,reserved_quantity,min_quantity',
             'stock.warehouse:id,name',
             'prices:id,good_id,price_type_id,price,sale_price',
@@ -2101,9 +2101,9 @@ class ShopGoodsController extends Controller
                             }
                         }
 
-                        // Обработка поля is_demping
-                        if (isset($data['is_demping'])) {
-                            $good->update(['is_demping' => (bool) $data['is_demping']]);
+                        // Обработка поля show_demping
+                        if (isset($data['show_demping'])) {
+                            $good->update(['show_demping' => (bool) $data['show_demping']]);
                         }
                         break;
                     case 'toggle_show_demping':

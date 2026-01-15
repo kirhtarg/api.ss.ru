@@ -7,6 +7,7 @@ use App\Models\ShopOrder;
 use App\Models\ShopOrderStatus;
 use App\Models\ShopOrderLog;
 use App\Models\ShopOrderLogIcon;
+use App\Models\ShopPaymentTransaction;
 use App\Models\ShopStock;
 use App\Models\ShopWarehouse;
 use App\Models\ShopGood;
@@ -3066,6 +3067,477 @@ class ShopOrdersController extends Controller
                 'success' => false,
                 'message' => 'Ошибка массового добавления комментария: ' . $e->getMessage()
             ], 500);
+        }
+    }
+
+    /**
+     * Перегенерация платежной ссылки для заказа
+     */
+    public function regeneratePaymentLink(Request $request, $orderId): JsonResponse
+    {
+        try {
+            \Log::info('Regenerate payment link started', ['order_id' => $orderId]);
+
+            $order = ShopOrder::findOrFail($orderId);
+
+            // Проверяем, что заказ не оплачен
+            if ($order->payed) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Заказ уже оплачен'
+                ], 400);
+            }
+
+            // Проверяем, что у заказа есть способ оплаты
+            if (!$order->payment_method_id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'У заказа не указан способ оплаты'
+                ], 400);
+            }
+
+            $paymentMethod = $order->paymentMethod;
+            if (!$paymentMethod) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Способ оплаты не найден'
+                ], 400);
+            }
+
+            // Проверяем, что способ оплаты активен
+            if (!$paymentMethod->is_active) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Способ оплаты неактивен'
+                ], 400);
+            }
+
+            // Создаем транзакцию для нового платежа
+            $transaction = ShopPaymentTransaction::create([
+                'order_id' => $order->id,
+                'payment_method_id' => $paymentMethod->id,
+                'status' => 'pending',
+                'amount' => $order->total_amount,
+                'request_data' => [
+                    'regenerated' => true,
+                    'original_order_id' => $order->id
+                ]
+            ]);
+
+            // Формируем данные для создания платежа (имитируем createPayment)
+            $paymentData = [
+                'payment_method_id' => $paymentMethod->id,
+                'amount' => $order->total_amount,
+                'order_number' => $order->order_number,
+                'return_url' => config('app.frontend_url', 'https://skateandsnow.ru') . '/order/' . $order->order_number
+            ];
+
+            // Создаем контроллер платежей для вызова методов создания платежа
+            $paymentController = new \App\Http\Controllers\Api\Public\ShopPaymentController();
+
+            // Создаем платеж напрямую через API для получения redirect ссылки
+            $result = null;
+
+            \Log::info('Creating payment for regeneration', [
+                'payment_method_type' => $paymentMethod->type,
+                'order_id' => $order->id,
+                'payment_method_id' => $paymentMethod->id
+            ]);
+
+            switch ($paymentMethod->type) {
+                case 'yookassa':
+                    $result = $this->regenerateYooKassaPayment($paymentMethod, $transaction, $order);
+                    break;
+                case 'yandex_pay':
+                case 'yandex_split':
+                    $result = $this->regenerateYandexPayPayment($paymentMethod, $transaction, $order);
+                    break;
+                default:
+                    \Log::warning('Unsupported payment method for regeneration', ['type' => $paymentMethod->type]);
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Перегенерация ссылок для этого типа оплаты не поддерживается'
+                    ], 400);
+            }
+
+            if (!$result) {
+                \Log::error('Payment creation returned null result');
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не удалось создать новый платеж - пустой ответ'
+                ], 500);
+            }
+
+            // Получаем данные из Response объекта
+            $content = $result->getContent();
+            $resultData = json_decode($content, true);
+
+            \Log::info('Payment creation result', [
+                'has_result' => !is_null($result),
+                'content_length' => strlen($content),
+                'result_data' => $resultData
+            ]);
+
+            if (!$resultData || !isset($resultData['success']) || !$resultData['success']) {
+                \Log::error('Regenerate payment link failed', [
+                    'result_content' => $content,
+                    'result_data' => $resultData
+                ]);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не удалось создать новый платеж'
+                ], 500);
+            }
+
+            // Отправляем email с новой ссылкой клиенту
+            $this->sendNewPaymentLinkEmail($order, $resultData['payment_url'] ?? $resultData['data']['payment_url'] ?? null);
+
+            // Добавляем запись в лог заказа
+            \App\Models\ShopOrderLog::create([
+                'entity_id' => $order->id,
+                'section' => 'orders',
+                'action' => 'regenerate_payment_link',
+                'user_id' => $request->user()->id ?? null,
+                'old_value' => $order->payment_url,
+                'new_value' => $resultData['payment_url'] ?? $resultData['data']['payment_url'] ?? null,
+                'comment' => 'Перегенерация платежной ссылки'
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Платежная ссылка успешно перегенерирована',
+                'data' => [
+                    'payment_url' => $resultData['payment_url'] ?? $resultData['data']['payment_url'] ?? null,
+                    'transaction_id' => $resultData['transaction_id'] ?? $resultData['data']['transaction_id'] ?? null
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Ошибка перегенерации платежной ссылки: ' . $e->getMessage(), [
+                'order_id' => $orderId,
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка перегенерации платежной ссылки: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Отправка email с текущей платежной ссылкой клиенту
+     */
+    public function sendPaymentLinkEmail(Request $request, $orderId): JsonResponse
+    {
+        try {
+            $order = ShopOrder::findOrFail($orderId);
+
+            // Проверяем, что у заказа есть платежная ссылка
+            if (!$order->payment_url) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'У заказа нет платежной ссылки'
+                ], 400);
+            }
+
+            // Проверяем, что у клиента есть email
+            if (!$order->customer_email) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'У клиента не указан email'
+                ], 400);
+            }
+
+            // Проверяем, что заказ не оплачен
+            if ($order->payed) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Заказ уже оплачен'
+                ], 400);
+            }
+
+            // Отправляем email с текущей ссылкой
+            $this->sendNewPaymentLinkEmail($order, $order->payment_url);
+
+            // Добавляем запись в лог заказа
+            \App\Models\ShopOrderLog::create([
+                'entity_id' => $order->id,
+                'section' => 'orders',
+                'action' => 'send_payment_link_email',
+                'user_id' => $request->user()->id ?? null,
+                'old_value' => null,
+                'new_value' => $order->payment_url,
+                'comment' => 'Отправка email с платежной ссылкой клиенту'
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Email с платежной ссылкой отправлен клиенту'
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Ошибка отправки email с платежной ссылкой: ' . $e->getMessage(), [
+                'order_id' => $orderId,
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка отправки email: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Перегенерация платежа YooKassa с redirect confirmation
+     */
+    private function regenerateYooKassaPayment($paymentMethod, $transaction, $order)
+    {
+        try {
+            $settings = $paymentMethod->getApiSettings();
+
+            if (empty($settings['shop_id']) || empty($settings['secret_key'])) {
+                \Log::error('YooKassa settings missing for regeneration');
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не настроены параметры Ю-Касса'
+                ], 400);
+            }
+
+            $apiUrl = 'https://api.yookassa.ru/v3/payments';
+
+            $paymentData = [
+                'amount' => [
+                    'value' => number_format($order->total_amount, 2, '.', ''),
+                    'currency' => $settings['currency'] ?? 'RUB'
+                ],
+                'capture' => true,
+                'confirmation' => [
+                    'type' => 'redirect',
+                    'return_url' => config('app.frontend_url', 'https://skateandsnow.ru') . '/order/' . $order->order_number
+                ],
+                'description' => 'Заказ №' . $order->order_number,
+                'metadata' => [
+                    'transaction_id' => $transaction->id,
+                    'order_number' => $order->order_number,
+                    'regenerated' => true
+                ]
+            ];
+
+            $response = \Illuminate\Support\Facades\Http::withBasicAuth($settings['shop_id'], $settings['secret_key'])
+                ->withHeaders([
+                    'Content-Type' => 'application/json',
+                    'Idempotence-Key' => uniqid('regenerate_', true)
+                ])
+                ->withOptions(['verify' => false])
+                ->post($apiUrl, $paymentData);
+
+            if ($response->successful()) {
+                $responseData = $response->json();
+                $yookassaPaymentId = $responseData['id'] ?? null;
+
+                // Получаем payment_url
+                $paymentUrl = null;
+                if (isset($responseData['confirmation']['confirmation_url'])) {
+                    $paymentUrl = $responseData['confirmation']['confirmation_url'];
+                }
+
+                // Обновляем транзакцию
+                $transaction->update([
+                    'transaction_id' => $yookassaPaymentId,
+                    'response_data' => $responseData,
+                    'status' => 'pending'
+                ]);
+
+                // Обновляем заказ
+                $order->update([
+                    'yookassa_payment_id' => $yookassaPaymentId,
+                    'payment_url' => $paymentUrl
+                ]);
+
+                return response()->json([
+                    'success' => true,
+                    'payment_url' => $paymentUrl,
+                    'transaction_id' => $transaction->id,
+                    'yookassa_payment_id' => $yookassaPaymentId
+                ]);
+            } else {
+                \Log::error('YooKassa regeneration failed', [
+                    'status' => $response->status(),
+                    'response' => $response->body()
+                ]);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка создания платежа в YooKassa'
+                ], 500);
+            }
+
+        } catch (\Exception $e) {
+            \Log::error('YooKassa regeneration exception: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при перегенерации платежа YooKassa'
+            ], 500);
+        }
+    }
+
+    /**
+     * Перегенерация платежа Yandex Pay с redirect confirmation
+     */
+    private function regenerateYandexPayPayment($paymentMethod, $transaction, $order)
+    {
+        try {
+            $settings = $paymentMethod->getApiSettings();
+
+            if (!$this->validateYandexPaySettings($settings)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Неверные настройки Yandex Pay'
+                ], 400);
+            }
+
+            $apiUrl = ($settings['mode'] === 'test' || $settings['mode'] === 'sandbox')
+                ? 'https://sandbox.pay.yandex.ru/api/merchant/v1/orders'
+                : 'https://pay.yandex.ru/api/merchant/v1/orders';
+
+            $orderData = [
+                'orderId' => 'REGENERATE-' . $order->order_number . '-' . time(),
+                'currencyCode' => $settings['currency'] ?? 'RUB',
+                'amount' => [
+                    'value' => number_format($order->total_amount, 2, '.', ''),
+                    'currency' => $settings['currency'] ?? 'RUB'
+                ],
+                'cart' => [
+                    'items' => [
+                        [
+                            'productId' => 'ORDER-' . $order->id,
+                            'description' => 'Заказ №' . $order->order_number,
+                            'quantity' => ['count' => '1.0', 'available' => '1.0'],
+                            'amount' => [
+                                'value' => number_format($order->total_amount, 2, '.', ''),
+                                'currency' => $settings['currency'] ?? 'RUB'
+                            ],
+                            'total' => number_format($order->total_amount, 2, '.', '')
+                        ]
+                    ],
+                    'total' => ['amount' => number_format($order->total_amount, 2, '.', '')]
+                ],
+                'confirmation' => [
+                    'type' => 'redirect',
+                    'return_url' => config('app.frontend_url', 'https://skateandsnow.ru') . '/order/' . $order->order_number
+                ],
+                'metadata' => json_encode([
+                    'order_id' => $order->id,
+                    'transaction_id' => $transaction->id,
+                    'regenerated' => true
+                ])
+            ];
+
+            // Для Yandex Pay используем правильные заголовки как в оригинальном методе
+            $apiKey = ($settings['mode'] === 'test') ? $settings['merchant_id'] : $settings['secret_key'];
+
+            $response = \Illuminate\Support\Facades\Http::withOptions([
+                'verify' => false,
+                'timeout' => 30
+            ])->withHeaders([
+                'Authorization' => 'Api-Key ' . $apiKey,
+                'Content-Type' => 'application/json',
+                'X-Request-Id' => uniqid('regenerate_', true),
+                'X-Request-Timeout' => '30000',
+                'X-Request-Attempt' => '0'
+            ])->post($apiUrl, $orderData);
+
+            if ($response->successful()) {
+                $responseData = $response->json();
+                $yandexOrderId = $responseData['orderId'] ?? null;
+
+                // Получаем payment_url
+                $paymentUrl = $responseData['paymentUrl'] ?? null;
+
+                // Обновляем транзакцию
+                $transaction->update([
+                    'transaction_id' => $yandexOrderId,
+                    'response_data' => $responseData,
+                    'status' => 'pending'
+                ]);
+
+                // Обновляем заказ
+                $order->update([
+                    'yandex_pay_order_id' => $yandexOrderId,
+                    'payment_url' => $paymentUrl
+                ]);
+
+                return response()->json([
+                    'success' => true,
+                    'payment_url' => $paymentUrl,
+                    'transaction_id' => $transaction->id,
+                    'yandex_order_id' => $yandexOrderId
+                ]);
+            } else {
+                \Log::error('Yandex Pay regeneration failed', [
+                    'status' => $response->status(),
+                    'response' => $response->body()
+                ]);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка создания платежа в Yandex Pay'
+                ], 500);
+            }
+
+        } catch (\Exception $e) {
+            \Log::error('Yandex Pay regeneration exception: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при перегенерации платежа Yandex Pay'
+            ], 500);
+        }
+    }
+
+    /**
+     * Проверка настроек Yandex Pay
+     */
+    private function validateYandexPaySettings($settings)
+    {
+        return !empty($settings['api_key']) && !empty($settings['mode']);
+    }
+
+    /**
+     * Отправка email с новой платежной ссылкой клиенту
+     */
+    private function sendNewPaymentLinkEmail($order, $newPaymentUrl)
+    {
+        if (!$newPaymentUrl || !$order->customer_email) {
+            return;
+        }
+
+        try {
+            // Получаем контакты и настройки сайта
+            $contacts = \App\Models\Contact::where('is_main', 1)->first();
+            $siteInfo = \App\Models\Setting::where('key', 'site_info')->first();
+            $siteInfo = $siteInfo ? json_decode($siteInfo->value, true) : [];
+
+            \Illuminate\Support\Facades\Mail::send('emails.new-payment-link', [
+                'order' => $order,
+                'payment_url' => $newPaymentUrl,
+                'contacts' => $contacts,
+                'siteInfo' => $siteInfo
+            ], function ($message) use ($order, $siteInfo) {
+                $siteName = $siteInfo['site_name'] ?? 'Skate & Snow';
+                $message->to($order->customer_email, $order->customer_name)
+                        ->subject("Новая ссылка для оплаты заказа №{$order->order_number} - {$siteName}");
+            });
+
+            Log::info('New payment link email sent', [
+                'order_id' => $order->id,
+                'customer_email' => $order->customer_email
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to send new payment link email: ' . $e->getMessage(), [
+                'order_id' => $order->id,
+                'customer_email' => $order->customer_email
+            ]);
         }
     }
 }

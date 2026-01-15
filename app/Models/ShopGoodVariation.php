@@ -14,6 +14,7 @@ class ShopGoodVariation extends Model
 
     protected $fillable = [
         'good_id',
+        'supplier',
         'name',
         'sku',
         'price',

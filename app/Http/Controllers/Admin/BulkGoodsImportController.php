@@ -371,9 +371,7 @@ class BulkGoodsImportController extends Controller
 
                             // Если указан поставщик, ищем только вариации этого поставщика
                             if ($supplierName) {
-                                $variationQuery->whereHas('good', function($query) use ($supplierName) {
-                                    $query->where('supplier', $supplierName);
-                                });
+                                $variationQuery->where('supplier', $supplierName);
                             }
 
                             $existingVariation = $variationQuery->first();
@@ -3238,8 +3236,11 @@ class BulkGoodsImportController extends Controller
             // Сортируем ID атрибутов для сравнения
             sort($attributeValueIds);
 
-            // Ищем существующую вариацию с такой же комбинацией атрибутов
-            $existingVariation = $this->findVariationByAttributes($good->id, $attributeValueIds);
+            // Получаем поставщика для вариации
+            $variationSupplier = isset($goodData['supplier_name']) && trim($goodData['supplier_name']) !== '' ? trim($goodData['supplier_name']) : null;
+
+            // Ищем существующую вариацию с такой же комбинацией атрибутов и поставщиком
+            $existingVariation = $this->findVariationByAttributes($good->id, $attributeValueIds, $variationSupplier);
 
             if ($existingVariation) {
                 // Вариация существует - обновляем все поля из goodData
@@ -3295,7 +3296,12 @@ class BulkGoodsImportController extends Controller
                 if (isset($goodData['is_active'])) {
                     $existingVariation->is_active = $goodData['is_active'];
                 }
-                
+
+                // Обновляем поставщика вариации
+                if (isset($goodData['supplier_name']) && trim($goodData['supplier_name']) !== '') {
+                    $existingVariation->supplier = trim($goodData['supplier_name']);
+                }
+
                 try {
                     $existingVariation->save();
                 } catch (QueryException $e) {
@@ -3335,6 +3341,7 @@ class BulkGoodsImportController extends Controller
                 try {
                     $variationDataToCreate = [
                         'good_id' => $good->id,
+                        'supplier' => isset($goodData['supplier_name']) && trim($goodData['supplier_name']) !== '' ? trim($goodData['supplier_name']) : null,
                         'name' => $good->name,
                         'sku' => $variationSku,
                         'price' => $variationPrice,
@@ -3370,10 +3377,14 @@ class BulkGoodsImportController extends Controller
                         // Пропускаем ошибку дублирования SKU - это разрешено для вариаций
                         // Пробуем найти существующую вариацию с таким же SKU и обновить её
                         
-                        // Ищем существующую вариацию с таким же SKU
-                        $existingVariationBySku = ShopGoodVariation::where('good_id', $good->id)
-                            ->where('sku', $variationSku)
-                            ->first();
+                        // Ищем существующую вариацию с таким же SKU и поставщиком
+                        $supplierName = isset($goodData['supplier_name']) && trim($goodData['supplier_name']) !== '' ? trim($goodData['supplier_name']) : null;
+                        $skuQuery = ShopGoodVariation::where('good_id', $good->id)
+                            ->where('sku', $variationSku);
+                        if ($supplierName) {
+                            $skuQuery->where('supplier', $supplierName);
+                        }
+                        $existingVariationBySku = $skuQuery->first();
                         
                         if ($existingVariationBySku) {
                             // Обновляем существующую вариацию - все поля из goodData
@@ -3419,7 +3430,12 @@ class BulkGoodsImportController extends Controller
                             if (isset($goodData['is_active'])) {
                                 $existingVariationBySku->is_active = $goodData['is_active'];
                             }
-                            
+
+                            // Обновляем поставщика вариации
+                            if (isset($goodData['supplier_name']) && trim($goodData['supplier_name']) !== '') {
+                                $existingVariationBySku->supplier = trim($goodData['supplier_name']);
+                            }
+
                             try {
                                 $existingVariationBySku->save();
                             } catch (QueryException $saveException) {
@@ -3666,10 +3682,14 @@ class BulkGoodsImportController extends Controller
     /**
      * Найти вариацию по комбинации атрибутов
      */
-    private function findVariationByAttributes($goodId, $attributeValueIds)
+    private function findVariationByAttributes($goodId, $attributeValueIds, $supplier = null)
     {
-        // Получаем все вариации товара
-        $variations = ShopGoodVariation::where('good_id', $goodId)->get();
+        // Получаем вариации товара, фильтруя по поставщику если он указан
+        $query = ShopGoodVariation::where('good_id', $goodId);
+        if ($supplier !== null) {
+            $query->where('supplier', $supplier);
+        }
+        $variations = $query->get();
         
         foreach ($variations as $variation) {
             // Получаем атрибуты существующей вариации
@@ -3802,15 +3822,12 @@ class BulkGoodsImportController extends Controller
                 ->toArray();
 
 
-            // Проверяем вариации
-            $variationsCount = ShopGoodVariation::whereHas('good', function($query) use ($supplierName) {
-                $query->where('supplier', $supplierName);
-            })->count();
+            // Проверяем вариации с указанным поставщиком
+            $variationsCount = ShopGoodVariation::where('supplier', $supplierName)->count();
 
-            // Обнуляем остатки ВСЕХ вариаций товаров поставщика только для выбранных полей
-            $variationsUpdated = ShopGoodVariation::whereHas('good', function($query) use ($supplierName) {
-                $query->where('supplier', $supplierName);
-            })->update($updateFields);
+            // Обнуляем остатки вариаций с указанным поставщиком только для выбранных полей
+            $variationsUpdated = ShopGoodVariation::where('supplier', $supplierName)
+                ->update($updateFields);
 
             $updatedVariations = $variationsUpdated;
 

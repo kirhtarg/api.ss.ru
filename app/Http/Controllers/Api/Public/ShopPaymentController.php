@@ -117,7 +117,7 @@ class ShopPaymentController extends Controller
     /**
      * Создать платеж через Ю-Касса
      */
-    private function createYooKassaPayment(ShopPaymentMethod $paymentMethod, ShopPaymentTransaction $transaction, array $data): JsonResponse
+    public function createYooKassaPayment(ShopPaymentMethod $paymentMethod, ShopPaymentTransaction $transaction, array $data): JsonResponse
     {
         try {
             $settings = $paymentMethod->getApiSettings();
@@ -368,7 +368,7 @@ class ShopPaymentController extends Controller
     /**
      * Создать платеж через Яндекс Пэй
      */
-    private function createYandexPayPayment(ShopPaymentMethod $paymentMethod, ShopPaymentTransaction $transaction, array $data): JsonResponse
+    public function createYandexPayPayment(ShopPaymentMethod $paymentMethod, ShopPaymentTransaction $transaction, array $data): JsonResponse
     {
         try {
             $settings = $paymentMethod->getApiSettings();

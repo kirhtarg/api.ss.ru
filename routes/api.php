@@ -1581,6 +1581,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('/{id}/cdek/waybill/download', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'downloadCdekWaybill']);
                 Route::post('/{id}/items', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'addItem']);
                 Route::delete('/{id}/items/{itemId}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'removeItem']);
+                Route::post('/{id}/regenerate-payment-link', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'regeneratePaymentLink']);
+                Route::post('/{id}/send-payment-link-email', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'sendPaymentLinkEmail']);
                 // Общие роуты с {id} должны быть в конце
                 Route::get('/{id}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'show']);
                 Route::put('/{id}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'update']);
