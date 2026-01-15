@@ -1332,6 +1332,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/bulk/create-variations', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'bulkCreateVariations']);
                 Route::post('/transfer-data', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'transferData']);
                 Route::post('/change-variation', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'changeVariation']);
+                Route::post('/transfer-media-var-to-main', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'transferMediaVarToMain']);
+                Route::get('/variations/images-count', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getVariationsImagesCount']);
                 Route::post('/check-duplicates', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'checkDuplicates']);
                 Route::post('/bulk-import', [\App\Http\Controllers\Admin\BulkGoodsImportController::class, 'bulkImport']);
                 Route::post('/test-reset-supplier-stocks', [\App\Http\Controllers\Admin\BulkGoodsImportController::class, 'testResetSupplierStocks']);

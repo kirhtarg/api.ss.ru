@@ -5393,7 +5393,9 @@ class ShopGoodsController extends Controller
             'goods_without_variations' => 'required|array|min:1',
             'goods_without_variations.*.update_description' => 'nullable|boolean',
             'goods_without_variations.*.update_short_description' => 'nullable|boolean',
-            'goods_without_variations.*.update_slug' => 'nullable|boolean'
+            'goods_without_variations.*.update_slug' => 'nullable|boolean',
+            'goods_without_variations.*.selected_image_ids' => 'nullable|array',
+            'goods_without_variations.*.selected_image_ids.*' => 'exists:shop_good_images,id'
         ]);
 
         if ($basicValidator->fails()) {
@@ -5519,6 +5521,7 @@ class ShopGoodsController extends Controller
                 $updateDescription = $goodData['update_description'] ?? false;
                 $updateShortDescription = $goodData['update_short_description'] ?? false;
                 $updateSlug = $goodData['update_slug'] ?? false;
+                $selectedImageIds = $goodData['selected_image_ids'] ?? [];
 
                 // Загружаем товар без вариаций
                 $goodWithoutVariations = ShopGood::with(['images'])->findOrFail($goodId);
@@ -5568,11 +5571,16 @@ class ShopGoodsController extends Controller
                 // Копируем изображения товара в каждую вариацию
                 // Это позволяет каждой вариации иметь свои собственные изображения
                 if (!empty($variationIds)) {
-                    // Получаем все изображения товара
-                    $sourceImages = DB::table('shop_good_images')
+                    // Получаем изображения товара - либо выбранные, либо все
+                    $sourceImagesQuery = DB::table('shop_good_images')
                         ->where('good_id', $goodWithoutVariations->id)
-                        ->whereNull('variation_id')
-                        ->get();
+                        ->whereNull('variation_id');
+
+                    if (!empty($selectedImageIds)) {
+                        $sourceImagesQuery->whereIn('id', $selectedImageIds);
+                    }
+
+                    $sourceImages = $sourceImagesQuery->get();
 
                     $imagesFound = $sourceImages->count();
                     $totalImagesCopied = 0;
@@ -5600,7 +5608,10 @@ class ShopGoodsController extends Controller
                         'variation_ids' => $variationIds,
                         'images_found' => $imagesFound,
                         'images_copied' => $totalImagesCopied,
-                        'note' => 'Изображения скопированы в каждую вариацию'
+                        'selected_images' => !empty($selectedImageIds),
+                        'note' => !empty($selectedImageIds)
+                            ? 'Выбранные изображения скопированы в каждую вариацию'
+                            : 'Все изображения скопированы в каждую вариацию'
                     ];
                 }
 
@@ -5730,6 +5741,138 @@ class ShopGoodsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка изменения вариации: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Перенос медиа из вариаций в основной товар
+     */
+    public function transferMediaVarToMain(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'goods_ids' => 'required|array|min:1',
+            'goods_ids.*' => 'exists:shop_goods,id'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $goodsIds = $request->input('goods_ids');
+            $totalVariationsDeleted = 0;
+            $totalImagesTransferred = 0;
+            $processedGoods = [];
+
+            foreach ($goodsIds as $goodId) {
+                $good = ShopGood::with(['variations' => function($query) {
+                    $query->with('images');
+                }])->findOrFail($goodId);
+
+                // Проверяем, что товар имеет вариации
+                if ($good->variations->isEmpty()) {
+                    continue; // Пропускаем товары без вариаций
+                }
+
+                $goodImagesTransferred = 0;
+
+                // Обрабатываем каждую вариацию
+                foreach ($good->variations as $variation) {
+                    // Переносим все изображения из вариации в основной товар
+                    foreach ($variation->images as $image) {
+                        // Меняем принадлежность изображения с вариации на товар
+                        $image->update([
+                            'good_id' => $good->id,
+                            'variation_id' => null
+                        ]);
+                        $goodImagesTransferred++;
+                        $totalImagesTransferred++;
+                    }
+
+                    // Удаляем вариацию
+                    $variation->delete();
+                    $totalVariationsDeleted++;
+                }
+
+                $processedGoods[] = [
+                    'id' => $good->id,
+                    'name' => $good->name,
+                    'variations_deleted' => $good->variations->count(),
+                    'images_transferred' => $goodImagesTransferred
+                ];
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Медиа успешно перенесено из вариаций в основной товар. Удалено вариаций: ' . $totalVariationsDeleted . '. Перенесено изображений: ' . $totalImagesTransferred,
+                'data' => [
+                    'processed_goods' => $processedGoods,
+                    'total_variations_deleted' => $totalVariationsDeleted,
+                    'total_images_transferred' => $totalImagesTransferred
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Ошибка переноса медиа из вариаций: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка переноса медиа из вариаций: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить количество изображений в вариациях для указанных товаров
+     */
+    public function getVariationsImagesCount(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'ids' => 'required|array|min:1',
+            'ids.*' => 'exists:shop_goods,id'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $goodsIds = $request->input('ids');
+            $result = [];
+
+            foreach ($goodsIds as $goodId) {
+                $imagesCount = DB::table('shop_good_images')
+                    ->join('shop_good_variations', 'shop_good_images.variation_id', '=', 'shop_good_variations.id')
+                    ->where('shop_good_variations.good_id', $goodId)
+                    ->whereNull('shop_good_images.good_id') // Только изображения вариаций, не товара
+                    ->count();
+
+                $result[$goodId] = $imagesCount;
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $result
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Ошибка получения количества изображений в вариациях: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения количества изображений в вариациях: ' . $e->getMessage()
             ], 500);
         }
     }
