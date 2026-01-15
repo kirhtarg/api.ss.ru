@@ -22,33 +22,8 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        // Автоматически генерируем MAIL_FROM_ADDRESS если не задан явно
-        if (!env('MAIL_FROM_ADDRESS')) {
-            $frontendUrl = env('FRONTEND_URL', 'http://localhost:3000');
-
-            // Извлекаем домен из URL
-            $domain = null;
-            if (filter_var($frontendUrl, FILTER_VALIDATE_URL)) {
-                // Если это полный URL с протоколом
-                $domain = parse_url($frontendUrl, PHP_URL_HOST);
-            } elseif (preg_match('/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/', $frontendUrl)) {
-                // Если это просто домен без протокола
-                $domain = $frontendUrl;
-            }
-
-            // Определяем адрес отправителя
-            if ($domain && !in_array($domain, ['localhost', '127.0.0.1', '::1'])) {
-                // Используем info@ для доменов skateandsnow.ru
-                if (str_contains($domain, 'skateandsnow.ru')) {
-                    config(['mail.from.address' => 'info@skateandsnow.ru']);
-                } else {
-                    config(['mail.from.address' => 'noreply@' . $domain]);
-                }
-            } else {
-                // Для localhost используем info@skateandsnow.ru как fallback
-                config(['mail.from.address' => 'info@skateandsnow.ru']);
-            }
-        }
+        // MAIL_FROM_ADDRESS берется только из .env файла
+        // Никакой автоматической генерации!
 
         // Регистрируем VK провайдер для Socialite
         Event::listen(SocialiteWasCalled::class, SocialiteWasCalledListener::class);
