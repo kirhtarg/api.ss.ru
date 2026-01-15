@@ -1398,7 +1398,12 @@ class ShopGoodVariationsController extends Controller
                         if ($activateDemping) {
                             $variation->show_demping = true;
                         }
-                        
+
+                        // Обработка поля is_demping
+                        if (isset($data['is_demping'])) {
+                            $variation->is_demping = (bool) $data['is_demping'];
+                        }
+
                         $variation->save();
                         $updatedCount++;
                     }
@@ -1631,7 +1636,12 @@ class ShopGoodVariationsController extends Controller
                         if ($activateDemping) {
                             $variation->show_demping = true;
                         }
-                        
+
+                        // Обработка поля is_demping
+                        if (isset($data['is_demping'])) {
+                            $variation->is_demping = (bool) $data['is_demping'];
+                        }
+
                         $variation->save();
                         $updatedCount++;
                     }

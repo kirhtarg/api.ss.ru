@@ -2100,6 +2100,11 @@ class ShopGoodsController extends Controller
                                 }
                             }
                         }
+
+                        // Обработка поля is_demping
+                        if (isset($data['is_demping'])) {
+                            $good->update(['is_demping' => (bool) $data['is_demping']]);
+                        }
                         break;
                     case 'toggle_show_demping':
                         if (isset($data['show_demping'])) {
