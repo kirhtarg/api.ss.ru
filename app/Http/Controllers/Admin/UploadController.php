@@ -176,12 +176,8 @@ class UploadController extends Controller
                 $canvas = $manager->create($width, $height);
                 $canvas->fill('ffffff'); // Белый фон
 
-                // Вычисляем позицию для центрирования
-                $x = (int)(($width - $fittedWidth) / 2);
-                $y = (int)(($height - $fittedHeight) / 2);
-
-                // Накладываем вписанное изображение на белый фон
-                $canvas->place($fittedImage, 'top-left', $x, $y);
+                // Накладываем вписанное изображение на белый фон с центрированием
+                $canvas->place($fittedImage, 'center');
                 $image = $canvas;
             } elseif ($maintainAspectRatio) {
                 // Обрезаем изображение до точных размеров с сохранением пропорций
@@ -403,14 +399,8 @@ class UploadController extends Controller
                 // Вписываем изображение в размеры (fit_with_white)
                 $image->contain($width, $height);
 
-                // Вычисляем позицию для центрирования
-                $fittedWidth = $image->width();
-                $fittedHeight = $image->height();
-                $x = (int)(($width - $fittedWidth) / 2);
-                $y = (int)(($height - $fittedHeight) / 2);
-
-                // Накладываем изображение на белый фон
-                $canvas->place($image, 'top-left', $x, $y);
+                // Накладываем изображение на белый фон с центрированием
+                $canvas->place($image, 'center');
 
                 // ВСЕГДА конвертируем в JPG для удаления прозрачности (не оптимизируем)
                 $imageData = $canvas->toJpeg(100); // 100% качество, без оптимизации
@@ -439,14 +429,8 @@ class UploadController extends Controller
                 // Вписываем изображение в размеры
                 $image->contain($width, $height);
 
-                // Вычисляем позицию для центрирования
-                $fittedWidth = $image->width();
-                $fittedHeight = $image->height();
-                $x = (int)(($width - $fittedWidth) / 2);
-                $y = (int)(($height - $fittedHeight) / 2);
-
-                // Накладываем изображение на белый фон
-                $canvas->place($image, 'top-left', $x, $y);
+                // Накладываем изображение на белый фон с центрированием
+                $canvas->place($image, 'center');
 
                 // Сохраняем в оригинальном формате без оптимизации
                 if (strtolower($extension) === 'jpg' || strtolower($extension) === 'jpeg') {

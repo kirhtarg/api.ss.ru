@@ -1667,7 +1667,8 @@ class ShopGoodsController extends Controller
                 ]);
             }
 
-            // Специальная обработка для удаления выбранных вариаций с нулевым остатком и без медиа
+            // Специальная обработка для удаления выбранных вариаций с нулевым остатком
+            // с предварительным перемещением изображений в другие вариации товара
             if ($action === 'delete_zero_stock_no_media') {
                 $variationIds = $data['variation_ids'] ?? [];
 
@@ -1678,8 +1679,8 @@ class ShopGoodsController extends Controller
                     ], 400);
                 }
 
-                // Удаляем только указанные вариации (дополнительная проверка безопасности)
-                $variationsQuery = ShopGoodVariation::whereIn('id', $variationIds)
+                // Получаем вариации для обработки
+                $variationsToDelete = ShopGoodVariation::whereIn('id', $variationIds)
                     ->whereIn('good_id', $ids) // Дополнительная проверка, что вариации принадлежат выбранным товарам
                     ->where('stock_quantity', 0)
                     ->where(function($query) {
@@ -1690,17 +1691,66 @@ class ShopGoodsController extends Controller
                         $query->whereNull('fast_remote_stock_quantity')
                               ->orWhere('fast_remote_stock_quantity', 0);
                     })
-                    ->whereDoesntHave('images') // Нет изображений
-                    ->whereDoesntHave('videos'); // Нет видео
+                    ->with(['images', 'good']) // Загружаем изображения и товар
+                    ->get();
 
-                $deletedCount = $variationsQuery->delete();
+
+                $deletedCount = 0;
+                $movedImagesCount = 0;
+
+                foreach ($variationsToDelete as $variation) {
+                    // Если у вариации есть изображения, пытаемся их перенести
+                    if ($variation->images->count() > 0) {
+                        // Находим другие вариации того же товара (любые, кроме тех что будут удалены)
+                        // Приоритет: активные вариации с положительным остатком, затем активные вариации, затем любые другие
+                        $targetVariation = ShopGoodVariation::where('good_id', $variation->good_id)
+                            ->where('id', '!=', $variation->id)
+                            ->whereNotIn('id', $variationIds) // Исключаем все вариации, которые будут удалены в этом запросе
+                            ->orderByRaw('
+                                CASE
+                                    WHEN is_active = 1 AND (stock_quantity > 0 OR remote_stock_quantity > 0 OR fast_remote_stock_quantity > 0) THEN 1
+                                    WHEN is_active = 1 THEN 2
+                                    ELSE 3
+                                END,
+                                sort_order ASC
+                            ')
+                            ->first();
+
+                        // Если нашли целевую вариацию, перемещаем изображения
+                        if ($targetVariation) {
+                            foreach ($variation->images as $image) {
+                                $image->variation_id = $targetVariation->id;
+                                $image->save();
+                                $movedImagesCount++;
+                            }
+                        } else {
+                            // Если нет других вариаций, отвязываем изображения от вариации (привязываем к товару)
+                            foreach ($variation->images as $image) {
+                                $image->variation_id = null;
+                                $image->save();
+                                $movedImagesCount++;
+                            }
+                        }
+                    }
+                    // Вариации без изображений просто удаляются без дополнительных действий
+
+                    // Удаляем вариацию
+                    $variation->delete();
+                    $deletedCount++;
+                }
 
                 DB::commit();
 
+                $message = "Удалено {$deletedCount} вариаций с нулевым остатком";
+                if ($movedImagesCount > 0) {
+                    $message .= ". Перемещено {$movedImagesCount} изображений";
+                }
+
                 return response()->json([
                     'success' => true,
-                    'message' => "Удалено {$deletedCount} вариаций с нулевым остатком и без медиа",
+                    'message' => $message,
                     'deleted_count' => $deletedCount,
+                    'moved_images_count' => $movedImagesCount,
                     'variation_ids' => $variationIds
                 ]);
             }

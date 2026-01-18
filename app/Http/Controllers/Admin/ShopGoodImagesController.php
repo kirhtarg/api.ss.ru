@@ -113,6 +113,23 @@ class ShopGoodImagesController extends Controller
      */
     public function store(Request $request, $goodId): JsonResponse
     {
+
+        // Дополнительный простой лог
+        file_put_contents('F:/Work/Projects/SS/api.ss.ru/storage/logs/laravel.log', "[" . date('Y-m-d H:i:s') . "] STORE_LOGGING: goodId=$goodId\n", FILE_APPEND);
+
+        \Log::info('=== PNG DEBUG: ShopGoodImagesController::store START ===', [
+            'goodId' => $goodId,
+            'timestamp' => now(),
+            'method' => $request->method(),
+            'has_files' => $request->hasFile('images') || $request->hasFile('image'),
+            'files_count' => count($request->allFiles()),
+            'all_files' => array_keys($request->allFiles()),
+            'request_data_keys' => array_keys($request->all()),
+            'content_type' => $request->header('Content-Type'),
+            'user_id' => auth()->id(),
+            'bearer_token' => $request->bearerToken() ? 'present' : 'missing'
+        ]);
+
         $good = ShopGood::findOrFail($goodId);
 
         $validator = Validator::make($request->all(), [
@@ -171,11 +188,24 @@ class ShopGoodImagesController extends Controller
                 // Читаем параметры как строки и конвертируем в boolean
                 $whiteBackground = filter_var($request->input('white_background', '1'), FILTER_VALIDATE_BOOLEAN);
                 $fitWithWhiteBackground = filter_var($request->input('fit_with_white_background', '1'), FILTER_VALIDATE_BOOLEAN);
+
+                Log::info('DEBUG: Processing multiple images', [
+                    'uploadType' => $uploadType,
+                    'whiteBackground' => $whiteBackground,
+                    'fitWithWhiteBackground' => $fitWithWhiteBackground,
+                    'images_count' => count($images)
+                ]);
                 
-                foreach ($images as $image) {
+                foreach ($images as $index => $image) {
+                    Log::info('DEBUG: Processing image in batch', [
+                        'index' => $index,
+                        'filename' => $image->getClientOriginalName(),
+                        'size' => $image->getSize()
+                    ]);
+
                     $uploadedImage = $this->processAndSaveImage(
-                        $image, 
-                        $goodId, 
+                        $image,
+                        $goodId,
                         $uploadType,
                         $request->input('custom_width'),
                         $request->input('custom_height'),
@@ -292,6 +322,12 @@ class ShopGoodImagesController extends Controller
                 }
             }
 
+            \Log::info('=== PNG DEBUG: ShopGoodImagesController::store END SUCCESS ===', [
+                'goodId' => $goodId,
+                'image_id' => $goodImage->id,
+                'file_path' => $goodImage->file_path
+            ]);
+
             return response()->json([
                 'success' => true,
                 'message' => 'Изображение успешно загружено',
@@ -299,6 +335,13 @@ class ShopGoodImagesController extends Controller
             ], 201);
 
         } catch (\Exception $e) {
+
+            \Log::error('=== PNG DEBUG: ShopGoodImagesController::store ERROR ===', [
+                'goodId' => $goodId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка загрузки изображения: ' . $e->getMessage()
@@ -1585,12 +1628,27 @@ class ShopGoodImagesController extends Controller
      */
     private function processAndSaveImage($image, $goodId, $uploadType = 'system_fit', $customWidth = null, $customHeight = null, $whiteBackground = true, $fitWithWhiteBackground = true)
     {
+
         try {
+            // Прямой файл лог для гарантии записи
+            file_put_contents('F:/Work/Projects/SS/api.ss.ru/storage/logs/laravel.log', "[" . date('Y-m-d H:i:s') . "] PROCESS_START: goodId=$goodId\n", FILE_APPEND);
+
             // Создаем уникальное имя файла
             $extension = $image->getClientOriginalExtension();
             $filename = uniqid() . '.' . $extension;
             $path = "images/shop/goods/{$goodId}/{$filename}";
-            
+
+            Log::info('DEBUG: processAndSaveImage START', [
+                'goodId' => $goodId,
+                'uploadType' => $uploadType,
+                'extension' => $extension,
+                'filename' => $filename,
+                'whiteBackground' => $whiteBackground,
+                'fitWithWhiteBackground' => $fitWithWhiteBackground,
+                'customWidth' => $customWidth,
+                'customHeight' => $customHeight
+            ]);
+
             // Путь к папке public фронтенда
             $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
             $fullPath = $frontendPublicPath . '/' . $path;
@@ -1602,23 +1660,50 @@ class ShopGoodImagesController extends Controller
             }
             
             // Всегда обрабатываем изображения с белым фоном для PNG/GIF/WebP
-            $isTransparentFormat = in_array(strtolower($extension), ['png', 'gif', 'webp']);
-            
-            // Для PNG/GIF/WebP ВСЕГДА обрабатываем через Intervention Image для применения белого фона
-            // Для других форматов обрабатываем только если не original
-            $needsProcessing = $isTransparentFormat || ($uploadType !== 'original' && ($whiteBackground || $fitWithWhiteBackground));
-            
-            Log::info('Processing image', [
+            $extension = strtolower($extension);
+            $mimeType = $image->getMimeType();
+            $isTransparentFormat = in_array($extension, ['png', 'gif', 'webp']) ||
+                                   strpos($mimeType, 'png') !== false ||
+                                   strpos($mimeType, 'gif') !== false ||
+                                   strpos($mimeType, 'webp') !== false;
+
+            // Дополнительная проверка на PNG по MIME типу
+            $mimeType = $image->getMimeType();
+            $isPngByMime = strpos($mimeType, 'png') !== false;
+
+            file_put_contents('F:/Work/Projects/SS/api.ss.ru/storage/logs/laravel.log', "[" . date('Y-m-d H:i:s') . "] PROCESSING_START: extension=$extension, mime=$mimeType, isTransparent=$isTransparentFormat\n", FILE_APPEND);
+
+            Log::info('DEBUG: Processing image START', [
                 'extension' => $extension,
+                'mime_type' => $mimeType,
                 'isTransparentFormat' => $isTransparentFormat,
+                'isPngByMime' => $isPngByMime,
                 'whiteBackground' => $whiteBackground,
                 'fitWithWhiteBackground' => $fitWithWhiteBackground,
                 'uploadType' => $uploadType,
-                'needsProcessing' => $needsProcessing
+                'goodId' => $goodId,
+                'filename' => $filename
             ]);
-            
-            // ВСЕГДА обрабатываем PNG/GIF/WebP через Intervention Image
-            if ($isTransparentFormat || $needsProcessing) {
+
+            // Для PNG всегда устанавливаем флаг прозрачности независимо от расширения
+            if ($isPngByMime || $extension === 'png') {
+                $isTransparentFormat = true;
+            }
+
+            // ВСЕГДА обрабатываем PNG/GIF/WebP через Intervention Image для применения белого фона
+            // Для других форматов обрабатываем только если требуется изменение размера
+            Log::info('DEBUG: Checking processing conditions', [
+                'isTransparentFormat' => $isTransparentFormat,
+                'uploadType' => $uploadType,
+                'whiteBackground' => $whiteBackground,
+                'fitWithWhiteBackground' => $fitWithWhiteBackground,
+                'will_process' => $isTransparentFormat || ($uploadType !== 'original' && ($whiteBackground || $fitWithWhiteBackground))
+            ]);
+
+            if ($isTransparentFormat) {
+                // ПРОСТОЙ ЛОГ ПЕРЕД ОБРАБОТКОЙ PNG
+                file_put_contents('F:/Work/Projects/SS/api.ss.ru/process_debug.log', "[" . date('Y-m-d H:i:s') . "] PNG_PROCESSING: Starting PNG processing for goodId=$goodId\n", FILE_APPEND);
+
                 $manager = new ImageManager(new Driver());
                 $processedImage = $manager->read($image);
                 
@@ -1641,6 +1726,11 @@ class ShopGoodImagesController extends Controller
                 
                 // Для PNG/GIF/WebP с прозрачностью ВСЕГДА применяем белый фон
                 if ($isTransparentFormat) {
+                    Log::info('DEBUG: Processing PNG/GIF/WEBP image', [
+                        'original_size' => $processedImage->width() . 'x' . $processedImage->height(),
+                        'target_size' => $width . 'x' . $height,
+                        'uploadType' => $uploadType
+                    ]);
                     // Если размеры не определены (original без изменения размера), используем оригинальные
                     if (!$width || !$height) {
                         $width = $processedImage->width();
@@ -1650,20 +1740,17 @@ class ShopGoodImagesController extends Controller
                     // Создаем новое изображение с белым фоном
                     $canvas = $manager->create($width, $height);
                     $canvas->fill('ffffff'); // Белый фон
-                    
+
+                    // ПРОСТОЙ ЛОГ ПОСЛЕ СОЗДАНИЯ БЕЛОГО ФОНА
+                    file_put_contents('F:/Work/Projects/SS/api.ss.ru/process_debug.log', "[" . date('Y-m-d H:i:s') . "] WHITE_BACKGROUND_CREATED: Created canvas with white background {$width}x{$height}\n", FILE_APPEND);
+
                     // Если нужно изменить размер, вписываем изображение
                     if ($uploadType !== 'original' && $fitWithWhiteBackground && $width && $height) {
                         $processedImage->contain($width, $height);
                     }
                     
-                    // Вычисляем позицию для центрирования
-                    $fittedWidth = $processedImage->width();
-                    $fittedHeight = $processedImage->height();
-                    $x = (int)(($width - $fittedWidth) / 2);
-                    $y = (int)(($height - $fittedHeight) / 2);
-                    
-                    // Накладываем изображение на белый фон
-                    $canvas->place($processedImage, 'top-left', $x, $y);
+                    // Накладываем изображение на белый фон с центрированием
+                    $canvas->place($processedImage, 'center');
                     $processedImage = $canvas;
                     
                     // ВСЕГДА конвертируем в JPG для удаления прозрачности
@@ -1673,24 +1760,23 @@ class ShopGoodImagesController extends Controller
                     
                     // Сохраняем обработанное изображение
                     file_put_contents($fullPath, $imageData);
-                    
+
+                    Log::info('DEBUG: PNG processing completed successfully', [
+                        'final_path' => $path,
+                        'file_size' => strlen($imageData) . ' bytes'
+                    ]);
+
                     return ['path' => $path];
                 } elseif ($uploadType !== 'original' && $fitWithWhiteBackground) {
                     // Вписываем изображение в размеры с белым фоном
                     $processedImage->contain($width, $height);
-                    
+
                     // Создаем новое изображение с белым фоном
                     $canvas = $manager->create($width, $height);
                     $canvas->fill('ffffff'); // Белый фон
-                    
-                    // Вычисляем позицию для центрирования
-                    $fittedWidth = $processedImage->width();
-                    $fittedHeight = $processedImage->height();
-                    $x = (int)(($width - $fittedWidth) / 2);
-                    $y = (int)(($height - $fittedHeight) / 2);
-                    
-                    // Накладываем вписанное изображение на белый фон
-                    $canvas->place($processedImage, 'top-left', $x, $y);
+
+                    // Накладываем вписанное изображение на белый фон с центрированием
+                    $canvas->place($processedImage, 'center');
                     $processedImage = $canvas;
                 } elseif ($uploadType === 'system_crop') {
                     // Обрезка с сохранением пропорций
@@ -1714,16 +1800,16 @@ class ShopGoodImagesController extends Controller
                 if ($isTransparentFormat) {
                     $manager = new ImageManager(new Driver());
                     $processedImage = $manager->read($image);
-                    
+
                     $width = $processedImage->width();
                     $height = $processedImage->height();
-                    
+
                     // Создаем новое изображение с белым фоном
                     $canvas = $manager->create($width, $height);
                     $canvas->fill('ffffff'); // Белый фон
-                    
-                    // Накладываем изображение на белый фон
-                    $canvas->place($processedImage, 'top-left', 0, 0);
+
+                    // Накладываем изображение на белый фон с центрированием
+                    $canvas->place($processedImage, 'center');
                     
                     // Конвертируем в JPG для удаления прозрачности
                     $imageData = $canvas->toJpeg(90);

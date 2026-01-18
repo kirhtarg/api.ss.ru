@@ -1769,7 +1769,7 @@ class ShopGoodVariationsController extends Controller
             // - stock_quantity = 0
             // - remote_stock_quantity IS NULL OR remote_stock_quantity = 0
             // - fast_remote_stock_quantity IS NULL OR fast_remote_stock_quantity = 0
-            // Убираем условие "без медиа" для упрощения
+            // Все вариации с 0 остатком (с изображениями или без)
             $variations = ShopGoodVariation::whereIn('good_id', $goodIds)
                 ->where('stock_quantity', 0)
                 ->where(function($query) {
@@ -1780,7 +1780,7 @@ class ShopGoodVariationsController extends Controller
                     $query->whereNull('fast_remote_stock_quantity')
                           ->orWhere('fast_remote_stock_quantity', 0);
                 })
-                ->with(['good:id,name,sku']) // Загружаем данные товара для отображения
+                ->with(['good:id,name,sku', 'images']) // Загружаем данные товара и изображения для отображения
                 ->select([
                     'id',
                     'good_id',
@@ -1801,7 +1801,8 @@ class ShopGoodVariationsController extends Controller
                         'sku' => $variation->sku,
                         'stock' => $variation->stock_quantity,
                         'remote_stock' => $variation->remote_stock_quantity,
-                        'fast_remote_stock' => $variation->fast_remote_stock_quantity
+                        'fast_remote_stock' => $variation->fast_remote_stock_quantity,
+                        'images_count' => $variation->images->count()
                     ];
                 }),
                 'count' => $variations->count()

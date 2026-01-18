@@ -813,23 +813,19 @@ class ImageUploadController extends Controller
                 // Создаем копию изображения для вписывания (читаем файл заново)
                 $fittedImage = $manager->read($file);
                 $fittedImage->contain($width, $height);
-                
+
                 // Получаем размеры вписанного изображения
                 $fittedWidth = $fittedImage->width();
                 $fittedHeight = $fittedImage->height();
-                
+
                 // Создаем новое изображение с белым фоном нужного размера
                 $canvas = $manager->create($width, $height);
                 $canvas->fill('ffffff'); // Белый фон
-                
-                // Вычисляем позицию для центрирования
-                $x = (int)(($width - $fittedWidth) / 2);
-                $y = (int)(($height - $fittedHeight) / 2);
-                
-                // Накладываем вписанное изображение на белый фон
-                $canvas->place($fittedImage, 'top-left', $x, $y);
+
+                // Накладываем вписанное изображение на белый фон с центрированием
+                $canvas->place($fittedImage, 'center');
                 $image = $canvas;
-                
+
                 Log::info('Изображение вписано в размеры: ' . $width . 'x' . $height . ' с белым фоном');
             } elseif ($maintainAspectRatio) {
                 // Обрезаем изображение до точных размеров с сохранением пропорций
@@ -935,23 +931,19 @@ class ImageUploadController extends Controller
                 // Создаем копию изображения для вписывания (читаем из данных изображения)
                 $fittedImage = $manager->read($imageContent);
                 $fittedImage->contain($width, $height);
-                
+
                 // Получаем размеры вписанного изображения
                 $fittedWidth = $fittedImage->width();
                 $fittedHeight = $fittedImage->height();
-                
+
                 // Создаем новое изображение с белым фоном нужного размера
                 $canvas = $manager->create($width, $height);
                 $canvas->fill('ffffff'); // Белый фон
-                
-                // Вычисляем позицию для центрирования
-                $x = (int)(($width - $fittedWidth) / 2);
-                $y = (int)(($height - $fittedHeight) / 2);
-                
-                // Накладываем вписанное изображение на белый фон
-                $canvas->place($fittedImage, 'top-left', $x, $y);
+
+                // Накладываем вписанное изображение на белый фон с центрированием
+                $canvas->place($fittedImage, 'center');
                 $image = $canvas;
-                
+
                 Log::info('Изображение вписано в размеры: ' . $width . 'x' . $height . ' с белым фоном');
             } elseif ($maintainAspectRatio) {
                 // Обрезаем изображение до точных размеров с сохранением пропорций

@@ -43,6 +43,7 @@ class ShopGoodImageController extends Controller
      */
     public function store(Request $request, ShopGood $good): JsonResponse
     {
+
         $validator = Validator::make($request->all(), [
             'images' => 'required|array|max:10',
             'images.*' => 'required|image|mimes:jpeg,png,jpg,gif,webp|max:51200', // 50MB max
@@ -306,120 +307,89 @@ class ShopGoodImageController extends Controller
      */
     private function processImage($file, $uploadType, $systemWidth, $systemHeight, $customWidth = null, $customHeight = null)
     {
-        $image = imagecreatefromstring(file_get_contents($file->getRealPath()));
-        
+
+        // Используем Intervention Image для правильной обработки PNG с прозрачностью
+        $manager = new \Intervention\Image\ImageManager(
+            new \Intervention\Image\Drivers\Gd\Driver()
+        );
+
+        $image = $manager->read($file->getRealPath());
+
         if (!$image) {
             throw new \Exception('Не удалось обработать изображение');
         }
 
-        $originalWidth = imagesx($image);
-        $originalHeight = imagesy($image);
+        $originalWidth = $image->width();
+        $originalHeight = $image->height();
+
+        // Определяем целевые размеры
+        $targetWidth = null;
+        $targetHeight = null;
 
         switch ($uploadType) {
             case 'original':
-                // Возвращаем оригинальное изображение
-                ob_start();
-                imagejpeg($image, null, 90);
-                $result = ob_get_contents();
-                ob_end_clean();
-                imagedestroy($image);
-                return $result;
+                // Для PNG с прозрачностью ВСЕГДА применяем белый фон
+                $extension = strtolower($file->getClientOriginalExtension());
+                $mimeType = $file->getMimeType();
+                $isTransparentFormat = in_array($extension, ['png', 'gif', 'webp']) ||
+                                       strpos($mimeType, 'png') !== false ||
+                                       strpos($mimeType, 'gif') !== false ||
+                                       strpos($mimeType, 'webp') !== false;
+
+                if ($isTransparentFormat) {
+                    // Создаем белый фон и накладываем изображение
+                    $canvas = $manager->create($originalWidth, $originalHeight);
+                    $canvas->fill('ffffff'); // Белый фон
+                    $canvas->place($image, 'center');
+                    return $canvas->toJpeg(90);
+                } else {
+                    // Для обычных изображений возвращаем как JPEG
+                    return $image->toJpeg(90);
+                }
 
             case 'system_crop':
-                return $this->cropImage($image, $systemWidth, $systemHeight);
+                $targetWidth = $systemWidth;
+                $targetHeight = $systemHeight;
+                // Обрезаем по центру
+                $image->cover($targetWidth, $targetHeight);
+                break;
 
             case 'system_fit':
-                return $this->fitImage($image, $systemWidth, $systemHeight);
+                $targetWidth = $systemWidth;
+                $targetHeight = $systemHeight;
+                // Вписываем с сохранением пропорций
+                $image->contain($targetWidth, $targetHeight);
+                break;
 
             case 'custom_fit':
-                return $this->fitImage($image, $customWidth, $customHeight);
+                $targetWidth = $customWidth;
+                $targetHeight = $customHeight;
+                // Вписываем с сохранением пропорций
+                $image->contain($targetWidth, $targetHeight);
+                break;
 
             default:
-                imagedestroy($image);
                 throw new \Exception('Неизвестный тип обработки изображения');
+        }
+
+        // Для всех типов обработки кроме original, применяем белый фон для прозрачных форматов
+        $extension = strtolower($file->getClientOriginalExtension());
+        $mimeType = $file->getMimeType();
+        $isTransparentFormat = in_array($extension, ['png', 'gif', 'webp']) ||
+                               strpos($mimeType, 'png') !== false ||
+                               strpos($mimeType, 'gif') !== false ||
+                               strpos($mimeType, 'webp') !== false;
+
+        if ($isTransparentFormat && $targetWidth && $targetHeight) {
+            // Создаем белый фон нужного размера
+            $canvas = $manager->create($targetWidth, $targetHeight);
+            $canvas->fill('ffffff'); // Белый фон
+            $canvas->place($image, 'center');
+            return $canvas->toJpeg(90);
+        } else {
+            // Для обычных изображений возвращаем как JPEG
+            return $image->toJpeg(90);
         }
     }
 
-    /**
-     * Обрезать изображение под заданные размеры
-     */
-    private function cropImage($image, $targetWidth, $targetHeight)
-    {
-        $originalWidth = imagesx($image);
-        $originalHeight = imagesy($image);
-
-        // Вычисляем масштаб
-        $scale = max($targetWidth / $originalWidth, $targetHeight / $originalHeight);
-        
-        // Новые размеры с сохранением пропорций
-        $newWidth = (int)($originalWidth * $scale);
-        $newHeight = (int)($originalHeight * $scale);
-
-        // Создаем временное изображение
-        $tempImage = imagecreatetruecolor($newWidth, $newHeight);
-        imagecopyresampled($tempImage, $image, 0, 0, 0, 0, $newWidth, $newHeight, $originalWidth, $originalHeight);
-
-        // Создаем финальное изображение
-        $finalImage = imagecreatetruecolor($targetWidth, $targetHeight);
-        
-        // Вычисляем координаты для обрезки по центру
-        $x = (int)(($newWidth - $targetWidth) / 2);
-        $y = (int)(($newHeight - $targetHeight) / 2);
-        
-        imagecopy($finalImage, $tempImage, 0, 0, $x, $y, $targetWidth, $targetHeight);
-
-        ob_start();
-        imagejpeg($finalImage, null, 90);
-        $result = ob_get_contents();
-        ob_end_clean();
-
-        imagedestroy($image);
-        imagedestroy($tempImage);
-        imagedestroy($finalImage);
-
-        return $result;
-    }
-
-    /**
-     * Подогнать изображение под заданные размеры с заполнением
-     */
-    private function fitImage($image, $targetWidth, $targetHeight)
-    {
-        $originalWidth = imagesx($image);
-        $originalHeight = imagesy($image);
-
-        // Вычисляем масштаб
-        $scale = min($targetWidth / $originalWidth, $targetHeight / $originalHeight);
-        
-        // Новые размеры с сохранением пропорций
-        $newWidth = (int)($originalWidth * $scale);
-        $newHeight = (int)($originalHeight * $scale);
-
-        // Создаем финальное изображение с белым фоном
-        $finalImage = imagecreatetruecolor($targetWidth, $targetHeight);
-        $white = imagecolorallocate($finalImage, 255, 255, 255);
-        imagefill($finalImage, 0, 0, $white);
-
-        // Вычисляем координаты для центрирования
-        $x = (int)(($targetWidth - $newWidth) / 2);
-        $y = (int)(($targetHeight - $newHeight) / 2);
-
-        // Создаем масштабированное изображение
-        $scaledImage = imagecreatetruecolor($newWidth, $newHeight);
-        imagecopyresampled($scaledImage, $image, 0, 0, 0, 0, $newWidth, $newHeight, $originalWidth, $originalHeight);
-
-        // Копируем на белый фон
-        imagecopy($finalImage, $scaledImage, $x, $y, 0, 0, $newWidth, $newHeight);
-
-        ob_start();
-        imagejpeg($finalImage, null, 90);
-        $result = ob_get_contents();
-        ob_end_clean();
-
-        imagedestroy($image);
-        imagedestroy($scaledImage);
-        imagedestroy($finalImage);
-
-        return $result;
-    }
 }

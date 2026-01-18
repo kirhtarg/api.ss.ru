@@ -2,6 +2,7 @@
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 use App\Http\Controllers\Auth\AuthController;
@@ -11,6 +12,8 @@ use App\Http\Controllers\Api\Public\SiteInfoController;
 use App\Http\Controllers\Api\Public\SiteTemplateController;
 use App\Http\Controllers\Api\Public\ShopTemplateController;
 use App\Http\Controllers\Api\Public\SiteMenuController;
+
+// CORS уже настроен в OPTIONS обработчике выше
 
 
 /*
@@ -24,8 +27,54 @@ use App\Http\Controllers\Api\Public\SiteMenuController;
 |
 */
 
+// DEBUG: Простой тестовый маршрут без аутентификации
+Route::post('/test-simple-upload', function (Request $request) {
+    file_put_contents('F:/Work/Projects/SS/api.ss.ru/storage/logs/laravel.log', "[" . date('Y-m-d H:i:s') . "] SIMPLE_TEST: files=" . count($request->allFiles()) . "\n", FILE_APPEND);
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Simple test upload',
+        'files' => count($request->allFiles())
+    ]);
+});
+
+// ТЕСТОВЫЙ ЭНДПОИНТ ДЛЯ ДИАГНОСТИКИ ВСЕХ ЗАПРОСОВ
+Route::post('/debug-all-requests', function (Request $request) {
+    $logData = [
+        'timestamp' => date('Y-m-d H:i:s'),
+        'method' => $request->method(),
+        'path' => $request->path(),
+        'full_url' => $request->fullUrl(),
+        'headers' => $request->headers->all(),
+        'has_auth' => $request->hasHeader('Authorization'),
+        'auth_header' => $request->header('Authorization') ? substr($request->header('Authorization'), 0, 50) . '...' : null,
+        'files_count' => count($request->allFiles()),
+        'user_agent' => $request->userAgent(),
+        'ip' => $request->ip(),
+        'origin' => $request->header('Origin'),
+        'host' => $request->header('Host'),
+    ];
+
+    file_put_contents('F:/Work/Projects/SS/api.ss.ru/debug_all_requests.log', json_encode($logData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . "\n---\n", FILE_APPEND);
+
+    return response()->json(['success' => true, 'message' => 'Request logged', 'data' => $logData]);
+});
+
 // DEBUG: Тестовый роут для проверки PHP настроек
 Route::get('/debug/php-info', function () {
+    \Log::info('=== DEBUG TEST: /debug/php-info accessed ===', [
+        'timestamp' => now(),
+        'ip' => request()->ip(),
+        'user_agent' => request()->userAgent(),
+        'log_level' => config('logging.channels.single.level'),
+        'log_path' => storage_path('logs/laravel.log')
+    ]);
+
+    // Проверяем, можем ли мы записать в файл напрямую
+    $logFile = storage_path('logs/laravel.log');
+    $testMessage = "[" . now() . "] local.INFO: DIRECT FILE WRITE TEST: PNG upload debug active\n";
+    file_put_contents($logFile, $testMessage, FILE_APPEND);
+
     return response()->json([
         'php_version' => phpversion(),
         'settings' => [
@@ -36,6 +85,238 @@ Route::get('/debug/php-info', function () {
             'max_execution_time' => ini_get('max_execution_time'),
         ],
         'server' => $_SERVER['SERVER_SOFTWARE'] ?? 'Unknown',
+        'log_test' => 'written'
+    ]);
+});
+
+// DEBUG: Тестовый роут для загрузки изображений товаров без аутентификации
+Route::post('/debug/test-goods-images/{goodId}', function (Request $request, $goodId) {
+    $logFile = storage_path('logs/laravel.log');
+    $logMessage = "[" . now() . "] local.INFO: === DEBUG GOODS IMAGES REQUEST === goodId:$goodId, method:" . $request->method() . ", files:" . count($request->allFiles()) . ", origin:" . ($request->header('Origin') ?: 'none') . ", ip:" . $request->ip() . "\n";
+    file_put_contents($logFile, $logMessage, FILE_APPEND);
+
+    if ($request->hasFile('images')) {
+        $files = $request->file('images');
+        $results = [];
+
+        foreach ($files as $index => $file) {
+            $originalName = $file->getClientOriginalName();
+            $mimeType = $file->getMimeType();
+            $size = $file->getSize();
+
+            $logMessage = "[" . now() . "] local.INFO: File $index: $originalName, $mimeType, $size bytes\n";
+            file_put_contents($logFile, $logMessage, FILE_APPEND);
+
+            // Проверяем, PNG ли файл
+            if (strpos($mimeType, 'png') !== false) {
+                $logMessage = "[" . now() . "] local.INFO: PNG FILE DETECTED: $originalName - processing with white background\n";
+                file_put_contents($logFile, $logMessage, FILE_APPEND);
+
+                try {
+                    $manager = new \Intervention\Image\ImageManager(new \Intervention\Image\Drivers\Gd\Driver());
+                    $image = $manager->read($file);
+
+                    $width = $image->width();
+                    $height = $image->height();
+
+                    $logMessage = "[" . now() . "] local.INFO: PNG size: {$width}x{$height} - creating white canvas\n";
+                    file_put_contents($logFile, $logMessage, FILE_APPEND);
+
+                    // Создаем белый холст
+                    $canvas = $manager->create($width, $height);
+                    $canvas->fill('ffffff');
+
+                    // Центрируем изображение
+                    $canvas->place($image, 'center');
+
+                    // Конвертируем в JPG
+                    $jpgData = $canvas->toJpeg(90);
+
+                    $logMessage = "[" . now() . "] local.INFO: PNG converted to JPG, size: " . strlen($jpgData) . " bytes\n";
+                    file_put_contents($logFile, $logMessage, FILE_APPEND);
+
+                    $results[] = [
+                        'filename' => $originalName,
+                        'original_size' => "{$width}x{$height}",
+                        'processed' => true,
+                        'jpg_size' => strlen($jpgData),
+                        'status' => 'PNG processed with white background'
+                    ];
+                } catch (\Exception $e) {
+                    $logMessage = "[" . now() . "] local.ERROR: PNG processing error: " . $e->getMessage() . "\n";
+                    file_put_contents($logFile, $logMessage, FILE_APPEND);
+
+                    $results[] = [
+                        'filename' => $originalName,
+                        'error' => $e->getMessage()
+                    ];
+                }
+            } else {
+                $results[] = [
+                    'filename' => $originalName,
+                    'mime_type' => $mimeType,
+                    'processed' => false,
+                    'status' => 'Not a PNG file'
+                ];
+            }
+        }
+
+        // Имитируем структуру ответа реального API
+        $mockImages = [];
+        foreach ($results as $index => $result) {
+            if ($result['processed'] ?? false) {
+                $filePath = "images/shop/goods/{$goodId}/processed_image_{$index}.jpg";
+                $mockImages[] = [
+                    'id' => 99999000 + $index, // Mock ID
+                    'good_id' => $goodId,
+                    'variation_id' => null,
+                    'file_path' => $filePath,
+                    'alt_text' => '',
+                    'is_main' => false,
+                    'sort_order' => $index
+                ];
+
+                $logMessage = "[" . now() . "] local.INFO: Created mock image: id=" . (99999000 + $index) . ", path=$filePath\n";
+                file_put_contents($logFile, $logMessage, FILE_APPEND);
+            }
+        }
+
+        $response = [
+            'success' => true,
+            'message' => 'Изображения успешно загружены (DEBUG MODE)',
+            'data' => $mockImages
+        ];
+
+        $logMessage = "[" . now() . "] local.INFO: === DEBUG RESPONSE === " . json_encode($response) . "\n";
+        file_put_contents($logFile, $logMessage, FILE_APPEND);
+
+        return response()->json($response);
+    }
+
+    return response()->json([
+        'success' => false,
+        'message' => 'No files uploaded'
+    ]);
+});
+
+// DEBUG: Тестовый роут для загрузки изображений без аутентификации
+Route::post('/debug/test-image-upload', function (Request $request) {
+    $logFile = storage_path('logs/laravel.log');
+    $logMessage = "[" . now() . "] local.INFO: === DEBUG IMAGE UPLOAD === files:" . count($request->allFiles()) . "\n";
+    file_put_contents($logFile, $logMessage, FILE_APPEND);
+
+    // Простая обработка файла
+    if ($request->hasFile('images')) {
+        $files = $request->file('images');
+        $results = [];
+
+        foreach ($files as $index => $file) {
+            $originalName = $file->getClientOriginalName();
+            $mimeType = $file->getMimeType();
+            $size = $file->getSize();
+
+            $logMessage = "[" . now() . "] local.INFO: File $index: $originalName, $mimeType, $size bytes\n";
+            file_put_contents($logFile, $logMessage, FILE_APPEND);
+
+            // Проверяем, PNG ли файл
+            $isPng = strpos($mimeType, 'png') !== false || strpos(strtolower($originalName), '.png') !== false;
+            $logMessage = "[" . now() . "] local.INFO: Checking PNG: mime=$mimeType, name=$originalName, isPng=" . ($isPng ? 'YES' : 'NO') . "\n";
+            file_put_contents($logFile, $logMessage, FILE_APPEND);
+
+            if ($isPng) {
+                $logMessage = "[" . now() . "] local.INFO: PNG FILE DETECTED: $originalName - processing with white background\n";
+                file_put_contents($logFile, $logMessage, FILE_APPEND);
+
+                // Имитируем обработку PNG
+                try {
+                    $manager = new \Intervention\Image\ImageManager(new \Intervention\Image\Drivers\Gd\Driver());
+                    $image = $manager->read($file);
+
+                    $width = $image->width();
+                    $height = $image->height();
+
+                    $logMessage = "[" . now() . "] local.INFO: PNG size: {$width}x{$height}\n";
+                    file_put_contents($logFile, $logMessage, FILE_APPEND);
+
+                    // Создаем белый холст
+                    $canvas = $manager->create($width, $height);
+                    $canvas->fill('ffffff');
+
+                    // Центрируем изображение
+                    $canvas->place($image, 'center');
+
+                    // Конвертируем в JPG
+                    $jpgData = $canvas->toJpeg(90);
+
+                    $logMessage = "[" . now() . "] local.INFO: PNG converted to JPG, size: " . strlen($jpgData) . " bytes\n";
+                    file_put_contents($logFile, $logMessage, FILE_APPEND);
+
+                    $logMessage = "[" . now() . "] local.INFO: About to save file - index=$index, goodId=$goodId\n";
+                    file_put_contents($logFile, $logMessage, FILE_APPEND);
+
+                    // Сохраняем файл на диск
+                    $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+                    $filePath = "images/shop/goods/{$goodId}/processed_image_{$index}.jpg";
+                    $fullFilePath = $frontendPublicPath . '/' . $filePath;
+
+                    $logMessage = "[" . now() . "] local.INFO: Saving file to: frontend=$frontendPublicPath, path=$filePath, full=$fullFilePath\n";
+                    file_put_contents($logFile, $logMessage, FILE_APPEND);
+
+                    // Создаем директорию если не существует
+                    $dir = dirname($fullFilePath);
+                    if (!is_dir($dir)) {
+                        mkdir($dir, 0755, true);
+                        $logMessage = "[" . now() . "] local.INFO: Created directory: $dir\n";
+                        file_put_contents($logFile, $logMessage, FILE_APPEND);
+                    }
+
+                    $result = file_put_contents($fullFilePath, $jpgData);
+                    if ($result === false) {
+                        $logMessage = "[" . now() . "] local.ERROR: Failed to save file: $fullFilePath\n";
+                        file_put_contents($logFile, $logMessage, FILE_APPEND);
+                    } else {
+                        $logMessage = "[" . now() . "] local.INFO: PNG processed to JPG, size: " . strlen($jpgData) . " bytes, saved to: $filePath (written $result bytes)\n";
+                        file_put_contents($logFile, $logMessage, FILE_APPEND);
+                    }
+
+                    $results[] = [
+                        'filename' => $originalName,
+                        'original_size' => "{$width}x{$height}",
+                        'processed' => true,
+                        'jpg_size' => strlen($jpgData),
+                        'file_saved' => true
+                    ];
+
+                    $logMessage = "[" . now() . "] local.INFO: Added to results: $originalName\n";
+                    file_put_contents($logFile, $logMessage, FILE_APPEND);
+                } catch (\Exception $e) {
+                    $logMessage = "[" . now() . "] local.ERROR: PNG processing error: " . $e->getMessage() . "\n";
+                    file_put_contents($logFile, $logMessage, FILE_APPEND);
+
+                    $results[] = [
+                        'filename' => $originalName,
+                        'error' => $e->getMessage()
+                    ];
+                }
+            } else {
+                $results[] = [
+                    'filename' => $originalName,
+                    'mime_type' => $mimeType,
+                    'processed' => false
+                ];
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Debug image upload test completed',
+            'results' => $results
+        ]);
+    }
+
+    return response()->json([
+        'success' => false,
+        'message' => 'No files uploaded'
     ]);
 });
 

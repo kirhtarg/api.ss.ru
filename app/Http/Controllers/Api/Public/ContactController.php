@@ -65,7 +65,7 @@ class ContactController extends Controller
     public function headerData()
     {
         try {
-            $contact = Contact::with(['addresses', 'phones', 'socials'])
+            $contact = Contact::with(['addresses', 'phones', 'socials.socialType'])
                 ->where('is_main', 1)
                 ->first();
             
@@ -115,11 +115,17 @@ class ContactController extends Controller
                         'is_main' => $phone->is_main
                     ];
                 }),
-                'socials' => $contact->socials->map(function($social) {
+                'social_networks' => $contact->socials->map(function($social) {
                     return [
-                        'name' => $social->name,
-                        'url' => $social->url,
-                        'icon' => $social->icon
+                        'id' => $social->id,
+                        'id_contact' => $social->id_contact,
+                        'social_name' => $social->social_name,
+                        'social_url' => $social->social_url,
+                        'social_type' => $social->socialType ? [
+                            'id' => $social->socialType->id,
+                            'social' => $social->socialType->social,
+                            'icon' => $social->socialType->icon
+                        ] : null
                     ];
                 })
             ];
