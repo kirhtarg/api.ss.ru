@@ -726,8 +726,47 @@ class ShopGoodsController extends Controller
             // Фильтрация по поставщику (текстовое поле)
             if ($request->has('supplier')) {
                 $supplier = $request->input('supplier');
-                if ($supplier && trim($supplier) !== '') {
+                Log::info('Supplier filter received', ['supplier' => $supplier, 'trimmed' => trim($supplier), 'is_empty' => trim($supplier) === '']);
+
+                if (trim($supplier) === '') {
+                    // Фильтр "Без поставщиков" - товары где supplier пустой или null
+                    Log::info('Applying "no supplier" filter');
+
+                    // Для отладки - давайте посмотрим SQL запрос
+                    $query->where(function($q) {
+                        $q->whereNull('supplier')
+                          ->orWhere('supplier', '');
+                    });
+
+                    // Временно добавим логирование количества найденных товаров
+                    $countBefore = $query->count();
+                    Log::info('Goods count with no supplier filter', ['count' => $countBefore]);
+                } elseif ($supplier && trim($supplier) !== '') {
+                    // Фильтр по конкретному поставщику
+                    Log::info('Applying specific supplier filter', ['supplier' => trim($supplier)]);
                     $query->where('supplier', trim($supplier));
+                }
+            }
+
+            // Фильтр "Без поставщиков" (альтернативный параметр для совместимости)
+            if ($request->has('supplier_empty') && $request->input('supplier_empty') == '1') {
+                Log::info('Applying "no supplier" filter via supplier_empty parameter');
+
+                $query->where(function($q) {
+                    $q->whereNull('supplier')
+                      ->orWhere('supplier', '');
+                });
+
+                $countBefore = $query->count();
+                Log::info('Goods count with no supplier filter (supplier_empty)', ['count' => $countBefore]);
+            }
+
+            // Фильтрация по множественным поставщикам
+            if ($request->has('suppliers')) {
+                $supplierIds = $request->input('suppliers');
+                if (is_array($supplierIds) && !empty($supplierIds)) {
+                    Log::info('Applying multiple suppliers filter', ['suppliers' => $supplierIds]);
+                    $query->whereIn('supplier', $supplierIds);
                 }
             }
 
@@ -1159,6 +1198,14 @@ class ShopGoodsController extends Controller
 
                 return $good;
             });
+
+            // Логируем результаты для отладки
+            Log::info('ShopGoods response', [
+                'total_goods' => $goods->total(),
+                'current_page_goods' => count($goods->items()),
+                'supplier_param' => $request->input('supplier'),
+                'request_params' => $request->all()
+            ]);
 
             return response()->json([
                 'success' => true,

@@ -167,6 +167,14 @@ class ShopGoodsController extends Controller
             }
         }
 
+        // Фильтр "Без поставщиков"
+        if ($request->has('supplier_empty')) {
+            $query->where(function($q) {
+                $q->whereNull('supplier')
+                  ->orWhere('supplier', '');
+            });
+        }
+
         // Фильтр по лейблам
         if ($request->has('labels')) {
             $labelIds = $request->input('labels');
@@ -5492,6 +5500,7 @@ class ShopGoodsController extends Controller
             'goods_without_variations.*.update_description' => 'nullable|boolean',
             'goods_without_variations.*.update_short_description' => 'nullable|boolean',
             'goods_without_variations.*.update_slug' => 'nullable|boolean',
+            'goods_without_variations.*.update_prices' => 'nullable|boolean',
             'goods_without_variations.*.selected_image_ids' => 'nullable|array',
             'goods_without_variations.*.selected_image_ids.*' => 'exists:shop_good_images,id'
         ]);
@@ -5619,6 +5628,7 @@ class ShopGoodsController extends Controller
                 $updateDescription = $goodData['update_description'] ?? false;
                 $updateShortDescription = $goodData['update_short_description'] ?? false;
                 $updateSlug = $goodData['update_slug'] ?? false;
+                $updatePrices = $goodData['update_prices'] ?? false;
                 $selectedImageIds = $goodData['selected_image_ids'] ?? [];
 
                 // Загружаем товар без вариаций
@@ -5641,14 +5651,20 @@ class ShopGoodsController extends Controller
                     $originalVariationName = $variation->name;
 
                     // Обновляем данные вариации данными из товара без вариаций
-                    // НЕ переносим остатки - только основные данные и цены
-                    $variation->update([
+                    // НЕ переносим остатки - только основные данные и цены (по выбору)
+                    $updateData = [
                         'name' => $goodWithoutVariations->name,
                         'sku' => $goodWithoutVariations->sku,
-                        'price' => $goodWithoutVariations->price,
-                        'sale_price' => $goodWithoutVariations->sale_price,
-                        'demping_price' => $goodWithoutVariations->demping_price,
-                    ]);
+                    ];
+
+                    // Переносим цены только если выбрана соответствующая опция
+                    if ($updatePrices) {
+                        $updateData['price'] = $goodWithoutVariations->price;
+                        $updateData['sale_price'] = $goodWithoutVariations->sale_price;
+                        $updateData['demping_price'] = $goodWithoutVariations->demping_price;
+                    }
+
+                    $variation->update($updateData);
 
                     // Добавляем информацию о товаре-источнике в логи
                     Log::info('Вариация обновлена данными из товара', [

@@ -62,6 +62,18 @@ Route::post('/debug-all-requests', function (Request $request) {
 
 // DEBUG: Тестовый роут для проверки PHP настроек
 Route::get('/debug/php-info', function () {
+
+// DEBUG: Тестовый роут для проверки check-slug
+Route::get('/debug-check-slug', function(Request $request) {
+    $slug = $request->query('slug');
+    \Log::info('Debug check slug called', ['slug' => $slug]);
+    return response()->json([
+        'success' => true,
+        'exists' => false,
+        'slug' => $slug,
+        'debug' => 'no auth required'
+    ]);
+});
     \Log::info('=== DEBUG TEST: /debug/php-info accessed ===', [
         'timestamp' => now(),
         'ip' => request()->ip(),
@@ -87,6 +99,20 @@ Route::get('/debug/php-info', function () {
         'server' => $_SERVER['SERVER_SOFTWARE'] ?? 'Unknown',
         'log_test' => 'written'
     ]);
+});
+
+// Page Builder routes (temporary without auth for testing)
+Route::prefix('page-builder')->group(function () {
+    Route::get('/pages', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'index']);
+    Route::post('/pages', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'store']);
+    Route::get('/pages/{id}', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'show']);
+    Route::put('/pages/{id}', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'update']);
+    Route::delete('/pages/{id}', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'destroy']);
+    Route::post('/pages/{id}/publish', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'publish']);
+    Route::post('/pages/{id}/duplicate', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'duplicate']);
+    Route::get('/pages/check-slug', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'checkSlug']);
+    Route::get('/blocks', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'getBlocks']);
+    Route::get('/dynamic-data', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'getDynamicData']);
 });
 
 // DEBUG: Тестовый роут для загрузки изображений товаров без аутентификации
@@ -1361,6 +1387,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::middleware(['auth:sanctum', 'role:admin,manager'])->prefix('admin')->group(function () {
         // Site info for admin
         Route::get('/site-info', [\App\Http\Controllers\Api\Public\SiteInfoController::class, 'index']);
+
+        // User preferences
+        Route::prefix('user')->group(function () {
+            Route::get('/preferences', [\App\Http\Controllers\Admin\UserPreferencesController::class, 'getPreferences']);
+            Route::put('/preferences', [\App\Http\Controllers\Admin\UserPreferencesController::class, 'updatePreferences']);
+        });
 
         // Profile management
         Route::get('/profile', [\App\Http\Controllers\Api\Admin\ProfileController::class, 'index']);
@@ -2862,6 +2894,91 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/{id}/bonuses/transactions', [\App\Http\Controllers\Admin\UserBonusController::class, 'transactions']);
         });
 
+        // Получить все пункты меню (доступно менеджерам и админам, с фильтрацией по правам доступа)
+        Route::get('/menu', function (Request $request) {
+            try {
+                $user = $request->user();
+                if (!$user) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Пользователь не аутентифицирован'
+                    ], 401);
+                }
+
+                // Получаем все пункты меню
+                $allMenuItems = \App\Models\AdminMenuItem::with('page')
+                    ->orderBy('order')
+                    ->get();
+
+                // Если пользователь - админ, возвращаем все пункты меню
+                if ($user->hasRole('admin')) {
+                    $menuItems = $allMenuItems->map(function ($item) {
+                        return [
+                            'id' => $item->id,
+                            'page_id' => $item->page_id,
+                            'parent_id' => $item->parent_id,
+                            'icon' => $item->icon,
+                            'label' => $item->label,
+                            'description' => $item->description,
+                            'href' => $item->href,
+                            'order' => $item->order,
+                            'is_active' => $item->is_active,
+                            'in_menu' => $item->in_menu ?? true,
+                            'page_name' => $item->page->name ?? null,
+                            'page_slug' => $item->page->slug ?? null,
+                            'created_at' => $item->created_at,
+                            'updated_at' => $item->updated_at,
+                        ];
+                    });
+                } else {
+                    // Для не-админов фильтруем пункты меню по правам доступа
+                    $userRoleIds = $user->roles->pluck('id')->toArray();
+
+                    $menuItems = $allMenuItems->filter(function ($item) use ($user, $userRoleIds) {
+                        // Если у пункта меню нет страницы, пропускаем
+                        if (!$item->page) {
+                            return false;
+                        }
+
+                        // Dashboard доступен всем авторизованным пользователям
+                        if ($item->page->slug === 'dashboard') {
+                            return true;
+                        }
+
+                        // Проверяем, есть ли у роли пользователя доступ к странице
+                        return $item->page->roles()->whereIn('role_id', $userRoleIds)->exists();
+                    })->map(function ($item) {
+                        return [
+                            'id' => $item->id,
+                            'page_id' => $item->page_id,
+                            'parent_id' => $item->parent_id,
+                            'icon' => $item->icon,
+                            'label' => $item->label,
+                            'description' => $item->description,
+                            'href' => $item->href,
+                            'order' => $item->order,
+                            'is_active' => $item->is_active,
+                            'in_menu' => $item->in_menu ?? true,
+                            'page_name' => $item->page->name ?? null,
+                            'page_slug' => $item->page->slug ?? null,
+                            'created_at' => $item->created_at,
+                            'updated_at' => $item->updated_at,
+                        ];
+                    })->values();
+                }
+
+                return response()->json([
+                    'success' => true,
+                    'data' => $menuItems
+                ]);
+            } catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка получения списка меню: ' . $e->getMessage()
+                ], 500);
+            }
+        });
+
         // Menu management
         Route::prefix('menu')->group(function () {
             // Получить пункты меню для конкретного раздела (доступно менеджерам и админам)
@@ -2952,8 +3069,25 @@ Route::middleware('auth:sanctum')->group(function () {
             });
         });
 
-        // Site management (только для админов)
-        Route::middleware(['auth:sanctum', 'role:admin'])->prefix('site')->group(function () {
+
+        // Site management (для админов и пользователей с ролью site)
+        Route::middleware(['auth:sanctum', 'role:admin,site'])->prefix('site')->group(function () {
+            // Управление настройками бонусов
+            Route::prefix('bonus-settings')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'index']);
+                Route::get('/active', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'getActive']);
+                Route::get('/{id}', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'show']);
+                Route::post('/', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'store']);
+                Route::put('/{id}', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'update']);
+                Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'destroy']);
+                Route::post('/{id}/toggle-active', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'toggleActive']);
+
+                // Изображения бонусных систем
+                Route::post('/upload-image', [\App\Http\Controllers\Api\Admin\BonusSettingImageController::class, 'upload']);
+                Route::post('/remove-image', [\App\Http\Controllers\Api\Admin\BonusSettingImageController::class, 'remove']);
+            });
+        });
+
             // Шаблоны сайта
             Route::prefix('templates')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'index']);
@@ -3077,105 +3211,6 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\TelegramNotificationController::class, 'destroy']);
             });
 
-            // Управление настройками бонусов
-            Route::prefix('bonus-settings')->group(function () {
-                Route::get('/', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'index']);
-                Route::get('/active', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'getActive']);
-                Route::get('/{id}', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'show']);
-                Route::post('/', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'store']);
-                Route::put('/{id}', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'update']);
-                Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'destroy']);
-                Route::post('/{id}/toggle-active', [\App\Http\Controllers\Api\Admin\ShopBonusSettingsController::class, 'toggleActive']);
-
-                // Изображения бонусных систем
-                Route::post('/upload-image', [\App\Http\Controllers\Api\Admin\BonusSettingImageController::class, 'upload']);
-                Route::post('/remove-image', [\App\Http\Controllers\Api\Admin\BonusSettingImageController::class, 'remove']);
-            });
-        });
-
-        // Получить все пункты меню (доступно менеджерам и админам, с фильтрацией по правам доступа)
-        Route::get('/menu', function (Request $request) {
-            try {
-                $user = $request->user();
-                if (!$user) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Пользователь не аутентифицирован'
-                    ], 401);
-                }
-
-                // Получаем все пункты меню
-                $allMenuItems = \App\Models\AdminMenuItem::with('page')
-                    ->orderBy('order')
-                    ->get();
-
-                // Если пользователь - админ, возвращаем все пункты меню
-                if ($user->hasRole('admin')) {
-                    $menuItems = $allMenuItems->map(function ($item) {
-                        return [
-                            'id' => $item->id,
-                            'page_id' => $item->page_id,
-                            'parent_id' => $item->parent_id,
-                            'icon' => $item->icon,
-                            'label' => $item->label,
-                            'description' => $item->description,
-                            'href' => $item->href,
-                            'order' => $item->order,
-                            'is_active' => $item->is_active,
-                            'in_menu' => $item->in_menu ?? true,
-                            'page_name' => $item->page->name ?? null,
-                            'page_slug' => $item->page->slug ?? null,
-                            'created_at' => $item->created_at,
-                            'updated_at' => $item->updated_at,
-                        ];
-                    });
-                } else {
-                    // Для не-админов фильтруем пункты меню по правам доступа
-                    $userRoleIds = $user->roles->pluck('id')->toArray();
-                    
-                    $menuItems = $allMenuItems->filter(function ($item) use ($user, $userRoleIds) {
-                        // Если у пункта меню нет страницы, пропускаем
-                        if (!$item->page) {
-                            return false;
-                        }
-                        
-                        // Dashboard доступен всем авторизованным пользователям
-                        if ($item->page->slug === 'dashboard') {
-                            return true;
-                        }
-                        
-                        // Проверяем, есть ли у роли пользователя доступ к странице
-                        return $item->page->roles()->whereIn('role_id', $userRoleIds)->exists();
-                    })->map(function ($item) {
-                        return [
-                            'id' => $item->id,
-                            'page_id' => $item->page_id,
-                            'parent_id' => $item->parent_id,
-                            'icon' => $item->icon,
-                            'label' => $item->label,
-                            'description' => $item->description,
-                            'href' => $item->href,
-                            'order' => $item->order,
-                            'is_active' => $item->is_active,
-                            'in_menu' => $item->in_menu ?? true,
-                            'page_name' => $item->page->name ?? null,
-                            'page_slug' => $item->page->slug ?? null,
-                            'created_at' => $item->created_at,
-                            'updated_at' => $item->updated_at,
-                        ];
-                    })->values();
-                }
-
-                return response()->json([
-                    'success' => true,
-                    'data' => $menuItems
-                ]);
-            } catch (\Exception $e) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Ошибка получения списка меню: ' . $e->getMessage()
-                ], 500);
-            }
         });
 
         // Menu management (только для админов - создание/редактирование/удаление)
@@ -3346,12 +3381,6 @@ Route::middleware('auth:sanctum')->group(function () {
                     ], 500);
                 }
             });
-        });
-
-        // User preferences
-        Route::prefix('user')->group(function () {
-            Route::get('/preferences', [\App\Http\Controllers\Admin\UserPreferencesController::class, 'getPreferences']);
-            Route::put('/preferences', [\App\Http\Controllers\Admin\UserPreferencesController::class, 'updatePreferences']);
         });
 
         // Profile management
@@ -3761,9 +3790,6 @@ Route::middleware('auth:sanctum')->group(function () {
             }
         });
     });
-
-
-});
 
 // Тестовый маршрут
 Route::get('/test', function () {

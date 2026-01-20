@@ -152,6 +152,11 @@ class TransferInvoiceController extends Controller
             $bonusDiscount = 0;
             $birthdayDiscount = 0;
             $deliveryCost = 0;
+            // Параметры наценки
+            $overTax = (float)$request->get('over_tax', 0);
+            $overText = $request->get('over_text', '');
+            $overtaxAmount = (float)$request->get('overtax_amount', 0);
+
             if ($order) {
                 $promoCodeDiscount = (float)($order->promo_code_discount_amount ?? 0);
                 $bonusDiscount = (float)($order->bonus_points_to_use ?? 0); // Скидка от списанных бонусов (1 бонус = 1 рубль)
@@ -164,15 +169,15 @@ class TransferInvoiceController extends Controller
             }
             
             // Формируем HTML для счета в зависимости от типа
-            // Используем шаблон ИП без НДС для всех случаев без НДС (и ИП, и ООО)
-            // Используем шаблон ООО с НДС только для случаев с НДС
-            if (!$withVat) {
-                // Без НДС (ИП или ООО на УСН)
-                $html = $this->generateInvoiceHtmlIP($orderId, $amount, $settings, $contact, $mainAddress, $mainPhone, $orderItems, $customerName, $customerInn, $customerAddress, $customerPhone, $promoCodeDiscount, $bonusDiscount, $deliveryCost, $birthdayDiscount);
-            } else {
-                // С НДС (ООО с НДС)
-                $html = $this->generateInvoiceHtmlOOO($orderId, $amount, $settings, $contact, $mainAddress, $mainPhone, $orderItems, $customerName, $customerInn, $customerAddress, $customerPhone, $promoCodeDiscount, $bonusDiscount, $deliveryCost, $birthdayDiscount);
-            }
+                // Используем шаблон ИП без НДС для всех случаев без НДС (и ИП, и ООО)
+                // Используем шаблон ООО с НДС только для случаев с НДС
+                if (!$withVat) {
+                    // Без НДС (ИП или ООО на УСН)
+                    $html = $this->generateInvoiceHtmlIP($orderId, $amount, $settings, $contact, $mainAddress, $mainPhone, $orderItems, $customerName, $customerInn, $customerAddress, $customerPhone, $promoCodeDiscount, $bonusDiscount, $deliveryCost, $birthdayDiscount, $overTax, $overText, $overtaxAmount);
+                } else {
+                    // С НДС (ООО с НДС)
+                    $html = $this->generateInvoiceHtmlOOO($orderId, $amount, $settings, $contact, $mainAddress, $mainPhone, $orderItems, $customerName, $customerInn, $customerAddress, $customerPhone, $promoCodeDiscount, $bonusDiscount, $deliveryCost, $birthdayDiscount, $overTax, $overText, $overtaxAmount);
+                }
             
             // Возвращаем HTML, который можно распечатать как PDF
             return response($html)
@@ -180,7 +185,7 @@ class TransferInvoiceController extends Controller
                 ->header('Content-Disposition', 'inline; filename="invoice-' . $orderId . '.html"');
                 
         } catch (\Exception $e) {
-            \Log::error('Ошибка генерации счета: ' . $e->getMessage());
+            // \Log::error('Ошибка генерации счета: ' . $e->getMessage());
             
             return response()->json([
                 'success' => false,
@@ -208,7 +213,10 @@ class TransferInvoiceController extends Controller
         $promoCodeDiscount = 0,
         $bonusPointsToUse = 0,
         $deliveryCost = 0,
-        $birthdayDiscount = 0
+        $birthdayDiscount = 0,
+        $overTax = 0,
+        $overText = '',
+        $overtaxAmount = 0
     ) {
         $legalName = $settings['legal_name'] ?? ($contact->legal_name ?? 'Не указано');
         $inn = $settings['inn'] ?? ($contact->inn ?? 'Не указано');
@@ -251,7 +259,7 @@ class TransferInvoiceController extends Controller
         $currentDateFull = date('d.m.Y H:i');
         
         // Сумма прописью (используем итоговую сумму с учетом скидок)
-        $finalAmount = $totalSum - $promoCodeDiscount - $bonusPointsToUse - $birthdayDiscount;
+        $finalAmount = $totalSum - $promoCodeDiscount - $bonusPointsToUse - $birthdayDiscount + $overtaxAmount;
         $amountInWords = $this->numberToWords($finalAmount);
 
         // Количество наименований
@@ -625,7 +633,21 @@ HTML;
             </div>
 HTML;
         }
-        
+
+        // Добавляем наценку, если она есть
+        if ($overtaxAmount > 0 && !empty($overText)) {
+            $formattedOvertaxAmount = \App\Helpers\PriceHelper::formatPrice($overtaxAmount);
+            $html .= <<<HTML
+            <div class="total-line" style="color: #ea580c;">
+                <span class="total-label">{$overText}:</span>
+                <span class="total-value">+{$formattedOvertaxAmount}</span>
+            </div>
+HTML;
+        }
+
+        // Итоговая сумма к оплате (с учетом всех скидок и наценки)
+        $formattedFinalAmount = \App\Helpers\PriceHelper::formatPrice($finalAmount);
+
         $html .= <<<HTML
             <div class="total-line" style="font-weight: bold;">
                 <span class="total-label">Всего к оплате:</span>
@@ -688,7 +710,10 @@ HTML;
         $promoCodeDiscount = 0,
         $bonusPointsToUse = 0,
         $deliveryCost = 0,
-        $birthdayDiscount = 0
+        $birthdayDiscount = 0,
+        $overTax = 0,
+        $overText = '',
+        $overtaxAmount = 0
     ) {
         $legalName = $settings['legal_name'] ?? ($contact->legal_name ?? 'Не указано');
         $inn = $settings['inn'] ?? ($contact->inn ?? 'Не указано');
@@ -723,7 +748,7 @@ HTML;
         $currentDate = date('d.m.Y');
         
         // Сумма прописью (используем итоговую сумму с учетом скидок)
-        $finalAmount = $totalSum - $promoCodeDiscount - $bonusPointsToUse - $birthdayDiscount;
+        $finalAmount = $totalSum - $promoCodeDiscount - $bonusPointsToUse - $birthdayDiscount + $overtaxAmount;
         $amountInWords = $this->numberToWords($finalAmount);
 
         // Количество наименований
@@ -1058,8 +1083,19 @@ HTML;
                     <td style="text-align: right; font-weight: bold;">{$formattedTotalSum}</td>
                 </tr>
 HTML;
-        
-        // Добавляем строки со скидками после "Итого"
+
+        // Добавляем наценку после "Итого", если она есть
+        if ($overtaxAmount > 0 && !empty($overText)) {
+            $formattedOvertaxAmount = \App\Helpers\PriceHelper::formatPrice($overtaxAmount);
+            $html .= <<<HTML
+                <tr>
+                    <td colspan="5" style="text-align: right; padding-right: 10px; color: #ea580c; font-weight: bold;">{$overText}:</td>
+                    <td style="text-align: right; color: #ea580c; font-weight: bold;">+{$formattedOvertaxAmount}</td>
+                </tr>
+HTML;
+        }
+
+        // Добавляем строки со скидками после наценки
         if ($promoCodeDiscount > 0) {
             $html .= <<<HTML
                 <tr>
@@ -1084,6 +1120,17 @@ HTML;
                 <tr>
                     <td colspan="5" style="text-align: right; padding-right: 10px; color: #dc2626;">Скидка ко дню рождения:</td>
                     <td style="text-align: right; color: #dc2626;">-{$formattedBirthdayDiscount}</td>
+                </tr>
+HTML;
+        }
+
+        // Добавляем наценку, если она есть
+        if ($overtaxAmount > 0 && !empty($overText)) {
+            $formattedOvertaxAmount = \App\Helpers\PriceHelper::formatPrice($overtaxAmount);
+            $html .= <<<HTML
+                <tr>
+                    <td colspan="5" style="text-align: right; padding-right: 10px; color: #ea580c; font-weight: bold;">{$overText}:</td>
+                    <td style="text-align: right; color: #ea580c; font-weight: bold;">+{$formattedOvertaxAmount}</td>
                 </tr>
 HTML;
         }
@@ -1384,7 +1431,7 @@ HTML;
             return response()->download($filepath, $filename)->deleteFileAfterSend(true);
             
         } catch (\Exception $e) {
-            \Log::error('Ошибка генерации Excel счета: ' . $e->getMessage());
+            // \Log::error('Ошибка генерации Excel счета: ' . $e->getMessage());
             
             return response()->json([
                 'success' => false,
@@ -1435,23 +1482,23 @@ HTML;
             } else {
                 $withVat = isset($settings['with_vat']) ? (bool)$settings['with_vat'] : true;
             }
-            
+
             $contact = Contact::where('is_main', 1)->first();
             $mainAddress = $contact ? $contact->mainAddress() : null;
             $mainPhone = $contact ? $contact->mainPhone() : null;
-            
+
             $order = null;
             $orderItems = [];
             $customerName = 'Покупатель';
             $customerInn = '';
             $customerAddress = '';
             $customerPhone = '';
-            
+
             if ($orderId !== 'TEST123' && (is_numeric($orderId) || is_string($orderId))) {
                 $order = ShopOrder::where('id', $orderId)
                     ->orWhere('order_number', $orderId)
                     ->first();
-                
+
                 if ($order) {
                     $orderItems = $order->getItemsWithDetails();
                     $amount = $order->total_amount ?? $amount;
@@ -1526,6 +1573,23 @@ HTML;
             $promoCodeDiscount = 0;
             $bonusDiscount = 0;
             $birthdayDiscount = 0;
+            // Параметры наценки - сначала пытаемся взять из заказа, затем из запроса
+            $overTax = 0;
+            $overText = '';
+            $overtaxAmount = 0;
+
+            if ($order) {
+                // Всегда берем из заказа, если он найден
+                $overTax = (float)($order->overtax_amount ?? 0);
+                $overText = $order->overtax_text ?? '';
+                $overtaxAmount = (float)($order->overtax_amount ?? 0);
+            } else {
+                // Если заказ не найден, берем из запроса
+                $overTax = (float)$request->get('over_tax', 0);
+                $overText = $request->get('over_text', '');
+                $overtaxAmount = (float)$request->get('overtax_amount', 0);
+            }
+
             if ($order) {
                 $promoCodeDiscount = $order->promo_code_discount_amount ?? 0;
                 $bonusDiscount = $order->bonus_points_to_use ?? 0; // Скидка от списанных бонусов (1 бонус = 1 рубль)
@@ -1549,6 +1613,10 @@ HTML;
                 'promo_code_discount_amount' => $promoCodeDiscount,
                 'bonus_points_to_use' => $bonusDiscount,
                 'birthday_discount_amount' => $birthdayDiscount,
+                // Параметры наценки
+                'over_tax' => $overTax,
+                'over_text' => $overText,
+                'overtax_amount' => $overtaxAmount,
             ];
             
             // Генерируем PDF напрямую
@@ -1562,7 +1630,7 @@ HTML;
                 ->header('Content-Disposition', 'inline; filename="' . $filename . '"');
             
         } catch (\Exception $e) {
-            \Log::error('Ошибка генерации PDF счета: ' . $e->getMessage());
+            // \Log::error('Ошибка генерации PDF счета: ' . $e->getMessage());
             
             return response()->json([
                 'success' => false,

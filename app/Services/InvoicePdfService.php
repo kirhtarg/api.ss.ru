@@ -11,6 +11,21 @@ class InvoicePdfService
      */
     public function generatePdf(array $data): string
     {
+        // Проверяем параметры наценки
+        $overTax = $data['over_tax'] ?? 0;
+        $overText = $data['over_text'] ?? '';
+        $overtaxAmount = $data['overtax_amount'] ?? 0;
+
+        // Если параметры переданы, но текст пустой - используем стандартный
+        if ($overTax > 0 && empty($overText)) {
+            $overText = 'Наценка';
+        }
+
+        // Перезаписываем параметры в данных
+        $data['over_tax'] = $overTax;
+        $data['over_text'] = $overText;
+        $data['overtax_amount'] = $overtaxAmount;
+
         // Создаем PDF документ
         $pdf = new TCPDF(PDF_PAGE_ORIENTATION, PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
         
@@ -62,12 +77,6 @@ class InvoicePdfService
         // Получаем стоимость доставки из данных заказа
         $deliveryAmount = (float)($data['delivery_cost'] ?? 0);
         
-        // Если доставка не передана явно, вычисляем ее как разницу между totalSum и itemsTotal
-        // (но только если totalSum больше itemsTotal, иначе это скидка)
-        if ($deliveryAmount == 0 && $totalSum > 0 && $totalSum > $itemsTotal) {
-            $deliveryAmount = $totalSum - $itemsTotal;
-        }
-        
         // Вычисляем общую сумму, если не передана (товары + доставка)
         if ($totalSum == 0 && !empty($orderItems)) {
             $totalSum = $itemsTotal + $deliveryAmount;
@@ -102,11 +111,14 @@ class InvoicePdfService
         $promoCodeDiscount = $data['promo_code_discount_amount'] ?? 0;
         $bonusDiscount = $data['bonus_points_to_use'] ?? 0; // Скидка от списанных бонусов (1 бонус = 1 рубль)
         $birthdayDiscount = $data['birthday_discount_amount'] ?? 0; // Скидка на день рождения
-        $y = $this->fillTotals($pdf, $itemsTotal, $totalSum, $discountAmount, $withVat, $itemsCount, $y, $promoCodeDiscount, $bonusDiscount, $deliveryAmount, $birthdayDiscount);
+        $overTaxAmount = $data['overtax_amount'] ?? 0; // Сумма наценки
+        $overText = $data['over_text'] ?? ''; // Текст наценки
 
-        // Сумма прописью (с учетом всех скидок)
-        $finalAmount = $totalSum - $promoCodeDiscount - $bonusDiscount - $birthdayDiscount;
-        $y = $this->fillAmountInWords($pdf, $finalAmount, $withVat, $y);
+        $y = $this->fillTotals($pdf, $itemsTotal, $totalSum, $discountAmount, $withVat, $itemsCount, $y, $promoCodeDiscount, $bonusDiscount, $deliveryAmount, $birthdayDiscount, $overTaxAmount, $overText);
+
+        // Сумма прописью (с учетом всех скидок и наценки)
+        $amountInWordsFinalAmount = $totalSum - $promoCodeDiscount - $bonusDiscount - $birthdayDiscount + $overTaxAmount;
+        $y = $this->fillAmountInWords($pdf, $amountInWordsFinalAmount, $withVat, $y);
         
         // Подписи
         $this->fillSignatures($pdf, $y, $withVat);
@@ -490,7 +502,7 @@ class InvoicePdfService
     /**
      * Итоги
      */
-    private function fillTotals(TCPDF $pdf, float $itemsTotal, float $totalSum, float $discountAmount, bool $withVat, int $itemsCount, float $y, float $promoCodeDiscount = 0, float $bonusDiscount = 0, float $deliveryAmount = 0, float $birthdayDiscount = 0): float
+    private function fillTotals(TCPDF $pdf, float $itemsTotal, float $totalSum, float $discountAmount, bool $withVat, int $itemsCount, float $y, float $promoCodeDiscount = 0, float $bonusDiscount = 0, float $deliveryAmount = 0, float $birthdayDiscount = 0, float $overTaxAmount = 0, string $overText = ''): float
     {
         $pdf->SetFont('dejavusans', '', 10);
         $colWidths = [15, 80, 20, 15, 25, 30];
@@ -509,7 +521,19 @@ class InvoicePdfService
         $pdf->SetXY($xValue, $y);
         $pdf->Cell($valueWidth, $rowHeight, \App\Helpers\PriceHelper::formatPrice($totalWithDelivery), 0, 0, 'R');
         $y += $rowHeight;
-        
+
+        // Наценка (если есть) - выводим сразу после Итого
+        if ($overTaxAmount > 0) {
+            $displayText = !empty($overText) ? $overText : 'Наценка';
+            $pdf->SetXY($xLabel, $y);
+            $pdf->Cell($labelWidth, $rowHeight, $displayText . ':', 0, 0, 'R');
+            $pdf->SetXY($xValue, $y);
+            $pdf->SetTextColor(255, 165, 0); // Оранжевый цвет для наценки
+            $pdf->Cell($valueWidth, $rowHeight, '+' . \App\Helpers\PriceHelper::formatPrice($overTaxAmount), 0, 0, 'R');
+            $pdf->SetTextColor(0, 0, 0); // Возвращаем черный цвет
+            $y += $rowHeight;
+        }
+
         // Скидка по промокоду (если есть)
         if ($promoCodeDiscount > 0) {
             $pdf->SetXY($xLabel, $y);
@@ -520,7 +544,7 @@ class InvoicePdfService
             $pdf->SetTextColor(0, 0, 0); // Возвращаем черный цвет
             $y += $rowHeight;
         }
-        
+
         // Скидка по списанию бонусов (если есть)
         if ($bonusDiscount > 0) {
             $pdf->SetXY($xLabel, $y);
@@ -542,7 +566,7 @@ class InvoicePdfService
             $pdf->SetTextColor(0, 0, 0); // Возвращаем черный цвет
             $y += $rowHeight;
         }
-        
+
         // В том числе НДС (только если с НДС)
         if ($withVat) {
             $vatAmount = \App\Helpers\PriceHelper::roundPrice($totalSum * 0.20 / 1.20);
@@ -552,9 +576,9 @@ class InvoicePdfService
             $pdf->Cell($valueWidth, $rowHeight, \App\Helpers\PriceHelper::formatPrice($vatAmount), 0, 0, 'R');
             $y += $rowHeight;
         }
-        
-        // Всего к оплате (учитываем все скидки)
-        $finalAmount = $totalWithDelivery - $promoCodeDiscount - $bonusDiscount - $birthdayDiscount;
+
+        // Всего к оплате (учитываем все скидки и наценку)
+        $finalAmount = $totalWithDelivery + $overTaxAmount - $promoCodeDiscount - $bonusDiscount - $birthdayDiscount;
         $pdf->SetFont('dejavusans', 'B', 10);
         $pdf->SetXY($xLabel, $y);
         $pdf->Cell($labelWidth, $rowHeight, 'Всего к оплате:', 0, 0, 'R');

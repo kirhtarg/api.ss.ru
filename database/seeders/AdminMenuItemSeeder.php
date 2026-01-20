@@ -275,6 +275,32 @@ class AdminMenuItemSeeder extends Seeder
                 'created_at' => '2025-09-15 08:33:22',
                 'updated_at' => '2025-09-15 08:33:31',
             ],
+            [
+                'id' => 22,
+                'page_id' => 3,
+                'parent_id' => null,
+                'icon' => 'mdi:page-layout-header-footer',
+                'label' => 'Конструктор страниц',
+                'href' => 'constructor',
+                'description' => 'Визуальный конструктор страниц',
+                'order' => 2,
+                'is_active' => 1,
+                'created_at' => '2026-01-20 10:00:00',
+                'updated_at' => '2026-01-20 10:00:00',
+            ],
+            [
+                'id' => 23,
+                'page_id' => 3,
+                'parent_id' => null,
+                'icon' => 'mdi:file-document-multiple',
+                'label' => 'Страницы',
+                'href' => 'constructor-pages',
+                'description' => 'Управление страницами конструктора',
+                'order' => 3,
+                'is_active' => 1, // Активно в меню для тестирования
+                'created_at' => '2026-01-20 10:00:00',
+                'updated_at' => '2026-01-20 10:00:00',
+            ],
         ];
 
         foreach ($menuItems as $item) {

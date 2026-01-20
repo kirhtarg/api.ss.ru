@@ -822,6 +822,8 @@ class CartController extends Controller
                 'use_bonus_points' => 'nullable|boolean',
                 'bonus_points_to_use' => 'nullable|integer|min:0',
                 'order_bonus_points' => 'nullable|integer|min:0',
+                'overtax_amount' => 'nullable|numeric',
+                'overtax_text' => 'nullable|string|max:255',
                 'items' => 'required|array'
             ]);
 
@@ -949,7 +951,7 @@ class CartController extends Controller
             ]);
 
             // Создаем заказ
-            $order = ShopOrder::create([
+            $orderData = [
                 'order_number' => $orderNumber,
                 'user_id' => $customerId,
                 'status_id' => $pendingStatus->id, // Статус "Ожидает обработки" (id=1)
@@ -972,6 +974,9 @@ class CartController extends Controller
                 'use_bonus_points' => $request->get('use_bonus_points', false),
                 'bonus_points_to_use' => $request->get('bonus_points_to_use', 0),
                 'order_bonus_points' => $request->get('order_bonus_points', 0),
+                'overtax_amount' => (float) $request->get('overtax_amount', 0),
+                'overtax_text' => $request->get('overtax_text'),
+
                 'delivery_cost' => $request->get('delivery_cost', 0),
                 'total_amount' => $request->get('total_amount', $cart['total_amount']),
                 'total_quantity' => $cart['total_quantity'],
@@ -986,7 +991,11 @@ class CartController extends Controller
                 'metadata' => [
                     // Дополнительные метаданные, если нужны
                 ]
-            ]);
+            ];
+
+
+            $order = ShopOrder::create($orderData);
+
 
             // Логируем создание заказа
             $userName = null;

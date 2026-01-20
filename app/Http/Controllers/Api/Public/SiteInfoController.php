@@ -26,10 +26,14 @@ class SiteInfoController extends Controller
                     $query->whereIn('group', ['general', 'site', 'auth', 'shop'])
                           ->orWhere('key', 'site_google_font') // Включаем параметр Google Fonts из любой группы
                           ->orWhere('key', 'yandex_metrika') // Включаем параметр Яндекс.Метрики из любой группы
+                          ->orWhere('key', 'jivo_script') // Включаем параметр скрипта Jivo из любой группы
+                          ->orWhere('key', 'site_favicon') // Включаем параметр favicon из любой группы
                           ->orWhere('key', 'show_counters') // Включаем параметр show_counters из любой группы
                           ->orWhere('key', 'absent_promocode_percent') // Включаем параметр процента промокода за отсутствие товара
                           ->orWhere('key', 'absent_promocode_percent_days') // Включаем параметр дней действия промокода
-                          ->orWhere('key', 'suff_support'); // Включаем параметр суффиксов для совместимости со старым сайтом
+                          ->orWhere('key', 'suff_support') // Включаем параметр суффиксов для совместимости со старым сайтом
+                          ->orWhere('key', 'over_tax') // Включаем параметр процента наценки
+                          ->orWhere('key', 'over_text'); // Включаем параметр текста наценки
                 })
                 ->get();
 
