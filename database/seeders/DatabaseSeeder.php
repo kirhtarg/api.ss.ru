@@ -30,6 +30,7 @@ class DatabaseSeeder extends Seeder
             // Магазин
             ShopTemplateSeeder::class,
             ShopOrderStatusSeeder::class,
+            ShopDeliveryStatusSeeder::class,
             ShopDeliveryMethodSeeder::class,
             ShopPaymentMethodSeeder::class,
             ShopBonusSettingsSeeder::class,

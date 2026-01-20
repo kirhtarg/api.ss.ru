@@ -489,6 +489,49 @@ class ShopGoodsController extends Controller
             }
         }
 
+        // Фильтр по названиям атрибутов вариаций
+        if ($request->has('variation_attribute_names')) {
+            $attributeNames = $request->input('variation_attribute_names');
+            if (is_array($attributeNames) && !empty($attributeNames)) {
+                // Фильтруем товары, у которых есть вариации с указанными атрибутами
+                $query->whereExists(function($subQuery) use ($attributeNames) {
+                    $subQuery->selectRaw('1')
+                        ->from('shop_good_variations as v')
+                        ->join('shop_variation_attributes_values as vav', 'v.id', '=', 'vav.variation_id')
+                        ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                        ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                        ->whereRaw('v.good_id = shop_goods.id')
+                        ->whereIn('a.name', $attributeNames)
+                        ->limit(1);
+                });
+            }
+        }
+
+        // Фильтр по исключению атрибутов вариаций (товары БЕЗ указанных атрибутов)
+        if ($request->has('exclude_variation_attribute_names')) {
+            $excludeAttributeNames = $request->input('exclude_variation_attribute_names');
+            if (is_array($excludeAttributeNames) && !empty($excludeAttributeNames)) {
+                // Когда применяется фильтр "БЕЗ атрибутов", показываем ТОЛЬКО товары с вариациями,
+                // которые НЕ имеют указанные атрибуты
+                // Используем подзапрос для точного контроля
+                $query->whereExists(function($subQuery) {
+                    $subQuery->selectRaw('1')
+                        ->from('shop_good_variations')
+                        ->whereColumn('good_id', 'shop_goods.id')
+                        ->limit(1);
+                })->whereNotExists(function($subQuery) use ($excludeAttributeNames) {
+                    $subQuery->selectRaw('1')
+                        ->from('shop_good_variations as v')
+                        ->join('shop_variation_attributes_values as vav', 'v.id', '=', 'vav.variation_id')
+                        ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                        ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                        ->whereColumn('v.good_id', 'shop_goods.id')
+                        ->whereIn('a.name', $excludeAttributeNames)
+                        ->limit(1);
+                });
+            }
+        }
+
         // Фильтр по артикулу
         if ($request->filled('sku_filter_type')) {
             $skuFilterType = $request->get('sku_filter_type');

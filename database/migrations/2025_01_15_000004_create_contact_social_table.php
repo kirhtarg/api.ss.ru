@@ -14,7 +14,7 @@ return new class extends Migration
         Schema::create('contact_socials', function (Blueprint $table) {
             $table->id();
             $table->foreignId('id_contact')->constrained('contacts')->onDelete('cascade');
-            $table->foreignId('social_type')->constrained('contact_social_types')->onDelete('cascade');
+            $table->foreignId('social_type')->constrained('social_types')->onDelete('cascade');
             $table->string('social_name');
             $table->string('social_url');
             $table->timestamps();

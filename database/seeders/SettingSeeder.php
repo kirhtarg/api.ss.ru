@@ -450,32 +450,6 @@ class SettingSeeder extends Seeder
             
             [
                 'id' => 36,
-                'key' => 'shop_show_q_card',
-                'name' => 'Показывать остатки в карточке',
-                'value' => '1',
-                'type' => 'boolean',
-                'group' => 'shop',
-                'description' => 'Показывать остатки в карточке товара при наведении в выпадающем блоке',
-                'image_width' => null,
-                'image_height' => null,
-                'created_at' => '2025-09-15 17:24:08',
-                'updated_at' => '2025-09-15 17:25:41',
-            ],
-            [
-                'id' => 37,
-                'key' => 'shop_var_show_main',
-                'name' => 'Показать главный товар при вариациях',
-                'value' => '1',
-                'type' => 'boolean',
-                'group' => 'shop',
-                'description' => 'Показывать главный товар при вариациях в карточке товара и на странице товара (иначе - вариация с мин.ценой)',
-                'image_width' => null,
-                'image_height' => null,
-                'created_at' => '2025-09-15 17:24:08',
-                'updated_at' => '2025-09-15 17:25:41',
-            ],
-            [
-                'id' => 38,
                 'key' => 'shop_remote_q',
                 'name' => 'Остатки на удаленном складе',
                 'value' => '1',
@@ -490,7 +464,7 @@ class SettingSeeder extends Seeder
             ],
 
             [
-                'id' => 39,
+                'id' => 41,
                 'key' => 'hidden_0_price',
                 'name' => 'Скрывать цену при цене 0',
                 'value' => '0',
@@ -503,7 +477,7 @@ class SettingSeeder extends Seeder
                 'updated_at' => '2025-09-25 17:25:41',
             ],
             [
-                'id' => 40,
+                'id' => 42,
                 'key' => 'is_off',
                 'name' => 'Отключение сайта',
                 'value' => '0',
@@ -516,7 +490,7 @@ class SettingSeeder extends Seeder
                 'updated_at' => '2025-09-25 17:25:41',
             ],
             [
-                'id' => 41,
+                'id' => 43,
                 'key' => 'is_off_text',
                 'name' => 'Текст при отключении сайта',
                 'value' => 'Сайт временно недоступен',
@@ -529,7 +503,7 @@ class SettingSeeder extends Seeder
                 'updated_at' => '2025-09-15 10:31:15',
             ],
             [
-                'id' => 42,
+                'id' => 44,
                 'key' => 'index_off',
                 'name' => 'Индексация сайта отключена',
                 'value' => '1',
@@ -542,7 +516,7 @@ class SettingSeeder extends Seeder
                 'updated_at' => '2025-09-25 17:25:41',
             ],
             [
-                'id' => 43,
+                'id' => 45,
                 'key' => 'yandex_metrika',
                 'name' => 'Яндекс Метрика',
                 'value' => '',
@@ -553,7 +527,7 @@ class SettingSeeder extends Seeder
                 'updated_at' => '2025-09-25 17:25:41',
             ],
             [
-                            'id' => 44,
+                            'id' => 46,
                             'key' => 'two_stage_pay',
                             'name' => 'Оплата после одобрения',
                             'value' => '0',
@@ -564,7 +538,7 @@ class SettingSeeder extends Seeder
                             'updated_at' => '2025-11-25 17:25:41',
                         ],
             [
-                            'id' => 45,
+                            'id' => 47,
                             'key' => 'show_counters',
                             'name' => 'Показывать счетчики товаров',
                             'value' => '1',
@@ -575,7 +549,7 @@ class SettingSeeder extends Seeder
                             'updated_at' => '2025-11-25 17:25:41',
                         ],
             [
-                            'id' => 46,
+                            'id' => 48,
                             'key' => 'show_promocode_0',
                             'name' => 'Показывать промокод при отсутствии товара',
                             'value' => '1',
@@ -586,7 +560,7 @@ class SettingSeeder extends Seeder
                             'updated_at' => '2025-11-25 17:25:41',
                         ],
             [
-                            'id' => 47,
+                            'id' => 49,
                             'key' => 'free_delivery_sale',
                             'name' => 'Бесплатная доставка с акционными товарами',
                             'value' => '1',
@@ -597,7 +571,7 @@ class SettingSeeder extends Seeder
                             'updated_at' => '2025-11-25 17:25:41',
                         ],
             [
-                            'id' => 48,
+                            'id' => 50,
                             'key' => 'birthday_bonuses',
                             'name' => 'Бонусы в день рождения',
                             'value' => '0',
@@ -608,7 +582,7 @@ class SettingSeeder extends Seeder
                             'updated_at' => '2025-11-25 17:25:41',
                         ],
             [
-                            'id' => 49,
+                            'id' => 51,
                             'key' => 'birthday_bonuses_days_from',
                             'name' => 'Дней скидки до дня рождения',
                             'value' => '5',
@@ -619,7 +593,7 @@ class SettingSeeder extends Seeder
                             'updated_at' => '2025-11-25 17:25:41',
                         ],
             [
-                            'id' => 50,
+                            'id' => 52,
                             'key' => 'birthday_bonuses_days_to',
                             'name' => 'Дней скидки после дня рождения',
                             'value' => '5',

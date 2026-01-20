@@ -19,10 +19,26 @@ class PriceHelper
     }
 
     /**
-     * Округлить цену согласно настройке shop_price_round
+     * Проверить, активно ли округление до 10 рублей
+     */
+    public static function isRound10Enabled(): bool
+    {
+        $setting = Setting::where('key', 'shop_round10')->first();
+        return $setting && ($setting->value == 1 || $setting->value == '1');
+    }
+
+    /**
+     * Округлить цену согласно настройкам
      */
     public static function roundPrice(float $price): float
     {
+        // Сначала проверяем округление до 10 рублей
+        if (self::isRound10Enabled()) {
+            // Округляем до ближайшего числа, кратного 10, в большую сторону
+            return ceil($price / 10) * 10;
+        }
+
+        // Иначе используем обычное округление по знакам после запятой
         $digits = self::getPriceRoundDigits();
         $multiplier = pow(10, $digits);
         return round($price * $multiplier) / $multiplier;
