@@ -38,7 +38,8 @@ class TransferInvoiceController extends Controller
             
             // Параметры из URL для тестирования (переопределяют настройки из БД)
             $orgTypeFromUrl = $request->get('org_type');
-            $withVatFromUrl = $request->get('with_vat');
+            $vatRateFromUrl = $request->get('vat_rate');
+            $withVatFromUrl = $request->get('with_vat'); // Для обратной совместимости
             
             // Определяем тип организации и НДС (приоритет у параметров URL для тестирования)
             if ($orgTypeFromUrl !== null && $orgTypeFromUrl !== '') {
@@ -47,17 +48,31 @@ class TransferInvoiceController extends Controller
                 $organizationType = $settings['organization_type'] ?? 'OOO';
             }
             
-            if ($withVatFromUrl !== null && $withVatFromUrl !== '') {
-                // Обрабатываем разные варианты: '1', 'true', true, '0', 'false', false
-                // Если передано '0' или 'false', то НДС = false, иначе проверяем на true
+            // Определяем ставку НДС (приоритет у параметра vat_rate, затем with_vat для обратной совместимости)
+            $vatRate = 0;
+            if ($vatRateFromUrl !== null && $vatRateFromUrl !== '') {
+                // Новая логика: vat_rate может быть '0', '5', '20'
+                $vatRate = (int)$vatRateFromUrl;
+            } elseif ($withVatFromUrl !== null && $withVatFromUrl !== '') {
+                // Обратная совместимость: with_vat как boolean
                 if ($withVatFromUrl === '0' || $withVatFromUrl === 'false' || $withVatFromUrl === false || $withVatFromUrl === 0) {
-                    $withVat = false;
+                    $vatRate = 0;
                 } else {
-                    $withVat = in_array($withVatFromUrl, ['1', 'true', true, 1], true);
+                    $vatRate = 20; // По умолчанию 20% для обратной совместимости
                 }
             } else {
-                $withVat = isset($settings['with_vat']) ? (bool)$settings['with_vat'] : true;
+                // Из настроек способа оплаты
+                $withVatSetting = $settings['with_vat'] ?? '5';
+                if ($withVatSetting === false || $withVatSetting === '0' || $withVatSetting === 0) {
+                    $vatRate = 0;
+                } elseif ($withVatSetting === true || $withVatSetting === '1' || $withVatSetting === 1) {
+                    $vatRate = 20; // Для обратной совместимости: true = 20%
+                } else {
+                    $vatRate = (int)$withVatSetting; // Может быть '5', '20' и т.д.
+                }
             }
+            
+            $withVat = $vatRate > 0;
             
             // Получаем данные контакта для дополнительной информации
             $contact = Contact::where('is_main', 1)->first();
@@ -175,8 +190,8 @@ class TransferInvoiceController extends Controller
                     // Без НДС (ИП или ООО на УСН)
                     $html = $this->generateInvoiceHtmlIP($orderId, $amount, $settings, $contact, $mainAddress, $mainPhone, $orderItems, $customerName, $customerInn, $customerAddress, $customerPhone, $promoCodeDiscount, $bonusDiscount, $deliveryCost, $birthdayDiscount, $overTax, $overText, $overtaxAmount);
                 } else {
-                    // С НДС (ООО с НДС)
-                    $html = $this->generateInvoiceHtmlOOO($orderId, $amount, $settings, $contact, $mainAddress, $mainPhone, $orderItems, $customerName, $customerInn, $customerAddress, $customerPhone, $promoCodeDiscount, $bonusDiscount, $deliveryCost, $birthdayDiscount, $overTax, $overText, $overtaxAmount);
+                    // С НДС (ООО с НДС) - передаем ставку НДС
+                    $html = $this->generateInvoiceHtmlOOO($orderId, $amount, $settings, $contact, $mainAddress, $mainPhone, $orderItems, $customerName, $customerInn, $customerAddress, $customerPhone, $promoCodeDiscount, $bonusDiscount, $deliveryCost, $birthdayDiscount, $overTax, $overText, $overtaxAmount, $vatRate);
                 }
             
             // Возвращаем HTML, который можно распечатать как PDF
@@ -216,7 +231,8 @@ class TransferInvoiceController extends Controller
         $birthdayDiscount = 0,
         $overTax = 0,
         $overText = '',
-        $overtaxAmount = 0
+        $overtaxAmount = 0,
+        $vatRate = 20
     ) {
         $legalName = $settings['legal_name'] ?? ($contact->legal_name ?? 'Не указано');
         $inn = $settings['inn'] ?? ($contact->inn ?? 'Не указано');
@@ -243,9 +259,12 @@ class TransferInvoiceController extends Controller
         // Явно добавляем доставку к сумме товаров
         $totalSum = (float)$itemsSum + (float)$deliveryCost;
         
-        // НДС 20%
-        $vatRate = 20;
-        $vatAmount = $totalSum * $vatRate / (100 + $vatRate);
+        // НДС (ставка определяется из настроек или параметров запроса)
+        // $vatRate уже определена выше (0, 5 или 20)
+        $vatAmount = 0;
+        if ($vatRate > 0) {
+            $vatAmount = $totalSum * $vatRate / (100 + $vatRate);
+        }
         $totalWithVat = $totalSum;
         
         // Форматируем скидки для отображения
@@ -1326,7 +1345,8 @@ HTML;
             
             // Параметры из URL
             $orgTypeFromUrl = $request->get('org_type');
-            $withVatFromUrl = $request->get('with_vat');
+            $vatRateFromUrl = $request->get('vat_rate');
+            $withVatFromUrl = $request->get('with_vat'); // Для обратной совместимости
             
             if ($orgTypeFromUrl !== null && $orgTypeFromUrl !== '') {
                 $organizationType = $orgTypeFromUrl;
@@ -1334,15 +1354,30 @@ HTML;
                 $organizationType = $settings['organization_type'] ?? 'OOO';
             }
             
-            if ($withVatFromUrl !== null && $withVatFromUrl !== '') {
+            // Определяем ставку НДС (приоритет у параметра vat_rate, затем with_vat для обратной совместимости)
+            $vatRate = 0;
+            if ($vatRateFromUrl !== null && $vatRateFromUrl !== '') {
+                $vatRate = (int)$vatRateFromUrl;
+            } elseif ($withVatFromUrl !== null && $withVatFromUrl !== '') {
+                // Обратная совместимость: with_vat как boolean
                 if ($withVatFromUrl === '0' || $withVatFromUrl === 'false' || $withVatFromUrl === false || $withVatFromUrl === 0) {
-                    $withVat = false;
+                    $vatRate = 0;
                 } else {
-                    $withVat = in_array($withVatFromUrl, ['1', 'true', true, 1], true);
+                    $vatRate = 20; // По умолчанию 20% для обратной совместимости
                 }
             } else {
-                $withVat = isset($settings['with_vat']) ? (bool)$settings['with_vat'] : true;
+                // Из настроек способа оплаты
+                $withVatSetting = $settings['with_vat'] ?? '5';
+                if ($withVatSetting === false || $withVatSetting === '0' || $withVatSetting === 0) {
+                    $vatRate = 0;
+                } elseif ($withVatSetting === true || $withVatSetting === '1' || $withVatSetting === 1) {
+                    $vatRate = 20; // Для обратной совместимости: true = 20%
+                } else {
+                    $vatRate = (int)$withVatSetting; // Может быть '5', '20' и т.д.
+                }
             }
+            
+            $withVat = $vatRate > 0;
             
             // Получаем данные
             $contact = Contact::where('is_main', 1)->first();
@@ -1401,7 +1436,8 @@ HTML;
                 'order_id' => $orderId,
                 'date' => date('d.m.Y'),
                 'total_amount' => $amount,
-                'with_vat' => $withVat,
+                'with_vat' => $withVat, // Для обратной совместимости
+                'vat_rate' => $vatRate, // Новая логика: ставка НДС (0, 5, 20)
                 'settings' => $settings,
                 'contact' => $contact,
                 'main_address' => $mainAddress,
@@ -1464,8 +1500,10 @@ HTML;
             
             $settings = $paymentMethod->settings ?? [];
             
+            // Параметры из URL
             $orgTypeFromUrl = $request->get('org_type');
-            $withVatFromUrl = $request->get('with_vat');
+            $vatRateFromUrl = $request->get('vat_rate');
+            $withVatFromUrl = $request->get('with_vat'); // Для обратной совместимости
             
             if ($orgTypeFromUrl !== null && $orgTypeFromUrl !== '') {
                 $organizationType = $orgTypeFromUrl;
@@ -1473,15 +1511,30 @@ HTML;
                 $organizationType = $settings['organization_type'] ?? 'OOO';
             }
             
-            if ($withVatFromUrl !== null && $withVatFromUrl !== '') {
+            // Определяем ставку НДС (приоритет у параметра vat_rate, затем with_vat для обратной совместимости)
+            $vatRate = 0;
+            if ($vatRateFromUrl !== null && $vatRateFromUrl !== '') {
+                $vatRate = (int)$vatRateFromUrl;
+            } elseif ($withVatFromUrl !== null && $withVatFromUrl !== '') {
+                // Обратная совместимость: with_vat как boolean
                 if ($withVatFromUrl === '0' || $withVatFromUrl === 'false' || $withVatFromUrl === false || $withVatFromUrl === 0) {
-                    $withVat = false;
+                    $vatRate = 0;
                 } else {
-                    $withVat = in_array($withVatFromUrl, ['1', 'true', true, 1], true);
+                    $vatRate = 20; // По умолчанию 20% для обратной совместимости
                 }
             } else {
-                $withVat = isset($settings['with_vat']) ? (bool)$settings['with_vat'] : true;
+                // Из настроек способа оплаты
+                $withVatSetting = $settings['with_vat'] ?? '5';
+                if ($withVatSetting === false || $withVatSetting === '0' || $withVatSetting === 0) {
+                    $vatRate = 0;
+                } elseif ($withVatSetting === true || $withVatSetting === '1' || $withVatSetting === 1) {
+                    $vatRate = 20; // Для обратной совместимости: true = 20%
+                } else {
+                    $vatRate = (int)$withVatSetting; // Может быть '5', '20' и т.д.
+                }
             }
+            
+            $withVat = $vatRate > 0;
 
             $contact = Contact::where('is_main', 1)->first();
             $mainAddress = $contact ? $contact->mainAddress() : null;
@@ -1600,7 +1653,8 @@ HTML;
                 'order_id' => $orderId,
                 'date' => date('d.m.Y'),
                 'total_amount' => $amount,
-                'with_vat' => $withVat,
+                'with_vat' => $withVat, // Для обратной совместимости
+                'vat_rate' => $vatRate, // Новая логика: ставка НДС (0, 5, 20)
                 'settings' => $settings,
                 'contact' => $contact,
                 'main_address' => $mainAddress,

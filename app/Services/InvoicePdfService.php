@@ -66,7 +66,15 @@ class InvoicePdfService
         $date = $data['date'] ?? date('d.m.Y');
         $orderItems = $data['order_items'] ?? [];
         $totalSum = $data['total_amount'] ?? 0;
-        $withVat = $data['with_vat'] ?? false;
+        $withVat = $data['with_vat'] ?? false; // Для обратной совместимости
+        // Получаем ставку НДС (приоритет у vat_rate, затем вычисляем из with_vat)
+        $vatRate = 0;
+        if (isset($data['vat_rate'])) {
+            $vatRate = (int)$data['vat_rate'];
+        } elseif ($withVat) {
+            $vatRate = 20; // Для обратной совместимости: true = 20%
+        }
+        $withVat = $vatRate > 0; // Обновляем withVat на основе vatRate
         
         // Вычисляем сумму всех товаров
         $itemsTotal = 0;
@@ -114,11 +122,11 @@ class InvoicePdfService
         $overTaxAmount = $data['overtax_amount'] ?? 0; // Сумма наценки
         $overText = $data['over_text'] ?? ''; // Текст наценки
 
-        $y = $this->fillTotals($pdf, $itemsTotal, $totalSum, $discountAmount, $withVat, $itemsCount, $y, $promoCodeDiscount, $bonusDiscount, $deliveryAmount, $birthdayDiscount, $overTaxAmount, $overText);
+        $y = $this->fillTotals($pdf, $itemsTotal, $totalSum, $discountAmount, $withVat, $itemsCount, $y, $promoCodeDiscount, $bonusDiscount, $deliveryAmount, $birthdayDiscount, $overTaxAmount, $overText, $vatRate);
 
         // Сумма прописью (с учетом всех скидок и наценки)
         $amountInWordsFinalAmount = $totalSum - $promoCodeDiscount - $bonusDiscount - $birthdayDiscount + $overTaxAmount;
-        $y = $this->fillAmountInWords($pdf, $amountInWordsFinalAmount, $withVat, $y);
+        $y = $this->fillAmountInWords($pdf, $amountInWordsFinalAmount, $withVat, $y, $vatRate);
         
         // Подписи
         $this->fillSignatures($pdf, $y, $withVat);
@@ -502,7 +510,7 @@ class InvoicePdfService
     /**
      * Итоги
      */
-    private function fillTotals(TCPDF $pdf, float $itemsTotal, float $totalSum, float $discountAmount, bool $withVat, int $itemsCount, float $y, float $promoCodeDiscount = 0, float $bonusDiscount = 0, float $deliveryAmount = 0, float $birthdayDiscount = 0, float $overTaxAmount = 0, string $overText = ''): float
+    private function fillTotals(TCPDF $pdf, float $itemsTotal, float $totalSum, float $discountAmount, bool $withVat, int $itemsCount, float $y, float $promoCodeDiscount = 0, float $bonusDiscount = 0, float $deliveryAmount = 0, float $birthdayDiscount = 0, float $overTaxAmount = 0, string $overText = '', int $vatRate = 20): float
     {
         $pdf->SetFont('dejavusans', '', 10);
         $colWidths = [15, 80, 20, 15, 25, 30];
@@ -568,10 +576,10 @@ class InvoicePdfService
         }
 
         // В том числе НДС (только если с НДС)
-        if ($withVat) {
-            $vatAmount = \App\Helpers\PriceHelper::roundPrice($totalSum * 0.20 / 1.20);
+        if ($withVat && $vatRate > 0) {
+            $vatAmount = \App\Helpers\PriceHelper::roundPrice($totalSum * $vatRate / (100 + $vatRate));
             $pdf->SetXY($xLabel, $y);
-            $pdf->Cell($labelWidth, $rowHeight, 'В т.ч. НДС 20%:', 0, 0, 'R');
+            $pdf->Cell($labelWidth, $rowHeight, "В т.ч. НДС {$vatRate}%:", 0, 0, 'R');
             $pdf->SetXY($xValue, $y);
             $pdf->Cell($valueWidth, $rowHeight, \App\Helpers\PriceHelper::formatPrice($vatAmount), 0, 0, 'R');
             $y += $rowHeight;
@@ -597,7 +605,7 @@ class InvoicePdfService
     /**
      * Сумма прописью
      */
-    private function fillAmountInWords(TCPDF $pdf, float $totalSum, bool $withVat, float $y): float
+    private function fillAmountInWords(TCPDF $pdf, float $totalSum, bool $withVat, float $y, int $vatRate = 20): float
     {
         $amountInWords = $this->numberToWords($totalSum);
         

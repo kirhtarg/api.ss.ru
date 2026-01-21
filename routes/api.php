@@ -1646,6 +1646,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/transfer-data', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'transferData']);
                 Route::post('/change-variation', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'changeVariation']);
                 Route::post('/transfer-media-var-to-main', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'transferMediaVarToMain']);
+                Route::post('/merge-variations', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'mergeVariations']);
                 Route::get('/variations/images-count', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getVariationsImagesCount']);
                 Route::post('/check-duplicates', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'checkDuplicates']);
                 Route::post('/bulk-import', [\App\Http\Controllers\Admin\BulkGoodsImportController::class, 'bulkImport']);
@@ -3709,15 +3710,22 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Шаблоны импорта товаров
         Route::prefix('import-templates')->group(function () {
+            // Специфичные маршруты с конкретными путями (должны быть первыми)
             Route::get('/list', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'list']); // Легкий список для выпадающих меню
-            Route::get('/', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'index']); // Полный список с настройками
             Route::post('/cleanup', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'cleanup']); // Очистка старых шаблонов
-            Route::get('/{id}', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'show']);
-            Route::post('/', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'store']);
-            Route::put('/{id}', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'update']);
-            Route::delete('/{id}', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'destroy']);
+            
+            // RESTful маршруты без параметров (должны быть перед параметризованными)
+            Route::get('/', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'index']); // Полный список с настройками
+            Route::post('/', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'store']); // Создание шаблона
+            
+            // Специфичные маршруты с параметрами (после общих, но перед общими параметризованными)
             Route::post('/{id}/duplicate', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'duplicate']);
             Route::put('/{id}/set-default', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'setDefault']);
+            
+            // Общие параметризованные маршруты (должны быть последними)
+            Route::get('/{id}', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'show']);
+            Route::put('/{id}', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'update']);
+            Route::delete('/{id}', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'destroy']);
         });
 
         // Автопарсинг Google Sheets
@@ -3740,7 +3748,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Логи импорта товаров
         Route::prefix('import-logs')->group(function () {
+            // Специфичные маршруты должны быть перед параметризованными
             Route::get('/stats', [\App\Http\Controllers\Admin\ImportLogController::class, 'getLogStats']);
+            // Параметризованные маршруты после специфичных
             Route::get('/{type}', [\App\Http\Controllers\Admin\ImportLogController::class, 'getLog']);
             Route::delete('/{type}', [\App\Http\Controllers\Admin\ImportLogController::class, 'clearLog']);
             Route::post('/load', [\App\Http\Controllers\Admin\ImportLogController::class, 'logLoad']);

@@ -613,14 +613,14 @@ class BulkGoodsImportController extends Controller
                             $details
                         );
                         
-                        // Применяем обрезку названия к существующему товару, если указан символ обрезки
-                        if ($nameTrimSymbol && !empty(trim($nameTrimSymbol)) && $existingGood->name && !in_array('name', $immutableFields) && !$searchByNameInVariations) {
+                        // Применяем обрезку названия из файла, если указан символ обрезки
+                        if ($nameTrimSymbol && !empty(trim($nameTrimSymbol)) && isset($goodData['name']) && !empty($goodData['name']) && !in_array('name', $immutableFields) && !$searchByNameInVariations) {
                             $trimSymbol = trim($nameTrimSymbol);
-                            $currentName = $existingGood->name;
-                            $trimIndex = strpos($currentName, $trimSymbol);
+                            $nameFromFile = $goodData['name'];
+                            $trimIndex = strpos($nameFromFile, $trimSymbol);
                             if ($trimIndex !== false) {
-                                $trimmedName = trim(substr($currentName, 0, $trimIndex));
-                                if (!empty($trimmedName) && $trimmedName !== $currentName) {
+                                $trimmedName = trim(substr($nameFromFile, 0, $trimIndex));
+                                if (!empty($trimmedName)) {
                                     $goodData['name'] = $trimmedName;
                                 }
                             }
@@ -665,7 +665,7 @@ class BulkGoodsImportController extends Controller
                             }
 
 
-                            $updateResult = $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation, $supplierStockFields);
+                            $updateResult = $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation, $supplierStockFields, $nameTrimSymbol);
                             $results['imagesDownloaded'] += $updateResult['imageStats']['downloaded'];
                             $results['imagesFailed'] += $updateResult['imageStats']['failed'];
 
@@ -999,16 +999,16 @@ class BulkGoodsImportController extends Controller
                             $sheet = $goodData['_sheet'] ?? 'неизвестно';
                             $updateItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'good_id' => $existingGood->id];
                         } elseif ($duplicateAction === 'update') {
-                            // Применяем обрезку названия к существующему товару, если указан символ обрезки
-                            if ($nameTrimSymbol && !empty(trim($nameTrimSymbol)) && $existingGood->name && !in_array('name', $immutableFields) && !$searchByNameInVariations) {
+                            // Применяем обрезку названия из файла, если указан символ обрезки
+                            if ($nameTrimSymbol && !empty(trim($nameTrimSymbol)) && isset($goodData['name']) && !empty($goodData['name']) && !in_array('name', $immutableFields) && !$searchByNameInVariations) {
                                 $trimSymbol = trim($nameTrimSymbol);
-                                $currentName = $existingGood->name;
-                                $trimIndex = strpos($currentName, $trimSymbol);
+                                $nameFromFile = $goodData['name'];
+                                $trimIndex = strpos($nameFromFile, $trimSymbol);
                                 if ($trimIndex !== false) {
-                                    $trimmedName = trim(substr($currentName, 0, $trimIndex));
-                                    if (!empty($trimmedName) && $trimmedName !== $currentName) {
+                                    $trimmedName = trim(substr($nameFromFile, 0, $trimIndex));
+                                    if (!empty($trimmedName)) {
                                         $goodData['name'] = $trimmedName;
-                                        }
+                                    }
                                 }
                             }
 
@@ -1049,7 +1049,7 @@ class BulkGoodsImportController extends Controller
                             }
 
 
-                            $updateResult = $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation, $supplierStockFields);
+                            $updateResult = $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation, $supplierStockFields, $nameTrimSymbol);
                             $results['imagesDownloaded'] += $updateResult['imageStats']['downloaded'];
                             $results['imagesFailed'] += $updateResult['imageStats']['failed'];
 
@@ -1244,7 +1244,7 @@ class BulkGoodsImportController extends Controller
                         }
 
                         // Товар действительно не существует - создаем новый (с вариацией или без)
-                        $createResult = $this->createGood($goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $supplierStockFields);
+                        $createResult = $this->createGood($goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $supplierStockFields, $nameTrimSymbol);
                         $newGood = $createResult['good'];
                         $results['imagesDownloaded'] += $createResult['imageStats']['downloaded'];
                         $results['imagesFailed'] += $createResult['imageStats']['failed'];
@@ -1453,19 +1453,32 @@ class BulkGoodsImportController extends Controller
     }
 
 
-    private function createGood($goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory = null, $useDefaultCategory = false, $supplierStockFields = null)
+    private function createGood($goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory = null, $useDefaultCategory = false, $supplierStockFields = null, $nameTrimSymbol = null)
     {
         $imageStats = ['downloaded' => 0, 'failed' => 0];
 
         $good = new ShopGood();
         // Если SKU пустой, устанавливаем null вместо пустой строки
         $good->sku = !empty($goodData['sku']) ? $goodData['sku'] : null;
-        $good->name = $goodData['name'];
+        
+        // Применяем обрезку названия при создании нового товара, если указан символ обрезки
+        $nameToSet = isset($goodData['name']) ? $goodData['name'] : '';
+        if (!empty($nameTrimSymbol) && !empty(trim($nameTrimSymbol)) && !empty($nameToSet)) {
+            $trimSymbol = trim($nameTrimSymbol);
+            $trimIndex = strpos($nameToSet, $trimSymbol);
+            if ($trimIndex !== false) {
+                $trimmedName = trim(substr($nameToSet, 0, $trimIndex));
+                if (!empty($trimmedName)) {
+                    $nameToSet = $trimmedName;
+                }
+            }
+        }
+        $good->name = $nameToSet;
         // Используем slug из данных, если он есть и не пустой, иначе генерируем автоматически
         if (!empty($goodData['slug']) && trim($goodData['slug']) !== '') {
             $good->slug = trim($goodData['slug']);
         } else {
-            $good->slug = $this->generateSlug($goodData['name'], $goodData['sku']);
+            $good->slug = $this->generateSlug($nameToSet, $goodData['sku']);
         }
         $good->description = $goodData['description'] ?? null;
         $good->short_description = $goodData['short_description'] ?? null;
@@ -1621,7 +1634,7 @@ class BulkGoodsImportController extends Controller
         return ['good' => $good, 'imageStats' => $imageStats];
     }
 
-    private function updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory = null, $useDefaultCategory = false, $immutableFields = [], $searchByNameInVariations = false, $hasVariation = false, $supplierStockFields = null)
+    private function updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory = null, $useDefaultCategory = false, $immutableFields = [], $searchByNameInVariations = false, $hasVariation = false, $supplierStockFields = null, $nameTrimSymbol = null)
     {
         $imageStats = ['downloaded' => 0, 'failed' => 0];
 
@@ -1637,22 +1650,23 @@ class BulkGoodsImportController extends Controller
         // Обновляем название только если оно передано, не пустое и не в списке неизменяемых
         // Если включен поиск по именам в вариациях, поле name нельзя изменять
         if (isset($goodData['name']) && !empty(trim($goodData['name'])) && !in_array('name', $immutableFields) && !$searchByNameInVariations) {
-            $nameToSet = $goodData['name'];
+            $nameToSet = trim($goodData['name']);
 
-            // Применяем обрезку названия к существующему товару, если указан символ обрезки
-            // Это применяется ко всем товарам, а не только к тем, которые имеют variation_ids
-            if (!empty($nameTrimSymbol) && !in_array('name', $immutableFields) && !$searchByNameInVariations) {
+            // Применяем обрезку названия из файла, если указан символ обрезки
+            // Обрезка применяется к названию из файла, а не к существующему названию в базе
+            // ВАЖНО: Обрезка применяется даже если название уже было обрезано на фронтенде
+            if (!empty($nameTrimSymbol) && !empty(trim($nameTrimSymbol)) && !empty($nameToSet) && !in_array('name', $immutableFields) && !$searchByNameInVariations) {
                 $trimSymbol = trim($nameTrimSymbol);
-                $currentName = $existingGood->name;
-                $trimIndex = strpos($currentName, $trimSymbol);
+                $trimIndex = strpos($nameToSet, $trimSymbol);
                 if ($trimIndex !== false) {
-                    $trimmedName = trim(substr($currentName, 0, $trimIndex));
-                    if (!empty($trimmedName) && $trimmedName !== $currentName) {
+                    $trimmedName = trim(substr($nameToSet, 0, $trimIndex));
+                    if (!empty($trimmedName)) {
                         $nameToSet = $trimmedName;
-                        }
+                    }
                 }
             }
 
+            // Сохраняем обрезанное название
             $existingGood->name = $nameToSet;
         }
         // Обновляем slug только если он явно передан в данных (выбран в маппинге) и не в списке неизменяемых

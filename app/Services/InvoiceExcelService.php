@@ -211,7 +211,15 @@ class InvoiceExcelService
     {
         $orderItems = $data['order_items'] ?? [];
         $totalSum = $data['total_amount'] ?? 0;
-        $withVat = $data['with_vat'] ?? false;
+        $withVat = $data['with_vat'] ?? false; // Для обратной совместимости
+        // Получаем ставку НДС (приоритет у vat_rate, затем вычисляем из with_vat)
+        $vatRate = 0;
+        if (isset($data['vat_rate'])) {
+            $vatRate = (int)$data['vat_rate'];
+        } elseif ($withVat) {
+            $vatRate = 20; // Для обратной совместимости: true = 20%
+        }
+        $withVat = $vatRate > 0; // Обновляем withVat на основе vatRate
         
         // Вычисляем общую сумму, если не передана
         if ($totalSum == 0 && !empty($orderItems)) {
@@ -226,9 +234,11 @@ class InvoiceExcelService
         $worksheet->setCellValue('AD19', number_format($totalSum, 2, ',', ' '));
         
         // Строка 20: В том числе НДС (только если с НДС, метка в AC20, значение в AD20)
-        if ($withVat) {
-            $vatAmount = $totalSum * 0.20 / 1.20; // НДС 20% включен в цену
+        if ($withVat && $vatRate > 0) {
+            $vatAmount = $totalSum * $vatRate / (100 + $vatRate); // НДС включен в цену
             $worksheet->setCellValue('AD20', number_format($vatAmount, 2, ',', ' '));
+            // Обновляем метку с указанием ставки НДС (если возможно)
+            // Метка находится в AC20, но обычно она статична в шаблоне
         } else {
             // Для ИП без НДС оставляем пустым
             $worksheet->setCellValue('AD20', '');

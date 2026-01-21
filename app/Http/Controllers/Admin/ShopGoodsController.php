@@ -6414,4 +6414,150 @@ class ShopGoodsController extends Controller
         ]);
     }
 
+    /**
+     * Слияние вариаций из нескольких товаров в один основной товар
+     */
+    public function mergeVariations(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'main_good_id' => 'required|exists:shop_goods,id',
+            'donor_good_ids' => 'required|array|min:1',
+            'donor_good_ids.*' => 'exists:shop_goods,id|different:main_good_id'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $mainGoodId = $request->input('main_good_id');
+            $donorGoodIds = $request->input('donor_good_ids');
+
+            // Загружаем основной товар
+            $mainGood = ShopGood::findOrFail($mainGoodId);
+
+            // Загружаем товары-доноры с вариациями, изображениями и видео
+            $donorGoods = ShopGood::with(['variations.images', 'variations.videos', 'variations'])->whereIn('id', $donorGoodIds)->get();
+
+            if ($donorGoods->isEmpty()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Товары-доноры не найдены'
+                ], 404);
+            }
+
+            $totalVariationsMoved = 0;
+            $totalImagesMoved = 0;
+            $totalVideosMoved = 0;
+
+            // Обрабатываем каждый товар-донор
+            foreach ($donorGoods as $donorGood) {
+                // Перемещаем все вариации из донора в основной товар
+                $variations = $donorGood->variations;
+                
+                if ($variations->isEmpty()) {
+                    // Если у товара-донора нет вариаций, просто удаляем его
+                    // Сначала удаляем изображения товара
+                    ShopGoodImage::where('good_id', $donorGood->id)
+                        ->whereNull('variation_id')
+                        ->delete();
+
+                    // Удаляем видео товара
+                    \App\Models\ShopGoodVideo::where('good_id', $donorGood->id)
+                        ->whereNull('variation_id')
+                        ->delete();
+
+                    // Разрываем связи many-to-many перед удалением
+                    $donorGood->categories()->detach();
+                    $donorGood->brands()->detach();
+                    $donorGood->tags()->detach();
+                    $donorGood->properties()->detach();
+
+                    // Удаляем товар-донор
+                    $donorGood->delete();
+                    continue;
+                }
+                
+                foreach ($variations as $variation) {
+                    // Обновляем good_id вариации на основной товар
+                    // Поставщик (supplier) уже сохранен в поле вариации, он автоматически сохранится
+                    $variation->good_id = $mainGoodId;
+                    $variation->save();
+                    
+                    $totalVariationsMoved++;
+
+                    // Перемещаем изображения вариации
+                    $variationImages = ShopGoodImage::where('variation_id', $variation->id)->get();
+                    foreach ($variationImages as $image) {
+                        // Обновляем good_id изображения на основной товар
+                        $image->good_id = $mainGoodId;
+                        $image->save();
+                        $totalImagesMoved++;
+                    }
+
+                    // Перемещаем видео вариации (если есть)
+                    $variationVideos = \App\Models\ShopGoodVideo::where('variation_id', $variation->id)->get();
+                    foreach ($variationVideos as $video) {
+                        $video->good_id = $mainGoodId;
+                        $video->save();
+                        $totalVideosMoved++;
+                    }
+
+                    // Атрибуты вариаций (shop_variation_attributes_values) привязаны только к variation_id,
+                    // поэтому они автоматически останутся привязанными после обновления good_id
+                }
+
+                // Удаляем товар-донор (вариации уже перемещены, связи разорваны)
+                // Сначала удаляем изображения товара (не вариаций, они уже перемещены)
+                ShopGoodImage::where('good_id', $donorGood->id)
+                    ->whereNull('variation_id')
+                    ->delete();
+
+                // Удаляем видео товара
+                \App\Models\ShopGoodVideo::where('good_id', $donorGood->id)
+                    ->whereNull('variation_id')
+                    ->delete();
+
+                // Разрываем связи many-to-many перед удалением
+                $donorGood->categories()->detach();
+                $donorGood->brands()->detach();
+                $donorGood->tags()->detach();
+                $donorGood->properties()->detach();
+
+                // Удаляем товар-донор
+                $donorGood->delete();
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Вариации успешно слиты',
+                'data' => [
+                    'variations_count' => $totalVariationsMoved,
+                    'images_count' => $totalImagesMoved,
+                    'videos_count' => $totalVideosMoved,
+                    'deleted_goods_count' => count($donorGoodIds)
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Ошибка слияния вариаций: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка слияния вариаций: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
 }
