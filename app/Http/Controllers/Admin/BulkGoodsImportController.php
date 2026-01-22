@@ -578,6 +578,12 @@ class BulkGoodsImportController extends Controller
                             continue;
                         }
                         
+                        // КРИТИЧНО: Для товаров с вариациями, найденных по имени, отдельно обрезаем и обновляем название товара
+                        // Это должно происходить ДО обновления вариации
+                        // Используем название из данных импорта, если оно есть, иначе проверяем название в БД
+                        $nameFromData = isset($goodData['name']) ? trim($goodData['name']) : null;
+                        $this->trimGoodName($existingGood, $nameTrimSymbol, $immutableFields, $nameFromData);
+                        
                         // Обновляем вариацию найденную по имени
                         $variationId = $this->updateVariationFromGoodData($existingVariation, $goodData, $searchByNameInVariations);
 
@@ -613,21 +619,17 @@ class BulkGoodsImportController extends Controller
                             $details
                         );
                         
-                        // Применяем обрезку названия из файла, если указан символ обрезки
-                        if ($nameTrimSymbol && !empty(trim($nameTrimSymbol)) && isset($goodData['name']) && !empty($goodData['name']) && !in_array('name', $immutableFields) && !$searchByNameInVariations) {
-                            $trimSymbol = trim($nameTrimSymbol);
-                            $nameFromFile = $goodData['name'];
-                            $trimIndex = strpos($nameFromFile, $trimSymbol);
-                            if ($trimIndex !== false) {
-                                $trimmedName = trim(substr($nameFromFile, 0, $trimIndex));
-                                if (!empty($trimmedName)) {
-                                    $goodData['name'] = $trimmedName;
-                                }
-                            }
-                        }
+                        // Обрезка названия для товаров без вариаций будет обработана в updateGood
 
                         // Обновляем товар, если нужно
                         if ($duplicateAction === 'update') {
+                            // КРИТИЧНО: Для товаров с вариациями отдельно обрезаем и обновляем название
+                            // Это должно происходить ДО вызова updateGood
+                            if ($hasVariation) {
+                                $nameFromData = isset($goodData['name']) ? trim($goodData['name']) : null;
+                                $this->trimGoodName($existingGood, $nameTrimSymbol, $immutableFields, $nameFromData);
+                            }
+                            
                             // Проверяем поле для удаления дубликатов
                             $duplicateCheckField = $request->input('duplicate_check_field');
 
@@ -791,6 +793,10 @@ class BulkGoodsImportController extends Controller
                     if ($searchByNameInVariations && $hasVariation && !$existingVariation && $existingGood) {
 
                         // Создаем новую вариацию для найденного товара
+                        // Передаем nameTrimSymbol в goodData для обрезки названия товара
+                        if (!isset($goodData['_nameTrimSymbol'])) {
+                            $goodData['_nameTrimSymbol'] = $nameTrimSymbol;
+                        }
                         $variationId = $this->processVariation($existingGood, $goodData['variation'], $goodData, $supplierStockFields);
 
                         // Сохраняем ID вариации для связи с изображениями
@@ -912,7 +918,19 @@ class BulkGoodsImportController extends Controller
                         // Товар существует
                         // Если у строки есть вариация, обрабатываем её независимо от duplicateAction
                         if ($hasVariation) {
+                            // КРИТИЧНО: Отдельно обрезаем и обновляем название товара с вариацией
+                            // Это должно происходить ДО обработки вариации
+                            // ВАЖНО: Для товаров с вариациями название обновляется отдельно, независимо от searchByNameInVariations
+                            // КРИТИЧНО: Для товаров с вариациями отдельно обрезаем и обновляем название
+                            // Используем название из данных импорта, если оно есть, иначе проверяем название в БД
+                            $nameFromData = isset($goodData['name']) ? trim($goodData['name']) : null;
+                            $this->trimGoodName($existingGood, $nameTrimSymbol, $immutableFields, $nameFromData);
+                            
                             // Обрабатываем только вариацию, но также обновляем категории товара, если нужно
+                            // Передаем nameTrimSymbol в goodData для обрезки названия товара (на случай если обрезка не была применена выше)
+                            if (!isset($goodData['_nameTrimSymbol'])) {
+                                $goodData['_nameTrimSymbol'] = $nameTrimSymbol;
+                            }
                             $variationId = $this->processVariation($existingGood, $goodData['variation'], $goodData, $supplierStockFields);
                             
                             // Обрабатываем категории товара (даже если обрабатывается только вариация)
@@ -999,18 +1017,13 @@ class BulkGoodsImportController extends Controller
                             $sheet = $goodData['_sheet'] ?? 'неизвестно';
                             $updateItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'good_id' => $existingGood->id];
                         } elseif ($duplicateAction === 'update') {
-                            // Применяем обрезку названия из файла, если указан символ обрезки
-                            if ($nameTrimSymbol && !empty(trim($nameTrimSymbol)) && isset($goodData['name']) && !empty($goodData['name']) && !in_array('name', $immutableFields) && !$searchByNameInVariations) {
-                                $trimSymbol = trim($nameTrimSymbol);
-                                $nameFromFile = $goodData['name'];
-                                $trimIndex = strpos($nameFromFile, $trimSymbol);
-                                if ($trimIndex !== false) {
-                                    $trimmedName = trim(substr($nameFromFile, 0, $trimIndex));
-                                    if (!empty($trimmedName)) {
-                                        $goodData['name'] = $trimmedName;
-                                    }
-                                }
+                            // КРИТИЧНО: Для товаров с вариациями отдельно обрезаем и обновляем название
+                            // Это должно происходить ДО вызова updateGood
+                            if ($hasVariation) {
+                                $nameFromData = isset($goodData['name']) ? trim($goodData['name']) : null;
+                                $this->trimGoodName($existingGood, $nameTrimSymbol, $immutableFields, $nameFromData);
                             }
+                            // Обрезка названия для товаров без вариаций будет обработана в updateGood
 
                             // Проверяем поле для удаления дубликатов (для варианта 2)
                             $duplicateCheckField = $request->input('duplicate_check_field');
@@ -1317,6 +1330,10 @@ class BulkGoodsImportController extends Controller
                         if ($existingGood) {
                             // Товар найден - обрабатываем только вариацию
                             try {
+                                // Передаем nameTrimSymbol в goodData для обрезки названия товара
+                                if (!isset($goodData['_nameTrimSymbol'])) {
+                                    $goodData['_nameTrimSymbol'] = $nameTrimSymbol;
+                                }
                                 $variationId = $this->processVariation($existingGood, $goodData['variation'], $goodData, $supplierStockFields);
                                 $results['updated']++; // Считаем как обновление (добавление вариации)
                                 
@@ -1452,6 +1469,81 @@ class BulkGoodsImportController extends Controller
         }
     }
 
+
+    /**
+     * Обрезает название товара, если в нем найден указанный символ обрезки
+     * 
+     * @param ShopGood $good Товар для обрезки названия
+     * @param string|null $nameTrimSymbol Символ обрезки
+     * @param array $immutableFields Поля, которые нельзя изменять
+     * @param string|null $nameFromData Название из данных импорта (если отличается от названия в БД)
+     * @return bool true если обрезка была применена, false если нет
+     */
+    private function trimGoodName($good, $nameTrimSymbol = null, $immutableFields = [], $nameFromData = null)
+    {
+        // Если символ обрезки не указан или товар не найден - ничего не делаем
+        if (empty($nameTrimSymbol) || empty(trim($nameTrimSymbol)) || !$good || !$good->id) {
+            return false;
+        }
+        
+        // Если название в immutableFields - не обрезаем
+        if (in_array('name', $immutableFields)) {
+            return false;
+        }
+        
+        // КРИТИЧНО: Проверяем название в БД, потому что на фронтенде название уже может быть обрезано
+        // Если символ обрезки указан, всегда проверяем название в БД на наличие символа
+        $nameInDb = $good->name ?? '';
+        $nameToCheck = !empty($nameInDb) && !empty(trim($nameInDb)) ? trim($nameInDb) : null;
+        
+        // Если название в БД пустое, но есть название из данных импорта - используем его
+        if (empty($nameToCheck) && !empty($nameFromData) && !empty(trim($nameFromData))) {
+            $nameToCheck = trim($nameFromData);
+        }
+        
+        // Если название пустое - ничего не делаем
+        if (empty($nameToCheck)) {
+            return false;
+        }
+        
+        $trimSymbol = trim($nameTrimSymbol);
+        
+        // Проверяем наличие символа обрезки в названии
+        $trimIndex = strpos($nameToCheck, $trimSymbol);
+        
+        if ($trimIndex === false) {
+            // Символ не найден - обрезка не требуется
+            return false;
+        }
+        
+        // Символ найден - обрезаем название
+        $trimmedName = trim(substr($nameToCheck, 0, $trimIndex));
+        
+        // Если после обрезки название пустое - не обновляем
+        if (empty($trimmedName)) {
+            return false;
+        }
+        
+        // Обновляем название товара через прямое SQL-обновление
+        // Это гарантирует обновление независимо от условий
+        try {
+            DB::table('shop_goods')
+                ->where('id', $good->id)
+                ->update(['name' => $trimmedName]);
+            
+            // Синхронизируем модель с базой данных
+            $good->name = $trimmedName;
+            $good->refresh();
+            
+            return true;
+        } catch (\Exception $e) {
+            \Log::error('Ошибка при обрезке названия товара', [
+                'good_id' => $good->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
 
     private function createGood($goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory = null, $useDefaultCategory = false, $supplierStockFields = null, $nameTrimSymbol = null)
     {
@@ -1596,6 +1688,10 @@ class BulkGoodsImportController extends Controller
         // Обрабатываем вариации товара
         $variationId = null;
         if (isset($goodData['variation']) && is_array($goodData['variation'])) {
+            // Передаем nameTrimSymbol в goodData для обрезки названия товара
+            if (!isset($goodData['_nameTrimSymbol'])) {
+                $goodData['_nameTrimSymbol'] = $nameTrimSymbol;
+            }
             $variationId = $this->processVariation($good, $goodData['variation'], $goodData, $supplierStockFields);
 
             if ($variationId) {
@@ -1646,28 +1742,24 @@ class BulkGoodsImportController extends Controller
             $existingGood->sku = !empty($goodData['sku']) ? $goodData['sku'] : null;
         }
         
-        // Обновляем название только если оно не в списке неизменяемых полей
-        // Обновляем название только если оно передано, не пустое и не в списке неизменяемых
-        // Если включен поиск по именам в вариациях, поле name нельзя изменять
-        if (isset($goodData['name']) && !empty(trim($goodData['name'])) && !in_array('name', $immutableFields) && !$searchByNameInVariations) {
-            $nameToSet = trim($goodData['name']);
-
-            // Применяем обрезку названия из файла, если указан символ обрезки
-            // Обрезка применяется к названию из файла, а не к существующему названию в базе
-            // ВАЖНО: Обрезка применяется даже если название уже было обрезано на фронтенде
-            if (!empty($nameTrimSymbol) && !empty(trim($nameTrimSymbol)) && !empty($nameToSet) && !in_array('name', $immutableFields) && !$searchByNameInVariations) {
-                $trimSymbol = trim($nameTrimSymbol);
-                $trimIndex = strpos($nameToSet, $trimSymbol);
-                if ($trimIndex !== false) {
-                    $trimmedName = trim(substr($nameToSet, 0, $trimIndex));
-                    if (!empty($trimmedName)) {
-                        $nameToSet = $trimmedName;
-                    }
-                }
+        // КРИТИЧНО: Обрабатываем название ПЕРВЫМ и ПРИНУДИТЕЛЬНО применяем обрезку
+        // ВАЖНО: Обрезка названия - это обработка данных, а не обновление полей
+        // Поэтому обрезка должна применяться ВСЕГДА, независимо от условий обновления
+        // Используем отдельную функцию для обрезки, которая проверяет наличие символа в названии товара
+        if (isset($goodData['name']) && !empty(trim($goodData['name']))) {
+            $nameFromData = trim($goodData['name']);
+            // Применяем обрезку через отдельную функцию
+            // Функция проверит наличие символа обрезки в названии товара (из БД или из данных)
+            $this->trimGoodName($existingGood, $nameTrimSymbol, $immutableFields, $nameFromData);
+            
+            // КРИТИЧНО: Удаляем название из goodData, чтобы оно не перезаписалось в цикле ниже
+            // Это гарантирует, что обрезанное название не будет перезаписано необрезанным значением
+            unset($goodData['name']);
+        } else {
+            // Если название не передано в данных, но есть символ обрезки - проверяем название в БД
+            if (!empty($nameTrimSymbol) && !empty(trim($nameTrimSymbol))) {
+                $this->trimGoodName($existingGood, $nameTrimSymbol, $immutableFields, null);
             }
-
-            // Сохраняем обрезанное название
-            $existingGood->name = $nameToSet;
         }
         // Обновляем slug только если он явно передан в данных (выбран в маппинге) и не в списке неизменяемых
         // При обновлении существующей записи не создаем slug автоматически
@@ -1882,6 +1974,12 @@ class BulkGoodsImportController extends Controller
                 continue;
             }
 
+            // ВАЖНО: Пропускаем поле 'name', так как оно уже обработано выше с обрезкой
+            // Если обновить его здесь, оно перезапишет обрезанное значение необрезанным
+            if ($field === 'name') {
+                continue;
+            }
+
             // Если поле есть в goodData, обновляем его
             if (isset($goodData[$field])) {
                 $existingGood->$field = $goodData[$field];
@@ -1965,6 +2063,10 @@ class BulkGoodsImportController extends Controller
 
         // Обрабатываем вариации товара
         if (isset($goodData['variation']) && is_array($goodData['variation'])) {
+            // Передаем nameTrimSymbol в goodData для обрезки названия товара
+            if (!isset($goodData['_nameTrimSymbol'])) {
+                $goodData['_nameTrimSymbol'] = $nameTrimSymbol;
+            }
             $this->processVariation($existingGood, $goodData['variation'], $goodData, $supplierStockFields);
         }
 
@@ -3160,6 +3262,26 @@ class BulkGoodsImportController extends Controller
     private function processVariation($good, $variationData, $goodData, $supplierStockFields = null)
     {
         try {
+            // КРИТИЧНО: Обрезаем и обновляем название товара ПЕРЕД обработкой вариации
+            // Это гарантирует, что обрезка будет применена для всех товаров с вариациями
+            // Получаем nameTrimSymbol из goodData или из глобального контекста
+            $nameTrimSymbol = $goodData['_nameTrimSymbol'] ?? null;
+            if (empty($nameTrimSymbol)) {
+                // Пробуем получить из request через глобальный контекст
+                try {
+                    $request = request();
+                    $nameTrimSymbol = $request ? $request->input('name_trim_symbol') : null;
+                } catch (\Exception $e) {
+                    $nameTrimSymbol = null;
+                }
+            }
+            
+            // Применяем обрезку названия товара, если указан символ обрезки
+            // Используем отдельную функцию для обрезки, которая проверяет наличие символа в названии товара
+            $nameFromData = isset($goodData['name']) ? trim($goodData['name']) : null;
+            $immutableFields = []; // В processVariation immutableFields не передаются, используем пустой массив
+            $this->trimGoodName($good, $nameTrimSymbol, $immutableFields, $nameFromData);
+            
             // Проверяем наличие данных вариации
             if (!isset($variationData['attributes']) || !is_array($variationData['attributes']) || count($variationData['attributes']) === 0) {
                 return null;
@@ -3767,6 +3889,13 @@ class BulkGoodsImportController extends Controller
     private function resetSupplierStock($supplierId)
     {
         try {
+            // Получаем имя поставщика по ID
+            $supplier = ShopSupplier::find($supplierId);
+            if (!$supplier) {
+                return;
+            }
+            $supplierName = $supplier->name;
+
             // Обнуляем остатки на удаленном складе и остатки у/с быстро у товаров с указанным поставщиком
             ShopGood::where('supplier_id', $supplierId)
                 ->update([
@@ -3774,13 +3903,13 @@ class BulkGoodsImportController extends Controller
                     'fast_remote_stock_quantity' => null
                 ]);
 
-            // Также обнуляем остатки у вариаций товаров с указанным поставщиком
-            ShopGoodVariation::whereHas('good', function($query) use ($supplierId) {
-                $query->where('supplier_id', $supplierId);
-            })->update([
-                'remote_stock_quantity' => null,
-                'fast_remote_stock_quantity' => null
-            ]);
+            // КРИТИЧНО: Обнуляем остатки у вариаций, которые привязаны к поставщику по полю supplier вариации,
+            // а не через связь с товаром. Вариации могут быть привязаны к другому поставщику, чем главный товар.
+            ShopGoodVariation::where('supplier', $supplierName)
+                ->update([
+                    'remote_stock_quantity' => null,
+                    'fast_remote_stock_quantity' => null
+                ]);
         } catch (\Exception $e) {
             // Логируем ошибку, но не прерываем импорт
             Log::error('Ошибка при обнулении остатков поставщика: ' . $e->getMessage());
@@ -3978,13 +4107,13 @@ class BulkGoodsImportController extends Controller
                     'fast_remote_stock_quantity' => null
                 ]);
 
-            // Также обнуляем остатки у вариаций товаров с указанным поставщиком
-            ShopGoodVariation::whereHas('good', function($query) use ($supplierName) {
-                $query->where('supplier', $supplierName);
-            })->update([
-                'remote_stock_quantity' => null,
-                'fast_remote_stock_quantity' => null
-            ]);
+            // КРИТИЧНО: Обнуляем остатки у вариаций, которые привязаны к поставщику по полю supplier вариации,
+            // а не через связь с товаром. Вариации могут быть привязаны к другому поставщику, чем главный товар.
+            ShopGoodVariation::where('supplier', $supplierName)
+                ->update([
+                    'remote_stock_quantity' => null,
+                    'fast_remote_stock_quantity' => null
+                ]);
         } catch (\Exception $e) {
             // Логируем ошибку, но не прерываем импорт
             Log::error('Ошибка при обнулении остатков поставщика по имени: ' . $e->getMessage());
@@ -4088,12 +4217,25 @@ class BulkGoodsImportController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('Ошибка парсинга загруженного YML файла: ' . $e->getMessage());
-            \Log::error('Стек вызовов: ' . $e->getTraceAsString());
+            \Log::error('Ошибка парсинга загруженного YML файла', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            // Формируем более понятное сообщение об ошибке
+            $errorMessage = $e->getMessage();
+            if (strpos($errorMessage, 'Opening and ending tag mismatch') !== false) {
+                $errorMessage = 'Ошибка парсинга YML: Несоответствие открывающих и закрывающих тегов в XML файле. ' . 
+                               'Проверьте корректность структуры XML файла. ' . 
+                               'Возможно, некоторые теги не закрыты или закрыты неправильно.';
+            } elseif (strpos($errorMessage, 'parser error') !== false) {
+                $errorMessage = 'Ошибка парсинга YML: ' . $errorMessage;
+            }
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка парсинга файла: ' . $e->getMessage()
+                'error' => $errorMessage,
+                'message' => $errorMessage
             ], 500);
         }
     }
@@ -4104,10 +4246,32 @@ class BulkGoodsImportController extends Controller
     private function parseYMLContent($content)
     {
         try {
+            // Включаем обработку ошибок для получения детальной информации об ошибках парсинга
+            libxml_use_internal_errors(true);
+            libxml_clear_errors();
+            
             // Загружаем XML
             $xml = simplexml_load_string($content);
+            
+            // Получаем ошибки парсинга, если они есть
+            $xmlErrors = libxml_get_errors();
+            libxml_clear_errors();
+            libxml_use_internal_errors(false);
+            
             if ($xml === false) {
-                throw new \Exception('Не удалось загрузить XML');
+                $errorMessage = 'Не удалось загрузить XML';
+                if (!empty($xmlErrors)) {
+                    $errorDetails = [];
+                    foreach ($xmlErrors as $error) {
+                        $errorDetails[] = sprintf(
+                            'Строка %d: %s',
+                            $error->line,
+                            trim($error->message)
+                        );
+                    }
+                    $errorMessage .= '. ' . implode('; ', $errorDetails);
+                }
+                throw new \Exception($errorMessage);
             }
 
             // Определяем структуру файла
@@ -4488,12 +4652,26 @@ class BulkGoodsImportController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('Ошибка парсинга YML по URL: ' . $e->getMessage());
-            \Log::error('Стек вызовов: ' . $e->getTraceAsString());
+            \Log::error('Ошибка парсинга YML по URL', [
+                'url' => $request->input('url'),
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            // Формируем более понятное сообщение об ошибке
+            $errorMessage = $e->getMessage();
+            if (strpos($errorMessage, 'Opening and ending tag mismatch') !== false) {
+                $errorMessage = 'Ошибка парсинга YML: Несоответствие открывающих и закрывающих тегов в XML файле. ' . 
+                               'Проверьте корректность структуры XML файла. ' . 
+                               'Возможно, некоторые теги не закрыты или закрыты неправильно.';
+            } elseif (strpos($errorMessage, 'parser error') !== false) {
+                $errorMessage = 'Ошибка парсинга YML: ' . $errorMessage;
+            }
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка парсинга файла: ' . $e->getMessage()
+                'error' => $errorMessage,
+                'message' => $errorMessage
             ], 500);
         }
     }

@@ -162,17 +162,46 @@ class ShopGoodsController extends Controller
         // Фильтр по множественным поставщикам
         if ($request->has('suppliers')) {
             $supplierIds = $request->input('suppliers');
+            $includeVariations = $request->boolean('suppliers_include_variations', false);
+            
             if (is_array($supplierIds) && !empty($supplierIds)) {
-                $query->whereIn('supplier', $supplierIds);
+                if ($includeVariations) {
+                    // Включаем товары с поставщиками И товары с вариациями с поставщиками
+                    $query->where(function($q) use ($supplierIds) {
+                        // Товары с выбранными поставщиками
+                        $q->whereIn('supplier', $supplierIds)
+                          // Или товары, у которых есть вариации с выбранными поставщиками
+                          ->orWhereHas('variations', function($varQ) use ($supplierIds) {
+                              $varQ->whereIn('supplier', $supplierIds);
+                          });
+                    });
+                } else {
+                    // Только товары с поставщиками (без учета вариаций)
+                    $query->whereIn('supplier', $supplierIds);
+                }
             }
         }
 
         // Фильтр "Без поставщиков"
         if ($request->has('supplier_empty')) {
-            $query->where(function($q) {
-                $q->whereNull('supplier')
-                  ->orWhere('supplier', '');
-            });
+            $includeVariations = $request->boolean('supplier_empty_include_variations', false);
+            
+            if ($includeVariations) {
+                // Исключаем товары с поставщиками И товары с вариациями с поставщиками
+                $query->where(function($q) {
+                    $q->whereNull('supplier')
+                      ->orWhere('supplier', '');
+                })->whereDoesntHave('variations', function($varQ) {
+                    $varQ->whereNotNull('supplier')
+                         ->where('supplier', '!=', '');
+                });
+            } else {
+                // Только товары без поставщика в основном товаре
+                $query->where(function($q) {
+                    $q->whereNull('supplier')
+                      ->orWhere('supplier', '');
+                });
+            }
         }
 
         // Фильтр по лейблам
@@ -901,7 +930,16 @@ class ShopGoodsController extends Controller
                 }
             }
 
-            return response()->json([
+            // Подсчитываем вариации с выбранными поставщиками (если фильтр по поставщикам активен)
+            $variationsCount = 0;
+            if ($request->has('suppliers')) {
+                $supplierIds = $request->input('suppliers');
+                if (is_array($supplierIds) && !empty($supplierIds)) {
+                    $variationsCount = ShopGoodVariation::whereIn('supplier', $supplierIds)->count();
+                }
+            }
+            
+            $response = [
                 'success' => true,
                 'data' => $goods->items(),
                 'pagination' => [
@@ -912,7 +950,14 @@ class ShopGoodsController extends Controller
                     'from' => $goods->firstItem(),
                     'to' => $goods->lastItem()
                 ]
-            ]);
+            ];
+            
+            // Добавляем количество вариаций, если фильтр по поставщикам активен
+            if ($request->has('suppliers')) {
+                $response['variations_count'] = $variationsCount;
+            }
+            
+            return response()->json($response);
         } else {
             // Если запрашиваются конкретные ID, возвращаем все без пагинации
             $goods = $query->get();
@@ -1675,8 +1720,15 @@ class ShopGoodsController extends Controller
      */
     public function bulkUpdate(Request $request): JsonResponse
     {
+        $action = $request->get('action');
+        
+        // Для действий clear_by_tags и clear_by_suppliers ids не обязателен, так как используются фильтры в data
+        $idsRules = in_array($action, ['clear_by_tags', 'clear_by_suppliers']) 
+            ? 'nullable|array' 
+            : 'required|array';
+        
         $validator = Validator::make($request->all(), [
-            'ids' => 'required|array',
+            'ids' => $idsRules,
             'ids.*' => 'exists:shop_goods,id',
             'action' => 'required|in:activate,deactivate,delete,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_price,update_sale_price,update_demping_price,toggle_show_demping,toggle_fields,update_label,remove_after_symbol,replace_text,update_dimensions,enable_preorder,disable_preorder,clear_by_tags,clear_by_suppliers,delete_images,delete_zero_stock_no_media',
             'data' => 'nullable|array',
@@ -1707,14 +1759,139 @@ class ShopGoodsController extends Controller
 
             // Для массового удаления по меткам/поставщикам делаем прямые запросы
             if (in_array($action, ['clear_by_tags', 'clear_by_suppliers'])) {
-                $deletedCount = ShopGood::whereIn('id', $ids)->delete();
+                $query = ShopGood::query();
+                
+                // Если пришли фильтры в data, используем их для поиска товаров
+                if (!empty($data)) {
+                    // Фильтр по категориям
+                    if (isset($data['categories']) && is_array($data['categories']) && !empty($data['categories'])) {
+                        $query->whereHas('categories', function($q) use ($data) {
+                            $q->whereIn('shop_categories.id', $data['categories']);
+                        });
+                    }
+                    
+                    // Фильтр по брендам
+                    if (isset($data['brands']) && is_array($data['brands']) && !empty($data['brands'])) {
+                        $query->whereHas('brands', function($q) use ($data) {
+                            $q->whereIn('shop_brands.id', $data['brands']);
+                        });
+                    }
+                    
+                    // Фильтр по лейблам
+                    if (isset($data['labels']) && is_array($data['labels']) && !empty($data['labels'])) {
+                        $query->whereIn('label_id', $data['labels']);
+                    }
+                    
+                    // Фильтр по тегам
+                    if (isset($data['tags']) && is_array($data['tags']) && !empty($data['tags'])) {
+                        $query->whereHas('tags', function($q) use ($data) {
+                            $q->whereIn('shop_tags.id', $data['tags']);
+                        });
+                    }
+                    
+                    // Фильтр по поставщикам
+                    if (isset($data['suppliers']) && is_array($data['suppliers']) && !empty($data['suppliers'])) {
+                        $includeVariations = isset($data['suppliers_include_variations']) && $data['suppliers_include_variations'];
+                        
+                        if ($includeVariations) {
+                            // Включаем товары с поставщиками И товары с вариациями с поставщиками
+                            $query->where(function($q) use ($data) {
+                                // Товары с выбранными поставщиками
+                                $q->whereIn('supplier', $data['suppliers'])
+                                  // Или товары, у которых есть вариации с выбранными поставщиками
+                                  ->orWhereHas('variations', function($varQ) use ($data) {
+                                      $varQ->whereIn('supplier', $data['suppliers']);
+                                  });
+                            });
+                        } else {
+                            // Только товары с поставщиками (без учета вариаций)
+                            $query->whereIn('supplier', $data['suppliers']);
+                        }
+                    }
+                } else {
+                    // Если фильтров нет, используем переданные ID
+                    if (!empty($ids)) {
+                        $query->whereIn('id', $ids);
+                    } else {
+                        DB::rollBack();
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Не указаны ID товаров или фильтры для удаления'
+                        ], 400);
+                    }
+                }
+                
+                // Получаем ID товаров для удаления
+                $goodIds = $query->pluck('id')->toArray();
+                
+                // Для поставщиков также получаем ID вариаций с выбранными поставщиками
+                $variationIdsToDelete = [];
+                if ($action === 'clear_by_suppliers' && isset($data['suppliers']) && is_array($data['suppliers']) && !empty($data['suppliers'])) {
+                    // Получаем вариации с выбранными поставщиками (даже если основной товар не имеет этого поставщика)
+                    $variationIdsToDelete = ShopGoodVariation::whereIn('supplier', $data['suppliers'])
+                        ->pluck('id')
+                        ->toArray();
+                }
+                
+                if (empty($goodIds) && empty($variationIdsToDelete)) {
+                    DB::rollBack();
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Не найдено товаров или вариаций для удаления'
+                    ], 404);
+                }
+                
+                // Удаляем вариации с выбранными поставщиками (если есть)
+                $variationsDeletedBySupplier = 0;
+                if (!empty($variationIdsToDelete)) {
+                    // Удаляем изображения этих вариаций
+                    ShopGoodImage::whereIn('variation_id', $variationIdsToDelete)->delete();
+                    // Удаляем вариации
+                    $variationsDeletedBySupplier = ShopGoodVariation::whereIn('id', $variationIdsToDelete)->delete();
+                }
+                
+                // Удаляем вариации товаров, которые будут удалены
+                $variationsDeletedByGood = 0;
+                if (!empty($goodIds)) {
+                    $variationsDeletedByGood = ShopGoodVariation::whereIn('good_id', $goodIds)->delete();
+                }
+                
+                // Удаляем изображения товаров и вариаций
+                if (!empty($goodIds)) {
+                    ShopGoodImage::whereIn('good_id', $goodIds)->delete();
+                }
+                
+                // Удаляем товары
+                $deletedCount = 0;
+                if (!empty($goodIds)) {
+                    $deletedCount = ShopGood::whereIn('id', $goodIds)->delete();
+                }
+                
+                $totalVariationsDeleted = $variationsDeletedBySupplier + $variationsDeletedByGood;
 
                 DB::commit();
 
+                $message = "";
+                if ($deletedCount > 0) {
+                    $message .= "Удалено {$deletedCount} товаров";
+                }
+                if ($totalVariationsDeleted > 0) {
+                    if ($message) {
+                        $message .= " и ";
+                    }
+                    $message .= "{$totalVariationsDeleted} вариаций";
+                }
+                if (!$message) {
+                    $message = "Нечего удалять";
+                }
+
                 return response()->json([
                     'success' => true,
-                    'message' => "Удалено {$deletedCount} товаров",
-                    'deleted_count' => $deletedCount
+                    'message' => $message,
+                    'deleted_count' => $deletedCount,
+                    'variations_deleted' => $totalVariationsDeleted,
+                    'variations_deleted_by_supplier' => $variationsDeletedBySupplier,
+                    'variations_deleted_by_good' => $variationsDeletedByGood
                 ]);
             }
 
@@ -5997,18 +6174,31 @@ class ShopGoodsController extends Controller
     public function getSuppliers(): JsonResponse
     {
         try {
-            $suppliers = ShopGood::whereNotNull('supplier')
+            // Получаем поставщиков из основных товаров
+            $suppliersFromGoods = ShopGood::whereNotNull('supplier')
                 ->where('supplier', '!=', '')
                 ->distinct()
-                ->orderBy('supplier')
                 ->pluck('supplier')
                 ->filter()
-                ->values()
                 ->toArray();
-
+            
+            // Получаем поставщиков из вариаций
+            $suppliersFromVariations = ShopGoodVariation::whereNotNull('supplier')
+                ->where('supplier', '!=', '')
+                ->distinct()
+                ->pluck('supplier')
+                ->filter()
+                ->toArray();
+            
+            // Объединяем и получаем уникальный список
+            $allSuppliers = array_unique(array_merge($suppliersFromGoods, $suppliersFromVariations));
+            
+            // Сортируем по алфавиту
+            sort($allSuppliers);
+            
             return response()->json([
                 'success' => true,
-                'data' => $suppliers
+                'data' => array_values($allSuppliers) // array_values для переиндексации массива
             ]);
         } catch (\Exception $e) {
             return response()->json([
