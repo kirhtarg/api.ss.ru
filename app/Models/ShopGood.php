@@ -283,34 +283,46 @@ class ShopGood extends Model
         // Если оба значения заданы и они одинаковы (с учетом погрешности), это точное значение
         if ($minPriceNum !== null && $maxPriceNum !== null && abs($minPriceNum - $maxPriceNum) < 0.01) {
             $query->where(function($q) use ($maxPriceNum) {
-                // Проверяем цену основного товара
-                $q->where('price', '=', $maxPriceNum)
-                  // Или цену в вариациях
-                  ->orWhereHas('variations', function($varQ) use ($maxPriceNum) {
-                      $varQ->where('price', '=', $maxPriceNum);
-                  });
+                // Товары БЕЗ вариаций: проверяем цену основного товара
+                $q->where(function($noVarQ) use ($maxPriceNum) {
+                    $noVarQ->whereDoesntHave('variations')
+                           ->where('price', '=', $maxPriceNum);
+                })
+                // Товары С вариациями: проверяем ТОЛЬКО цену вариаций
+                ->orWhere(function($hasVarQ) use ($maxPriceNum) {
+                    $hasVarQ->whereHas('variations')
+                            ->whereHas('variations', function($varQ) use ($maxPriceNum) {
+                                $varQ->where('price', '=', $maxPriceNum);
+                            });
+                });
             });
         } else {
             // Применяем диапазон с учетом вариаций
             $query->where(function($q) use ($minPriceNum, $maxPriceNum) {
-                // Проверяем цену основного товара
-                if ($minPriceNum !== null && $maxPriceNum !== null) {
-                    $q->whereBetween('price', [$minPriceNum, $maxPriceNum]);
-                } elseif ($minPriceNum !== null) {
-                    $q->where('price', '>=', $minPriceNum);
-                } elseif ($maxPriceNum !== null) {
-                    $q->where('price', '<=', $maxPriceNum);
-                }
-                
-                // Или цену в вариациях
-                $q->orWhereHas('variations', function($varQ) use ($minPriceNum, $maxPriceNum) {
+                // Товары БЕЗ вариаций: проверяем цену основного товара
+                $q->where(function($noVarQ) use ($minPriceNum, $maxPriceNum) {
+                    $noVarQ->whereDoesntHave('variations');
+                    
                     if ($minPriceNum !== null && $maxPriceNum !== null) {
-                        $varQ->whereBetween('price', [$minPriceNum, $maxPriceNum]);
+                        $noVarQ->whereBetween('price', [$minPriceNum, $maxPriceNum]);
                     } elseif ($minPriceNum !== null) {
-                        $varQ->where('price', '>=', $minPriceNum);
+                        $noVarQ->where('price', '>=', $minPriceNum);
                     } elseif ($maxPriceNum !== null) {
-                        $varQ->where('price', '<=', $maxPriceNum);
+                        $noVarQ->where('price', '<=', $maxPriceNum);
                     }
+                })
+                // Товары С вариациями: проверяем ТОЛЬКО цену вариаций
+                ->orWhere(function($hasVarQ) use ($minPriceNum, $maxPriceNum) {
+                    $hasVarQ->whereHas('variations')
+                            ->whereHas('variations', function($varQ) use ($minPriceNum, $maxPriceNum) {
+                                if ($minPriceNum !== null && $maxPriceNum !== null) {
+                                    $varQ->whereBetween('price', [$minPriceNum, $maxPriceNum]);
+                                } elseif ($minPriceNum !== null) {
+                                    $varQ->where('price', '>=', $minPriceNum);
+                                } elseif ($maxPriceNum !== null) {
+                                    $varQ->where('price', '<=', $maxPriceNum);
+                                }
+                            });
                 });
             });
         }
