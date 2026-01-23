@@ -645,10 +645,6 @@ class ShopGoodImagesController extends Controller
             foreach ($images as $index => $image) {
                 $hasGoodId = !empty($image['good_id']);
                 $hasVariationId = !empty($image['variation_id']);
-
-                if ($index < 5) { // Логируем только первые 5 для отладки
-                    \Log::info("Изображение {$index}: good_id=" . ($image['good_id'] ?? 'null') . ", variation_id=" . ($image['variation_id'] ?? 'null'));
-                }
                 
                 if (!$hasGoodId && !$hasVariationId) {
                     $validator->errors()->add("images.{$index}.good_id", 'Необходимо указать либо good_id, либо variation_id');
@@ -688,7 +684,6 @@ class ShopGoodImagesController extends Controller
                 // Если товар/вариация не существует, добавляем в список для пропуска
                 if ($hasGoodId) {
                     if (!\DB::table('shop_goods')->where('id', $image['good_id'])->exists()) {
-                        \Log::warning("Товар не найден в БД - пропускаем изображение", ['good_id' => $image['good_id'], 'image' => $image]);
                         $imagesToSkip[] = $index;
                         continue;
                     }

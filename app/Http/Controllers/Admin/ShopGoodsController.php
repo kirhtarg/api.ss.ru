@@ -44,7 +44,7 @@ class ShopGoodsController extends Controller
             'label:id,name,color',
             'properties:id,name,slug',
             'images:id,good_id,file_path,alt_text,is_main,sort_order',
-            'variations:id,good_id,name,sku,price,sale_price,demping_price,show_demping,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,is_active'
+            'variations:id,good_id,name,sku,price,sale_price,demping_price,show_demping,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,is_active,supplier'
         ])->withCount('variations');
 
         // Загружаем pivot данные для свойств (поддерживаем разные схемы: value или shop_property_value_id)
@@ -1730,7 +1730,7 @@ class ShopGoodsController extends Controller
         $validator = Validator::make($request->all(), [
             'ids' => $idsRules,
             'ids.*' => 'exists:shop_goods,id',
-            'action' => 'required|in:activate,deactivate,delete,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_price,update_sale_price,update_demping_price,toggle_show_demping,toggle_fields,update_label,remove_after_symbol,replace_text,update_dimensions,enable_preorder,disable_preorder,clear_by_tags,clear_by_suppliers,delete_images,delete_zero_stock_no_media',
+            'action' => 'required|in:activate,deactivate,delete,delete_without_supplier,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_fast_remote_stock,update_price,update_sale_price,update_demping_price,toggle_show_demping,toggle_fields,update_label,remove_after_symbol,replace_text,update_dimensions,enable_preorder,disable_preorder,clear_by_tags,clear_by_suppliers,delete_images,delete_zero_stock_no_media',
             'data' => 'nullable|array',
             'data.delete_type' => 'nullable|in:goods,variations,goods_and_variations',
             'data.variation_ids' => 'nullable|array',
@@ -1984,6 +1984,8 @@ class ShopGoodsController extends Controller
             }
 
             $goods = ShopGood::whereIn('id', $ids)->get();
+            $deletedCount = 0; // Счетчик удаленных товаров для delete_without_supplier
+            $deletedVariationsCount = 0; // Счетчик удаленных вариаций для delete_without_supplier
 
             foreach ($goods as $good) {
                 if (!$good) {
@@ -1995,6 +1997,23 @@ class ShopGoodsController extends Controller
                 if ($action === 'delete') {
                     $this->logAudit($good, 'bulk_deleted', $oldValues, null);
                     $good->delete();
+                    continue;
+                }
+                
+                // Для удаления вариаций без поставщика (товары не удаляем, даже если у товара не останется вариаций)
+                if ($action === 'delete_without_supplier') {
+                    // Удаляем только вариации без поставщика
+                    // ВАЖНО: Основной товар НЕ удаляется, даже если у него не останется вариаций
+                    $variations = $good->variations()->get();
+                    foreach ($variations as $variation) {
+                        $variationSupplier = $variation->supplier;
+                        if (empty($variationSupplier) || $variationSupplier === null || trim($variationSupplier) === '') {
+                            $variation->delete();
+                            $deletedVariationsCount++;
+                        }
+                    }
+                    // Явно убеждаемся, что товар не удаляется - просто продолжаем цикл
+                    // Товар остается в базе данных, даже если у него не осталось вариаций
                     continue;
                 }
 
@@ -2214,6 +2233,7 @@ class ShopGoodsController extends Controller
                             $stockValue = (int) $data['stock_value'];
                             $currentStock = (int) $good->stock_quantity;
                             
+                            // Обновляем остаток основного товара
                             if ($stockAction === 'set') {
                                 $good->update(['stock_quantity' => $stockValue]);
                             } elseif ($stockAction === 'add') {
@@ -2221,13 +2241,51 @@ class ShopGoodsController extends Controller
                             } elseif ($stockAction === 'subtract') {
                                 $good->update(['stock_quantity' => max(0, $currentStock - $stockValue)]);
                             }
+                            
+                            // Также обновляем остатки всех вариаций товара
+                            $variations = $good->variations()->get();
+                            foreach ($variations as $variation) {
+                                $variationCurrentStock = (int) $variation->stock_quantity;
+                                
+                                if ($stockAction === 'set') {
+                                    $variation->update(['stock_quantity' => $stockValue]);
+                                } elseif ($stockAction === 'add') {
+                                    $variation->update(['stock_quantity' => max(0, $variationCurrentStock + $stockValue)]);
+                                } elseif ($stockAction === 'subtract') {
+                                    $variation->update(['stock_quantity' => max(0, $variationCurrentStock - $stockValue)]);
+                                }
+                            }
                         }
                         break;
                     case 'update_remote_stock':
                         if (isset($data['remote_stock_quantity'])) {
                             $remoteStockValue = $data['remote_stock_quantity'];
+                            $remoteStockValueFormatted = ($remoteStockValue === '' || $remoteStockValue === null) ? null : (string)$remoteStockValue;
+                            
+                            // Обновляем остаток у/с основного товара
                             $good->update([
-                                'remote_stock_quantity' => ($remoteStockValue === '' || $remoteStockValue === null) ? null : (string)$remoteStockValue
+                                'remote_stock_quantity' => $remoteStockValueFormatted
+                            ]);
+                            
+                            // Также обновляем остатки у/с всех вариаций товара
+                            $good->variations()->update([
+                                'remote_stock_quantity' => $remoteStockValueFormatted
+                            ]);
+                        }
+                        break;
+                    case 'update_fast_remote_stock':
+                        if (isset($data['fast_remote_stock_quantity'])) {
+                            $fastRemoteStockValue = $data['fast_remote_stock_quantity'];
+                            $fastRemoteStockValueFormatted = ($fastRemoteStockValue === '' || $fastRemoteStockValue === null) ? null : (string)$fastRemoteStockValue;
+                            
+                            // Обновляем быстрый остаток у/с основного товара
+                            $good->update([
+                                'fast_remote_stock_quantity' => $fastRemoteStockValueFormatted
+                            ]);
+                            
+                            // Также обновляем быстрые остатки у/с всех вариаций товара
+                            $good->variations()->update([
+                                'fast_remote_stock_quantity' => $fastRemoteStockValueFormatted
                             ]);
                         }
                         break;
@@ -2497,10 +2555,18 @@ class ShopGoodsController extends Controller
 
             DB::commit();
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Массовое обновление выполнено успешно'
-            ]);
+            // Формируем сообщение в зависимости от действия
+            $message = 'Массовое обновление выполнено успешно';
+            $responseData = ['success' => true, 'message' => $message];
+            
+            if ($action === 'delete_without_supplier') {
+                $message = "Удалено вариаций без поставщика: {$deletedVariationsCount}";
+                $responseData['message'] = $message;
+                $responseData['deleted_count'] = 0; // Товары не удаляются
+                $responseData['deleted_variations_count'] = $deletedVariationsCount;
+            }
+
+            return response()->json($responseData);
 
         } catch (\Exception $e) {
             DB::rollBack();

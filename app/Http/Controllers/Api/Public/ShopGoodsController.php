@@ -1199,14 +1199,6 @@ class ShopGoodsController extends Controller
                 return $good;
             });
 
-            // Логируем результаты для отладки
-            Log::info('ShopGoods response', [
-                'total_goods' => $goods->total(),
-                'current_page_goods' => count($goods->items()),
-                'supplier_param' => $request->input('supplier'),
-                'request_params' => $request->all()
-            ]);
-
             return response()->json([
                 'success' => true,
                 'data' => $goods->items(),
