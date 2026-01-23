@@ -282,15 +282,37 @@ class ShopGood extends Model
         
         // Если оба значения заданы и они одинаковы (с учетом погрешности), это точное значение
         if ($minPriceNum !== null && $maxPriceNum !== null && abs($minPriceNum - $maxPriceNum) < 0.01) {
-            $query->where('price', '=', $maxPriceNum);
+            $query->where(function($q) use ($maxPriceNum) {
+                // Проверяем цену основного товара
+                $q->where('price', '=', $maxPriceNum)
+                  // Или цену в вариациях
+                  ->orWhereHas('variations', function($varQ) use ($maxPriceNum) {
+                      $varQ->where('price', '=', $maxPriceNum);
+                  });
+            });
         } else {
-            // Применяем диапазон
-            if ($minPriceNum !== null) {
-                $query->where('price', '>=', $minPriceNum);
-            }
-            if ($maxPriceNum !== null) {
-                $query->where('price', '<=', $maxPriceNum);
-            }
+            // Применяем диапазон с учетом вариаций
+            $query->where(function($q) use ($minPriceNum, $maxPriceNum) {
+                // Проверяем цену основного товара
+                if ($minPriceNum !== null && $maxPriceNum !== null) {
+                    $q->whereBetween('price', [$minPriceNum, $maxPriceNum]);
+                } elseif ($minPriceNum !== null) {
+                    $q->where('price', '>=', $minPriceNum);
+                } elseif ($maxPriceNum !== null) {
+                    $q->where('price', '<=', $maxPriceNum);
+                }
+                
+                // Или цену в вариациях
+                $q->orWhereHas('variations', function($varQ) use ($minPriceNum, $maxPriceNum) {
+                    if ($minPriceNum !== null && $maxPriceNum !== null) {
+                        $varQ->whereBetween('price', [$minPriceNum, $maxPriceNum]);
+                    } elseif ($minPriceNum !== null) {
+                        $varQ->where('price', '>=', $minPriceNum);
+                    } elseif ($maxPriceNum !== null) {
+                        $varQ->where('price', '<=', $maxPriceNum);
+                    }
+                });
+            });
         }
         
         return $query;

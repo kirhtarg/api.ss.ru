@@ -281,6 +281,36 @@ class ShopGoodsController extends Controller
             $query->priceRange($minPrice, $maxPrice);
         }
 
+        // Фильтр по наличию акционной цены (has_sale_price)
+        if ($request->filled('has_sale_price')) {
+            $hasSalePrice = $request->get('has_sale_price');
+            if ($hasSalePrice === 'true') {
+                $query->where(function($q) {
+                    // Проверяем акционную цену основного товара
+                    $q->whereNotNull('sale_price')
+                      ->where('sale_price', '>', 0)
+                      // Или акционную цену в вариациях
+                      ->orWhereHas('variations', function($varQ) {
+                          $varQ->whereNotNull('sale_price')
+                               ->where('sale_price', '>', 0);
+                      });
+                });
+            } elseif ($hasSalePrice === 'false') {
+                $query->where(function($q) {
+                    // Основной товар без акционной цены
+                    $q->where(function($mainQ) {
+                        $mainQ->whereNull('sale_price')
+                              ->orWhere('sale_price', '=', 0);
+                    })
+                    // И нет вариаций с акционной ценой
+                    ->whereDoesntHave('variations', function($varQ) {
+                        $varQ->whereNotNull('sale_price')
+                             ->where('sale_price', '>', 0);
+                    });
+                });
+            }
+        }
+
         // Фильтр по акционной цене
         $minSalePrice = $request->has('min_sale_price') ? $request->get('min_sale_price') : null;
         $maxSalePrice = $request->has('max_sale_price') ? $request->get('max_sale_price') : null;
