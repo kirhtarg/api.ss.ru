@@ -32,5 +32,10 @@ class RouteServiceProvider extends ServiceProvider
         RateLimiter::for('public', function (Request $request) {
             return Limit::perMinute(300)->by($request->ip());
         });
+
+        // Повышенный лимит для тяжёлых операций импорта: download-images-batch, import-logs/*-batch, images/import-batch
+        RateLimiter::for('import', function (Request $request) {
+            return Limit::perMinute(500)->by($request->user()?->id ?: $request->ip());
+        });
     }
 }

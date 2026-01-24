@@ -24,6 +24,16 @@ class ThrottlePublicRoutes
             return $next($request);
         }
 
+        // Для тяжёлых операций импорта (download-images-batch, import-logs/*-batch, images/import-batch)
+        // — более мягкий лимит 500/мин, чтобы не было 429 при массовой загрузке изображений
+        $path = $request->path();
+        if (str_contains($path, 'download-images-batch')
+            || str_contains($path, 'image-error-batch')
+            || str_contains($path, 'image-success-batch')
+            || str_contains($path, 'import-batch')) {
+            return app(ThrottleRequests::class)->handle($request, $next, 'import');
+        }
+
         // Для остальных маршрутов применяем стандартный throttle:api
         return app(ThrottleRequests::class)->handle($request, $next, $limiter);
     }
