@@ -143,9 +143,15 @@ class BulkGoodsImportController extends Controller
             // Если есть только название без SKU - это валидно для создания нового товара
             // Если есть и SKU, и название - это валидно для создания или обновления
             
-            // Нормализуем данные
-            $good['sku'] = $sku;
-            $good['name'] = $name; // Может быть пустым, если есть только SKU
+            // Нормализуем только те поля, которые были в запросе (пришли из маппинга колонок).
+            // Не добавляем sku/name, если колонка не была сопоставлена — иначе при обновлении
+            // мы бы перезаписывали значения в БД «пустыми» из хороших данных.
+            if (array_key_exists('sku', $good)) {
+                $good['sku'] = $sku;
+            }
+            if (array_key_exists('name', $good)) {
+                $good['name'] = $name;
+            }
             
             // Добавляем supplier_name из запроса, если указан
             $supplierName = $request->input('supplier_name', null);
@@ -320,8 +326,9 @@ class BulkGoodsImportController extends Controller
 
             foreach ($goods as $index => $goodData) {
                 $count = $index + 1;
-                $sku = $goodData['sku'] ?? 'неизвестно';
-                $name = $goodData['name'] ?? 'неизвестно';
+                // Для поиска: только значения из маппинга. Если колонка не сопоставлена — пустая строка
+                $sku = isset($goodData['sku']) ? trim((string)$goodData['sku']) : '';
+                $name = isset($goodData['name']) ? trim((string)$goodData['name']) : '';
 
                 try {
                     // Пустые строки уже отфильтрованы на этапе валидации
@@ -342,8 +349,15 @@ class BulkGoodsImportController extends Controller
                         $searchByFieldInVariations = 'name'; // значение по умолчанию
                     }
 
-                    // Получаем поставщика из данных товара
-                    $supplierName = isset($goodData['supplier_name']) && trim($goodData['supplier_name']) !== '' ? trim($goodData['supplier_name']) : null;
+                    // Получаем поставщика: из данных товара (добавлено при препроцессинге из request) или из request
+                    $supplierName = null;
+                    $supplierNameRaw = $goodData['supplier_name'] ?? $request->input('supplier_name', null);
+                    if ($supplierNameRaw !== null && $supplierNameRaw !== '' && $supplierNameRaw !== '__reset_all__') {
+                        $trimmed = trim((string) $supplierNameRaw);
+                        if ($trimmed !== '') {
+                            $supplierName = $trimmed;
+                        }
+                    }
 
                     $existingGood = null;
                     $existingVariation = null;
@@ -359,6 +373,7 @@ class BulkGoodsImportController extends Controller
                                     count($goodData['variation']['attributes']) > 0;
 
                     // Сначала проверяем режим поиска в вариациях (если включен)
+                    // Поиск работает и без поставщика: при отсутствии поставщика ищем по всем вариациям
                     if ($searchByNameInVariations && !$hasVariation) {
                         // Поиск вариаций по имени отключаем для товаров с вариациями,
                         // потому что может быть несколько вариаций с одинаковым SKU
@@ -369,18 +384,22 @@ class BulkGoodsImportController extends Controller
                             // Ищем вариацию по выбранному полю
                             $variationQuery = ShopGoodVariation::where($searchByFieldInVariations, $searchValue);
 
-                            // Если указан поставщик, ищем только вариации этого поставщика
+                            // Если указан поставщик, сужаем поиск до вариаций этого поставщика.
+                            // При отсутствии поставщика фильтр не добавляется — ищем по всем вариациям.
                             if ($supplierName) {
                                 $variationQuery->where('supplier', $supplierName);
                             }
 
                             $existingVariation = $variationQuery->first();
 
+                            // Если с фильтром по поставщику не нашли — пробуем без него (вариация может быть без поставщика или с другим)
+                            if (!$existingVariation && $supplierName) {
+                                $existingVariation = ShopGoodVariation::where($searchByFieldInVariations, $searchValue)->first();
+                            }
+
                             if ($existingVariation) {
                                 $existingGood = $existingVariation->good;
                             }
-                            // Если вариация не найдена, existingVariation остается null
-                            // и existingGood тоже null, что приведет к обычному поиску товара ниже
                         }
                     }
 
@@ -389,7 +408,6 @@ class BulkGoodsImportController extends Controller
                         // Обычный поиск товара по duplicateFields
                         foreach ($duplicateFields as $field) {
                             if ($field === 'sku') {
-                                // Если SKU пустой, ищем товары с NULL в поле SKU
                                 if (!empty($sku)) {
                                     // Если указан поставщик, сначала ищем товар этого поставщика
                                     if ($supplierName) {
@@ -414,24 +432,28 @@ class BulkGoodsImportController extends Controller
                                         }
                                     }
                                 } else {
-                                    // Ищем товары с пустым SKU
-                                    $goodQuery = ShopGood::whereNull('sku')->where('name', $name);
+                                    // При пустом SKU не ищем по name, если 'name' не в duplicate_fields
+                                    if (in_array('name', $duplicateFields) && !empty($name)) {
+                                        $goodQuery = ShopGood::whereNull('sku')->where('name', $name);
+                                        if ($supplierName) {
+                                            $goodQuery->where('supplier', $supplierName);
+                                        }
+                                        $existingGood = $goodQuery->first();
+                                        if ($existingGood) {
+                                            $foundByFields[] = $supplierName ? "пустой SKU + название: '{$name}' (поставщик: {$supplierName})" : "пустой SKU + название: '{$name}'";
+                                        }
+                                    }
+                                }
+                            } elseif ($field === 'name') {
+                                if (!empty($name)) {
+                                    $goodQuery = ShopGood::where('name', $name);
                                     if ($supplierName) {
                                         $goodQuery->where('supplier', $supplierName);
                                     }
                                     $existingGood = $goodQuery->first();
                                     if ($existingGood) {
-                                        $foundByFields[] = $supplierName ? "пустой SKU + название: '{$name}' (поставщик: {$supplierName})" : "пустой SKU + название: '{$name}'";
+                                        $foundByFields[] = $supplierName ? "название: '{$name}' (поставщик: {$supplierName})" : "название: '{$name}'";
                                     }
-                                }
-                            } elseif ($field === 'name') {
-                                $goodQuery = ShopGood::where('name', $name);
-                                if ($supplierName) {
-                                    $goodQuery->where('supplier', $supplierName);
-                                }
-                                $existingGood = $goodQuery->first();
-                                if ($existingGood) {
-                                    $foundByFields[] = $supplierName ? "название: '{$name}' (поставщик: {$supplierName})" : "название: '{$name}'";
                                 }
                             }
 
@@ -468,8 +490,8 @@ class BulkGoodsImportController extends Controller
                             }
                         }
 
-                        // 2. Если не найден по SKU, ищем по имени (точное совпадение)
-                        if (!$existingGood) {
+                        // 2. Если не найден по SKU, ищем по имени — только если 'name' в duplicate_fields
+                        if (!$existingGood && in_array('name', $duplicateFields) && !empty($name)) {
                             $goodQuery = ShopGood::where('name', $name);
                             if ($supplierName) {
                                 $goodQuery->where('supplier', $supplierName);
@@ -480,8 +502,8 @@ class BulkGoodsImportController extends Controller
                             }
                         }
 
-                        // 3. Если не найден, пробуем по имени с пустым SKU
-                        if (!$existingGood) {
+                        // 3. Если не найден, пробуем по имени с пустым SKU — только если 'name' в duplicate_fields
+                        if (!$existingGood && in_array('name', $duplicateFields) && !empty($name)) {
                             $goodQuery = ShopGood::whereNull('sku')->where('name', $name);
                             if ($supplierName) {
                                 $goodQuery->where('supplier', $supplierName);
@@ -492,8 +514,8 @@ class BulkGoodsImportController extends Controller
                             }
                         }
 
-                        // 4. Если все еще не найден, пробуем поиск по имени без учета регистра и пробелов
-                        if (!$existingGood) {
+                        // 4. Если все еще не найден, пробуем поиск по имени без учета регистра — только если 'name' в duplicate_fields
+                        if (!$existingGood && in_array('name', $duplicateFields) && !empty($name)) {
                             // Нормализуем имя для поиска (убираем лишние пробелы, приводим к нижнему регистру)
                             $normalizedName = trim(preg_replace('/\s+/', ' ', mb_strtolower($name)));
                             $goodQuery = ShopGood::whereRaw('LOWER(TRIM(name)) = ?', [$normalizedName]);
@@ -510,7 +532,6 @@ class BulkGoodsImportController extends Controller
                         // Ищем товар по указанным полям (обычная логика)
                         foreach ($duplicateFields as $field) {
                             if ($field === 'sku') {
-                                // Если SKU пустой, ищем товары с NULL в поле SKU
                                 if (!empty($sku)) {
                                     // Если указан поставщик, сначала ищем товар этого поставщика
                                     if ($supplierName) {
@@ -535,24 +556,28 @@ class BulkGoodsImportController extends Controller
                                         }
                                     }
                                 } else {
-                                    // Ищем товары с пустым SKU
-                                    $goodQuery = ShopGood::whereNull('sku')->where('name', $name);
+                                    // При пустом SKU не ищем по name, если 'name' не в duplicate_fields
+                                    if (in_array('name', $duplicateFields) && !empty($name)) {
+                                        $goodQuery = ShopGood::whereNull('sku')->where('name', $name);
+                                        if ($supplierName) {
+                                            $goodQuery->where('supplier', $supplierName);
+                                        }
+                                        $existingGood = $goodQuery->first();
+                                        if ($existingGood) {
+                                            $foundByFields[] = $supplierName ? "пустой SKU + название: '{$name}' (поставщик: {$supplierName})" : "пустой SKU + название: '{$name}'";
+                                        }
+                                    }
+                                }
+                            } elseif ($field === 'name') {
+                                if (!empty($name)) {
+                                    $goodQuery = ShopGood::where('name', $name);
                                     if ($supplierName) {
                                         $goodQuery->where('supplier', $supplierName);
                                     }
                                     $existingGood = $goodQuery->first();
                                     if ($existingGood) {
-                                        $foundByFields[] = $supplierName ? "пустой SKU + название: '{$name}' (поставщик: {$supplierName})" : "пустой SKU + название: '{$name}'";
+                                        $foundByFields[] = $supplierName ? "название: '{$name}' (поставщик: {$supplierName})" : "название: '{$name}'";
                                     }
-                                }
-                            } elseif ($field === 'name') {
-                                $goodQuery = ShopGood::where('name', $name);
-                                if ($supplierName) {
-                                    $goodQuery->where('supplier', $supplierName);
-                                }
-                                $existingGood = $goodQuery->first();
-                                if ($existingGood) {
-                                    $foundByFields[] = $supplierName ? "название: '{$name}' (поставщик: {$supplierName})" : "название: '{$name}'";
                                 }
                             }
 
@@ -667,14 +692,18 @@ class BulkGoodsImportController extends Controller
                             }
 
 
-                            $updateResult = $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation, $supplierStockFields, $nameTrimSymbol);
+                            // Для «Поиск в вариациях»: изображения привязываем к вариации только если у товара есть вариации;
+                            // если у товара нет вариаций — к основному товару
+                            $attachImagesTo = ($existingGood->variations()->count() > 0) ? $existingVariation : null;
+                            $updateResult = $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation, $supplierStockFields, $nameTrimSymbol, $attachImagesTo);
                             $results['imagesDownloaded'] += $updateResult['imageStats']['downloaded'];
                             $results['imagesFailed'] += $updateResult['imageStats']['failed'];
 
                             // Для логики "Изменить вариацию" также обновляем остатки сопоставленных вариаций
+                            // Важно: используем $vid в цикле, чтобы не перезаписать $variationId (нужен для variationIds ниже)
                             if (isset($goodData['variation_ids']) && is_array($goodData['variation_ids'])) {
-                                foreach ($goodData['variation_ids'] as $variationId) {
-                                    $variation = ShopGoodVariation::where('id', $variationId)
+                                foreach ($goodData['variation_ids'] as $vid) {
+                                    $variation = ShopGoodVariation::where('id', $vid)
                                         ->where('good_id', $existingGood->id)
                                         ->first();
 
@@ -691,8 +720,7 @@ class BulkGoodsImportController extends Controller
                                         }
 
                                         $variation->save();
-
-                                        }
+                                    }
                                 }
                             }
                         }
@@ -750,11 +778,17 @@ class BulkGoodsImportController extends Controller
                             $results['goodIds'][$goodData['_row']] = $existingGood->id;
                         }
 
-                        // Сохраняем ID вариации для связи с изображениями
+                        // Сохраняем ID вариации для связи с изображениями (фронтенд: встроенные и связанные изображения)
                         if ($variationId) {
-
                             if (isset($goodData['_row'])) {
                                 $results['variationIds'][$goodData['_row']] = $variationId;
+                            }
+                            // Для «Поиск в вариациях»: в строке нет variation.attributes, добавляем по sku и name для надёжного поиска на фронте
+                            if (!empty($sku)) {
+                                $results['variationIds'][$sku] = $variationId;
+                            }
+                            if (!empty($name)) {
+                                $results['variationIds'][$name] = $variationId;
                             }
 
                             // Также сохраняем по ключу на основе SKU + атрибутов вариации для случаев,
@@ -826,6 +860,15 @@ class BulkGoodsImportController extends Controller
                             }
                         }
 
+                        // Изображения привязываем к созданной вариации, а не к основному товару
+                        if (isset($goodData['images']) && is_array($goodData['images']) && $variationId) {
+                            $variationForImages = ShopGoodVariation::find($variationId);
+                            if ($variationForImages) {
+                                $imageStats = $this->processImages($existingGood, $goodData['images'], $variationForImages);
+                                $results['imagesDownloaded'] += $imageStats['downloaded'];
+                                $results['imagesFailed'] += $imageStats['failed'];
+                            }
+                        }
 
                         // Обрабатываем категории товара (даже если обрабатывается только вариация)
                         $categoryIds = [];
@@ -1012,6 +1055,16 @@ class BulkGoodsImportController extends Controller
                                     $results['variationIds'][$variationKey] = $variationId;
                                 }
                             }
+
+                            // Изображения привязываем к вариации, а не к основному товару
+                            if (isset($goodData['images']) && is_array($goodData['images']) && $variationId) {
+                                $variationForImages = ShopGoodVariation::find($variationId);
+                                if ($variationForImages) {
+                                    $imageStats = $this->processImages($existingGood, $goodData['images'], $variationForImages);
+                                    $results['imagesDownloaded'] += $imageStats['downloaded'];
+                                    $results['imagesFailed'] += $imageStats['failed'];
+                                }
+                            }
                             
                             // Добавляем в группу для обновления
                             $sheet = $goodData['_sheet'] ?? 'неизвестно';
@@ -1061,15 +1114,24 @@ class BulkGoodsImportController extends Controller
                                     }
                             }
 
+                            // Если у товара есть вариации и в строке указан SKU — обновляем вариацию и привязываем изображения к ней
+                            $attachImagesToVariation = null;
+                            if ($existingGood->variations()->count() > 0 && !empty($sku)) {
+                                $attachImagesToVariation = $existingGood->variations()->where('sku', $sku)->first();
+                                // Критично: обновляем вариацию (остатки, цена, SKU и т.д.) из строки — иначе вариации «не затрагиваются»
+                                if ($attachImagesToVariation) {
+                                    $this->updateVariationFromGoodData($attachImagesToVariation, $goodData, $searchByNameInVariations);
+                                }
+                            }
 
-                            $updateResult = $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation, $supplierStockFields, $nameTrimSymbol);
+                            $updateResult = $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation, $supplierStockFields, $nameTrimSymbol, $attachImagesToVariation);
                             $results['imagesDownloaded'] += $updateResult['imageStats']['downloaded'];
                             $results['imagesFailed'] += $updateResult['imageStats']['failed'];
 
                             // Для логики "Изменить вариацию" также обновляем остатки сопоставленных вариаций
                             if (isset($goodData['variation_ids']) && is_array($goodData['variation_ids'])) {
-                                foreach ($goodData['variation_ids'] as $variationId) {
-                                    $variation = ShopGoodVariation::where('id', $variationId)
+                                foreach ($goodData['variation_ids'] as $vid) {
+                                    $variation = ShopGoodVariation::where('id', $vid)
                                         ->where('good_id', $existingGood->id)
                                         ->first();
 
@@ -1088,8 +1150,7 @@ class BulkGoodsImportController extends Controller
                                         }
 
                                         $variation->save();
-
-                                        }
+                                    }
                                 }
                             }
 
@@ -1104,6 +1165,19 @@ class BulkGoodsImportController extends Controller
                             // Также добавляем ID по _row для связи с изображениями
                             if (isset($goodData['_row'])) {
                                 $results['goodIds'][$goodData['_row']] = $existingGood->id;
+                            }
+
+                            // При привязке изображений к вариации — variationIds для встроенных/связанных изображений на фронте
+                            if ($attachImagesToVariation) {
+                                if (isset($goodData['_row'])) {
+                                    $results['variationIds'][$goodData['_row']] = $attachImagesToVariation->id;
+                                }
+                                if (!empty($sku)) {
+                                    $results['variationIds'][$sku] = $attachImagesToVariation->id;
+                                }
+                                if (!empty($name)) {
+                                    $results['variationIds'][$name] = $attachImagesToVariation->id;
+                                }
                             }
                             
                             // Добавляем в группу для обновления
@@ -1132,13 +1206,13 @@ class BulkGoodsImportController extends Controller
                                 $doubleCheckGood = ShopGood::where('sku', $sku)->first();
                             }
                             
-                            // Если не найден по SKU, проверяем по имени
-                            if (!$doubleCheckGood) {
+                            // Если не найден по SKU, проверяем по имени — только если 'name' в duplicate_fields
+                            if (!$doubleCheckGood && in_array('name', $duplicateFields) && !empty($name)) {
                                 $doubleCheckGood = ShopGood::where('name', $name)->first();
                             }
                             
-                            // Если все еще не найден, проверяем по имени с пустым SKU
-                            if (!$doubleCheckGood && empty($sku)) {
+                            // Если все еще не найден, проверяем по имени с пустым SKU — только если 'name' в duplicate_fields
+                            if (!$doubleCheckGood && empty($sku) && in_array('name', $duplicateFields) && !empty($name)) {
                                 $doubleCheckGood = ShopGood::whereNull('sku')->where('name', $name)->first();
                             }
                             
@@ -1320,10 +1394,10 @@ class BulkGoodsImportController extends Controller
                         if (!empty($sku)) {
                             $existingGood = ShopGood::where('sku', $sku)->first();
                         }
-                        if (!$existingGood) {
+                        if (!$existingGood && in_array('name', $duplicateFields) && !empty($name)) {
                             $existingGood = ShopGood::where('name', $name)->first();
                         }
-                        if (!$existingGood && empty($sku)) {
+                        if (!$existingGood && empty($sku) && in_array('name', $duplicateFields) && !empty($name)) {
                             $existingGood = ShopGood::whereNull('sku')->where('name', $name)->first();
                         }
                         
@@ -1675,52 +1749,41 @@ class BulkGoodsImportController extends Controller
             $good->brands()->sync($brandIds);
         }
 
-        // Обрабатываем изображения
-        if (isset($goodData['images']) && is_array($goodData['images'])) {
-            $imageStats = $this->processImages($good, $goodData['images']);
-        }
-
-        // Обрабатываем свойства товаров
-        if (isset($goodData['properties']) && is_array($goodData['properties'])) {
-            $this->processProperties($good, $goodData['properties']);
-        }
-
-        // Обрабатываем вариации товара
+        // Обрабатываем вариации товара ДО изображений: при создании с вариацией картинки вешаем на вариацию
         $variationId = null;
         if (isset($goodData['variation']) && is_array($goodData['variation'])) {
-            // Передаем nameTrimSymbol в goodData для обрезки названия товара
             if (!isset($goodData['_nameTrimSymbol'])) {
                 $goodData['_nameTrimSymbol'] = $nameTrimSymbol;
             }
             $variationId = $this->processVariation($good, $goodData['variation'], $goodData, $supplierStockFields);
 
             if ($variationId) {
-                // Для товаров с вариациями устанавливаем цены и остатки из вариации с учетом настроек поставщика
-                // Обычно берем данные из первой вариации или оставляем пустыми (null)
                 $good->price = $goodData['variation']['price'] ?? 0;
                 $good->sale_price = $goodData['variation']['sale_price'] ?? null;
-
-
-                // Обновляем остатки товарами из вариации
                 $stockValue = is_numeric($goodData['variation']['stock_quantity'] ?? 0) ? (float)($goodData['variation']['stock_quantity'] ?? 0) : 0;
                 $good->stock_quantity = $stockValue;
-
                 $remoteValue = $goodData['variation']['remote_stock_quantity'] ?? null;
-                // Обновляем только если значение не пустое
                 if ($remoteValue !== null && $remoteValue !== '' && trim($remoteValue) !== '') {
                     $good->remote_stock_quantity = is_numeric($remoteValue) ? (string)$remoteValue : $remoteValue;
                 }
-
                 $fastRemoteValue = $goodData['variation']['fast_remote_stock_quantity'] ?? null;
-                // Обновляем только если значение не пустое
                 if ($fastRemoteValue !== null && $fastRemoteValue !== '' && trim($fastRemoteValue) !== '') {
                     $good->fast_remote_stock_quantity = is_numeric($fastRemoteValue) ? (string)$fastRemoteValue : $fastRemoteValue;
                 }
-
-                $good->save(); // Сохраняем обновленные данные после обработки вариации
-                }
-        } else {
+                $good->save();
             }
+        }
+
+        // Обрабатываем изображения: при создании с вариацией — к вариации, иначе к товару
+        if (isset($goodData['images']) && is_array($goodData['images'])) {
+            $variationForImages = $variationId ? ShopGoodVariation::find($variationId) : null;
+            $imageStats = $this->processImages($good, $goodData['images'], $variationForImages);
+        }
+
+        // Обрабатываем свойства товаров
+        if (isset($goodData['properties']) && is_array($goodData['properties'])) {
+            $this->processProperties($good, $goodData['properties']);
+        }
 
         // Сохраняем ID вариации в объекте товара для последующего использования
         if ($variationId) {
@@ -1730,16 +1793,24 @@ class BulkGoodsImportController extends Controller
         return ['good' => $good, 'imageStats' => $imageStats];
     }
 
-    private function updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory = null, $useDefaultCategory = false, $immutableFields = [], $searchByNameInVariations = false, $hasVariation = false, $supplierStockFields = null, $nameTrimSymbol = null)
+    private function updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory = null, $useDefaultCategory = false, $immutableFields = [], $searchByNameInVariations = false, $hasVariation = false, $supplierStockFields = null, $nameTrimSymbol = null, $attachImagesToVariation = null)
     {
         $imageStats = ['downloaded' => 0, 'failed' => 0];
 
         // Обновляем все поля из goodData, которые переданы в импорте
         // Это позволяет обновлять все поля, отмеченные для импорта, а не только те, что используются для поиска
         
-        // Обновляем SKU (артикул) - если передан и не в списке неизменяемых, обновляем
+        // Обновляем SKU (артикул) - если передан и не в списке неизменяемых, обновляем.
+        // Не «восстанавливаем» артикул: если у товара в БД он пустой, а в файле — непустой,
+        // не перезаписываем (пользователь мог намеренно очистить; значение в файле могло
+        // остаться от вариации/старого значения).
         if (isset($goodData['sku']) && !in_array('sku', $immutableFields)) {
-            $existingGood->sku = !empty($goodData['sku']) ? $goodData['sku'] : null;
+            $newSku = !empty($goodData['sku']) ? trim($goodData['sku']) : null;
+            $existingIsEmpty = ($existingGood->sku === null || trim((string)($existingGood->sku ?? '')) === '');
+            $wouldRestore = ($newSku !== null && $newSku !== '' && $existingIsEmpty);
+            if (!$wouldRestore) {
+                $existingGood->sku = $newSku;
+            }
         }
         
         // КРИТИЧНО: Обрабатываем название ПЕРВЫМ и ПРИНУДИТЕЛЬНО применяем обрезку
@@ -2051,9 +2122,10 @@ class BulkGoodsImportController extends Controller
             $existingGood->brands()->sync($brandIds);
         }
 
-        // Обрабатываем изображения
+        // Обрабатываем изображения. Если передан $attachImagesToVariation (при «Поиск в вариациях»),
+        // привязываем изображения к вариации, а не к основному товару.
         if (isset($goodData['images']) && is_array($goodData['images'])) {
-            $imageStats = $this->processImages($existingGood, $goodData['images']);
+            $imageStats = $this->processImages($existingGood, $goodData['images'], $attachImagesToVariation);
         }
 
         // Обрабатываем свойства товаров
@@ -2198,9 +2270,16 @@ class BulkGoodsImportController extends Controller
         return array_unique($brandIds);
     }
 
-    private function processImages($good, $images)
+    /**
+     * Обрабатывает изображения: загрузка и привязка к товару или вариации.
+     * @param object $good Товар (для очистки Excel-изображений и когда $variation пустая)
+     * @param array $images Массив URL или путей к изображениям
+     * @param object|null $variation Вариация: если передана, изображения привязываются к вариации, а не к товару
+     */
+    private function processImages($good, $images, $variation = null)
     {
         $stats = ['downloaded' => 0, 'failed' => 0];
+        $attachToVariation = $variation !== null;
 
         // Проверяем, есть ли среди новых изображений изображения из Excel
         $hasExcelImages = false;
@@ -2211,26 +2290,27 @@ class BulkGoodsImportController extends Controller
             }
         }
 
-        // Если есть изображения из Excel, удаляем существующие изображения из Excel для этого товара
+        // Если есть изображения из Excel, удаляем существующие изображения из Excel
         if ($hasExcelImages) {
-            // Получаем все вариации товара
-            $variationIds = $good->variations()->pluck('id')->toArray();
-
-            // Удаляем изображения из Excel, привязанные к товару
-            $existingExcelImages = ShopGoodImage::where('good_id', $good->id)
-                ->where('file_path', 'like', '/images/shop/goods/excel_%')
-                ->get();
-
-            // Также удаляем изображения из Excel, привязанные к вариациям
-            if (!empty($variationIds)) {
-                $existingVariationExcelImages = ShopGoodImage::whereIn('variation_id', $variationIds)
+            if ($attachToVariation) {
+                // Привязка к вариации: удаляем только изображения этой вариации из Excel
+                $existingExcelImages = ShopGoodImage::where('variation_id', $variation->id)
                     ->where('file_path', 'like', '/images/shop/goods/excel_%')
                     ->get();
-
-                $existingExcelImages = $existingExcelImages->merge($existingVariationExcelImages);
+            } else {
+                // Привязка к товару: удаляем изображения товара и всех его вариаций из Excel
+                $variationIds = $good->variations()->pluck('id')->toArray();
+                $existingExcelImages = ShopGoodImage::where('good_id', $good->id)
+                    ->where('file_path', 'like', '/images/shop/goods/excel_%')
+                    ->get();
+                if (!empty($variationIds)) {
+                    $existingVariationExcelImages = ShopGoodImage::whereIn('variation_id', $variationIds)
+                        ->where('file_path', 'like', '/images/shop/goods/excel_%')
+                        ->get();
+                    $existingExcelImages = $existingExcelImages->merge($existingVariationExcelImages);
+                }
             }
 
-            // Физически удаляем файлы и записи из БД
             foreach ($existingExcelImages as $existingImage) {
                 $filePath = str_replace('/images/', '', $existingImage->file_path);
                 $fullPath = base_path('../admin.skateandsnow.ru/public/images/' . $filePath);
@@ -2241,47 +2321,42 @@ class BulkGoodsImportController extends Controller
             }
         }
 
+        $imageRecord = static function ($filePath) use ($attachToVariation, $good, $variation) {
+            if ($attachToVariation) {
+                return [
+                    'good_id' => null,
+                    'variation_id' => $variation->id,
+                    'file_path' => $filePath,
+                    'is_main' => false,
+                    'sort_order' => 0
+                ];
+            }
+            return [
+                'good_id' => $good->id,
+                'variation_id' => null,
+                'file_path' => $filePath,
+                'is_main' => false,
+                'sort_order' => 0
+            ];
+        };
+
         foreach ($images as $imageUrl) {
             if (!empty($imageUrl)) {
-                // Если это уже локальный путь (начинается с /), сохраняем как есть
                 if (str_starts_with($imageUrl, '/')) {
-                    ShopGoodImage::create([
-                        'good_id' => $good->id,
-                        'file_path' => $imageUrl,
-                        'is_main' => false,
-                        'sort_order' => 0
-                    ]);
+                    ShopGoodImage::create($imageRecord($imageUrl));
                     $stats['downloaded']++;
                 } else {
-                    // Если это внешний URL, скачиваем изображение
                     try {
                         $downloadResponse = $this->downloadImage($imageUrl);
                         if ($downloadResponse && isset($downloadResponse['data']['path'])) {
-                            ShopGoodImage::create([
-                                'good_id' => $good->id,
-                                'file_path' => $downloadResponse['data']['path'],
-                                'is_main' => false,
-                                'sort_order' => 0
-                            ]);
+                            ShopGoodImage::create($imageRecord($downloadResponse['data']['path']));
                             $stats['downloaded']++;
                         } else {
-                            // Если не удалось скачать, сохраняем оригинальный URL
-                            ShopGoodImage::create([
-                                'good_id' => $good->id,
-                                'file_path' => $imageUrl,
-                                'is_main' => false,
-                                'sort_order' => 0
-                            ]);
+                            ShopGoodImage::create($imageRecord($imageUrl));
                             $stats['failed']++;
                         }
                     } catch (\Exception $e) {
-                        // В случае ошибки сохраняем оригинальный URL
-                        ShopGoodImage::create([
-                            'good_id' => $good->id,
-                            'file_path' => $imageUrl,
-                            'is_main' => false,
-                            'sort_order' => 0
-                        ]);
+                        ShopGoodImage::create($imageRecord($imageUrl));
                         $stats['failed']++;
                     }
                 }
