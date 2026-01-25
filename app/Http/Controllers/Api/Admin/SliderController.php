@@ -182,9 +182,8 @@ class SliderController extends Controller
         try {
             $slider = Slider::findOrFail($id);
             
-            // Удаляем все изображения слайдера с фронтенда
-            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
-            $frontendPublicPath = base_path($frontendPath . '/public');
+            // Удаляем все изображения слайдера с фронтенда (из FRONTEND_PATH в .env)
+            $frontendPublicPath = frontend_public_path();
             
             foreach ($slider->images as $image) {
                 $imagePath = $frontendPublicPath . '/images/sliders/' . $image->image_path;
@@ -253,9 +252,8 @@ class SliderController extends Controller
                 $height = $request->input('custom_height');
             }
             
-            // Путь к папке public фронтенда
-            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
-            $frontendPublicPath = base_path($frontendPath . '/public');
+            // Путь к папке public фронтенда (из FRONTEND_PATH в .env)
+            $frontendPublicPath = frontend_public_path();
             $slidersDir = $frontendPublicPath . '/images/sliders';
             
             // Создаем директорию, если её нет
@@ -473,9 +471,8 @@ class SliderController extends Controller
         try {
             $image = SliderImage::where('slider_id', $sliderId)->findOrFail($imageId);
             
-            // Удаляем файл изображения с фронтенда
-            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
-            $frontendPublicPath = base_path($frontendPath . '/public');
+            // Удаляем файл изображения с фронтенда (из FRONTEND_PATH в .env)
+            $frontendPublicPath = frontend_public_path();
             $imagePath = $frontendPublicPath . '/images/sliders/' . $image->image_path;
             
             if (file_exists($imagePath)) {

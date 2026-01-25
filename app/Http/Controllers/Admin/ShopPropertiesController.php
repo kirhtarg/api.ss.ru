@@ -170,9 +170,8 @@ class ShopPropertiesController extends Controller
                 ]);
             }
 
-            // Удаляем файл с фронтенда
-            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
-            $frontendPublicPath = base_path($frontendPath . '/public');
+            // Удаляем файл с фронтенда (из FRONTEND_PATH в .env)
+            $frontendPublicPath = frontend_public_path();
 
             // Обрабатываем разные форматы пути
             $imagePathToDelete = $currentImage;
@@ -253,13 +252,12 @@ class ShopPropertiesController extends Controller
             $fileName = 'color-image-' . $valueId . '.' . $fileExtension;
             $relativePath = 'color-images/' . $fileName;
 
-            // Получаем путь к фронтенду из переменной окружения
-            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
-            $frontendPublicPath = base_path($frontendPath . '/public');
+            // Получаем путь к фронтенду (из FRONTEND_PATH в .env)
+            $frontendPublicPath = frontend_public_path();
             $fullPath = $frontendPublicPath . '/' . $relativePath;
             $dir = dirname($fullPath);
 
-            Log::info('Путь к фронтенду: ' . $frontendPath);
+            Log::info('Путь к фронтенду: ' . config('frontend.path'));
             Log::info('Полный путь к public фронтенда: ' . $frontendPublicPath);
             Log::info('Полный путь к файлу: ' . $fullPath);
             Log::info('Директория для сохранения: ' . $dir);
@@ -352,13 +350,12 @@ class ShopPropertiesController extends Controller
             $fileName = 'color-image-' . $valueId . '.jpg';
             $relativePath = 'color-images/' . $fileName;
 
-            // Получаем путь к фронтенду из переменной окружения
-            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
-            $frontendPublicPath = base_path($frontendPath . '/public');
+            // Получаем путь к фронтенду (из FRONTEND_PATH в .env)
+            $frontendPublicPath = frontend_public_path();
             $fullPath = $frontendPublicPath . '/' . $relativePath;
             $dir = dirname($fullPath);
 
-            Log::info('Путь к фронтенду: ' . $frontendPath);
+            Log::info('Путь к фронтенду: ' . config('frontend.path'));
             Log::info('Полный путь к файлу: ' . $fullPath);
             Log::info('Директория для сохранения: ' . $dir);
 

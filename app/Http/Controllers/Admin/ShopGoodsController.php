@@ -2819,10 +2819,9 @@ class ShopGoodsController extends Controller
             
             // Полный путь для сохранения
             $fullPath = $storagePath . '/' . $fileName;
-            // Получаем путь к фронтенду из переменной окружения FRONTEND_PATH
-            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
-            $frontendPublicPath = base_path($frontendPath . '/public');
-            $storageFullPath = $frontendPublicPath . $fullPath;
+            // Получаем путь к фронтенду из FRONTEND_PATH в .env
+            $frontendPublicPath = frontend_public_path();
+            $storageFullPath = $frontendPublicPath . '/' . ltrim($fullPath, '/');
             
             // Проверяем, существует ли файл уже
             if (file_exists($storageFullPath)) {
@@ -3050,11 +3049,9 @@ class ShopGoodsController extends Controller
             $width = $request->input('width');
             $height = $request->input('height');
 
-            // Путь для сохранения на фронтенд
-            // Получаем путь к фронтенду из переменной окружения FRONTEND_PATH
-            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
-            $frontendPublicPath = base_path($frontendPath . '/public');
-            $fullPath = $frontendPublicPath . $path;
+            // Путь для сохранения на фронтенд (из FRONTEND_PATH в .env)
+            $frontendPublicPath = frontend_public_path();
+            $fullPath = $frontendPublicPath . '/' . ltrim($path, '/');
             $dir = dirname($fullPath);
 
             // Создаем директорию если не существует
@@ -3142,10 +3139,9 @@ class ShopGoodsController extends Controller
             
             // Полный путь для сохранения на фронтенд
             $fullPath = $storagePath . '/' . $fileName;
-            // Получаем путь к фронтенду из переменной окружения FRONTEND_PATH
-            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
-            $frontendPublicPath = base_path($frontendPath . '/public');
-            $storageFullPath = $frontendPublicPath . $fullPath;
+            // Получаем путь к фронтенду из FRONTEND_PATH в .env
+            $frontendPublicPath = frontend_public_path();
+            $storageFullPath = $frontendPublicPath . '/' . ltrim($fullPath, '/');
             $normalizedStorageFullPath = realpath($storageFullPath) ?: $storageFullPath;
             
             // Проверяем, существует ли файл уже (до скачивания, чтобы не тратить время)

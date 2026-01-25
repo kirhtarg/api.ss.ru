@@ -380,8 +380,8 @@ class UserProfileController extends Controller
                 return false;
             }
 
-            // Путь к папке на фронтенде
-            $frontendPath = dirname(base_path()) . '/' . ltrim(env('FRONTEND_PATH', 'admin.skateandsnow.ru'), './') . '/public/images/users/';
+            // Путь к папке на фронтенде (из FRONTEND_PATH в .env)
+            $frontendPath = frontend_public_path('images/users') . '/';
             
             // Всегда используем стандартное имя файла user_{id}.jpg
             // Не проверяем БД - просто удаляем файл, если он есть

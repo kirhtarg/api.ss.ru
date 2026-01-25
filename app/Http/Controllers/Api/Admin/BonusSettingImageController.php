@@ -46,11 +46,8 @@ class BonusSettingImageController extends Controller
             // Generate filename based on bonus setting ID
             $filename = 'bsys_' . $bonusSetting->id . '.jpg';
             
-            // Get frontend path from environment variable (path from backend root to frontend root)
-            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
-            
-            // Build the correct path to frontend public folder
-            $imagePath = base_path($frontendPath . '/public/images/bsys/');
+            // Путь к public фронтенда (из FRONTEND_PATH в .env)
+            $imagePath = frontend_public_path('images/bsys/');
             
             // Ensure directory exists
             if (!file_exists($imagePath)) {
@@ -230,8 +227,7 @@ class BonusSettingImageController extends Controller
      */
     private function getImagePath($bonusSettingId)
     {
-        $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
-        $imagePath = base_path($frontendPath . '/public/images/bsys/');
+        $imagePath = frontend_public_path('images/bsys/');
         $filename = 'bsys_' . $bonusSettingId . '.jpg';
         return $imagePath . $filename;
     }

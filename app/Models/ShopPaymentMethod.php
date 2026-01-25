@@ -92,14 +92,8 @@ class ShopPaymentMethod extends Model
             
             $imagePath = '/images/payment/payment_' . $this->id . '.jpg';
             
-            // Check if image exists in frontend public folder
-            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
-            
-            if (empty($frontendPath)) {
-                return null;
-            }
-            
-            $fullPath = base_path($frontendPath . '/public' . $imagePath);
+            // Проверяем наличие файла в public фронтенда (из FRONTEND_PATH в .env)
+            $fullPath = frontend_public_path(ltrim($imagePath, '/'));
             
             if ($fullPath && file_exists($fullPath)) {
                 return $imagePath;

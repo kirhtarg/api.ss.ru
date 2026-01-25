@@ -32,11 +32,8 @@ class PaymentMethodImageController extends Controller
             // Generate filename based on payment method ID
             $filename = 'payment_' . $paymentMethod->id . '.jpg';
             
-            // Get frontend path from environment variable (path from backend root to frontend root)
-            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
-            
-            // Build the correct path to frontend public folder
-            $imagePath = base_path($frontendPath . '/public/images/payment/');
+            // Путь к public фронтенда (из FRONTEND_PATH в .env)
+            $imagePath = frontend_public_path('images/payment/');
             
             // Ensure directory exists
             if (!file_exists($imagePath)) {
@@ -158,8 +155,7 @@ class PaymentMethodImageController extends Controller
     private function deleteImage($imageUrl)
     {
         try {
-            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
-            $fullPath = base_path($frontendPath . '/public' . $imageUrl);
+            $fullPath = frontend_public_path(ltrim($imageUrl, '/'));
             
             if (file_exists($fullPath)) {
                 unlink($fullPath);

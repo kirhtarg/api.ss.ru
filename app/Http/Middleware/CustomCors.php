@@ -26,6 +26,10 @@ class CustomCors
                 'https://skateandsnow.ru',
                 'https://admin.skateandsnow.ru',
                 'https://api.skateandsnow.ru',
+                'https://psy.kirhtarg.ru',
+                'https://api-psy.kirhtarg.ru',
+                'https://self-reason.ru',
+                'https://api.self-reason.ru',
                 'http://localhost:3000',
                 'http://localhost:3001',
             ];
@@ -57,6 +61,10 @@ class CustomCors
             'https://skateandsnow.ru',
             'https://admin.skateandsnow.ru',
             'https://api.skateandsnow.ru',
+            'https://psy.kirhtarg.ru',
+            'https://api-psy.kirhtarg.ru',
+            'https://self-reason.ru',
+            'https://api.self-reason.ru',
             'http://localhost:3000',
             'http://localhost:3001',
         ];

@@ -154,7 +154,7 @@ class ShopGoodVideosController extends Controller
                 $path = 'videos/goods/' . $goodId . '/' . $filename;
                 
                 // Путь к папке public фронтенда
-                $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+                $frontendPublicPath = frontend_public_path();
                 $fullPath = $frontendPublicPath . '/' . $path;
                 $dir = dirname($fullPath);
 
@@ -200,7 +200,7 @@ class ShopGoodVideosController extends Controller
                 $path = 'images/shop/videos/thumbnails/' . $goodId . '/' . $filename;
                 
                 // Путь к папке public фронтенда
-                $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+                $frontendPublicPath = frontend_public_path();
                 $fullPath = $frontendPublicPath . '/' . $path;
                 $dir = dirname($fullPath);
 
@@ -342,7 +342,7 @@ class ShopGoodVideosController extends Controller
 
         try {
             // Удаляем файлы с фронтенда
-            $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+            $frontendPublicPath = frontend_public_path();
             
             if ($video->video_path) {
                 $videoPath = $frontendPublicPath . '/' . $video->video_path;

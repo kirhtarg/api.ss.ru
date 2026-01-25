@@ -2491,7 +2491,7 @@ class BulkGoodsImportController extends Controller
 
             foreach ($existingExcelImages as $existingImage) {
                 $filePath = str_replace('/images/', '', $existingImage->file_path);
-                $fullPath = base_path('../admin.skateandsnow.ru/public/images/' . $filePath);
+                $fullPath = frontend_public_path('images/' . $filePath);
                 if (file_exists($fullPath)) {
                     unlink($fullPath); // Удаляем файл
                 }

@@ -39,6 +39,28 @@ if (!function_exists('get_shop_setting')) {
     }
 }
 
+if (!function_exists('frontend_public_path')) {
+    /**
+     * Абсолютный путь к папке public фронтенд-приложения.
+     * Берётся из FRONTEND_PATH в .env (без запасных значений в коде).
+     *
+     * @param string $subpath Подпуть относительно public (например 'images/settings')
+     * @return string
+     * @throws \RuntimeException если FRONTEND_PATH не задан в .env
+     */
+    function frontend_public_path(string $subpath = ''): string
+    {
+        $path = config('frontend.path');
+        if (empty($path)) {
+            throw new \RuntimeException(
+                'FRONTEND_PATH должен быть задан в .env (относительный путь к папке фронтенда, напр. ../admin.skateandsnow.ru)'
+            );
+        }
+        $base = base_path(rtrim($path, '/') . '/public');
+        return $subpath !== '' ? rtrim($base, '/') . '/' . ltrim($subpath, '/') : $base;
+    }
+}
+
 if (!function_exists('mb_ucfirst')) {
     /**
      * Преобразует первый символ строки в верхний регистр (с поддержкой UTF-8)

@@ -30,11 +30,8 @@ class DeliveryMethodImageController extends Controller
             // Generate filename based on delivery method ID
             $filename = 'delivery_' . $deliveryMethod->id . '.jpg';
             
-            // Get frontend path from environment variable (path from backend root to frontend root)
-            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
-            
-            // Build the correct path to frontend public folder
-            $imagePath = base_path($frontendPath . '/public/images/deliveries/');
+            // Путь к public фронтенда (из FRONTEND_PATH в .env)
+            $imagePath = frontend_public_path('images/deliveries/');
             
             // Ensure directory exists
             if (!file_exists($imagePath)) {
@@ -159,8 +156,7 @@ class DeliveryMethodImageController extends Controller
     private function deleteImage($imageUrl)
     {
         try {
-            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
-            $fullPath = base_path($frontendPath . '/public' . $imageUrl);
+            $fullPath = frontend_public_path(ltrim($imageUrl, '/'));
             
             if (file_exists($fullPath)) {
                 unlink($fullPath);

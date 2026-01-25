@@ -92,7 +92,7 @@ class ShopGoodImageController extends Controller
                 $processedImage = $this->processImage($file, $uploadType, $systemWidth, $systemHeight, $customWidth, $customHeight);
                 
                 // Путь к папке public фронтенда
-                $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+                $frontendPublicPath = frontend_public_path();
                 $fullPath = $frontendPublicPath . '/' . $path;
                 $dir = dirname($fullPath);
 
@@ -214,7 +214,7 @@ class ShopGoodImageController extends Controller
             DB::beginTransaction();
 
             // Удаляем файл с фронтенда
-            $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+            $frontendPublicPath = frontend_public_path();
             $filePath = $frontendPublicPath . '/' . $image->file_path;
             if (file_exists($filePath)) {
                 unlink($filePath);

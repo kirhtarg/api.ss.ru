@@ -280,8 +280,8 @@ class SettingController extends Controller
             // Путь для сохранения на фронтенде
             $path = 'images/settings/' . $filename;
             
-            // Путь к папке public фронтенда
-            $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+            // Путь к папке public фронтенда (из FRONTEND_PATH в .env)
+            $frontendPublicPath = frontend_public_path();
             $fullPath = $frontendPublicPath . '/' . $path;
             $dir = dirname($fullPath);
 
@@ -505,7 +505,7 @@ class SettingController extends Controller
 
             // Удаляем файл изображения с фронтенда, если он существует
             if ($setting->value && $setting->value !== 'default-image.png') {
-                $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+                $frontendPublicPath = frontend_public_path();
                 $filePath = $frontendPublicPath . '/' . $setting->value;
                 if (file_exists($filePath)) {
                     unlink($filePath);
@@ -576,8 +576,8 @@ class SettingController extends Controller
             $width = $request->input('width');
             $height = $request->input('height');
 
-            // Получаем полный путь к изображению на фронтенде
-            $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+            // Получаем полный путь к изображению на фронтенде (из FRONTEND_PATH в .env)
+            $frontendPublicPath = frontend_public_path();
             $imagePath = $frontendPublicPath . '/' . $setting->value;
 
             if (!file_exists($imagePath)) {

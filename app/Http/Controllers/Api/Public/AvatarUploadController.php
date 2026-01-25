@@ -192,8 +192,8 @@ class AvatarUploadController extends Controller
             // Генерируем имя файла как user_{id} (всегда jpg после оптимизации)
             $filename = 'user_' . $userId . '.jpg';
             
-            // Путь к папке на фронтенде из переменной окружения
-            $frontendPath = dirname(base_path()) . '/' . ltrim(env('FRONTEND_PATH', 'admin.skateandsnow.ru'), './') . '/public/images/users/';
+            // Путь к папке на фронтенде (из FRONTEND_PATH в .env)
+            $frontendPath = frontend_public_path('images/users') . '/';
             
             Log::info('Frontend path: ' . $frontendPath);
             Log::info('Frontend path exists: ' . (file_exists($frontendPath) ? 'yes' : 'no'));
@@ -348,8 +348,8 @@ class AvatarUploadController extends Controller
             // Получаем пользователя из базы данных
             $user = $request->user();
 
-            // Путь к папке на фронтенде
-            $frontendPath = dirname(base_path()) . '/' . ltrim(env('FRONTEND_PATH', 'admin.skateandsnow.ru'), './') . '/public/images/users/';
+            // Путь к папке на фронтенде (из FRONTEND_PATH в .env)
+            $frontendPath = frontend_public_path('images/users') . '/';
             
             // Всегда используем стандартное имя файла user_{id}.jpg
             // Не проверяем БД - просто удаляем файл, если он есть

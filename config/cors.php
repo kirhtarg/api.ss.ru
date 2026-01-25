@@ -27,6 +27,10 @@ return [
         'https://skateandsnow-test.ru',
         'https://admin.skateandsnow-test.ru',
         'https://api.skateandsnow-test.ru',
+        'https://psy.kirhtarg.ru',
+        'https://api-psy.kirhtarg.ru',
+        'https://self-reason.ru',
+        'https://api.self-reason.ru',
     ], explode(',', env('CORS_ALLOWED_ORIGINS', '')))),
 
     'allowed_origins_patterns' => [],

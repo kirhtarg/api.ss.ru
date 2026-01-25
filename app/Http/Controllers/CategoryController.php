@@ -455,9 +455,8 @@ class CategoryController extends Controller
             $updated = 0;
             $errors = [];
 
-            // Получаем путь к фронтенду
-            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
-            $imagesPath = $frontendPath . '/public/images/categories';
+            // Получаем путь к фронтенду (из FRONTEND_PATH в .env)
+            $imagesPath = frontend_public_path('images/categories');
 
             foreach ($categoriesData as $index => $categoryData) {
                 try {

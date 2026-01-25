@@ -281,7 +281,7 @@ Route::post('/debug/test-image-upload', function (Request $request) {
                     file_put_contents($logFile, $logMessage, FILE_APPEND);
 
                     // Сохраняем файл на диск
-                    $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+                    $frontendPublicPath = frontend_public_path();
                     $filePath = "images/shop/goods/{$goodId}/processed_image_{$index}.jpg";
                     $fullFilePath = $frontendPublicPath . '/' . $filePath;
 
@@ -350,16 +350,7 @@ Route::post('/debug/test-image-upload', function (Request $request) {
 // Обработка OPTIONS запросов для CORS - должна быть первой
 Route::match(['OPTIONS'], '/{any}', function (Request $request) {
     $origin = $request->header('Origin');
-    $allowedOrigins = [
-        'https://skateandsnow-test.ru',
-        'https://admin.skateandsnow-test.ru',
-        'https://api.skateandsnow-test.ru',
-        'https://skateandsnow.ru',
-        'https://admin.skateandsnow.ru',
-        'https://api.skateandsnow.ru',
-        'http://localhost:3000',
-        'http://localhost:3001',
-    ];
+    $allowedOrigins = config('cors.allowed_origins', []);
 
     // Если origin не разрешен, возвращаем заголовок только если есть Origin
     $allowOrigin = $origin && in_array($origin, $allowedOrigins) ? $origin : ($origin ?: '*');
@@ -3555,7 +3546,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     $file = $request->file('avatar');
 
                     // Путь для сохранения на фронтенде
-                    $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+                    $frontendPublicPath = frontend_public_path();
                     $dir = $frontendPublicPath . '/images/users';
 
                     // Создаем директорию, если её нет
@@ -3639,7 +3630,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
                     // Удаляем файл аватара с фронтенда
                     // Используем стандартное имя файла user_{id}.jpg
-                    $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+                    $frontendPublicPath = frontend_public_path();
                     $filePath = $frontendPublicPath . '/images/users/user_' . $user->id . '.jpg';
                     
                     $fileDeleted = false;
@@ -3902,7 +3893,7 @@ Route::middleware(['auth:sanctum', 'role:admin'])->get('/admin/config', function
     return response()->json([
         'success' => true,
         'data' => [
-            'frontend_path' => env('FRONTEND_PATH', '../admin.skateandsnow.ru')
+            'frontend_path' => config('frontend.path')
         ]
     ]);
 });

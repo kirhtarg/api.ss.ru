@@ -406,7 +406,7 @@ class ShopGoodImagesController extends Controller
 
         try {
             // Удаляем файл с фронтенда
-            $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+            $frontendPublicPath = frontend_public_path();
             $filePath = $frontendPublicPath . '/' . $image->file_path;
             if (file_exists($filePath)) {
                 unlink($filePath);
@@ -441,7 +441,7 @@ class ShopGoodImagesController extends Controller
         $deleted = [];
         $errors = [];
 
-        $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+        $frontendPublicPath = frontend_public_path();
 
         foreach ($imageIds as $imageId) {
             try {
@@ -668,9 +668,8 @@ class ShopGoodImagesController extends Controller
                 if (!empty($image['file_path'])) {
                     // Сначала проверяем в public_path API
                     $apiPath = realpath(public_path($image['file_path'])) ?: public_path($image['file_path']);
-                    // Затем проверяем в директории фронтенда
-                    $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
-                    $frontendFullPath = realpath(base_path($frontendPath . '/public' . $image['file_path'])) ?: base_path($frontendPath . '/public' . $image['file_path']);
+                    // Затем проверяем в директории фронтенда (из FRONTEND_PATH в .env)
+                    $frontendFullPath = realpath(frontend_public_path($image['file_path'])) ?: frontend_public_path($image['file_path']);
 
                     $fileExists = file_exists($apiPath) || file_exists($frontendFullPath);
 
@@ -858,7 +857,7 @@ class ShopGoodImagesController extends Controller
     private function processImagesBatch(ShopGood $good, array $imagesData): array
     {
         $goodId = $good->id;
-        $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+        $frontendPublicPath = frontend_public_path();
         $results = ['created' => [], 'updated' => [], 'skipped' => [], 'errors' => []];
         
         // Проверяем существование всех файлов и валидируем данные
@@ -1054,7 +1053,7 @@ class ShopGoodImagesController extends Controller
         $goodId = $good->id;
 
         // Проверяем существование файла на фронтенде
-        $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+        $frontendPublicPath = frontend_public_path();
         $fullFilePath = $frontendPublicPath . '/' . $filePath;
         if (!file_exists($fullFilePath)) {
             throw new \Exception('Файл изображения не найден: ' . $filePath);
@@ -1189,7 +1188,7 @@ class ShopGoodImagesController extends Controller
     private function processVariationImagesBatch(ShopGoodVariation $variation, array $imagesData): array
     {
         $variationId = $variation->id;
-        $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+        $frontendPublicPath = frontend_public_path();
         $results = ['created' => [], 'updated' => [], 'skipped' => [], 'errors' => []];
         
         // Проверяем существование всех файлов и валидируем данные
@@ -1390,7 +1389,7 @@ class ShopGoodImagesController extends Controller
         $variationId = $variation->id;
 
         // Проверяем существование файла на фронтенде
-        $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+        $frontendPublicPath = frontend_public_path();
         $fullFilePath = $frontendPublicPath . '/' . $filePath;
         if (!file_exists($fullFilePath)) {
             throw new \Exception('Файл изображения не найден: ' . $filePath);
@@ -1645,7 +1644,7 @@ class ShopGoodImagesController extends Controller
             ]);
 
             // Путь к папке public фронтенда
-            $frontendPublicPath = base_path('../admin.skateandsnow.ru/public');
+            $frontendPublicPath = frontend_public_path();
             $fullPath = $frontendPublicPath . '/' . $path;
             $dir = dirname($fullPath);
 

@@ -123,9 +123,8 @@ class UploadController extends Controller
             }
             $relativePath = 'color-images/' . $fileName;
 
-            // Получаем путь к фронтенду
-            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
-            $frontendPublicPath = base_path($frontendPath . '/public');
+            // Получаем путь к фронтенду (из FRONTEND_PATH в .env)
+            $frontendPublicPath = frontend_public_path();
             $fullPath = $frontendPublicPath . '/' . $relativePath;
             $dir = dirname($fullPath);
 
@@ -317,10 +316,9 @@ class UploadController extends Controller
             $storagePath = '/images/shop/goods';
             $fullPath = $storagePath . '/' . $filename;
 
-            // Получаем путь к фронтенду из переменной окружения FRONTEND_PATH
-            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
-            $frontendPublicPath = base_path($frontendPath . '/public');
-            $storageFullPath = $frontendPublicPath . $fullPath;
+            // Получаем путь к фронтенду (из FRONTEND_PATH в .env)
+            $frontendPublicPath = frontend_public_path();
+            $storageFullPath = $frontendPublicPath . '/' . ltrim($fullPath, '/');
 
             // Создаем директорию если не существует
             $directory = dirname($storageFullPath);
@@ -512,9 +510,8 @@ class UploadController extends Controller
             $results = [];
             $errors = [];
 
-            // Получаем путь к фронтенду
-            $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
-            $frontendPublicPath = base_path($frontendPath . '/public');
+            // Получаем путь к фронтенду (из FRONTEND_PATH в .env)
+            $frontendPublicPath = frontend_public_path();
 
             foreach ($images as $index => $file) {
                 try {

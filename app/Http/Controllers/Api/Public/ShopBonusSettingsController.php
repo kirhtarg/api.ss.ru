@@ -23,8 +23,7 @@ class ShopBonusSettingsController extends Controller
             // Добавляем image_url к каждой настройке, если файл существует
             $settings = $settings->map(function ($setting) {
                 $imageUrl = '/images/bsys/bsys_' . $setting->id . '.jpg';
-                $frontendPath = env('FRONTEND_PATH', '../admin.skateandsnow.ru');
-                $imagePath = base_path($frontendPath . '/public' . $imageUrl);
+                $imagePath = frontend_public_path(ltrim($imageUrl, '/'));
                 
                 if (file_exists($imagePath)) {
                     $setting->image_url = $imageUrl;
