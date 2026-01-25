@@ -404,6 +404,24 @@ class BulkGoodsImportController extends Controller
                         }
                     }
 
+                    // При поиске в вариациях по SKU: ищем вариацию по артикулу также для строк С вариацией (hasVariation),
+                    // т.к. в блоке выше поиск выполняется только при !hasVariation. Если вариация найдена по SKU —
+                    // приоритет: только обновить вариацию, имя основного товара не затрагивать.
+                    if (!$existingVariation && $searchByNameInVariations && $searchByFieldInVariations === 'sku' && !empty($sku) && $hasVariation) {
+                        $variationQuery = ShopGoodVariation::where('sku', $sku);
+                        if ($supplierName) {
+                            $variationQuery->where('supplier', $supplierName);
+                        }
+                        $existingVariation = $variationQuery->first();
+                        if (!$existingVariation && $supplierName) {
+                            $existingVariation = ShopGoodVariation::where('sku', $sku)->first();
+                        }
+                        if ($existingVariation) {
+                            $existingGood = $existingVariation->good;
+                            $searchValue = $sku;
+                        }
+                    }
+
                     // Если вариация не найдена (или поиск в вариациях отключен), ищем товар обычным способом
                     if (!$existingVariation) {
                         // Специальный режим: «Поиск в вариациях» по артикулу (SKU). Порядок: 1) по названию → добавить вариацию, 2) по артикулу в основных → обновить; поставщик учитывается.
@@ -504,8 +522,8 @@ class BulkGoodsImportController extends Controller
                         }
                     }
 
-                    if ($hasVariation) {
-                        // При наличии вариации ищем товар более тщательно
+                    if ($hasVariation && !$existingVariation) {
+                        // При наличии вариации ищем товар более тщательно (только если вариация ещё не найдена по SKU)
                         // Важно: для вариаций товар должен существовать, иначе будет ошибка дублирования
                         // Проверяем все возможные варианты поиска
 
@@ -680,18 +698,19 @@ class BulkGoodsImportController extends Controller
                         if (!$existingGood) {
                             $results['skipped']++;
                             $sheet = $goodData['_sheet'] ?? 'неизвестно';
-                            $reason = 'Вариация найдена по имени "' . $searchValue . '" (поле: ' . $searchByFieldInVariations . '), но связанный товар не найден в базе данных. Вариация ID: ' . $existingVariation->id;
+                            $reason = 'Вариация найдена по ' . ($searchByFieldInVariations === 'sku' ? 'артикулу' : 'имени') . ' "' . ($searchValue ?? $sku) . '" (поле: ' . $searchByFieldInVariations . '), но связанный товар не найден в базе данных. Вариация ID: ' . $existingVariation->id;
                             $skipItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'reason' => $reason];
                             continue;
                         }
                         
-                        // КРИТИЧНО: Для товаров с вариациями, найденных по имени, отдельно обрезаем и обновляем название товара
-                        // Это должно происходить ДО обновления вариации
-                        // Используем название из данных импорта, если оно есть, иначе проверяем название в БД
-                        $nameFromData = isset($goodData['name']) ? trim($goodData['name']) : null;
-                        $this->trimGoodName($existingGood, $nameTrimSymbol, $immutableFields, $nameFromData);
+                        // КРИТИЧНО: Для товаров с вариациями, найденных по имени, отдельно обрезаем и обновляем название товара.
+                        // При поиске по артикулу (SKU) имя основного товара не затрагиваем.
+                        if ($searchByFieldInVariations !== 'sku') {
+                            $nameFromData = isset($goodData['name']) ? trim($goodData['name']) : null;
+                            $this->trimGoodName($existingGood, $nameTrimSymbol, $immutableFields, $nameFromData);
+                        }
                         
-                        // Обновляем вариацию найденную по имени
+                        // Обновляем вариацию (найденную по имени или по артикулу)
                         $variationId = $this->updateVariationFromGoodData($existingVariation, $goodData, $searchByNameInVariations);
 
                         // Логируем действие с вариацией
@@ -712,13 +731,13 @@ class BulkGoodsImportController extends Controller
                             ];
                         }
 
-                        $details = "Найдена по имени: {$name}";
+                        $details = 'Найдена по ' . ($searchByFieldInVariations === 'sku' ? 'артикулу' : 'имени') . ': ' . ($searchByFieldInVariations === 'sku' ? ($searchValue ?? $sku) : $name);
                         if ($sheet !== 'неизвестно') {
                             $details .= ", Лист: {$sheet}, Строка: {$count}";
                         }
 
                         $this->importLogService->logVariation(
-                            'ОБНОВЛЕНА ВАРИАЦИЯ ПО ИМЕНИ',
+                            $searchByFieldInVariations === 'sku' ? 'ОБНОВЛЕНА ВАРИАЦИЯ ПО АРТИКУЛУ' : 'ОБНОВЛЕНА ВАРИАЦИЯ ПО ИМЕНИ',
                             $existingGood->name ?? $name,
                             $existingGood->sku ?? 'нет SKU',
                             $variationAttributes,
@@ -730,9 +749,9 @@ class BulkGoodsImportController extends Controller
 
                         // Обновляем товар, если нужно
                         if ($duplicateAction === 'update') {
-                            // КРИТИЧНО: Для товаров с вариациями отдельно обрезаем и обновляем название
-                            // Это должно происходить ДО вызова updateGood
-                            if ($hasVariation) {
+                            // КРИТИЧНО: Для товаров с вариациями отдельно обрезаем и обновляем название.
+                            // При поиске по артикулу (SKU) имя основного товара не затрагиваем.
+                            if ($hasVariation && $searchByFieldInVariations !== 'sku') {
                                 $nameFromData = isset($goodData['name']) ? trim($goodData['name']) : null;
                                 $this->trimGoodName($existingGood, $nameTrimSymbol, $immutableFields, $nameFromData);
                             }
@@ -777,7 +796,7 @@ class BulkGoodsImportController extends Controller
                             // Для «Поиск в вариациях»: изображения привязываем к вариации только если у товара есть вариации;
                             // если у товара нет вариаций — к основному товару
                             $attachImagesTo = ($existingGood->variations()->count() > 0) ? $existingVariation : null;
-                            $updateResult = $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation, $supplierStockFields, $nameTrimSymbol, $attachImagesTo);
+                            $updateResult = $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation, $supplierStockFields, $nameTrimSymbol, $attachImagesTo, $searchByFieldInVariations);
                             $results['imagesDownloaded'] += $updateResult['imageStats']['downloaded'];
                             $results['imagesFailed'] += $updateResult['imageStats']['failed'];
 
@@ -1283,7 +1302,7 @@ class BulkGoodsImportController extends Controller
                                 }
                             }
 
-                            $updateResult = $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation, $supplierStockFields, $nameTrimSymbol, $attachImagesToVariation);
+                            $updateResult = $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation, $supplierStockFields, $nameTrimSymbol, $attachImagesToVariation, $searchByFieldInVariations);
                             $results['imagesDownloaded'] += $updateResult['imageStats']['downloaded'];
                             $results['imagesFailed'] += $updateResult['imageStats']['failed'];
 
@@ -1952,7 +1971,7 @@ class BulkGoodsImportController extends Controller
         return ['good' => $good, 'imageStats' => $imageStats];
     }
 
-    private function updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory = null, $useDefaultCategory = false, $immutableFields = [], $searchByNameInVariations = false, $hasVariation = false, $supplierStockFields = null, $nameTrimSymbol = null, $attachImagesToVariation = null)
+    private function updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory = null, $useDefaultCategory = false, $immutableFields = [], $searchByNameInVariations = false, $hasVariation = false, $supplierStockFields = null, $nameTrimSymbol = null, $attachImagesToVariation = null, $searchByFieldInVariations = null)
     {
         $imageStats = ['downloaded' => 0, 'failed' => 0];
 
@@ -1972,23 +1991,23 @@ class BulkGoodsImportController extends Controller
             }
         }
         
-        // КРИТИЧНО: Обрабатываем название ПЕРВЫМ и ПРИНУДИТЕЛЬНО применяем обрезку
-        // ВАЖНО: Обрезка названия - это обработка данных, а не обновление полей
-        // Поэтому обрезка должна применяться ВСЕГДА, независимо от условий обновления
-        // Используем отдельную функцию для обрезки, которая проверяет наличие символа в названии товара
-        if (isset($goodData['name']) && !empty(trim($goodData['name']))) {
-            $nameFromData = trim($goodData['name']);
-            // Применяем обрезку через отдельную функцию
-            // Функция проверит наличие символа обрезки в названии товара (из БД или из данных)
-            $this->trimGoodName($existingGood, $nameTrimSymbol, $immutableFields, $nameFromData);
-            
-            // КРИТИЧНО: Удаляем название из goodData, чтобы оно не перезаписалось в цикле ниже
-            // Это гарантирует, что обрезанное название не будет перезаписано необрезанным значением
-            unset($goodData['name']);
-        } else {
-            // Если название не передано в данных, но есть символ обрезки - проверяем название в БД
-            if (!empty($nameTrimSymbol) && !empty(trim($nameTrimSymbol))) {
-                $this->trimGoodName($existingGood, $nameTrimSymbol, $immutableFields, null);
+        // КРИТИЧНО: Обрабатываем название. При поиске в вариациях по артикулу (SKU) поле name основного товара
+        // не затрагиваем только у товаров С вариациями. У товаров без вариаций имя обновляется.
+        if (!($searchByNameInVariations && $searchByFieldInVariations === 'sku' && $existingGood->variations()->exists())) {
+            if (isset($goodData['name']) && !empty(trim($goodData['name']))) {
+                $nameFromData = trim($goodData['name']);
+                // Прямое обновление имени из файла (если name не в «Не изменять поля»)
+                if (!in_array('name', $immutableFields)) {
+                    $existingGood->name = $nameFromData;
+                }
+                // Применяем обрезку через trimGoodName, если в названии есть символ обрезки
+                $this->trimGoodName($existingGood, $nameTrimSymbol, $immutableFields, $nameFromData);
+                unset($goodData['name']);
+            } else {
+                // Если название не передано в данных, но есть символ обрезки — проверяем название в БД
+                if (!empty($nameTrimSymbol) && !empty(trim($nameTrimSymbol))) {
+                    $this->trimGoodName($existingGood, $nameTrimSymbol, $immutableFields, null);
+                }
             }
         }
         // Обновляем slug только если он явно передан в данных (выбран в маппинге) и не в списке неизменяемых
