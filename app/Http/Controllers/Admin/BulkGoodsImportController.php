@@ -1145,6 +1145,7 @@ class BulkGoodsImportController extends Controller
                             continue;
                         }
                         
+                        
                         // Товар существует
                         // Если у строки есть вариация, обрабатываем её независимо от duplicateAction
                         if ($hasVariation) {
