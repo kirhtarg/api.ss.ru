@@ -149,6 +149,7 @@ class PageBuilderController extends Controller
             'meta_description' => 'nullable|string|max:500',
             'css_class' => 'nullable|string|max:255',
             'structure' => 'required|array',
+            'settings' => 'nullable|array',
             'is_published' => 'boolean'
         ]);
 
@@ -161,7 +162,18 @@ class PageBuilderController extends Controller
         }
 
         try {
-            $page->update($request->all());
+            $data = $request->all();
+            
+            // Обрабатываем settings - удаляем background_color если он null
+            if (isset($data['settings']) && is_array($data['settings'])) {
+                if (isset($data['settings']['background_color']) && 
+                    ($data['settings']['background_color'] === null || 
+                     $data['settings']['background_color'] === '')) {
+                    unset($data['settings']['background_color']);
+                }
+            }
+            
+            $page->update($data);
 
             return response()->json([
                 'success' => true,
@@ -222,6 +234,7 @@ class PageBuilderController extends Controller
             }
 
             $page->publish();
+            $page->refresh();
 
             return response()->json([
                 'success' => true,
@@ -232,6 +245,30 @@ class PageBuilderController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка публикации страницы: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Снять страницу с публикации
+     */
+    public function unpublish($id)
+    {
+        try {
+            $page = ConstructorPage::findOrFail($id);
+
+            $page->unpublish();
+            $page->refresh();
+
+            return response()->json([
+                'success' => true,
+                'data' => $page,
+                'message' => 'Страница снята с публикации'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка снятия с публикации: ' . $e->getMessage()
             ], 500);
         }
     }

@@ -109,6 +109,7 @@ Route::prefix('page-builder')->group(function () {
     Route::put('/pages/{id}', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'update']);
     Route::delete('/pages/{id}', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'destroy']);
     Route::post('/pages/{id}/publish', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'publish']);
+    Route::post('/pages/{id}/unpublish', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'unpublish']);
     Route::post('/pages/{id}/duplicate', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'duplicate']);
     Route::get('/pages/check-slug', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'checkSlug']);
     Route::get('/blocks', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'getBlocks']);
@@ -462,6 +463,12 @@ Route::get('/test/oauth', function () {
         return response()->json([], 200);
     });
     Route::get('/public/site-info', [SiteInfoController::class, 'index']);
+    
+    // Публичный роут для получения опубликованных страниц конструктора
+    Route::options('/public/page-builder/pages/{slug}', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/page-builder/pages/{slug}', [App\Http\Controllers\Api\Public\PageBuilderController::class, 'getPublishedPageBySlug']);
 
     Route::options('/public/settings', function () {
         return response()->json([], 200);

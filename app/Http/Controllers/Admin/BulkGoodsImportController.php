@@ -1803,7 +1803,7 @@ class BulkGoodsImportController extends Controller
 
         $good = new ShopGood();
         // Если SKU пустой, устанавливаем null вместо пустой строки
-        $good->sku = !empty($goodData['sku']) ? $goodData['sku'] : null;
+        $good->sku = (isset($goodData['sku']) && !empty($goodData['sku'])) ? $goodData['sku'] : null;
         
         // Применяем обрезку названия при создании нового товара, если указан символ обрезки
         $nameToSet = isset($goodData['name']) ? $goodData['name'] : '';
@@ -1819,10 +1819,10 @@ class BulkGoodsImportController extends Controller
         }
         $good->name = $nameToSet;
         // Используем slug из данных, если он есть и не пустой, иначе генерируем автоматически
-        if (!empty($goodData['slug']) && trim($goodData['slug']) !== '') {
+        if (isset($goodData['slug']) && !empty($goodData['slug']) && trim($goodData['slug']) !== '') {
             $good->slug = trim($goodData['slug']);
         } else {
-            $good->slug = $this->generateSlug($nameToSet, $goodData['sku']);
+            $good->slug = $this->generateSlug($nameToSet, $goodData['sku'] ?? null);
         }
         $good->description = $goodData['description'] ?? null;
         $good->short_description = $goodData['short_description'] ?? null;
@@ -1979,15 +1979,24 @@ class BulkGoodsImportController extends Controller
         // Это позволяет обновлять все поля, отмеченные для импорта, а не только те, что используются для поиска
         
         // Обновляем SKU (артикул) - если передан и не в списке неизменяемых, обновляем.
+        // КРИТИЧНО: При поиске в вариациях по артикулу (SKU) и наличии вариаций у товара,
+        // SKU из файла относится к вариации, а не к основному товару. Не обновляем SKU основного товара,
+        // чтобы избежать конфликта с уникальным индексом (SKU уже установлен в вариации).
         // Не «восстанавливаем» артикул: если у товара в БД он пустой, а в файле — непустой,
         // не перезаписываем (пользователь мог намеренно очистить; значение в файле могло
         // остаться от вариации/старого значения).
         if (isset($goodData['sku']) && !in_array('sku', $immutableFields)) {
-            $newSku = !empty($goodData['sku']) ? trim($goodData['sku']) : null;
-            $existingIsEmpty = ($existingGood->sku === null || trim((string)($existingGood->sku ?? '')) === '');
-            $wouldRestore = ($newSku !== null && $newSku !== '' && $existingIsEmpty);
-            if (!$wouldRestore) {
-                $existingGood->sku = $newSku;
+            // Пропускаем обновление SKU основного товара, если найден товар с вариациями по артикулу
+            // (в этом случае SKU относится к вариации, а не к основному товару)
+            $skipSkuUpdate = ($searchByNameInVariations && $searchByFieldInVariations === 'sku' && $existingGood->variations()->exists());
+            
+            if (!$skipSkuUpdate) {
+                $newSku = !empty($goodData['sku']) ? trim($goodData['sku']) : null;
+                $existingIsEmpty = ($existingGood->sku === null || trim((string)($existingGood->sku ?? '')) === '');
+                $wouldRestore = ($newSku !== null && $newSku !== '' && $existingIsEmpty);
+                if (!$wouldRestore) {
+                    $existingGood->sku = $newSku;
+                }
             }
         }
         

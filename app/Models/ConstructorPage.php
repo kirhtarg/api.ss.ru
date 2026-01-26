@@ -19,12 +19,14 @@ class ConstructorPage extends Model
         'meta_description',
         'css_class',
         'structure',
+        'settings',
         'is_published',
         'published_at'
     ];
 
     protected $casts = [
         'structure' => 'array',
+        'settings' => 'array',
         'is_published' => 'boolean',
         'published_at' => 'datetime'
     ];
@@ -33,6 +35,17 @@ class ConstructorPage extends Model
      * Accessor для structure - гарантирует возврат массива
      */
     public function getStructureAttribute($value)
+    {
+        if (is_string($value)) {
+            return json_decode($value, true) ?: [];
+        }
+        return $value ?: [];
+    }
+
+    /**
+     * Accessor для settings - гарантирует возврат массива
+     */
+    public function getSettingsAttribute($value)
     {
         if (is_string($value)) {
             return json_decode($value, true) ?: [];
