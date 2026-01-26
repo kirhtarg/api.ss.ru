@@ -1136,6 +1136,15 @@ class BulkGoodsImportController extends Controller
                     }
 
                     if ($existingGood) {
+                        // КРИТИЧНО: Если вариация уже найдена и обновлена в блоке выше (691-921),
+                        // то $existingVariation установлен и код должен был сделать continue.
+                        // Если мы попали сюда, но $existingVariation установлен - это ошибка логики.
+                        // Пропускаем дальнейшую обработку, чтобы не создавать дубликат товара.
+                        if ($existingVariation && $searchByNameInVariations) {
+                            // Вариация уже обработана выше, пропускаем
+                            continue;
+                        }
+                        
                         // Товар существует
                         // Если у строки есть вариация, обрабатываем её независимо от duplicateAction
                         if ($hasVariation) {
@@ -1371,6 +1380,14 @@ class BulkGoodsImportController extends Controller
                             $skipItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'reason' => $reason];
                         }
                     } else {
+                        // КРИТИЧНО: Если вариация найдена по артикулу, но товар не найден в основном поиске,
+                        // это означает, что вариация принадлежит существующему товару, который мы должны использовать.
+                        // Не создаем новый товар, если вариация уже найдена и обработана.
+                        if ($existingVariation && $searchByNameInVariations) {
+                            // Вариация уже найдена и обработана выше, пропускаем создание нового товара
+                            continue;
+                        }
+                        
                         // Товар не найден при первоначальном поиске
                         // Если есть вариация, делаем дополнительную проверку перед созданием товара
                         // чтобы избежать ошибки дублирования SKU
@@ -1508,6 +1525,38 @@ class BulkGoodsImportController extends Controller
                             continue;
                         }
 
+                        // КРИТИЧНО: Финальная проверка - если вариация найдена по артикулу, не создаем новый товар
+                        // Это защита от создания дубликата, если вариация была найдена, но код по какой-то причине
+                        // не попал в блок обработки вариации выше
+                        if ($existingVariation && $searchByNameInVariations && $searchByFieldInVariations === 'sku') {
+                            // Вариация найдена по артикулу - используем существующий товар, не создаем новый
+                            $existingGoodFromVariation = $existingVariation->good;
+                            if ($existingGoodFromVariation) {
+                                // Обновляем вариацию, если еще не обновлена
+                                if ($duplicateAction === 'update') {
+                                    $this->updateVariationFromGoodData($existingVariation, $goodData, $searchByNameInVariations);
+                                    $updateResult = $this->updateGood($existingGoodFromVariation, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, false, $supplierStockFields, $nameTrimSymbol, $existingVariation, $searchByFieldInVariations);
+                                    $results['imagesDownloaded'] += $updateResult['imageStats']['downloaded'];
+                                    $results['imagesFailed'] += $updateResult['imageStats']['failed'];
+                                    $results['updated']++;
+                                    
+                                    if (!empty($sku)) {
+                                        $results['goodIds'][$sku] = $existingGoodFromVariation->id;
+                                    }
+                                    if (isset($goodData['_row'])) {
+                                        $results['goodIds'][$goodData['_row']] = $existingGoodFromVariation->id;
+                                    }
+                                    if (!empty($sku)) {
+                                        $results['variationIds'][$sku] = $existingVariation->id;
+                                    }
+                                    
+                                    $sheet = $goodData['_sheet'] ?? 'неизвестно';
+                                    $updateItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'good_id' => $existingGoodFromVariation->id];
+                                    continue;
+                                }
+                            }
+                        }
+                        
                         // Товар действительно не существует - создаем новый (с вариацией или без)
                         $createResult = $this->createGood($goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $supplierStockFields, $nameTrimSymbol);
                         $newGood = $createResult['good'];
@@ -1832,7 +1881,21 @@ class BulkGoodsImportController extends Controller
         if (!isset($goodData['variation']) || !is_array($goodData['variation'])) {
             // Применяем модификацию цены
             $priceModification = $goodData['price_modification'] ?? null;
-            $good->price = $this->applyPriceModification($goodData['price'] ?? 0, $priceModification['regular'] ?? null);
+            $rawPrice = $goodData['price'] ?? null;
+            
+            // Проверяем, что цена передана и не пустая
+            if ($rawPrice === null || $rawPrice === '' || $rawPrice === 0) {
+                // Логируем предупреждение, если цена не установлена для товара без вариаций
+                \Log::warning('Товар создается без вариаций с пустой ценой', [
+                    'good_name' => $goodData['name'] ?? 'неизвестно',
+                    'good_sku' => $goodData['sku'] ?? 'нет SKU',
+                    'price_in_data' => $rawPrice,
+                    'has_variation_field' => isset($goodData['variation']),
+                    'variation_is_array' => is_array($goodData['variation'] ?? null)
+                ]);
+            }
+            
+            $good->price = $this->applyPriceModification($rawPrice ?? 0, $priceModification['regular'] ?? null);
             // Применяем модификацию акционной цены (даже если sale_price не передана в файле, но есть модификация)
             if (isset($priceModification) && isset($priceModification['sale'])) {
                 $good->sale_price = $this->applySalePriceModification($goodData, $priceModification);
@@ -1936,8 +1999,22 @@ class BulkGoodsImportController extends Controller
             $variationId = $this->processVariation($good, $goodData['variation'], $goodData, $supplierStockFields);
 
             if ($variationId) {
-                $good->price = $goodData['variation']['price'] ?? 0;
-                $good->sale_price = $goodData['variation']['sale_price'] ?? null;
+                // КРИТИЧНО: Берем цену из вариации, но если её нет - пробуем из goodData['price']
+                // Это нужно, если цена не была передана в variation.price, но есть в основном товаре
+                $variationPrice = $goodData['variation']['price'] ?? null;
+                if ($variationPrice === null || $variationPrice === '' || $variationPrice === 0) {
+                    // Если цена вариации не установлена, берем из goodData['price']
+                    $variationPrice = $goodData['price'] ?? null;
+                }
+                // Если и там нет - используем цену из созданной вариации (если она была установлена при создании)
+                if (($variationPrice === null || $variationPrice === '' || $variationPrice === 0) && $variationId) {
+                    $createdVariation = ShopGoodVariation::find($variationId);
+                    if ($createdVariation && $createdVariation->price && $createdVariation->price > 0) {
+                        $variationPrice = $createdVariation->price;
+                    }
+                }
+                $good->price = $variationPrice ?? 0;
+                $good->sale_price = $goodData['variation']['sale_price'] ?? $goodData['sale_price'] ?? null;
                 $stockValue = is_numeric($goodData['variation']['stock_quantity'] ?? 0) ? (float)($goodData['variation']['stock_quantity'] ?? 0) : 0;
                 $good->stock_quantity = $stockValue;
                 $remoteValue = $goodData['variation']['remote_stock_quantity'] ?? null;
@@ -1949,6 +2026,27 @@ class BulkGoodsImportController extends Controller
                     $good->fast_remote_stock_quantity = is_numeric($fastRemoteValue) ? (string)$fastRemoteValue : $fastRemoteValue;
                 }
                 $good->save();
+            } else {
+                // КРИТИЧНО: Если вариация не была создана, но товар создан с hasVariation=true,
+                // устанавливаем цену из goodData['price'], чтобы не оставлять цену 0
+                // Это может произойти, если вариация не создалась из-за ошибки или отсутствия атрибутов
+                $priceModification = $goodData['price_modification'] ?? null;
+                $rawPrice = $goodData['price'] ?? null;
+                if ($rawPrice !== null && $rawPrice !== '' && $rawPrice !== 0) {
+                    $good->price = $this->applyPriceModification($rawPrice, $priceModification['regular'] ?? null);
+                    \Log::warning('Вариация не создана, но товар создан с hasVariation=true. Установлена цена из goodData[price]', [
+                        'good_id' => $good->id,
+                        'good_name' => $good->name,
+                        'good_sku' => $good->sku,
+                        'price_set' => $good->price
+                    ]);
+                } else {
+                    \Log::warning('Вариация не создана, и цена в goodData отсутствует. Товар создан с ценой 0', [
+                        'good_id' => $good->id,
+                        'good_name' => $good->name,
+                        'good_sku' => $good->sku
+                    ]);
+                }
             }
         }
 
@@ -3986,10 +4084,10 @@ class BulkGoodsImportController extends Controller
                 null,
                 "Ошибка: {$e->getMessage()}"
             );
+            
+            // Возвращаем null при ошибке (функция должна возвращать int|null)
+            return null;
         }
-
-
-        return $results;
     }
 
     /**
@@ -4075,29 +4173,50 @@ class BulkGoodsImportController extends Controller
                             ->first();
 
                         if ($attribute) {
-                            // Находим или создаем значение атрибута
-                            $attributeValueRecord = DB::table('shop_variation_attribute_values')
-                                ->where('attribute_id', $attribute->id)
-                                ->where('value', $attributeValue)
-                                ->first();
+                            try {
+                                // Находим или создаем значение атрибута
+                                $attributeValueRecord = DB::table('shop_variation_attribute_values')
+                                    ->where('attribute_id', $attribute->id)
+                                    ->where('value', $attributeValue)
+                                    ->first();
 
-                            if (!$attributeValueRecord) {
-                                $attributeValueRecord = DB::table('shop_variation_attribute_values')->insertGetId([
-                                    'attribute_id' => $attribute->id,
-                                    'value' => $attributeValue,
-                                    'created_at' => now(),
-                                    'updated_at' => now()
+                                if (!$attributeValueRecord) {
+                                    $newAttributeValueId = DB::table('shop_variation_attribute_values')->insertGetId([
+                                        'attribute_id' => $attribute->id,
+                                        'value' => $attributeValue,
+                                        'created_at' => now(),
+                                        'updated_at' => now()
+                                    ]);
+                                    
+                                    // Проверяем, что insertGetId вернул валидный ID
+                                    if ($newAttributeValueId && $newAttributeValueId > 0) {
+                                        $attributeValueRecord = (object)['id' => $newAttributeValueId];
+                                    } else {
+                                        // Если не удалось создать значение атрибута, пропускаем его
+                                        continue;
+                                    }
+                                }
+
+                                // Добавляем связь вариации с значением атрибута
+                                if ($attributeValueRecord && isset($attributeValueRecord->id)) {
+                                    DB::table('shop_variation_attributes_values')->insert([
+                                        'variation_id' => $variation->id,
+                                        'attribute_value_id' => $attributeValueRecord->id,
+                                        'created_at' => now(),
+                                        'updated_at' => now()
+                                    ]);
+                                }
+                            } catch (\Exception $e) {
+                                // Логируем ошибку, но продолжаем обработку остальных атрибутов
+                                \Log::error('Ошибка при обработке атрибута вариации', [
+                                    'variation_id' => $variation->id,
+                                    'attribute_name' => $attributeName,
+                                    'attribute_value' => $attributeValue,
+                                    'error' => $e->getMessage()
                                 ]);
-                                $attributeValueRecord = (object)['id' => $attributeValueRecord];
+                                // Пропускаем этот атрибут и продолжаем со следующим
+                                continue;
                             }
-
-                            // Добавляем связь вариации с значением атрибута
-                            DB::table('shop_variation_attributes_values')->insert([
-                                'variation_id' => $variation->id,
-                                'attribute_value_id' => $attributeValueRecord->id,
-                                'created_at' => now(),
-                                'updated_at' => now()
-                            ]);
                         }
                     }
                 }

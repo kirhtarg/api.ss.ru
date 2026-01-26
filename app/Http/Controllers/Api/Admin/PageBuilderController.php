@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\ConstructorPage;
 use App\Models\ConstructorPageVersion;
 use App\Models\ConstructorBlockSetting;
+use App\Models\PageSettingsTemplate;
 use App\Models\Slider;
 use App\Models\ShopGood;
 use App\Models\ShopCategory;
@@ -441,5 +442,110 @@ class PageBuilderController extends Controller
         }
 
         return $slug;
+    }
+
+    /**
+     * Получить список шаблонов настроек страниц
+     */
+    public function getSettingsTemplates()
+    {
+        try {
+            $templates = PageSettingsTemplate::active()->ordered()->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $templates
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения шаблонов: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Сохранить шаблон настроек страницы
+     */
+    public function saveSettingsTemplate(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'name' => 'required|string|max:255',
+            'description' => 'nullable|string|max:1000',
+            'settings' => 'required|array',
+            'structure' => 'nullable|array',
+            'sort_order' => 'nullable|integer|min:0'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $template = PageSettingsTemplate::create([
+                'name' => $request->name,
+                'description' => $request->description,
+                'settings' => $request->settings,
+                'structure' => $request->structure,
+                'sort_order' => $request->sort_order ?? 0,
+                'is_active' => true
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $template,
+                'message' => 'Шаблон сохранен'
+            ], 201);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка сохранения шаблона: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить шаблон настроек по ID
+     */
+    public function getSettingsTemplate($id)
+    {
+        try {
+            $template = PageSettingsTemplate::findOrFail($id);
+
+            return response()->json([
+                'success' => true,
+                'data' => $template
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Шаблон не найден'
+            ], 404);
+        }
+    }
+
+    /**
+     * Удалить шаблон настроек
+     */
+    public function deleteSettingsTemplate($id)
+    {
+        try {
+            $template = PageSettingsTemplate::findOrFail($id);
+            $template->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Шаблон удален'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка удаления шаблона: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }

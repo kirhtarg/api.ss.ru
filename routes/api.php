@@ -114,6 +114,10 @@ Route::prefix('page-builder')->group(function () {
     Route::get('/pages/check-slug', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'checkSlug']);
     Route::get('/blocks', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'getBlocks']);
     Route::get('/dynamic-data', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'getDynamicData']);
+    Route::get('/settings-templates', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'getSettingsTemplates']);
+    Route::post('/settings-templates', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'saveSettingsTemplate']);
+    Route::get('/settings-templates/{id}', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'getSettingsTemplate']);
+    Route::delete('/settings-templates/{id}', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'deleteSettingsTemplate']);
 });
 
 // DEBUG: Тестовый роут для загрузки изображений товаров без аутентификации
