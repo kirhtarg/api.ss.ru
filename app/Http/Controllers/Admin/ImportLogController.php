@@ -46,6 +46,41 @@ class ImportLogController extends Controller
     }
     
     /**
+     * Скачать лог-файл
+     */
+    public function downloadLog(Request $request, $type)
+    {
+        $allowedTypes = ['import-load', 'import-skip', 'import-update', 'import-error', 'import-variation'];
+        
+        if (!in_array($type, $allowedTypes)) {
+            return response()->json(['error' => 'Invalid log type'], 400);
+        }
+        
+        // Используем тот же путь, что и ImportLogService
+        $logDir = storage_path('app/public/import-logs');
+        $logPath = $logDir . "/{$type}.log";
+        
+        if (!File::exists($logPath)) {
+            return response()->json(['error' => 'Log file not found'], 404);
+        }
+        
+        $logLabels = [
+            'import-load' => 'Загружено',
+            'import-update' => 'Обновлено',
+            'import-skip' => 'Пропущено',
+            'import-error' => 'Ошибки',
+            'import-variation' => 'Вариации'
+        ];
+        
+        $label = $logLabels[$type] ?? $type;
+        $filename = "import-log-{$label}-" . date('Y-m-d_H-i-s') . '.log';
+        
+        return response()->download($logPath, $filename, [
+            'Content-Type' => 'text/plain; charset=utf-8',
+        ]);
+    }
+    
+    /**
      * Очистить лог-файл
      */
     public function clearLog(Request $request, $type)

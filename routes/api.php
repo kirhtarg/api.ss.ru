@@ -105,13 +105,14 @@ Route::get('/debug-check-slug', function(Request $request) {
 Route::prefix('page-builder')->group(function () {
     Route::get('/pages', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'index']);
     Route::post('/pages', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'store']);
+    // ВАЖНО: Специфичные роуты должны быть ПЕРЕД параметризованными
+    Route::get('/pages/check-slug', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'checkSlug']);
     Route::get('/pages/{id}', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'show']);
     Route::put('/pages/{id}', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'update']);
     Route::delete('/pages/{id}', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'destroy']);
     Route::post('/pages/{id}/publish', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'publish']);
     Route::post('/pages/{id}/unpublish', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'unpublish']);
     Route::post('/pages/{id}/duplicate', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'duplicate']);
-    Route::get('/pages/check-slug', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'checkSlug']);
     Route::get('/blocks', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'getBlocks']);
     Route::get('/dynamic-data', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'getDynamicData']);
     Route::get('/settings-templates', [\App\Http\Controllers\Api\Admin\PageBuilderController::class, 'getSettingsTemplates']);
@@ -1510,24 +1511,24 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/statistics/overview', [\App\Http\Controllers\Admin\RoleController::class, 'statistics']);
         });
 
-            // Site Menus management (только для админов)
-    Route::middleware('role:admin')->prefix('site-menus')->group(function () {
-        Route::get('/', [\App\Http\Controllers\Admin\SiteMenuController::class, 'index']);
-        Route::get('/{id}', [\App\Http\Controllers\Admin\SiteMenuController::class, 'show']);
-        Route::post('/', [\App\Http\Controllers\Admin\SiteMenuController::class, 'store']);
-        Route::put('/{id}', [\App\Http\Controllers\Admin\SiteMenuController::class, 'update']);
-        Route::delete('/{id}', [\App\Http\Controllers\Admin\SiteMenuController::class, 'destroy']);
-        Route::put('/{id}/status', [\App\Http\Controllers\Admin\SiteMenuController::class, 'updateStatus']);
-        Route::get('/statistics/overview', [\App\Http\Controllers\Admin\SiteMenuController::class, 'statistics']);
+        // Site Menus management (только для админов)
+        Route::middleware('role:admin')->prefix('site-menus')->group(function () {
+            Route::get('/', [\App\Http\Controllers\Admin\SiteMenuController::class, 'index']);
+            Route::get('/{id}', [\App\Http\Controllers\Admin\SiteMenuController::class, 'show']);
+            Route::post('/', [\App\Http\Controllers\Admin\SiteMenuController::class, 'store']);
+            Route::put('/{id}', [\App\Http\Controllers\Admin\SiteMenuController::class, 'update']);
+            Route::delete('/{id}', [\App\Http\Controllers\Admin\SiteMenuController::class, 'destroy']);
+            Route::put('/{id}/status', [\App\Http\Controllers\Admin\SiteMenuController::class, 'updateStatus']);
+            Route::get('/statistics/overview', [\App\Http\Controllers\Admin\SiteMenuController::class, 'statistics']);
 
-        // Menu Items management
-        Route::get('/{menuId}/items', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'index']);
-        Route::post('/{menuId}/items', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'store']);
-        Route::put('/items/order', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'updateOrder']);
-        Route::get('/items/{id}', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'show']);
-        Route::put('/items/{id}', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'update']);
-        Route::delete('/items/{id}', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'destroy']);
-    });
+            // Menu Items management
+            Route::get('/{menuId}/items', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'index']);
+            Route::post('/{menuId}/items', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'store']);
+            Route::put('/items/order', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'updateOrder']);
+            Route::get('/items/{id}', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'show']);
+            Route::put('/items/{id}', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'update']);
+            Route::delete('/items/{id}', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'destroy']);
+        });
 
         // Debug endpoint для проверки ролей (только для админов)
         Route::middleware('role:admin')->get('/debug/roles', function () {
@@ -1544,6 +1545,24 @@ Route::middleware('auth:sanctum')->group(function () {
                     'message' => 'Ошибка: ' . $e->getMessage()
                 ], 500);
             }
+        });
+
+        // SELF-REASON (SR) Module management (только для админов)
+        Route::middleware('role:admin')->prefix('sr')->group(function () {
+            // Categories
+            Route::get('/categories', [\App\Http\Controllers\Admin\SrCategoriesController::class, 'index']);
+            Route::post('/categories', [\App\Http\Controllers\Admin\SrCategoriesController::class, 'store']);
+            Route::patch('/categories/{id}', [\App\Http\Controllers\Admin\SrCategoriesController::class, 'update']);
+            Route::delete('/categories/{id}', [\App\Http\Controllers\Admin\SrCategoriesController::class, 'destroy']);
+
+            // Cards
+            Route::get('/cards', [\App\Http\Controllers\Admin\SrCardsController::class, 'index']);
+            Route::post('/cards', [\App\Http\Controllers\Admin\SrCardsController::class, 'store']);
+            Route::patch('/cards/{id}', [\App\Http\Controllers\Admin\SrCardsController::class, 'update']);
+            Route::delete('/cards/{id}', [\App\Http\Controllers\Admin\SrCardsController::class, 'destroy']);
+
+            // Upload images
+            Route::post('/upload', [\App\Http\Controllers\Admin\SrUploadController::class, 'upload']);
         });
 
         // Categories management (просмотр доступен менеджерам и админам)
@@ -2984,6 +3003,171 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Menu management
         Route::prefix('menu')->group(function () {
+            // Создать новый пункт меню (только для админов)
+            Route::post('/', function (Request $request) {
+                try {
+                    $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
+                        'page_id' => 'required|exists:admin_pages,id',
+                        'parent_id' => 'nullable|exists:admin_menu_items,id',
+                        'icon' => 'nullable|string|max:255',
+                        'label' => 'required|string|max:255',
+                        'description' => 'nullable|string|max:1000',
+                        'href' => 'nullable|string|max:255',
+                        'order' => 'nullable|integer|min:0',
+                        'is_active' => 'boolean',
+                        'in_menu' => 'boolean'
+                    ]);
+
+                    if ($validator->fails()) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Ошибка валидации',
+                            'errors' => $validator->errors()
+                        ], 422);
+                    }
+
+                    $menuItem = \App\Models\AdminMenuItem::create([
+                        'page_id' => $request->page_id,
+                        'parent_id' => $request->parent_id,
+                        'icon' => $request->icon,
+                        'label' => $request->label,
+                        'description' => $request->description,
+                        'href' => $request->href ?? null,
+                        'order' => $request->order ?? 0,
+                        'is_active' => $request->is_active ?? true,
+                        'in_menu' => $request->has('in_menu') ? (bool) $request->in_menu : true,
+                    ]);
+
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Пункт меню успешно создан',
+                        'data' => $menuItem
+                    ]);
+                } catch (\Exception $e) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка создания пункта меню: ' . $e->getMessage()
+                    ], 500);
+                }
+            });
+
+            // Обновить пункт меню (только для админов)
+            Route::put('/{id}', function (Request $request, $id) {
+                try {
+                    $menuItem = \App\Models\AdminMenuItem::find($id);
+
+                    if (!$menuItem) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Пункт меню не найден'
+                        ], 404);
+                    }
+
+                    $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
+                        'page_id' => 'required|exists:admin_pages,id',
+                        'parent_id' => 'nullable|exists:admin_menu_items,id',
+                        'icon' => 'nullable|string|max:255',
+                        'label' => 'required|string|max:255',
+                        'description' => 'nullable|string|max:1000',
+                        'href' => 'nullable|string|max:255',
+                        'order' => 'nullable|integer|min:0',
+                        'is_active' => 'boolean',
+                        'in_menu' => 'boolean'
+                    ]);
+
+                    if ($validator->fails()) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Ошибка валидации',
+                            'errors' => $validator->errors()
+                        ], 422);
+                    }
+
+                    $menuItem->update([
+                        'page_id' => $request->page_id,
+                        'parent_id' => $request->parent_id,
+                        'icon' => $request->icon,
+                        'label' => $request->label,
+                        'description' => $request->description,
+                        'href' => $request->href ?? null,
+                        'order' => $request->order ?? $menuItem->order,
+                        'is_active' => $request->is_active ?? $menuItem->is_active,
+                        'in_menu' => $request->has('in_menu') ? (bool) $request->in_menu : $menuItem->in_menu,
+                    ]);
+
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Пункт меню успешно обновлен',
+                        'data' => $menuItem
+                    ]);
+                } catch (\Exception $e) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка обновления пункта меню: ' . $e->getMessage()
+                    ], 500);
+                }
+            });
+
+            // Удалить пункт меню (только для админов)
+            Route::delete('/{id}', function ($id) {
+                try {
+                    $menuItem = \App\Models\AdminMenuItem::find($id);
+
+                    if (!$menuItem) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Пункт меню не найден'
+                        ], 404);
+                    }
+
+                    $menuItem->delete();
+
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Пункт меню успешно удален'
+                    ]);
+                } catch (\Exception $e) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка удаления пункта меню: ' . $e->getMessage()
+                    ], 500);
+                }
+            });
+
+            // Изменить порядок пунктов меню (только для админов)
+            Route::post('/order', function (Request $request) {
+                try {
+                    $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
+                        'items' => 'required|array',
+                        'items.*.id' => 'required|exists:admin_menu_items,id',
+                        'items.*.order' => 'required|integer|min:0'
+                    ]);
+
+                    if ($validator->fails()) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Ошибка валидации',
+                            'errors' => $validator->errors()
+                        ], 422);
+                    }
+
+                    foreach ($request->items as $item) {
+                        \App\Models\AdminMenuItem::where('id', $item['id'])
+                            ->update(['order' => $item['order']]);
+                    }
+
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Порядок пунктов меню успешно обновлен'
+                    ]);
+                } catch (\Exception $e) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка обновления порядка: ' . $e->getMessage()
+                    ], 500);
+                }
+            });
+
             // Получить пункты меню для конкретного раздела (доступно менеджерам и админам)
             Route::get('/by-page/{pageId}', function ($pageId) {
                 try {
@@ -3214,176 +3398,6 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\TelegramNotificationController::class, 'destroy']);
             });
 
-        });
-
-        // Menu management (только для админов - создание/редактирование/удаление)
-        Route::middleware('role:admin')->prefix('menu')->group(function () {
-
-
-
-            // Создать новый пункт меню
-            Route::post('/', function (Request $request) {
-                try {
-                    $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
-                        'page_id' => 'required|exists:admin_pages,id',
-                        'parent_id' => 'nullable|exists:admin_menu_items,id',
-                        'icon' => 'nullable|string|max:255',
-                        'label' => 'required|string|max:255',
-                        'description' => 'nullable|string|max:1000',
-                        'href' => 'nullable|string|max:255',
-                        'order' => 'nullable|integer|min:0',
-                        'is_active' => 'boolean',
-                        'in_menu' => 'boolean'
-                    ]);
-
-                    if ($validator->fails()) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Ошибка валидации',
-                            'errors' => $validator->errors()
-                        ], 422);
-                    }
-
-                    $menuItem = \App\Models\AdminMenuItem::create([
-                        'page_id' => $request->page_id,
-                        'parent_id' => $request->parent_id,
-                        'icon' => $request->icon,
-                        'label' => $request->label,
-                        'description' => $request->description,
-                        'href' => $request->href ?? null,
-                        'order' => $request->order ?? 0,
-                        'is_active' => $request->is_active ?? true,
-                        'in_menu' => $request->has('in_menu') ? (bool) $request->in_menu : true,
-                    ]);
-
-                    return response()->json([
-                        'success' => true,
-                        'message' => 'Пункт меню успешно создан',
-                        'data' => $menuItem
-                    ]);
-                } catch (\Exception $e) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Ошибка создания пункта меню: ' . $e->getMessage()
-                    ], 500);
-                }
-            });
-
-            // Обновить пункт меню
-            Route::put('/{id}', function (Request $request, $id) {
-                try {
-                    $menuItem = \App\Models\AdminMenuItem::find($id);
-
-                    if (!$menuItem) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Пункт меню не найден'
-                        ], 404);
-                    }
-
-                    $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
-                        'page_id' => 'required|exists:admin_pages,id',
-                        'parent_id' => 'nullable|exists:admin_menu_items,id',
-                        'icon' => 'nullable|string|max:255',
-                        'label' => 'required|string|max:255',
-                        'description' => 'nullable|string|max:1000',
-                        'href' => 'nullable|string|max:255',
-                        'order' => 'nullable|integer|min:0',
-                        'is_active' => 'boolean',
-                        'in_menu' => 'boolean'
-                    ]);
-
-                    if ($validator->fails()) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Ошибка валидации',
-                            'errors' => $validator->errors()
-                        ], 422);
-                    }
-
-                    $menuItem->update([
-                        'page_id' => $request->page_id,
-                        'parent_id' => $request->parent_id,
-                        'icon' => $request->icon,
-                        'label' => $request->label,
-                        'description' => $request->description,
-                        'href' => $request->href ?? null,
-                        'order' => $request->order ?? $menuItem->order,
-                        'is_active' => $request->is_active ?? $menuItem->is_active,
-                        'in_menu' => $request->has('in_menu') ? (bool) $request->in_menu : $menuItem->in_menu,
-                    ]);
-
-                    return response()->json([
-                        'success' => true,
-                        'message' => 'Пункт меню успешно обновлен',
-                        'data' => $menuItem
-                    ]);
-                } catch (\Exception $e) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Ошибка обновления пункта меню: ' . $e->getMessage()
-                    ], 500);
-                }
-            });
-
-            // Удалить пункт меню
-            Route::delete('/{id}', function ($id) {
-                try {
-                    $menuItem = \App\Models\AdminMenuItem::find($id);
-
-                    if (!$menuItem) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Пункт меню не найден'
-                        ], 404);
-                    }
-
-                    $menuItem->delete();
-
-                    return response()->json([
-                        'success' => true,
-                        'message' => 'Пункт меню успешно удален'
-                    ]);
-                } catch (\Exception $e) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Ошибка удаления пункта меню: ' . $e->getMessage()
-                    ], 500);
-                }
-            });
-
-            // Изменить порядок пунктов меню
-            Route::post('/order', function (Request $request) {
-                try {
-                    $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
-                        'items' => 'required|array',
-                        'items.*.id' => 'required|exists:admin_menu_items,id',
-                        'items.*.order' => 'required|integer|min:0'
-                    ]);
-
-                    if ($validator->fails()) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Ошибка валидации',
-                            'errors' => $validator->errors()
-                        ], 422);
-                    }
-
-                    foreach ($request->items as $item) {
-                        \App\Models\AdminMenuItem::where('id', $item['id'])->update(['order' => $item['order']]);
-                    }
-
-                    return response()->json([
-                        'success' => true,
-                        'message' => 'Порядок пунктов меню успешно обновлен'
-                    ]);
-                } catch (\Exception $e) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Ошибка обновления порядка: ' . $e->getMessage()
-                    ], 500);
-                }
-            });
         });
 
         // Profile management
@@ -3752,6 +3766,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::prefix('import-logs')->group(function () {
             // Специфичные маршруты должны быть перед параметризованными
             Route::get('/stats', [\App\Http\Controllers\Admin\ImportLogController::class, 'getLogStats']);
+            // Маршрут для скачивания лога
+            Route::get('/{type}/download', [\App\Http\Controllers\Admin\ImportLogController::class, 'downloadLog']);
             // Параметризованные маршруты после специфичных
             Route::get('/{type}', [\App\Http\Controllers\Admin\ImportLogController::class, 'getLog']);
             Route::delete('/{type}', [\App\Http\Controllers\Admin\ImportLogController::class, 'clearLog']);
