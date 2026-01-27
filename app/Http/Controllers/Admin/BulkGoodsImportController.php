@@ -32,6 +32,33 @@ class BulkGoodsImportController extends Controller
         $this->backupService = $backupService;
     }
 
+    /**
+     * Нормализует текст: удаляет двойные пробелы и лишние пробелы в начале/конце
+     */
+    private function normalizeText(string $text): string
+    {
+        if (empty($text)) {
+            return $text;
+        }
+
+        // Убираем пробелы в начале и конце
+        $text = trim($text);
+
+        // Заменяем множественные пробелы на один
+        $text = preg_replace('/\s+/', ' ', $text);
+
+        return $text;
+    }
+
+    /**
+     * Нормализует текст для поиска в базе данных (для совместимости со старыми записями)
+     * Используется для поиска товаров с учетом двойных пробелов
+     */
+    private function normalizeTextForSearch(string $text): string
+    {
+        return $this->normalizeText($text);
+    }
+
     public function bulkImport(Request $request)
     {
 
@@ -101,7 +128,7 @@ class BulkGoodsImportController extends Controller
 
         foreach ($allGoods as $index => $good) {
             $sku = isset($good['sku']) ? trim((string) $good['sku']) : '';
-            $name = isset($good['name']) ? trim((string) $good['name']) : '';
+            $name = isset($good['name']) ? $this->normalizeText((string) $good['name']) : '';
 
             // Получаем информацию о листе
             $sheet = $good['_sheet'] ?? 'неизвестно';
@@ -328,7 +355,7 @@ class BulkGoodsImportController extends Controller
                 $count = $index + 1;
                 // Для поиска: только значения из маппинга. Если колонка не сопоставлена — пустая строка
                 $sku = isset($goodData['sku']) ? trim((string)$goodData['sku']) : '';
-                $name = isset($goodData['name']) ? trim((string)$goodData['name']) : '';
+                $name = isset($goodData['name']) ? $this->normalizeText((string)$goodData['name']) : '';
 
                 try {
                     // Пустые строки уже отфильтрованы на этапе валидации
@@ -383,7 +410,7 @@ class BulkGoodsImportController extends Controller
 
                         if (!empty($searchValue)) {
                             // Ищем вариацию по выбранному полю
-                            $variationQuery = ShopGoodVariation::where($searchByFieldInVariations, $searchValue);
+                            $variationQuery = ShopGoodVariation::where($searchByFieldInVariations, $searchByFieldInVariations === 'name' ? $this->normalizeTextForSearch($searchValue) : $searchValue);
 
                             // Если указан поставщик, сужаем поиск до вариаций этого поставщика.
                             // При отсутствии поставщика фильтр не добавляется — ищем по всем вариациям.
@@ -395,7 +422,7 @@ class BulkGoodsImportController extends Controller
 
                             // Если с фильтром по поставщику не нашли — пробуем без него (вариация может быть без поставщика или с другим)
                             if (!$existingVariation && $supplierName) {
-                                $existingVariation = ShopGoodVariation::where($searchByFieldInVariations, $searchValue)->first();
+                                $existingVariation = ShopGoodVariation::where($searchByFieldInVariations, $searchByFieldInVariations === 'name' ? $this->normalizeTextForSearch($searchValue) : $searchValue)->first();
                             }
 
                             if ($existingVariation) {
@@ -429,13 +456,14 @@ class BulkGoodsImportController extends Controller
                         if ($searchByNameInVariations && $searchByFieldInVariations === 'sku') {
                             // 1) По названию в основных товарах (с учётом поставщика)
                             if (!empty($name)) {
-                                $foundByName = ShopGood::where('name', $name);
+                                $normalizedName = $this->normalizeTextForSearch($name);
+                                $foundByName = ShopGood::where('name', $normalizedName);
                                 if ($supplierName) {
                                     $foundByName->where('supplier', $supplierName);
                                 }
                                 $foundByName = $foundByName->first();
                                 if (!$foundByName && $supplierName) {
-                                    $foundByName = ShopGood::where('name', $name)->first();
+                                    $foundByName = ShopGood::where('name', $normalizedName)->first();
                                 }
                                 if ($foundByName) {
                                     $existingGood = $foundByName;
@@ -504,7 +532,7 @@ class BulkGoodsImportController extends Controller
                                     }
                                 } elseif ($field === 'name') {
                                     if (!empty($name)) {
-                                        $goodQuery = ShopGood::where('name', $name);
+                                        $goodQuery = ShopGood::where('name', $this->normalizeTextForSearch($name));
                                         if ($supplierName) {
                                             $goodQuery->where('supplier', $supplierName);
                                         }
@@ -518,6 +546,27 @@ class BulkGoodsImportController extends Controller
                                 if ($existingGood) {
                                     break; // Найден товар, прекращаем поиск
                                 }
+                            }
+                        }
+                    }
+
+                    // ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: При режиме "Искать в вариациях - по названию",
+                    // если товар не найден после всех проверок, проверяем главные товары по SKU
+                    if (!$existingGood && $searchByNameInVariations && $searchByFieldInVariations === 'name' && !empty($sku)) {
+                        if ($supplierName) {
+                            $existingGood = ShopGood::where('sku', $sku)->where('supplier', $supplierName)->first();
+                            if ($existingGood) {
+                                $foundByFields[] = "SKU: '{$sku}' (дополнительная проверка после поиска в вариациях по названию, поставщик: {$supplierName})";
+                            } else {
+                                $existingGood = ShopGood::where('sku', $sku)->first();
+                                if ($existingGood) {
+                                    $foundByFields[] = "SKU: '{$sku}' (дополнительная проверка после поиска в вариациях по названию, без фильтра поставщика)";
+                                }
+                            }
+                        } else {
+                            $existingGood = ShopGood::where('sku', $sku)->first();
+                            if ($existingGood) {
+                                $foundByFields[] = "SKU: '{$sku}' (дополнительная проверка после поиска в вариациях по названию)";
                             }
                         }
                     }
@@ -551,7 +600,7 @@ class BulkGoodsImportController extends Controller
 
                         // 2. Если не найден по SKU, ищем по имени — только если 'name' в duplicate_fields
                         if (!$existingGood && in_array('name', $duplicateFields) && !empty($name)) {
-                            $goodQuery = ShopGood::where('name', $name);
+                            $goodQuery = ShopGood::where('name', $this->normalizeTextForSearch($name));
                             if ($supplierName) {
                                 $goodQuery->where('supplier', $supplierName);
                             }
@@ -593,13 +642,13 @@ class BulkGoodsImportController extends Controller
                         // Критично: присваиваем existingGood только при успешном нахождении, иначе затирается результат из блока 407-465 (найденный по артикулу в основных).
                         if ($searchByNameInVariations && $searchByFieldInVariations === 'sku') {
                             if (!empty($name) && !$existingGood) {
-                                $foundByName = ShopGood::where('name', $name);
+                                $foundByName = ShopGood::where('name', $this->normalizeTextForSearch($name));
                                 if ($supplierName) {
                                     $foundByName->where('supplier', $supplierName);
                                 }
                                 $foundByName = $foundByName->first();
                                 if (!$foundByName && $supplierName) {
-                                    $foundByName = ShopGood::where('name', $name)->first();
+                                    $foundByName = ShopGood::where('name', $this->normalizeTextForSearch($name))->first();
                                 }
                                 if ($foundByName) {
                                     $existingGood = $foundByName;
@@ -669,7 +718,7 @@ class BulkGoodsImportController extends Controller
                                     }
                                 } elseif ($field === 'name') {
                                     if (!empty($name)) {
-                                        $goodQuery = ShopGood::where('name', $name);
+                                        $goodQuery = ShopGood::where('name', $this->normalizeTextForSearch($name));
                                         if ($supplierName) {
                                             $goodQuery->where('supplier', $supplierName);
                                         }
@@ -1404,7 +1453,7 @@ class BulkGoodsImportController extends Controller
                             
                             // Если не найден по SKU, проверяем по имени — только если 'name' в duplicate_fields
                             if (!$doubleCheckGood && in_array('name', $duplicateFields) && !empty($name)) {
-                                $doubleCheckGood = ShopGood::where('name', $name)->first();
+                                $doubleCheckGood = ShopGood::where('name', $this->normalizeTextForSearch($name))->first();
                             }
                             
                             // Если все еще не найден, проверяем по имени с пустым SKU — только если 'name' в duplicate_fields
@@ -1623,7 +1672,7 @@ class BulkGoodsImportController extends Controller
                             $existingGood = ShopGood::where('sku', $sku)->first();
                         }
                         if (!$existingGood && in_array('name', $duplicateFields) && !empty($name)) {
-                            $existingGood = ShopGood::where('name', $name)->first();
+                            $existingGood = ShopGood::where('name', $this->normalizeTextForSearch($name))->first();
                         }
                         if (!$existingGood && empty($sku) && in_array('name', $duplicateFields) && !empty($name)) {
                             $existingGood = ShopGood::whereNull('sku')->where('name', $name)->first();
@@ -1856,7 +1905,7 @@ class BulkGoodsImportController extends Controller
         $good->sku = (isset($goodData['sku']) && !empty($goodData['sku'])) ? $goodData['sku'] : null;
         
         // Применяем обрезку названия при создании нового товара, если указан символ обрезки
-        $nameToSet = isset($goodData['name']) ? $goodData['name'] : '';
+        $nameToSet = isset($goodData['name']) ? $this->normalizeText($goodData['name']) : '';
         if (!empty($nameTrimSymbol) && !empty(trim($nameTrimSymbol)) && !empty($nameToSet)) {
             $trimSymbol = trim($nameTrimSymbol);
             $trimIndex = strpos($nameToSet, $trimSymbol);
@@ -2103,7 +2152,7 @@ class BulkGoodsImportController extends Controller
         // не затрагиваем только у товаров С вариациями. У товаров без вариаций имя обновляется.
         if (!($searchByNameInVariations && $searchByFieldInVariations === 'sku' && $existingGood->variations()->exists())) {
             if (isset($goodData['name']) && !empty(trim($goodData['name']))) {
-                $nameFromData = trim($goodData['name']);
+                $nameFromData = $this->normalizeText($goodData['name']);
                 // Прямое обновление имени из файла (если name не в «Не изменять поля»)
                 if (!in_array('name', $immutableFields)) {
                     $existingGood->name = $nameFromData;

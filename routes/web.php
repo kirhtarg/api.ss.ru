@@ -79,3 +79,6 @@ Route::get('/temp-file/{filename}', function ($filename) {
         'Expires' => '0'
     ]);
 })->name('temp-file');
+
+// Отдельный маршрут для настроек СДЭК (без throttle для надежности)
+Route::get('/delivery/cdek/settings', [App\Http\Controllers\DeliveryController::class, 'getCdekSettings'])->name('delivery.cdek.settings');

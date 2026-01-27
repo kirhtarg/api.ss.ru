@@ -18,9 +18,9 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Log as Logger;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\Schema;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Auth\AuthenticationException;
 
 class ShopGoodsController extends Controller
@@ -57,34 +57,62 @@ class ShopGoodsController extends Controller
             }
         }]);
 
-        // Фильтр по массиву ID (для массовой загрузки) - должен быть первым
-        // Проверяем оба варианта: ids[] и ids
-        $ids = null;
-        if ($request->has('ids')) {
-            $ids = $request->input('ids');
-        } elseif ($request->has('ids[]')) {
-            $ids = $request->input('ids[]');
-        }
-        
-        if ($ids !== null) {
-            // Если это не массив, пытаемся преобразовать
-            if (!is_array($ids)) {
-                $ids = [$ids];
+        // Фильтр по массиву ID (для массовой загрузки и экспорта) - должен быть первым
+        // Проверяем selected_ids (для экспорта выбранных товаров)
+        if ($request->has('selected_ids') && !empty($request->input('selected_ids'))) {
+            $selectedIdsRaw = $request->input('selected_ids');
+
+            // Если это строка с запятыми, разбиваем на массив
+            if (is_string($selectedIdsRaw) && strpos($selectedIdsRaw, ',') !== false) {
+                $selectedIds = explode(',', $selectedIdsRaw);
+            } elseif (is_array($selectedIdsRaw)) {
+                $selectedIds = $selectedIdsRaw;
+            } else {
+                $selectedIds = [$selectedIdsRaw];
             }
-            
-            if (!empty($ids)) {
-                $ids = array_map('intval', $ids);
-                $ids = array_filter($ids, function($id) {
-                    return $id > 0;
-                });
-                
+
+            $selectedIds = array_map('intval', array_filter($selectedIds, function($id) {
+                return is_numeric($id) && $id > 0;
+            }));
+
+            if (!empty($selectedIds)) {
+                $query->whereIn('id', $selectedIds);
+                // Когда есть selected_ids, пропускаем все остальные фильтры
+                // (экспортируем только выбранные товары без дополнительных фильтров)
+            }
+        } else {
+            // Обычная фильтрация
+            // Проверяем оба варианта: ids[] и ids (для других случаев)
+            $ids = null;
+            if ($request->has('ids')) {
+                $ids = $request->input('ids');
+            } elseif ($request->has('ids[]')) {
+                $ids = $request->input('ids[]');
+            }
+
+            if ($ids !== null) {
+                // Если это не массив, пытаемся преобразовать
+                if (!is_array($ids)) {
+                    $ids = [$ids];
+                }
+
                 if (!empty($ids)) {
-                    $query->whereIn('id', $ids);
+                    $ids = array_map('intval', $ids);
+                    $ids = array_filter($ids, function($id) {
+                        return $id > 0;
+                    });
+
+                    if (!empty($ids)) {
+                        $query->whereIn('id', $ids);
+                    }
                 }
             }
-        }
 
-        // Поиск
+            // Применяем фильтры только если нет ids
+            if (!$ids || empty($ids)) {
+                $this->applyGoodsFilters($query, $request);
+            }
+        }
         if ($request->filled('search')) {
             $search = $request->get('search');
             // Если передан параметр search_only_name_sku, ищем только по названию и артикулу
@@ -556,48 +584,6 @@ class ShopGoodsController extends Controller
             }
         }
 
-        // Фильтр по названиям атрибутов вариаций
-        if ($request->has('variation_attribute_names')) {
-            $attributeNames = $request->input('variation_attribute_names');
-            if (is_array($attributeNames) && !empty($attributeNames)) {
-                // Фильтруем товары, у которых есть вариации с указанными атрибутами
-                $query->whereExists(function($subQuery) use ($attributeNames) {
-                    $subQuery->selectRaw('1')
-                        ->from('shop_good_variations as v')
-                        ->join('shop_variation_attributes_values as vav', 'v.id', '=', 'vav.variation_id')
-                        ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
-                        ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
-                        ->whereRaw('v.good_id = shop_goods.id')
-                        ->whereIn('a.name', $attributeNames)
-                        ->limit(1);
-                });
-            }
-        }
-
-        // Фильтр по исключению атрибутов вариаций (товары БЕЗ указанных атрибутов)
-        if ($request->has('exclude_variation_attribute_names')) {
-            $excludeAttributeNames = $request->input('exclude_variation_attribute_names');
-            if (is_array($excludeAttributeNames) && !empty($excludeAttributeNames)) {
-                // Когда применяется фильтр "БЕЗ атрибутов", показываем ТОЛЬКО товары с вариациями,
-                // которые НЕ имеют указанные атрибуты
-                // Используем подзапрос для точного контроля
-                $query->whereExists(function($subQuery) {
-                    $subQuery->selectRaw('1')
-                        ->from('shop_good_variations')
-                        ->whereColumn('good_id', 'shop_goods.id')
-                        ->limit(1);
-                })->whereNotExists(function($subQuery) use ($excludeAttributeNames) {
-                    $subQuery->selectRaw('1')
-                        ->from('shop_good_variations as v')
-                        ->join('shop_variation_attributes_values as vav', 'v.id', '=', 'vav.variation_id')
-                        ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
-                        ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
-                        ->whereColumn('v.good_id', 'shop_goods.id')
-                        ->whereIn('a.name', $excludeAttributeNames)
-                        ->limit(1);
-                });
-            }
-        }
 
         // Фильтр по артикулу
         if ($request->filled('sku_filter_type')) {
@@ -785,6 +771,39 @@ class ShopGoodsController extends Controller
         } elseif (in_array($sortBy, $allowedSortFields)) {
             // Обычная сортировка для простых полей
             $query->orderBy($sortBy, $sortDirection);
+        }
+
+        // Проверяем, запрошена ли не пагинированная выборка для экспорта
+        $forExport = $request->has('for_export') && $request->get('for_export') === '1';
+
+        if ($forExport) {
+            // Оптимизированный подсчет количества строк для экспорта
+            // Используем SQL для подсчета без загрузки всех данных
+            $goodsIdsQuery = clone $query;
+            $goodsIdsQuery->select('id');
+
+            $totalRows = DB::table('shop_goods')
+                ->leftJoin('shop_good_variations', 'shop_goods.id', '=', 'shop_good_variations.good_id')
+                ->whereIn('shop_goods.id', $goodsIdsQuery)
+                ->selectRaw('
+                    SUM(CASE
+                        WHEN shop_good_variations.id IS NULL THEN 1
+                        ELSE 0
+                    END) as goods_without_variations,
+                    COUNT(shop_good_variations.id) as variations_count
+                ')
+                ->first();
+
+            $totalRowsCount = ($totalRows->goods_without_variations ?? 0) + ($totalRows->variations_count ?? 0);
+
+            // Теперь загружаем товары для экспорта
+            $goods = $query->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $goods,
+                'count' => $totalRowsCount
+            ]);
         }
 
         // Пагинация (если не запрашиваются конкретные ID, используем пагинацию)
@@ -986,7 +1005,7 @@ class ShopGoodsController extends Controller
             if ($request->has('suppliers')) {
                 $response['variations_count'] = $variationsCount;
             }
-            
+
             return response()->json($response);
         } else {
             // Если запрашиваются конкретные ID, возвращаем все без пагинации
@@ -1750,14 +1769,17 @@ class ShopGoodsController extends Controller
      */
     public function bulkUpdate(Request $request): JsonResponse
     {
-        $action = $request->get('action');
-        
+        // Получаем сырые JSON данные до обработки middleware
+        $rawJsonData = json_decode($request->getContent(), true);
+
+        $action = $rawJsonData['action'] ?? $request->get('action');
+
         // Для действий clear_by_tags и clear_by_suppliers ids не обязателен, так как используются фильтры в data
-        $idsRules = in_array($action, ['clear_by_tags', 'clear_by_suppliers']) 
-            ? 'nullable|array' 
+        $idsRules = in_array($action, ['clear_by_tags', 'clear_by_suppliers'])
+            ? 'nullable|array'
             : 'required|array';
-        
-        $validator = Validator::make($request->all(), [
+
+        $validator = Validator::make($rawJsonData, [
             'ids' => $idsRules,
             'ids.*' => 'exists:shop_goods,id',
             'action' => 'required|in:activate,deactivate,delete,delete_without_supplier,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_fast_remote_stock,update_price,update_sale_price,update_demping_price,toggle_show_demping,toggle_fields,update_label,remove_after_symbol,replace_text,update_dimensions,enable_preorder,disable_preorder,clear_by_tags,clear_by_suppliers,delete_images,delete_zero_stock_no_media',
@@ -1769,7 +1791,10 @@ class ShopGoodsController extends Controller
             'data.is_sale' => 'nullable|boolean',
             'data.is_new' => 'nullable|boolean',
             'data.is_featured' => 'nullable|boolean',
-            'data.is_show' => 'nullable|boolean'
+            'data.is_show' => 'nullable|boolean',
+            'data.search' => 'nullable|string',
+            'data.replace' => 'nullable|string',
+            'data.normalize_spaces' => 'nullable|boolean'
         ]);
 
         if ($validator->fails()) {
@@ -1785,7 +1810,9 @@ class ShopGoodsController extends Controller
 
             $ids = $request->get('ids');
             $action = $request->get('action');
-            $data = $request->get('data', []);
+            // Получаем данные напрямую из JSON, без обработки middleware
+            $jsonData = json_decode($request->getContent(), true);
+            $data = $jsonData['data'] ?? [];
 
             // Для массового удаления по меткам/поставщикам делаем прямые запросы
             if (in_array($action, ['clear_by_tags', 'clear_by_suppliers'])) {
@@ -2519,14 +2546,39 @@ class ShopGoodsController extends Controller
                         }
                         break;
                     case 'replace_text':
-                        if (isset($data['search']) && !empty($data['search'])) {
-                            $search = $data['search'];
-                            $replace = $data['replace'] ?? '';
+                        $search = $data['search'] ?? '';
+                        $replace = $data['replace'] ?? '';
+                        $normalizeSpaces = $data['normalize_spaces'] ?? false;
+
+
+                        if ($search !== '' || $normalizeSpaces) {
                             $name = $good->name;
-                            
-                            // Заменяем все вхождения текста (регистронезависимый поиск)
-                            $newName = str_ireplace($search, $replace, $name);
-                            
+
+                            if ($normalizeSpaces) {
+                                // Нормализация пробелов: убираем множественные пробелы, оставляем максимум 1 между словами
+                                $newName = preg_replace('/\s+/', ' ', trim($name));
+                            } else {
+                                // Проверяем, состоит ли search только из пробелов
+                                $isSearchOnlySpaces = trim($search) === '';
+
+                                if ($isSearchOnlySpaces && $search !== '') {
+                                    // Специальная обработка для пробелов - ищем точное количество ПРОБЕЛОВ (space characters)
+                                    $exactSpaces = strlen($search); // Точное количество пробелов для поиска
+
+                                    if ($replace === '') {
+                                        // Удаляем найденные пробелы (заменяем на пустоту)
+                                        $newName = str_replace($search, '', $name);
+                                    } else {
+                                        // Заменяем точное количество пробелов на заданное количество пробелов
+                                        $replaceSpaces = str_repeat(' ', strlen($replace));
+                                        $newName = str_replace($search, $replaceSpaces, $name);
+                                    }
+                                } else {
+                                    // Обычная замена текста (регистронезависимый поиск)
+                                    $newName = str_ireplace($search, $replace, $name);
+                                }
+                            }
+
                             if ($newName !== $name) {
                                 $good->update(['name' => $newName]);
                             }
@@ -2605,6 +2657,339 @@ class ShopGoodsController extends Controller
                 'success' => false,
                 'message' => 'Ошибка массового обновления: ' . $e->getMessage()
             ], 500);
+        }
+    }
+
+    /**
+     * Применить фильтры к запросу товаров
+     */
+    private function applyGoodsFilters($query, Request $request): void
+    {
+        if ($request->filled('search')) {
+            $search = $request->get('search');
+            // Если передан параметр search_only_name_sku, ищем только по названию и артикулу
+            $searchOnlyNameSku = $request->input('search_only_name_sku');
+            if ($searchOnlyNameSku && ($searchOnlyNameSku === '1' || $searchOnlyNameSku === 1 || $searchOnlyNameSku === true || $searchOnlyNameSku === 'true')) {
+                $query->searchNameSku($search);
+            } else {
+                $query->search($search);
+            }
+        }
+
+        // Фильтр по названию (точное вхождение текста)
+        if ($request->filled('name_search')) {
+            $nameSearch = $request->get('name_search');
+            $query->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($nameSearch) . '%']);
+        }
+
+        // Фильтр по артикулу (точное вхождение текста)
+        if ($request->filled('sku_search')) {
+            $skuSearch = $request->get('sku_search');
+            $query->whereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($skuSearch) . '%']);
+        }
+
+        // Фильтр по категории
+        if ($request->filled('category_id')) {
+            $query->byCategory($request->get('category_id'));
+        }
+
+        // Фильтр по множественным категориям
+        if ($request->has('categories')) {
+            $categoryIds = $request->input('categories');
+            if (is_array($categoryIds) && !empty($categoryIds)) {
+                $query->whereHas('categories', function($q) use ($categoryIds) {
+                    $q->whereIn('shop_categories.id', $categoryIds);
+                });
+            }
+        }
+
+        // Фильтр по бренду
+        if ($request->filled('brand_id')) {
+            $query->byBrand($request->get('brand_id'));
+        }
+
+        // Фильтр по множественным брендам
+        if ($request->has('brands')) {
+            $brandIds = $request->input('brands');
+            if (is_array($brandIds) && !empty($brandIds)) {
+                $query->whereHas('brands', function($q) use ($brandIds) {
+                    $q->whereIn('shop_brands.id', $brandIds);
+                });
+            }
+        }
+
+        // Фильтр по тегам
+        if ($request->has('tags')) {
+            $tagIds = $request->input('tags');
+            if (is_array($tagIds) && !empty($tagIds)) {
+                $query->whereHas('tags', function($q) use ($tagIds) {
+                    $q->whereIn('shop_tags.id', $tagIds);
+                });
+            }
+        }
+
+        // Исключение тегов
+        if ($request->has('exclude_tags')) {
+            $excludeTagIds = $request->input('exclude_tags');
+            if (is_array($excludeTagIds) && !empty($excludeTagIds)) {
+                $query->whereDoesntHave('tags', function($q) use ($excludeTagIds) {
+                    $q->whereIn('shop_tags.id', $excludeTagIds);
+                });
+            }
+        }
+
+        // Фильтр по лейблам
+        if ($request->has('labels')) {
+            $labelIds = $request->input('labels');
+            if (is_array($labelIds) && !empty($labelIds)) {
+                $query->whereIn('label_id', $labelIds);
+            }
+        }
+
+        // Фильтр по свойствам
+        if ($request->has('properties')) {
+            $properties = $request->input('properties');
+            if (is_array($properties)) {
+                foreach ($properties as $propertyId => $valueIds) {
+                    if (is_array($valueIds) && !empty($valueIds)) {
+                        $query->whereHas('properties', function($q) use ($propertyId, $valueIds) {
+                            $q->where('shop_properties.id', $propertyId)
+                              ->whereIn('shop_property_value_id', $valueIds);
+                        });
+                    }
+                }
+            }
+        }
+
+        // Фильтр по поставщикам
+        if ($request->has('suppliers')) {
+            $supplierIds = $request->input('suppliers');
+            if (is_array($supplierIds) && !empty($supplierIds)) {
+                $query->whereIn('supplier', $supplierIds);
+            }
+        }
+
+        // Фильтр по демпингу
+        if ($request->filled('has_demping')) {
+            $hasDemping = $request->boolean('has_demping');
+            if ($hasDemping) {
+                $query->where('show_demping', true);
+            } else {
+                $query->where('show_demping', false);
+            }
+        }
+
+        // Фильтр по демпинговой цене
+        if ($request->filled('has_demping_price')) {
+            $hasDempingPrice = $request->boolean('has_demping_price');
+            if ($hasDempingPrice) {
+                $query->whereNotNull('demping_price');
+            } else {
+                $query->whereNull('demping_price');
+            }
+        }
+
+        // Фильтр по акционной цене
+        if ($request->filled('has_sale_price')) {
+            $hasSalePrice = $request->boolean('has_sale_price');
+            if ($hasSalePrice) {
+                $query->whereNotNull('sale_price');
+            } else {
+                $query->whereNull('sale_price');
+            }
+        }
+
+        // Фильтр по лейблу
+        if ($request->filled('has_label')) {
+            $hasLabel = $request->boolean('has_label');
+            if ($hasLabel) {
+                $query->whereNotNull('label_id');
+            } else {
+                $query->whereNull('label_id');
+            }
+        }
+
+        // Фильтр по тегам
+        if ($request->filled('has_tags')) {
+            $hasTags = $request->boolean('has_tags');
+            if ($hasTags) {
+                $query->whereHas('tags');
+            } else {
+                $query->whereDoesntHave('tags');
+            }
+        }
+
+        // Фильтр по количеству характеристик
+        if ($request->filled('properties_count_type')) {
+            $countType = $request->get('properties_count_type');
+            if ($countType === 'exact' && $request->filled('properties_count')) {
+                $count = (int) $request->get('properties_count');
+                $query->whereHas('properties', function($q) use ($count) {
+                    $q->havingRaw('COUNT(*) = ?', [$count]);
+                }, '=', $count);
+            }
+        }
+
+        // Фильтр по артикулу
+        if ($request->filled('sku_filter_type')) {
+            $skuFilterType = $request->get('sku_filter_type');
+            if ($skuFilterType === 'empty') {
+                $query->where(function($q) {
+                    $q->whereNull('sku')
+                      ->orWhere('sku', '=', '');
+                });
+            }
+        }
+
+        // Фильтр по цене
+        if ($request->filled('min_price') || $request->filled('max_price')) {
+            if ($request->filled('min_price')) {
+                $query->where('price', '>=', $request->get('min_price'));
+            }
+            if ($request->filled('max_price')) {
+                $query->where('price', '<=', $request->get('max_price'));
+            }
+        }
+
+        // Фильтр по остатку
+        if ($request->filled('stock_quantity_min') || $request->filled('stock_quantity_max')) {
+            if ($request->filled('stock_quantity_min')) {
+                $query->where('stock_quantity', '>=', $request->get('stock_quantity_min'));
+            }
+            if ($request->filled('stock_quantity_max')) {
+                $query->where('stock_quantity', '<=', $request->get('stock_quantity_max'));
+            }
+        }
+
+        // Фильтр по удаленному остатку
+        if ($request->filled('remote_stock_quantity')) {
+            $query->where('remote_stock_quantity', $request->get('remote_stock_quantity'));
+        }
+
+        // Фильтр по быстрому удаленному остатку
+        if ($request->filled('fast_remote_stock_quantity')) {
+            $query->where('fast_remote_stock_quantity', $request->get('fast_remote_stock_quantity'));
+        }
+
+        // Фильтр по статусу активности
+        if ($request->has('is_active')) {
+            $query->where('is_active', $request->boolean('is_active'));
+        }
+
+        // Фильтр по статусу "Рекомендуемый"
+        if ($request->has('is_featured')) {
+            $query->where('is_featured', $request->boolean('is_featured'));
+        }
+
+        // Фильтр по статусу "Новый"
+        if ($request->has('is_new')) {
+            $query->where('is_new', $request->boolean('is_new'));
+        }
+
+        // Фильтр по статусу "Со скидкой"
+        if ($request->has('is_sale')) {
+            $query->where('is_sale', $request->boolean('is_sale'));
+        }
+
+        // Фильтр по статусу "Доступен к заказу"
+        if ($request->has('is_preorder')) {
+            $query->where('is_preorder', $request->boolean('is_preorder'));
+        }
+
+        // Фильтр по статусу "Показывать"
+        if ($request->has('is_show')) {
+            $query->where('is_show', $request->boolean('is_show'));
+        }
+
+        // Фильтр по наличию вариаций
+        if ($request->filled('has_variations')) {
+            $hasVariations = $request->boolean('has_variations');
+            if ($hasVariations) {
+                $query->has('variations');
+            } else {
+                $query->doesntHave('variations');
+            }
+        }
+
+        // Фильтр по наличию категорий
+        if ($request->filled('has_categories')) {
+            $hasCategories = $request->boolean('has_categories');
+            if ($hasCategories) {
+                $query->has('categories');
+            } else {
+                $query->doesntHave('categories');
+            }
+        }
+
+        // Фильтр по наличию брендов
+        if ($request->filled('has_brands')) {
+            $hasBrands = $request->boolean('has_brands');
+            if ($hasBrands) {
+                $query->has('brands');
+            } else {
+                $query->doesntHave('brands');
+            }
+        }
+
+        // Фильтр по наличию на складе
+        if ($request->filled('in_stock')) {
+            $inStock = $request->boolean('in_stock');
+            if ($inStock) {
+                $query->where('stock_quantity', '>', 0);
+            } else {
+                $query->where('stock_quantity', '<=', 0);
+            }
+        }
+
+        // Фильтр по атрибутам вариаций (товары С этими атрибутами)
+        if ($request->has('variation_attribute_names')) {
+            $attributeNames = $request->input('variation_attribute_names');
+            // Обрабатываем как массив, так и строку
+            if (!is_array($attributeNames)) {
+                $attributeNames = [$attributeNames];
+            }
+            if (!empty($attributeNames)) {
+                // Фильтруем товары, у которых есть вариации с указанными атрибутами
+                $query->whereExists(function($subQuery) use ($attributeNames) {
+                    $subQuery->selectRaw('1')
+                        ->from('shop_good_variations as v')
+                        ->join('shop_variation_attributes_values as vav', 'v.id', '=', 'vav.variation_id')
+                        ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                        ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                        ->whereRaw('v.good_id = shop_goods.id')
+                        ->whereIn('a.name', $attributeNames)
+                        ->limit(1);
+                });
+            }
+        }
+
+        // Исключение атрибутов вариаций (товары БЕЗ этих атрибутов)
+        if ($request->has('exclude_variation_attribute_names')) {
+            $excludeAttributeNames = $request->input('exclude_variation_attribute_names');
+            // Обрабатываем как массив, так и строку
+            if (!is_array($excludeAttributeNames)) {
+                $excludeAttributeNames = [$excludeAttributeNames];
+            }
+            if (!empty($excludeAttributeNames)) {
+                // Когда применяется фильтр "БЕЗ атрибутов", показываем ТОЛЬКО товары с вариациями,
+                // которые НЕ имеют указанные атрибуты
+                // Используем подзапрос для точного контроля
+                $query->whereExists(function($subQuery) {
+                    $subQuery->selectRaw('1')
+                        ->from('shop_good_variations')
+                        ->whereColumn('good_id', 'shop_goods.id')
+                        ->limit(1);
+                })->whereNotExists(function($subQuery) use ($excludeAttributeNames) {
+                    $subQuery->selectRaw('1')
+                        ->from('shop_good_variations as v')
+                        ->join('shop_variation_attributes_values as vav', 'v.id', '=', 'vav.variation_id')
+                        ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                        ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                        ->whereColumn('v.good_id', 'shop_goods.id')
+                        ->whereIn('a.name', $excludeAttributeNames)
+                        ->limit(1);
+                });
+            }
         }
     }
 

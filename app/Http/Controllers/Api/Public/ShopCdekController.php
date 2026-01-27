@@ -115,15 +115,10 @@ class ShopCdekController extends Controller
                 }
             }
 
-            // Если DaData не работает или не нашли городов, используем fallback
-            if (empty($formattedCities)) {
-                $formattedCities = $this->getFallbackCities($query);
-            }
-
             if (empty($formattedCities)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Город не найден в базе данных'
+                    'message' => 'Города не найдены. Проверьте настройки DaData API.'
                 ], 404);
             }
 
@@ -469,92 +464,6 @@ class ShopCdekController extends Controller
         return $result;
     }
 
-    /**
-     * Получить fallback список городов при недоступности DaData
-     */
-    private function getFallbackCities($query)
-    {
-        $fallbackCities = [
-            // Крупные города с правильными кодами CDEK
-            ['code' => '44', 'name' => 'Москва', 'region' => 'Московская область', 'country' => 'Россия', 'full_name' => 'г. Москва'],
-            ['code' => '2', 'name' => 'Санкт-Петербург', 'region' => 'Ленинградская область', 'country' => 'Россия', 'full_name' => 'г. Санкт-Петербург'],
-            ['code' => '63', 'name' => 'Казань', 'region' => 'Республика Татарстан', 'country' => 'Россия', 'full_name' => 'г. Казань'],
-            ['code' => '137', 'name' => 'Екатеринбург', 'region' => 'Свердловская область', 'country' => 'Россия', 'full_name' => 'г. Екатеринбург'],
-            ['code' => '65', 'name' => 'Новосибирск', 'region' => 'Новосибирская область', 'country' => 'Россия', 'full_name' => 'г. Новосибирск'],
-            ['code' => '52', 'name' => 'Нижний Новгород', 'region' => 'Нижегородская область', 'country' => 'Россия', 'full_name' => 'г. Нижний Новгород'],
-            ['code' => '154', 'name' => 'Челябинск', 'region' => 'Челябинская область', 'country' => 'Россия', 'full_name' => 'г. Челябинск'],
-            ['code' => '78', 'name' => 'Самара', 'region' => 'Самарская область', 'country' => 'Россия', 'full_name' => 'г. Самара'],
-
-            // Дополнительные крупные города с правильными кодами CDEK
-            ['code' => '68', 'name' => 'Омск', 'region' => 'Омская область', 'country' => 'Россия', 'full_name' => 'г. Омск'],
-            ['code' => '61', 'name' => 'Ростов-на-Дону', 'region' => 'Ростовская область', 'country' => 'Россия', 'full_name' => 'г. Ростов-на-Дону'],
-            ['code' => '99', 'name' => 'Уфа', 'region' => 'Республика Башкортостан', 'country' => 'Россия', 'full_name' => 'г. Уфа'],
-            ['code' => '20', 'name' => 'Волгоград', 'region' => 'Волгоградская область', 'country' => 'Россия', 'full_name' => 'г. Волгоград'],
-            ['code' => '72', 'name' => 'Пермь', 'region' => 'Пермский край', 'country' => 'Россия', 'full_name' => 'г. Пермь'],
-            ['code' => '54', 'name' => 'Красноярск', 'region' => 'Красноярский край', 'country' => 'Россия', 'full_name' => 'г. Красноярск'],
-            ['code' => '21', 'name' => 'Воронеж', 'region' => 'Воронежская область', 'country' => 'Россия', 'full_name' => 'г. Воронеж'],
-            ['code' => '64', 'name' => 'Саратов', 'region' => 'Саратовская область', 'country' => 'Россия', 'full_name' => 'г. Саратов'],
-            ['code' => '23', 'name' => 'Краснодар', 'region' => 'Краснодарский край', 'country' => 'Россия', 'full_name' => 'г. Краснодар'],
-            ['code' => '18', 'name' => 'Ижевск', 'region' => 'Удмуртская Республика', 'country' => 'Россия', 'full_name' => 'г. Ижевск'],
-            ['code' => '4', 'name' => 'Барнаул', 'region' => 'Алтайский край', 'country' => 'Россия', 'full_name' => 'г. Барнаул'],
-            ['code' => '73', 'name' => 'Ульяновск', 'region' => 'Ульяновская область', 'country' => 'Россия', 'full_name' => 'г. Ульяновск'],
-            ['code' => '38', 'name' => 'Иркутск', 'region' => 'Иркутская область', 'country' => 'Россия', 'full_name' => 'г. Иркутск'],
-            ['code' => '75', 'name' => 'Хабаровск', 'region' => 'Хабаровский край', 'country' => 'Россия', 'full_name' => 'г. Хабаровск'],
-            ['code' => '76', 'name' => 'Ярославль', 'region' => 'Ярославская область', 'country' => 'Россия', 'full_name' => 'г. Ярославль'],
-            ['code' => '72', 'name' => 'Тюмень', 'region' => 'Тюменская область', 'country' => 'Россия', 'full_name' => 'г. Тюмень'],
-            ['code' => '5', 'name' => 'Махачкала', 'region' => 'Республика Дагестан', 'country' => 'Россия', 'full_name' => 'г. Махачкала'],
-            ['code' => '70', 'name' => 'Томск', 'region' => 'Томская область', 'country' => 'Россия', 'full_name' => 'г. Томск'],
-            ['code' => '42', 'name' => 'Кемерово', 'region' => 'Кемеровская область', 'country' => 'Россия', 'full_name' => 'г. Кемерово'],
-            ['code' => '42', 'name' => 'Новокузнецк', 'region' => 'Кемеровская область', 'country' => 'Россия', 'full_name' => 'г. Новокузнецк'],
-            ['code' => '62', 'name' => 'Рязань', 'region' => 'Рязанская область', 'country' => 'Россия', 'full_name' => 'г. Рязань'],
-            ['code' => '63', 'name' => 'Набережные Челны', 'region' => 'Республика Татарстан', 'country' => 'Россия', 'full_name' => 'г. Набережные Челны'],
-            ['code' => '30', 'name' => 'Астрахань', 'region' => 'Астраханская область', 'country' => 'Россия', 'full_name' => 'г. Астрахань'],
-            ['code' => '58', 'name' => 'Пенза', 'region' => 'Пензенская область', 'country' => 'Россия', 'full_name' => 'г. Пенза'],
-            ['code' => '48', 'name' => 'Липецк', 'region' => 'Липецкая область', 'country' => 'Россия', 'full_name' => 'г. Липецк'],
-            ['code' => '71', 'name' => 'Тула', 'region' => 'Тульская область', 'country' => 'Россия', 'full_name' => 'г. Тула'],
-            ['code' => '43', 'name' => 'Киров', 'region' => 'Кировская область', 'country' => 'Россия', 'full_name' => 'г. Киров'],
-            ['code' => '21', 'name' => 'Чебоксары', 'region' => 'Чувашская Республика', 'country' => 'Россия', 'full_name' => 'г. Чебоксары'],
-            ['code' => '39', 'name' => 'Калининград', 'region' => 'Калининградская область', 'country' => 'Россия', 'full_name' => 'г. Калининград'],
-            ['code' => '32', 'name' => 'Брянск', 'region' => 'Брянская область', 'country' => 'Россия', 'full_name' => 'г. Брянск'],
-            ['code' => '46', 'name' => 'Курск', 'region' => 'Курская область', 'country' => 'Россия', 'full_name' => 'г. Курск'],
-            ['code' => '37', 'name' => 'Иваново', 'region' => 'Ивановская область', 'country' => 'Россия', 'full_name' => 'г. Иваново'],
-            ['code' => '154', 'name' => 'Магнитогорск', 'region' => 'Челябинская область', 'country' => 'Россия', 'full_name' => 'г. Магнитогорск'],
-            ['code' => '86', 'name' => 'Петрозаводск', 'region' => 'Республика Карелия', 'country' => 'Россия', 'full_name' => 'г. Петрозаводск'],
-        ];
-
-        // Фильтруем по запросу (поддерживаем частичные совпадения)
-        $query = mb_strtolower(trim($query), 'UTF-8');
-
-        $filteredCities = array_filter($fallbackCities, function($city) use ($query) {
-            $name = mb_strtolower($city['name'], 'UTF-8');
-            $region = mb_strtolower($city['region'], 'UTF-8');
-            $fullName = mb_strtolower($city['full_name'] ?? '', 'UTF-8');
-
-            // Проверяем точное совпадение начала названия
-            if (mb_strpos($name, $query, 0, 'UTF-8') === 0) {
-                return true;
-            }
-
-            // Проверяем частичное совпадение в названии
-            if (mb_strpos($name, $query, 0, 'UTF-8') !== false) {
-                return true;
-            }
-
-            // Проверяем совпадение в полном названии (включая "г.")
-            if (mb_strpos($fullName, $query, 0, 'UTF-8') !== false) {
-                return true;
-            }
-
-            // Проверяем совпадение в регионе
-            if (mb_strpos($region, $query, 0, 'UTF-8') !== false) {
-                return true;
-            }
-
-            return false;
-        });
-
-        return array_values($filteredCities);
-    }
 
     /**
      * Получить код города CDEK по названию через CDEK API

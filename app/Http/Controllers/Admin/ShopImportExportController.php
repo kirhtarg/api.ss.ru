@@ -23,30 +23,22 @@ class ShopImportExportController extends Controller
     public function exportCsv(Request $request): JsonResponse
     {
         try {
-            $query = ShopGood::with([
-                'categories:id,name',
-                'brands:id,name',
-                'tags:id,name',
-                'properties' => function($query) {
-                    $query->select('shop_properties.id', 'shop_properties.name')
-                          ->withPivot('shop_property_value_id');
-                }
-            ]);
+            // Получаем товары для экспорта через обычный index метод с параметром for_export
+            $goodsController = new \App\Http\Controllers\Admin\ShopGoodsController();
+            $exportRequest = new \Illuminate\Http\Request();
+            $exportRequest->merge($request->all());
+            $exportRequest->merge(['for_export' => '1']);
 
-            // Применяем фильтры если есть
-            if ($request->filled('category_id')) {
-                $query->byCategory($request->get('category_id'));
+            $goodsResponse = $goodsController->index($exportRequest);
+
+            if (!$goodsResponse->getData()->success) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка получения товаров для экспорта: ' . ($goodsResponse->getData()->message ?? 'Неизвестная ошибка')
+                ], 500);
             }
 
-            if ($request->filled('brand_id')) {
-                $query->byBrand($request->get('brand_id'));
-            }
-
-            if ($request->has('is_active')) {
-                $query->where('is_active', $request->boolean('is_active'));
-            }
-
-            $goods = $query->get();
+            $goods = collect($goodsResponse->getData()->data);
 
             // Создаем CSV файл
             $filename = 'goods_export_' . date('Y-m-d_H-i-s') . '.csv';
@@ -167,6 +159,314 @@ class ShopImportExportController extends Controller
     }
 
     /**
+     * Применение фильтров для экспорта (аналогично ShopGoodsController@index)
+     */
+    private function applyExportFilters($query, Request $request): void
+    {
+        // Поиск
+        if ($request->filled('search')) {
+            $search = $request->get('search');
+            $query->search($search);
+        }
+
+        // Фильтр по категории
+        if ($request->filled('category_id')) {
+            $query->byCategory($request->get('category_id'));
+        }
+
+        // Фильтр по множественным категориям
+        if ($request->has('categories')) {
+            $categoryIds = $request->input('categories');
+            if (is_array($categoryIds) && !empty($categoryIds)) {
+                $query->whereHas('categories', function($q) use ($categoryIds) {
+                    $q->whereIn('shop_categories.id', $categoryIds);
+                });
+            }
+        }
+
+        // Фильтр по бренду
+        if ($request->filled('brand_id')) {
+            $query->byBrand($request->get('brand_id'));
+        }
+
+        // Фильтр по множественным брендам
+        if ($request->has('brands')) {
+            $brandIds = $request->input('brands');
+            if (is_array($brandIds) && !empty($brandIds)) {
+                $query->whereHas('brands', function($q) use ($brandIds) {
+                    $q->whereIn('shop_brands.id', $brandIds);
+                });
+            }
+        }
+
+        // Фильтр по тегам
+        if ($request->has('tags')) {
+            $tagIds = $request->input('tags');
+            if (is_array($tagIds) && !empty($tagIds)) {
+                $query->whereHas('tags', function($q) use ($tagIds) {
+                    $q->whereIn('shop_tags.id', $tagIds);
+                });
+            }
+        }
+
+        // Исключение тегов
+        if ($request->has('exclude_tags')) {
+            $excludeTagIds = $request->input('exclude_tags');
+            if (is_array($excludeTagIds) && !empty($excludeTagIds)) {
+                $query->whereDoesntHave('tags', function($q) use ($excludeTagIds) {
+                    $q->whereIn('shop_tags.id', $excludeTagIds);
+                });
+            }
+        }
+
+        // Фильтр по лейблам
+        if ($request->has('labels')) {
+            $labelIds = $request->input('labels');
+            if (is_array($labelIds) && !empty($labelIds)) {
+                $query->whereIn('label_id', $labelIds);
+            }
+        }
+
+        // Фильтр по свойствам
+        if ($request->has('properties')) {
+            $properties = $request->input('properties');
+            if (is_array($properties)) {
+                foreach ($properties as $propertyId => $valueIds) {
+                    if (is_array($valueIds) && !empty($valueIds)) {
+                        $query->whereHas('properties', function($q) use ($propertyId, $valueIds) {
+                            $q->where('shop_properties.id', $propertyId)
+                              ->whereIn('shop_property_value_id', $valueIds);
+                        });
+                    }
+                }
+            }
+        }
+
+        // Фильтр по поставщикам
+        if ($request->has('suppliers')) {
+            $supplierIds = $request->input('suppliers');
+            if (is_array($supplierIds) && !empty($supplierIds)) {
+                $query->whereIn('supplier', $supplierIds);
+            }
+        }
+
+        // Фильтр по демпингу
+        if ($request->filled('has_demping')) {
+            $hasDemping = $request->boolean('has_demping');
+            if ($hasDemping) {
+                $query->where('show_demping', true);
+            } else {
+                $query->where('show_demping', false);
+            }
+        }
+
+        // Фильтр по демпинговой цене
+        if ($request->filled('has_demping_price')) {
+            $hasDempingPrice = $request->boolean('has_demping_price');
+            if ($hasDempingPrice) {
+                $query->whereNotNull('demping_price');
+            } else {
+                $query->whereNull('demping_price');
+            }
+        }
+
+        // Фильтр по акционной цене
+        if ($request->filled('has_sale_price')) {
+            $hasSalePrice = $request->boolean('has_sale_price');
+            if ($hasSalePrice) {
+                $query->whereNotNull('sale_price');
+            } else {
+                $query->whereNull('sale_price');
+            }
+        }
+
+        // Фильтр по лейблу
+        if ($request->filled('has_label')) {
+            $hasLabel = $request->boolean('has_label');
+            if ($hasLabel) {
+                $query->whereNotNull('label_id');
+            } else {
+                $query->whereNull('label_id');
+            }
+        }
+
+        // Фильтр по тегам
+        if ($request->filled('has_tags')) {
+            $hasTags = $request->boolean('has_tags');
+            if ($hasTags) {
+                $query->whereHas('tags');
+            } else {
+                $query->whereDoesntHave('tags');
+            }
+        }
+
+        // Фильтр по количеству характеристик
+        if ($request->filled('properties_count_type')) {
+            $countType = $request->get('properties_count_type');
+            if ($countType === 'exact' && $request->filled('properties_count')) {
+                $count = (int) $request->get('properties_count');
+                $query->whereHas('properties', function($q) use ($count) {
+                    $q->havingRaw('COUNT(*) = ?', [$count]);
+                }, '=', $count);
+            }
+        }
+
+        // Фильтр по артикулу
+        if ($request->filled('sku_filter_type')) {
+            $skuFilterType = $request->get('sku_filter_type');
+            if ($skuFilterType === 'empty') {
+                $query->where(function($q) {
+                    $q->whereNull('sku')
+                      ->orWhere('sku', '=', '');
+                });
+            }
+        }
+
+        // Фильтр по цене
+        if ($request->filled('min_price') || $request->filled('max_price')) {
+            if ($request->filled('min_price')) {
+                $query->where('price', '>=', $request->get('min_price'));
+            }
+            if ($request->filled('max_price')) {
+                $query->where('price', '<=', $request->get('max_price'));
+            }
+        }
+
+        // Фильтр по остатку
+        if ($request->filled('stock_quantity_min') || $request->filled('stock_quantity_max')) {
+            if ($request->filled('stock_quantity_min')) {
+                $query->where('stock_quantity', '>=', $request->get('stock_quantity_min'));
+            }
+            if ($request->filled('stock_quantity_max')) {
+                $query->where('stock_quantity', '<=', $request->get('stock_quantity_max'));
+            }
+        }
+
+        // Фильтр по удаленному остатку
+        if ($request->filled('remote_stock_quantity')) {
+            $query->where('remote_stock_quantity', $request->get('remote_stock_quantity'));
+        }
+
+        // Фильтр по быстрому удаленному остатку
+        if ($request->filled('fast_remote_stock_quantity')) {
+            $query->where('fast_remote_stock_quantity', $request->get('fast_remote_stock_quantity'));
+        }
+
+        // Фильтр по статусу активности
+        if ($request->has('is_active')) {
+            $query->where('is_active', $request->boolean('is_active'));
+        }
+
+        // Фильтр по статусу "Рекомендуемый"
+        if ($request->has('is_featured')) {
+            $query->where('is_featured', $request->boolean('is_featured'));
+        }
+
+        // Фильтр по статусу "Новый"
+        if ($request->has('is_new')) {
+            $query->where('is_new', $request->boolean('is_new'));
+        }
+
+        // Фильтр по статусу "Со скидкой"
+        if ($request->has('is_sale')) {
+            $query->where('is_sale', $request->boolean('is_sale'));
+        }
+
+        // Фильтр по статусу "Доступен к заказу"
+        if ($request->has('is_preorder')) {
+            $query->where('is_preorder', $request->boolean('is_preorder'));
+        }
+
+        // Фильтр по статусу "Показывать"
+        if ($request->has('is_show')) {
+            $query->where('is_show', $request->boolean('is_show'));
+        }
+
+        // Фильтр по наличию вариаций
+        if ($request->filled('has_variations')) {
+            $hasVariations = $request->boolean('has_variations');
+            if ($hasVariations) {
+                $query->has('variations');
+            } else {
+                $query->doesntHave('variations');
+            }
+        }
+
+        // Фильтр по наличию категорий
+        if ($request->filled('has_categories')) {
+            $hasCategories = $request->boolean('has_categories');
+            if ($hasCategories) {
+                $query->has('categories');
+            } else {
+                $query->doesntHave('categories');
+            }
+        }
+
+        // Фильтр по наличию брендов
+        if ($request->filled('has_brands')) {
+            $hasBrands = $request->boolean('has_brands');
+            if ($hasBrands) {
+                $query->has('brands');
+            } else {
+                $query->doesntHave('brands');
+            }
+        }
+
+        // Фильтр по наличию на складе
+        if ($request->filled('in_stock')) {
+            $inStock = $request->boolean('in_stock');
+            if ($inStock) {
+                $query->where('stock_quantity', '>', 0);
+            } else {
+                $query->where('stock_quantity', '<=', 0);
+            }
+        }
+
+        // Фильтр по атрибутам вариаций (товары С этими атрибутами)
+        if ($request->has('variation_attribute_names')) {
+            $attributeNames = $request->input('variation_attribute_names');
+            if (is_array($attributeNames) && !empty($attributeNames)) {
+                // Фильтруем товары, у которых есть вариации с указанными атрибутами
+                $query->whereExists(function($subQuery) use ($attributeNames) {
+                    $subQuery->selectRaw('1')
+                        ->from('shop_good_variations as v')
+                        ->join('shop_variation_attributes_values as vav', 'v.id', '=', 'vav.variation_id')
+                        ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                        ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                        ->whereRaw('v.good_id = shop_goods.id')
+                        ->whereIn('a.name', $attributeNames)
+                        ->limit(1);
+                });
+            }
+        }
+
+        // Исключение атрибутов вариаций (товары БЕЗ этих атрибутов)
+        if ($request->has('exclude_variation_attribute_names')) {
+            $excludeAttributeNames = $request->input('exclude_variation_attribute_names');
+            if (is_array($excludeAttributeNames) && !empty($excludeAttributeNames)) {
+                // Когда применяется фильтр "БЕЗ атрибутов", показываем ТОЛЬКО товары с вариациями,
+                // которые НЕ имеют указанные атрибуты
+                // Используем подзапрос для точного контроля
+                $query->whereExists(function($subQuery) {
+                    $subQuery->selectRaw('1')
+                        ->from('shop_good_variations')
+                        ->whereColumn('good_id', 'shop_goods.id')
+                        ->limit(1);
+                })->whereNotExists(function($subQuery) use ($excludeAttributeNames) {
+                    $subQuery->selectRaw('1')
+                        ->from('shop_good_variations as v')
+                        ->join('shop_variation_attributes_values as vav', 'v.id', '=', 'vav.variation_id')
+                        ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                        ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                        ->whereColumn('v.good_id', 'shop_goods.id')
+                        ->whereIn('a.name', $excludeAttributeNames)
+                        ->limit(1);
+                });
+            }
+        }
+    }
+
+    /**
      * Генерация CSV данных для экспорта
      */
     private function generateCsvData($goods): string
@@ -197,6 +497,9 @@ class ShopImportExportController extends Controller
             'Бренды',
             'Теги',
             'Свойства',
+            'Тип',
+            'Модель',
+            'Год',
             'Дата создания',
             'Дата обновления'
         ];
@@ -240,6 +543,9 @@ class ShopImportExportController extends Controller
                     }
                     return $property->name . ':' . $value;
                 })->join(';'),
+                '', // Тип (заполняется на фронтенде)
+                '', // Модель (заполняется на фронтенде)
+                '', // Год (заполняется на фронтенде)
                 $good->created_at,
                 $good->updated_at
             ];
@@ -279,7 +585,10 @@ class ShopImportExportController extends Controller
             'Категории',
             'Бренды',
             'Теги',
-            'Свойства'
+            'Свойства',
+            'Тип',
+            'Модель',
+            'Год'
         ];
 
         $csvData = implode(',', array_map(function($header) {
@@ -309,7 +618,10 @@ class ShopImportExportController extends Controller
             'Категория 1;Категория 2',
             'Бренд 1',
             'Тег 1;Тег 2',
-            'Цвет:Красный;Размер:L'
+            'Цвет:Красный;Размер:L',
+            'Тип товара',
+            'Модель товара',
+            '2024'
         ];
 
         $csvData .= implode(',', array_map(function($value) {

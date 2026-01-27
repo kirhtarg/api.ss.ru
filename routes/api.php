@@ -1651,7 +1651,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'index']);
                 Route::get('/filters', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'filters']);
                 Route::get('/check-slug', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'checkSlug']);
-            Route::get('/suppliers', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getSuppliers']);
+
+                Route::get('/suppliers', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getSuppliers']);
                 Route::get('/categories-stats', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getCategoriesStats']);
                 Route::get('/characteristics/list', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getCharacteristicsList']);
                 Route::post('/categories', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'createCategory']);
