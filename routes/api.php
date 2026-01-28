@@ -1645,7 +1645,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
 
         // Shop management (для пользователей с доступом к shop)
-        Route::middleware(['auth:sanctum', 'role:admin,manager'])->prefix('shop')->group(function () {
+        Route::middleware(['auth:sanctum', 'role:admin,manager', \App\Http\Middleware\CustomCors::class])->prefix('shop')->group(function () {
             // Товары
             Route::prefix('goods')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'index']);
