@@ -404,17 +404,6 @@ Route::post('/phone/check-status', [\App\Http\Controllers\Auth\PhoneAuthControll
 // Свойства товаров для импорта (временно без middleware для тестирования)
 Route::get('/admin/shop/goods/properties', [\App\Http\Controllers\Admin\ShopPropertiesController::class, 'list']);
 
-// Временный маршрут для тестирования CORS без авторизации
-Route::get('/test-cors-goods', function (Request $request) {
-    return response()->json([
-        'success' => true,
-        'message' => 'CORS test successful',
-        'origin' => $request->header('Origin'),
-        'method' => $request->method(),
-        'params' => $request->all(),
-    ]);
-});
-
 // Google OAuth маршруты (требуют сессии)
 Route::middleware(['web'])->group(function () {
     Route::get('/auth/google', [\App\Http\Controllers\Auth\GoogleAuthController::class, 'redirectToGoogle']);
