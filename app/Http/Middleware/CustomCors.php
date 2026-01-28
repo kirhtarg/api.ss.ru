@@ -26,27 +26,16 @@ class CustomCors
             'bearer_token' => $request->bearerToken() ? substr($request->bearerToken(), 0, 20) . '...' : null,
         ]);
 
-        // Обрабатываем preflight запросы сразу
+        // Обрабатываем preflight запросы сразу - РАЗРЕШАЕМ ВСЕ ДЛЯ ТЕСТИРОВАНИЯ
         if ($request->isMethod('OPTIONS')) {
-            $allowedOrigins = [
-                'https://skateandsnow-test.ru',
-                'https://admin.skateandsnow-test.ru',
-                'https://api.skateandsnow-test.ru',
-                'https://skateandsnow.ru',
-                'https://admin.skateandsnow.ru',
-                'https://api.skateandsnow.ru',
-                'https://psy.kirhtarg.ru',
-                'https://api-psy.kirhtarg.ru',
-                'https://self-reason.ru',
-                'https://api.self-reason.ru',
-                'http://localhost:3000',
-                'http://localhost:3001',
-            ];
-
-            $allowOrigin = in_array($origin, $allowedOrigins) ? $origin : '*';
+            \Illuminate\Support\Facades\Log::info('CORS Middleware: OPTIONS preflight request', [
+                'origin' => $origin,
+                'method' => $request->method(),
+                'headers' => $request->headers->all(),
+            ]);
 
             return response('', 200)
-                ->header('Access-Control-Allow-Origin', $allowOrigin)
+                ->header('Access-Control-Allow-Origin', $origin ?: '*')
                 ->header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS')
                 ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN, X-Session-ID')
                 ->header('Access-Control-Allow-Credentials', 'true')
@@ -81,21 +70,12 @@ class CustomCors
         // Все разрешенные origins
         $allAllowedOrigins = array_unique(array_merge($allowedOrigins, $hardCodedAllowedOrigins));
 
-        // Устанавливаем CORS заголовки
+        // Устанавливаем CORS заголовки - РАЗРЕШАЕМ ВСЕ ДЛЯ ТЕСТИРОВАНИЯ
         $finalOrigin = null;
-        if ($origin && in_array($origin, $allAllowedOrigins)) {
+        if ($origin) {
             $response->headers->set('Access-Control-Allow-Origin', $origin);
-            $finalOrigin = $origin;
-        } elseif ($origin === 'https://skateandsnow.ru') {
-            // Специально разрешаем skateandsnow.ru для тестирования
-            $response->headers->set('Access-Control-Allow-Origin', $origin);
-            $finalOrigin = $origin . ' (forced for testing)';
-        } elseif ($origin) {
-            // Разрешаем origin для отладки (временно)
-            $response->headers->set('Access-Control-Allow-Origin', $origin);
-            $finalOrigin = $origin . ' (not in whitelist)';
+            $finalOrigin = $origin . ' (allowed for testing)';
         } else {
-            // Если нет Origin, разрешаем все домены
             $response->headers->set('Access-Control-Allow-Origin', '*');
             $finalOrigin = '*';
         }
