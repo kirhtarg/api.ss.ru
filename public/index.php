@@ -5,6 +5,19 @@ use Illuminate\Http\Request;
 
 define('LARAVEL_START', microtime(true));
 
+// ОТЛАДКА: логируем все входящие запросы
+$logData = [
+    'timestamp' => date('Y-m-d H:i:s'),
+    'method' => $_SERVER['REQUEST_METHOD'] ?? 'unknown',
+    'uri' => $_SERVER['REQUEST_URI'] ?? 'unknown',
+    'origin' => $_SERVER['HTTP_ORIGIN'] ?? 'no-origin',
+    'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? 'no-ua',
+    'remote_addr' => $_SERVER['REMOTE_ADDR'] ?? 'unknown',
+    'query_string' => $_SERVER['QUERY_STRING'] ?? '',
+];
+
+file_put_contents(__DIR__.'/../storage/logs/debug.log', json_encode($logData) . PHP_EOL, FILE_APPEND);
+
 // Determine if the application is in maintenance mode...
 if (file_exists($maintenance = __DIR__.'/../storage/framework/maintenance.php')) {
     require $maintenance;
