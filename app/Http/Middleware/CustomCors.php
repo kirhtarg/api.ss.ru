@@ -15,12 +15,13 @@ class CustomCors
      */
     public function handle(Request $request, Closure $next): Response
     {
-        $origin = $request->header('Origin');
-        $url = $request->fullUrl();
-        $method = $request->method();
+        try {
+            $origin = $request->header('Origin');
+            $url = $request->fullUrl();
+            $method = $request->method();
 
-        // СУПЕР ПОДРОБНАЯ ОТЛАДКА
-        \Illuminate\Support\Facades\Log::info('=== CORS MIDDLEWARE DEBUG START ===', [
+            // СУПЕР ПОДРОБНАЯ ОТЛАДКА
+            \Illuminate\Support\Facades\Log::info('=== CORS MIDDLEWARE DEBUG START ===', [
             'timestamp' => now()->toISOString(),
             'origin' => $origin,
             'method' => $method,
@@ -118,22 +119,43 @@ class CustomCors
             'access_control_allow_headers' => $response->headers->get('Access-Control-Allow-Headers'),
             'access_control_allow_credentials' => $response->headers->get('Access-Control-Allow-Credentials'),
             'all_response_headers' => $response->headers->all(),
+            'error_debug' => 'Headers should be set above this line',
         ]);
 
-        // Принудительно добавляем CORS заголовки к ошибкам
-        if ($response->getStatusCode() >= 400) {
-            $errorOrigin = $request->header('Origin');
-            if ($errorOrigin && in_array($errorOrigin, $hardCodedAllowedOrigins)) {
-                $response->headers->set('Access-Control-Allow-Origin', $errorOrigin);
-            } else {
-                $response->headers->set('Access-Control-Allow-Origin', '*');
+            // Принудительно добавляем CORS заголовки к ошибкам
+            if ($response->getStatusCode() >= 400) {
+                $errorOrigin = $request->header('Origin');
+                if ($errorOrigin && in_array($errorOrigin, $hardCodedAllowedOrigins)) {
+                    $response->headers->set('Access-Control-Allow-Origin', $errorOrigin);
+                } else {
+                    $response->headers->set('Access-Control-Allow-Origin', '*');
+                }
+                $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+                $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN, X-Session-ID');
+                $response->headers->set('Access-Control-Allow-Credentials', 'true');
+                $response->headers->set('Access-Control-Max-Age', '86400');
             }
-            $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-            $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN, X-Session-ID');
-            $response->headers->set('Access-Control-Allow-Credentials', 'true');
-            $response->headers->set('Access-Control-Max-Age', '86400');
-        }
 
-        return $response;
+            return $response;
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('=== CORS MIDDLEWARE EXCEPTION ===', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
+                'request_url' => $request->fullUrl(),
+                'request_method' => $request->method(),
+                'origin' => $request->header('Origin'),
+            ]);
+
+            // В случае ошибки возвращаем ответ с базовыми CORS заголовками
+            $errorResponse = response()->json(['error' => 'CORS middleware error'], 500);
+            $errorResponse->headers->set('Access-Control-Allow-Origin', $request->header('Origin') ?: '*');
+            $errorResponse->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+            $errorResponse->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN, X-Session-ID');
+            $errorResponse->headers->set('Access-Control-Allow-Credentials', 'true');
+
+            return $errorResponse;
+        }
     }
 }
