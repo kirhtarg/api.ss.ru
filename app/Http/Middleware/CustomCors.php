@@ -15,6 +15,42 @@ class CustomCors
      */
     public function handle(Request $request, Closure $next): Response
     {
+        // ГЛОБАЛЬНАЯ ОБРАБОТКА OPTIONS - перехватываем ВСЕ OPTIONS запросы ПЕРВЫМИ
+        if ($request->isMethod('OPTIONS')) {
+            $origin = $request->header('Origin');
+
+            \Illuminate\Support\Facades\Log::info('=== GLOBAL CORS OPTIONS INTERCEPTED ===', [
+                'origin' => $origin,
+                'url' => $request->fullUrl(),
+                'timestamp' => now()->toISOString(),
+            ]);
+
+            $allowedOrigins = [
+                'https://skateandsnow.ru',
+                'https://admin.skateandsnow.ru',
+                'https://api.skateandsnow.ru',
+                'https://skateandsnow-test.ru',
+                'https://admin.skateandsnow-test.ru',
+                'https://api.skateandsnow-test.ru',
+                'http://localhost:3000',
+                'http://localhost:3001',
+            ];
+
+            $allowOrigin = in_array($origin, $allowedOrigins) ? $origin : '*';
+
+            \Illuminate\Support\Facades\Log::info('=== GLOBAL CORS OPTIONS RESPONSE ===', [
+                'allow_origin' => $allowOrigin,
+                'origin_was_allowed' => in_array($origin, $allowedOrigins)
+            ]);
+
+            return response('', 200)
+                ->header('Access-Control-Allow-Origin', $allowOrigin)
+                ->header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS')
+                ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN, X-Session-ID')
+                ->header('Access-Control-Allow-Credentials', 'true')
+                ->header('Access-Control-Max-Age', '86400');
+        }
+
         try {
             $origin = $request->header('Origin');
             $url = $request->fullUrl();

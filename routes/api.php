@@ -1644,7 +1644,7 @@ Route::middleware('auth:sanctum')->group(function () {
         });
 
 
-        // Shop management (для пользователей с доступом к shop)
+        // Shop management (для пользователей с доступом к shop) - CORS ПЕРВЫЙ!
         Route::middleware([\App\Http\Middleware\CustomCors::class, 'auth:sanctum', 'role:admin,manager'])->prefix('shop')->group(function () {
             // Товары
             Route::prefix('goods')->group(function () {
