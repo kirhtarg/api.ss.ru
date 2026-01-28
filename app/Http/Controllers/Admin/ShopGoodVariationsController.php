@@ -140,7 +140,7 @@ class ShopGoodVariationsController extends Controller
                 'a.id', 'a.name', 'a.slug',
                 \Illuminate\Support\Facades\DB::raw('COUNT(vav.id) as usage_count')
             ]);
-        
+
         // Определяем тип атрибута на основе slug
         foreach ($attributes as $attr) {
             $slug = strtolower($attr->slug ?? '');
@@ -152,7 +152,6 @@ class ShopGoodVariationsController extends Controller
                 $attr->type = '';
             }
         }
-
 
         return response()->json([
             'success' => true,

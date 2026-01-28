@@ -51,31 +51,8 @@ class CustomCors
             $url = $request->fullUrl();
             $method = $request->method();
 
-            // СУПЕР ПОДРОБНАЯ ОТЛАДКА
-            \Illuminate\Support\Facades\Log::info('=== CORS MIDDLEWARE DEBUG START ===', [
-                'timestamp' => now()->toISOString(),
-            'origin' => $origin,
-            'method' => $method,
-            'url' => $url,
-            'user_agent' => $request->header('User-Agent'),
-            'referer' => $request->header('Referer'),
-            'all_headers' => $request->headers->all(),
-            'is_export' => $request->has('for_export') ? $request->get('for_export') : 'no',
-            'per_page' => $request->get('per_page'),
-            'with_variations' => $request->get('with_variations'),
-            'server_software' => $_SERVER['SERVER_SOFTWARE'] ?? 'unknown',
-            'remote_addr' => $_SERVER['REMOTE_ADDR'] ?? 'unknown',
-            'request_uri' => $_SERVER['REQUEST_URI'] ?? 'unknown',
-        ]);
-
         // Обрабатываем preflight запросы сразу
         if ($request->isMethod('OPTIONS')) {
-            \Illuminate\Support\Facades\Log::info('=== CORS OPTIONS REQUEST ===', [
-                'origin' => $origin,
-                'url' => $url,
-                'timestamp' => now()->toISOString(),
-            ]);
-
             $allowedOrigins = [
                 'https://skateandsnow-test.ru',
                 'https://admin.skateandsnow-test.ru',
@@ -91,20 +68,11 @@ class CustomCors
                 'http://localhost:3001',
             ];
 
-            $allowOrigin = in_array($origin, $allowedOrigins) ? $origin : false;
+            $allowOrigin = in_array($request->header('Origin'), $allowedOrigins) ? $request->header('Origin') : false;
 
             if (!$allowOrigin) {
-                \Illuminate\Support\Facades\Log::warning('=== CORS OPTIONS BLOCKED ===', [
-                    'origin' => $origin,
-                    'reason' => 'Origin not in allowed list'
-                ]);
                 return response('Origin not allowed', 403);
             }
-
-            \Illuminate\Support\Facades\Log::info('=== CORS OPTIONS ALLOWED ===', [
-                'origin' => $origin,
-                'allowed_origin' => $allowOrigin
-            ]);
 
             return response('', 200)
                 ->header('Access-Control-Allow-Origin', $allowOrigin)
