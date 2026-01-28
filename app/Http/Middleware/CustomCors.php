@@ -17,6 +17,15 @@ class CustomCors
     {
         $origin = $request->header('Origin');
 
+        // Логируем CORS запросы для отладки
+        \Illuminate\Support\Facades\Log::info('CORS Middleware: Processing request', [
+            'origin' => $origin,
+            'method' => $request->method(),
+            'url' => $request->fullUrl(),
+            'has_authorization' => $request->hasHeader('Authorization'),
+            'bearer_token' => $request->bearerToken() ? substr($request->bearerToken(), 0, 20) . '...' : null,
+        ]);
+
         // Обрабатываем preflight запросы сразу
         if ($request->isMethod('OPTIONS')) {
             $allowedOrigins = [
@@ -77,6 +86,10 @@ class CustomCors
         if ($origin && in_array($origin, $allAllowedOrigins)) {
             $response->headers->set('Access-Control-Allow-Origin', $origin);
             $finalOrigin = $origin;
+        } elseif ($origin === 'https://skateandsnow.ru') {
+            // Специально разрешаем skateandsnow.ru для тестирования
+            $response->headers->set('Access-Control-Allow-Origin', $origin);
+            $finalOrigin = $origin . ' (forced for testing)';
         } elseif ($origin) {
             // Разрешаем origin для отладки (временно)
             $response->headers->set('Access-Control-Allow-Origin', $origin);
@@ -91,6 +104,14 @@ class CustomCors
         $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN, X-Session-ID');
         $response->headers->set('Access-Control-Allow-Credentials', 'true');
         $response->headers->set('Access-Control-Max-Age', '86400');
+
+        // Логируем установленные заголовки
+        \Illuminate\Support\Facades\Log::info('CORS Middleware: Headers set', [
+            'access-control-allow-origin' => $response->headers->get('Access-Control-Allow-Origin'),
+            'access-control-allow-methods' => $response->headers->get('Access-Control-Allow-Methods'),
+            'access-control-allow-headers' => $response->headers->get('Access-Control-Allow-Headers'),
+            'status_code' => $response->getStatusCode(),
+        ]);
 
         // Принудительно добавляем CORS заголовки к ошибкам
         if ($response->getStatusCode() >= 400) {
