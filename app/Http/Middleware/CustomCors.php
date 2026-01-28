@@ -15,6 +15,15 @@ class CustomCors
      */
     public function handle(Request $request, Closure $next): Response
     {
+        // ЛОГИРУЕМ ВСЕ запросы, которые доходят до middleware
+        \Illuminate\Support\Facades\Log::info('=== CORS MIDDLEWARE CALLED ===', [
+            'method' => $request->method(),
+            'url' => $request->fullUrl(),
+            'origin' => $request->header('Origin'),
+            'user_agent' => substr($request->header('User-Agent') ?? '', 0, 50),
+            'timestamp' => now()->toISOString(),
+        ]);
+
         // Обрабатываем preflight запросы сразу
         if ($request->isMethod('OPTIONS')) {
             $allowedOrigins = [
