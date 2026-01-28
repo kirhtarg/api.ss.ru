@@ -15,33 +15,28 @@ class CustomCors
      */
     public function handle(Request $request, Closure $next): Response
     {
-        // ГЛОБАЛЬНАЯ ОБРАБОТКА OPTIONS - перехватываем ВСЕ OPTIONS запросы ПЕРВЫМИ
+        // Обрабатываем preflight запросы сразу
         if ($request->isMethod('OPTIONS')) {
-            $origin = $request->header('Origin');
-
-            \Illuminate\Support\Facades\Log::info('=== GLOBAL CORS OPTIONS INTERCEPTED ===', [
-                'origin' => $origin,
-                'url' => $request->fullUrl(),
-                'timestamp' => now()->toISOString(),
-            ]);
-
             $allowedOrigins = [
-                'https://skateandsnow.ru',
-                'https://admin.skateandsnow.ru',
-                'https://api.skateandsnow.ru',
                 'https://skateandsnow-test.ru',
                 'https://admin.skateandsnow-test.ru',
                 'https://api.skateandsnow-test.ru',
+                'https://skateandsnow.ru',
+                'https://admin.skateandsnow.ru',
+                'https://api.skateandsnow.ru',
+                'https://psy.kirhtarg.ru',
+                'https://api-psy.kirhtarg.ru',
+                'https://self-reason.ru',
+                'https://api.self-reason.ru',
                 'http://localhost:3000',
                 'http://localhost:3001',
             ];
 
-            $allowOrigin = in_array($origin, $allowedOrigins) ? $origin : '*';
+            $allowOrigin = in_array($request->header('Origin'), $allowedOrigins) ? $request->header('Origin') : false;
 
-            \Illuminate\Support\Facades\Log::info('=== GLOBAL CORS OPTIONS RESPONSE ===', [
-                'allow_origin' => $allowOrigin,
-                'origin_was_allowed' => in_array($origin, $allowedOrigins)
-            ]);
+            if (!$allowOrigin) {
+                return response('Origin not allowed', 403);
+            }
 
             return response('', 200)
                 ->header('Access-Control-Allow-Origin', $allowOrigin)
@@ -58,7 +53,7 @@ class CustomCors
 
             // СУПЕР ПОДРОБНАЯ ОТЛАДКА
             \Illuminate\Support\Facades\Log::info('=== CORS MIDDLEWARE DEBUG START ===', [
-            'timestamp' => now()->toISOString(),
+                'timestamp' => now()->toISOString(),
             'origin' => $origin,
             'method' => $method,
             'url' => $url,
@@ -161,19 +156,7 @@ class CustomCors
         $response->headers->set('Access-Control-Allow-Credentials', 'true');
         $response->headers->set('Access-Control-Max-Age', '86400');
 
-        // ОТЛАДКА: логируем установленные заголовки
-        \Illuminate\Support\Facades\Log::info('=== CORS MIDDLEWARE DEBUG END ===', [
-            'timestamp' => now()->toISOString(),
-            'response_status' => $response->getStatusCode(),
-            'access_control_allow_origin' => $response->headers->get('Access-Control-Allow-Origin'),
-            'access_control_allow_methods' => $response->headers->get('Access-Control-Allow-Methods'),
-            'access_control_allow_headers' => $response->headers->get('Access-Control-Allow-Headers'),
-            'access_control_allow_credentials' => $response->headers->get('Access-Control-Allow-Credentials'),
-            'all_response_headers' => $response->headers->all(),
-            'error_debug' => 'Headers should be set above this line',
-        ]);
-
-            // Принудительно добавляем CORS заголовки к ошибкам
+        // Принудительно добавляем CORS заголовки к ошибкам
             if ($response->getStatusCode() >= 400) {
                 $errorOrigin = $request->header('Origin');
                 if ($errorOrigin && in_array($errorOrigin, $hardCodedAllowedOrigins)) {
@@ -189,16 +172,6 @@ class CustomCors
 
             return $response;
         } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::error('=== CORS MIDDLEWARE EXCEPTION ===', [
-                'error' => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString(),
-                'request_url' => $request->fullUrl(),
-                'request_method' => $request->method(),
-                'origin' => $request->header('Origin'),
-            ]);
-
             // В случае ошибки возвращаем ответ с базовыми CORS заголовками
             $errorResponse = response()->json(['error' => 'CORS middleware error'], 500);
             $errorResponse->headers->set('Access-Control-Allow-Origin', $request->header('Origin') ?: '*');

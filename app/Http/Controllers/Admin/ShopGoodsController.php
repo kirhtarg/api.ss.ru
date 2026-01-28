@@ -777,19 +777,8 @@ class ShopGoodsController extends Controller
         $forExport = $request->has('for_export') && $request->get('for_export') === '1';
         $countOnly = $request->has('count_only') && $request->get('count_only') === '1';
 
-        \Illuminate\Support\Facades\Log::info('=== SHOP GOODS CONTROLLER DEBUG ===', [
-            'for_export' => $forExport,
-            'count_only' => $countOnly,
-            'per_page' => $request->get('per_page'),
-            'with_variations' => $request->get('with_variations'),
-            'url' => $request->fullUrl(),
-            'memory_usage' => memory_get_usage(true) / 1024 / 1024 . ' MB',
-        ]);
-
         if ($forExport && $countOnly) {
             // ТОЛЬКО ПОДСЧЕТ СТРОК - без загрузки данных
-            \Illuminate\Support\Facades\Log::info('=== COUNT ONLY MODE ===');
-
             $goodsIdsQuery = clone $query;
             $goodsIdsQuery->select('id');
 
@@ -807,12 +796,6 @@ class ShopGoodsController extends Controller
 
             $totalRowsCount = ($totalRows->goods_without_variations ?? 0) + ($totalRows->variations_count ?? 0);
 
-            \Illuminate\Support\Facades\Log::info('=== COUNT ONLY RESULT ===', [
-                'total_rows_count' => $totalRowsCount,
-                'goods_without_variations' => $totalRows->goods_without_variations ?? 0,
-                'variations_count' => $totalRows->variations_count ?? 0,
-            ]);
-
             return response()->json([
                 'success' => true,
                 'count' => $totalRowsCount
@@ -820,15 +803,9 @@ class ShopGoodsController extends Controller
         }
 
         if ($forExport) {
-            \Illuminate\Support\Facades\Log::info('=== EXPORT BLOCK STARTED ===', [
-                'timestamp' => now()->toISOString(),
-                'memory_before' => memory_get_usage(true) / 1024 / 1024 . ' MB',
-            ]);
-
-            try {
-                // Оптимизированный подсчет количества строк для экспорта
-                // Используем SQL для подсчета без загрузки всех данных
-                $goodsIdsQuery = clone $query;
+            // Оптимизированный подсчет количества строк для экспорта
+            // Используем SQL для подсчета без загрузки всех данных
+            $goodsIdsQuery = clone $query;
             $goodsIdsQuery->select('id');
 
             $totalRows = DB::table('shop_goods')
@@ -848,31 +825,11 @@ class ShopGoodsController extends Controller
             // Теперь загружаем товары для экспорта
             $goods = $query->get();
 
-                \Illuminate\Support\Facades\Log::info('=== EXPORT SUCCESS ===', [
-                    'goods_count' => $goods->count(),
-                    'total_rows_count' => $totalRowsCount,
-                    'memory_after' => memory_get_usage(true) / 1024 / 1024 . ' MB',
-                ]);
-
-                return response()->json([
-                    'success' => true,
-                    'data' => $goods,
-                    'count' => $totalRowsCount
-                ]);
-            } catch (\Exception $e) {
-                \Illuminate\Support\Facades\Log::error('=== EXPORT ERROR ===', [
-                    'error' => $e->getMessage(),
-                    'file' => $e->getFile(),
-                    'line' => $e->getLine(),
-                    'trace' => substr($e->getTraceAsString(), 0, 1000),
-                    'memory_usage' => memory_get_usage(true) / 1024 / 1024 . ' MB',
-                ]);
-
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Export failed: ' . $e->getMessage()
-                ], 500);
-            }
+            return response()->json([
+                'success' => true,
+                'data' => $goods,
+                'count' => $totalRowsCount
+            ]);
         }
 
         // Пагинация (если не запрашиваются конкретные ID, используем пагинацию)
