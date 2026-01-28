@@ -17,15 +17,6 @@ class CustomCors
     {
         $origin = $request->header('Origin');
 
-        // Логируем CORS запросы для отладки
-        \Illuminate\Support\Facades\Log::info('CORS Middleware: Processing request', [
-            'origin' => $origin,
-            'method' => $request->method(),
-            'url' => $request->fullUrl(),
-            'has_authorization' => $request->hasHeader('Authorization'),
-            'bearer_token' => $request->bearerToken() ? substr($request->bearerToken(), 0, 20) . '...' : null,
-        ]);
-
         // Обрабатываем preflight запросы сразу
         if ($request->isMethod('OPTIONS')) {
             $allowedOrigins = [
@@ -85,22 +76,13 @@ class CustomCors
         // Все разрешенные origins
         $allAllowedOrigins = array_unique(array_merge($allowedOrigins, $hardCodedAllowedOrigins));
 
-        // Устанавливаем CORS заголовки
-        $finalOrigin = null;
-        if ($origin && in_array($origin, $allAllowedOrigins)) {
+        // Устанавливаем CORS заголовки - упрощенная версия для тестирования
+        if ($origin && in_array($origin, $hardCodedAllowedOrigins)) {
             $response->headers->set('Access-Control-Allow-Origin', $origin);
-            $finalOrigin = $origin;
         } elseif ($origin) {
-            // Блокировка неразрешенного origin
-            \Illuminate\Support\Facades\Log::warning('CORS Middleware: Origin not in whitelist', [
-                'origin' => $origin,
-                'allAllowedOrigins' => $allAllowedOrigins,
-            ]);
-            return response('Origin not allowed', 403);
+            $response->headers->set('Access-Control-Allow-Origin', $origin); // Временно разрешаем все для тестирования
         } else {
-            // Если нет Origin, разрешаем все домены
             $response->headers->set('Access-Control-Allow-Origin', '*');
-            $finalOrigin = '*';
         }
 
         $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');

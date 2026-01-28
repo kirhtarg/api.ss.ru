@@ -21,10 +21,9 @@ return Application::configure(basePath: dirname(__DIR__))
             'api.logger' => \App\Http\Middleware\GlobalApiLogger::class,
         ]);
 
-        // Настраиваем web middleware с CSRF и CORS
+        // Настраиваем web middleware с CSRF
         $middleware->web([
             \App\Http\Middleware\VerifyCsrfToken::class,
-            \App\Http\Middleware\HandleCors::class,
         ]);
 
         // Настраиваем API middleware с CORS
