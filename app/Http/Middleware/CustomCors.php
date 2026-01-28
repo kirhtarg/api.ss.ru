@@ -39,6 +39,12 @@ class CustomCors
 
         // Обрабатываем preflight запросы сразу
         if ($request->isMethod('OPTIONS')) {
+            \Illuminate\Support\Facades\Log::info('=== CORS OPTIONS REQUEST ===', [
+                'origin' => $origin,
+                'url' => $url,
+                'timestamp' => now()->toISOString(),
+            ]);
+
             $allowedOrigins = [
                 'https://skateandsnow-test.ru',
                 'https://admin.skateandsnow-test.ru',
@@ -57,8 +63,17 @@ class CustomCors
             $allowOrigin = in_array($origin, $allowedOrigins) ? $origin : false;
 
             if (!$allowOrigin) {
+                \Illuminate\Support\Facades\Log::warning('=== CORS OPTIONS BLOCKED ===', [
+                    'origin' => $origin,
+                    'reason' => 'Origin not in allowed list'
+                ]);
                 return response('Origin not allowed', 403);
             }
+
+            \Illuminate\Support\Facades\Log::info('=== CORS OPTIONS ALLOWED ===', [
+                'origin' => $origin,
+                'allowed_origin' => $allowOrigin
+            ]);
 
             return response('', 200)
                 ->header('Access-Control-Allow-Origin', $allowOrigin)
