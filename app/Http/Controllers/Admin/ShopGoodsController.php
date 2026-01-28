@@ -825,6 +825,25 @@ class ShopGoodsController extends Controller
             // Теперь загружаем товары для экспорта
             $goods = $query->get();
 
+            // Загружаем значения свойств для всех товаров (как в обычном режиме)
+            $hasValueCol = Schema::hasColumn('shop_good_properties', 'value');
+            foreach ($goods as $good) {
+                foreach ($good->properties as $property) {
+                    if (isset($property->pivot) && $property->pivot->shop_property_value_id) {
+                        $propertyValue = \App\Models\Shop\PropertyValue::find($property->pivot->shop_property_value_id);
+                        $property->property_value = $propertyValue;
+                    } elseif ($hasValueCol && isset($property->pivot) && $property->pivot->value) {
+                        // Если свойство использует value напрямую
+                        $property->property_value = (object)[
+                            'id' => null,
+                            'value' => $property->pivot->value,
+                            'property_id' => $property->id
+                        ];
+                    }
+                }
+            }
+
+
             return response()->json([
                 'success' => true,
                 'data' => $goods,
