@@ -61,6 +61,11 @@ class ShopGoodsController extends Controller
         // Проверяем selected_ids (для экспорта выбранных товаров)
         if ($request->has('selected_ids') && !empty($request->input('selected_ids'))) {
             $selectedIdsRaw = $request->input('selected_ids');
+            \Log::info('ShopGoodsController: selected_ids received', [
+                'selected_ids_raw' => $selectedIdsRaw,
+                'type' => gettype($selectedIdsRaw),
+                'all_params' => $request->all()
+            ]);
 
             // Если это строка с запятыми, разбиваем на массив
             if (is_string($selectedIdsRaw) && strpos($selectedIdsRaw, ',') !== false) {

@@ -1,0 +1,1348 @@
+<?php
+
+namespace App\Jobs;
+
+use App\Models\ExportFile;
+use App\Models\ShopGood;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Log;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+
+class ProcessExportJob implements ShouldQueue
+{
+    use Queueable;
+
+    public $timeout = 3600; // 1 час таймаут
+    public $tries = 3; // 3 попытки
+
+    protected ExportFile $exportFile;
+
+    /**
+     * Create a new job instance.
+     */
+    public function __construct(ExportFile $exportFile)
+    {
+        $this->exportFile = $exportFile;
+    }
+
+    /**
+     * Execute the job.
+     */
+    public function handle(): void
+    {
+        try {
+            // Обновляем статус на "обрабатывается"
+            $this->exportFile->update(['status' => 'processing']);
+
+            // Получаем конфигурацию экспорта
+            $config = $this->exportFile->export_config ?? [];
+
+            // Получаем данные для экспорта
+            $exportData = $this->getExportData($config);
+
+            if (empty($exportData)) {
+                throw new \Exception('Нет данных для экспорта');
+            }
+
+            // Генерируем файл
+            $fileContent = $this->generateFileContent($exportData, $this->exportFile->format);
+
+            // Сохраняем файл
+            $filePath = 'exports/' . $this->exportFile->filename;
+            Storage::put($filePath, $fileContent);
+
+            // Получаем размер файла
+            $fileSize = Storage::size($filePath);
+
+
+            // Обновляем запись в БД
+            $this->exportFile->update([
+                'status' => 'completed',
+                'file_path' => $filePath,
+                'file_size' => $fileSize,
+                'total_rows' => count($exportData)
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Export job failed', [
+                'export_file_id' => $this->exportFile->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            $this->exportFile->update([
+                'status' => 'failed',
+                'error_message' => $e->getMessage()
+            ]);
+
+            throw $e;
+        }
+    }
+
+    /**
+     * Получить данные для экспорта
+     */
+    protected function getExportData(array $config): array
+    {
+
+        // Фильтр по массиву ID (для экспорта выбранных товаров) - должен быть первым
+        $selectedIds = null;
+        if (isset($config['filters']['selected_ids']) && !empty($config['filters']['selected_ids'])) {
+            $selectedIdsRaw = $config['filters']['selected_ids'];
+
+            // Убеждаемся, что это массив
+            if (!is_array($selectedIdsRaw)) {
+                $selectedIdsRaw = is_string($selectedIdsRaw) && strpos($selectedIdsRaw, ',') !== false
+                    ? explode(',', $selectedIdsRaw)
+                    : [$selectedIdsRaw];
+            }
+
+            $selectedIds = array_map('intval', array_filter($selectedIdsRaw, function($id) {
+                return is_numeric($id) && $id > 0;
+            }));
+
+            if (empty($selectedIds)) {
+                $selectedIds = null;
+            }
+        }
+
+        $query = ShopGood::select([
+            'id', 'name', 'sku', 'description', 'short_description',
+            'price', 'sale_price', 'demping_price', 'show_demping',
+            'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity',
+            'width', 'height', 'depth', 'weight',
+            'is_active', 'is_featured', 'is_new', 'is_sale', 'is_preorder', 'is_show',
+            'created_at'
+        ])->with([
+            'categories:id,name',
+            'brands:id,name',
+            'tags:id,name,color',
+            'label:id,name,color',
+            'properties:id,name,slug',
+            'images:id,good_id,file_path,alt_text,is_main,sort_order',
+            'variations:id,good_id,name,sku,price,sale_price,demping_price,show_demping,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,is_active'
+        ]);
+
+        // Применяем фильтр по выбранным товарам (если указан)
+        if ($selectedIds !== null) {
+            $query->whereIn('id', $selectedIds);
+            // Когда есть selected_ids, пропускаем другие фильтры (как в ShopGoodsController)
+        } else {
+            // Применяем фильтры из конфигурации только если нет selected_ids
+            if (isset($config['filters'])) {
+                $this->applyFilters($query, $config['filters']);
+            }
+        }
+
+        // Загружаем характеристики товаров
+        $hasValueCol = Schema::hasColumn('shop_good_properties', 'value');
+        if ($hasValueCol) {
+            $query->with(['properties' => function($query) {
+                $query->withPivot('shop_property_value_id', 'value');
+            }]);
+        } else {
+            $query->with(['properties' => function($query) {
+                $query->withPivot('shop_property_value_id');
+            }]);
+        }
+
+        $goods = $query->get();
+
+        // Обрабатываем характеристики товаров
+        foreach ($goods as $good) {
+            foreach ($good->properties as $property) {
+                if (isset($property->pivot) && $property->pivot->shop_property_value_id) {
+                    $propertyValue = \App\Models\Shop\PropertyValue::find($property->pivot->shop_property_value_id);
+                    $property->property_value = $propertyValue;
+                } elseif ($hasValueCol && isset($property->pivot) && $property->pivot->value) {
+                    $property->property_value = (object)[
+                        'id' => null,
+                        'value' => $property->pivot->value,
+                        'property_id' => $property->id
+                    ];
+                }
+            }
+        }
+
+        // Загружаем характеристики и атрибуты вариаций
+        if (isset($config['with_variation_attributes']) && $config['with_variation_attributes']) {
+            $this->loadVariationAttributes($goods);
+        }
+
+        if (isset($config['with_characteristics']) && $config['with_characteristics']) {
+            $this->loadVariationCharacteristics($goods);
+        }
+
+        return $this->formatExportData($goods, $config);
+    }
+
+    /**
+     * Применить фильтры к запросу
+     */
+    protected function applyFilters($query, array $filters): void
+    {
+
+        // Реализуем фильтры аналогично ShopGoodsController
+
+        // Фильтр по наличию (in_stock) - специальная обработка
+        if (isset($filters['in_stock']) && $filters['in_stock'] !== '') {
+            $inStock = $filters['in_stock'];
+            if ($inStock === 'true') {
+                $query->where('stock_quantity', '>', 0);
+            } elseif ($inStock === 'false') {
+                $query->where('stock_quantity', '=', 0);
+            } elseif ($inStock === 'low') {
+                $query->where('stock_quantity', '>', 0)
+                      ->where('stock_quantity', '<', 3);
+            } elseif (strpos($inStock, 'exact:') === 0) {
+                // Точное значение остатка в формате exact:value
+                $exactValue = (int)substr($inStock, 6);
+                $query->where('stock_quantity', '=', $exactValue);
+            }
+        }
+
+        // Базовые фильтры (одиночные значения) - boolean поля
+        $booleanFilters = [
+            'is_active', 'is_new', 'is_featured', 'is_sale', 'is_show', 'is_preorder'
+        ];
+
+        foreach ($booleanFilters as $filterName) {
+            if (isset($filters[$filterName]) && $filters[$filterName] !== '') {
+                // Преобразуем строковые "true"/"false" в boolean значения
+                $booleanValue = filter_var($filters[$filterName], FILTER_VALIDATE_BOOLEAN);
+                $query->where($filterName, $booleanValue);
+            }
+        }
+
+        // Фильтры наличия связанных записей
+        $relationFilters = [
+            'has_variations' => 'variations',
+            'has_categories' => 'categories',
+            'has_brands' => 'brands',
+            'has_tags' => 'tags',
+            'has_label' => 'label'
+        ];
+
+        foreach ($relationFilters as $filterName => $relation) {
+            if (isset($filters[$filterName]) && $filters[$filterName] !== '') {
+                $value = $filters[$filterName];
+                if ($value === 'true') {
+                    $query->whereHas($relation);
+                } elseif ($value === 'false') {
+                    $query->whereDoesntHave($relation);
+                }
+            }
+        }
+
+        // Фильтр по категории (одиночный)
+        if (isset($filters['category_id']) && !empty($filters['category_id'])) {
+            $query->whereHas('categories', function($q) use ($filters) {
+                $q->where('categories.id', $filters['category_id']);
+            });
+        }
+
+        // Фильтр по бренду (одиночный)
+        if (isset($filters['brand_id']) && !empty($filters['brand_id'])) {
+            $query->where('brand_id', $filters['brand_id']);
+        }
+
+        // Множественные фильтры (массивы)
+        // Категории - отношение
+        if (isset($filters['categories']) && is_array($filters['categories']) && !empty($filters['categories'])) {
+            $query->whereHas('categories', function($q) use ($filters) {
+                $q->whereIn('shop_categories.id', $filters['categories']);
+            });
+        }
+
+        // Бренды - отношение
+        if (isset($filters['brands']) && is_array($filters['brands']) && !empty($filters['brands'])) {
+            $query->whereHas('brands', function($q) use ($filters) {
+                $q->whereIn('shop_brands.id', $filters['brands']);
+            });
+        }
+
+        // Теги - отношение
+        if (isset($filters['tags']) && is_array($filters['tags']) && !empty($filters['tags'])) {
+            $query->whereHas('tags', function($q) use ($filters) {
+                $q->whereIn('shop_tags.id', $filters['tags']);
+            });
+        }
+
+        // Лейблы - поле label_id
+        if (isset($filters['labels']) && is_array($filters['labels']) && !empty($filters['labels'])) {
+            $query->whereIn('label_id', $filters['labels']);
+        }
+
+        // Поставщики - поле supplier
+        if (isset($filters['suppliers']) && is_array($filters['suppliers']) && !empty($filters['suppliers'])) {
+            $suppliers = array_filter($filters['suppliers'], function($supplier) {
+                return !empty($supplier);
+            });
+            if (!empty($suppliers)) {
+                $query->whereIn('supplier', $suppliers);
+            }
+        }
+
+        // Поиск
+        if (isset($filters['search']) && !empty($filters['search'])) {
+            $searchTerm = $filters['search'];
+            $query->where(function($q) use ($searchTerm) {
+                $q->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($searchTerm) . '%'])
+                  ->orWhereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($searchTerm) . '%']);
+            });
+        }
+
+        // Фильтр по цене (min_price, max_price)
+        $this->applyPriceFilter($query, $filters, 'price', 'min_price', 'max_price');
+
+        // Фильтр по акционной цене (min_sale_price, max_sale_price)
+        $this->applyPriceFilter($query, $filters, 'sale_price', 'min_sale_price', 'max_sale_price');
+
+        // Фильтр по демпинг цене (min_demping_price, max_demping_price)
+        $this->applyPriceFilter($query, $filters, 'demping_price', 'min_demping_price', 'max_demping_price');
+
+        // Фильтр по артикулу (sku_filter_type)
+        if (isset($filters['sku_filter_type']) && !empty($filters['sku_filter_type'])) {
+            $skuFilterType = $filters['sku_filter_type'];
+            if ($skuFilterType === 'empty') {
+                $query->where(function($q) {
+                    $q->whereNull('sku')
+                      ->orWhere('sku', '=', '');
+                });
+            } elseif ($skuFilterType === 'not_empty') {
+                $query->whereNotNull('sku')
+                      ->where('sku', '!=', '');
+            }
+        }
+
+        // Фильтр по демпингу (show_demping)
+        if (isset($filters['has_demping'])) {
+            $value = $filters['has_demping'];
+            if ($value === 'true') {
+                $query->where('show_demping', true);
+            } elseif ($value === 'false') {
+                $query->where(function($q) {
+                    $q->where('show_demping', false)
+                      ->orWhereNull('show_demping');
+                });
+            }
+        }
+
+        // Фильтр по наличию демпинг цены
+        if (isset($filters['has_demping_price'])) {
+            $value = $filters['has_demping_price'];
+            if ($value === 'true') {
+                $query->whereNotNull('demping_price')
+                      ->where('demping_price', '>', 0);
+            } elseif ($value === 'false') {
+                $query->where(function($q) {
+                    $q->whereNull('demping_price')
+                      ->orWhere('demping_price', '=', 0);
+                });
+            }
+        }
+
+        // Фильтр по наличию акционной цены
+        if (isset($filters['has_sale_price'])) {
+            $value = $filters['has_sale_price'];
+            if ($value === 'true') {
+                $query->where(function($q) {
+                    // Проверяем акционную цену основного товара
+                    $q->whereNotNull('sale_price')
+                      ->where('sale_price', '>', 0)
+                      // Или акционную цену в вариациях
+                      ->orWhereHas('variations', function($varQ) {
+                          $varQ->whereNotNull('sale_price')
+                               ->where('sale_price', '>', 0);
+                      });
+                });
+            } elseif ($value === 'false') {
+                $query->where(function($q) {
+                    // Основной товар без акционной цены И все вариации без акционной цены
+                    $q->where(function($mainQ) {
+                        $mainQ->whereNull('sale_price')
+                              ->orWhere('sale_price', '=', 0);
+                    })->whereDoesntHave('variations', function($varQ) {
+                        $varQ->whereNotNull('sale_price')
+                             ->where('sale_price', '>', 0);
+                    });
+                });
+            }
+        }
+
+        // Фильтр по общему остатку (total_stock_not_empty, total_stock_both_empty)
+        if (isset($filters['total_stock_not_empty']) && $filters['total_stock_not_empty'] == '1') {
+            // В наличии: (нет вариаций И остаток основного товара > 0 или у/с не пустой или у/с быстрый не пустой) ИЛИ (есть вариации И есть вариации с остатком)
+            $query->where(function($mainQuery) {
+                // Вариант 1: Нет вариаций И остаток основного товара > 0 или у/с не пустой или у/с быстрый не пустой
+                $mainQuery->where(function($noVariationsQuery) {
+                    $noVariationsQuery->whereDoesntHave('variations')
+                        ->where(function($stockQuery) {
+                            $stockQuery->where('stock_quantity', '>', 0)
+                                ->orWhere(function($remoteCondition) {
+                                    $remoteCondition->whereNotNull('remote_stock_quantity')
+                                        ->where('remote_stock_quantity', '!=', '0')
+                                        ->where('remote_stock_quantity', '!=', '')
+                                        ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                })
+                                ->orWhere(function($fastRemoteCondition) {
+                                    $fastRemoteCondition->whereNotNull('fast_remote_stock_quantity')
+                                        ->where('fast_remote_stock_quantity', '!=', '0')
+                                        ->where('fast_remote_stock_quantity', '!=', '')
+                                        ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
+                                });
+                        });
+                });
+
+                // Вариант 2: Есть вариации И есть вариации с остатком
+                $mainQuery->orWhere(function($hasVariationsQuery) {
+                    $hasVariationsQuery->whereHas('variations')
+                        ->whereHas('variations', function($varQ) {
+                            $varQ->where(function($subVarQ) {
+                                $subVarQ->where('stock_quantity', '>', 0)
+                                    ->orWhere(function($remoteVarQ) {
+                                        $remoteVarQ->whereNotNull('remote_stock_quantity')
+                                            ->where('remote_stock_quantity', '!=', '0')
+                                            ->where('remote_stock_quantity', '!=', '')
+                                            ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                    })
+                                    ->orWhere(function($fastRemoteVarQ) {
+                                        $fastRemoteVarQ->whereNotNull('fast_remote_stock_quantity')
+                                            ->where('fast_remote_stock_quantity', '!=', '0')
+                                            ->where('fast_remote_stock_quantity', '!=', '')
+                                            ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
+                                    });
+                            });
+                        });
+                });
+            });
+        } elseif (isset($filters['total_stock_both_empty']) && $filters['total_stock_both_empty'] == '1') {
+            // Нет в наличии: (нет вариаций И остаток основного товара = 0 и у/с пустой и у/с быстрый пустой) ИЛИ (есть вариации И нет вариаций с остатком)
+            $query->where(function($mainQuery) {
+                // Вариант 1: Нет вариаций И остаток основного товара = 0 и у/с пустой и у/с быстрый пустой
+                $mainQuery->where(function($noVariationsQuery) {
+                    $noVariationsQuery->whereDoesntHave('variations')
+                        ->where('stock_quantity', '=', 0)
+                        ->where(function($remoteCondition) {
+                            $remoteCondition->where(function($remoteNull) {
+                                $remoteNull->whereNull('remote_stock_quantity')
+                                    ->orWhere('remote_stock_quantity', '=', '0')
+                                    ->orWhere('remote_stock_quantity', '=', '')
+                                    ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
+                            });
+                        })
+                        ->where(function($fastRemoteCondition) {
+                            $fastRemoteCondition->where(function($fastRemoteNull) {
+                                $fastRemoteNull->whereNull('fast_remote_stock_quantity')
+                                    ->orWhere('fast_remote_stock_quantity', '=', '0')
+                                    ->orWhere('fast_remote_stock_quantity', '=', '')
+                                    ->orWhereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) = 0');
+                            });
+                        });
+                });
+
+                // Вариант 2: Есть вариации И нет вариаций с остатком
+                $mainQuery->orWhere(function($hasVariationsQuery) {
+                    $hasVariationsQuery->whereHas('variations')
+                        ->whereDoesntHave('variations', function($varQ) {
+                            $varQ->where(function($subVarQ) {
+                                $subVarQ->where('stock_quantity', '>', 0)
+                                    ->orWhere(function($remoteVarQ) {
+                                        $remoteVarQ->whereNotNull('remote_stock_quantity')
+                                            ->where('remote_stock_quantity', '!=', '0')
+                                            ->where('remote_stock_quantity', '!=', '')
+                                            ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                                    })
+                                    ->orWhere(function($fastRemoteVarQ) {
+                                        $fastRemoteVarQ->whereNotNull('fast_remote_stock_quantity')
+                                            ->where('fast_remote_stock_quantity', '!=', '0')
+                                            ->where('fast_remote_stock_quantity', '!=', '')
+                                            ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
+                                    });
+                            });
+                        });
+                });
+            });
+        }
+
+        // Фильтр по общему остатку (stock_quantity_min, stock_quantity_max) - для обратной совместимости
+        elseif (isset($filters['stock_quantity_min']) || isset($filters['stock_quantity_max'])) {
+            if (isset($filters['stock_quantity_min']) && isset($filters['stock_quantity_max'])) {
+                $min = (int)$filters['stock_quantity_min'];
+                $max = (int)$filters['stock_quantity_max'];
+                if ($min === $max) {
+                    $query->where('stock_quantity', '=', $min);
+                } else {
+                    $query->whereBetween('stock_quantity', [$min, $max]);
+                }
+            } elseif (isset($filters['stock_quantity_min'])) {
+                $query->where('stock_quantity', '>=', (int)$filters['stock_quantity_min']);
+            } elseif (isset($filters['stock_quantity_max'])) {
+                $query->where('stock_quantity', '<=', (int)$filters['stock_quantity_max']);
+            }
+        }
+
+        // Фильтр по остатку у/с (remote_stock_quantity)
+        if (isset($filters['remote_stock_quantity_not_empty']) && $filters['remote_stock_quantity_not_empty']) {
+            $query->whereNotNull('remote_stock_quantity')
+                  ->where('remote_stock_quantity', '!=', '')
+                  ->where('remote_stock_quantity', '!=', '0');
+        } elseif (isset($filters['remote_stock_quantity_empty']) && $filters['remote_stock_quantity_empty']) {
+            $query->where(function($q) {
+                $q->whereNull('remote_stock_quantity')
+                  ->orWhere('remote_stock_quantity', '=', '')
+                  ->orWhere('remote_stock_quantity', '=', '0');
+            });
+        } elseif (isset($filters['remote_stock_quantity']) && $filters['remote_stock_quantity'] !== '') {
+            $query->where('remote_stock_quantity', '=', $filters['remote_stock_quantity']);
+        }
+
+        // Фильтр по быстрому остатку у/с (fast_remote_stock_quantity)
+        if (isset($filters['fast_remote_stock_quantity_not_empty']) && $filters['fast_remote_stock_quantity_not_empty'] == '1') {
+            $query->whereNotNull('fast_remote_stock_quantity')
+                  ->where('fast_remote_stock_quantity', '!=', '')
+                  ->where('fast_remote_stock_quantity', '!=', '0');
+        } elseif (isset($filters['fast_remote_stock_quantity_empty']) && $filters['fast_remote_stock_quantity_empty'] == '1') {
+            $query->where(function($q) {
+                $q->whereNull('fast_remote_stock_quantity')
+                  ->orWhere('fast_remote_stock_quantity', '=', '')
+                  ->orWhere('fast_remote_stock_quantity', '=', '0');
+            });
+        }
+
+        // Фильтр по именам атрибутов вариаций
+        if (isset($filters['variation_attribute_names']) && is_array($filters['variation_attribute_names']) && !empty($filters['variation_attribute_names'])) {
+            $query->whereExists(function($subQuery) use ($filters) {
+                $subQuery->selectRaw('1')
+                    ->from('shop_good_variations as v')
+                    ->join('shop_variation_attributes_values as vav', 'v.id', '=', 'vav.variation_id')
+                    ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                    ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                    ->whereRaw('v.good_id = shop_goods.id')
+                    ->whereIn('a.name', $filters['variation_attribute_names'])
+                    ->limit(1);
+            });
+        }
+
+        // Фильтр по характеристикам (properties[property_id][])
+        if (isset($filters['properties']) && is_array($filters['properties']) && !empty($filters['properties'])) {
+            $query->where(function($q) use ($filters) {
+                foreach ($filters['properties'] as $propertyId => $valueIds) {
+                    if (is_array($valueIds) && !empty($valueIds)) {
+                        $q->orWhereHas('properties', function($propQuery) use ($propertyId, $valueIds) {
+                            $propQuery->where('shop_properties.id', $propertyId)
+                                      ->whereIn('shop_good_properties.shop_property_value_id', $valueIds);
+                        });
+                    }
+                }
+            });
+        }
+
+        // Фильтр по количеству характеристик (properties_count_type)
+        if (isset($filters['properties_count_type'])) {
+            $countType = $filters['properties_count_type'];
+            if ($countType === 'none') {
+                $query->whereDoesntHave('properties');
+            } elseif ($countType === 'with') {
+                $query->whereHas('properties');
+            } elseif ($countType === 'exact' && isset($filters['properties_count'])) {
+                $exactCount = (int)$filters['properties_count'];
+                $query->has('properties', '=', $exactCount);
+            }
+        }
+
+    }
+
+    /**
+     * Применить фильтр цены
+     */
+    private function applyPriceFilter($query, array $filters, string $field, string $minKey, string $maxKey): void
+    {
+        $minValue = $filters[$minKey] ?? null;
+        $maxValue = $filters[$maxKey] ?? null;
+
+        if ($minValue !== null || $maxValue !== null) {
+            if ($minValue !== null && $maxValue !== null && $minValue == $maxValue) {
+                // Точное значение
+                $query->where($field, '=', $minValue);
+            } else {
+                // Диапазон
+                if ($minValue !== null) {
+                    $query->where($field, '>=', $minValue);
+                }
+                if ($maxValue !== null) {
+                    $query->where($field, '<=', $maxValue);
+                }
+            }
+        }
+    }
+
+    /**
+     * Загрузить атрибуты вариаций
+     */
+    protected function loadVariationAttributes($goods): void
+    {
+        $allVariationIds = [];
+
+        foreach ($goods as $good) {
+            if ($good->variations) {
+                foreach ($good->variations as $variation) {
+                    if ($variation->id) {
+                        $allVariationIds[] = $variation->id;
+                    }
+                }
+            }
+        }
+
+        if (empty($allVariationIds)) return;
+
+        // Загружаем атрибуты батчами
+        $variationAttributesMap = [];
+        $batchSize = 5000;
+
+        for ($i = 0; $i < count($allVariationIds); $i += $batchSize) {
+            $batch = array_slice($allVariationIds, $i, $batchSize);
+
+            $attrsData = DB::table('shop_variation_attributes_values as vav')
+                ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                ->whereIn('vav.variation_id', $batch)
+                ->select('vav.variation_id', 'a.id as attribute_id', 'a.name as attribute_name', 'av.id as value_id', 'av.value as value_value')
+                ->get()
+                ->groupBy('variation_id');
+
+            foreach ($attrsData as $variationId => $attributes) {
+                $variationAttributesMap[$variationId] = $attributes->map(function($attr) {
+                    return [
+                        'attribute' => [
+                            'id' => $attr->attribute_id,
+                            'name' => $attr->attribute_name
+                        ],
+                        'value' => [
+                            'id' => $attr->value_id,
+                            'value' => $attr->value_value
+                        ],
+                        'attribute_id' => $attr->attribute_id,
+                        'attribute_name' => $attr->attribute_name,
+                        'value_id' => $attr->value_id,
+                        'value_value' => $attr->value_value,
+                        'value' => $attr->value_value
+                    ];
+                })->toArray();
+            }
+        }
+
+        // Присваиваем атрибуты вариациям
+        foreach ($goods as $good) {
+            if ($good->variations) {
+                foreach ($good->variations as $variation) {
+                    if (isset($variationAttributesMap[$variation->id])) {
+                        $variation->attributes = $variationAttributesMap[$variation->id];
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Загрузить характеристики вариаций
+     */
+    protected function loadVariationCharacteristics($goods): void
+    {
+        // Загружаем характеристики вариаций
+        $hasVariationIdCol = Schema::hasColumn('shop_good_properties', 'variation_id');
+
+        if (!$hasVariationIdCol) return;
+
+        foreach ($goods as $good) {
+            if ($good->variations) {
+                foreach ($good->variations as $variation) {
+                    $variationProperties = DB::table('shop_good_properties as sgp')
+                        ->join('shop_properties as sp', 'sp.id', '=', 'sgp.property_id')
+                        ->leftJoin('shop_property_values as spv', 'spv.id', '=', 'sgp.shop_property_value_id')
+                        ->where('sgp.good_id', $good->id)
+                        ->where('sgp.variation_id', $variation->id)
+                        ->select(
+                            'sp.id',
+                            'sp.name',
+                            'sp.slug',
+                            'sgp.shop_property_value_id',
+                            'sgp.value as pivot_value',
+                            'spv.value as property_value_value'
+                        )
+                        ->get()
+                        ->map(function ($row) {
+                            $property = [
+                                'id' => $row->id,
+                                'name' => $row->name,
+                                'slug' => $row->slug,
+                                'pivot' => (object) [
+                                    'shop_property_value_id' => $row->shop_property_value_id,
+                                    'value' => $row->pivot_value
+                                ]
+                            ];
+
+                            if ($row->shop_property_value_id) {
+                                $property['property_value'] = (object) [
+                                    'id' => $row->shop_property_value_id,
+                                    'value' => $row->property_value_value
+                                ];
+                            } elseif ($row->pivot_value) {
+                                $property['property_value'] = (object) [
+                                    'id' => null,
+                                    'value' => $row->pivot_value
+                                ];
+                            }
+
+                            return $property;
+                        });
+
+                    $variation->properties = $variationProperties;
+                }
+            }
+        }
+    }
+
+    /**
+     * Форматировать данные для экспорта
+     */
+    protected function formatExportData($goods, array $config): array
+    {
+        $exportRows = [];
+        $rowCounter = 1;
+
+        foreach ($goods as $good) {
+            $hasVariations = $good->variations && $good->variations->count() > 0;
+
+            if ($hasVariations) {
+                // Создаем строку для каждой вариации
+                foreach ($good->variations as $variation) {
+                    $row = $this->createExportRow($good, $config, $rowCounter, $variation);
+                    $exportRows[] = $row;
+                    $rowCounter++;
+                }
+            } else {
+                // Создаем одну строку для товара
+                $row = $this->createExportRow($good, $config, $rowCounter);
+                $exportRows[] = $row;
+                $rowCounter++;
+            }
+        }
+
+        return $exportRows;
+    }
+
+    /**
+     * Создать строку экспорта
+     */
+    protected function createExportRow($good, array $config, int $rowCounter, $variation = null): array
+    {
+        $row = [];
+
+        // Получаем список полей из конфигурации
+        $fields = $config['fields'] ?? ['id', 'name'];
+
+        foreach ($fields as $field) {
+            $value = $this->getFieldValue($field, $good, $variation, $config);
+            // Убеждаемся, что значение - строка
+            if (is_array($value) || is_object($value)) {
+                $value = json_encode($value);
+            } elseif ($value === null) {
+                $value = '';
+            } else {
+                $value = (string)$value;
+            }
+            $label = $this->getFieldLabel($field, $config);
+            $row[$label] = $value;
+        }
+
+        return $row;
+    }
+
+    /**
+     * Получить значение поля
+     */
+    protected function getFieldValue(string $field, $good, $variation = null, array $config = [])
+    {
+        // Поддержка как объектов (Eloquent), так и массивов (toArray())
+        $isArray = is_array($good);
+
+        // Хелпер для безопасного доступа к полям
+        $getValue = function($obj, $key, $default = '') use ($isArray) {
+            if ($isArray) {
+                return $obj[$key] ?? $default;
+            }
+            return $obj->$key ?? $default;
+        };
+
+        // Реализуем получение значений полей аналогично фронтенду
+        switch ($field) {
+            case 'counter':
+                return '';
+            case 'id':
+                return $isArray ? ($good['id'] ?? '') : $good->id;
+            case 'name':
+                return $isArray ? ($good['name'] ?? '') : $good->name;
+            case 'sku':
+                if ($variation) {
+                    return $isArray ? ($variation['sku'] ?? '') : $variation->sku;
+                }
+                return $isArray ? ($good['sku'] ?? '') : $good->sku;
+            case 'price':
+                return $variation ? $variation->price : $good->price;
+            case 'sale_price':
+                return $variation ? $variation->sale_price : $good->sale_price;
+            case 'demping_price':
+                return $variation ? $variation->demping_price : $good->demping_price;
+            case 'show_demping':
+                $showDemping = $variation ? $variation->show_demping : $good->show_demping;
+                return $showDemping ? 'Да' : 'Нет';
+            case 'stock_quantity':
+                return $variation ? $variation->stock_quantity : $good->stock_quantity;
+            case 'remote_stock_quantity':
+                return $variation ? $variation->remote_stock_quantity : $good->remote_stock_quantity;
+            case 'fast_remote_stock_quantity':
+                return $variation ? $variation->fast_remote_stock_quantity : $good->fast_remote_stock_quantity;
+            case 'variation':
+                return $this->formatVariationAttributes($variation);
+            case 'supplier':
+                if ($variation) {
+                    if ($isArray) {
+                        $supplier = $variation['supplier'] ?? null;
+                        if ($supplier) {
+                            return is_string($supplier) ? $supplier : ($supplier['name'] ?? '');
+                        }
+                        return $variation['supplier_name'] ?? '';
+                    }
+                    if ($variation->supplier) {
+                        return is_string($variation->supplier) ? $variation->supplier : ($variation->supplier->name ?? '');
+                    }
+                    if ($variation->supplier_name) {
+                        return $variation->supplier_name;
+                    }
+                }
+                return $isArray ? ($good['supplier'] ?? $good['supplier_name'] ?? '') : ($good->supplier ?? $good->supplier_name ?? '');
+            case 'supplier_name':
+                return $isArray ? ($good['supplier_name'] ?? '') : ($good->supplier_name ?? '');
+            case 'description':
+                return $isArray ? ($good['description'] ?? '') : ($good->description ?? '');
+            case 'short_description':
+                return $isArray ? ($good['short_description'] ?? '') : ($good->short_description ?? '');
+            case 'width':
+                return $isArray ? ($good['width'] ?? '') : ($good->width ?? '');
+            case 'height':
+                return $isArray ? ($good['height'] ?? '') : ($good->height ?? '');
+            case 'depth':
+                return $isArray ? ($good['depth'] ?? '') : ($good->depth ?? '');
+            case 'weight':
+                return $isArray ? ($good['weight'] ?? '') : ($good->weight ?? '');
+            case 'is_active':
+                $active = $isArray ? ($good['is_active'] ?? false) : $good->is_active;
+                return $active ? 'Да' : 'Нет';
+            case 'is_featured':
+                $featured = $isArray ? ($good['is_featured'] ?? false) : $good->is_featured;
+                return $featured ? 'Да' : 'Нет';
+            case 'is_new':
+                $new = $isArray ? ($good['is_new'] ?? false) : $good->is_new;
+                return $new ? 'Да' : 'Нет';
+            case 'is_sale':
+                $sale = $isArray ? ($good['is_sale'] ?? false) : $good->is_sale;
+                return $sale ? 'Да' : 'Нет';
+            case 'is_preorder':
+                return $good->is_preorder ? 'Да' : 'Нет';
+            case 'is_show':
+                return $good->is_show ? 'Да' : 'Нет';
+            case 'categories':
+                if ($isArray) {
+                    $categories = $good['categories'] ?? [];
+                    $names = array_column($categories, 'name');
+                    return implode(', ', array_filter($names));
+                }
+                return $good->categories ? $good->categories->pluck('name')->filter()->join(', ') : '';
+            case 'brands':
+                if ($isArray) {
+                    $brands = $good['brands'] ?? [];
+                    $names = array_column($brands, 'name');
+                    return implode(', ', array_filter($names));
+                }
+                return $good->brands ? $good->brands->pluck('name')->filter()->join(', ') : '';
+            case 'tags':
+                if ($isArray) {
+                    $tags = $good['tags'] ?? [];
+                    $names = array_column($tags, 'name');
+                    return implode(', ', array_filter($names));
+                }
+                return $good->tags ? $good->tags->pluck('name')->filter()->join(', ') : '';
+            case 'label':
+                if ($isArray) {
+                    $label = $good['label'] ?? null;
+                    return $label && isset($label['name']) ? $label['name'] : '';
+                }
+                return $good->label && isset($good->label->name) ? $good->label->name : '';
+            case 'properties':
+                return $this->formatGoodProperties($good);
+            case 'images':
+                return $this->formatGoodImages($good, $variation);
+            default:
+                // Проверяем на характеристики и атрибуты вариаций
+                // Сначала проверяем старый формат с префиксами
+                if (str_starts_with($field, 'prop_')) {
+                    return $this->getPropertyValueForExport($good, $variation, $field);
+                }
+                if (str_starts_with($field, 'attr_')) {
+                    return $this->getVariationAttributeValueForExport($variation, $field);
+                }
+
+                // Новый формат: характеристики могут быть по ID или по имени
+                // Сначала пытаемся найти как характеристику товара
+                $propertyValue = $this->findPropertyByIdOrName($good, $field);
+                if ($propertyValue !== null) {
+                    return $propertyValue;
+                }
+
+                // Если не нашли как характеристику, пытаемся найти как атрибут вариации
+                if ($variation) {
+                    $attributeValue = $this->findVariationAttributeByIdOrName($variation, $field);
+                    if ($attributeValue !== null) {
+                        return $attributeValue;
+                    }
+                }
+
+                // Проверяем на кастомные поля разбора
+                if (in_array($field, ['type', 'model', 'year'])) {
+                    return $this->getParsedFieldValue($good, $field, $config);
+                }
+
+                return '';
+        }
+    }
+
+    /**
+     * Получить название поля
+     */
+    protected function getFieldLabel(string $field, array $config): string
+    {
+        // Возвращаем название поля из конфигурации или стандартное
+        $fieldLabels = $config['field_labels'] ?? [];
+        if (!is_array($fieldLabels)) {
+            return $field;
+        }
+        return $fieldLabels[$field] ?? $field;
+    }
+
+    /**
+     * Форматировать атрибуты вариации
+     */
+    protected function formatVariationAttributes($variation): string
+    {
+        if (!$variation || !isset($variation->attributes)) {
+            return '';
+        }
+
+        $attributes = [];
+        foreach ($variation->attributes as $attr) {
+            // Проверяем разные возможные структуры данных
+            $attrName = $attr['attribute_name'] ?? $attr['name'] ?? 'unknown';
+            $attrValue = $attr['value_value'] ?? $attr['value'] ?? '';
+            $attributes[] = $attrName . ': ' . $attrValue;
+        }
+
+        return implode(', ', $attributes);
+    }
+
+    /**
+     * Форматировать характеристики товара
+     */
+    protected function formatGoodProperties($good): string
+    {
+        if (!$good || !isset($good->properties)) {
+            return '';
+        }
+
+        $properties = [];
+        foreach ($good->properties as $property) {
+            $value = '';
+            if (isset($property->property_value)) {
+                $value = $property->property_value->value ?? '';
+            }
+            $properties[] = $property->name . ': ' . $value;
+        }
+
+        return implode('; ', $properties);
+    }
+
+    /**
+     * Форматировать изображения товара
+     */
+    protected function formatGoodImages($good, $variation = null): string
+    {
+        $images = [];
+
+        if ($variation && isset($variation->images)) {
+            foreach ($variation->images as $image) {
+                $images[] = $image->file_path;
+            }
+        }
+
+        if (isset($good->images)) {
+            foreach ($good->images as $image) {
+                if (!$variation || !isset($variation->images) || !$variation->images->contains('id', $image->id)) {
+                    $images[] = $image->file_path;
+                }
+            }
+        }
+
+        return implode(', ', $images);
+    }
+
+    /**
+     * Получить значение характеристики
+     */
+    protected function getPropertyValueForExport($good, $variation, string $field): string
+    {
+        // prop_{property_id}
+        $propertyId = str_replace('prop_', '', $field);
+
+        if (!$good || !isset($good->properties)) {
+            return '';
+        }
+
+        foreach ($good->properties as $property) {
+            if ($property->id == $propertyId && isset($property->property_value)) {
+                return $property->property_value->value ?? '';
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * Найти характеристику товара по ID или имени
+     */
+    protected function findPropertyByIdOrName($good, string $field): ?string
+    {
+        if (!$good || !isset($good->properties)) {
+            return null;
+        }
+
+        foreach ($good->properties as $property) {
+            // Проверяем по ID (если field - число)
+            if (is_numeric($field) && $property->id == $field) {
+                return $property->property_value->value ?? '';
+            }
+
+            // Проверяем по имени
+            if ($property->name === $field && isset($property->property_value)) {
+                return $property->property_value->value ?? '';
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Получить разобранное значение поля (type, model, year)
+     */
+    protected function getParsedFieldValue($good, string $field, array $config): string
+    {
+        try {
+            // Получаем field type mappings из конфигурации
+            $fieldTypeMappings = $config['field_type_mappings'] ?? [];
+
+            // Получаем название товара
+            $nameField = $fieldTypeMappings['name'] ?? null;
+            $nameValue = $nameField ? ($good->{$nameField} ?? $good->name) : $good->name;
+
+            // Получаем бренд
+            $brandField = $fieldTypeMappings['brand'] ?? null;
+            $brandValue = '';
+            if ($brandField) {
+                if ($brandField === 'brands' && $good->brands && $good->brands->count() > 0) {
+                    $brandValue = $good->brands->pluck('name')->join(' ');
+                } else {
+                    $brandValue = $good->{$brandField} ?? '';
+                }
+            } elseif ($good->brands && $good->brands->count() > 0) {
+                $brandValue = $good->brands->pluck('name')->join(' ');
+            }
+
+            if (!$nameValue || !$brandValue) {
+                return '';
+            }
+
+            // Разбираем название
+            return $this->parseProductName($nameValue, $brandValue, $field);
+        } catch (\Exception $e) {
+            return '';
+        }
+    }
+
+    /**
+     * Функция разбора названия товара
+     */
+    protected function parseProductName(string $name, string $brand, string $fieldType): string
+    {
+        if (!$name || !$brand) {
+            return '';
+        }
+
+        // Находим позицию бренда в названии (регистронезависимо)
+        $brandIndex = stripos($name, $brand);
+
+        if ($fieldType === 'type') {
+            // Тип - это часть до бренда
+            if ($brandIndex === false) {
+                return '';
+            }
+            return trim(substr($name, 0, $brandIndex));
+        }
+
+        if ($fieldType === 'model' || $fieldType === 'year') {
+            // Модель и год - это часть после бренда
+            if ($brandIndex === false) {
+                return '';
+            }
+
+            $afterBrand = trim(substr($name, $brandIndex + strlen($brand)));
+            if (!$afterBrand) {
+                return '';
+            }
+
+            if ($fieldType === 'year') {
+                // Ищем год в оставшейся части
+                return $this->extractYearFromText($afterBrand);
+            } else {
+                // Модель - все остальное после удаления года
+                $year = $this->extractYearFromText($afterBrand);
+                if ($year) {
+                    return trim(str_replace($year, '', $afterBrand));
+                }
+                return $afterBrand;
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * Функция извлечения года из текста
+     */
+    protected function extractYearFromText(string $text): string
+    {
+        if (!$text) {
+            return '';
+        }
+
+        $currentYear = (int) date('Y');
+        $minYear = $currentYear - 10;
+        $maxYear = $currentYear + 1;
+
+        // Ищем 4-значные числа в диапазоне лет
+        preg_match_all('/\b(20\d{2}|19\d{2})\b/', $text, $matches);
+
+        if (!empty($matches[0])) {
+            foreach ($matches[0] as $yearStr) {
+                $year = (int) $yearStr;
+                if ($year >= $minYear && $year <= $maxYear) {
+                    return $yearStr;
+                }
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * Найти атрибут вариации по ID или имени
+     */
+    protected function findVariationAttributeByIdOrName($variation, string $field): ?string
+    {
+        if (!$variation || !isset($variation->attributes)) {
+            return null;
+        }
+
+        foreach ($variation->attributes as $attr) {
+            // Проверяем по ID атрибута
+            if (is_numeric($field) && isset($attr['attribute_id']) && $attr['attribute_id'] == $field) {
+                return $attr['value'] ?? '';
+            }
+
+            // Проверяем по имени атрибута
+            if (isset($attr['attribute_name']) && $attr['attribute_name'] === $field) {
+                return $attr['value'] ?? '';
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Получить значение атрибута вариации
+     */
+    protected function getVariationAttributeValueForExport($variation, string $field): string
+    {
+        // attr_{attribute_id} или attr_{attribute_name}
+        $attrIdentifier = str_replace('attr_', '', $field);
+
+        if (!$variation || !isset($variation->attributes)) {
+            return '';
+        }
+
+        // Сначала ищем по ID
+        foreach ($variation->attributes as $attr) {
+            if (isset($attr['attribute_id']) && $attr['attribute_id'] == $attrIdentifier) {
+                return $attr['value'] ?? '';
+            }
+        }
+
+        // Затем по имени (проверяем разные варианты)
+        $possibleNames = [$attrIdentifier];
+        if ($attrIdentifier === 'color') {
+            $possibleNames[] = 'Цвет';
+        } elseif ($attrIdentifier === 'size') {
+            $possibleNames[] = 'Размер';
+        }
+
+        foreach ($variation->attributes as $attr) {
+            $attrName = $attr['attribute_name'] ?? $attr['name'] ?? '';
+            if (in_array($attrName, $possibleNames)) {
+                return $attr['value_value'] ?? $attr['value'] ?? '';
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * Генерировать содержимое файла
+     */
+    protected function generateFileContent(array $data, string $format): string
+    {
+        if (empty($data)) return '';
+
+        switch ($format) {
+            case 'csv':
+                return $this->generateCsv($data);
+            case 'txt':
+                return $this->generateTxt($data);
+            case 'excel':
+            default:
+                return $this->generateExcel($data);
+        }
+    }
+
+    /**
+     * Генерировать CSV
+     */
+    protected function generateCsv(array $data): string
+    {
+
+        $output = '';
+
+        if (!empty($data)) {
+            $headers = array_keys($data[0]);
+            $output .= implode(',', array_map(function($header) {
+                return '"' . str_replace('"', '""', $header) . '"';
+            }, $headers)) . "\n";
+
+            foreach ($data as $row) {
+                $values = array_map(function($value) {
+                    if (is_array($value) || is_object($value)) {
+                        return '"' . json_encode($value) . '"';
+                    }
+                    return '"' . str_replace('"', '""', (string)$value) . '"';
+                }, array_values($row));
+                $output .= implode(',', $values) . "\n";
+            }
+        }
+
+        return $output;
+    }
+
+    /**
+     * Генерировать TXT
+     */
+    protected function generateTxt(array $data): string
+    {
+        // Простая TXT генерация
+        $output = '';
+
+        if (!empty($data)) {
+            $headers = array_keys($data[0]);
+            $output .= implode("\t", $headers) . "\n";
+
+            foreach ($data as $row) {
+                $values = array_map(function($value) {
+                    if (is_array($value) || is_object($value)) {
+                        return json_encode($value);
+                    }
+                    return (string)$value;
+                }, array_values($row));
+                $output .= implode("\t", $values) . "\n";
+            }
+        }
+
+        return $output;
+    }
+
+    /**
+     * Генерировать настоящий Excel файл
+     */
+    protected function generateExcel(array $data): string
+    {
+
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+
+        if (!empty($data)) {
+            // Записываем заголовки
+            $firstRow = $data[0];
+            if (is_array($firstRow)) {
+                $headers = array_keys($firstRow);
+                $col = 'A';
+                foreach ($headers as $header) {
+                    $sheet->setCellValue($col . '1', $header);
+                    $col++;
+                }
+
+                // Записываем данные
+                $row = 2;
+                foreach ($data as $dataRow) {
+                    if (is_array($dataRow)) {
+                        $col = 'A';
+                        foreach ($dataRow as $key => $value) {
+                            // Преобразуем массивы и объекты в строки
+                            if (is_array($value) || is_object($value)) {
+                                $value = json_encode($value);
+                            } elseif ($value === null) {
+                                $value = '';
+                            } else {
+                                $value = (string)$value;
+                            }
+                            $sheet->setCellValue($col . $row, $value);
+                            $col++;
+                        }
+                        $row++;
+                    }
+                }
+            }
+        }
+
+        // Создаем writer и сохраняем в память
+        $writer = new Xlsx($spreadsheet);
+        ob_start();
+        $writer->save('php://output');
+        $excelContent = ob_get_clean();
+
+        // Очищаем память
+        $spreadsheet->disconnectWorksheets();
+        unset($spreadsheet);
+
+        return $excelContent;
+    }
+}

@@ -38,6 +38,10 @@ Route::post('/test-simple-upload', function (Request $request) {
     ]);
 });
 
+// Скачивание экспорт файлов (с middleware для аутентификации через token)
+Route::get('/admin/export-files/{exportFile}/download', [\App\Http\Controllers\Admin\ExportFilesController::class, 'download'])
+    ->middleware(['download.token']);
+
 // ТЕСТОВЫЙ ЭНДПОИНТ ДЛЯ ДИАГНОСТИКИ ВСЕХ ЗАПРОСОВ
 Route::post('/debug-all-requests', function (Request $request) {
     $logData = [
@@ -2077,6 +2081,17 @@ Route::middleware('auth:sanctum')->group(function () {
             //     Route::delete('/{backup}', [\App\Http\Controllers\Admin\GoodsBackupController::class, 'destroy']);
             // });
         });
+
+        // Экспорт файлов (для пользователей с доступом к shop)
+        Route::middleware([\App\Http\Middleware\CustomCors::class, 'auth:sanctum', 'role:admin,manager'])->prefix('export-files')->group(function () {
+            Route::get('/', [\App\Http\Controllers\Admin\ExportFilesController::class, 'index']);
+            Route::get('/stats', [\App\Http\Controllers\Admin\ExportFilesController::class, 'stats']);
+            Route::post('/', [\App\Http\Controllers\Admin\ExportFilesController::class, 'store']);
+            Route::post('/{exportFile}/complete-test', [\App\Http\Controllers\Admin\ExportFilesController::class, 'completeTest']);
+            Route::delete('/{exportFile}', [\App\Http\Controllers\Admin\ExportFilesController::class, 'destroy']);
+            Route::delete('/', [\App\Http\Controllers\Admin\ExportFilesController::class, 'clearAll']);
+        });
+
 
         // Pages management
         Route::prefix('pages')->group(function () {

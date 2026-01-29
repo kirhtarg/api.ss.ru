@@ -19,6 +19,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'cors' => \App\Http\Middleware\CustomCors::class,
             'throttle.public' => \App\Http\Middleware\ThrottlePublicRoutes::class,
             'api.logger' => \App\Http\Middleware\GlobalApiLogger::class,
+            'download.token' => \App\Http\Middleware\CheckDownloadToken::class,
         ]);
 
         // Настраиваем web middleware с CSRF

@@ -12,7 +12,7 @@
         "laravel/sanctum": "^4.2",
         "laravel/socialite": "^5.23",
         "laravel/tinker": "^2.10.1",
-        "phpoffice/phpspreadsheet": "^5.3",
+        "phpoffice/phpspreadsheet": "^5.4",
         "socialiteproviders/vkontakte": "^5.0",
         "tecnickcom/tcpdf": "^6.10"
     },

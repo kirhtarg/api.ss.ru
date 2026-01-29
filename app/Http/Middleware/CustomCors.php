@@ -15,14 +15,6 @@ class CustomCors
      */
     public function handle(Request $request, Closure $next): Response
     {
-        // ЛОГИРУЕМ ВСЕ запросы, которые доходят до middleware
-        \Illuminate\Support\Facades\Log::info('=== CORS MIDDLEWARE CALLED ===', [
-            'method' => $request->method(),
-            'url' => $request->fullUrl(),
-            'origin' => $request->header('Origin'),
-            'user_agent' => substr($request->header('User-Agent') ?? '', 0, 50),
-            'timestamp' => now()->toISOString(),
-        ]);
 
         // Обрабатываем preflight запросы сразу
         if ($request->isMethod('OPTIONS')) {
@@ -133,15 +125,6 @@ class CustomCors
         $response->headers->set('Access-Control-Allow-Credentials', 'true');
         $response->headers->set('Access-Control-Max-Age', '86400');
 
-        // ЛОГИРУЕМ заголовки ответа
-        \Illuminate\Support\Facades\Log::info('=== CORS RESPONSE HEADERS ===', [
-            'status' => $response->getStatusCode(),
-            'access_control_allow_origin' => $response->headers->get('Access-Control-Allow-Origin'),
-            'access_control_allow_credentials' => $response->headers->get('Access-Control-Allow-Credentials'),
-            'all_cors_headers' => array_filter($response->headers->all(), function($key) {
-                return strpos($key, 'access-control') === 0;
-            }, ARRAY_FILTER_USE_KEY)
-        ]);
 
         // Принудительно добавляем CORS заголовки к ошибкам
             if ($response->getStatusCode() >= 400) {
