@@ -30,6 +30,19 @@ class ExportFilesController extends Controller
             $query->where('created_by', $request->get('created_by'));
         }
 
+        // Фильтр по типу экспорта
+        if ($request->has('type')) {
+            $type = $request->get('type');
+            if ($type === 'modex') {
+                $query->where('export_config->type', 'modex');
+            } elseif ($type === 'export') {
+                $query->where(function($q) {
+                    $q->whereNull('export_config->type')
+                      ->orWhere('export_config->type', '!=', 'modex');
+                });
+            }
+        }
+
         // Большое количество файлов на странице по умолчанию
         $perPage = $request->get('per_page', 100);
 

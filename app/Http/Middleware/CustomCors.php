@@ -15,44 +15,7 @@ class CustomCors
      */
     public function handle(Request $request, Closure $next): Response
     {
-
-        // Обрабатываем preflight запросы сразу
-        if ($request->isMethod('OPTIONS')) {
-            $allowedOrigins = [
-                'https://skateandsnow-test.ru',
-                'https://admin.skateandsnow-test.ru',
-                'https://api.skateandsnow-test.ru',
-                'https://skateandsnow.ru',
-                'https://admin.skateandsnow.ru',
-                'https://api.skateandsnow.ru',
-                'https://psy.kirhtarg.ru',
-                'https://api-psy.kirhtarg.ru',
-                'https://self-reason.ru',
-                'https://api.self-reason.ru',
-                'http://localhost:3000',
-                'http://localhost:3001',
-            ];
-
-            $allowOrigin = in_array($request->header('Origin'), $allowedOrigins) ? $request->header('Origin') : false;
-
-            if (!$allowOrigin) {
-                return response('Origin not allowed', 403);
-            }
-
-            return response('', 200)
-                ->header('Access-Control-Allow-Origin', $allowOrigin)
-                ->header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS')
-                ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN, X-Session-ID')
-                ->header('Access-Control-Allow-Credentials', 'true')
-                ->header('Access-Control-Max-Age', '86400');
-        }
-
-        try {
-            $origin = $request->header('Origin');
-            $url = $request->fullUrl();
-            $method = $request->method();
-
-        // Обрабатываем preflight запросы сразу
+        // Обрабатываем preflight запросы сразу, ДО любой другой обработки
         if ($request->isMethod('OPTIONS')) {
             $allowedOrigins = [
                 'https://skateandsnow-test.ru',
@@ -141,15 +104,5 @@ class CustomCors
             }
 
             return $response;
-        } catch (\Exception $e) {
-            // В случае ошибки возвращаем ответ с базовыми CORS заголовками
-            $errorResponse = response()->json(['error' => 'CORS middleware error'], 500);
-            $errorResponse->headers->set('Access-Control-Allow-Origin', $request->header('Origin') ?: '*');
-            $errorResponse->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-            $errorResponse->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN, X-Session-ID');
-            $errorResponse->headers->set('Access-Control-Allow-Credentials', 'true');
-
-            return $errorResponse;
-        }
     }
 }

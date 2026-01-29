@@ -3,11 +3,10 @@
 require_once 'vendor/autoload.php';
 
 $app = require_once 'bootstrap/app.php';
-$app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
 use Illuminate\Support\Facades\DB;
 
-echo "Modex files:\n";
+echo "Last 5 modex files:\n";
 
 $files = DB::table('export_files')
     ->whereRaw("JSON_EXTRACT(export_config, '$.type') = 'modex'")
@@ -20,6 +19,8 @@ foreach ($files as $file) {
     if ($file->error_message) {
         echo "  Error: {$file->error_message}\n";
     }
+    echo "\n";
 }
 
 echo "\nJobs in queue: " . DB::table('jobs')->count() . "\n";
+echo "Failed jobs: " . DB::table('failed_jobs')->count() . "\n";

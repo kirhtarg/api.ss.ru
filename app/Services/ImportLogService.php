@@ -259,7 +259,7 @@ class ImportLogService
         $goodSkuStr = $goodSku ? " - SKU: {$goodSku}" : '';
         $variationIdStr = $variationId ? " - ID вариации: {$variationId}" : '';
         $detailsStr = $details ? " - {$details}" : '';
-        
+
         // Формируем строку атрибутов
         $attributesStr = '';
         if (is_array($variationAttributes) && count($variationAttributes) > 0) {
@@ -273,9 +273,43 @@ class ImportLogService
             }
             $attributesStr = ' - Атрибуты: ' . implode(', ', $attrParts);
         }
-        
+
         $message = "{$action} - Товар: {$goodName}{$goodSkuStr}{$variationIdStr}{$attributesStr}{$detailsStr}";
         $this->writeLog('import-variation', $message);
+    }
+
+    /**
+     * Обновляет ID вариации в последней записи лога вариаций
+     */
+    public function updateLastLogVariationId($variationId)
+    {
+        try {
+            $logPath = $this->getLogPath('import-variation');
+
+            if (!File::exists($logPath)) {
+                return;
+            }
+
+            $content = File::get($logPath);
+            $lines = explode("\n", $content);
+
+            // Находим последнюю непустую строку
+            for ($i = count($lines) - 1; $i >= 0; $i--) {
+                $line = trim($lines[$i]);
+                if (!empty($line)) {
+                    // Если в строке еще нет ID вариации, добавляем его
+                    if (strpos($line, ' - ID вариации: ') === false) {
+                        $lines[$i] = str_replace(' - ID вариации: null', " - ID вариации: {$variationId}", $line);
+                        $lines[$i] = str_replace('ID вариации: null', "ID вариации: {$variationId}", $line);
+                    }
+                    break;
+                }
+            }
+
+            File::put($logPath, implode("\n", $lines));
+        } catch (\Exception $e) {
+            \Log::error("Failed to update last log variation ID: " . $e->getMessage());
+        }
     }
     
     /**

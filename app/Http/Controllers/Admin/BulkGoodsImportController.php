@@ -409,20 +409,26 @@ class BulkGoodsImportController extends Controller
                         $searchValue = ($searchByFieldInVariations === 'sku') ? $sku : $name;
 
                         if (!empty($searchValue)) {
-                            // Ищем вариацию по выбранному полю
-                            $variationQuery = ShopGoodVariation::where($searchByFieldInVariations, $searchByFieldInVariations === 'name' ? $this->normalizeTextForSearch($searchValue) : $searchValue);
-
-                            // Если указан поставщик, сужаем поиск до вариаций этого поставщика.
-                            // При отсутствии поставщика фильтр не добавляется — ищем по всем вариациям.
+                            // Ищем вариацию по выбранному полю и атрибутам
+                            // Сначала пробуем найти с учетом поставщика
+                            $existingVariation = null;
                             if ($supplierName) {
-                                $variationQuery->where('supplier', $supplierName);
+                                $existingVariation = $this->findVariationByNameAndAttributes(
+                                    $searchByFieldInVariations,
+                                    $searchValue,
+                                    $goodData['variation']['attributes'] ?? [],
+                                    $supplierName
+                                );
                             }
 
-                            $existingVariation = $variationQuery->first();
-
-                            // Если с фильтром по поставщику не нашли — пробуем без него (вариация может быть без поставщика или с другим)
-                            if (!$existingVariation && $supplierName) {
-                                $existingVariation = ShopGoodVariation::where($searchByFieldInVariations, $searchByFieldInVariations === 'name' ? $this->normalizeTextForSearch($searchValue) : $searchValue)->first();
+                            // Если не нашли с поставщиком — пробуем без него
+                            if (!$existingVariation) {
+                                $existingVariation = $this->findVariationByNameAndAttributes(
+                                    $searchByFieldInVariations,
+                                    $searchValue,
+                                    $goodData['variation']['attributes'] ?? [],
+                                    null
+                                );
                             }
 
                             if ($existingVariation) {
@@ -435,14 +441,27 @@ class BulkGoodsImportController extends Controller
                     // т.к. в блоке выше поиск выполняется только при !hasVariation. Если вариация найдена по SKU —
                     // приоритет: только обновить вариацию, имя основного товара не затрагивать.
                     if (!$existingVariation && $searchByNameInVariations && $searchByFieldInVariations === 'sku' && !empty($sku) && $hasVariation) {
-                        $variationQuery = ShopGoodVariation::where('sku', $sku);
+                        // Сначала пробуем найти с учетом поставщика
+                        $existingVariation = null;
                         if ($supplierName) {
-                            $variationQuery->where('supplier', $supplierName);
+                            $existingVariation = $this->findVariationByNameAndAttributes(
+                                'sku',
+                                $sku,
+                                $goodData['variation']['attributes'] ?? [],
+                                $supplierName
+                            );
                         }
-                        $existingVariation = $variationQuery->first();
-                        if (!$existingVariation && $supplierName) {
-                            $existingVariation = ShopGoodVariation::where('sku', $sku)->first();
+
+                        // Если не нашли с поставщиком — пробуем без него
+                        if (!$existingVariation) {
+                            $existingVariation = $this->findVariationByNameAndAttributes(
+                                'sku',
+                                $sku,
+                                $goodData['variation']['attributes'] ?? [],
+                                null
+                            );
                         }
+
                         if ($existingVariation) {
                             $existingGood = $existingVariation->good;
                             $searchValue = $sku;
@@ -780,13 +799,13 @@ class BulkGoodsImportController extends Controller
                             ];
                         }
 
-                        $details = 'Найдена по ' . ($searchByFieldInVariations === 'sku' ? 'артикулу' : 'имени') . ': ' . ($searchByFieldInVariations === 'sku' ? ($searchValue ?? $sku) : $name);
+                        $details = 'Найдена по ' . ($searchByFieldInVariations === 'sku' ? 'артикулу' : 'имени') . ' + совпадению атрибутов: ' . ($searchByFieldInVariations === 'sku' ? ($searchValue ?? $sku) : $name);
                         if ($sheet !== 'неизвестно') {
                             $details .= ", Лист: {$sheet}, Строка: {$count}";
                         }
 
                         $this->importLogService->logVariation(
-                            $searchByFieldInVariations === 'sku' ? 'ОБНОВЛЕНА ВАРИАЦИЯ ПО АРТИКУЛУ' : 'ОБНОВЛЕНА ВАРИАЦИЯ ПО ИМЕНИ',
+                            $searchByFieldInVariations === 'sku' ? 'ОБНОВЛЕНА ВАРИАЦИЯ ПО АРТИКУЛУ + АТРИБУТАМ' : 'ОБНОВЛЕНА ВАРИАЦИЯ ПО ИМЕНИ + АТРИБУТАМ',
                             $existingGood->name ?? $name,
                             $existingGood->sku ?? 'нет SKU',
                             $variationAttributes,
@@ -1052,6 +1071,20 @@ class BulkGoodsImportController extends Controller
                     // Если включен поиск в вариациях и товар имеет вариации, но вариация не найдена,
                     // а товар найден - создаем новую вариацию для существующего товара
                     if ($searchByNameInVariations && $hasVariation && !$existingVariation && $existingGood) {
+                        // Логируем создание новой вариации
+                        $sheet = $goodData['_sheet'] ?? 'неизвестно';
+                        $variationAttributes = $goodData['variation']['attributes'] ?? [];
+                        $searchFieldName = $searchByFieldInVariations === 'sku' ? 'артикулу' : 'имени';
+                        $searchValue = $searchByFieldInVariations === 'sku' ? ($sku ?? 'пустой') : $name;
+
+                        $this->importLogService->logVariation(
+                            'СОЗДАНА НОВАЯ ВАРИАЦИЯ',
+                            $existingGood->name ?? $name,
+                            $existingGood->sku ?? 'нет SKU',
+                            $variationAttributes,
+                            null, // ID будет установлен после создания
+                            "Поиск по {$searchFieldName}: '{$searchValue}', вариация с такими атрибутами не найдена. Лист: {$sheet}, Строка: {$count}"
+                        );
 
                         // Создаем новую вариацию для найденного товара
                         // Передаем nameTrimSymbol в goodData для обрезки названия товара
@@ -1059,6 +1092,11 @@ class BulkGoodsImportController extends Controller
                             $goodData['_nameTrimSymbol'] = $nameTrimSymbol;
                         }
                         $variationId = $this->processVariation($existingGood, $goodData['variation'], $goodData, $supplierStockFields);
+
+                        // Обновляем лог с ID созданной вариации
+                        if ($variationId) {
+                            $this->importLogService->updateLastLogVariationId($variationId);
+                        }
 
                         // Сохраняем ID вариации для связи с изображениями
                         if ($variationId) {
@@ -4338,6 +4376,67 @@ class BulkGoodsImportController extends Controller
         return $id;
     }
     
+    /**
+     * Найти вариацию по имени/SKU и атрибутам
+     * Возвращает вариацию, если найдена с точно совпадающими атрибутами, иначе null
+     */
+    private function findVariationByNameAndAttributes($searchField, $searchValue, $importAttributes, $supplier = null)
+    {
+        // Если нет атрибутов для сравнения, возвращаем null (не используем старый поиск)
+        if (empty($importAttributes) || !is_array($importAttributes)) {
+            return null;
+        }
+
+        // Строим запрос для поиска вариаций по имени/SKU
+        $query = ShopGoodVariation::where($searchField, $searchField === 'name' ? $this->normalizeTextForSearch($searchValue) : $searchValue);
+
+        // Фильтр по поставщику, если указан
+        if ($supplier !== null && $supplier !== '') {
+            $query->where('supplier', $supplier);
+        }
+
+        // Получаем все найденные вариации
+        $variations = $query->get();
+
+        // Для каждой вариации проверяем совпадение атрибутов
+        foreach ($variations as $variation) {
+            // Получаем атрибуты существующей вариации
+            $existingAttributes = $this->getVariationAttributes($variation);
+
+            // Сравниваем атрибуты
+            if ($this->attributesMatch($existingAttributes, $importAttributes)) {
+                return $variation;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Проверяет, совпадают ли два массива атрибутов
+     */
+    private function attributesMatch($existingAttributes, $importAttributes)
+    {
+        if (count($importAttributes) !== count($existingAttributes)) {
+            return false;
+        }
+
+        // Сортируем оба массива для сравнения
+        $importAttrsSorted = collect($importAttributes)->sortBy(function($attr) {
+            return $attr['name'] ?? '';
+        })->map(function($attr) {
+            return ($attr['name'] ?? '') . ':' . ($attr['value'] ?? '');
+        })->values()->toArray();
+
+        $existingAttrsSorted = collect($existingAttributes)->sortBy(function($attr) {
+            return $attr['name'] ?? '';
+        })->map(function($attr) {
+            return ($attr['name'] ?? '') . ':' . ($attr['value'] ?? '');
+        })->values()->toArray();
+
+        return $importAttrsSorted === $existingAttrsSorted;
+    }
+
     /**
      * Найти вариацию по комбинации атрибутов
      */

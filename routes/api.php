@@ -42,6 +42,16 @@ Route::post('/test-simple-upload', function (Request $request) {
 Route::get('/admin/export-files/{exportFile}/download', [\App\Http\Controllers\Admin\ExportFilesController::class, 'download'])
     ->middleware(['download.token']);
 
+// Скачивание modex файлов (с middleware для аутентификации через token)
+Route::get('/admin/modex/download/{exportFile}', [\App\Http\Controllers\Admin\ModexController::class, 'download'])
+    ->middleware(['download.token']);
+
+// OPTIONS роуты для CORS (без аутентификации)
+Route::middleware(['options.cors'])->group(function () {
+    Route::options('admin/modex/process', [\App\Http\Controllers\Admin\ModexController::class, 'process']);
+    Route::options('admin/modex/download/{exportFile}', [\App\Http\Controllers\Admin\ModexController::class, 'download']);
+});
+
 // ТЕСТОВЫЙ ЭНДПОИНТ ДЛЯ ДИАГНОСТИКИ ВСЕХ ЗАПРОСОВ
 Route::post('/debug-all-requests', function (Request $request) {
     $logData = [
@@ -2092,6 +2102,10 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::delete('/', [\App\Http\Controllers\Admin\ExportFilesController::class, 'clearAll']);
         });
 
+        // Modex main routes
+        Route::middleware([\App\Http\Middleware\CustomCors::class, 'auth:sanctum', 'role:admin,manager'])->prefix('modex')->group(function () {
+            Route::post('/process', [\App\Http\Controllers\Admin\ModexController::class, 'process']);
+        });
 
         // Pages management
         Route::prefix('pages')->group(function () {
