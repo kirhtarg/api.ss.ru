@@ -11,9 +11,58 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class ModexController extends Controller
 {
+    /**
+     * Анализировать файл перед обработкой
+     */
+    public function analyze(Request $request): JsonResponse
+    {
+        try {
+            $request->validate([
+                'file' => 'required|file|mimes:xlsx,xls|max:51200',
+            ]);
+
+            $file = $request->file('file');
+            $path = $file->getRealPath();
+            
+            // Увеличиваем лимит памяти для анализа
+            ini_set('memory_limit', '512M');
+
+            try {
+                // Используем IOFactory для автоматического определения типа
+                $spreadsheet = IOFactory::load($path);
+                $worksheet = $spreadsheet->getActiveSheet();
+                
+                $rows = $worksheet->getHighestRow();
+                $highestColumn = $worksheet->getHighestColumn();
+                $columns = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($highestColumn);
+                
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'rows' => $rows,
+                        'columns' => $columns,
+                        'size' => $file->getSize(),
+                        'filename' => $file->getClientOriginalName()
+                    ]
+                ]);
+            } catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка чтения Excel файла: ' . $e->getMessage()
+                ], 422);
+            }
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка анализа файла: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
     /**
      * Обработать файл модекса
      */
@@ -27,9 +76,6 @@ class ModexController extends Controller
      */
     private function handleProcess(Request $request): JsonResponse
     {
-        // Временный dd для отладки
-        // Декодируем rules из JSON строки в массив
-
         try {
             // Увеличиваем лимит памяти для обработки больших файлов
             ini_set('memory_limit', '1024M');
@@ -113,6 +159,7 @@ class ModexController extends Controller
             }
 
             // Создаем запись в БД
+            $removeTagsGlobal = (bool)($request->get('removeTags') ?? $request->get('remove_tags') ?? false);
             $modexFile = ExportFile::create([
                 'created_by' => Auth::id(),
                 'filename' => $filename,
@@ -122,14 +169,12 @@ class ModexController extends Controller
                 'export_config' => [
                     'type' => 'modex',
                     'input_file_path' => $tempPath,
-                    'rules' => $rulesData
+                    'rules' => $rulesData,
+                    'removeTags' => $removeTagsGlobal
                 ]
             ]);
 
             // Логируем создание файла
-            $logMessage = "[" . date('Y-m-d H:i:s') . "] Modex file created: ID={$modexFile->id}, filename={$filename}, input_path={$tempPath}, exists=" . (Storage::exists($tempPath) ? 'YES' : 'NO') . "\n";
-            file_put_contents(storage_path('logs/modex_debug.log'), $logMessage, FILE_APPEND);
-
             Log::info('Modex file created', [
                 'file_id' => $modexFile->id,
                 'filename' => $filename,
@@ -137,11 +182,26 @@ class ModexController extends Controller
                 'file_exists' => Storage::exists($tempPath)
             ]);
 
-            // Запускаем задачу обработки в фоне (асинхронно)
-            \App\Jobs\ProcessModexJob::dispatch($modexFile);
+            // Быстро и безопасно определяем количество строк для отображения прогресса на фронте
+            try {
+                $reader = IOFactory::createReaderForFile(storage_path('app/' . $tempPath));
+                $reader->setReadDataOnly(true);
+                $spreadsheet = $reader->load(storage_path('app/' . $tempPath));
+                $worksheet = $spreadsheet->getActiveSheet();
+                $rows = max($worksheet->getHighestRow() - 1, 0);
+                $spreadsheet->disconnectWorksheets();
+                unset($spreadsheet);
+                $conf = $modexFile->export_config ?? [];
+                $conf['total_rows'] = $rows;
+                $conf['progress_rows'] = 0;
+                $modexFile->update(['export_config' => $conf]);
+            } catch (\Throwable $e) {
+                // ignore
+            }
 
-            $logMessage2 = "[" . date('Y-m-d H:i:s') . "] ProcessModexJob dispatched for file ID={$modexFile->id}\n";
-            file_put_contents(storage_path('logs/modex_debug.log'), $logMessage2, FILE_APPEND);
+            // Запускаем задачу обработки в фоне (асинхронно)
+            $modexFile->update(['status' => 'processing']);
+            \App\Jobs\ProcessModexJob::dispatch($modexFile);
 
             Log::info('ProcessModexJob dispatched', ['file_id' => $modexFile->id]);
 
@@ -161,14 +221,27 @@ class ModexController extends Controller
     /**
      * Скачать результат модекса
      */
-    public function download(Request $request, ExportFile $exportFile): \Symfony\Component\HttpFoundation\BinaryFileResponse
+    public function download(Request $request, $id): \Symfony\Component\HttpFoundation\BinaryFileResponse
     {
+        $exportFile = ExportFile::findOrFail($id);
+
+        // Log download attempt
+        \Illuminate\Support\Facades\Log::info('ModexController::download HIT', [
+            'file_id' => $exportFile->id,
+            'user' => Auth::user() ? Auth::id() : 'guest',
+            'token_query' => $request->query('token')
+        ]);
+
         // Проверяем, что это файл модекса и он готов
         if (($exportFile->export_config['type'] ?? null) !== 'modex' || $exportFile->status !== 'completed') {
             abort(404, 'Файл не найден или не готов');
         }
 
         $user = Auth::user();
+
+        if (!$user) {
+            abort(401, 'Пользователь не авторизован');
+        }
 
         // Проверяем, что пользователь имеет доступ к файлу
         if ($user->id !== $exportFile->created_by && !$user->hasRole(['admin', 'manager'])) {

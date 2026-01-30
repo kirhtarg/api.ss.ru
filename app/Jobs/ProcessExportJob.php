@@ -12,6 +12,10 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use OpenSpout\Writer\XLSX\Options;
+use OpenSpout\Writer\XLSX\Writer;
+use OpenSpout\Common\Entity\Row;
+use OpenSpout\Common\Entity\Cell;
 
 class ProcessExportJob implements ShouldQueue
 {
@@ -49,16 +53,37 @@ class ProcessExportJob implements ShouldQueue
                 throw new \Exception('Нет данных для экспорта');
             }
 
-            // Генерируем файл
-            $fileContent = $this->generateFileContent($exportData, $this->exportFile->format);
-
-            // Сохраняем файл
             $filePath = 'exports/' . $this->exportFile->filename;
-            Storage::put($filePath, $fileContent);
+            $fullPath = Storage::path($filePath);
+            
+            // Создаем директорию, если её нет
+            $directory = dirname($fullPath);
+            if (!file_exists($directory)) {
+                mkdir($directory, 0755, true);
+            }
 
-            // Получаем размер файла
-            $fileSize = Storage::size($filePath);
+            // Определяем, использовать ли OpenSpout
+            // Используем Spout только для Excel и если НЕТ шаблона
+            // Если есть шаблон, используем PhpSpreadsheet для сохранения стилей
+            $useSpout = $this->exportFile->format === 'excel' && empty($config['template_path']);
 
+            if ($useSpout) {
+                $this->generateExcelWithSpout($exportData, $fullPath);
+                
+                if (file_exists($fullPath)) {
+                    $fileSize = filesize($fullPath);
+                } else {
+                    // Если что-то пошло не так, пробуем стандартный метод
+                    $fileContent = $this->generateFileContent($exportData, $this->exportFile->format);
+                    Storage::put($filePath, $fileContent);
+                    $fileSize = Storage::size($filePath);
+                }
+            } else {
+                // Генерируем файл стандартным способом (PhpSpreadsheet для шаблонов, CSV, TXT)
+                $fileContent = $this->generateFileContent($exportData, $this->exportFile->format);
+                Storage::put($filePath, $fileContent);
+                $fileSize = Storage::size($filePath);
+            }
 
             // Обновляем запись в БД
             $this->exportFile->update([
@@ -488,30 +513,93 @@ class ProcessExportJob implements ShouldQueue
         }
 
         // Фильтр по остатку у/с (remote_stock_quantity)
+        // Проверяем как остатки основного товара, так и остатки вариаций
         if (isset($filters['remote_stock_quantity_not_empty']) && $filters['remote_stock_quantity_not_empty']) {
-            $query->whereNotNull('remote_stock_quantity')
-                  ->where('remote_stock_quantity', '!=', '')
-                  ->where('remote_stock_quantity', '!=', '0');
+            $query->where(function($mainQuery) {
+                // Вариант 1: Остаток у/с не пустой в основном товаре
+                $mainQuery->where(function($mainStockQuery) {
+                    $mainStockQuery->whereNotNull('remote_stock_quantity')
+                        ->where('remote_stock_quantity', '!=', '')
+                        ->where('remote_stock_quantity', '!=', '0')
+                        ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                });
+                // Вариант 2: Есть вариации с остатком у/с не пустым
+                $mainQuery->orWhere(function($variationsQuery) {
+                    $variationsQuery->whereHas('variations', function($varQ) {
+                        $varQ->whereNotNull('remote_stock_quantity')
+                            ->where('remote_stock_quantity', '!=', '')
+                            ->where('remote_stock_quantity', '!=', '0')
+                            ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                    });
+                });
+            });
         } elseif (isset($filters['remote_stock_quantity_empty']) && $filters['remote_stock_quantity_empty']) {
-            $query->where(function($q) {
-                $q->whereNull('remote_stock_quantity')
-                  ->orWhere('remote_stock_quantity', '=', '')
-                  ->orWhere('remote_stock_quantity', '=', '0');
+            $query->where(function($mainQuery) {
+                // Вариант 1: Остаток у/с пустой в основном товаре И нет вариаций с остатком у/с
+                $mainQuery->where(function($mainStockQuery) {
+                    $mainStockQuery->where(function($remoteCondition) {
+                        $remoteCondition->whereNull('remote_stock_quantity')
+                            ->orWhere('remote_stock_quantity', '=', '0')
+                            ->orWhere('remote_stock_quantity', '=', '')
+                            ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
+                    });
+                })
+                ->whereDoesntHave('variations', function($varQ) {
+                    $varQ->whereNotNull('remote_stock_quantity')
+                        ->where('remote_stock_quantity', '!=', '')
+                        ->where('remote_stock_quantity', '!=', '0')
+                        ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                });
             });
         } elseif (isset($filters['remote_stock_quantity']) && $filters['remote_stock_quantity'] !== '') {
-            $query->where('remote_stock_quantity', '=', $filters['remote_stock_quantity']);
+            $query->where(function($mainQuery) {
+                // Вариант 1: Точное значение в основном товаре
+                $mainQuery->where('remote_stock_quantity', '=', $filters['remote_stock_quantity']);
+                // Вариант 2: Точное значение в вариациях
+                $mainQuery->orWhereHas('variations', function($varQ) {
+                    $varQ->where('remote_stock_quantity', '=', $filters['remote_stock_quantity']);
+                });
+            });
         }
 
         // Фильтр по быстрому остатку у/с (fast_remote_stock_quantity)
+        // Проверяем как остатки основного товара, так и остатки вариаций
         if (isset($filters['fast_remote_stock_quantity_not_empty']) && $filters['fast_remote_stock_quantity_not_empty'] == '1') {
-            $query->whereNotNull('fast_remote_stock_quantity')
-                  ->where('fast_remote_stock_quantity', '!=', '')
-                  ->where('fast_remote_stock_quantity', '!=', '0');
+            $query->where(function($mainQuery) {
+                // Вариант 1: Остаток у/с быстро не пустой в основном товаре
+                $mainQuery->where(function($mainStockQuery) {
+                    $mainStockQuery->whereNotNull('fast_remote_stock_quantity')
+                        ->where('fast_remote_stock_quantity', '!=', '')
+                        ->where('fast_remote_stock_quantity', '!=', '0')
+                        ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
+                });
+                // Вариант 2: Есть вариации с остатком у/с быстро не пустым
+                $mainQuery->orWhere(function($variationsQuery) {
+                    $variationsQuery->whereHas('variations', function($varQ) {
+                        $varQ->whereNotNull('fast_remote_stock_quantity')
+                            ->where('fast_remote_stock_quantity', '!=', '')
+                            ->where('fast_remote_stock_quantity', '!=', '0')
+                            ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
+                    });
+                });
+            });
         } elseif (isset($filters['fast_remote_stock_quantity_empty']) && $filters['fast_remote_stock_quantity_empty'] == '1') {
-            $query->where(function($q) {
-                $q->whereNull('fast_remote_stock_quantity')
-                  ->orWhere('fast_remote_stock_quantity', '=', '')
-                  ->orWhere('fast_remote_stock_quantity', '=', '0');
+            $query->where(function($mainQuery) {
+                // Вариант 1: Остаток у/с быстро пустой в основном товаре И нет вариаций с остатком у/с быстро
+                $mainQuery->where(function($mainStockQuery) {
+                    $mainStockQuery->where(function($fastRemoteCondition) {
+                        $fastRemoteCondition->whereNull('fast_remote_stock_quantity')
+                            ->orWhere('fast_remote_stock_quantity', '=', '0')
+                            ->orWhere('fast_remote_stock_quantity', '=', '')
+                            ->orWhereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) = 0');
+                    });
+                })
+                ->whereDoesntHave('variations', function($varQ) {
+                    $varQ->whereNotNull('fast_remote_stock_quantity')
+                        ->where('fast_remote_stock_quantity', '!=', '')
+                        ->where('fast_remote_stock_quantity', '!=', '0')
+                        ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
+                });
             });
         }
 
@@ -1295,28 +1383,60 @@ class ProcessExportJob implements ShouldQueue
      */
     protected function generateExcel(array $data): string
     {
-
-        $spreadsheet = new Spreadsheet();
-        $sheet = $spreadsheet->getActiveSheet();
-
-        if (!empty($data)) {
-            // Записываем заголовки
-            $firstRow = $data[0];
-            if (is_array($firstRow)) {
-                $headers = array_keys($firstRow);
-                $col = 'A';
-                foreach ($headers as $header) {
-                    $sheet->setCellValue($col . '1', $header);
-                    $col++;
+        $config = $this->exportFile->export_config ?? [];
+        $templatePath = $config['template_path'] ?? null;
+        
+        if ($templatePath && Storage::exists($templatePath)) {
+            // Используем шаблон
+            $fullPath = Storage::path($templatePath);
+            try {
+                $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($fullPath);
+            } catch (\Exception $e) {
+                Log::warning('Failed to load export template: ' . $e->getMessage());
+                $spreadsheet = new Spreadsheet();
+            }
+            
+            $sheet = $spreadsheet->getActiveSheet();
+            
+            if (!empty($data)) {
+                $startRow = isset($config['excel_template_start_row']) ? (int)$config['excel_template_start_row'] : 2;
+                $includeHeaders = filter_var($config['excel_template_include_headers'] ?? false, FILTER_VALIDATE_BOOLEAN);
+                $headerRow = isset($config['excel_template_header_row']) ? (int)$config['excel_template_header_row'] : 1;
+                
+                // Записываем заголовки, если нужно
+                if ($includeHeaders) {
+                    $firstRow = $data[0];
+                    if (is_array($firstRow)) {
+                        $headers = array_keys($firstRow);
+                        $col = 'A';
+                        foreach ($headers as $header) {
+                            $sheet->setCellValue($col . $headerRow, $header);
+                            $col++;
+                        }
+                    }
                 }
-
+                
                 // Записываем данные
-                $row = 2;
+                $row = $startRow;
+                $highestColumnIndex = 0;
+                
+                // Определяем максимальное количество колонок
+                foreach ($data as $dataRow) {
+                    if (is_array($dataRow)) {
+                        $count = count($dataRow);
+                        if ($count > $highestColumnIndex) {
+                            $highestColumnIndex = $count;
+                        }
+                    }
+                }
+                
+                // Преобразуем индекс в букву (1 -> A, 2 -> B, etc.)
+                $highestColumn = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($highestColumnIndex);
+
                 foreach ($data as $dataRow) {
                     if (is_array($dataRow)) {
                         $col = 'A';
                         foreach ($dataRow as $key => $value) {
-                            // Преобразуем массивы и объекты в строки
                             if (is_array($value) || is_object($value)) {
                                 $value = json_encode($value);
                             } elseif ($value === null) {
@@ -1330,19 +1450,89 @@ class ProcessExportJob implements ShouldQueue
                         $row++;
                     }
                 }
+
+                // Копируем стили с начальной строки на все остальные строки
+                $lastRow = $row - 1;
+                if ($lastRow > $startRow) {
+                    try {
+                        $styleSourceRange = "A{$startRow}:{$highestColumn}{$startRow}";
+                        $styleTargetRange = "A" . ($startRow + 1) . ":{$highestColumn}{$lastRow}";
+                        $sheet->duplicateStyle($sheet->getStyle($styleSourceRange), $styleTargetRange);
+                    } catch (\Exception $e) {
+                        Log::warning('Failed to duplicate styles: ' . $e->getMessage());
+                    }
+                }
+            }
+
+            // Создаем writer и сохраняем в память
+            $writer = new Xlsx($spreadsheet);
+            ob_start();
+            $writer->save('php://output');
+            $excelContent = ob_get_clean();
+
+            // Очищаем память
+            $spreadsheet->disconnectWorksheets();
+            unset($spreadsheet);
+
+            return $excelContent;
+        } else {
+            // Стандартная генерация (без шаблона)
+            // Если вызов пришел сюда (а не через handle -> generateExcelWithSpout),
+            // значит нам нужно вернуть контент строкой (fallback).
+            $tempPath = tempnam(sys_get_temp_dir(), 'export_xls_');
+            $this->generateExcelWithSpout($data, $tempPath);
+            $content = file_get_contents($tempPath);
+            @unlink($tempPath);
+            return $content;
+        }
+    }
+
+    /**
+     * Генерировать Excel с использованием OpenSpout (для больших файлов)
+     * Пишет напрямую в файл по указанному пути
+     */
+    protected function generateExcelWithSpout(array $data, string $filePath): void
+    {
+        $options = new Options();
+        $writer = new Writer($options);
+        $writer->openToFile($filePath);
+
+        if (!empty($data)) {
+            // Записываем заголовки
+            $firstRow = $data[0];
+            if (is_array($firstRow)) {
+                $headers = array_keys($firstRow);
+                $headerCells = array_map(function($value) {
+                    return Cell::fromValue((string)$value);
+                }, $headers);
+                $writer->addRow(new Row($headerCells));
+            }
+
+            // Записываем данные
+            foreach ($data as $dataRow) {
+                if (is_array($dataRow)) {
+                    $cells = array_map(function($value) {
+                        if (is_array($value) || is_object($value)) {
+                            $strVal = json_encode($value, JSON_UNESCAPED_UNICODE);
+                        } elseif ($value === null) {
+                            $strVal = '';
+                        } else {
+                            $strVal = (string)$value;
+                        }
+                        
+                        // Защита от инъекций формул
+                        if (str_starts_with($strVal, '=')) {
+                            $strVal = ' ' . $strVal;
+                        }
+                        
+                        return Cell::fromValue($strVal);
+                    }, array_values($dataRow));
+                    
+                    $writer->addRow(new Row($cells));
+                }
             }
         }
 
-        // Создаем writer и сохраняем в память
-        $writer = new Xlsx($spreadsheet);
-        ob_start();
-        $writer->save('php://output');
-        $excelContent = ob_get_clean();
-
-        // Очищаем память
-        $spreadsheet->disconnectWorksheets();
-        unset($spreadsheet);
-
-        return $excelContent;
+        $writer->close();
     }
 }

@@ -43,16 +43,8 @@ Route::get('/admin/export-files/{exportFile}/download', [\App\Http\Controllers\A
     ->middleware(['download.token']);
 
 // Скачивание modex файлов (с middleware для аутентификации через token)
-Route::get('/admin/modex/download/{id}', [\App\Http\Controllers\Admin\ModexController::class, 'download'])
+Route::get('/admin/modex/download/{exportFile}', [\App\Http\Controllers\Admin\ModexController::class, 'download'])
     ->middleware(['download.token']);
-
-// DEBUG ROUTE 1: No middleware
-Route::get('/admin/modex/debug-download-no-mw/{exportFile}', [\App\Http\Controllers\Admin\ModexController::class, 'download']);
-
-// DEBUG ROUTE 2: Only download.token middleware with closure
-Route::get('/admin/modex/debug-mw-only', function (Request $request) {
-    return response()->json(['success' => true, 'message' => 'Middleware passed', 'user' => Auth::user()]);
-})->middleware(['download.token']);
 
 // OPTIONS роуты для CORS (без аутентификации)
 Route::middleware(['options.cors'])->group(function () {
@@ -1413,114 +1405,6 @@ Route::middleware('auth:sanctum')->group(function () {
         // Site info for admin
         Route::get('/site-info', [\App\Http\Controllers\Api\Public\SiteInfoController::class, 'index']);
 
-        // Modex management
-        Route::middleware('role:admin')->prefix('modex')->group(function () {
-            Route::post('/analyze', [\App\Http\Controllers\Admin\ModexController::class, 'analyze']);
-            Route::post('/process', [\App\Http\Controllers\Admin\ModexController::class, 'process']);
-            Route::get('/download/{exportFile}', [\App\Http\Controllers\Admin\ModexController::class, 'download']);
-        });
-
-        // Export Files management
-        Route::prefix('export-files')->group(function () {
-            Route::get('/', [\App\Http\Controllers\Admin\ExportFilesController::class, 'index']);
-            Route::get('/stats', [\App\Http\Controllers\Admin\ExportFilesController::class, 'stats']);
-            Route::post('/', [\App\Http\Controllers\Admin\ExportFilesController::class, 'store']);
-            Route::post('/clear-all', [\App\Http\Controllers\Admin\ExportFilesController::class, 'clearAll']);
-            Route::delete('/', [\App\Http\Controllers\Admin\ExportFilesController::class, 'clearAll']);
-            Route::get('/{id}', [\App\Http\Controllers\Admin\ExportFilesController::class, 'show']);
-            Route::delete('/{exportFile}', [\App\Http\Controllers\Admin\ExportFilesController::class, 'destroy']);
-            Route::post('/{exportFile}/complete-test', [\App\Http\Controllers\Admin\ExportFilesController::class, 'completeTest']);
-        });
-
-        // Queue management
-        Route::prefix('queue-status')->middleware('role:admin')->group(function () {
-            Route::get('/', function () {
-                $pending = \Illuminate\Support\Facades\DB::table('jobs')->count();
-                $failed = \Illuminate\Support\Facades\DB::table('failed_jobs')->count();
-                
-                $workerActive = false;
-                $debugOutput = [];
-                try {
-                    if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-                        $output = [];
-                        exec('wmic process where "name=\'php.exe\'" get commandline 2>&1', $output);
-                        $debugOutput = []; // Debug disabled
-                        
-                        // Check line by line
-                        foreach ($output as $line) {
-                            if (stripos($line, 'queue:work') !== false || stripos($line, 'queue:listen') !== false) {
-                                $workerActive = true;
-                                break;
-                            }
-                        }
-                        
-                        // Double check with full string just in case
-                        if (!$workerActive) {
-                            $fullOutput = implode(' ', $output);
-                            if (stripos($fullOutput, 'queue:work') !== false || stripos($fullOutput, 'queue:listen') !== false) {
-                                $workerActive = true;
-                            }
-                        }
-                    } else {
-                        $output = [];
-                        exec('ps aux | grep "queue:work" | grep -v grep', $output);
-                        if (count($output) > 0) {
-                            $workerActive = true;
-                        }
-                    }
-                } catch (\Exception $e) {
-                    \Illuminate\Support\Facades\Log::error('Queue worker check failed: ' . $e->getMessage());
-                }
-
-                $status = $workerActive ? ($pending > 0 ? 'working' : 'idle') : 'inactive';
-
-                return response()->json([
-                    'success' => true,
-                    'data' => [
-                        'pending' => $pending,
-                        'failed' => $failed,
-                        'status' => $status,
-                        'worker_active' => $workerActive,
-                        'debug_output' => $debugOutput // Temporary debug info
-                    ]
-                ]);
-            });
-
-            Route::post('/restart', function (\Illuminate\Http\Request $request) {
-                try {
-                    \Illuminate\Support\Facades\Artisan::call('queue:restart');
-                    return response()->json(['success' => true, 'message' => 'Queue restart signal sent']);
-                } catch (\Exception $e) {
-                    return response()->json(['success' => false, 'message' => 'Error restarting queue: ' . $e->getMessage()], 500);
-                }
-            });
-
-            Route::post('/start', function (\Illuminate\Http\Request $request) {
-                try {
-                    $os = strtoupper(substr(PHP_OS, 0, 3));
-                    $artisanPath = base_path('artisan');
-                    $phpPath = PHP_BINARY; // Используем тот же PHP, который запустил сервер
-
-                    if ($os === 'WIN') {
-                        // Windows: запуск в фоне через start /B
-                        $command = "start /B \"\" \"$phpPath\" \"$artisanPath\" queue:work --tries=3 --timeout=7200 > NUL 2>&1";
-                        pclose(popen($command, "r"));
-                    } else {
-                        // Linux/Unix: запуск в фоне через nohup
-                        $command = "nohup \"$phpPath\" \"$artisanPath\" queue:work --tries=3 --timeout=7200 > /dev/null 2>&1 &";
-                        exec($command);
-                    }
-                    
-                    // Даем немного времени на запуск
-                    sleep(1);
-                    
-                    return response()->json(['success' => true, 'message' => 'Queue worker started']);
-                } catch (\Exception $e) {
-                    return response()->json(['success' => false, 'message' => 'Error starting queue: ' . $e->getMessage()], 500);
-                }
-            });
-        });
-
         // User preferences
         Route::prefix('user')->group(function () {
             Route::get('/preferences', [\App\Http\Controllers\Admin\UserPreferencesController::class, 'getPreferences']);
@@ -2208,7 +2092,15 @@ Route::middleware('auth:sanctum')->group(function () {
             // });
         });
 
-
+        // Экспорт файлов (для пользователей с доступом к shop)
+        Route::middleware([\App\Http\Middleware\CustomCors::class, 'auth:sanctum', 'role:admin,manager'])->prefix('export-files')->group(function () {
+            Route::get('/', [\App\Http\Controllers\Admin\ExportFilesController::class, 'index']);
+            Route::get('/stats', [\App\Http\Controllers\Admin\ExportFilesController::class, 'stats']);
+            Route::post('/', [\App\Http\Controllers\Admin\ExportFilesController::class, 'store']);
+            Route::post('/{exportFile}/complete-test', [\App\Http\Controllers\Admin\ExportFilesController::class, 'completeTest']);
+            Route::delete('/{exportFile}', [\App\Http\Controllers\Admin\ExportFilesController::class, 'destroy']);
+            Route::delete('/', [\App\Http\Controllers\Admin\ExportFilesController::class, 'clearAll']);
+        });
 
         // Modex main routes
         Route::middleware([\App\Http\Middleware\CustomCors::class, 'auth:sanctum', 'role:admin,manager'])->prefix('modex')->group(function () {

@@ -19,9 +19,38 @@ class CheckDownloadToken
     {
         $token = $request->query('token');
 
+        // Try to handle URL encoded token if present
+        if ($token && strpos($token, '%') !== false) {
+            $decodedToken = urldecode($token);
+            // If decoding changed the token, try both
+            if ($decodedToken !== $token) {
+                 $token = $decodedToken;
+            }
+        }
+
+        // DEBUG LOG TO LARAVEL LOG
+        \Log::warning("Download Token Check (WARNING LEVEL):", [
+            'token_provided' => $token,
+            'url' => $request->fullUrl(),
+            'ip' => $request->ip()
+        ]);
+        
         if ($token) {
-            // Пытаемся найти токен в базе Sanctum
+            // Очищаем токен от пробелов и кавычек (если вдруг пришли из JSON)
+            $token = trim($token, " \t\n\r\0\x0B\"'");
+
+            // Fix for tokens with pipe that might be double encoded or not handled correctly
+            if (strpos($token, '|') !== false) {
+                 // Ensure we are passing the raw string to findToken
+            }
+
             $accessToken = PersonalAccessToken::findToken($token);
+            
+            \Log::info("Token lookup result:", [
+                'found' => $accessToken ? true : false,
+                'id' => $accessToken ? $accessToken->id : null,
+                'tokenable_id' => ($accessToken && $accessToken->tokenable) ? $accessToken->tokenable->id : null
+            ]);
 
             if ($accessToken && $accessToken->tokenable) {
                 // Аутентифицируем пользователя
@@ -37,8 +66,11 @@ class CheckDownloadToken
 
         return response()->json([
             'success' => false,
-            'message' => 'Не авторизован',
-            'error' => 'Unauthenticated.'
+            'message' => 'Не авторизован (Middleware Check)',
+            'error' => 'Unauthenticated.',
+            'debug_token' => $token, 
+            'debug_encoded' => $request->query('token'),
+            'middleware_version' => 'v2'
         ], 401);
     }
 }

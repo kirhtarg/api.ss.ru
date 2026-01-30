@@ -4,11 +4,13 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ExportFile;
+use App\Jobs\ProcessModexJob;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\DB;
 
 class ExportFilesController extends Controller
 {
@@ -47,16 +49,120 @@ class ExportFilesController extends Controller
         $perPage = $request->get('per_page', 100);
 
         $files = $query->paginate($perPage);
+        foreach ($files->items() as $model) {
+            $arr = $model->toArray();
+            $conf = $arr['export_config'] ?? [];
+            if (!is_array($conf)) $conf = [];
+            $progress = (int)($conf['progress_rows'] ?? 0);
+            $total = (int)($conf['total_rows'] ?? ($arr['total_rows'] ?? 0));
+            if (($arr['status'] ?? '') === 'processing' && $total > 0 && $progress >= $total) {
+                $expectedPath = 'modex/' . $arr['filename'];
+                if (!Storage::exists($expectedPath)) {
+                    $temp = $conf['temp_output_path'] ?? null;
+                    if ($temp && Storage::exists($temp)) {
+                        try {
+                            $contents = Storage::get($temp);
+                            Storage::put($expectedPath, $contents);
+                            Storage::delete($temp);
+                        } catch (\Throwable $e) {}
+                    }
+                }
+                if (Storage::exists($expectedPath)) {
+                    try {
+                        $size = Storage::size($expectedPath);
+                        $model->update([
+                            'status' => 'completed',
+                            'file_path' => $expectedPath,
+                            'file_size' => $size,
+                            'total_rows' => $total,
+                            'error_message' => null
+                        ]);
+                    } catch (\Throwable $e) {}
+                }
+            }
+        }
+        $normalized = array_map(function($file) {
+            $arr = $file->toArray();
+            $conf = $arr['export_config'] ?? [];
+            if (!is_array($conf)) $conf = [];
+            $conf['progress_rows'] = (int)($conf['progress_rows'] ?? 0);
+            $conf['total_rows'] = (int)($conf['total_rows'] ?? ($arr['total_rows'] ?? 0));
+            if (($arr['status'] ?? '') === 'processing' && $conf['total_rows'] > 0 && $conf['progress_rows'] === 0) {
+                $conf['progress_rows'] = 1;
+            }
+            $arr['export_config'] = $conf;
+            $arr['progress_rows'] = $conf['progress_rows'];
+            $arr['rows'] = $conf['total_rows'];
+            return $arr;
+        }, $files->items());
 
         return response()->json([
             'success' => true,
-            'data' => $files->items(),
+            'data' => $normalized,
             'pagination' => [
                 'current_page' => $files->currentPage(),
                 'last_page' => $files->lastPage(),
                 'per_page' => $files->perPage(),
                 'total' => $files->total()
             ]
+        ]);
+    }
+
+    /**
+     * Получить информацию о файле экспорта
+     */
+    public function show($id): JsonResponse
+    {
+        $file = ExportFile::with('creator')->findOrFail($id);
+        $arr = $file->toArray();
+        $conf = $arr['export_config'] ?? [];
+        if (!is_array($conf)) $conf = [];
+        $conf['progress_rows'] = (int)($conf['progress_rows'] ?? 0);
+        $conf['total_rows'] = (int)($conf['total_rows'] ?? ($arr['total_rows'] ?? 0));
+        if (($arr['status'] ?? '') === 'processing' && $conf['total_rows'] > 0 && $conf['progress_rows'] === 0) {
+            $conf['progress_rows'] = 1;
+        }
+        $arr['export_config'] = $conf;
+        $arr['progress_rows'] = $conf['progress_rows'];
+        $arr['rows'] = $conf['total_rows'];
+        if (($arr['status'] ?? '') === 'processing') {
+            $path = $arr['file_path'] ?? null;
+            $expectedPath = $path ?: ('modex/' . ($arr['filename'] ?? ''));
+            $exists = $expectedPath ? Storage::exists($expectedPath) : false;
+            $progress = $conf['progress_rows'] ?? 0;
+            $total = $conf['total_rows'] ?? ($arr['total_rows'] ?? 0);
+            if (!$exists && $total > 0 && $progress >= $total) {
+                $temp = $conf['temp_output_path'] ?? null;
+                if ($temp && Storage::exists($temp)) {
+                    try {
+                        $contents = Storage::get($temp);
+                        Storage::put($expectedPath, $contents);
+                        Storage::delete($temp);
+                        $exists = true;
+                    } catch (\Throwable $e) {}
+                }
+            }
+            if ($exists && $total > 0 && $progress >= $total) {
+                $size = Storage::size($expectedPath);
+                $file->update([
+                    'status' => 'completed',
+                    'file_path' => $expectedPath,
+                    'file_size' => $size,
+                    'total_rows' => $total,
+                    'error_message' => null
+                ]);
+                $arr = $file->fresh()->toArray();
+                $c2 = $arr['export_config'] ?? [];
+                if (!is_array($c2)) $c2 = [];
+                $c2['progress_rows'] = (int)($c2['progress_rows'] ?? $total);
+                $c2['total_rows'] = (int)($c2['total_rows'] ?? $total);
+                $arr['export_config'] = $c2;
+            }
+        }
+        
+        return response()->json([
+            'success' => true,
+            'data' => $arr
         ]);
     }
 
@@ -101,13 +207,36 @@ class ExportFilesController extends Controller
             $filename = 'export_' . time() . '_' . uniqid() . '.' . $extension;
         }
 
+        $exportConfig = $request->export_config ?? [];
+
+        // Обработка загруженного шаблона
+        if (isset($exportConfig['excel_template_data'])) {
+            try {
+                $templateData = base64_decode($exportConfig['excel_template_data']);
+                if ($templateData) {
+                    $templateHash = md5($templateData);
+                    $templatePath = 'export_templates/' . $templateHash . '.xlsx';
+    
+                    if (!Storage::exists($templatePath)) {
+                        Storage::put($templatePath, $templateData);
+                    }
+    
+                    $exportConfig['template_path'] = $templatePath;
+                }
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::error('Error saving export template: ' . $e->getMessage());
+            }
+            // Удаляем данные шаблона из конфига, чтобы не сохранять в БД огромную строку
+            unset($exportConfig['excel_template_data']);
+        }
+
         $file = ExportFile::create([
             'created_by' => Auth::id(),
             'filename' => $filename,
             'original_filename' => $originalFilename,
             'format' => $format, // Сохраняем оригинальный format (excel, csv, txt)
             'status' => 'pending',
-            'export_config' => $request->export_config
+            'export_config' => $exportConfig
         ]);
 
         // Запускаем задачу экспорта (синхронно для надежности)
@@ -226,6 +355,9 @@ class ExportFilesController extends Controller
      */
     public function destroy(ExportFile $exportFile): JsonResponse
     {
+        // Удаляем задания очереди, связанные с этим файлом
+        $this->cancelQueueJobsForFile($exportFile);
+
         // Удаляем физический файл, если он существует
         if ($exportFile->file_path && Storage::exists($exportFile->file_path)) {
             Storage::delete($exportFile->file_path);
@@ -245,10 +377,23 @@ class ExportFilesController extends Controller
      */
     public function clearAll(Request $request): JsonResponse
     {
-        $files = ExportFile::all();
+        // Учитываем тип, если передан (например, type=modex)
+        $type = $request->get('type');
+        $query = ExportFile::query();
+        if ($type === 'modex') {
+            $query->where('export_config->type', 'modex');
+        } elseif ($type === 'export') {
+            $query->where(function($q) {
+                $q->whereNull('export_config->type')
+                  ->orWhere('export_config->type', '!=', 'modex');
+            });
+        }
+        $files = $query->get();
 
         $deletedCount = 0;
         foreach ($files as $file) {
+            // Удаляем задания очереди, связанные с этим файлом
+            $this->cancelQueueJobsForFile($file);
             // Удаляем физический файл
             if ($file->file_path && Storage::exists($file->file_path)) {
                 Storage::delete($file->file_path);
@@ -283,5 +428,66 @@ class ExportFilesController extends Controller
             'success' => true,
             'data' => $stats
         ]);
+    }
+
+    /**
+     * Удалить задания из очереди, связанные с конкретным ExportFile
+     */
+    private function cancelQueueJobsForFile(ExportFile $exportFile): void
+    {
+        try {
+            // Удаляем задания для ProcessModexJob
+            DB::table('jobs')
+                ->where('payload', 'like', '%App\\\\Jobs\\\\ProcessModexJob%')
+                ->where(function($q) use ($exportFile) {
+                    $patterns = [
+                        '%"id";i:' . $exportFile->id . '%',
+                        '%"id";s:%"' . $exportFile->id . '"%',
+                        '%"id":' . $exportFile->id . '%',
+                        '%;i:' . $exportFile->id . '%'
+                    ];
+                    foreach ($patterns as $p) {
+                        $q->orWhere('payload', 'like', $p);
+                    }
+                })
+                ->delete();
+
+            // Удаляем задания для ProcessExportJob (на случай общего экспорта)
+            DB::table('jobs')
+                ->where('payload', 'like', '%App\\\\Jobs\\\\ProcessExportJob%')
+                ->where(function($q) use ($exportFile) {
+                    $patterns = [
+                        '%"id";i:' . $exportFile->id . '%',
+                        '%"id";s:%"' . $exportFile->id . '"%',
+                        '%"id":' . $exportFile->id . '%',
+                        '%;i:' . $exportFile->id . '%'
+                    ];
+                    foreach ($patterns as $p) {
+                        $q->orWhere('payload', 'like', $p);
+                    }
+                })
+                ->delete();
+
+            // Также очищаем failed_jobs
+            DB::table('failed_jobs')
+                ->where(function($q) {
+                    $q->where('payload', 'like', '%App\\\\Jobs\\\\ProcessModexJob%')
+                      ->orWhere('payload', 'like', '%App\\\\Jobs\\\\ProcessExportJob%');
+                })
+                ->where(function($q) use ($exportFile) {
+                    $patterns = [
+                        '%"id";i:' . $exportFile->id . '%',
+                        '%"id";s:%"' . $exportFile->id . '"%',
+                        '%"id":' . $exportFile->id . '%',
+                        '%;i:' . $exportFile->id . '%'
+                    ];
+                    foreach ($patterns as $p) {
+                        $q->orWhere('payload', 'like', $p);
+                    }
+                })
+                ->delete();
+        } catch (\Throwable $e) {
+            // Игнорируем ошибки удаления из очереди
+        }
     }
 }

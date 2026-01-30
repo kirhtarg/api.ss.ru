@@ -605,41 +605,107 @@ class ShopGoodsController extends Controller
         }
 
         // Фильтр по остатку у/с (remote_stock_quantity)
+        // Проверяем как остатки основного товара, так и остатки вариаций
         if ($request->filled('remote_stock_quantity_not_empty')) {
-            $query->where(function($q) {
-                $q->whereNotNull('remote_stock_quantity')
-                  ->where('remote_stock_quantity', '!=', '')
-                  ->where('remote_stock_quantity', '!=', '0');
+            $query->where(function($mainQuery) {
+                // Вариант 1: Остаток у/с не пустой в основном товаре
+                $mainQuery->where(function($mainStockQuery) {
+                    $mainStockQuery->whereNotNull('remote_stock_quantity')
+                        ->where('remote_stock_quantity', '!=', '')
+                        ->where('remote_stock_quantity', '!=', '0')
+                        ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                });
+                // Вариант 2: Есть вариации с остатком у/с не пустым
+                $mainQuery->orWhere(function($variationsQuery) {
+                    $variationsQuery->whereHas('variations', function($varQ) {
+                        $varQ->whereNotNull('remote_stock_quantity')
+                            ->where('remote_stock_quantity', '!=', '')
+                            ->where('remote_stock_quantity', '!=', '0')
+                            ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                    });
+                });
             });
         } elseif ($request->filled('remote_stock_quantity_empty')) {
-            $query->where(function($q) {
-                $q->whereNull('remote_stock_quantity')
-                  ->orWhere('remote_stock_quantity', '=', '')
-                  ->orWhere('remote_stock_quantity', '=', '0');
+            $query->where(function($mainQuery) {
+                // Вариант 1: Остаток у/с пустой в основном товаре И нет вариаций с остатком у/с
+                $mainQuery->where(function($mainStockQuery) {
+                    $mainStockQuery->where(function($remoteCondition) {
+                        $remoteCondition->whereNull('remote_stock_quantity')
+                            ->orWhere('remote_stock_quantity', '=', '0')
+                            ->orWhere('remote_stock_quantity', '=', '')
+                            ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
+                    });
+                })
+                ->whereDoesntHave('variations', function($varQ) {
+                    $varQ->whereNotNull('remote_stock_quantity')
+                        ->where('remote_stock_quantity', '!=', '')
+                        ->where('remote_stock_quantity', '!=', '0')
+                        ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                });
             });
         } elseif ($request->filled('remote_stock_quantity')) {
-            // Точное значение
+            // Точное значение - проверяем как в основном товаре, так и в вариациях
             $exactValue = $request->get('remote_stock_quantity');
-            $query->where('remote_stock_quantity', '=', $exactValue);
+            $query->where(function($mainQuery) {
+                // Вариант 1: Точное значение в основном товаре
+                $mainQuery->where('remote_stock_quantity', '=', $exactValue);
+                // Вариант 2: Точное значение в вариациях
+                $mainQuery->orWhereHas('variations', function($varQ) use ($exactValue) {
+                    $varQ->where('remote_stock_quantity', '=', $exactValue);
+                });
+            });
         }
 
         // Фильтр по остатку у/с быстро (fast_remote_stock_quantity)
+        // Проверяем как остатки основного товара, так и остатки вариаций
         if ($request->filled('fast_remote_stock_quantity_not_empty')) {
-            $query->where(function($q) {
-                $q->whereNotNull('fast_remote_stock_quantity')
-                  ->where('fast_remote_stock_quantity', '!=', '')
-                  ->where('fast_remote_stock_quantity', '!=', '0');
+            $query->where(function($mainQuery) {
+                // Вариант 1: Остаток у/с быстро не пустой в основном товаре
+                $mainQuery->where(function($mainStockQuery) {
+                    $mainStockQuery->whereNotNull('fast_remote_stock_quantity')
+                        ->where('fast_remote_stock_quantity', '!=', '')
+                        ->where('fast_remote_stock_quantity', '!=', '0')
+                        ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
+                });
+                // Вариант 2: Есть вариации с остатком у/с быстро не пустым
+                $mainQuery->orWhere(function($variationsQuery) {
+                    $variationsQuery->whereHas('variations', function($varQ) {
+                        $varQ->whereNotNull('fast_remote_stock_quantity')
+                            ->where('fast_remote_stock_quantity', '!=', '')
+                            ->where('fast_remote_stock_quantity', '!=', '0')
+                            ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
+                    });
+                });
             });
         } elseif ($request->filled('fast_remote_stock_quantity_empty')) {
-            $query->where(function($q) {
-                $q->whereNull('fast_remote_stock_quantity')
-                  ->orWhere('fast_remote_stock_quantity', '=', '')
-                  ->orWhere('fast_remote_stock_quantity', '=', '0');
+            $query->where(function($mainQuery) {
+                // Вариант 1: Остаток у/с быстро пустой в основном товаре И нет вариаций с остатком у/с быстро
+                $mainQuery->where(function($mainStockQuery) {
+                    $mainStockQuery->where(function($fastRemoteCondition) {
+                        $fastRemoteCondition->whereNull('fast_remote_stock_quantity')
+                            ->orWhere('fast_remote_stock_quantity', '=', '0')
+                            ->orWhere('fast_remote_stock_quantity', '=', '')
+                            ->orWhereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) = 0');
+                    });
+                })
+                ->whereDoesntHave('variations', function($varQ) {
+                    $varQ->whereNotNull('fast_remote_stock_quantity')
+                        ->where('fast_remote_stock_quantity', '!=', '')
+                        ->where('fast_remote_stock_quantity', '!=', '0')
+                        ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
+                });
             });
         } elseif ($request->filled('fast_remote_stock_quantity')) {
-            // Точное значение
+            // Точное значение - проверяем как в основном товаре, так и в вариациях
             $exactValue = $request->get('fast_remote_stock_quantity');
-            $query->where('fast_remote_stock_quantity', '=', $exactValue);
+            $query->where(function($mainQuery) {
+                // Вариант 1: Точное значение в основном товаре
+                $mainQuery->where('fast_remote_stock_quantity', '=', $exactValue);
+                // Вариант 2: Точное значение в вариациях
+                $mainQuery->orWhereHas('variations', function($varQ) use ($exactValue) {
+                    $varQ->where('fast_remote_stock_quantity', '=', $exactValue);
+                });
+            });
         }
 
         // Фильтр по общему остатку (total_stock)
