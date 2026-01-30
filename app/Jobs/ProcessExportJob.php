@@ -835,6 +835,7 @@ class ProcessExportJob implements ShouldQueue
         // Получаем список полей из конфигурации
         $fields = $config['fields'] ?? ['id', 'name'];
 
+        $labelCounts = [];
         foreach ($fields as $field) {
             $value = $this->getFieldValue($field, $good, $variation, $config);
             // Убеждаемся, что значение - строка
@@ -846,7 +847,20 @@ class ProcessExportJob implements ShouldQueue
                 $value = (string)$value;
             }
             $label = $this->getFieldLabel($field, $config);
-            $row[$label] = $value;
+            
+            // Обеспечиваем уникальность ключей для дубликатов полей
+            if (isset($row[$label])) {
+                if (!isset($labelCounts[$label])) {
+                    $labelCounts[$label] = 1;
+                }
+                $labelCounts[$label]++;
+                // Используем специальный суффикс, который будем удалять при записи заголовков
+                $uniqueLabel = $label . '{{' . $labelCounts[$label] . '}}';
+                $row[$uniqueLabel] = $value;
+            } else {
+                $labelCounts[$label] = 1;
+                $row[$label] = $value;
+            }
         }
 
         return $row;
@@ -857,6 +871,11 @@ class ProcessExportJob implements ShouldQueue
      */
     protected function getFieldValue(string $field, $good, $variation = null, array $config = [])
     {
+        // Удаляем суффикс клонирования, если он есть (например, field__clone_123456)
+        if (strpos($field, '__clone_') !== false) {
+            $field = preg_replace('/__clone_\d+$/', '', $field);
+        }
+
         // Поддержка как объектов (Eloquent), так и массивов (toArray())
         $isArray = is_array($good);
 
@@ -878,9 +897,32 @@ class ProcessExportJob implements ShouldQueue
                 return $isArray ? ($good['name'] ?? '') : $good->name;
             case 'sku':
                 if ($variation) {
-                    return $isArray ? ($variation['sku'] ?? '') : $variation->sku;
+                    return (string)($isArray ? ($variation['sku'] ?? '') : $variation->sku);
                 }
-                return $isArray ? ($good['sku'] ?? '') : $good->sku;
+                return (string)($isArray ? ($good['sku'] ?? '') : $good->sku);
+            case 'main_image':
+                $baseUrl = config('app.frontend_url', env('FRONTEND_URL', ''));
+                if ($isArray) {
+                    $images = $good['images'] ?? [];
+                    if (empty($images)) return '';
+                    
+                    $mainImage = null;
+                    foreach ($images as $img) {
+                        if ($img['is_main'] ?? false) {
+                            $mainImage = $img;
+                            break;
+                        }
+                    }
+                    if (!$mainImage) $mainImage = $images[0];
+                    return $baseUrl . ($mainImage['file_path'] ?? '');
+                }
+                
+                if (!$good->images || $good->images->isEmpty()) return '';
+                
+                $mainImage = $good->images->where('is_main', true)->first();
+                if (!$mainImage) $mainImage = $good->images->first();
+                
+                return $baseUrl . $mainImage->file_path;
             case 'price':
                 return $variation ? $variation->price : $good->price;
             case 'sale_price':
@@ -977,6 +1019,15 @@ class ProcessExportJob implements ShouldQueue
             case 'images':
                 return $this->formatGoodImages($good, $variation);
             default:
+                // Проверяем на кастомные поля (статичные значения из конфигурации)
+                if (isset($config['custom_fields']) && is_array($config['custom_fields'])) {
+                    foreach ($config['custom_fields'] as $customField) {
+                        if (isset($customField['id']) && $customField['id'] === $field) {
+                            return $customField['value'] ?? '';
+                        }
+                    }
+                }
+
                 // Проверяем на характеристики и атрибуты вариаций
                 // Сначала проверяем старый формат с префиксами
                 if (str_starts_with($field, 'prop_')) {
@@ -1070,18 +1121,47 @@ class ProcessExportJob implements ShouldQueue
     protected function formatGoodImages($good, $variation = null): string
     {
         $images = [];
+        $baseUrl = config('app.frontend_url', env('FRONTEND_URL', ''));
+        $isArray = is_array($good);
 
-        if ($variation && isset($variation->images)) {
-            foreach ($variation->images as $image) {
-                $images[] = $image->file_path;
+        if ($variation) {
+            $varImages = $isArray ? ($variation['images'] ?? []) : ($variation->images ?? []);
+            // Если images - это Collection, преобразуем
+            if (!is_array($varImages) && method_exists($varImages, 'toArray')) {
+                $varImages = $varImages; // Iterate directly over collection
+            }
+            
+            foreach ($varImages as $image) {
+                $path = $isArray ? ($image['file_path'] ?? '') : $image->file_path;
+                if ($path) $images[] = $baseUrl . $path;
             }
         }
 
-        if (isset($good->images)) {
-            foreach ($good->images as $image) {
-                if (!$variation || !isset($variation->images) || !$variation->images->contains('id', $image->id)) {
-                    $images[] = $image->file_path;
+        $goodImages = $isArray ? ($good['images'] ?? []) : ($good->images ?? []);
+        
+        foreach ($goodImages as $image) {
+            $imgId = $isArray ? ($image['id'] ?? null) : $image->id;
+            $path = $isArray ? ($image['file_path'] ?? '') : $image->file_path;
+            
+            $skip = false;
+            if ($variation) {
+                $varImages = $isArray ? ($variation['images'] ?? []) : ($variation->images ?? []);
+                // Collection contains check
+                if (!$isArray && method_exists($varImages, 'contains')) {
+                    if ($varImages->contains('id', $imgId)) $skip = true;
+                } else {
+                    foreach ($varImages as $vImg) {
+                        $vId = $isArray ? ($vImg['id'] ?? null) : $vImg->id;
+                        if ($vId == $imgId) {
+                            $skip = true;
+                            break;
+                        }
+                    }
                 }
+            }
+            
+            if (!$skip && $path) {
+                $images[] = $baseUrl . $path;
             }
         }
 
@@ -1335,7 +1415,9 @@ class ProcessExportJob implements ShouldQueue
         if (!empty($data)) {
             $headers = array_keys($data[0]);
             $output .= implode(',', array_map(function($header) {
-                return '"' . str_replace('"', '""', $header) . '"';
+                // Remove {{...}} suffix
+                $cleanHeader = preg_replace('/\{\{\d+\}\}$/', '', $header);
+                return '"' . str_replace('"', '""', $cleanHeader) . '"';
             }, $headers)) . "\n";
 
             foreach ($data as $row) {
@@ -1362,7 +1444,10 @@ class ProcessExportJob implements ShouldQueue
 
         if (!empty($data)) {
             $headers = array_keys($data[0]);
-            $output .= implode("\t", $headers) . "\n";
+            $cleanHeaders = array_map(function($header) {
+                return preg_replace('/\{\{\d+\}\}$/', '', $header);
+            }, $headers);
+            $output .= implode("\t", $cleanHeaders) . "\n";
 
             foreach ($data as $row) {
                 $values = array_map(function($value) {
@@ -1410,7 +1495,8 @@ class ProcessExportJob implements ShouldQueue
                         $headers = array_keys($firstRow);
                         $col = 'A';
                         foreach ($headers as $header) {
-                            $sheet->setCellValue($col . $headerRow, $header);
+                            $cleanHeader = preg_replace('/\{\{\d+\}\}$/', '', $header);
+                            $sheet->setCellValue($col . $headerRow, $cleanHeader);
                             $col++;
                         }
                     }
@@ -1503,7 +1589,8 @@ class ProcessExportJob implements ShouldQueue
             if (is_array($firstRow)) {
                 $headers = array_keys($firstRow);
                 $headerCells = array_map(function($value) {
-                    return Cell::fromValue((string)$value);
+                    $cleanValue = preg_replace('/\{\{\d+\}\}$/', '', (string)$value);
+                    return Cell::fromValue($cleanValue);
                 }, $headers);
                 $writer->addRow(new Row($headerCells));
             }
