@@ -239,8 +239,8 @@ class ExportFilesController extends Controller
             'export_config' => $exportConfig
         ]);
 
-        // Запускаем задачу экспорта (синхронно для надежности)
-        \App\Jobs\ProcessExportJob::dispatchSync($file);
+        // Запускаем задачу экспорта (асинхронно через очередь)
+        \App\Jobs\ProcessExportJob::dispatch($file);
 
         return response()->json([
             'success' => true,

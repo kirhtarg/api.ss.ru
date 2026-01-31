@@ -44,7 +44,8 @@ class ShopGoodsController extends Controller
             'label:id,name,color',
             'properties:id,name,slug',
             'images:id,good_id,file_path,alt_text,is_main,sort_order',
-            'variations:id,good_id,name,sku,price,sale_price,demping_price,show_demping,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,is_active,supplier'
+            'variations:id,good_id,name,sku,price,sale_price,demping_price,show_demping,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,is_active,supplier',
+            'variations.images:id,variation_id,file_path,alt_text,is_main,sort_order'
         ])->withCount('variations');
 
         // Загружаем pivot данные для свойств (поддерживаем разные схемы: value или shop_property_value_id)

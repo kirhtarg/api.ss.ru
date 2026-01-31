@@ -12,8 +12,10 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
-use OpenSpout\Writer\XLSX\Options;
-use OpenSpout\Writer\XLSX\Writer;
+use OpenSpout\Writer\XLSX\Options as XlsxOptions;
+use OpenSpout\Writer\XLSX\Writer as XlsxWriter;
+use OpenSpout\Writer\CSV\Options as CsvOptions;
+use OpenSpout\Writer\CSV\Writer as CsvWriter;
 use OpenSpout\Common\Entity\Row;
 use OpenSpout\Common\Entity\Cell;
 
@@ -21,7 +23,7 @@ class ProcessExportJob implements ShouldQueue
 {
     use Queueable;
 
-    public $timeout = 3600; // 1 час таймаут
+    public $timeout = 7200; // 2 часа таймаут
     public $tries = 3; // 3 попытки
 
     protected ExportFile $exportFile;
@@ -40,18 +42,14 @@ class ProcessExportJob implements ShouldQueue
     public function handle(): void
     {
         try {
+            ini_set('memory_limit', '2048M');
+            ini_set('max_execution_time', '7200');
+
             // Обновляем статус на "обрабатывается"
             $this->exportFile->update(['status' => 'processing']);
 
             // Получаем конфигурацию экспорта
             $config = $this->exportFile->export_config ?? [];
-
-            // Получаем данные для экспорта
-            $exportData = $this->getExportData($config);
-
-            if (empty($exportData)) {
-                throw new \Exception('Нет данных для экспорта');
-            }
 
             $filePath = 'exports/' . $this->exportFile->filename;
             $fullPath = Storage::path($filePath);
@@ -62,27 +60,38 @@ class ProcessExportJob implements ShouldQueue
                 mkdir($directory, 0755, true);
             }
 
-            // Определяем, использовать ли OpenSpout
-            // Используем Spout только для Excel и если НЕТ шаблона
-            // Если есть шаблон, используем PhpSpreadsheet для сохранения стилей
-            $useSpout = $this->exportFile->format === 'excel' && empty($config['template_path']);
+            // Определяем, использовать ли потоковую выгрузку (OpenSpout)
+            // Используем для всех форматов, если нет шаблона Excel
+            // Для CSV и TXT всегда используем потоковую выгрузку, так как шаблоны для них не поддерживаются
+            $useStreaming = empty($config['template_path']);
 
-            if ($useSpout) {
-                $this->generateExcelWithSpout($exportData, $fullPath);
+            $totalRows = 0;
+            $fileSize = 0;
+
+            if ($useStreaming) {
+                $totalRows = $this->streamExport($config, $fullPath, $this->exportFile->format);
                 
                 if (file_exists($fullPath)) {
                     $fileSize = filesize($fullPath);
                 } else {
-                    // Если что-то пошло не так, пробуем стандартный метод
-                    $fileContent = $this->generateFileContent($exportData, $this->exportFile->format);
-                    Storage::put($filePath, $fileContent);
-                    $fileSize = Storage::size($filePath);
+                    throw new \Exception('Failed to create export file');
                 }
             } else {
-                // Генерируем файл стандартным способом (PhpSpreadsheet для шаблонов, CSV, TXT)
+                // Стандартный метод (только для Excel с шаблоном)
+                // Загружаем все данные в память (не рекомендуется для больших файлов)
+                $query = $this->getExportQuery($config);
+                $goods = $query->get();
+                $exportData = $this->processChunk($goods, $config);
+
+                if (empty($exportData)) {
+                    throw new \Exception('Нет данных для экспорта');
+                }
+
+                // Генерируем файл с использованием шаблона
                 $fileContent = $this->generateFileContent($exportData, $this->exportFile->format);
                 Storage::put($filePath, $fileContent);
                 $fileSize = Storage::size($filePath);
+                $totalRows = count($exportData);
             }
 
             // Обновляем запись в БД
@@ -90,7 +99,7 @@ class ProcessExportJob implements ShouldQueue
                 'status' => 'completed',
                 'file_path' => $filePath,
                 'file_size' => $fileSize,
-                'total_rows' => count($exportData)
+                'total_rows' => $totalRows
             ]);
 
         } catch (\Exception $e) {
@@ -110,11 +119,106 @@ class ProcessExportJob implements ShouldQueue
     }
 
     /**
-     * Получить данные для экспорта
+     * Потоковая выгрузка (Excel, CSV, TXT) с использованием OpenSpout
      */
-    protected function getExportData(array $config): array
+    protected function streamExport(array $config, string $filePath, string $format): int
     {
+        $writer = null;
 
+        if ($format === 'csv' || $format === 'txt') {
+            $options = new CsvOptions();
+            if ($format === 'txt') {
+                $options->setFieldDelimiter("\t");
+            }
+            $writer = new CsvWriter($options);
+        } else {
+            $options = new XlsxOptions();
+            $writer = new XlsxWriter($options);
+        }
+
+        $writer->openToFile($filePath);
+
+        $query = $this->getExportQuery($config);
+        
+        // Считаем общее количество строк для корректного отображения прогресса
+        try {
+            $totalCount = $query->count();
+            $this->exportFile->update([
+                'total_rows' => $totalCount
+            ]);
+        } catch (\Throwable $e) {
+            // Если не удалось посчитать (сложный запрос), оставляем 0
+        }
+
+        $processedRows = 0;
+        $headersWritten = false;
+
+        $query->chunk(500, function($goods) use ($writer, $config, &$processedRows, &$headersWritten) {
+            $data = $this->processChunk($goods, $config);
+            
+            if (empty($data)) return;
+
+            // Записываем заголовки (из первого чанка)
+            if (!$headersWritten) {
+                $firstRow = $data[0];
+                if (is_array($firstRow)) {
+                    $headers = array_keys($firstRow);
+                    $headerCells = array_map(function($value) {
+                        $cleanValue = preg_replace('/\{\{\d+\}\}$/', '', (string)$value);
+                        return Cell::fromValue($cleanValue);
+                    }, $headers);
+                    $writer->addRow(new Row($headerCells));
+                }
+                $headersWritten = true;
+            }
+
+            // Записываем данные
+            foreach ($data as $dataRow) {
+                if (is_array($dataRow)) {
+                    $cells = array_map(function($value) {
+                        if (is_array($value) || is_object($value)) {
+                            $strVal = json_encode($value, JSON_UNESCAPED_UNICODE);
+                        } elseif ($value === null) {
+                            $strVal = '';
+                        } else {
+                            $strVal = (string)$value;
+                        }
+                        
+                        // Защита от инъекций формул (для всех форматов для безопасности)
+                        if (str_starts_with($strVal, '=')) {
+                            $strVal = ' ' . $strVal;
+                        }
+                        
+                        return Cell::fromValue($strVal);
+                    }, array_values($dataRow));
+                    
+                    $writer->addRow(new Row($cells));
+                    
+                    $processedRows++;
+                    
+                    // Обновляем прогресс (паттерн Modex: часто в начале, потом реже)
+                    if ($processedRows <= 100 || $processedRows % 50 === 0) {
+                        try {
+                            $conf = $this->exportFile->export_config ?? [];
+                            $conf['progress_rows'] = $processedRows;
+                            $this->exportFile->update([
+                                'export_config' => $conf
+                            ]);
+                        } catch (\Throwable $e) {}
+                    }
+                }
+            }
+        });
+
+        $writer->close();
+        return $processedRows;
+    }
+
+    /**
+     * Подготовка запроса для выборки данных
+     */
+    protected function getExportQuery(array $config)
+    {
         // Фильтр по массиву ID (для экспорта выбранных товаров) - должен быть первым
         $selectedIds = null;
         if (isset($config['filters']['selected_ids']) && !empty($config['filters']['selected_ids'])) {
@@ -150,7 +254,8 @@ class ProcessExportJob implements ShouldQueue
             'label:id,name,color',
             'properties:id,name,slug',
             'images:id,good_id,file_path,alt_text,is_main,sort_order',
-            'variations:id,good_id,name,sku,price,sale_price,demping_price,show_demping,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,is_active'
+            'variations:id,good_id,name,sku,price,sale_price,demping_price,show_demping,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,is_active',
+            'variations.images:id,variation_id,file_path,alt_text,is_main,sort_order'
         ]);
 
         // Применяем фильтр по выбранным товарам (если указан)
@@ -176,7 +281,15 @@ class ProcessExportJob implements ShouldQueue
             }]);
         }
 
-        $goods = $query->get();
+        return $query;
+    }
+
+    /**
+     * Обработка чанка данных (загрузка связей и форматирование)
+     */
+    protected function processChunk($goods, array $config): array
+    {
+        $hasValueCol = Schema::hasColumn('shop_good_properties', 'value');
 
         // Обрабатываем характеристики товаров
         foreach ($goods as $good) {
@@ -204,6 +317,16 @@ class ProcessExportJob implements ShouldQueue
         }
 
         return $this->formatExportData($goods, $config);
+    }
+
+    /**
+     * Получить данные для экспорта (Legacy wrapper)
+     */
+    protected function getExportData(array $config): array
+    {
+        $query = $this->getExportQuery($config);
+        $goods = $query->get();
+        return $this->processChunk($goods, $config);
     }
 
     /**
@@ -799,10 +922,10 @@ class ProcessExportJob implements ShouldQueue
     /**
      * Форматировать данные для экспорта
      */
-    protected function formatExportData($goods, array $config): array
+    protected function formatExportData($goods, array $config, int $startRowCounter = 1): array
     {
         $exportRows = [];
-        $rowCounter = 1;
+        $rowCounter = $startRowCounter;
 
         foreach ($goods as $good) {
             $hasVariations = $good->variations && $good->variations->count() > 0;
@@ -831,36 +954,31 @@ class ProcessExportJob implements ShouldQueue
     protected function createExportRow($good, array $config, int $rowCounter, $variation = null): array
     {
         $row = [];
+        $labelCounts = [];
 
         // Получаем список полей из конфигурации
-        $fields = $config['fields'] ?? ['id', 'name'];
+        $fields = $config['fields'] ?? [];
+        if (empty($fields)) {
+            // Если поля не указаны, берем стандартные
+            $fields = ['id', 'name', 'sku', 'price', 'stock_quantity'];
+        }
 
-        $labelCounts = [];
         foreach ($fields as $field) {
-            $value = $this->getFieldValue($field, $good, $variation, $config);
-            // Убеждаемся, что значение - строка
-            if (is_array($value) || is_object($value)) {
-                $value = json_encode($value);
-            } elseif ($value === null) {
-                $value = '';
-            } else {
-                $value = (string)$value;
-            }
             $label = $this->getFieldLabel($field, $config);
+            $value = $this->getFieldValue($good, $field, $config, $variation, $rowCounter);
             
-            // Обеспечиваем уникальность ключей для дубликатов полей
-            if (isset($row[$label])) {
-                if (!isset($labelCounts[$label])) {
-                    $labelCounts[$label] = 1;
-                }
+            // Обработка дублирующихся заголовков (например, при клонировании полей)
+            // Добавляем суффикс {{count}} для уникальности ключа массива
+            // Этот суффикс будет удален при записи заголовков в файл
+            if (isset($labelCounts[$label])) {
                 $labelCounts[$label]++;
-                // Используем специальный суффикс, который будем удалять при записи заголовков
                 $uniqueLabel = $label . '{{' . $labelCounts[$label] . '}}';
-                $row[$uniqueLabel] = $value;
             } else {
                 $labelCounts[$label] = 1;
-                $row[$label] = $value;
+                $uniqueLabel = $label;
             }
+            
+            $row[$uniqueLabel] = $value;
         }
 
         return $row;
@@ -869,124 +987,43 @@ class ProcessExportJob implements ShouldQueue
     /**
      * Получить значение поля
      */
-    protected function getFieldValue(string $field, $good, $variation = null, array $config = [])
+    protected function getFieldValue($good, string $field, array $config, $variation = null, int $rowCounter = 0)
     {
-        // Удаляем суффикс клонирования, если он есть (например, field__clone_123456)
+        $isArray = is_array($good);
+        
+        // Handle cloned fields
         if (strpos($field, '__clone_') !== false) {
             $field = preg_replace('/__clone_\d+$/', '', $field);
         }
 
-        // Поддержка как объектов (Eloquent), так и массивов (toArray())
-        $isArray = is_array($good);
-
-        // Хелпер для безопасного доступа к полям
-        $getValue = function($obj, $key, $default = '') use ($isArray) {
-            if ($isArray) {
-                return $obj[$key] ?? $default;
-            }
-            return $obj->$key ?? $default;
-        };
-
-        // Реализуем получение значений полей аналогично фронтенду
         switch ($field) {
             case 'counter':
-                return '';
+                return $rowCounter;
+            case 'variation':
+                return $this->formatVariationAttributes($variation);
             case 'id':
                 return $isArray ? ($good['id'] ?? '') : $good->id;
             case 'name':
                 return $isArray ? ($good['name'] ?? '') : $good->name;
             case 'sku':
-                if ($variation) {
-                    return (string)($isArray ? ($variation['sku'] ?? '') : $variation->sku);
-                }
-                return (string)($isArray ? ($good['sku'] ?? '') : $good->sku);
-            case 'main_image':
-                $baseUrl = config('app.frontend_url', env('FRONTEND_URL', ''));
-                if ($isArray) {
-                    $images = $good['images'] ?? [];
-                    if (empty($images)) return '';
-                    
-                    $mainImage = null;
-                    foreach ($images as $img) {
-                        if ($img['is_main'] ?? false) {
-                            $mainImage = $img;
-                            break;
-                        }
-                    }
-                    if (!$mainImage) $mainImage = $images[0];
-                    return $baseUrl . ($mainImage['file_path'] ?? '');
-                }
-                
-                if (!$good->images || $good->images->isEmpty()) return '';
-                
-                $mainImage = $good->images->where('is_main', true)->first();
-                if (!$mainImage) $mainImage = $good->images->first();
-                
-                return $baseUrl . $mainImage->file_path;
-            case 'price':
-                return $variation ? $variation->price : $good->price;
-            case 'sale_price':
-                return $variation ? $variation->sale_price : $good->sale_price;
-            case 'demping_price':
-                return $variation ? $variation->demping_price : $good->demping_price;
-            case 'show_demping':
-                $showDemping = $variation ? $variation->show_demping : $good->show_demping;
-                return $showDemping ? 'Да' : 'Нет';
-            case 'stock_quantity':
-                return $variation ? $variation->stock_quantity : $good->stock_quantity;
-            case 'remote_stock_quantity':
-                return $variation ? $variation->remote_stock_quantity : $good->remote_stock_quantity;
-            case 'fast_remote_stock_quantity':
-                return $variation ? $variation->fast_remote_stock_quantity : $good->fast_remote_stock_quantity;
-            case 'variation':
-                return $this->formatVariationAttributes($variation);
-            case 'supplier':
-                if ($variation) {
-                    if ($isArray) {
-                        $supplier = $variation['supplier'] ?? null;
-                        if ($supplier) {
-                            return is_string($supplier) ? $supplier : ($supplier['name'] ?? '');
-                        }
-                        return $variation['supplier_name'] ?? '';
-                    }
-                    if ($variation->supplier) {
-                        return is_string($variation->supplier) ? $variation->supplier : ($variation->supplier->name ?? '');
-                    }
-                    if ($variation->supplier_name) {
-                        return $variation->supplier_name;
-                    }
-                }
-                return $isArray ? ($good['supplier'] ?? $good['supplier_name'] ?? '') : ($good->supplier ?? $good->supplier_name ?? '');
-            case 'supplier_name':
-                return $isArray ? ($good['supplier_name'] ?? '') : ($good->supplier_name ?? '');
+                return (string)($isArray ? ($variation['sku'] ?? '') : ($variation->sku ?? $good->sku));
             case 'description':
-                return $isArray ? ($good['description'] ?? '') : ($good->description ?? '');
+                return $isArray ? ($good['description'] ?? '') : $good->description;
             case 'short_description':
-                return $isArray ? ($good['short_description'] ?? '') : ($good->short_description ?? '');
-            case 'width':
-                return $isArray ? ($good['width'] ?? '') : ($good->width ?? '');
-            case 'height':
-                return $isArray ? ($good['height'] ?? '') : ($good->height ?? '');
-            case 'depth':
-                return $isArray ? ($good['depth'] ?? '') : ($good->depth ?? '');
-            case 'weight':
-                return $isArray ? ($good['weight'] ?? '') : ($good->weight ?? '');
-            case 'is_active':
-                $active = $isArray ? ($good['is_active'] ?? false) : $good->is_active;
-                return $active ? 'Да' : 'Нет';
-            case 'is_featured':
-                $featured = $isArray ? ($good['is_featured'] ?? false) : $good->is_featured;
-                return $featured ? 'Да' : 'Нет';
-            case 'is_new':
-                $new = $isArray ? ($good['is_new'] ?? false) : $good->is_new;
-                return $new ? 'Да' : 'Нет';
-            case 'is_sale':
-                $sale = $isArray ? ($good['is_sale'] ?? false) : $good->is_sale;
-                return $sale ? 'Да' : 'Нет';
-            case 'is_preorder':
-                return $good->is_preorder ? 'Да' : 'Нет';
-            case 'is_show':
-                return $good->is_show ? 'Да' : 'Нет';
+                return $isArray ? ($good['short_description'] ?? '') : $good->short_description;
+            case 'price':
+                return $isArray ? ($variation['price'] ?? $good['price'] ?? 0) : ($variation->price ?? $good->price);
+            case 'sale_price':
+                return $isArray ? ($variation['sale_price'] ?? $good['sale_price'] ?? 0) : ($variation->sale_price ?? $good->sale_price);
+            case 'demping_price':
+                return $isArray ? ($variation['demping_price'] ?? $good['demping_price'] ?? 0) : ($variation->demping_price ?? $good->demping_price);
+            case 'stock_quantity':
+                return $isArray ? ($variation['stock_quantity'] ?? $good['stock_quantity'] ?? 0) : ($variation->stock_quantity ?? $good->stock_quantity);
+            case 'remote_stock_quantity':
+                return $isArray ? ($variation['remote_stock_quantity'] ?? $good['remote_stock_quantity'] ?? '') : ($variation->remote_stock_quantity ?? $good->remote_stock_quantity);
+            case 'fast_remote_stock_quantity':
+                return $isArray ? ($variation['fast_remote_stock_quantity'] ?? $good['fast_remote_stock_quantity'] ?? '') : ($variation->fast_remote_stock_quantity ?? $good->fast_remote_stock_quantity);
+            case 'category':
             case 'categories':
                 if ($isArray) {
                     $categories = $good['categories'] ?? [];
@@ -994,6 +1031,7 @@ class ProcessExportJob implements ShouldQueue
                     return implode(', ', array_filter($names));
                 }
                 return $good->categories ? $good->categories->pluck('name')->filter()->join(', ') : '';
+            case 'brand':
             case 'brands':
                 if ($isArray) {
                     $brands = $good['brands'] ?? [];
@@ -1014,15 +1052,69 @@ class ProcessExportJob implements ShouldQueue
                     return $label && isset($label['name']) ? $label['name'] : '';
                 }
                 return $good->label && isset($good->label->name) ? $good->label->name : '';
+            case 'type':
+            case 'model':
+            case 'year':
+                return $isArray ? '' : $this->getParsedFieldValue($good, $field, $config);
             case 'properties':
                 return $this->formatGoodProperties($good);
             case 'images':
+            case 'related_images':
                 return $this->formatGoodImages($good, $variation);
+            case 'main_image':
+                $baseUrl = config('app.frontend_url', env('FRONTEND_URL', ''));
+                $mainImg = null;
+
+                // Если есть вариация, сначала ищем изображение в ней
+                if ($variation) {
+                    $varImages = $isArray ? ($variation['images'] ?? []) : ($variation->images ?? []);
+                    
+                    foreach ($varImages as $img) {
+                        $isMain = $isArray ? ($img['is_main'] ?? false) : $img->is_main;
+                        if ($isMain) {
+                            $mainImg = $img;
+                            break;
+                        }
+                    }
+                    
+                    if (!$mainImg && count($varImages) > 0) {
+                        $mainImg = is_array($varImages) ? reset($varImages) : $varImages->first();
+                    }
+                }
+
+                // Если не нашли в вариации (или это не вариация), ищем в основном товаре
+                if (!$mainImg) {
+                    $images = $isArray ? ($good['images'] ?? []) : ($good->images ?? []);
+                    
+                    foreach ($images as $img) {
+                        $isMain = $isArray ? ($img['is_main'] ?? false) : $img->is_main;
+                        if ($isMain) {
+                            $mainImg = $img;
+                            break;
+                        }
+                    }
+                    if (!$mainImg && count($images) > 0) {
+                        $mainImg = is_array($images) ? reset($images) : $images->first();
+                    }
+                }
+
+                if ($mainImg) {
+                    $path = $isArray ? ($mainImg['file_path'] ?? '') : $mainImg->file_path;
+                    if ($path) return $baseUrl . $path;
+                }
+                return '';
+                
             default:
                 // Проверяем на кастомные поля (статичные значения из конфигурации)
                 if (isset($config['custom_fields']) && is_array($config['custom_fields'])) {
                     foreach ($config['custom_fields'] as $customField) {
-                        if (isset($customField['id']) && $customField['id'] === $field) {
+                        // Support both raw field name and suffix-stripped name
+                        $cleanField = $field;
+                        if (strpos($cleanField, '__clone_') !== false) {
+                            $cleanField = preg_replace('/__clone_\d+$/', '', $cleanField);
+                        }
+                        
+                        if (isset($customField['id']) && $customField['id'] === $cleanField) {
                             return $customField['value'] ?? '';
                         }
                     }
@@ -1079,19 +1171,31 @@ class ProcessExportJob implements ShouldQueue
      */
     protected function formatVariationAttributes($variation): string
     {
-        if (!$variation || !isset($variation->attributes)) {
+        if (!$variation) {
             return '';
         }
 
         $attributes = [];
-        foreach ($variation->attributes as $attr) {
-            // Проверяем разные возможные структуры данных
-            $attrName = $attr['attribute_name'] ?? $attr['name'] ?? 'unknown';
-            $attrValue = $attr['value_value'] ?? $attr['value'] ?? '';
-            $attributes[] = $attrName . ': ' . $attrValue;
+        if (is_object($variation)) {
+            $attributes = $variation->attributes ?? [];
+        } elseif (is_array($variation)) {
+            $attributes = $variation['attributes'] ?? [];
         }
 
-        return implode(', ', $attributes);
+        if (empty($attributes)) {
+            return '';
+        }
+
+        $formatted = [];
+        foreach ($attributes as $attr) {
+            // Проверяем разные возможные структуры данных
+            $attr = (array)$attr;
+            $attrName = $attr['attribute_name'] ?? $attr['name'] ?? 'unknown';
+            $attrValue = $attr['value_value'] ?? $attr['value'] ?? '';
+            $formatted[] = $attrName . ': ' . $attrValue;
+        }
+
+        return implode(', ', $formatted);
     }
 
     /**
@@ -1306,20 +1410,11 @@ class ProcessExportJob implements ShouldQueue
             return '';
         }
 
-        $currentYear = (int) date('Y');
-        $minYear = $currentYear - 10;
-        $maxYear = $currentYear + 1;
-
         // Ищем 4-значные числа в диапазоне лет
         preg_match_all('/\b(20\d{2}|19\d{2})\b/', $text, $matches);
 
         if (!empty($matches[0])) {
-            foreach ($matches[0] as $yearStr) {
-                $year = (int) $yearStr;
-                if ($year >= $minYear && $year <= $maxYear) {
-                    return $yearStr;
-                }
-            }
+            return $matches[0][0];
         }
 
         return '';
@@ -1579,8 +1674,8 @@ class ProcessExportJob implements ShouldQueue
      */
     protected function generateExcelWithSpout(array $data, string $filePath): void
     {
-        $options = new Options();
-        $writer = new Writer($options);
+        $options = new XlsxOptions();
+        $writer = new XlsxWriter($options);
         $writer->openToFile($filePath);
 
         if (!empty($data)) {
