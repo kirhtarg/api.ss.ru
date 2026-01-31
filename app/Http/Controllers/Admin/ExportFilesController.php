@@ -276,7 +276,7 @@ class ExportFilesController extends Controller
     /**
      * Скачать файл экспорта
      */
-    public function download(Request $request, ExportFile $exportFile): \Symfony\Component\HttpFoundation\BinaryFileResponse
+    public function download(Request $request, ExportFile $exportFile): \Symfony\Component\HttpFoundation\StreamedResponse
     {
         // Проверяем аутентификацию через token в query параметре
         $token = $request->query('token');

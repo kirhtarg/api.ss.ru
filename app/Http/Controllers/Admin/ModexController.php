@@ -221,7 +221,7 @@ class ModexController extends Controller
     /**
      * Скачать результат модекса
      */
-    public function download(Request $request, $id): \Symfony\Component\HttpFoundation\BinaryFileResponse
+    public function download(Request $request, $id): \Symfony\Component\HttpFoundation\StreamedResponse
     {
         $exportFile = ExportFile::findOrFail($id);
 
