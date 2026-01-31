@@ -181,7 +181,8 @@ class ProcessModexJob implements ShouldQueue
 
         if (empty($rules)) {
             $tempOut = 'temp/modex_out_' . time() . '_' . uniqid() . '.xlsx';
-            Storage::copy(str_replace(storage_path('app/'), '', $inputFilePath), $tempOut);
+            // Since inputFilePath is absolute, we can just read it and write to storage
+            Storage::put($tempOut, file_get_contents($inputFilePath));
             return $tempOut;
         }
 
@@ -413,7 +414,7 @@ class ProcessModexJob implements ShouldQueue
         gc_collect_cycles();
         
         $tempOut = 'temp/modex_out_' . time() . '_' . uniqid() . '.xlsx';
-        $fullOutputPath = storage_path('app/' . $tempOut);
+        $fullOutputPath = Storage::path($tempOut);
         
         $dir = dirname($fullOutputPath);
         if (!is_dir($dir)) mkdir($dir, 0755, true);
@@ -461,7 +462,7 @@ class ProcessModexJob implements ShouldQueue
                 $this->debugLog('Final update failed: ' . $e->getMessage());
             }
 
-            return str_replace(storage_path('app/'), '', $tempOut);
+            return $tempOut;
 
         } catch (\Throwable $e) {
             $this->debugLog('Spout write failed: ' . $e->getMessage());
