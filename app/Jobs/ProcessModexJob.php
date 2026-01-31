@@ -45,9 +45,6 @@ class ProcessModexJob implements ShouldQueue
      */
     public function handle(): void
     {
-        // Debug Log at very start
-        Log::info("[" . date('Y-m-d H:i:s') . "] START ProcessModexJob handle() for file: " . $this->modexFile->id);
-
         try {
             // Проверяем существование файла
             $config = $this->modexFile->export_config ?? [];
@@ -81,12 +78,7 @@ class ProcessModexJob implements ShouldQueue
             clearstatcache();
 
             if (!$tempOutputPath || (!Storage::exists($tempOutputPath) && !file_exists(Storage::path($tempOutputPath)))) {
-                Log::error('Temp output file not created', [
-                    'path' => $tempOutputPath,
-                    'full_path' => $tempOutputPath ? Storage::path($tempOutputPath) : null,
-                    'storage_exists' => $tempOutputPath ? Storage::exists($tempOutputPath) : false,
-                    'file_exists' => $tempOutputPath ? file_exists(Storage::path($tempOutputPath)) : false
-                ]);
+                Log::error('Temp output file not created', ['path' => $tempOutputPath]);
                 throw new \Exception('Failed to create temp output file: ' . ($tempOutputPath ?? 'null'));
             }
             try {
@@ -221,7 +213,6 @@ class ProcessModexJob implements ShouldQueue
             if ($sheet->getIndex() > 0) break; // Only first sheet
 
             foreach ($sheet->getRowIterator() as $row) {
-                if ($progressRows % 100 === 0) echo ">>> P1 Row $progressRows\n";
                 try {
                     // Extract row data
                     $rowData = [];
@@ -238,8 +229,6 @@ class ProcessModexJob implements ShouldQueue
                         $headers = $rowData;
                         $progressRows++;
                         
-                        $this->debugLog('Headers found: ' . implode(',', $headers));
-
                         // Skip DB update for headers to avoid "1" progress confusion
                         continue;
                     }
@@ -255,10 +244,6 @@ class ProcessModexJob implements ShouldQueue
 
                         $ruleResult = $this->applyModexRule($ruleKey, $cellValue, $params);
                         
-                        if ($progressRows < 5) {
-                             $this->debugLog("Row $progressRows Rule $ruleIndex: key=$ruleKey col=$sourceColumn resolved=$colIndex val=" . substr($cellValue, 0, 50));
-                        }
-
                         $count = 0;
                         if ($ruleResult !== null) {
                             $count = is_array($ruleResult) ? count($ruleResult) : 1;
@@ -282,15 +267,12 @@ class ProcessModexJob implements ShouldQueue
                         } catch (\Throwable $e) {}
                     }
                 } catch (\Throwable $e) {
-                    $this->debugLog("Error in Phase 1 Row $progressRows: " . $e->getMessage());
                     throw $e;
                 }
             }
         }
         $reader->close();
         
-        $this->debugLog('Phase 1 completed. Rows: ' . $progressRows);
-
         // Calculate New Headers
         $newHeaders = $headers;
         foreach ($rules as $ruleIndex => $rule) {
@@ -315,7 +297,6 @@ class ProcessModexJob implements ShouldQueue
         }
 
         // Pass 2: Write to CSV
-        $this->debugLog('Phase 2 Start (Write CSV)');
         fputcsv($csvHandle, $newHeaders);
         
         $removeTagsGlobal = (bool)($config['removeTags'] ?? $config['removeTagsAll'] ?? false);
@@ -401,8 +382,6 @@ class ProcessModexJob implements ShouldQueue
         $reader->close();
         fclose($csvHandle);
         
-        $this->debugLog('Phase 2 completed.');
-
         // Save CSV path
         try {
             $currentConfig = $this->modexFile->export_config ?? [];
@@ -411,7 +390,6 @@ class ProcessModexJob implements ShouldQueue
         } catch (\Throwable $e) {}
 
         // --- PHASE 3: CSV to XLSX ---
-        $this->debugLog('Phase 3 Start (CSV to XLSX)');
         
         // Update Phase to generating
         try {
@@ -455,7 +433,6 @@ class ProcessModexJob implements ShouldQueue
             $writer->close();
             
             @unlink($tempCsvPath);
-            $this->debugLog('Phase 3 completed. Rows: ' . $rowIndex);
 
             // Update model immediately
             try {
@@ -468,20 +445,14 @@ class ProcessModexJob implements ShouldQueue
                     'export_config' => array_merge($this->modexFile->export_config ?? [], ['phase' => 'completed', 'progress_rows' => $rowIndex])
                 ]);
             } catch (\Throwable $e) {
-                $this->debugLog('Final update failed: ' . $e->getMessage());
+                // Log silently if needed or ignore
             }
 
             return $tempOut;
 
         } catch (\Throwable $e) {
-            $this->debugLog('Spout write failed: ' . $e->getMessage());
             throw $e;
         }
-    }
-
-    protected function debugLog($message)
-    {
-        Log::info("[ProcessModexJob] " . $message);
     }
 
     protected function getReaderForFile(string $filePath)

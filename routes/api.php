@@ -1519,6 +1519,24 @@ Route::middleware('auth:sanctum')->group(function () {
                     return response()->json(['success' => false, 'message' => 'Error starting queue: ' . $e->getMessage()], 500);
                 }
             });
+
+            Route::post('/clear-pending', function () {
+                try {
+                    \Illuminate\Support\Facades\Artisan::call('queue:clear', ['--force' => true]);
+                    return response()->json(['success' => true, 'message' => 'Очередь задач очищена']);
+                } catch (\Exception $e) {
+                    return response()->json(['success' => false, 'message' => 'Ошибка очистки очереди: ' . $e->getMessage()], 500);
+                }
+            });
+
+            Route::post('/clear-failed', function () {
+                try {
+                    \Illuminate\Support\Facades\Artisan::call('queue:flush');
+                    return response()->json(['success' => true, 'message' => 'Список неудачных задач очищен']);
+                } catch (\Exception $e) {
+                    return response()->json(['success' => false, 'message' => 'Ошибка очистки неудачных задач: ' . $e->getMessage()], 500);
+                }
+            });
         });
 
         // User preferences
