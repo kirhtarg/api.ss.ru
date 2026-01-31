@@ -76,9 +76,18 @@ class ProcessModexJob implements ShouldQueue
             // Загружаем и обрабатываем файл
             $inputFileFullPath = Storage::path($inputFilePath);
             $tempOutputPath = $this->processModexFile($inputFileFullPath, $config);
-            if (!$tempOutputPath || !Storage::exists($tempOutputPath)) {
-                Log::error('Temp output file not created', ['path' => $tempOutputPath]);
-                throw new \Exception('Failed to create temp output file');
+
+            // Clear stat cache to ensure file existence check is fresh
+            clearstatcache();
+
+            if (!$tempOutputPath || (!Storage::exists($tempOutputPath) && !file_exists(Storage::path($tempOutputPath)))) {
+                Log::error('Temp output file not created', [
+                    'path' => $tempOutputPath,
+                    'full_path' => $tempOutputPath ? Storage::path($tempOutputPath) : null,
+                    'storage_exists' => $tempOutputPath ? Storage::exists($tempOutputPath) : false,
+                    'file_exists' => $tempOutputPath ? file_exists(Storage::path($tempOutputPath)) : false
+                ]);
+                throw new \Exception('Failed to create temp output file: ' . ($tempOutputPath ?? 'null'));
             }
             try {
                 $conf = $this->modexFile->export_config ?? [];
