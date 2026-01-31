@@ -74,7 +74,7 @@ class ProcessModexJob implements ShouldQueue
             }
 
             // Загружаем и обрабатываем файл
-            $inputFileFullPath = storage_path('app/' . $inputFilePath);
+            $inputFileFullPath = Storage::path($inputFilePath);
             $tempOutputPath = $this->processModexFile($inputFileFullPath, $config);
             if (!$tempOutputPath || !Storage::exists($tempOutputPath)) {
                 Log::error('Temp output file not created', ['path' => $tempOutputPath]);
@@ -93,8 +93,8 @@ class ProcessModexJob implements ShouldQueue
             }
             Storage::makeDirectory('modex');
             try {
-                $src = storage_path('app/' . $tempOutputPath);
-                $dst = storage_path('app/' . $outputFilePath);
+                $src = Storage::path($tempOutputPath);
+                $dst = Storage::path($outputFilePath);
                 if (!is_dir(dirname($dst))) {
                     mkdir(dirname($dst), 0755, true);
                 }
@@ -186,7 +186,10 @@ class ProcessModexJob implements ShouldQueue
         }
 
         // --- PHASE 1: Analyze & Write to Temp CSV ---
-        $tempCsvPath = storage_path('app/temp/modex_temp_' . uniqid() . '.csv');
+        if (!Storage::exists('temp')) {
+            Storage::makeDirectory('temp');
+        }
+        $tempCsvPath = Storage::path('temp/modex_temp_' . uniqid() . '.csv');
         $csvHandle = fopen($tempCsvPath, 'w');
         fwrite($csvHandle, "\xEF\xBB\xBF"); // BOM
 
