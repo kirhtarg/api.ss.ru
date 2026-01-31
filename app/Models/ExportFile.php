@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\Storage;
 
 class ExportFile extends Model
 {
@@ -55,7 +56,7 @@ class ExportFile extends Model
      */
     public function isDownloadable(): bool
     {
-        return $this->status === 'completed' && $this->file_path && file_exists(storage_path('app/' . $this->file_path));
+        return $this->status === 'completed' && $this->file_path && Storage::exists($this->file_path);
     }
 
     /**
@@ -63,7 +64,7 @@ class ExportFile extends Model
      */
     public function getFullPath(): string
     {
-        return storage_path('app/' . $this->file_path);
+        return Storage::path($this->file_path);
     }
 
     /**

@@ -260,12 +260,10 @@ class ModexController extends Controller
             abort(404, 'Файл не готов к скачиванию');
         }
 
-        $filePath = $exportFile->getFullPath();
-
-        if (!file_exists($filePath)) {
+        if (!Storage::exists($exportFile->file_path)) {
             abort(404, 'Файл не найден');
         }
 
-        return response()->download($filePath, $exportFile->original_filename);
+        return Storage::download($exportFile->file_path, $exportFile->original_filename);
     }
 }

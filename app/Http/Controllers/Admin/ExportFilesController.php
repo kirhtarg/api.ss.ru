@@ -331,23 +331,21 @@ class ExportFilesController extends Controller
             abort(404, 'Файл не найден или еще не готов');
         }
 
-        $fullPath = $exportFile->getFullPath();
         $filename = $exportFile->original_filename;
 
         \Log::info('Starting file download', [
             'file_id' => $exportFile->id,
-            'full_path' => $fullPath,
+            'file_path' => $exportFile->file_path,
             'filename' => $filename,
-            'file_exists' => file_exists($fullPath),
-            'is_readable' => is_readable($fullPath)
+            'exists' => Storage::exists($exportFile->file_path)
         ]);
 
-        if (!file_exists($fullPath)) {
-            \Log::error('File does not exist for download', ['path' => $fullPath]);
+        if (!Storage::exists($exportFile->file_path)) {
+            \Log::error('File does not exist for download', ['path' => $exportFile->file_path]);
             abort(404, 'Файл не найден');
         }
 
-        return response()->download($fullPath, $filename);
+        return Storage::download($exportFile->file_path, $filename);
     }
 
     /**
