@@ -596,7 +596,7 @@ class BulkGoodsImportController extends Controller
                         // Проверяем все возможные варианты поиска
 
                         // 1. Сначала по SKU (если указан) - самый надежный способ
-                        if (!$existingGood && !empty($sku)) {
+                        if (!empty($sku)) {
                             if ($supplierName) {
                                 // Если указан поставщик, сначала ищем товар этого поставщика
                                 $existingGood = ShopGood::where('sku', $sku)->where('supplier', $supplierName)->first();
