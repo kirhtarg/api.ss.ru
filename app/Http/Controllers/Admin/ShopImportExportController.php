@@ -142,7 +142,11 @@ class ShopImportExportController extends Controller
             $query = ShopGood::with([
                 'categories:id,name',
                 'brands:id,name',
-                'images:id,good_id,file_path,alt_text,is_main,sort_order'
+                'images:id,good_id,file_path,alt_text,is_main,sort_order',
+                'variations' => function($q) {
+                    $q->select('id', 'good_id')
+                      ->with('images:id,variation_id,file_path,alt_text,is_main,sort_order');
+                }
             ]);
 
             // Если нужно, можно добавить фильтр активности
@@ -245,8 +249,27 @@ class ShopImportExportController extends Controller
         }
         
         // Изображения
+        $images = collect();
+        
+        // 1. Пробуем взять изображения самого товара
         if ($good->images->isNotEmpty()) {
-            foreach ($good->images as $image) {
+            $images = $good->images;
+        } 
+        // 2. Если у товара нет изображений, ищем в вариациях
+        elseif ($good->variations->isNotEmpty()) {
+            foreach ($good->variations as $variation) {
+                if ($variation->images->isNotEmpty()) {
+                    $images = $variation->images;
+                    break; // Берем изображения из первой попавшейся вариации с картинками
+                }
+            }
+        }
+
+        if ($images->isNotEmpty()) {
+            // Сортируем: сначала главное, потом по порядку
+            $images = $images->sortBy('sort_order')->sortByDesc('is_main');
+
+            foreach ($images as $image) {
                 // Используем file_path или url accessor если есть
                 $path = $image->file_path;
                 if ($path) {

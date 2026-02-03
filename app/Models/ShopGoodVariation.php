@@ -58,6 +58,19 @@ class ShopGoodVariation extends Model
     // shop_variation_attributes_values -> shop_variation_attribute_values -> shop_variation_attributes
 
     /**
+     * Значения атрибутов вариации
+     */
+    public function attributeValues(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            ShopVariationAttributeValue::class,
+            'shop_variation_attributes_values',
+            'variation_id',
+            'attribute_value_id'
+        );
+    }
+
+    /**
      * Изображения вариации
      */
     public function images(): HasMany

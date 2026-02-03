@@ -967,6 +967,12 @@ Route::get('/test/oauth', function () {
     });
     Route::get('/public/shop/properties/{property}/values', [App\Http\Controllers\Api\Public\ShopPropertiesController::class, 'getValues']);
 
+    // Публичные маршруты для атрибутов вариаций
+    Route::options('/public/shop/variation-attributes', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/variation-attributes', [App\Http\Controllers\Api\Public\ShopVariationAttributesController::class, 'index']);
+
     // Публичный маршрут для поиска
     Route::options('/public/search', function () {
         return response()->json([], 200);
@@ -3464,7 +3470,6 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::delete('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'destroy']);
                 Route::put('/{siteTemplate}/activate', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'activate']);
             });
-        });
 
         // Слайдеры (доступны админам и пользователям с ролью site)
         Route::middleware(['auth:sanctum', 'role:admin,site'])->prefix('site')->group(function () {
@@ -3488,6 +3493,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\TextblockController::class, 'destroy']);
             });
         });
+    });
 
         // Site templates management (только для админов)
         Route::middleware('auth:sanctum')->prefix('site')->group(function () {

@@ -621,7 +621,9 @@ class ShopGoodsController extends Controller
 
             $query = ShopGood::with([
                 'variations' => function($query) {
-                    $query->where('is_active', true);
+                    $query->where('is_active', true)->with(['images' => function($q) {
+                        $q->orderBy('sort_order');
+                    }]);
                 },
                 'images' => function($query) {
                     $query->whereNull('variation_id')->orderBy('sort_order');
@@ -1093,6 +1095,26 @@ class ShopGoodsController extends Controller
                 }
             }
 
+            // Фильтрация по атрибутам вариаций
+            if ($request->has('attributes')) {
+                $attributes = $request->input('attributes');
+                // Поддержка формата attributes[id][]=value
+                if (is_array($attributes) && !empty($attributes)) {
+                    foreach ($attributes as $attributeId => $values) {
+                        if (is_array($values) && !empty($values)) {
+                            // Фильтруем товары, у которых есть вариация с указанным атрибутом и одним из выбранных значений
+                            $query->whereHas('variations', function($q) use ($attributeId, $values) {
+                                $q->where('is_active', true)
+                                  ->whereHas('attributeValues', function($avQ) use ($attributeId, $values) {
+                                      $avQ->where('attribute_id', $attributeId)
+                                          ->whereIn('value', $values);
+                                  });
+                            });
+                        }
+                    }
+                }
+            }
+
             // Фильтрация по свойствам
             if ($request->has('properties')) {
                 $properties = $request->input('properties');
@@ -1470,7 +1492,9 @@ class ShopGoodsController extends Controller
 
             // Получаем хиты продаж (featured) - показываем напрямую товары с is_featured = true без дополнительных условий
             $featuredQuery = ShopGood::with(['images', 'variations' => function($query) {
-                $query->where('is_active', true);
+                $query->where('is_active', true)->with(['images' => function($q) {
+                    $q->orderBy('sort_order');
+                }]);
             }, 'categories', 'brands'])
                 ->featured() // Только товары с is_featured = true
                 ->active() // Только активные товары
@@ -1481,7 +1505,9 @@ class ShopGoodsController extends Controller
 
             // Получаем товары со скидками (sale) - показываем напрямую товары с is_sale = true без дополнительных условий
             $saleQuery = ShopGood::with(['images', 'variations' => function($query) {
-                $query->where('is_active', true);
+                $query->where('is_active', true)->with(['images' => function($q) {
+                    $q->orderBy('sort_order');
+                }]);
             }, 'categories', 'brands'])
                 ->sale() // Только товары с is_sale = true
                 ->active() // Только активные товары
@@ -1492,7 +1518,9 @@ class ShopGoodsController extends Controller
 
             // Получаем новинки (new)
             $newQuery = ShopGood::with(['images', 'variations' => function($query) {
-                $query->where('is_active', true);
+                $query->where('is_active', true)->with(['images' => function($q) {
+                    $q->orderBy('sort_order');
+                }]);
             }, 'categories', 'brands'])
                 ->new() // Используем scope метод для правильной фильтрации boolean поля
                 ->active() // Используем scope метод для правильной фильтрации boolean поля
@@ -1889,7 +1917,9 @@ class ShopGoodsController extends Controller
 
             $goods = ShopGood::with([
                 'variations' => function($query) {
-                    $query->where('is_active', true);
+                    $query->where('is_active', true)->with(['images' => function($q) {
+                        $q->orderBy('sort_order');
+                    }]);
                 },
                 'images' => function($query) {
                     $query->whereNull('variation_id')->orderBy('sort_order');
