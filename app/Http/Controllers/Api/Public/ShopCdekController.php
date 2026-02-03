@@ -41,7 +41,7 @@ class ShopCdekController extends Controller
             }
 
             // Используем DaData API для поиска городов
-            $dadataApiKey = env('DADATA_API_KEY');
+            $dadataApiKey = config('services.dadata.api_key') ?: env('DADATA_API_KEY');
 
             // Инициализируем переменную на случай ошибки
             $formattedCities = [];
@@ -593,7 +593,7 @@ class ShopCdekController extends Controller
             }
 
             // Используем API ключ DaData из переменных окружения
-            $dadataApiKey = env('DADATA_API_KEY');
+            $dadataApiKey = config('services.dadata.api_key') ?: env('DADATA_API_KEY');
             if (!$dadataApiKey) {
                 return response()->json([
                     'success' => false,
@@ -734,7 +734,7 @@ class ShopCdekController extends Controller
             }
 
             // Используем API ключ DaData из переменных окружения
-            $dadataApiKey = env('DADATA_API_KEY');
+            $dadataApiKey = config('services.dadata.api_key') ?: env('DADATA_API_KEY');
             if (!$dadataApiKey) {
                 return response()->json([
                     'success' => false,
@@ -848,7 +848,7 @@ class ShopCdekController extends Controller
             }
 
             // Используем API ключ DaData из переменных окружения
-            $dadataApiKey = env('DADATA_API_KEY');
+            $dadataApiKey = config('services.dadata.api_key') ?: env('DADATA_API_KEY');
             if (!$dadataApiKey) {
                 return response()->json([
                     'success' => false,
