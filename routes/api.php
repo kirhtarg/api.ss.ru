@@ -84,18 +84,6 @@ Route::post('/debug-all-requests', function (Request $request) {
 
 // DEBUG: Тестовый роут для проверки PHP настроек
 Route::get('/debug/php-info', function () {
-
-// DEBUG: Тестовый роут для проверки check-slug
-Route::get('/debug-check-slug', function(Request $request) {
-    $slug = $request->query('slug');
-    \Log::info('Debug check slug called', ['slug' => $slug]);
-    return response()->json([
-        'success' => true,
-        'exists' => false,
-        'slug' => $slug,
-        'debug' => 'no auth required'
-    ]);
-});
     \Log::info('=== DEBUG TEST: /debug/php-info accessed ===', [
         'timestamp' => now(),
         'ip' => request()->ip(),
@@ -122,6 +110,21 @@ Route::get('/debug-check-slug', function(Request $request) {
         'log_test' => 'written'
     ]);
 });
+
+// DEBUG: Тестовый роут для проверки check-slug
+Route::get('/debug-check-slug', function(Request $request) {
+    $slug = $request->query('slug');
+    \Log::info('Debug check slug called', ['slug' => $slug]);
+    return response()->json([
+        'success' => true,
+        'exists' => false,
+        'slug' => $slug,
+        'debug' => 'no auth required'
+    ]);
+});
+
+// Настройки доставки СДЭК
+Route::get('/delivery/cdek/settings', [\App\Http\Controllers\DeliveryController::class, 'getCdekSettings']);
 
 // Page Builder routes (temporary without auth for testing)
 Route::prefix('page-builder')->group(function () {
