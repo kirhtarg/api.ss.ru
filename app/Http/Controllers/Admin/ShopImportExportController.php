@@ -93,24 +93,10 @@ class ShopImportExportController extends Controller
     public function exportYml(Request $request): JsonResponse
     {
         try {
-            // Получаем товары для экспорта
-            $goodsController = new \App\Http\Controllers\Admin\ShopGoodsController();
-            $exportRequest = new \Illuminate\Http\Request();
-            $exportRequest->merge($request->all());
-            $exportRequest->merge(['for_export' => '1']);
+            // Увеличиваем лимиты для генерации большого файла
+            ini_set('memory_limit', '512M');
+            set_time_limit(300);
 
-            $goodsResponse = $goodsController->index($exportRequest);
-
-            if (!$goodsResponse->getData()->success) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Ошибка получения товаров для экспорта: ' . ($goodsResponse->getData()->message ?? 'Неизвестная ошибка')
-                ], 500);
-            }
-
-            $goods = collect($goodsResponse->getData()->data);
-
-            // Создаем YML файл
             $filename = 'goods_feed.xml';
             $filepath = 'exports/' . $filename;
 
@@ -119,8 +105,64 @@ class ShopImportExportController extends Controller
                 Storage::disk('public')->makeDirectory('exports');
             }
 
-            $ymlData = $this->generateYmlData($goods);
-            Storage::disk('public')->put($filepath, $ymlData);
+            // Используем прямой доступ к файлу для потоковой записи
+            $fullPath = Storage::disk('public')->path($filepath);
+            $handle = fopen($fullPath, 'w');
+            
+            if (!$handle) {
+                throw new \Exception("Не удалось открыть файл для записи: $fullPath");
+            }
+
+            // Пишем заголовок
+            fwrite($handle, '<?xml version="1.0" encoding="UTF-8"?>' . PHP_EOL);
+            fwrite($handle, '<yml_catalog date="' . date('Y-m-d H:i') . '">' . PHP_EOL);
+            fwrite($handle, '    <shop>' . PHP_EOL);
+            fwrite($handle, '        <name>' . htmlspecialchars('Skate & Snow') . '</name>' . PHP_EOL);
+            fwrite($handle, '        <company>' . htmlspecialchars('Skate & Snow') . '</company>' . PHP_EOL);
+            fwrite($handle, '        <url>' . htmlspecialchars(config('app.frontend_url', 'https://skateandsnow.ru')) . '</url>' . PHP_EOL);
+            fwrite($handle, '        <currencies>' . PHP_EOL);
+            fwrite($handle, '            <currency id="RUR" rate="1"/>' . PHP_EOL);
+            fwrite($handle, '        </currencies>' . PHP_EOL);
+
+            // Категории
+            fwrite($handle, '        <categories>' . PHP_EOL);
+            ShopCategory::chunk(100, function($categories) use ($handle) {
+                foreach ($categories as $category) {
+                    $parentId = $category->parent_id ? ' parentId="' . $category->parent_id . '"' : '';
+                    fwrite($handle, '            <category id="' . $category->id . '"' . $parentId . '>' . htmlspecialchars($category->name) . '</category>' . PHP_EOL);
+                }
+            });
+            fwrite($handle, '        </categories>' . PHP_EOL);
+
+            // Товары
+            fwrite($handle, '        <offers>' . PHP_EOL);
+            
+            // Загружаем товары порциями для экономии памяти
+            // Используем те же связи, что и в ShopGoodsController
+            $query = ShopGood::with([
+                'categories:id,name',
+                'brands:id,name',
+                'images:id,good_id,file_path,alt_text,is_main,sort_order'
+            ]);
+
+            // Если нужно, можно добавить фильтр активности
+            // $query->where('is_active', true);
+
+            $count = 0;
+            $query->chunk(200, function($goods) use ($handle, &$count) {
+                foreach ($goods as $good) {
+                    $this->writeOfferToHandle($handle, $good);
+                    $count++;
+                }
+                // Освобождаем память
+                unset($goods);
+            });
+            
+            fwrite($handle, '        </offers>' . PHP_EOL);
+            fwrite($handle, '    </shop>' . PHP_EOL);
+            fwrite($handle, '</yml_catalog>');
+            
+            fclose($handle);
             
             // Копируем файл на фронтенд
             $frontendPathRelative = config('frontend.path');
@@ -137,7 +179,7 @@ class ShopImportExportController extends Controller
                 
                 if (is_dir($frontendPublicPath)) {
                     $frontendFilepath = $frontendPublicPath . '/' . $filename;
-                    file_put_contents($frontendFilepath, $ymlData);
+                    copy($fullPath, $frontendFilepath);
                     $frontendUrl = config('app.frontend_url') . '/' . $filename;
                 }
             }
@@ -156,7 +198,7 @@ class ShopImportExportController extends Controller
                     'frontend_url' => $frontendUrl,
                     'generated_at' => date('Y-m-d H:i:s', $lastModified),
                     'size' => round($size / 1024, 2) . ' KB',
-                    'count' => $goods->count()
+                    'count' => $count
                 ]
             ]);
 
@@ -166,6 +208,76 @@ class ShopImportExportController extends Controller
                 'message' => 'Ошибка генерации YML: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Запись одного товара в YML
+     */
+    private function writeOfferToHandle($handle, $good): void
+    {
+        // Пропускаем товары без цены или имени
+        if (empty($good->price) || empty($good->name)) return;
+        
+        // Определяем доступность
+        $available = ($good->stock_quantity > 0) ? 'true' : 'false';
+        
+        fwrite($handle, '            <offer id="' . $good->id . '" available="' . $available . '">' . PHP_EOL);
+        
+        // URL товара
+        $url = config('app.frontend_url', 'https://skateandsnow.ru') . '/product/' . ($good->slug ?? $good->id);
+        fwrite($handle, '                <url>' . htmlspecialchars($url) . '</url>' . PHP_EOL);
+        
+        // Цена
+        $price = $good->sale_price ?? $good->price;
+        $oldPrice = $good->sale_price ? $good->price : null;
+        
+        fwrite($handle, '                <price>' . $price . '</price>' . PHP_EOL);
+        if ($oldPrice) {
+            fwrite($handle, '                <oldprice>' . $oldPrice . '</oldprice>' . PHP_EOL);
+        }
+        
+        fwrite($handle, '                <currencyId>RUR</currencyId>' . PHP_EOL);
+        
+        // Категория (берем первую из списка)
+        if ($good->categories->isNotEmpty()) {
+            $categoryId = $good->categories->first()->id;
+            fwrite($handle, '                <categoryId>' . $categoryId . '</categoryId>' . PHP_EOL);
+        }
+        
+        // Изображения
+        if ($good->images->isNotEmpty()) {
+            foreach ($good->images as $image) {
+                // Используем file_path или url accessor если есть
+                $path = $image->file_path;
+                if ($path) {
+                    $imgUrl = '';
+                    if (Str::startsWith($path, 'http')) {
+                        $imgUrl = $path;
+                    } else {
+                         // Формируем URL
+                        $imgUrl = config('app.url') . '/storage/' . ltrim($path, '/');
+                    }
+                    fwrite($handle, '                <picture>' . htmlspecialchars($imgUrl) . '</picture>' . PHP_EOL);
+                }
+            }
+        }
+        
+        fwrite($handle, '                <name>' . htmlspecialchars($good->name) . '</name>' . PHP_EOL);
+        
+        // Бренд
+        if ($good->brands->isNotEmpty()) {
+            $brandName = $good->brands->first()->name;
+            fwrite($handle, '                <vendor>' . htmlspecialchars($brandName) . '</vendor>' . PHP_EOL);
+        }
+        
+        if (!empty($good->description)) {
+            $description = strip_tags($good->description);
+            // Удаляем недопустимые символы
+            $description = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $description);
+            fwrite($handle, '                <description><![CDATA[' . $description . ']]></description>' . PHP_EOL);
+        }
+
+        fwrite($handle, '            </offer>' . PHP_EOL);
     }
 
     /**
@@ -630,111 +742,6 @@ class ShopImportExportController extends Controller
                 'message' => 'Ошибка получения статуса robots.txt: ' . $e->getMessage()
             ], 500);
         }
-    }
-
-    /**
-     * Генерация данных YML
-     */
-    private function generateYmlData($goods): string
-    {
-        $xml = '<?xml version="1.0" encoding="UTF-8"?>' . PHP_EOL;
-        $xml .= '<yml_catalog date="' . date('Y-m-d H:i') . '">' . PHP_EOL;
-        $xml .= '    <shop>' . PHP_EOL;
-        $xml .= '        <name>' . htmlspecialchars('Skate & Snow') . '</name>' . PHP_EOL;
-        $xml .= '        <company>' . htmlspecialchars('Skate & Snow') . '</company>' . PHP_EOL;
-        $xml .= '        <url>' . htmlspecialchars(config('app.frontend_url', 'https://skateandsnow.ru')) . '</url>' . PHP_EOL;
-        $xml .= '        <currencies>' . PHP_EOL;
-        $xml .= '            <currency id="RUR" rate="1"/>' . PHP_EOL;
-        $xml .= '        </currencies>' . PHP_EOL;
-
-        // Категории
-        $xml .= '        <categories>' . PHP_EOL;
-        $categories = ShopCategory::all();
-        foreach ($categories as $category) {
-            $parentId = $category->parent_id ? ' parentId="' . $category->parent_id . '"' : '';
-            $xml .= '            <category id="' . $category->id . '"' . $parentId . '>' . htmlspecialchars($category->name) . '</category>' . PHP_EOL;
-        }
-        $xml .= '        </categories>' . PHP_EOL;
-
-        // Товары
-        $xml .= '        <offers>' . PHP_EOL;
-        foreach ($goods as $good) {
-            // Пропускаем товары без цены или имени
-            if (empty($good->price) || empty($good->name)) continue;
-            
-            // Определяем доступность (если количество > 0)
-            $available = ($good->stock_quantity > 0) ? 'true' : 'false';
-            
-            $xml .= '            <offer id="' . $good->id . '" available="' . $available . '">' . PHP_EOL;
-            
-            // URL товара (предполагаем структуру ссылок)
-            $url = config('app.frontend_url', 'https://skateandsnow.ru') . '/product/' . ($good->slug ?? $good->id);
-            $xml .= '                <url>' . htmlspecialchars($url) . '</url>' . PHP_EOL;
-            
-            // Цена
-            $price = $good->sale_price ?? $good->price;
-            $oldPrice = $good->sale_price ? $good->price : null;
-            
-            $xml .= '                <price>' . $price . '</price>' . PHP_EOL;
-            if ($oldPrice) {
-                $xml .= '                <oldprice>' . $oldPrice . '</oldprice>' . PHP_EOL;
-            }
-            
-            $xml .= '                <currencyId>RUR</currencyId>' . PHP_EOL;
-            
-            // Категория (берем первую из списка, если есть)
-            $categoryId = null;
-            if (!empty($good->categories) && is_iterable($good->categories) && count($good->categories) > 0) {
-                $categoryId = $good->categories[0]->id ?? null;
-            }
-            
-            if ($categoryId) {
-                $xml .= '                <categoryId>' . $categoryId . '</categoryId>' . PHP_EOL;
-            }
-            
-            // Изображения
-            if (!empty($good->images) && is_array($good->images)) {
-                foreach ($good->images as $image) {
-                    if (!empty($image->url)) {
-                        $imgUrl = Str::startsWith($image->url, 'http') ? $image->url : config('app.url') . '/storage/' . $image->url;
-                        $xml .= '                <picture>' . htmlspecialchars($imgUrl) . '</picture>' . PHP_EOL;
-                    }
-                }
-            }
-            
-            $xml .= '                <name>' . htmlspecialchars($good->name) . '</name>' . PHP_EOL;
-            
-            if (!empty($good->brand)) {
-                $brandName = is_object($good->brand) ? ($good->brand->name ?? '') : ($good->brand['name'] ?? '');
-                if ($brandName) {
-                    $xml .= '                <vendor>' . htmlspecialchars($brandName) . '</vendor>' . PHP_EOL;
-                }
-            }
-            
-            if (!empty($good->description)) {
-                // Очищаем описание от HTML тегов для YML, если нужно, или оборачиваем в CDATA
-                $description = strip_tags($good->description);
-                $xml .= '                <description><![CDATA[' . $description . ']]></description>' . PHP_EOL;
-            }
-            
-            // Параметры (характеристики)
-            // Предполагаем, что характеристики могут быть в properties
-            /*
-            if (!empty($good->properties)) {
-                foreach ($good->properties as $prop) {
-                    $xml .= '                <param name="' . htmlspecialchars($prop->name) . '">' . htmlspecialchars($prop->value) . '</param>' . PHP_EOL;
-                }
-            }
-            */
-
-            $xml .= '            </offer>' . PHP_EOL;
-        }
-        $xml .= '        </offers>' . PHP_EOL;
-        
-        $xml .= '    </shop>' . PHP_EOL;
-        $xml .= '</yml_catalog>';
-        
-        return $xml;
     }
 
     /**
