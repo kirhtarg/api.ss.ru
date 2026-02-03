@@ -7,7 +7,9 @@ use App\Models\ShopGood;
 use App\Models\ShopBrand;
 use App\Models\ShopTag;
 use App\Models\ShopProperty;
-use App\Models\Category;
+use App\Models\ShopCategory;
+use App\Models\AdminPage;
+use App\Models\ConstructorPage;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -17,6 +19,8 @@ use Illuminate\Support\Str;
 
 class ShopImportExportController extends Controller
 {
+
+
     /**
      * Экспорт товаров в CSV
      */
@@ -81,6 +85,656 @@ class ShopImportExportController extends Controller
             'success' => false,
             'message' => 'Экспорт в Excel будет доступен в следующей версии'
         ], 501);
+    }
+
+    /**
+     * Экспорт товаров в YML (Yandex Market Language)
+     */
+    public function exportYml(Request $request): JsonResponse
+    {
+        try {
+            // Получаем товары для экспорта
+            $goodsController = new \App\Http\Controllers\Admin\ShopGoodsController();
+            $exportRequest = new \Illuminate\Http\Request();
+            $exportRequest->merge($request->all());
+            $exportRequest->merge(['for_export' => '1']);
+
+            $goodsResponse = $goodsController->index($exportRequest);
+
+            if (!$goodsResponse->getData()->success) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка получения товаров для экспорта: ' . ($goodsResponse->getData()->message ?? 'Неизвестная ошибка')
+                ], 500);
+            }
+
+            $goods = collect($goodsResponse->getData()->data);
+
+            // Создаем YML файл
+            $filename = 'goods_feed.xml';
+            $filepath = 'exports/' . $filename;
+
+            // Создаем директорию если не существует
+            if (!Storage::disk('public')->exists('exports')) {
+                Storage::disk('public')->makeDirectory('exports');
+            }
+
+            $ymlData = $this->generateYmlData($goods);
+            Storage::disk('public')->put($filepath, $ymlData);
+            
+            // Копируем файл на фронтенд
+            $frontendPathRelative = config('frontend.path');
+            $frontendUrl = null;
+            
+            if ($frontendPathRelative) {
+                $frontendBasePath = base_path($frontendPathRelative);
+                $frontendPublicPath = $frontendBasePath . '/public';
+                
+                // Создаем папку public, если её нет (стандарт для Nuxt 3)
+                if (!file_exists($frontendPublicPath)) {
+                    @mkdir($frontendPublicPath, 0755, true);
+                }
+                
+                if (is_dir($frontendPublicPath)) {
+                    $frontendFilepath = $frontendPublicPath . '/' . $filename;
+                    file_put_contents($frontendFilepath, $ymlData);
+                    $frontendUrl = config('app.frontend_url') . '/' . $filename;
+                }
+            }
+            
+            // Получаем метаданные файла
+            $url = Storage::disk('public')->url($filepath);
+            $size = Storage::disk('public')->size($filepath);
+            $lastModified = Storage::disk('public')->lastModified($filepath);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'YML фид успешно сгенерирован',
+                'data' => [
+                    'filename' => $filename,
+                    'download_url' => $url,
+                    'frontend_url' => $frontendUrl,
+                    'generated_at' => date('Y-m-d H:i:s', $lastModified),
+                    'size' => round($size / 1024, 2) . ' KB',
+                    'count' => $goods->count()
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка генерации YML: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получение статуса YML фида
+     */
+    public function getYmlStatus(): JsonResponse
+     {
+         try {
+             $filename = 'goods_feed.xml';
+             $filepath = 'exports/' . $filename;
+             
+             if (Storage::disk('public')->exists($filepath)) {
+                 $url = Storage::disk('public')->url($filepath);
+                 $size = Storage::disk('public')->size($filepath);
+                 $lastModified = Storage::disk('public')->lastModified($filepath);
+                 
+                 // Проверяем наличие на фронтенде
+                 $frontendPathRelative = config('frontend.path');
+                 $frontendUrl = null;
+                 
+                 if ($frontendPathRelative) {
+                     $frontendBasePath = base_path($frontendPathRelative);
+                     $frontendPublicPath = $frontendBasePath . '/public';
+                     
+                     if (is_dir($frontendPublicPath) && file_exists($frontendPublicPath . '/' . $filename)) {
+                         $frontendUrl = config('app.frontend_url') . '/' . $filename;
+                     }
+                 }
+                 
+                 return response()->json([
+                     'success' => true,
+                     'data' => [
+                         'exists' => true,
+                         'filename' => $filename,
+                         'download_url' => $url,
+                         'frontend_url' => $frontendUrl,
+                         'generated_at' => date('Y-m-d H:i:s', $lastModified),
+                         'size' => round($size / 1024, 2) . ' KB'
+                     ]
+                 ]);
+             } else {
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'exists' => false
+                    ]
+                ]);
+            }
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения статуса YML: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Генерация Sitemap
+     */
+    public function generateSitemap(Request $request): JsonResponse
+    {
+        try {
+            $frontendUrl = config('app.frontend_url', 'https://skateandsnow.ru');
+            $xml = '<?xml version="1.0" encoding="UTF-8"?>' . PHP_EOL;
+            $xml .= '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . PHP_EOL;
+
+            // 1. Главная страница
+            $xml .= '    <url>' . PHP_EOL;
+            $xml .= '        <loc>' . $frontendUrl . '</loc>' . PHP_EOL;
+            $xml .= '        <changefreq>daily</changefreq>' . PHP_EOL;
+            $xml .= '        <priority>1.0</priority>' . PHP_EOL;
+            $xml .= '    </url>' . PHP_EOL;
+
+            $pagesCount = 1;
+
+            // 2. Страницы конструктора
+            $constructorPages = \App\Models\ConstructorPage::where('is_published', true)->get();
+            foreach ($constructorPages as $page) {
+                $slug = trim($page->slug, '/');
+                if (empty($slug)) continue;
+
+                $xml .= '    <url>' . PHP_EOL;
+                $xml .= '        <loc>' . $frontendUrl . '/' . $slug . '</loc>' . PHP_EOL;
+                $xml .= '        <lastmod>' . $page->updated_at->toIso8601String() . '</lastmod>' . PHP_EOL;
+                $xml .= '        <changefreq>weekly</changefreq>' . PHP_EOL;
+                $xml .= '        <priority>0.8</priority>' . PHP_EOL;
+                $xml .= '    </url>' . PHP_EOL;
+                $pagesCount++;
+            }
+
+            // 3. Категории каталога
+            $categories = \App\Models\ShopCategory::where('is_active', true)->get();
+            
+            // Создаем карту категорий для построения путей
+            $categoryMap = [];
+            foreach ($categories as $cat) {
+                $categoryMap[$cat->id] = $cat;
+            }
+
+            // Функция для построения полного пути категории
+            $buildCategoryPath = function($categoryId) use ($categoryMap) {
+                $path = [];
+                $currentId = $categoryId;
+                $seen = []; // Защита от рекурсии
+                
+                while ($currentId && isset($categoryMap[$currentId]) && !isset($seen[$currentId])) {
+                    $cat = $categoryMap[$currentId];
+                    array_unshift($path, $cat->slug);
+                    $seen[$currentId] = true;
+                    $currentId = $cat->parent_id;
+                }
+                return implode('/', $path);
+            };
+
+            foreach ($categories as $category) {
+                $path = $buildCategoryPath($category->id);
+                if (empty($path)) continue;
+
+                $xml .= '    <url>' . PHP_EOL;
+                $xml .= '        <loc>' . $frontendUrl . '/catalog/' . $path . '</loc>' . PHP_EOL;
+                $xml .= '        <lastmod>' . $category->updated_at->toIso8601String() . '</lastmod>' . PHP_EOL;
+                $xml .= '        <changefreq>weekly</changefreq>' . PHP_EOL;
+                $xml .= '        <priority>0.9</priority>' . PHP_EOL;
+                $xml .= '    </url>' . PHP_EOL;
+                $pagesCount++;
+            }
+
+            // 4. Товары
+            // Загружаем товары с категориями для формирования красивых ссылок
+            // Используем chunk для экономии памяти, если товаров много
+            \App\Models\ShopGood::where('is_active', true)
+                ->with(['categories' => function($query) {
+                    $query->select('shop_categories.id', 'shop_categories.slug', 'shop_categories.parent_id');
+                }])
+                ->chunk(500, function($goods) use (&$xml, $frontendUrl, &$pagesCount, $buildCategoryPath) {
+                    foreach ($goods as $good) {
+                        $catPath = '';
+                        
+                        // Пытаемся найти главную категорию
+                        if ($good->categories->isNotEmpty()) {
+                            $category = $good->categories->first();
+                            $catPath = $buildCategoryPath($category->id);
+                        }
+                        
+                        $urlPath = $catPath ? '/catalog/' . $catPath . '/' . $good->slug : '/catalog/' . $good->slug;
+                        
+                        $xml .= '    <url>' . PHP_EOL;
+                        $xml .= '        <loc>' . $frontendUrl . $urlPath . '</loc>' . PHP_EOL;
+                        $xml .= '        <lastmod>' . $good->updated_at->toIso8601String() . '</lastmod>' . PHP_EOL;
+                        $xml .= '        <changefreq>weekly</changefreq>' . PHP_EOL;
+                        $xml .= '        <priority>0.7</priority>' . PHP_EOL;
+                        $xml .= '    </url>' . PHP_EOL;
+                        $pagesCount++;
+                    }
+                });
+
+            // 5. Статические страницы Nuxt (из файловой системы)
+            $frontendPathRelative = config('frontend.path');
+            if ($frontendPathRelative) {
+                $frontendBasePath = base_path($frontendPathRelative);
+                $pagesDir = $frontendBasePath . '/pages';
+                
+                if (is_dir($pagesDir)) {
+                    $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($pagesDir));
+                    
+                    foreach ($iterator as $file) {
+                        if ($file->isFile() && $file->getExtension() === 'vue') {
+                            $relativePath = str_replace($pagesDir, '', $file->getPathname());
+                            $relativePath = str_replace('\\', '/', $relativePath);
+                            
+                            // Исключаем системные и админские папки
+                            if (preg_match('#^/(admin|auth|cms|profile|user-dashboard)#', $relativePath)) continue;
+                            
+                            $filename = $file->getBasename('.vue');
+                            
+                            // Исключаем динамические маршруты и скрытые файлы
+                            if (str_starts_with($filename, '[') || str_starts_with($filename, '_')) continue;
+                            if (str_starts_with($filename, 'error')) continue;
+                            
+                            // Формируем URL
+                            $urlPath = dirname($relativePath);
+                            $urlPath = str_replace('\\', '/', $urlPath); // Fix for Windows
+                            
+                            if ($urlPath === '.') $urlPath = '';
+                            if ($urlPath === '/') $urlPath = '';
+                            
+                            // Обработка index.vue
+                            if ($filename === 'index') {
+                                if ($urlPath === '') continue; // Главная уже добавлена
+                            } else {
+                                $urlPath .= '/' . $filename;
+                            }
+                            
+                            // Нормализация пути (убираем двойные слеши)
+                            $urlPath = str_replace('//', '/', $urlPath);
+                            
+                            $xml .= '    <url>' . PHP_EOL;
+                            $xml .= '        <loc>' . $frontendUrl . $urlPath . '</loc>' . PHP_EOL;
+                            $xml .= '        <lastmod>' . date('c', $file->getMTime()) . '</lastmod>' . PHP_EOL;
+                            $xml .= '        <changefreq>monthly</changefreq>' . PHP_EOL;
+                            $xml .= '        <priority>0.5</priority>' . PHP_EOL;
+                            $xml .= '    </url>' . PHP_EOL;
+                            $pagesCount++;
+                        }
+                    }
+                }
+            }
+
+            $xml .= '</urlset>';
+
+            $filename = 'sitemap.xml';
+            $filepath = 'exports/' . $filename;
+
+            if (!Storage::disk('public')->exists('exports')) {
+                Storage::disk('public')->makeDirectory('exports');
+            }
+
+            Storage::disk('public')->put($filepath, $xml);
+
+            // Копируем на фронтенд
+            $frontendPathRelative = config('frontend.path');
+            $frontendPublicUrl = null;
+
+            if ($frontendPathRelative) {
+                $frontendBasePath = base_path($frontendPathRelative);
+                $frontendPublicPath = $frontendBasePath . '/public';
+
+                if (!file_exists($frontendPublicPath)) {
+                    @mkdir($frontendPublicPath, 0755, true);
+                }
+
+                if (is_dir($frontendPublicPath)) {
+                    $frontendFilepath = $frontendPublicPath . '/' . $filename;
+                    file_put_contents($frontendFilepath, $xml);
+                    $frontendPublicUrl = config('app.frontend_url') . '/' . $filename;
+                }
+            }
+
+             $url = Storage::disk('public')->url($filepath);
+             $size = Storage::disk('public')->size($filepath);
+             $lastModified = Storage::disk('public')->lastModified($filepath);
+
+             return response()->json([
+                 'success' => true,
+                 'message' => 'Sitemap успешно сгенерирован',
+                 'data' => [
+                     'filename' => $filename,
+                     'download_url' => $url,
+                     'frontend_url' => $frontendPublicUrl,
+                     'generated_at' => date('Y-m-d H:i:s', $lastModified),
+                     'size' => round($size / 1024, 2) . ' KB',
+                     'pages_count' => $pagesCount
+                 ]
+             ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка генерации Sitemap: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получение статуса Sitemap
+     */
+    public function getSitemapStatus(): JsonResponse
+    {
+        try {
+            $filename = 'sitemap.xml';
+            $filepath = 'exports/' . $filename;
+
+            if (Storage::disk('public')->exists($filepath)) {
+                $url = Storage::disk('public')->url($filepath);
+                $size = Storage::disk('public')->size($filepath);
+                $lastModified = Storage::disk('public')->lastModified($filepath);
+
+                $frontendPathRelative = config('frontend.path');
+                $frontendUrl = null;
+
+                if ($frontendPathRelative) {
+                    $frontendBasePath = base_path($frontendPathRelative);
+                    $frontendPublicPath = $frontendBasePath . '/public';
+
+                    if (is_dir($frontendPublicPath) && file_exists($frontendPublicPath . '/' . $filename)) {
+                        $frontendUrl = config('app.frontend_url') . '/' . $filename;
+                    }
+                }
+
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'exists' => true,
+                        'filename' => $filename,
+                        'download_url' => $url,
+                        'frontend_url' => $frontendUrl,
+                        'generated_at' => date('Y-m-d H:i:s', $lastModified),
+                        'size' => round($size / 1024, 2) . ' KB'
+                    ]
+                ]);
+            } else {
+                 return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'exists' => false
+                    ]
+                ]);
+            }
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения статуса Sitemap: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Генерация robots.txt
+     */
+    public function generateRobots(Request $request): JsonResponse
+    {
+        try {
+            $mode = $request->input('mode', 'open'); // 'open' or 'closed'
+            $frontendUrl = config('app.frontend_url', 'https://skateandsnow.ru');
+            
+            if ($mode === 'closed') {
+                $content = "User-agent: *\n";
+                $content .= "Disallow: /\n";
+            } else {
+                // Open mode
+                $content = "User-agent: *\n";
+                $content .= "Disallow: /admin\n";
+                $content .= "Disallow: /cms\n";
+                $content .= "Allow: /\n";
+                $content .= "Sitemap: " . $frontendUrl . "/sitemap.xml\n";
+            }
+            
+            $filename = 'robots.txt';
+            $filepath = 'exports/' . $filename;
+            
+            // Сохраняем локально (для истории/бекапа)
+            if (!Storage::disk('public')->exists('exports')) {
+                Storage::disk('public')->makeDirectory('exports');
+            }
+            Storage::disk('public')->put($filepath, $content);
+            
+            // Копируем на фронтенд
+            $frontendPathRelative = config('frontend.path');
+            $frontendPublicUrl = null;
+            $copiedToFrontend = false;
+
+            if ($frontendPathRelative) {
+                $frontendBasePath = base_path($frontendPathRelative);
+                $frontendPublicPath = $frontendBasePath . '/public';
+
+                if (!is_dir($frontendPublicPath)) {
+                     // Пытаемся создать, если нет (для локальной разработки)
+                     @mkdir($frontendPublicPath, 0755, true);
+                }
+
+                if (is_dir($frontendPublicPath)) {
+                    $frontendFilepath = $frontendPublicPath . '/' . $filename;
+                    file_put_contents($frontendFilepath, $content);
+                    $frontendPublicUrl = config('app.frontend_url') . '/' . $filename;
+                    $copiedToFrontend = true;
+                }
+            }
+            
+            $url = Storage::disk('public')->url($filepath);
+            $lastModified = time(); // Мы только что создали
+
+            return response()->json([
+                'success' => true,
+                'message' => 'robots.txt успешно сгенерирован (' . ($mode === 'closed' ? 'закрыт' : 'открыт') . ')',
+                'data' => [
+                    'filename' => $filename,
+                    'download_url' => $url,
+                    'frontend_url' => $frontendPublicUrl,
+                    'generated_at' => date('Y-m-d H:i:s', $lastModified),
+                    'mode' => $mode,
+                    'content' => $content
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка генерации robots.txt: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получение статуса robots.txt
+     */
+    public function getRobotsStatus(): JsonResponse
+    {
+        try {
+            $filename = 'robots.txt';
+            // Проверяем сначала на фронтенде, так как это "боевой" файл
+            $frontendPathRelative = config('frontend.path');
+            $frontendUrl = null;
+            $mode = 'unknown';
+            $exists = false;
+            $lastModified = null;
+            $content = '';
+
+            if ($frontendPathRelative) {
+                $frontendBasePath = base_path($frontendPathRelative);
+                $frontendPublicPath = $frontendBasePath . '/public';
+                $frontendFilepath = $frontendPublicPath . '/' . $filename;
+
+                if (is_dir($frontendPublicPath) && file_exists($frontendFilepath)) {
+                    $exists = true;
+                    $content = file_get_contents($frontendFilepath);
+                    $lastModified = filemtime($frontendFilepath);
+                    $frontendUrl = config('app.frontend_url') . '/' . $filename;
+                }
+            }
+            
+            // Если на фронте нет, проверяем локально в экспортах
+            if (!$exists) {
+                $filepath = 'exports/' . $filename;
+                if (Storage::disk('public')->exists($filepath)) {
+                    $exists = true;
+                    $content = Storage::disk('public')->get($filepath);
+                    $lastModified = Storage::disk('public')->lastModified($filepath);
+                }
+            }
+
+            if ($exists) {
+                // Определяем режим по содержимому
+                // Если есть "Disallow: /" в начале строки (или после пробелов) и это конец строки
+                if (preg_match('/^\s*Disallow:\s*\/\s*$/m', $content)) {
+                     $mode = 'closed';
+                } else {
+                     $mode = 'open';
+                }
+                
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'exists' => true,
+                        'filename' => $filename,
+                        'frontend_url' => $frontendUrl,
+                        'generated_at' => date('Y-m-d H:i:s', $lastModified),
+                        'mode' => $mode
+                    ]
+                ]);
+            } else {
+                 return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'exists' => false,
+                        'mode' => 'unknown' 
+                    ]
+                ]);
+            }
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения статуса robots.txt: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Генерация данных YML
+     */
+    private function generateYmlData($goods): string
+    {
+        $xml = '<?xml version="1.0" encoding="UTF-8"?>' . PHP_EOL;
+        $xml .= '<yml_catalog date="' . date('Y-m-d H:i') . '">' . PHP_EOL;
+        $xml .= '    <shop>' . PHP_EOL;
+        $xml .= '        <name>' . htmlspecialchars('Skate & Snow') . '</name>' . PHP_EOL;
+        $xml .= '        <company>' . htmlspecialchars('Skate & Snow') . '</company>' . PHP_EOL;
+        $xml .= '        <url>' . htmlspecialchars(config('app.frontend_url', 'https://skateandsnow.ru')) . '</url>' . PHP_EOL;
+        $xml .= '        <currencies>' . PHP_EOL;
+        $xml .= '            <currency id="RUR" rate="1"/>' . PHP_EOL;
+        $xml .= '        </currencies>' . PHP_EOL;
+
+        // Категории
+        $xml .= '        <categories>' . PHP_EOL;
+        $categories = ShopCategory::all();
+        foreach ($categories as $category) {
+            $parentId = $category->parent_id ? ' parentId="' . $category->parent_id . '"' : '';
+            $xml .= '            <category id="' . $category->id . '"' . $parentId . '>' . htmlspecialchars($category->name) . '</category>' . PHP_EOL;
+        }
+        $xml .= '        </categories>' . PHP_EOL;
+
+        // Товары
+        $xml .= '        <offers>' . PHP_EOL;
+        foreach ($goods as $good) {
+            // Пропускаем товары без цены или имени
+            if (empty($good->price) || empty($good->name)) continue;
+            
+            // Определяем доступность (если количество > 0)
+            $available = ($good->stock_quantity > 0) ? 'true' : 'false';
+            
+            $xml .= '            <offer id="' . $good->id . '" available="' . $available . '">' . PHP_EOL;
+            
+            // URL товара (предполагаем структуру ссылок)
+            $url = config('app.frontend_url', 'https://skateandsnow.ru') . '/product/' . ($good->slug ?? $good->id);
+            $xml .= '                <url>' . htmlspecialchars($url) . '</url>' . PHP_EOL;
+            
+            // Цена
+            $price = $good->sale_price ?? $good->price;
+            $oldPrice = $good->sale_price ? $good->price : null;
+            
+            $xml .= '                <price>' . $price . '</price>' . PHP_EOL;
+            if ($oldPrice) {
+                $xml .= '                <oldprice>' . $oldPrice . '</oldprice>' . PHP_EOL;
+            }
+            
+            $xml .= '                <currencyId>RUR</currencyId>' . PHP_EOL;
+            
+            // Категория (берем первую из списка, если есть)
+            $categoryId = null;
+            if (!empty($good->categories) && is_iterable($good->categories) && count($good->categories) > 0) {
+                $categoryId = $good->categories[0]->id ?? null;
+            }
+            
+            if ($categoryId) {
+                $xml .= '                <categoryId>' . $categoryId . '</categoryId>' . PHP_EOL;
+            }
+            
+            // Изображения
+            if (!empty($good->images) && is_array($good->images)) {
+                foreach ($good->images as $image) {
+                    if (!empty($image->url)) {
+                        $imgUrl = Str::startsWith($image->url, 'http') ? $image->url : config('app.url') . '/storage/' . $image->url;
+                        $xml .= '                <picture>' . htmlspecialchars($imgUrl) . '</picture>' . PHP_EOL;
+                    }
+                }
+            }
+            
+            $xml .= '                <name>' . htmlspecialchars($good->name) . '</name>' . PHP_EOL;
+            
+            if (!empty($good->brand)) {
+                $brandName = is_object($good->brand) ? ($good->brand->name ?? '') : ($good->brand['name'] ?? '');
+                if ($brandName) {
+                    $xml .= '                <vendor>' . htmlspecialchars($brandName) . '</vendor>' . PHP_EOL;
+                }
+            }
+            
+            if (!empty($good->description)) {
+                // Очищаем описание от HTML тегов для YML, если нужно, или оборачиваем в CDATA
+                $description = strip_tags($good->description);
+                $xml .= '                <description><![CDATA[' . $description . ']]></description>' . PHP_EOL;
+            }
+            
+            // Параметры (характеристики)
+            // Предполагаем, что характеристики могут быть в properties
+            /*
+            if (!empty($good->properties)) {
+                foreach ($good->properties as $prop) {
+                    $xml .= '                <param name="' . htmlspecialchars($prop->name) . '">' . htmlspecialchars($prop->value) . '</param>' . PHP_EOL;
+                }
+            }
+            */
+
+            $xml .= '            </offer>' . PHP_EOL;
+        }
+        $xml .= '        </offers>' . PHP_EOL;
+        
+        $xml .= '    </shop>' . PHP_EOL;
+        $xml .= '</yml_catalog>';
+        
+        return $xml;
     }
 
     /**

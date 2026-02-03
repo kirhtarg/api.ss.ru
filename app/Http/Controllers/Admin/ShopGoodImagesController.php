@@ -474,6 +474,147 @@ class ShopGoodImagesController extends Controller
     }
 
     /**
+     * Пакетное удаление изображений выбранных вариаций
+     */
+    public function destroyBatchByVariations(Request $request, $goodId): JsonResponse
+    {
+        $request->validate([
+            'variation_ids' => 'required|array|min:1',
+            'variation_ids.*' => 'required|integer|exists:shop_good_variations,id'
+        ]);
+
+        $variationIds = $request->input('variation_ids', []);
+        
+        // Находим все изображения, привязанные к указанным вариациям
+        $images = ShopGoodImage::whereIn('variation_id', $variationIds)->get();
+        
+        $deleted = [];
+        $errors = [];
+        $frontendPublicPath = frontend_public_path();
+
+        foreach ($images as $image) {
+            try {
+                // Удаляем файл с фронтенда
+                $filePath = $frontendPublicPath . '/' . $image->file_path;
+                if (file_exists($filePath)) {
+                    unlink($filePath);
+                }
+
+                $imageId = $image->id;
+                $image->delete();
+                $deleted[] = $imageId;
+
+            } catch (\Exception $e) {
+                $errors[] = [
+                    'image_id' => $image->id,
+                    'variation_id' => $image->variation_id,
+                    'error' => $e->getMessage()
+                ];
+            }
+        }
+
+        return response()->json([
+            'success' => count($errors) === 0,
+            'deleted' => $deleted,
+            'errors' => $errors,
+            'total_deleted' => count($deleted),
+            'total_errors' => count($errors),
+            'message' => 'Удалено изображений: ' . count($deleted)
+        ]);
+    }
+
+    /**
+     * Пакетное копирование изображений из одной вариации в другие
+     */
+    public function copyBatchByVariations(Request $request, $goodId): JsonResponse
+    {
+        $request->validate([
+            'source_variation_id' => 'required|integer|exists:shop_good_variations,id',
+            'target_variation_ids' => 'required|array|min:1',
+            'target_variation_ids.*' => 'required|integer|exists:shop_good_variations,id'
+        ]);
+
+        $sourceVariationId = $request->input('source_variation_id');
+        $targetVariationIds = $request->input('target_variation_ids');
+
+        // Получаем изображения исходной вариации
+        $sourceImages = ShopGoodImage::where('variation_id', $sourceVariationId)
+            ->ordered()
+            ->get();
+
+        if ($sourceImages->isEmpty()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'В исходной вариации нет изображений'
+            ], 404);
+        }
+
+        $results = [
+            'total_copied' => 0,
+            'errors' => []
+        ];
+
+        $frontendPublicPath = frontend_public_path();
+
+        foreach ($targetVariationIds as $targetVariationId) {
+            // Пропускаем, если целевая вариация совпадает с исходной
+            if ($targetVariationId == $sourceVariationId) {
+                continue;
+            }
+
+            foreach ($sourceImages as $sourceImage) {
+                try {
+                    $sourcePath = $frontendPublicPath . '/' . $sourceImage->file_path;
+                    
+                    if (!file_exists($sourcePath)) {
+                        $results['errors'][] = "Файл не найден: {$sourceImage->file_path}";
+                        continue;
+                    }
+
+                    // Генерируем новое имя файла
+                    $pathInfo = pathinfo($sourceImage->file_path);
+                    $extension = $pathInfo['extension'] ?? 'jpg';
+                    $newFileName = 'variation_' . $targetVariationId . '_' . uniqid() . '.' . $extension;
+                    $newRelativePath = ($pathInfo['dirname'] !== '.' ? $pathInfo['dirname'] : 'images') . '/' . $newFileName;
+                    $newFullPath = $frontendPublicPath . '/' . $newRelativePath;
+
+                    // Убедимся, что директория существует
+                    $directory = dirname($newFullPath);
+                    if (!file_exists($directory)) {
+                        mkdir($directory, 0755, true);
+                    }
+
+                    // Копируем файл
+                    if (copy($sourcePath, $newFullPath)) {
+                        // Создаем запись в БД
+                        ShopGoodImage::create([
+                            'good_id' => null,
+                            'variation_id' => $targetVariationId,
+                            'file_path' => $newRelativePath,
+                            'alt_text' => $sourceImage->alt_text,
+                            'is_main' => $sourceImage->is_main,
+                            'sort_order' => $sourceImage->sort_order
+                        ]);
+
+                        $results['total_copied']++;
+                    } else {
+                        $results['errors'][] = "Не удалось скопировать файл для вариации {$targetVariationId}";
+                    }
+
+                } catch (\Exception $e) {
+                    $results['errors'][] = "Ошибка при копировании для вариации {$targetVariationId}: " . $e->getMessage();
+                }
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => "Скопировано {$results['total_copied']} изображений",
+            'data' => $results
+        ]);
+    }
+
+    /**
      * Установить главное изображение
      */
     public function setMain($goodId, $imageId): JsonResponse

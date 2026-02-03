@@ -762,6 +762,94 @@ class ShopGoodVariationsController extends Controller
     }
 
     /**
+     * Обновить атрибуты вариации
+     */
+    public function updateAttributes(Request $request, $goodId, $variationId): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'attributes' => 'required|array',
+            'attributes.*.attribute_id' => 'required|integer|exists:shop_variation_attributes,id',
+            'attributes.*.value_id' => 'required|integer|exists:shop_variation_attribute_values,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $variation = ShopGoodVariation::where('good_id', $goodId)->findOrFail($variationId);
+            $attributes = $request->get('attributes');
+
+            foreach ($attributes as $attrData) {
+                $attributeId = (int)$attrData['attribute_id'];
+                $valueId = (int)$attrData['value_id'];
+
+                // Проверяем, что значение принадлежит атрибуту
+                $valueCheck = DB::table('shop_variation_attribute_values')
+                    ->where('id', $valueId)
+                    ->where('attribute_id', $attributeId)
+                    ->exists();
+                
+                if (!$valueCheck) {
+                    throw new \Exception("Значение ID {$valueId} не принадлежит атрибуту ID {$attributeId}");
+                }
+
+                // Ищем существующую связь для этого атрибута
+                // Нам нужно найти запись в shop_variation_attributes_values, которая ссылается на значение,
+                // которое в свою очередь ссылается на этот атрибут.
+                
+                // Получаем текущие значения вариации
+                $currentValues = DB::table('shop_variation_attributes_values as vav')
+                    ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                    ->where('vav.variation_id', $variation->id)
+                    ->where('av.attribute_id', $attributeId)
+                    ->select('vav.id', 'vav.attribute_value_id')
+                    ->first();
+
+                if ($currentValues) {
+                    // Если связь есть, обновляем её
+                    if ($currentValues->attribute_value_id != $valueId) {
+                        DB::table('shop_variation_attributes_values')
+                            ->where('id', $currentValues->id)
+                            ->update([
+                                'attribute_value_id' => $valueId,
+                                'updated_at' => now()
+                            ]);
+                    }
+                } else {
+                    // Если связи нет, создаем новую
+                    DB::table('shop_variation_attributes_values')->insert([
+                        'variation_id' => $variation->id,
+                        'attribute_value_id' => $valueId,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                }
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Атрибуты вариации обновлены'
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка обновления атрибутов: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Удалить вариацию
      */
     public function destroy($goodId, $variationId): JsonResponse

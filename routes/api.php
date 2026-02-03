@@ -426,6 +426,15 @@ Route::post('/phone/check-status', [\App\Http\Controllers\Auth\PhoneAuthControll
 // Свойства товаров для импорта (временно без middleware для тестирования)
 Route::get('/admin/shop/goods/properties', [\App\Http\Controllers\Admin\ShopPropertiesController::class, 'list']);
 
+// Batch delete images by variation IDs
+Route::post('/admin/shop/goods/{goodId}/images/batch-delete-by-variations', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'destroyBatchByVariations']);
+
+// Batch copy images between variations
+Route::post('/admin/shop/goods/{goodId}/images/batch-copy-variations', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'copyBatchByVariations']);
+
+// Update variation attributes
+Route::put('/admin/shop/goods/{goodId}/variations/{variationId}/attributes', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'updateAttributes']);
+
 // Google OAuth маршруты (требуют сессии)
 Route::middleware(['web'])->group(function () {
     Route::get('/auth/google', [\App\Http\Controllers\Auth\GoogleAuthController::class, 'redirectToGoogle']);
@@ -1432,6 +1441,15 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/{exportFile}/complete-test', [\App\Http\Controllers\Admin\ExportFilesController::class, 'completeTest']);
         });
 
+        // General Export management (Sitemap, etc.)
+        Route::prefix('export')->group(function () {
+            Route::post('/sitemap', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'generateSitemap']);
+            Route::get('/sitemap/status', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getSitemapStatus']);
+            
+            Route::post('/robots', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'generateRobots']);
+            Route::get('/robots/status', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getRobotsStatus']);
+        });
+
         // Queue management
         Route::prefix('queue-status')->middleware('role:admin')->group(function () {
             Route::get('/', function () {
@@ -1792,6 +1810,8 @@ Route::middleware('auth:sanctum')->group(function () {
         });
 
 
+
+
         // Shop management (для пользователей с доступом к shop) - CORS ПЕРВЫЙ!
         Route::middleware([\App\Http\Middleware\CustomCors::class, 'auth:sanctum', 'role:admin,manager'])->prefix('shop')->group(function () {
             // Товары
@@ -1837,7 +1857,9 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::prefix('import-export')->group(function () {
                     Route::post('/export/csv', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'exportCsv']);
                     Route::post('/export/excel', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'exportExcel']);
-                    Route::post('/import/csv', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'importCsv']);
+          Route::post('/export/yml', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'exportYml']);
+          Route::get('/export/yml/status', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getYmlStatus']);
+          Route::post('/import/csv', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'importCsv']);
                     Route::get('/template', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getTemplate']);
                 });
 
@@ -1915,6 +1937,8 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::put('/{imageId}', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'update']);
                     Route::delete('/{imageId}', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'destroy']);
                     Route::delete('/batch', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'destroyBatch']);
+                    Route::post('/batch-copy-variations', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'copyBatchByVariations']);
+                    Route::post('/batch-delete-by-variations', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'destroyBatchByVariations']);
                     Route::put('/{imageId}/main', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'setMain']);
                     Route::post('/{imageId}/link-variation', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'linkVariation']);
                     Route::post('/reorder', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'reorder']);
