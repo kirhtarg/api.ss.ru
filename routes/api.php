@@ -15,6 +15,9 @@ use App\Http\Controllers\Api\Public\SiteMenuController;
 
 // CORS уже настроен в OPTIONS обработчике выше
 
+// Вебхук Т‑Банк (e‑acq и Долями)
+Route::post('/webhooks/tbank', [\App\Http\Controllers\Api\Public\ShopPaymentController::class, 'tbankWebhook']);
+
 
 /*
 |--------------------------------------------------------------------------
@@ -585,6 +588,12 @@ Route::get('/test/oauth', function () {
     });
     Route::post('/public/shop/goods/batch', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getBatch']);
 
+    // Получение деталей товаров по ID (для корзины/чекаута)
+    Route::options('/public/shop/goods/details', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/public/shop/goods/details', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getGoodsDetails']);
+
     Route::options('/public/shop/goods/{id}', function () {
         return response()->json([], 200);
     });
@@ -875,6 +884,8 @@ Route::get('/test/oauth', function () {
 
     // Информация о товарах (публичная)
     Route::post('/public/shop/goods/details', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getGoodsDetails']);
+    // Получить данные для чекаута (товары с ценами, бонусами и скидками)
+    Route::post('/public/shop/checkout/data', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getCheckoutData']);
 
     // Значения характеристик товаров (публичные)
     Route::get('/public/shop/property-values', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getPropertyValues']);
@@ -1858,6 +1869,9 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::get('/', [ShopGoodImageController::class, 'index']);
                     Route::post('/', [ShopGoodImageController::class, 'store']);
                     Route::post('/{image}/set-main', [ShopGoodImageController::class, 'setMain']);
+                    // Специфичные маршруты должны быть перед динамическими
+                    Route::delete('/batch-delete', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'destroyBatch']);
+                    Route::delete('/batch', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'destroyBatch']);
                     Route::delete('/{image}', [ShopGoodImageController::class, 'destroy']);
                     Route::post('/reorder', [ShopGoodImageController::class, 'reorder']);
                 });
@@ -1877,6 +1891,9 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/download-image', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'downloadImage']);
                 Route::post('/download-images-batch', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'downloadImagesBatch']);
                 Route::post('/save-image-to-frontend', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'saveImageToFrontend']);
+                Route::post('/image-downloads/start', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'startImageDownloadsTask']);
+                Route::get('/image-downloads/{taskId}/status', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'imageDownloadsTaskStatus']);
+                Route::get('/image-downloads/{taskId}/result', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'imageDownloadsTaskResult']);
 
                 // Прокси для загрузки YML фидов (обход CORS)
                 Route::post('/yml-feed-proxy', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'proxyYMLFeed']);
@@ -1943,11 +1960,13 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::get('/', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'index']);
                     Route::get('/all', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'getAllWithVariations']);
                     Route::post('/', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'store']);
-                    Route::put('/{imageId}', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'update']);
-                    Route::delete('/{imageId}', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'destroy']);
+                    Route::post('/batch-delete', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'destroyBatch']);
+                    // Специфичные маршруты должны быть перед общими с параметрами
                     Route::delete('/batch', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'destroyBatch']);
                     Route::post('/batch-copy-variations', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'copyBatchByVariations']);
                     Route::post('/batch-delete-by-variations', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'destroyBatchByVariations']);
+                    Route::put('/{imageId}', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'update']);
+                    Route::delete('/{imageId}', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'destroy']);
                     Route::put('/{imageId}/main', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'setMain']);
                     Route::post('/{imageId}/link-variation', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'linkVariation']);
                     Route::post('/reorder', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'reorder']);

@@ -866,12 +866,7 @@ class ShopGoodImagesController extends Controller
             $errors = [];
             $skipped = [];
             
-            // Логируем входящие данные
-            Log::info('ShopGoodImagesController::createFromImportBatch - Получены данные', [
-                'images_count' => count($images),
-                'first_image_sample' => $images[0] ?? null,
-                'request_size' => strlen(json_encode($request->all()))
-            ]);
+            
 
             // Группируем изображения по товарам/вариациям для оптимизации
             $imagesByGood = [];
@@ -956,20 +951,7 @@ class ShopGoodImagesController extends Controller
                 }
             }
 
-            // Логируем итоговые результаты
-            Log::info('ShopGoodImagesController::createFromImportBatch - Завершено', [
-                'total_images' => count($images),
-                'successful' => count($results),
-                'skipped' => count($skipped),
-                'failed' => count($errors),
-                'errors_summary' => array_map(function($error) {
-                    return [
-                        'good_id' => $error['good_id'],
-                        'file_path' => $error['file_path'],
-                        'error' => $error['error']
-                    ];
-                }, $errors)
-            ]);
+            
 
             return response()->json([
                 'success' => true,

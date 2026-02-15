@@ -33,31 +33,23 @@ class SearchController extends Controller
         $shopRemoteQ = Setting::where('key', 'shop_remote_q')->first();
         $remoteQ = $shopRemoteQ ? (int)$shopRemoteQ->value : 1;
         
-        // ВРЕМЕННО: Отключаем кеш для отладки
-        // Кэшируем результаты на 5 минут (ключ включает настройки фильтрации)
-        // $cacheKey = 'search_' . md5($query . '_' . $limit . '_' . $showGoodMode . '_' . $remoteQ);
-        
-        // $results = Cache::remember($cacheKey, 300, function () use ($query, $limit) {
-            $products = $this->searchProducts($query, $limit);
-            $categories = $this->searchCategories($query, $limit);
-            $brands = $this->searchBrands($query, $limit);
-            
-            // Получаем общее количество результатов для каждого типа
-            $totalProducts = $this->getTotalProductsCount($query);
-            $totalCategories = $this->getTotalCategoriesCount($query);
-            $totalBrands = $this->getTotalBrandsCount($query);
-            
-            $results = [
-                'products' => $products,
-                'categories' => $categories,
-                'brands' => $brands,
-                'total' => [
-                    'products' => $totalProducts,
-                    'categories' => $totalCategories,
-                    'brands' => $totalBrands
-                ]
-            ];
-        // });
+        // ВРЕМЕННО: Отключаем кеш для проверки качества релевантности
+        $products = $this->searchProducts($query, $limit);
+        $categories = $this->searchCategories($query, $limit);
+        $brands = $this->searchBrands($query, $limit);
+        $totalProducts = $this->getTotalProductsCount($query);
+        $totalCategories = $this->getTotalCategoriesCount($query);
+        $totalBrands = $this->getTotalBrandsCount($query);
+        $results = [
+            'products' => $products,
+            'categories' => $categories,
+            'brands' => $brands,
+            'total' => [
+                'products' => $totalProducts,
+                'categories' => $totalCategories,
+                'brands' => $totalBrands
+            ]
+        ];
 
         return response()->json(['data' => $results]);
     }
@@ -71,30 +63,31 @@ class SearchController extends Controller
             $escapedQuery = DB::getPdo()->quote($query);
             $escapedQuery = trim($escapedQuery, "'");
             
-            // Разбиваем запрос на слова для полнотекстового поиска
-            // Используем оригинальный запрос для разбивки, чтобы сохранить регистр
-            $words = preg_split('/\s+/', $query);
-            $words = array_filter($words, function($word) {
-                $trimmed = trim($word);
-                return mb_strlen($trimmed) >= 2; // Минимум 2 символа для слова
-            });
-            $words = array_map('trim', $words); // Убираем пробелы
-            $words = array_values($words);
-            
-            // Экранируем слова для использования в LIKE запросах
-            // Преобразуем к нижнему регистру для case-insensitive поиска
+            // Токенизация с учетом стоп-слов и минимальной длины
+            $tokens = $this->tokenizeQuery($query);
             $escapedWords = array_map(function($word) {
                 $quoted = DB::getPdo()->quote(mb_strtolower($word));
                 return trim($quoted, "'");
-            }, $words);
-            
-            // Также преобразуем полный запрос к нижнему регистру
+            }, $tokens);
             $escapedQueryLower = mb_strtolower($escapedQuery);
-            
-            // Отключаем FULLTEXT полностью, так как индекс может отсутствовать
-            // Проверяем, есть ли FULLTEXT индекс (если нет, используем LIKE как fallback)
-            // Ищем только по полю name (убрали description и short_description)
-            $hasFulltextIndex = false; // Отключаем FULLTEXT для надежности
+            $quotedPhrase = $this->extractQuotedPhrase($query);
+            $hasFulltextIndex = false; // FULLTEXT не используется
+            // Год извлекаем из оригинальной строки, чтобы не ломаться на пунктуации
+            $years = [];
+            if (preg_match_all('/(19|20)\d{2}/', $query, $ym)) {
+                $years = array_values(array_unique($ym[0]));
+            }
+            $nonMandatoryWords = array_values(array_filter($tokens, function($t) use ($years) {
+                return !in_array($t, $years, true);
+            }));
+            $escapedYears = array_map(function($y) {
+                $quoted = DB::getPdo()->quote(mb_strtolower($y));
+                return trim($quoted, "'");
+            }, $years);
+            $escapedNonMandatory = array_map(function($word) {
+                $quoted = DB::getPdo()->quote(mb_strtolower($word));
+                return trim($quoted, "'");
+            }, $nonMandatoryWords);
             
             $productsQuery = DB::table('shop_goods')
                 ->where('is_active', true);
@@ -125,77 +118,18 @@ class SearchController extends Controller
                 }
             }
             
-            // Умный поиск: сначала проверяем логику И, если нет результатов - используем ИЛИ
-            if (count($wordsForLike) > 0) {
-                // Создаем упрощенный запрос для проверки наличия товаров с логикой И
-                // Проверяем БЕЗ фильтров по остаткам, чтобы понять, есть ли вообще товары с нужными словами
-                $testQuerySimple = DB::table('shop_goods')
-                    ->where('is_active', true);
-                
-                // Применяем поиск с логикой И (все слова) - БЕЗ фильтров по остаткам
-                $testQuerySimple->where(function($q) use ($wordsForLike) {
-                    foreach ($wordsForLike as $word) {
-                        $q->whereRaw('LOWER(name) LIKE ?', ["%{$word}%"]);
-                    }
-                });
-                
-                // Проверяем количество результатов с логикой И (без фильтров по остаткам)
-                $countWithAnd = $testQuerySimple->count();
-                
-                $useAndLogic = $countWithAnd > 0;
-                
-                // Применяем выбранную логику к основному запросу
-                if ($useAndLogic) {
-                    // Если есть результаты с логикой И, используем её
-                    $productsQuery->where(function ($q) use ($wordsForLike, $escapedQueryLower) {
-                        // Все слова должны быть найдены в названии (AND между словами)
-                        $q->where(function($allWordsQuery) use ($wordsForLike) {
-                            foreach ($wordsForLike as $word) {
-                                $allWordsQuery->whereRaw('LOWER(name) LIKE ?', ["%{$word}%"]);
-                            }
-                        })
-                        // ИЛИ артикул совпадает
-                        ->orWhereRaw('LOWER(sku) LIKE ?', ["%{$escapedQueryLower}%"])
-                        ->orWhereExists(function ($subQuery) use ($escapedQueryLower) {
-                            $subQuery->select(DB::raw(1))
-                                     ->from('shop_good_variations')
-                                     ->whereColumn('shop_good_variations.good_id', 'shop_goods.id')
-                                     ->where('shop_good_variations.is_active', true)
-                                     ->whereRaw('LOWER(shop_good_variations.sku) LIKE ?', ["%{$escapedQueryLower}%"]);
-                        });
-                    });
-                } else {
-                    // Если нет результатов с логикой И, используем логику ИЛИ
-                    $productsQuery->where(function ($q) use ($wordsForLike, $escapedQueryLower) {
-                        // Хотя бы одно слово должно быть найдено в названии (OR между словами)
-                        $q->where(function($anyWordQuery) use ($wordsForLike) {
-                            foreach ($wordsForLike as $word) {
-                                $anyWordQuery->orWhereRaw('LOWER(name) LIKE ?', ["%{$word}%"]);
-                            }
-                        })
-                        // ИЛИ артикул совпадает
-                        ->orWhereRaw('LOWER(sku) LIKE ?', ["%{$escapedQueryLower}%"])
-                        ->orWhereExists(function ($subQuery) use ($escapedQueryLower) {
-                            $subQuery->select(DB::raw(1))
-                                     ->from('shop_good_variations')
-                                     ->whereColumn('shop_good_variations.good_id', 'shop_goods.id')
-                                     ->where('shop_good_variations.is_active', true)
-                                     ->whereRaw('LOWER(shop_good_variations.sku) LIKE ?', ["%{$escapedQueryLower}%"]);
-                        });
-                    });
-                }
-            } else {
-                // Если нет слов, используем простой поиск
+            // Жесткие требования: фраза в кавычках и год(ы), если есть
+            if ($quotedPhrase) {
+                $qp = mb_strtolower($quotedPhrase);
+                $productsQuery->whereRaw('LOWER(name) LIKE ?', ["%{$qp}%"]);
+            }
+            foreach ($escapedYears as $y) {
+                $productsQuery->whereRaw('LOWER(name) LIKE ?', ["%{$y}%"]);
+            }
+            // Если нет токенов вовсе — fallback на целую строку
+            if (count($escapedNonMandatory) === 0 && count($escapedYears) === 0 && !$quotedPhrase) {
                 $productsQuery->where(function ($q) use ($escapedQueryLower) {
-                    $q->whereRaw('LOWER(name) LIKE ?', ["%{$escapedQueryLower}%"])
-                      ->orWhereRaw('LOWER(sku) LIKE ?', ["%{$escapedQueryLower}%"])
-                      ->orWhereExists(function ($subQuery) use ($escapedQueryLower) {
-                          $subQuery->select(DB::raw(1))
-                                   ->from('shop_good_variations')
-                                   ->whereColumn('shop_good_variations.good_id', 'shop_goods.id')
-                                   ->where('shop_good_variations.is_active', true)
-                                   ->whereRaw('LOWER(shop_good_variations.sku) LIKE ?', ["%{$escapedQueryLower}%"]);
-                      });
+                    $q->whereRaw('LOWER(name) LIKE ?', ["%{$escapedQueryLower}%"]);
                 });
             }
             
@@ -203,22 +137,73 @@ class SearchController extends Controller
             // ВАЖНО: применяем ПЕРЕД selectRaw, чтобы фильтр применялся к базовому запросу
             $this->applyStockFilter($productsQuery);
             
-            // Добавляем релевантность для сортировки
-            // НЕ используем FULLTEXT, так как индекс может отсутствовать
-            // Используем только LIKE для надежности
-            $productsQuery->selectRaw('shop_goods.*,
+            // Релевантность + подсчет совпадений по словам (по всем токенам)
+            $matchParts = [];
+            foreach ($escapedWords as $w) {
+                $matchParts[] = "CASE WHEN LOWER(name) LIKE '%{$w}%' THEN 1 ELSE 0 END";
+            }
+            $matchExpr = count($matchParts) ? implode(' + ', $matchParts) : '0';
+            $productsQuery->selectRaw("shop_goods.*,
                 (CASE 
                     WHEN LOWER(sku) = ? THEN 100
-                    WHEN LOWER(sku) LIKE ? THEN 80
-                    WHEN LOWER(name) = ? THEN 90
-                    WHEN LOWER(name) LIKE ? THEN 70
+                    WHEN LOWER(name) = ? THEN 95
+                    WHEN LOWER(sku) LIKE ? THEN 85
+                    WHEN LOWER(name) LIKE ? THEN 80
+                    WHEN LOWER(name) LIKE ? THEN 60
                     ELSE 10
-                END) as relevance', [
+                END) as relevance, ({$matchExpr}) as match_count", [
+                $escapedQueryLower,
                 $escapedQueryLower,
                 "{$escapedQueryLower}%",
-                $escapedQueryLower,
-                "{$escapedQueryLower}%"
+                "{$escapedQueryLower}%",
+                "%{$escapedQueryLower}%"
             ]);
+            // Этап 1.5: если все слова встречаются в name/sku/sku вариаций — отдаем такие результаты
+            $hasAllAcrossFields = false;
+            if (count($escapedWords) > 0) {
+                $testAllWordsQuery = DB::table('shop_goods')->where('is_active', true);
+                foreach ($escapedWords as $word) {
+                    $testAllWordsQuery->where(function($qw) use ($word) {
+                        $qw->whereRaw('LOWER(name) LIKE ?', ["%{$word}%"])
+                           ->orWhereRaw('LOWER(sku) LIKE ?', ["%{$word}%"])
+                           ->orWhereExists(function ($subQuery) use ($word) {
+                               $subQuery->select(DB::raw(1))
+                                    ->from('shop_good_variations')
+                                    ->whereColumn('shop_good_variations.good_id', 'shop_goods.id')
+                                    ->where('shop_good_variations.is_active', true)
+                                    ->whereRaw('LOWER(shop_good_variations.sku) LIKE ?', ["%{$word}%"]);
+                           });
+                    });
+                }
+                $hasAllAcrossFields = $testAllWordsQuery->exists();
+            }
+            if ($hasAllAcrossFields) {
+                $productsQuery->where(function ($q) use ($escapedWords) {
+                    foreach ($escapedWords as $word) {
+                        $q->where(function($qw) use ($word) {
+                            $qw->whereRaw('LOWER(name) LIKE ?', ["%{$word}%"])
+                               ->orWhereRaw('LOWER(sku) LIKE ?', ["%{$word}%"])
+                               ->orWhereExists(function ($subQuery) use ($word) {
+                                   $subQuery->select(DB::raw(1))
+                                        ->from('shop_good_variations')
+                                        ->whereColumn('shop_good_variations.good_id', 'shop_goods.id')
+                                        ->where('shop_good_variations.is_active', true)
+                                        ->whereRaw('LOWER(shop_good_variations.sku) LIKE ?', ["%{$word}%"]);
+                               });
+                        });
+                    }
+                });
+            }
+            // Порог: обязательное присутствие 75% (в большую сторону) введенных слов, если не сработал этап 1.5
+            $tokensCount = max(0, count($escapedWords));
+            if (isset($phraseEsc)) {
+                $productsQuery->havingRaw('match_count >= 0');
+            } else if ($hasAllAcrossFields) {
+                $productsQuery->havingRaw('match_count >= 0');
+            } else if ($tokensCount > 0) {
+                $threshold = (int)ceil($tokensCount * 0.75);
+                $productsQuery->havingRaw('match_count >= ?', [$threshold]);
+            }
             
             // Сортируем по релевантности (убывание), затем по названию
             $products = $productsQuery
@@ -334,19 +319,12 @@ class SearchController extends Controller
         $escapedQuery = trim($escapedQuery, "'");
         $escapedQueryLower = mb_strtolower($escapedQuery);
         
-        // Разбиваем запрос на слова
-        $words = preg_split('/\s+/', $query);
-        $words = array_filter($words, function($word) {
-            return mb_strlen(trim($word)) >= 2;
-        });
-        $words = array_map('trim', $words);
-        $words = array_values($words);
-        
-        // Экранируем слова для LIKE запросов (case-insensitive)
+        // Токенизация запроса
+        $tokens = $this->tokenizeQuery($query);
         $escapedWords = array_map(function($word) {
             $quoted = DB::getPdo()->quote(mb_strtolower($word));
             return trim($quoted, "'");
-        }, $words);
+        }, $tokens);
         
         $productsQuery = DB::table('shop_goods')
             ->where('is_active', true);
@@ -390,24 +368,25 @@ class SearchController extends Controller
                     });
                 });
             } else {
-                // Если нет результатов с логикой И, используем логику ИЛИ
-                $productsQuery->where(function ($q) use ($escapedWords, $escapedQueryLower) {
-                    // Хотя бы одно слово должно быть найдено в названии (OR между словами)
-                    $q->where(function($anyWordQuery) use ($escapedWords) {
-                        foreach ($escapedWords as $word) {
-                            $anyWordQuery->orWhereRaw('LOWER(name) LIKE ?', ["%{$word}%"]);
-                        }
-                    })
-                    // ИЛИ артикул совпадает
-                    ->orWhereRaw('LOWER(sku) LIKE ?', ["%{$escapedQueryLower}%"])
-                    ->orWhereExists(function ($subQuery) use ($escapedQueryLower) {
-                        $subQuery->select(DB::raw(1))
-                                 ->from('shop_good_variations')
-                                 ->whereColumn('shop_good_variations.good_id', 'shop_goods.id')
-                                 ->where('shop_good_variations.is_active', true)
-                                 ->whereRaw('LOWER(shop_good_variations.sku) LIKE ?', ["%{$escapedQueryLower}%"]);
+                if (mb_strlen(trim($query)) >= 10) {
+                    $productsQuery->where(function ($q) use ($escapedWords, $escapedQueryLower) {
+                        $q->where(function($anyWordQuery) use ($escapedWords) {
+                            foreach ($escapedWords as $word) {
+                                $anyWordQuery->orWhereRaw('LOWER(name) LIKE ?', ["%{$word}%"]);
+                            }
+                        })
+                        ->orWhereRaw('LOWER(sku) LIKE ?', ["%{$escapedQueryLower}%"])
+                        ->orWhereExists(function ($subQuery) use ($escapedQueryLower) {
+                            $subQuery->select(DB::raw(1))
+                                     ->from('shop_good_variations')
+                                     ->whereColumn('shop_good_variations.good_id', 'shop_goods.id')
+                                     ->where('shop_good_variations.is_active', true)
+                                     ->whereRaw('LOWER(shop_good_variations.sku) LIKE ?', ["%{$escapedQueryLower}%"]);
+                        });
                     });
-                });
+                } else {
+                    $productsQuery->whereRaw('1 = 0');
+                }
             }
         } else {
             $productsQuery->where(function ($q) use ($escapedQueryLower) {
@@ -968,49 +947,27 @@ class SearchController extends Controller
     private function getTotalProductsCount($query)
     {
         try {
-            // Используем ту же логику обработки запроса, что и в searchProducts
             $escapedQuery = DB::getPdo()->quote($query);
             $escapedQuery = trim($escapedQuery, "'");
-            
-            // Разбиваем запрос на слова для полнотекстового поиска
-            // Используем оригинальный запрос для разбивки, чтобы сохранить регистр
-            $words = preg_split('/\s+/', $query);
-            $words = array_filter($words, function($word) {
-                $trimmed = trim($word);
-                return mb_strlen($trimmed) >= 2; // Минимум 2 символа для слова
-            });
-            $words = array_map('trim', $words); // Убираем пробелы
-            $words = array_values($words);
-            
-            // Экранируем слова для использования в LIKE запросах
-            // Преобразуем к нижнему регистру для case-insensitive поиска
+            $escapedQueryLower = mb_strtolower($escapedQuery);
+            $tokens = $this->tokenizeQuery($query);
             $escapedWords = array_map(function($word) {
                 $quoted = DB::getPdo()->quote(mb_strtolower($word));
                 return trim($quoted, "'");
-            }, $words);
-            
-            // Также преобразуем полный запрос к нижнему регистру
-            $escapedQueryLower = mb_strtolower($escapedQuery);
-            
-            // Отключаем FULLTEXT полностью, так как индекс может отсутствовать
+            }, $tokens);
             $hasFulltextIndex = false;
             
             $countQuery = DB::table('shop_goods')
                 ->where('is_active', true);
             
-            // Используем экранированные слова для LIKE запросов
-            $wordsForLike = $escapedWords;
-            
-            // Умный поиск: сначала проверяем логику И, если нет результатов - используем ИЛИ
-            if (count($wordsForLike) > 0) {
+            if (count($escapedWords) > 0) {
                 // Создаем упрощенный запрос для проверки наличия товаров с логикой И
                 // Проверяем БЕЗ фильтров по остаткам, чтобы понять, есть ли вообще товары с нужными словами
                 $testQuerySimple = DB::table('shop_goods')
                     ->where('is_active', true);
                 
-                // Применяем поиск с логикой И (все слова) - БЕЗ фильтров по остаткам
-                $testQuerySimple->where(function($q) use ($wordsForLike) {
-                    foreach ($wordsForLike as $word) {
+                $testQuerySimple->where(function($q) use ($escapedWords) {
+                    foreach ($escapedWords as $word) {
                         $q->whereRaw('LOWER(name) LIKE ?', ["%{$word}%"]);
                     }
                 });
@@ -1023,10 +980,10 @@ class SearchController extends Controller
                 // Применяем выбранную логику к основному запросу
                 if ($useAndLogic) {
                     // Если есть результаты с логикой И, используем её
-                    $countQuery->where(function ($q) use ($wordsForLike, $escapedQueryLower) {
+                    $countQuery->where(function ($q) use ($escapedWords, $escapedQueryLower) {
                         // Все слова должны быть найдены в названии (AND между словами)
-                        $q->where(function($allWordsQuery) use ($wordsForLike) {
-                            foreach ($wordsForLike as $word) {
+                        $q->where(function($allWordsQuery) use ($escapedWords) {
+                            foreach ($escapedWords as $word) {
                                 $allWordsQuery->whereRaw('LOWER(name) LIKE ?', ["%{$word}%"]);
                             }
                         })
@@ -1041,24 +998,25 @@ class SearchController extends Controller
                         });
                     });
                 } else {
-                    // Если нет результатов с логикой И, используем логику ИЛИ
-                    $countQuery->where(function ($q) use ($wordsForLike, $escapedQueryLower) {
-                        // Хотя бы одно слово должно быть найдено в названии (OR между словами)
-                        $q->where(function($anyWordQuery) use ($wordsForLike) {
-                            foreach ($wordsForLike as $word) {
-                                $anyWordQuery->orWhereRaw('LOWER(name) LIKE ?', ["%{$word}%"]);
-                            }
-                        })
-                        // ИЛИ артикул совпадает
-                        ->orWhereRaw('LOWER(sku) LIKE ?', ["%{$escapedQueryLower}%"])
-                        ->orWhereExists(function ($subQuery) use ($escapedQueryLower) {
-                            $subQuery->select(DB::raw(1))
-                                     ->from('shop_good_variations')
-                                     ->whereColumn('shop_good_variations.good_id', 'shop_goods.id')
-                                     ->where('shop_good_variations.is_active', true)
-                                     ->whereRaw('LOWER(shop_good_variations.sku) LIKE ?', ["%{$escapedQueryLower}%"]);
+                    if (mb_strlen(trim($query)) >= 10) {
+                        $countQuery->where(function ($q) use ($escapedWords, $escapedQueryLower) {
+                            $q->where(function($anyWordQuery) use ($escapedWords) {
+                                foreach ($escapedWords as $word) {
+                                    $anyWordQuery->orWhereRaw('LOWER(name) LIKE ?', ["%{$word}%"]);
+                                }
+                            })
+                            ->orWhereRaw('LOWER(sku) LIKE ?', ["%{$escapedQueryLower}%"])
+                            ->orWhereExists(function ($subQuery) use ($escapedQueryLower) {
+                                $subQuery->select(DB::raw(1))
+                                         ->from('shop_good_variations')
+                                         ->whereColumn('shop_good_variations.good_id', 'shop_goods.id')
+                                         ->where('shop_good_variations.is_active', true)
+                                         ->whereRaw('LOWER(shop_good_variations.sku) LIKE ?', ["%{$escapedQueryLower}%"]);
+                            });
                         });
-                    });
+                    } else {
+                        $countQuery->whereRaw('1 = 0');
+                    }
                 }
             } else {
                 // Если нет слов, используем простой поиск
@@ -1234,5 +1192,47 @@ class SearchController extends Controller
         } catch (\Exception $e) {
             return 0;
         }
+    }
+
+    /**
+     * Токенизация запроса: удаление стоп-слов и коротких токенов (<3), кроме кодов с цифрами
+     */
+    private function tokenizeQuery($query)
+    {
+        $raw = preg_split('/\s+/', $query);
+        $stop = $this->getStopWords();
+        $tokens = [];
+        foreach ($raw as $w) {
+            $w = trim($w);
+            if ($w === '') continue;
+            $lower = mb_strtolower($w);
+            if (in_array($lower, $stop, true)) continue;
+            $hasDigit = preg_match('/\d/', $lower) === 1;
+            if (!$hasDigit && mb_strlen($lower) < 3) continue;
+            $tokens[] = $lower;
+        }
+        return array_values($tokens);
+    }
+
+    /**
+     * Извлечь фразу в кавычках, если есть ("..."), без кавычек
+     */
+    private function extractQuotedPhrase($query)
+    {
+        if (preg_match('/"([^"]{2,})"/u', $query, $m)) {
+            return trim($m[1]);
+        }
+        return null;
+    }
+
+    /**
+     * Русские/английские стоп-слова
+     */
+    private function getStopWords()
+    {
+        return [
+            'и','в','на','для','по','с','без','при','над','под','из','от','до','как','что','где','когда','или','но','же','то','не',
+            'a','an','and','or','the','to','in','on','for','of','by','with','at'
+        ];
     }
 }

@@ -122,6 +122,17 @@ class ImportLogService
     }
     
     /**
+     * Записать пропуск загрузки изображения
+     */
+    public function logImageSkipped($imageUrl, $reason = 'Файл уже существует', $goodSku = null)
+    {
+        $imageUrl = $imageUrl ? " ({$imageUrl})" : '';
+        $goodSku = $goodSku ? " - Товар: {$goodSku}" : '';
+        $reason = $reason ?: 'Пропущено';
+        $this->writeLog('import-skip', "IMAGE_SKIPPED{$imageUrl}{$goodSku} - {$reason}");
+    }
+    
+    /**
      * Пакетная запись успешных загрузок изображений
      */
     public function logImageLoadingSuccessBatch($items)
@@ -389,7 +400,9 @@ class ImportLogService
         $lines = [];
         foreach ($items as $item) {
             $sheet = $item['sheet'] ?? 'неизвестно';
-            $lines[] = "{$item['count']} - {$item['sku']} - {$item['name']} - Лист: {$sheet}";
+            $supplier = $item['supplier'] ?? '';
+            $supplierStr = $supplier ? " - Поставщик: {$supplier}" : '';
+            $lines[] = "{$item['count']} - {$item['sku']} - {$item['name']}{$supplierStr} - Лист: {$sheet}";
         }
         
         if (!empty($lines)) {
@@ -407,7 +420,9 @@ class ImportLogService
             $sheet = $item['sheet'] ?? 'неизвестно';
             $goodId = $item['good_id'] ?? '';
             $goodIdStr = $goodId ? " - ID: {$goodId}" : '';
-            $lines[] = "{$item['count']} - {$item['sku']} - {$item['name']}{$goodIdStr} - Лист: {$sheet}";
+            $supplier = $item['supplier'] ?? '';
+            $supplierStr = $supplier ? " - Поставщик: {$supplier}" : '';
+            $lines[] = "{$item['count']} - {$item['sku']} - {$item['name']}{$goodIdStr}{$supplierStr} - Лист: {$sheet}";
         }
         
         if (!empty($lines)) {

@@ -21,6 +21,7 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Http;
+use App\Services\TbankPaymentService;
 
 class ShopOrdersController extends Controller
 {
@@ -3146,6 +3147,12 @@ class ShopOrdersController extends Controller
                 case 'yandex_split':
                     $result = $this->regenerateYandexPayPayment($paymentMethod, $transaction, $order);
                     break;
+                case 'tbank_eacq':
+                    $result = $this->regenerateTbankEacqPayment($paymentMethod, $transaction, $order);
+                    break;
+                case 'tbank_dolyame':
+                    $result = $this->regenerateTbankDolyamePayment($paymentMethod, $transaction, $order);
+                    break;
                 default:
                     \Log::warning('Unsupported payment method for regeneration', ['type' => $paymentMethod->type]);
                     return response()->json([
@@ -3509,6 +3516,108 @@ class ShopOrdersController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка при перегенерации платежа Yandex Pay'
+            ], 500);
+        }
+    }
+
+    /**
+     * Перегенерация платежной ссылки для Т‑Банк (e‑acq)
+     */
+    private function regenerateTbankEacqPayment($paymentMethod, $transaction, $order)
+    {
+        try {
+            $settings = $paymentMethod->getApiSettings();
+            if (empty($settings['terminal_key']) || empty($settings['terminal_password'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Неверные настройки Т‑Банк'
+                ], 400);
+            }
+            $service = new TbankPaymentService($settings);
+            $orderStub = new \stdClass();
+            $orderStub->id = $order->id;
+            $orderStub->order_number = $order->order_number;
+            $orderStub->total_amount = (float)$order->total_amount;
+            $orderStub->customer_email = $order->customer_email;
+            $orderStub->customer_phone = $order->customer_phone;
+            $orderStub->user_id = $order->user_id;
+            $orderStub->items = $order->items;
+            $orderStub->delivery_cost = $order->delivery_cost ?? 0;
+            $result = $service->initiatePayment($orderStub);
+            if (!empty($result['success']) && !empty($result['payment_url'])) {
+                $transaction->update([
+                    'transaction_id' => $result['transaction_id'] ?? null,
+                    'response_data' => $result['response_data'] ?? null,
+                    'status' => 'pending'
+                ]);
+                $order->update([
+                    'payment_url' => $result['payment_url']
+                ]);
+                return response()->json([
+                    'success' => true,
+                    'payment_url' => $result['payment_url'],
+                    'transaction_id' => $transaction->id
+                ]);
+            }
+            return response()->json([
+                'success' => false,
+                'message' => $result['message'] ?? 'T‑Bank: не удалось создать платеж'
+            ], 500);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при перегенерации платежа Т‑Банк'
+            ], 500);
+        }
+    }
+
+    /**
+     * Перегенерация платежной ссылки для Т‑Банк Долями
+     */
+    private function regenerateTbankDolyamePayment($paymentMethod, $transaction, $order)
+    {
+        try {
+            $settings = $paymentMethod->getApiSettings();
+            if (empty($settings['terminal_key']) || empty($settings['terminal_password'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Неверные настройки Т‑Банк Долями'
+                ], 400);
+            }
+            $service = new TbankPaymentService(array_merge($settings, ['pay_type' => 'DOLYAMI']));
+            $orderStub = new \stdClass();
+            $orderStub->id = $order->id;
+            $orderStub->order_number = $order->order_number;
+            $orderStub->total_amount = (float)$order->total_amount;
+            $orderStub->customer_email = $order->customer_email;
+            $orderStub->customer_phone = $order->customer_phone;
+            $orderStub->user_id = $order->user_id;
+            $orderStub->items = $order->items;
+            $orderStub->delivery_cost = $order->delivery_cost ?? 0;
+            $result = $service->initiatePayment($orderStub);
+            if (!empty($result['success']) && !empty($result['payment_url'])) {
+                $transaction->update([
+                    'transaction_id' => $result['transaction_id'] ?? null,
+                    'response_data' => $result['response_data'] ?? null,
+                    'status' => 'pending'
+                ]);
+                $order->update([
+                    'payment_url' => $result['payment_url']
+                ]);
+                return response()->json([
+                    'success' => true,
+                    'payment_url' => $result['payment_url'],
+                    'transaction_id' => $transaction->id
+                ]);
+            }
+            return response()->json([
+                'success' => false,
+                'message' => $result['message'] ?? 'T‑Bank Долями: не удалось создать платеж'
+            ], 500);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при перегенерации платежа Т‑Банк Долями'
             ], 500);
         }
     }

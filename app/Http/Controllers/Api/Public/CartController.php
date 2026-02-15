@@ -950,6 +950,72 @@ class CartController extends Controller
                 'is_paid' => $isPaid
             ]);
 
+            // SECURITY FIX: Пересчитываем цены товаров из БД, чтобы избежать заказов с нулевой ценой
+            $rawItems = $request->get('items', array_values($cart['items']));
+            $finalItems = [];
+            $recalculatedSubtotal = 0;
+            $recalculatedTotalQuantity = 0;
+
+            foreach ($rawItems as $item) {
+                $goodId = $item['good_id'] ?? null;
+                $variationId = $item['variation_id'] ?? null;
+                $quantity = $item['quantity'] ?? 1;
+                
+                if (!$goodId) continue;
+
+                $good = ShopGood::find($goodId);
+                if (!$good) continue;
+
+                // Определяем базовые цены
+                $dbPrice = $good->price;
+                $dbSalePrice = $good->sale_price;
+                $dbDempingPrice = $good->demping_price;
+                $dbShowDemping = $good->show_demping;
+                
+                // Если есть вариация, берем цены из нее
+                if ($variationId) {
+                    $variation = ShopGoodVariation::find($variationId);
+                    if ($variation) {
+                        $dbPrice = $variation->price;
+                        $dbSalePrice = $variation->sale_price;
+                        $dbDempingPrice = $variation->demping_price;
+                        $dbShowDemping = $variation->show_demping;
+                    }
+                }
+                
+                // Определяем финальную цену (копируем логику из formatCartData)
+                $finalPrice = $dbPrice;
+                $showDemping = ($dbShowDemping == 1 || $dbShowDemping === true || $dbShowDemping === '1');
+                
+                if ($showDemping && $dbDempingPrice && $dbDempingPrice > 0) {
+                    $finalPrice = $dbDempingPrice;
+                } elseif ($dbSalePrice && $dbSalePrice > 0 && $dbSalePrice < $dbPrice) {
+                    $finalPrice = $dbSalePrice;
+                }
+
+                $itemTotal = $finalPrice * $quantity;
+                
+                // Обновляем поля товара
+                $newItem = $item;
+                $newItem['price'] = $dbPrice;
+                $newItem['sale_price'] = $dbSalePrice;
+                $newItem['demping_price'] = $dbDempingPrice;
+                $newItem['show_demping'] = $showDemping;
+                $newItem['total'] = $itemTotal;
+                
+                $finalItems[] = $newItem;
+                $recalculatedSubtotal += $itemTotal;
+                $recalculatedTotalQuantity += $quantity;
+            }
+
+            // Пересчитываем общую сумму
+            $deliveryCost = $request->get('delivery_cost', 0);
+            $overtaxAmount = (float) $request->get('overtax_amount', 0);
+            $totalDiscount = $request->get('total_discount_amount', 0);
+            
+            $finalTotalAmount = $recalculatedSubtotal + $deliveryCost + $overtaxAmount - $totalDiscount;
+            if ($finalTotalAmount < 0) $finalTotalAmount = 0;
+
             // Создаем заказ
             $orderData = [
                 'order_number' => $orderNumber,
@@ -961,25 +1027,25 @@ class CartController extends Controller
                 'customer_name' => $request->get('customer_name'),
                 'customer_email' => $request->get('customer_email'),
                 'customer_phone' => $request->get('customer_phone'),
-                'items' => $request->get('items', array_values($cart['items'])),
-                'subtotal' => $request->get('subtotal', $cart['subtotal']),
+                'items' => $finalItems, // Используем проверенные товары
+                'subtotal' => $recalculatedSubtotal, // Используем пересчитанную сумму
                 'discount_amount' => $request->get('total_discount_amount', 0),
                 'sale_discount_amount' => $request->get('sale_discount_amount', 0),
                 'registered_user_discount_amount' => $request->get('registered_user_discount_amount', 0),
                 'promo_code_discount_amount' => $request->get('promo_code_discount_amount', 0),
                 'birthday_discount_amount' => $request->get('birthday_discount_amount', 0),
-                'total_discount_amount' => $request->get('total_discount_amount', 0),
+                'total_discount_amount' => $totalDiscount,
                 'promo_code' => $request->get('promo_code'),
                 'promo_code_id' => $request->get('promo_code_id'),
                 'use_bonus_points' => $request->get('use_bonus_points', false),
                 'bonus_points_to_use' => $request->get('bonus_points_to_use', 0),
                 'order_bonus_points' => $request->get('order_bonus_points', 0),
-                'overtax_amount' => (float) $request->get('overtax_amount', 0),
+                'overtax_amount' => $overtaxAmount,
                 'overtax_text' => $request->get('overtax_text'),
 
-                'delivery_cost' => $request->get('delivery_cost', 0),
-                'total_amount' => $request->get('total_amount', $cart['total_amount']),
-                'total_quantity' => $cart['total_quantity'],
+                'delivery_cost' => $deliveryCost,
+                'total_amount' => $finalTotalAmount, // Используем пересчитанную общую сумму
+                'total_quantity' => $recalculatedTotalQuantity,
                 'payment_method' => $request->get('payment_method'),
                 'payment_method_id' => $paymentMethodId,
                 'shipping_method' => $request->get('shipping_method'),
@@ -1228,9 +1294,13 @@ class CartController extends Controller
     private function getCartItems(?User $user, string $sessionId)
     {
         $query = ShopCartItem::active()->with([
-            'good:id,slug,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,demping_price,show_demping,price,sale_price',
-            // Загружаем только саму вариацию; атрибуты подтянем отдельно при форматировании, если нужно
-            'variation:id,name,sku,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,demping_price,show_demping,price,sale_price'
+            'good' => function ($query) {
+                $query->select('id', 'name', 'slug', 'sku', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity', 'demping_price', 'show_demping', 'price', 'sale_price', 'is_preorder')
+                      ->with('tags:id,name,slug,color');
+            },
+            'variation' => function ($query) {
+                $query->select('id', 'good_id', 'name', 'sku', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity', 'demping_price', 'show_demping', 'price', 'sale_price');
+            }
         ]);
 
         if ($user) {
@@ -1355,41 +1425,54 @@ class CartController extends Controller
                 $variationName = $item->variation_name;
             }
 
-            // Используем цены из корзины (уже сохранены при добавлении)
-            $regularPrice = \App\Helpers\PriceHelper::roundPrice($item->price);
-            $salePrice = $item->sale_price ? \App\Helpers\PriceHelper::roundPrice($item->sale_price) : null;
+            // Определяем актуальные данные из связей (good/variation)
+            $freshRegularPrice = null;
+            $freshSalePrice = null;
+            $freshDempingPrice = null;
+            $freshShowDemping = false;
+            $freshStockQuantity = 0;
+            $freshRemoteStock = '';
+            $freshFastRemoteStock = '';
+            
+            if ($item->variation_id && $item->relationLoaded('variation') && $item->variation) {
+                $freshRegularPrice = $item->variation->price;
+                $freshSalePrice = $item->variation->sale_price;
+                $freshDempingPrice = $item->variation->demping_price;
+                $freshShowDemping = ($item->variation->show_demping == 1 || $item->variation->show_demping === true || $item->variation->show_demping === '1');
+                
+                $freshStockQuantity = $item->variation->stock_quantity ?? 0;
+                $freshRemoteStock = $item->variation->remote_stock_quantity ?? '';
+                $freshFastRemoteStock = $item->variation->fast_remote_stock_quantity ?? '';
+            } elseif ($item->relationLoaded('good') && $item->good) {
+                $freshRegularPrice = $item->good->price;
+                $freshSalePrice = $item->good->sale_price;
+                $freshDempingPrice = $item->good->demping_price;
+                $freshShowDemping = ($item->good->show_demping == 1 || $item->good->show_demping === true || $item->good->show_demping === '1');
+                
+                $freshStockQuantity = $item->good->stock_quantity ?? 0;
+                $freshRemoteStock = $item->good->remote_stock_quantity ?? '';
+                $freshFastRemoteStock = $item->good->fast_remote_stock_quantity ?? '';
+            }
+
+            // Используем актуальные цены, если они доступны, иначе из корзины
+            $regularPrice = $freshRegularPrice !== null ? \App\Helpers\PriceHelper::roundPrice($freshRegularPrice) : \App\Helpers\PriceHelper::roundPrice($item->price);
+            $salePrice = $freshSalePrice !== null ? \App\Helpers\PriceHelper::roundPrice($freshSalePrice) : ($item->sale_price ? \App\Helpers\PriceHelper::roundPrice($item->sale_price) : null);
 
             // Получаем демпинговую цену и флаг активации
             $dempingPrice = null;
             $showDemping = false;
-            if ($item->variation_id && $item->relationLoaded('variation') && $item->variation) {
-                // Проверяем show_demping как 1 или true, и наличие демпинговой цены
-                $isDempingActive = ($item->variation->show_demping == 1 || $item->variation->show_demping === true || $item->variation->show_demping === '1');
-                if ($isDempingActive && $item->variation->demping_price && $item->variation->demping_price > 0) {
-                    $dempingPrice = \App\Helpers\PriceHelper::roundPrice($item->variation->demping_price);
-                    $showDemping = true;
-                }
-            } elseif ($item->relationLoaded('good') && $item->good) {
-                // Проверяем show_demping как 1 или true, и наличие демпинговой цены
-                $isDempingActive = ($item->good->show_demping == 1 || $item->good->show_demping === true || $item->good->show_demping === '1');
-                if ($isDempingActive && $item->good->demping_price && $item->good->demping_price > 0) {
-                    $dempingPrice = \App\Helpers\PriceHelper::roundPrice($item->good->demping_price);
-                    $showDemping = true;
-                }
+            
+            if ($freshShowDemping && $freshDempingPrice && $freshDempingPrice > 0) {
+                $dempingPrice = \App\Helpers\PriceHelper::roundPrice($freshDempingPrice);
+                $showDemping = true;
             }
 
-            // Получаем остатки товара
-            $stockQuantity = 0;
-            $remoteStockQuantity = '';
-            $fastRemoteStockQuantity = '';
-            if ($item->variation_id && $item->relationLoaded('variation') && $item->variation) {
-                $stockQuantity = $item->variation->stock_quantity ?? 0;
-                $remoteStockQuantity = $item->variation->remote_stock_quantity ?? '';
-                $fastRemoteStockQuantity = $item->variation->fast_remote_stock_quantity ?? '';
-            } elseif ($item->relationLoaded('good') && $item->good) {
-                $stockQuantity = $item->good->stock_quantity ?? 0;
-                $remoteStockQuantity = $item->good->remote_stock_quantity ?? '';
-                $fastRemoteStockQuantity = $item->good->fast_remote_stock_quantity ?? '';
+            // Получаем теги и флаг предзаказа
+            $tags = [];
+            $isPreorder = false;
+            if ($item->relationLoaded('good') && $item->good) {
+                $tags = $item->good->tags ?? [];
+                $isPreorder = $item->good->is_preorder == 1 || $item->good->is_preorder === true;
             }
 
             $items[$cartKey] = [
@@ -1400,17 +1483,21 @@ class CartController extends Controller
                 'sale_price' => $salePrice, // Акционная цена
                 'demping_price' => $dempingPrice, // Демпинговая цена
                 'show_demping' => $showDemping, // Флаг активации демпинга
-                'total' => \App\Helpers\PriceHelper::roundPrice($item->total),
+                'total' => \App\Helpers\PriceHelper::roundPrice($item->total), // Total пересчитается на фронте или при следующем сохранении, но пока отдаем как есть
                 'good_name' => $item->good_name,
                 'variation_name' => $variationName,
                 'good_sku' => $item->good_sku,
                 'good_image' => $item->good_image,
                 'good_slug' => $item->good ? $item->good->slug : '',
-                'stock_quantity' => $stockQuantity,
-                'remote_stock_quantity' => $remoteStockQuantity,
-                'fast_remote_stock_quantity' => $fastRemoteStockQuantity
+                'stock_quantity' => $freshStockQuantity,
+                'remote_stock_quantity' => $freshRemoteStock,
+                'fast_remote_stock_quantity' => $freshFastRemoteStock,
+                'tags' => $tags,
+                'is_preorder' => $isPreorder
             ];
 
+            // Если цены изменились, имеет смысл пересчитать total для корректного subtotal
+            // Но пока оставим как есть, так как total в item зависит от логики скидок
             $subtotal += $item->total;
             $totalQuantity += $item->quantity;
         }

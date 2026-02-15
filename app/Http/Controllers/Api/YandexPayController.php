@@ -6,7 +6,10 @@ use App\Http\Controllers\Controller;
 use App\Models\ShopPaymentMethod;
 use App\Models\ShopOrder;
 use App\Models\ShopPaymentTransaction;
+use App\Models\ShopPaymentStatus;
+use App\Models\ShopOrderStatus;
 use App\Models\Setting;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
@@ -726,23 +729,116 @@ class YandexPayController extends Controller
             }
 
             if (!$transaction) {
-                Log::warning('Transaction not found for YandexPay payment', [
-                    'yandex_order_id' => $yandexOrderId,
-                    'event' => $event,
-                    'status' => $status
-                ]);
-                // Возвращаем 200, чтобы Яндекс Пэй не повторяла запрос
-                return response()->json(['status' => 'ok', 'message' => 'Transaction not found']);
+                $cacheKey = 'payment:init:yandex_pay:' . $yandexOrderId;
+                $draft = Cache::get($cacheKey);
+                if ($draft && is_array($draft) && in_array($event, ['payment.succeeded','order.succeeded'])) {
+                    try {
+                        $orderData = $draft['order_data'] ?? [];
+                        $order = ShopOrder::create([
+                            'order_number' => $draft['order_number'] ?? ('TX-' . uniqid()),
+                            'user_id' => $orderData['customer_id'] ?? null,
+                            'customer_name' => $orderData['customer_name'] ?? '',
+                            'customer_email' => $orderData['customer_email'] ?? '',
+                            'customer_phone' => $orderData['customer_phone'] ?? null,
+                            'items' => $orderData['items'] ?? [],
+                            'subtotal' => $orderData['subtotal'] ?? 0,
+                            'discount_amount' => $orderData['total_discount_amount'] ?? 0,
+                            'total_amount' => $orderData['total_amount'] ?? 0,
+                            'total_quantity' => isset($orderData['items']) ? array_sum(array_column($orderData['items'], 'quantity')) : 0,
+                            'payment_method' => optional(\App\Models\ShopPaymentMethod::find($draft['payment_method_id'] ?? null))->name,
+                            'payment_method_id' => $draft['payment_method_id'] ?? null,
+                            'shipping_method' => $orderData['shipping_method'] ?? null,
+                            'shipping_method_id' => $orderData['shipping_method_id'] ?? null,
+                            'shipping_address' => $orderData['shipping_address'] ?? null,
+                            'notes' => $orderData['notes'] ?? null,
+                            'delivery_cost' => $orderData['delivery_cost'] ?? 0,
+                            'sale_discount_amount' => $orderData['sale_discount_amount'] ?? 0,
+                            'registered_user_discount_amount' => $orderData['registered_user_discount_amount'] ?? 0,
+                            'promo_code_discount_amount' => $orderData['promo_code_discount_amount'] ?? 0,
+                            'birthday_discount_amount' => $orderData['birthday_discount_amount'] ?? 0,
+                            'total_discount_amount' => $orderData['total_discount_amount'] ?? 0,
+                            'promo_code' => $orderData['promo_code'] ?? null,
+                            'promo_code_id' => $orderData['promo_code_id'] ?? null,
+                            'use_bonus_points' => $orderData['use_bonus_points'] ?? false,
+                            'bonus_points_to_use' => $orderData['bonus_points_to_use'] ?? 0,
+                            'order_bonus_points' => $orderData['order_bonus_points'] ?? 0,
+                            'payment_status_id' => ShopPaymentStatus::where('name', 'paid')->value('id'),
+                            'status_id' => ShopOrderStatus::where('name', 'confirmed')->value('id') ?? ShopOrderStatus::where('name', 'pending')->value('id'),
+                        ]);
+                        ShopPaymentTransaction::create([
+                            'order_id' => $order->id,
+                            'payment_method_id' => $draft['payment_method_id'] ?? null,
+                            'amount' => $draft['amount'] ?? 0,
+                            'transaction_id' => $yandexOrderId,
+                            'status' => 'paid',
+                            'request_data' => $draft,
+                            'response_data' => $data,
+                        ]);
+                        Cache::forget($cacheKey);
+                        // обновим ссылку на заказ в дальнейшем коде
+                        $transaction = ShopPaymentTransaction::where('order_id', $order->id)->where('transaction_id', $yandexOrderId)->first();
+                    } catch (\Exception $e) {
+                        Log::error('YandexPay webhook: failed to create order from cache', ['error' => $e->getMessage()]);
+                    }
+                }
+                if (!$transaction) {
+                    Log::warning('Transaction not found for YandexPay payment', [
+                        'yandex_order_id' => $yandexOrderId,
+                        'event' => $event,
+                        'status' => $status
+                    ]);
+                    return response()->json(['status' => 'ok', 'message' => 'Transaction not found']);
+                }
             }
 
-            // Получаем заказ
+            // Получаем заказ; если его нет и статус успешный — создаем его из данных транзакции
             $order = ShopOrder::find($transaction->order_id);
-            
+            if (!$order && in_array($event, ['payment.succeeded', 'order.succeeded'])) {
+                try {
+                    $orderData = $transaction->request_data['order_data'] ?? null;
+                    if (is_array($orderData)) {
+                        $order = ShopOrder::create([
+                            'order_number' => $transaction->request_data['order_number'] ?? ('TX-' . $transaction->id),
+                            'user_id' => $orderData['customer_id'] ?? null,
+                            'customer_name' => $orderData['customer_name'] ?? '',
+                            'customer_email' => $orderData['customer_email'] ?? '',
+                            'customer_phone' => $orderData['customer_phone'] ?? null,
+                            'items' => $orderData['items'] ?? [],
+                            'subtotal' => $orderData['subtotal'] ?? 0,
+                            'discount_amount' => $orderData['total_discount_amount'] ?? 0,
+                            'total_amount' => $orderData['total_amount'] ?? 0,
+                            'total_quantity' => isset($orderData['items']) ? array_sum(array_column($orderData['items'], 'quantity')) : 0,
+                            'payment_method' => optional($transaction->paymentMethod)->name,
+                            'payment_method_id' => $transaction->payment_method_id,
+                            'shipping_method' => $orderData['shipping_method'] ?? null,
+                            'shipping_method_id' => $orderData['shipping_method_id'] ?? null,
+                            'shipping_address' => $orderData['shipping_address'] ?? null,
+                            'notes' => $orderData['notes'] ?? null,
+                            'delivery_cost' => $orderData['delivery_cost'] ?? 0,
+                            'sale_discount_amount' => $orderData['sale_discount_amount'] ?? 0,
+                            'registered_user_discount_amount' => $orderData['registered_user_discount_amount'] ?? 0,
+                            'promo_code_discount_amount' => $orderData['promo_code_discount_amount'] ?? 0,
+                            'birthday_discount_amount' => $orderData['birthday_discount_amount'] ?? 0,
+                            'total_discount_amount' => $orderData['total_discount_amount'] ?? 0,
+                            'promo_code' => $orderData['promo_code'] ?? null,
+                            'promo_code_id' => $orderData['promo_code_id'] ?? null,
+                            'use_bonus_points' => $orderData['use_bonus_points'] ?? false,
+                            'bonus_points_to_use' => $orderData['bonus_points_to_use'] ?? 0,
+                            'order_bonus_points' => $orderData['order_bonus_points'] ?? 0,
+                            'payment_status_id' => ShopPaymentStatus::where('name', 'paid')->value('id'),
+                            'status_id' => ShopOrderStatus::where('name', 'confirmed')->value('id') ?? ShopOrderStatus::where('name', 'pending')->value('id'),
+                        ]);
+                        $transaction->update(['order_id' => $order->id]);
+                    }
+                } catch (\Exception $e) {
+                    Log::error('YandexPay webhook: failed to create order from transaction', [
+                        'tx_id' => $transaction->id,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
             if (!$order) {
-                Log::warning('Order not found for transaction', [
-                    'transaction_id' => $transaction->id,
-                    'order_id' => $transaction->order_id
-                ]);
+                Log::warning('Order not found for transaction', ['transaction_id' => $transaction->id, 'order_id' => $transaction->order_id]);
                 return response()->json(['status' => 'ok', 'message' => 'Order not found']);
             }
 

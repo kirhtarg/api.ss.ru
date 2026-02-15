@@ -119,4 +119,17 @@ return [
         'api_key' => env('DADATA_API_KEY'),
     ],
 
+    'tbank' => [
+        'api_url_live' => env('TBANK_API_URL_LIVE', 'https://securepay.tinkoff.ru/v2'),
+        'api_url_test' => env('TBANK_API_URL_TEST', 'https://securepay.tinkoff.ru/v2'),
+        'verify_ssl' => env('HTTP_CLIENT_VERIFY', true),
+        'ca_bundle_path' => env('HTTP_CLIENT_CA_BUNDLE'),
+    ],
+
+    'dolyame' => [
+        'api_url' => env('DOLYAME_API_URL', 'https://partner.dolyame.ru/v1'),
+        'verify_ssl' => env('HTTP_CLIENT_VERIFY', true),
+        'ca_bundle_path' => env('HTTP_CLIENT_CA_BUNDLE'),
+    ],
+
 ];

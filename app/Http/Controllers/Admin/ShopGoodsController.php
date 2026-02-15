@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\PostProcessImage;
 use App\Models\ShopGood;
 use App\Models\ShopGoodVariation;
 use App\Models\ShopGoodImage;
@@ -22,6 +23,8 @@ use Illuminate\Support\Facades\Log as Logger;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Auth\AuthenticationException;
+use Illuminate\Support\Facades\Redis;
+use App\Jobs\ImageDownloadTaskJob;
 
 class ShopGoodsController extends Controller
 {
@@ -140,6 +143,24 @@ class ShopGoodsController extends Controller
         if ($request->filled('sku_search')) {
             $skuSearch = $request->get('sku_search');
             $query->whereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($skuSearch) . '%']);
+        }
+
+        // Фильтр: дубли по названию (нормализовано по LOWER(TRIM(name)))
+        if ($request->filled('duplicate_names')) {
+            $query->whereNotNull('name')
+                  ->whereRaw('LENGTH(TRIM(name)) > 0');
+            
+            // Подключаем подзапрос с группировкой дублей и отфильтровываем по нему
+            $duplicatesSubquery = DB::table('shop_goods')
+                ->select(DB::raw('LOWER(TRIM(name)) as norm_name'))
+                ->whereNotNull('name')
+                ->whereRaw('LENGTH(TRIM(name)) > 0')
+                ->groupBy(DB::raw('LOWER(TRIM(name))'))
+                ->havingRaw('COUNT(*) > 1');
+            
+            $query->joinSub($duplicatesSubquery, 'dup', function($join) {
+                $join->on(DB::raw('LOWER(TRIM(shop_goods.name))'), '=', 'dup.norm_name');
+            })->distinct('shop_goods.id');
         }
 
         // Фильтр по категории
@@ -575,12 +596,56 @@ class ShopGoodsController extends Controller
             }
         }
 
-        // Фильтр по наличию описания
+        // Фильтры по описаниям (с учётом удаления HTML-тегов и пробелов)
+        // Поддерживаются варианты:
+        // - description_not_empty=1 | description_empty=1
+        // - short_description_not_empty=1 | short_description_empty=1
+        // - descriptions_both_not_empty=1 | descriptions_both_empty=1
+        // Для обратной совместимости также поддерживается has_description=1 (только наличие полного описания)
+        $cleanDescExpr = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(description, '<p>', ''), '</p>', ''), '<br>', ''), '<br/>', ''), '<br />', ''), '&nbsp;', ''), '<div>', ''), '</div>', ''), '<span>', ''), '</span>', '')";
+        $cleanShortDescExpr = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(short_description, '<p>', ''), '</p>', ''), '<br>', ''), '<br/>', ''), '<br />', ''), '&nbsp;', ''), '<div>', ''), '</div>', ''), '<span>', ''), '</span>', '')";
+
+        if ($request->filled('description_not_empty')) {
+            $query->whereNotNull('description')
+                  ->whereRaw("LENGTH(TRIM($cleanDescExpr)) > 0");
+        } elseif ($request->filled('description_empty')) {
+            $query->where(function($q) use ($cleanDescExpr) {
+                $q->whereNull('description')
+                  ->orWhereRaw("LENGTH(TRIM($cleanDescExpr)) = 0");
+            });
+        }
+
+        if ($request->filled('short_description_not_empty')) {
+            $query->whereNotNull('short_description')
+                  ->whereRaw("LENGTH(TRIM($cleanShortDescExpr)) > 0");
+        } elseif ($request->filled('short_description_empty')) {
+            $query->where(function($q) use ($cleanShortDescExpr) {
+                $q->whereNull('short_description')
+                  ->orWhereRaw("LENGTH(TRIM($cleanShortDescExpr)) = 0");
+            });
+        }
+
+        if ($request->filled('descriptions_both_not_empty')) {
+            $query->whereNotNull('description')
+                  ->whereRaw("LENGTH(TRIM($cleanDescExpr)) > 0")
+                  ->whereNotNull('short_description')
+                  ->whereRaw("LENGTH(TRIM($cleanShortDescExpr)) > 0");
+        } elseif ($request->filled('descriptions_both_empty')) {
+            $query->where(function($q) use ($cleanDescExpr) {
+                $q->whereNull('description')
+                  ->orWhereRaw("LENGTH(TRIM($cleanDescExpr)) = 0");
+            })->where(function($q) use ($cleanShortDescExpr) {
+                $q->whereNull('short_description')
+                  ->orWhereRaw("LENGTH(TRIM($cleanShortDescExpr)) = 0");
+            });
+        }
+
+        // Обратная совместимость: старый параметр has_description=1
         if ($request->filled('has_description')) {
             $hasDescription = $request->get('has_description');
             if ($hasDescription === '1' || $hasDescription === 'true') {
                 $query->whereNotNull('description')
-                      ->where('description', '!=', '');
+                      ->whereRaw("LENGTH(TRIM($cleanDescExpr)) > 0");
             }
         }
 
@@ -989,6 +1054,21 @@ class ShopGoodsController extends Controller
             $perPage = $request->get('per_page', 20);
             $perPage = in_array($perPage, [10, 20, 50, 100, 5000]) ? $perPage : 20;
 
+            // Счетчик групп дублей, если активен duplicate_names
+            $duplicateGroupsCount = null;
+            if ($request->filled('duplicate_names')) {
+                $idsSub = (clone $query)->select('id');
+                $duplicateGroupsCount = DB::table('shop_goods')
+                    ->whereIn('id', $idsSub)
+                    ->whereNotNull('name')
+                    ->whereRaw('LENGTH(TRIM(name)) > 0')
+                    ->select(DB::raw('LOWER(TRIM(name)) as n'))
+                    ->groupBy('n')
+                    ->havingRaw('COUNT(*) > 1')
+                    ->get()
+                    ->count();
+            }
+
             $goods = $query->paginate($perPage);
 
             // Получаем URL фронтенда для изображений
@@ -1182,6 +1262,10 @@ class ShopGoodsController extends Controller
             if ($request->has('suppliers')) {
                 $response['variations_count'] = $variationsCount;
             }
+            // Добавляем счетчик групп дублей, если активен фильтр duplicate_names
+            if ($duplicateGroupsCount !== null) {
+                $response['duplicate_groups_count'] = $duplicateGroupsCount;
+            }
 
             return response()->json($response);
         } else {
@@ -1344,10 +1428,26 @@ class ShopGoodsController extends Controller
                 }
             }
             
-            return response()->json([
+            // Формируем ответ
+            $response = [
                 'success' => true,
                 'data' => $goods->toArray()
-            ]);
+            ];
+
+            // Добавляем счетчик групп дублей, если активен фильтр duplicate_names
+            if ($request->filled('duplicate_names')) {
+                $names = collect($goods)->map(function($g) {
+                    return is_string($g->name ?? null) ? mb_strtolower(trim($g->name)) : '';
+                })->filter(function($n) {
+                    return $n !== '';
+                });
+                $duplicateGroupsCount = $names->countBy()->filter(function($c) {
+                    return $c > 1;
+                })->count();
+                $response['duplicate_groups_count'] = $duplicateGroupsCount;
+            }
+
+            return response()->json($response);
         }
     }
 
@@ -1685,15 +1785,14 @@ class ShopGoodsController extends Controller
                         }
 
                         if ($propertyValueId) {
-                            DB::table('shop_good_properties')->updateOrInsert(
-                                ['good_id' => $good->id, 'property_id' => $propertyId],
-                                [
-                                    'shop_property_value_id' => $propertyValueId,
-                                    'updated_at' => now(),
-                                    'created_at' => now(),
-                                ]
-                            );
-                            $lastSyncData[$propertyId] = ['shop_property_value_id' => $propertyValueId];
+                            DB::table('shop_good_properties')->insert([
+                                'good_id' => $good->id,
+                                'property_id' => $propertyId,
+                                'shop_property_value_id' => $propertyValueId,
+                                'created_at' => now(),
+                                'updated_at' => now(),
+                            ]);
+                            $lastSyncData[] = ['property_id' => $propertyId, 'shop_property_value_id' => $propertyValueId];
                         }
                     }
                     // Режим хранения прямого текста значения
@@ -1707,15 +1806,14 @@ class ShopGoodsController extends Controller
                         }
 
                         if ($textValue !== null && $textValue !== '') {
-                            DB::table('shop_good_properties')->updateOrInsert(
-                                ['good_id' => $good->id, 'property_id' => $propertyId],
-                                [
-                                    'value' => $textValue,
-                                    'updated_at' => now(),
-                                    'created_at' => now(),
-                                ]
-                            );
-                            $lastSyncData[$propertyId] = ['value' => $textValue];
+                            DB::table('shop_good_properties')->insert([
+                                'good_id' => $good->id,
+                                'property_id' => $propertyId,
+                                'value' => $textValue,
+                                'created_at' => now(),
+                                'updated_at' => now(),
+                            ]);
+                            $lastSyncData[] = ['property_id' => $propertyId, 'value' => $textValue];
                         }
                     }
                 }
@@ -1846,15 +1944,14 @@ class ShopGoodsController extends Controller
                         $propertyValueId = (int) $pv->id;
                     }
                     if ($propertyValueId) {
-                        DB::table('shop_good_properties')->updateOrInsert(
-                            ['good_id' => $good->id, 'property_id' => $propertyId],
-                            [
-                                'shop_property_value_id' => $propertyValueId,
-                                'updated_at' => now(),
-                                'created_at' => now(),
-                            ]
-                        );
-                        $lastSyncData[$propertyId] = ['shop_property_value_id' => $propertyValueId];
+                        DB::table('shop_good_properties')->insert([
+                            'good_id' => $good->id,
+                            'property_id' => $propertyId,
+                            'shop_property_value_id' => $propertyValueId,
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ]);
+                        $lastSyncData[] = ['property_id' => $propertyId, 'shop_property_value_id' => $propertyValueId];
                     }
                 } elseif ($hasValueCol) {
                     $textValue = null;
@@ -1875,15 +1972,14 @@ class ShopGoodsController extends Controller
                         }
                     }
                     if ($textValue !== null && $textValue !== '') {
-                        DB::table('shop_good_properties')->updateOrInsert(
-                            ['good_id' => $good->id, 'property_id' => $propertyId],
-                            [
-                                'value' => $textValue,
-                                'updated_at' => now(),
-                                'created_at' => now(),
-                            ]
-                        );
-                        $lastSyncData[$propertyId] = ['value' => $textValue];
+                        DB::table('shop_good_properties')->insert([
+                            'good_id' => $good->id,
+                            'property_id' => $propertyId,
+                            'value' => $textValue,
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ]);
+                        $lastSyncData[] = ['property_id' => $propertyId, 'value' => $textValue];
                     }
                 }
             }
@@ -1961,6 +2057,8 @@ class ShopGoodsController extends Controller
             'ids.*' => 'exists:shop_goods,id',
             'action' => 'required|in:activate,deactivate,delete,delete_without_supplier,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_fast_remote_stock,update_price,update_sale_price,update_demping_price,toggle_show_demping,toggle_fields,update_label,remove_after_symbol,replace_text,update_dimensions,enable_preorder,disable_preorder,clear_by_tags,clear_by_suppliers,delete_images,delete_zero_stock_no_media',
             'data' => 'nullable|array',
+            'data.field' => 'nullable|in:name,description,short_description',
+            'data.mode' => 'nullable|in:exact,start_end',
             'data.delete_type' => 'nullable|in:goods,variations,goods_and_variations',
             'data.variation_ids' => 'nullable|array',
             'data.variation_ids.*' => 'exists:shop_good_variations,id',
@@ -1971,6 +2069,8 @@ class ShopGoodsController extends Controller
             'data.is_show' => 'nullable|boolean',
             'data.search' => 'nullable|string',
             'data.replace' => 'nullable|string',
+            'data.start' => 'nullable|string',
+            'data.end' => 'nullable|string',
             'data.normalize_spaces' => 'nullable|boolean'
         ]);
 
@@ -2726,38 +2826,54 @@ class ShopGoodsController extends Controller
                         $search = $data['search'] ?? '';
                         $replace = $data['replace'] ?? '';
                         $normalizeSpaces = $data['normalize_spaces'] ?? false;
+                        $field = $data['field'] ?? 'name';
+                        $mode = $data['mode'] ?? 'exact';
+                        $start = $data['start'] ?? '';
+                        $end = $data['end'] ?? '';
 
+                        if (!in_array($field, ['name', 'description', 'short_description'])) {
+                            $field = 'name';
+                        }
 
-                        if ($search !== '' || $normalizeSpaces) {
-                            $name = $good->name;
-
-                            if ($normalizeSpaces) {
-                                // Нормализация пробелов: убираем множественные пробелы, оставляем максимум 1 между словами
-                                $newName = preg_replace('/\s+/', ' ', trim($name));
+                        if ($field === 'name') {
+                            $text = $good->name ?? '';
+                            $newText = $text;
+                            if ($mode === 'start_end' && $start !== '' && $end !== '') {
+                                $pattern = '/' . preg_quote($start, '/') . '.*?' . preg_quote($end, '/') . '/si';
+                                $newText = preg_replace($pattern, $replace, $text);
                             } else {
-                                // Проверяем, состоит ли search только из пробелов
-                                $isSearchOnlySpaces = trim($search) === '';
-
-                                if ($isSearchOnlySpaces && $search !== '') {
-                                    // Специальная обработка для пробелов - ищем точное количество ПРОБЕЛОВ (space characters)
-                                    $exactSpaces = strlen($search); // Точное количество пробелов для поиска
-
-                                    if ($replace === '') {
-                                        // Удаляем найденные пробелы (заменяем на пустоту)
-                                        $newName = str_replace($search, '', $name);
+                                if ($search !== '' || $normalizeSpaces) {
+                                    if ($normalizeSpaces) {
+                                        $newText = preg_replace('/\s+/', ' ', trim($text));
                                     } else {
-                                        // Заменяем точное количество пробелов на заданное количество пробелов
-                                        $replaceSpaces = str_repeat(' ', strlen($replace));
-                                        $newName = str_replace($search, $replaceSpaces, $name);
+                                        $isSearchOnlySpaces = trim($search) === '';
+                                        if ($isSearchOnlySpaces && $search !== '') {
+                                            if ($replace === '') {
+                                                $newText = str_replace($search, '', $text);
+                                            } else {
+                                                $replaceSpaces = str_repeat(' ', strlen($replace));
+                                                $newText = str_replace($search, $replaceSpaces, $text);
+                                            }
+                                        } else {
+                                            $newText = str_ireplace($search, $replace, $text);
+                                        }
                                     }
-                                } else {
-                                    // Обычная замена текста (регистронезависимый поиск)
-                                    $newName = str_ireplace($search, $replace, $name);
                                 }
                             }
-
-                            if ($newName !== $name) {
-                                $good->update(['name' => $newName]);
+                            if ($newText !== $text) {
+                                $good->update(['name' => $newText]);
+                            }
+                        } else {
+                            $text = $good->{$field} ?? '';
+                            $newText = $text;
+                            if ($mode === 'start_end' && $start !== '' && $end !== '') {
+                                $pattern = '/' . preg_quote($start, '/') . '.*?' . preg_quote($end, '/') . '/si';
+                                $newText = preg_replace($pattern, $replace, $text);
+                            } elseif ($search !== '') {
+                                $newText = str_ireplace($search, $replace, $text);
+                            }
+                            if ($newText !== $text) {
+                                $good->update([$field => $newText]);
                             }
                         }
                         break;
@@ -3466,7 +3582,11 @@ class ShopGoodsController extends Controller
             'naming' => 'string|in:original,hash',
             'resize' => 'string|in:no_change,crop_proportional,fit_with_white,fit_system,custom',
             'width' => 'nullable|integer|min:1',
-            'height' => 'nullable|integer|min:1'
+            'height' => 'nullable|integer|min:1',
+            'concurrency' => 'nullable|integer|min:1|max:20',
+            'timeout' => 'nullable|integer|min:5|max:120',
+            'connect_timeout' => 'nullable|integer|min:1|max:60',
+            'queue_post_process' => 'nullable|boolean'
         ]);
 
         if ($validator->fails()) {
@@ -3493,49 +3613,285 @@ class ShopGoodsController extends Controller
             $resize = $request->input('resize', 'no_change');
             $width = $request->input('width');
             $height = $request->input('height');
+            $concurrency = (int)($request->input('concurrency', 8));
+            if ($concurrency < 1) $concurrency = 1;
+            if ($concurrency > 20) $concurrency = 20;
+            $timeout = (int)($request->input('timeout', 30));
+            $connectTimeout = (int)($request->input('connect_timeout', 10));
 
 
             $results = [];
             $errors = [];
             $skipped = [];
 
-            // Обрабатываем изображения последовательно (для стабильности)
-            foreach ($imageUrls as $index => $imageUrl) {
-                $response = $this->downloadSingleImage(
-                    $imageUrl,
-                    $storagePath,
-                    $optimize,
-                    $naming,
-                    $resize,
-                    $width,
-                    $height,
-                    $index
-                );
+            // Предварительная подготовка: вычисляем имена файлов и пропускаем существующие, затем скачиваем параллельно
+            $frontendPublicPath = frontend_public_path();
+            $cacheKey = 'imgdl_cache:' . md5($storagePath);
+            $queue = [];
+            foreach ($imageUrls as $index => $imageUrlRaw) {
+                $imageUrl = mb_convert_encoding($imageUrlRaw, 'UTF-8', 'UTF-8');
+                $imageUrl = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $imageUrl);
+                if (!filter_var($imageUrl, FILTER_VALIDATE_URL)) {
+                    $errors[] = ['url' => $imageUrl, 'error' => 'Неверный формат URL'];
+                    continue;
+                }
 
-                if ($response['success']) {
-                    // Очищаем URL от невалидных UTF-8 символов для использования в качестве ключа
-                    $cleanUrl = mb_convert_encoding($response['originalUrl'], 'UTF-8', 'UTF-8');
-                    $cleanPath = mb_convert_encoding($response['path'], 'UTF-8', 'UTF-8');
-                    
-                    $results[$cleanUrl] = $cleanPath;
-                    
-                    // Проверяем, был ли файл пропущен (уже существовал)
-                    if (isset($response['skipped']) && $response['skipped']) {
-                        $skipped[] = $cleanUrl;
+                $cachedRelativePath = null;
+                try {
+                    $cached = Redis::hGet($cacheKey, $imageUrl);
+                    if (is_string($cached) && $cached !== '') {
+                        $cachedRelativePath = $cached;
+                        $cachedAbsolutePath = $frontendPublicPath . '/' . ltrim($cachedRelativePath, '/');
+                        if (file_exists($cachedAbsolutePath)) {
+                            $results[$imageUrl] = $cachedRelativePath;
+                            $skipped[] = $imageUrl;
+                            continue;
+                        }
                     }
+                } catch (\Throwable $e) {
+                    // Игнорируем ошибки Redis, продолжаем обычный поток
+                }
+                $urlPath = parse_url($imageUrl, PHP_URL_PATH);
+                $extension = strtolower(pathinfo($urlPath, PATHINFO_EXTENSION));
+                if (!$extension) {
+                    $extension = 'jpg';
+                }
+                if ($naming === 'original') {
+                    $originalName = pathinfo($urlPath, PATHINFO_FILENAME);
+                    $originalName = mb_convert_encoding($originalName, 'UTF-8', 'UTF-8');
+                    $originalName = preg_replace('/[^\p{L}\p{N}._-]/u', '_', $originalName);
+                    $fileName = preg_replace('/[^a-zA-Z0-9._-]/', '_', $originalName) . '.' . $extension;
                 } else {
-                    // Очищаем URL и сообщение об ошибке от невалидных UTF-8 символов
-                    $cleanUrl = isset($response['originalUrl']) ? mb_convert_encoding($response['originalUrl'], 'UTF-8', 'UTF-8') : '';
-                    $cleanError = isset($response['error']) ? mb_convert_encoding($response['error'], 'UTF-8', 'UTF-8') : 'Неизвестная ошибка';
-                    $cleanError = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $cleanError); // Удаляем управляющие символы
-                    
-                    $errors[] = [
-                        'url' => $cleanUrl,
-                        'error' => $cleanError
-                    ];
+                    $hash = hash('sha256', $imageUrl . $index);
+                    $fileName = $hash . '.' . $extension;
+                }
+                $relativePath = rtrim($storagePath, '/') . '/' . $fileName;
+                $absolutePath = $frontendPublicPath . '/' . ltrim($relativePath, '/');
+                $normalizedAbsolutePath = realpath($absolutePath) ?: $absolutePath;
+                if (file_exists($normalizedAbsolutePath)) {
+                    $results[$imageUrl] = $relativePath;
+                    $skipped[] = $imageUrl;
+                    continue;
+                }
+                $dir = dirname($normalizedAbsolutePath);
+                if (!\App\Helpers\StorageHelper::createDirectory($dir)) {
+                    $errors[] = ['url' => $imageUrl, 'error' => 'Не удалось создать директорию для изображения'];
+                    continue;
+                }
+                $queue[] = [
+                    'url' => $imageUrl,
+                    'relativePath' => $relativePath,
+                    'absolutePath' => $normalizedAbsolutePath,
+                    'index' => $index,
+                    'extension' => $extension
+                ];
+            }
+
+            // Если нечего скачивать
+            if (empty($queue)) {
+                $cleanResults = [];
+                foreach ($results as $url => $path) {
+                    $cleanResults[mb_convert_encoding($url, 'UTF-8', 'UTF-8')] = mb_convert_encoding($path, 'UTF-8', 'UTF-8');
+                }
+                $cleanSkipped = array_map(fn($u) => mb_convert_encoding($u, 'UTF-8', 'UTF-8'), $skipped);
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'paths' => $cleanResults,
+                        'skipped' => $cleanSkipped,
+                        'errors' => $errors,
+                        'total' => count($imageUrls),
+                        'successful' => count($cleanResults),
+                        'failed' => count($errors),
+                        'skipped_count' => count($cleanSkipped)
+                    ]
+                ], 200, [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            }
+
+            // Перемешиваем очередь, чтобы распределить запросы по различным хостам более равномерно
+            if (count($queue) > 1) {
+                shuffle($queue);
+            }
+
+            // Параллельная загрузка с помощью curl_multi
+            $mh = curl_multi_init();
+            // Общий share-объект для DNS/SSL/соединений
+            $sh = function_exists('curl_share_init') ? curl_share_init() : null;
+            if ($sh && function_exists('curl_share_setopt')) {
+                if (defined('CURLSHOPT_SHARE') && defined('CURL_LOCK_DATA_DNS')) {
+                    curl_share_setopt($sh, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS);
+                }
+                if (defined('CURL_LOCK_DATA_SSL_SESSION')) {
+                    curl_share_setopt($sh, CURLSHOPT_SHARE, CURL_LOCK_DATA_SSL_SESSION);
+                }
+                if (defined('CURL_LOCK_DATA_CONNECT')) {
+                    curl_share_setopt($sh, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
+                }
+            }
+            $handles = [];
+            $active = null;
+            $startedAt = microtime(true);
+
+            $createHandle = function($item) use ($timeout, $connectTimeout, $sh) {
+                $ch = curl_init();
+                $normalizedUrl = $this->normalizeImageUrl($item['url']);
+                curl_setopt($ch, CURLOPT_URL, $normalizedUrl);
+                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+                curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
+                curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $connectTimeout);
+                curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+                curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+                if (defined('CURL_SSLVERSION_TLSv1_2')) {
+                    curl_setopt($ch, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+                }
+                curl_setopt($ch, CURLOPT_SSL_CIPHER_LIST, 'DEFAULT@SECLEVEL=0');
+                if (defined('CURLSSLOPT_ALLOW_BEAST') && defined('CURLSSLOPT_NO_REVOKE')) {
+                    curl_setopt($ch, CURLOPT_SSL_OPTIONS, CURLSSLOPT_ALLOW_BEAST | CURLSSLOPT_NO_REVOKE);
+                }
+                if (defined('CURL_HTTP_VERSION_2TLS')) {
+                    curl_setopt($ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2TLS);
+                } else {
+                    curl_setopt($ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+                }
+                curl_setopt($ch, CURLOPT_TCP_KEEPALIVE, 1);
+                curl_setopt($ch, CURLOPT_TCP_KEEPIDLE, 10);
+                curl_setopt($ch, CURLOPT_TCP_KEEPINTVL, 1);
+                if (defined('CURLOPT_LOW_SPEED_LIMIT') && defined('CURLOPT_LOW_SPEED_TIME')) {
+                    curl_setopt($ch, CURLOPT_LOW_SPEED_LIMIT, 1024);
+                    curl_setopt($ch, CURLOPT_LOW_SPEED_TIME, 15);
+                }
+                if (defined('CURLOPT_NOSIGNAL')) {
+                    curl_setopt($ch, CURLOPT_NOSIGNAL, true);
+                }
+                if (defined('CURLOPT_DNS_CACHE_TIMEOUT')) {
+                    curl_setopt($ch, CURLOPT_DNS_CACHE_TIMEOUT, 300);
+                }
+                if (defined('CURL_IPRESOLVE_V4')) {
+                    curl_setopt($ch, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+                }
+                curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                    'Accept: image/*,*/*;q=0.8',
+                    'Accept-Language: en-US,en;q=0.5',
+                    'Accept-Encoding: gzip, deflate',
+                    'Connection: keep-alive',
+                    'Cache-Control: no-cache',
+                ]);
+                if ($sh && function_exists('curl_setopt')) {
+                    if (defined('CURLOPT_SHARE')) {
+                        curl_setopt($ch, CURLOPT_SHARE, $sh);
+                    }
+                }
+                // Сохраняем метаданные для последующей обработки
+                curl_setopt($ch, CURLOPT_PRIVATE, json_encode($item));
+                return $ch;
+            };
+
+            $nextIndex = 0;
+            $totalToDownload = count($queue);
+
+            // Инициализируем первые потоки
+            for (; $nextIndex < $totalToDownload && count($handles) < $concurrency; $nextIndex++) {
+                $item = $queue[$nextIndex];
+                $ch = $createHandle($item);
+                $handles[(int)$ch] = $ch;
+                curl_multi_add_handle($mh, $ch);
+            }
+
+            if (function_exists('curl_multi_setopt')) {
+                if (defined('CURLMOPT_MAXCONNECTS')) {
+                    curl_multi_setopt($mh, CURLMOPT_MAXCONNECTS, max($concurrency * 2, 10));
+                }
+                if (defined('CURLMOPT_MAX_HOST_CONNECTIONS')) {
+                    // Ограничиваем соединения на хост, чтобы не «душить» один источник
+                    curl_multi_setopt($mh, CURLMOPT_MAX_HOST_CONNECTIONS, min($concurrency, 6));
+                }
+                if (defined('CURLMOPT_PIPELINING')) {
+                    // Включаем HTTP/2 мультиплексирование, если поддерживается
+                    $pipemode = defined('CURLPIPE_MULTIPLEX') ? CURLPIPE_MULTIPLEX : 1;
+                    curl_multi_setopt($mh, CURLMOPT_PIPELINING, $pipemode);
                 }
             }
 
+            do {
+                do {
+                    $mrc = curl_multi_exec($mh, $active);
+                } while ($mrc === CURLM_CALL_MULTI_PERFORM);
+
+                // Обрабатываем завершенные
+                while ($info = curl_multi_info_read($mh)) {
+                    $ch = $info['handle'];
+                    $content = curl_multi_getcontent($ch);
+                    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                    $error = curl_error($ch);
+                    $private = curl_getinfo($ch, CURLINFO_PRIVATE);
+                    $item = json_decode($private, true) ?: [];
+
+                    curl_multi_remove_handle($mh, $ch);
+                    curl_close($ch);
+                    unset($handles[(int)$ch]);
+
+                    $originalUrl = mb_convert_encoding($item['url'] ?? '', 'UTF-8', 'UTF-8');
+
+                    if ($content === false || $httpCode !== 200) {
+                        $errors[] = [
+                            'url' => $originalUrl,
+                            'error' => $error ? mb_convert_encoding($error, 'UTF-8', 'UTF-8') : "HTTP {$httpCode}"
+                        ];
+                    } else {
+                        if (strlen($content) > 30 * 1024 * 1024) {
+                            $errors[] = [
+                                'url' => $originalUrl,
+                                'error' => 'Файл слишком большой (максимум 30MB)'
+                            ];
+                        } else {
+                            $mimeType = $this->getMimeTypeFromData($content);
+                            $allowedMimeTypes = [
+                                'image/jpeg','image/jpg','image/png','image/gif','image/webp','image/bmp','image/svg+xml','image/tiff','image/x-icon'
+                            ];
+                            if (!in_array($mimeType, $allowedMimeTypes)) {
+                                $errors[] = [
+                                    'url' => $originalUrl,
+                                    'error' => 'Скачанный контент не является изображением (MIME: ' . $mimeType . ')'
+                                ];
+                            } else {
+                                file_put_contents($item['absolutePath'], $content);
+                                if ($optimize || $resize !== 'no_change') {
+                                    if ($request->boolean('queue_post_process', false)) {
+                                        PostProcessImage::dispatch($item['absolutePath'], $resize, $width, $height);
+                                    } else {
+                                        $this->processImage($item['absolutePath'], $resize, $width, $height);
+                                    }
+                                }
+                                $results[$originalUrl] = mb_convert_encoding($item['relativePath'], 'UTF-8', 'UTF-8');
+                                try {
+                                    Redis::hSet($cacheKey, $originalUrl, $item['relativePath']);
+                                } catch (\Throwable $e) {
+                                    // Ошибки Redis не критичны для основного потока
+                                }
+                            }
+                        }
+                    }
+
+                    // Добавляем следующий элемент в очередь
+                    if ($nextIndex < $totalToDownload) {
+                        $nextItem = $queue[$nextIndex++];
+                        $chNext = $createHandle($nextItem);
+                        $handles[(int)$chNext] = $chNext;
+                        curl_multi_add_handle($mh, $chNext);
+                    }
+                }
+
+                if ($active) {
+                    curl_multi_select($mh, 0.5);
+                }
+            } while ($active || !empty($handles));
+
+            curl_multi_close($mh);
+            if ($sh && function_exists('curl_share_close')) {
+                curl_share_close($sh);
+            }
 
             // Очищаем все данные перед JSON-кодированием для предотвращения ошибок UTF-8
             $cleanResults = [];
@@ -3548,7 +3904,7 @@ class ShopGoodsController extends Controller
             $cleanSkipped = array_map(function($url) {
                 return mb_convert_encoding($url, 'UTF-8', 'UTF-8');
             }, $skipped);
-            
+            $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
             return response()->json([
                 'success' => true,
                 'data' => [
@@ -3558,7 +3914,14 @@ class ShopGoodsController extends Controller
                     'total' => count($imageUrls),
                     'successful' => count($cleanResults),
                     'failed' => count($errors),
-                    'skipped_count' => count($cleanSkipped)
+                    'skipped_count' => count($cleanSkipped),
+                    'metrics' => [
+                        'duration_ms' => $durationMs,
+                        'concurrency_used' => $concurrency,
+                        'timeout_s' => $timeout,
+                        'connect_timeout_s' => $connectTimeout,
+                        'to_download' => $totalToDownload
+                    ]
                 ]
             ], 200, [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
@@ -3573,6 +3936,114 @@ class ShopGoodsController extends Controller
                 'message' => 'Ошибка пакетной загрузки изображений: ' . $errorMessage
             ], 500);
         }
+    }
+
+    public function startImageDownloadsTask(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'imageUrls' => 'required|array|min:1|max:5000',
+            'imageUrls.*' => 'required|url',
+            'storagePath' => 'required|string',
+            'optimize' => 'boolean',
+            'naming' => 'string|in:original,hash',
+            'resize' => 'string|in:no_change,crop_proportional,fit_with_white,fit_system,custom',
+            'width' => 'nullable|integer|min:1',
+            'height' => 'nullable|integer|min:1',
+            'concurrency' => 'nullable|integer|min:1|max:20',
+            'timeout' => 'nullable|integer|min:5|max:120',
+            'connect_timeout' => 'nullable|integer|min:1|max:60'
+        ]);
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+        $taskId = (string) Str::uuid();
+        $imageUrls = $request->input('imageUrls');
+        $storagePath = $request->input('storagePath');
+        $options = [
+            'optimize' => $request->boolean('optimize', true),
+            'naming' => $request->input('naming', 'hash'),
+            'resize' => $request->input('resize', 'no_change'),
+            'width' => $request->input('width'),
+            'height' => $request->input('height'),
+            'concurrency' => (int) $request->input('concurrency', 12),
+            'timeout' => (int) $request->input('timeout', 60),
+            'connect_timeout' => (int) $request->input('connect_timeout', 10),
+        ];
+        $metaKey = "imgdl:$taskId:meta";
+        Redis::hMSet($metaKey, [
+            'status' => 'pending',
+            'total' => count($imageUrls),
+            'queued' => count($imageUrls),
+            'running' => 0,
+            'success' => 0,
+            'failed' => 0,
+            'skipped' => 0,
+            'started_at' => time(),
+            'updated_at' => time(),
+        ]);
+        Redis::expire($metaKey, 172800);
+        ImageDownloadTaskJob::dispatch($taskId, $imageUrls, $storagePath, $options);
+        return response()->json([
+            'success' => true,
+            'data' => ['task_id' => $taskId]
+        ]);
+    }
+
+    public function imageDownloadsTaskStatus(string $taskId): JsonResponse
+    {
+        $metaKey = "imgdl:$taskId:meta";
+        $errorsKey = "imgdl:$taskId:errors";
+        $recentKey = "imgdl:$taskId:recent";
+        $pathsKey = "imgdl:$taskId:paths";
+        $meta = Redis::hGetAll($metaKey);
+        if (!$meta) {
+            return response()->json([
+                'success' => false,
+                'message' => 'task_not_found'
+            ], 404);
+        }
+        $errors = Redis::lrange($errorsKey, -50, -1) ?: [];
+        $recent = Redis::lrange($recentKey, -50, -1) ?: [];
+        $progressPct = 0;
+        $total = (int)($meta['total'] ?? 0);
+        $processed = (int)($meta['success'] ?? 0) + (int)($meta['failed'] ?? 0) + (int)($meta['skipped'] ?? 0);
+        if ($total > 0) {
+            $progressPct = (int) round($processed * 100 / $total);
+        }
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'meta' => $meta,
+                'progress_pct' => $progressPct,
+                'recent' => array_map(function ($v) {
+                    return json_decode($v, true);
+                }, $recent),
+                'errors' => array_map(function ($v) {
+                    return json_decode($v, true);
+                }, $errors),
+            ]
+        ]);
+    }
+
+    public function imageDownloadsTaskResult(string $taskId): JsonResponse
+    {
+        $pathsKey = "imgdl:$taskId:paths";
+        $metaKey = "imgdl:$taskId:meta";
+        $exists = Redis::hGetAll($metaKey);
+        if (!$exists) {
+            return response()->json(['success' => false, 'message' => 'task_not_found'], 404);
+        }
+        $paths = Redis::hGetAll($pathsKey) ?: [];
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'paths' => $paths
+            ]
+        ]);
     }
 
     /**

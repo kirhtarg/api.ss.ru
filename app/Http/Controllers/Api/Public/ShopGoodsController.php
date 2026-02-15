@@ -808,148 +808,85 @@ class ShopGoodsController extends Controller
                     }
                 }
 
-            // Умный поиск по названию: сначала И (все слова), если нет результатов - ИЛИ (хотя бы одно слово)
+            // Поиск по каталогу: приоритет точной фразы, затем требование половины слов в названии
             if ($request->has('search')) {
                 $search = $request->input('search');
-                
-                // Разбиваем запрос на слова
-                $words = preg_split('/\s+/', $search);
-                $words = array_filter($words, function($word) {
-                    $trimmed = trim($word);
-                    return mb_strlen($trimmed) >= 2; // Минимум 2 символа для слова
-                });
-                $words = array_map('trim', $words);
-                $words = array_values($words);
-                
-                
-                if (count($words) > 0) {
-                    // Создаем упрощенный запрос для проверки наличия товаров с логикой И
-                    // Проверяем БЕЗ фильтров по остаткам, чтобы понять, есть ли вообще товары с нужными словами
-                    $testQuerySimple = ShopGood::where('is_active', true);
-                    
-                    // Применяем только основные фильтры (категории, бренды)
-                    if ($request->has('category_id')) {
-                        $testQuerySimple->whereHas('categories', function($q) use ($request) {
-                            $q->where('shop_categories.id', $request->input('category_id'));
-                        });
-                    }
-                    
-                    if ($request->has('categories')) {
-                        $categoryIds = $request->input('categories');
-                        if (is_string($categoryIds)) {
-                            $categoryIds = array_filter(explode(',', $categoryIds));
-                        }
-                        if (is_array($categoryIds) && !empty($categoryIds)) {
-                            $testQuerySimple->whereHas('categories', function($q) use ($categoryIds) {
-                                $q->whereIn('shop_categories.id', $categoryIds);
-                            });
-                        }
-                    }
-                    
-                    if ($request->has('categories[]')) {
-                        $categoryIds = $request->input('categories[]');
-                        if (is_array($categoryIds) && !empty($categoryIds)) {
-                            $testQuerySimple->whereHas('categories', function($q) use ($categoryIds) {
-                                $q->whereIn('shop_categories.id', $categoryIds);
-                            });
-                        }
-                    }
-                    
-                    if ($request->has('brand_id')) {
-                        $testQuerySimple->whereHas('brands', function($q) use ($request) {
-                            $q->where('shop_brands.id', $request->input('brand_id'));
-                        });
-                    }
-                    
-                    if ($request->has('brands')) {
-                        $brandIds = $request->input('brands');
-                        if (is_array($brandIds) && !empty($brandIds)) {
-                            $testQuerySimple->whereHas('brands', function($q) use ($brandIds) {
-                                $q->whereIn('shop_brands.id', $brandIds);
-                            });
-                        }
-                    }
-                    
-                    if ($request->has('brands[]')) {
-                        $brandIds = $request->input('brands[]');
-                        if (is_array($brandIds) && !empty($brandIds)) {
-                            $testQuerySimple->whereHas('brands', function($q) use ($brandIds) {
-                                $q->whereIn('shop_brands.id', $brandIds);
-                            });
-                        }
-                    }
-                    
-                    // Применяем поиск с логикой И (все слова) - БЕЗ фильтров по остаткам и цене
-                    // Ищем по названию, артикулу товара и артикулам вариаций
-                    $testQuerySimple->where(function($q) use ($words) {
-                        foreach ($words as $word) {
-                            $q->where(function($wordQuery) use ($word) {
-                                $wordQuery->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($word) . '%'])
-                                    ->orWhereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($word) . '%'])
-                                    ->orWhereHas('variations', function($varQuery) use ($word) {
-                                        $varQuery->where('is_active', true)
-                                            ->whereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($word) . '%']);
-                                    });
-                            });
-                        }
+                $searchLower = mb_strtolower(trim($search));
+                // Приоритет: точная фраза в name/sku/sku вариаций
+                $exactQuery = ShopGood::where('is_active', true)
+                    ->where(function($q) use ($searchLower) {
+                        $q->whereRaw('LOWER(name) LIKE ?', ['%' . $searchLower . '%'])
+                          ->orWhereRaw('LOWER(sku) LIKE ?', ['%' . $searchLower . '%'])
+                          ->orWhereHas('variations', function($varQuery) use ($searchLower) {
+                              $varQuery->where('is_active', true)
+                                  ->whereRaw('LOWER(sku) LIKE ?', ['%' . $searchLower . '%']);
+                          });
                     });
-                    
-                    // Проверяем количество результатов с логикой И (без фильтров по остаткам)
-                    $countWithAnd = $testQuerySimple->count();
-                    
-                    $useAndLogic = $countWithAnd > 0;
-                    
-                    if ($useAndLogic) {
-                        // Если есть результаты с логикой И, используем её
-                        $query->where(function($q) use ($words) {
-                            foreach ($words as $word) {
-                                $q->where(function($wordQuery) use ($word) {
-                                    $wordQuery->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($word) . '%'])
-                                        ->orWhereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($word) . '%'])
-                                        ->orWhereHas('variations', function($varQuery) use ($word) {
-                                            $varQuery->where('is_active', true)
-                                                ->whereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($word) . '%']);
-                                        });
-                                });
-                            }
-                        });
-                    } else {
-                        // Если нет результатов с логикой И, используем логику ИЛИ
-                        $query->where(function($q) use ($words) {
-                            foreach ($words as $index => $word) {
-                                if ($index === 0) {
-                                    $q->where(function($wordQuery) use ($word) {
-                                        $wordQuery->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($word) . '%'])
-                                            ->orWhereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($word) . '%'])
-                                            ->orWhereHas('variations', function($varQuery) use ($word) {
+                $hasExact = $exactQuery->exists();
+
+                if ($hasExact) {
+                    // Ограничиваем выборку точной фразой
+                    $query->where(function($q) use ($searchLower) {
+                        $q->whereRaw('LOWER(name) LIKE ?', ['%' . $searchLower . '%'])
+                          ->orWhereRaw('LOWER(sku) LIKE ?', ['%' . $searchLower . '%'])
+                          ->orWhereHas('variations', function($varQuery) use ($searchLower) {
+                              $varQuery->where('is_active', true)
+                                  ->whereRaw('LOWER(sku) LIKE ?', ['%' . $searchLower . '%']);
+                          });
+                    });
+                } else {
+                    // Этап 1.5: если все слова найдены в полях name/sku/sku вариаций — показываем такие результаты
+                    $words = preg_split('/\s+/', $searchLower);
+                    $words = array_values(array_filter(array_map('trim', $words), function($w) {
+                        return mb_strlen($w) >= 2;
+                    }));
+                    if (count($words) > 0) {
+                        $testAllWordsQuery = ShopGood::where('is_active', true);
+                        foreach ($words as $w) {
+                            $testAllWordsQuery->where(function($qw) use ($w) {
+                                $qw->whereRaw('LOWER(name) LIKE ?', ['%' . $w . '%'])
+                                   ->orWhereRaw('LOWER(sku) LIKE ?', ['%' . $w . '%'])
+                                   ->orWhereHas('variations', function($varQuery) use ($w) {
+                                        $varQuery->where('is_active', true)
+                                                 ->whereRaw('LOWER(sku) LIKE ?', ['%' . $w . '%']);
+                                   });
+                            });
+                        }
+                        $hasAllWords = $testAllWordsQuery->exists();
+                        if ($hasAllWords) {
+                            $query->where(function($q) use ($words) {
+                                foreach ($words as $w) {
+                                    $q->where(function($qw) use ($w) {
+                                        $qw->whereRaw('LOWER(name) LIKE ?', ['%' . $w . '%'])
+                                           ->orWhereRaw('LOWER(sku) LIKE ?', ['%' . $w . '%'])
+                                           ->orWhereHas('variations', function($varQuery) use ($w) {
                                                 $varQuery->where('is_active', true)
-                                                    ->whereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($word) . '%']);
-                                            });
-                                    });
-                                } else {
-                                    $q->orWhere(function($wordQuery) use ($word) {
-                                        $wordQuery->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($word) . '%'])
-                                            ->orWhereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($word) . '%'])
-                                            ->orWhereHas('variations', function($varQuery) use ($word) {
-                                                $varQuery->where('is_active', true)
-                                                    ->whereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($word) . '%']);
-                                            });
+                                                         ->whereRaw('LOWER(sku) LIKE ?', ['%' . $w . '%']);
+                                           });
                                     });
                                 }
+                            });
+                        } else {
+                            // Иначе требуем присутствие 75% слов в названии
+                            $threshold = (int)ceil(count($words) * 0.75);
+                            $sumExprParts = [];
+                            foreach ($words as $w) {
+                                $sumExprParts[] = "CASE WHEN LOWER(name) LIKE '%" . addslashes($w) . "%' THEN 1 ELSE 0 END";
                             }
+                            $sumExpr = implode(' + ', $sumExprParts);
+                            $query->whereRaw("({$sumExpr}) >= {$threshold}");
+                        }
+                    } else {
+                        // Если нет валидных слов, используем простой поиск по фразе
+                        $query->where(function($q) use ($searchLower) {
+                            $q->whereRaw('LOWER(name) LIKE ?', ['%' . $searchLower . '%'])
+                              ->orWhereRaw('LOWER(sku) LIKE ?', ['%' . $searchLower . '%'])
+                              ->orWhereHas('variations', function($varQuery) use ($searchLower) {
+                                  $varQuery->where('is_active', true)
+                                      ->whereRaw('LOWER(sku) LIKE ?', ['%' . $searchLower . '%']);
+                              });
                         });
                     }
-                } else {
-                    // Если нет слов длиннее 2 символов, используем простой поиск
-                    // Ищем по названию, артикулу товара и артикулам вариаций
-                    $query->where(function($q) use ($search) {
-                        $q->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($search) . '%'])
-                            ->orWhereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($search) . '%'])
-                            ->orWhereHas('variations', function($varQuery) use ($search) {
-                                $varQuery->where('is_active', true)
-                                    ->whereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($search) . '%']);
-                            });
-                    });
                 }
             }
 
@@ -1396,6 +1333,9 @@ class ShopGoodsController extends Controller
                     'slug' => $good->slug,
                     'price' => $good->price,
                     'sale_price' => $good->sale_price,
+                    'demping_price' => $good->demping_price,
+                    'show_demping' => $good->show_demping,
+                    'is_preorder' => $good->is_preorder,
                     'old_price' => $good->old_price,
                     'image_url' => $mainImage ?: $good->image_url,
                     'images' => $good->images ? $good->images->toArray() : [],
@@ -1447,6 +1387,8 @@ class ShopGoodsController extends Controller
                         'sku' => $variation->sku,
                         'price' => $variation->price,
                         'sale_price' => $variation->sale_price,
+                        'demping_price' => $variation->demping_price,
+                        'show_demping' => $variation->show_demping,
                         'old_price' => $variation->old_price,
                         'final_price' => $variation->final_price,
                         'attributes' => $variationAttributes,
