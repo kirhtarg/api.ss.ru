@@ -81,7 +81,10 @@ class ShopPaymentController extends Controller
                 if ($status === 'success') {
                     $paidStatusId = ShopPaymentStatus::where('name', 'paid')->value('id');
                     if ($paidStatusId) {
-                        $order->update(['payment_status_id' => $paidStatusId]);
+                        $order->update([
+                            'payment_status_id' => $paidStatusId,
+                            'payed' => true,
+                        ]);
                     }
                     try {
                         app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
@@ -104,7 +107,10 @@ class ShopPaymentController extends Controller
                 if ($status === 'fail') {
                     $failedStatusId = ShopPaymentStatus::where('name', 'failed')->value('id');
                     if ($failedStatusId) {
-                        $order->update(['payment_status_id' => $failedStatusId]);
+                        $order->update([
+                            'payment_status_id' => $failedStatusId,
+                            'payed' => false,
+                        ]);
                     }
                     $q = 'id=' . $order->id . '&status=tbank_failed';
                     if (!empty($rawStatus)) {
@@ -140,7 +146,10 @@ class ShopPaymentController extends Controller
                     if ($order) {
                         $paidStatusId = ShopPaymentStatus::where('name', 'paid')->value('id');
                         if ($paidStatusId) {
-                            $order->update(['payment_status_id' => $paidStatusId]);
+                            $order->update([
+                                'payment_status_id' => $paidStatusId,
+                                'payed' => true,
+                            ]);
                         }
                         $txId = $draft['gateway_response']['PaymentId'] ?? null;
                         ShopPaymentTransaction::create([
@@ -195,7 +204,10 @@ class ShopPaymentController extends Controller
                         if ($order) {
                             $paidStatusId = ShopPaymentStatus::where('name', 'paid')->value('id');
                             if ($paidStatusId) {
-                                $order->update(['payment_status_id' => $paidStatusId]);
+                                $order->update([
+                                    'payment_status_id' => $paidStatusId,
+                                    'payed' => true,
+                                ]);
                             }
                             ShopPaymentTransaction::create([
                                 'order_id' => $order->id,
@@ -359,6 +371,7 @@ class ShopPaymentController extends Controller
                             $order->update([
                                 'payment_status_id' => $paidStatusId,
                                 'yookassa_payment_id' => $paymentId,
+                                'payed' => true,
                             ]);
                             Log::info('Yookassa: Order ' . $order->id . ' created/updated as paid via tx ' . $transaction->id);
                         }
@@ -374,6 +387,7 @@ class ShopPaymentController extends Controller
                         $order->update([
                             'payment_status_id' => $paidStatusId,
                             'yookassa_payment_id' => $paymentId,
+                            'payed' => true,
                         ]);
                         Log::info('Yookassa: Order ' . $orderIdFromMeta . ' payment succeeded.');
                     }
@@ -395,6 +409,7 @@ class ShopPaymentController extends Controller
                             $order->update([
                                 'payment_status_id' => $paidStatusId,
                                 'yookassa_payment_id' => $paymentId,
+                                'payed' => true,
                             ]);
                         }
                         ShopPaymentTransaction::create([
@@ -428,7 +443,10 @@ class ShopPaymentController extends Controller
                 if ($order) {
                     $cancelledStatusId = ShopPaymentStatus::where('name', 'cancelled')->value('id');
                     if ($cancelledStatusId) {
-                        $order->update(['payment_status_id' => $cancelledStatusId]);
+                        $order->update([
+                            'payment_status_id' => $cancelledStatusId,
+                            'payed' => false,
+                        ]);
                         Log::info('Yookassa: Order ' . $orderId . ' payment cancelled.');
                     }
                 }
@@ -477,6 +495,7 @@ class ShopPaymentController extends Controller
                 'ip_address' => $transaction->request_data['ip'] ?? null,
                 'user_agent' => $transaction->request_data['user_agent'] ?? null,
                 'payment_status_id' => ShopPaymentStatus::where('name', 'paid')->value('id'),
+                'payed' => true,
                 'status_id' => ShopOrderStatus::where('name', 'confirmed')->value('id') ?? ShopOrderStatus::where('name', 'pending')->value('id'),
             ]);
             return $order;
@@ -520,6 +539,7 @@ class ShopPaymentController extends Controller
                 'ip_address' => $ip,
                 'user_agent' => $userAgent,
                 'payment_status_id' => ShopPaymentStatus::where('name', 'pending')->value('id'),
+                'payed' => false,
                 'status_id' => ShopOrderStatus::where('name', 'pending')->value('id') ?? ShopOrderStatus::where('name', 'confirmed')->value('id'),
             ]);
             return $order;
@@ -1770,7 +1790,10 @@ class ShopPaymentController extends Controller
                 if ($order) {
                     $paidStatusId = ShopPaymentStatus::where('name', 'paid')->value('id');
                     if ($paidStatusId) {
-                        $order->update(['payment_status_id' => $paidStatusId]);
+                        $order->update([
+                            'payment_status_id' => $paidStatusId,
+                            'payed' => true,
+                        ]);
                     }
                     $transaction = ShopPaymentTransaction::create([
                         'order_id' => $order->id,
@@ -1859,7 +1882,10 @@ class ShopPaymentController extends Controller
             $statusName = $paymentStatusMap[$newStatus];
             $statusId = ShopPaymentStatus::where('name', $statusName)->value('id');
             if ($statusId) {
-                $order->update(['payment_status_id' => $statusId]);
+                $order->update([
+                    'payment_status_id' => $statusId,
+                    'payed' => $newStatus === 'success' ? true : false,
+                ]);
             } else {
                 Log::warning('ShopPaymentStatus with name ' . $statusName . ' not found.');
             }
