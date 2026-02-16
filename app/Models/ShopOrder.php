@@ -58,6 +58,10 @@ class ShopOrder extends Model
         'metadata'
     ];
 
+    protected $attributes = [
+        'is_active' => true,
+    ];
+
     protected $casts = [
         'items' => 'array',
         'subtotal' => 'decimal:2',
