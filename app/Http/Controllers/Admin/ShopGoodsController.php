@@ -1079,11 +1079,11 @@ class ShopGoodsController extends Controller
         // ids_only: вернуть только список ID (для массового выбора)
         $idsOnly = $request->has('ids_only') && $request->get('ids_only') === '1';
         if ($idsOnly) {
-            $limit = (int)$request->get('limit', 10000);
+            $limit = (int)$request->get('limit', 30000);
             if ($limit <= 0) {
-                $limit = 10000;
+                $limit = 30000;
             }
-            $limit = min($limit, 10000);
+            $limit = min($limit, 30000);
             $ids = $query->select('shop_goods.id')->limit($limit)->pluck('shop_goods.id')->toArray();
             return response()->json([
                 'success' => true,
