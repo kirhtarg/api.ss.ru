@@ -91,7 +91,14 @@ class ShopPaymentController extends Controller
                             'error' => $e->getMessage(),
                         ]);
                     }
-                    return redirect(config('app.frontend_url') . '/payment-status?id=' . $order->id . '&status=tbank_success');
+                    $q = 'id=' . $order->id . '&status=tbank_success';
+                    if (!empty($rawStatus)) {
+                        $q .= '&raw_status=' . urlencode((string) $rawStatus);
+                    }
+                    if (!empty($paymentType)) {
+                        $q .= '&payment_type=' . urlencode((string) $paymentType);
+                    }
+                    return redirect(config('app.frontend_url') . '/payment-status?' . $q);
                 }
 
                 if ($status === 'fail') {
@@ -99,10 +106,24 @@ class ShopPaymentController extends Controller
                     if ($failedStatusId) {
                         $order->update(['payment_status_id' => $failedStatusId]);
                     }
-                    return redirect(config('app.frontend_url') . '/payment-status?id=' . $order->id . '&status=tbank_failed');
+                    $q = 'id=' . $order->id . '&status=tbank_failed';
+                    if (!empty($rawStatus)) {
+                        $q .= '&raw_status=' . urlencode((string) $rawStatus);
+                    }
+                    if (!empty($paymentType)) {
+                        $q .= '&payment_type=' . urlencode((string) $paymentType);
+                    }
+                    return redirect(config('app.frontend_url') . '/payment-status?' . $q);
                 }
 
-                return redirect(config('app.frontend_url') . '/payment-status?id=' . $order->id . '&status=tbank_processing');
+                $q = 'id=' . $order->id . '&status=tbank_processing';
+                if (!empty($rawStatus)) {
+                    $q .= '&raw_status=' . urlencode((string) $rawStatus);
+                }
+                if (!empty($paymentType)) {
+                    $q .= '&payment_type=' . urlencode((string) $paymentType);
+                }
+                return redirect(config('app.frontend_url') . '/payment-status?' . $q);
             }
 
             // Если заказ не найден, пытаемся создать из черновика в кэше (eacq — одноэтапная оплата)
@@ -143,33 +164,88 @@ class ShopPaymentController extends Controller
                         if ($txId) {
                             Cache::forget('payment:init:tbank_eacq:' . $txId);
                         }
-                        return redirect(config('app.frontend_url') . '/payment-status?id=' . $order->id . '&status=tbank_success');
+                        $q2 = 'id=' . $order->id . '&status=tbank_success';
+                        if (!empty($rawStatus)) {
+                            $q2 .= '&raw_status=' . urlencode((string) $rawStatus);
+                        }
+                        if (!empty($paymentType)) {
+                            $q2 .= '&payment_type=' . urlencode((string) $paymentType);
+                        }
+                        return redirect(config('app.frontend_url') . '/payment-status?' . $q2);
                     }
                 }
             }
 
-            // Если до сюда дошли, значит:
-            // - заказ ещё не создан (нет записи в БД)
-            //   или не удалось создать его из черновика в кэше
-            // Показываем пользователю статус, максимально близкий к ответу банка
-            $statusParam = 'tbank_processing';
+            // Если до сюда дошли, попробуем создать заказ из черновика по альтернативным ключам
             if ($status === 'success') {
-                // Банк вернул успешный статус (например, ok/success),
-                // но заказ ещё не создан — считаем оплату успешной для пользователя
-                $statusParam = 'tbank_success';
-                Log::warning('T-Bank return: success status but order not created', [
-                    'payment_type' => $paymentType,
-                    'status' => $status,
-                    'raw_status' => $rawStatus ?? null,
-                    'order_number' => $orderNumber,
-                ]);
-            } elseif ($status === 'fail') {
+                $paymentIdParam = $request->get('PaymentId')
+                    ?? $request->get('paymentId')
+                    ?? $request->get('payment_id')
+                    ?? $request->get('PaymentID');
+                if (!empty($paymentIdParam)) {
+                    $draft = Cache::get('payment:init:tbank_eacq:' . $paymentIdParam);
+                    if ($draft && is_array($draft)) {
+                        $order = $this->createOrderFromPayload(
+                            $draft['order_data'] ?? [],
+                            $draft['payment_method_id'] ?? null,
+                            $draft['order_number'] ?? ($orderNumber ?: $this->generateOrderNumber()),
+                            $draft['ip'] ?? null,
+                            $draft['user_agent'] ?? null
+                        );
+                        if ($order) {
+                            $paidStatusId = ShopPaymentStatus::where('name', 'paid')->value('id');
+                            if ($paidStatusId) {
+                                $order->update(['payment_status_id' => $paidStatusId]);
+                            }
+                            ShopPaymentTransaction::create([
+                                'order_id' => $order->id,
+                                'payment_method_id' => $draft['payment_method_id'] ?? null,
+                                'amount' => $order->total_amount,
+                                'transaction_id' => $paymentIdParam,
+                                'status' => 'paid',
+                                'request_data' => $draft,
+                                'response_data' => ['source' => 'return_success_by_payment_id'],
+                            ]);
+                            try {
+                                app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+                            } catch (\Exception $e) {
+                                \Log::error('T-Bank eacq return by PaymentId: failed to send order_created notification', [
+                                    'order_id' => $order->id ?? null,
+                                    'error' => $e->getMessage(),
+                                ]);
+                            }
+                            Cache::forget('payment:init:tbank_eacq:' . $paymentIdParam);
+                            if (!empty($draft['order_number'])) {
+                                Cache::forget('payment:init:tbank_eacq:order:' . $draft['order_number']);
+                            }
+                            $q3 = 'id=' . $order->id . '&status=tbank_success';
+                            if (!empty($rawStatus)) {
+                                $q3 .= '&raw_status=' . urlencode((string) $rawStatus);
+                            }
+                            if (!empty($paymentType)) {
+                                $q3 .= '&payment_type=' . urlencode((string) $paymentType);
+                            }
+                            return redirect(config('app.frontend_url') . '/payment-status?' . $q3);
+                        }
+                    }
+                }
+            }
+
+            // Если заказ создать не удалось — возвращаем максимально честный статус
+            $statusParam = 'tbank_processing';
+            if ($status === 'fail') {
                 $statusParam = 'tbank_failed';
             }
 
             $query = 'status=' . $statusParam;
             if ($orderNumber) {
                 $query .= '&order_number=' . urlencode((string) $orderNumber);
+            }
+            if (!empty($rawStatus)) {
+                $query .= '&raw_status=' . urlencode((string) $rawStatus);
+            }
+            if (!empty($paymentType)) {
+                $query .= '&payment_type=' . urlencode((string) $paymentType);
             }
 
             return redirect(config('app.frontend_url') . '/payment-status?' . $query);
