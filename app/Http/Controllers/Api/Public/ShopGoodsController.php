@@ -808,85 +808,31 @@ class ShopGoodsController extends Controller
                     }
                 }
 
-            // Поиск по каталогу: приоритет точной фразы, затем требование половины слов в названии
+            // Поиск по каталогу: все слова запроса должны встретиться в name/sku/sku вариаций
             if ($request->has('search')) {
-                $search = $request->input('search');
-                $searchLower = mb_strtolower(trim($search));
-                // Приоритет: точная фраза в name/sku/sku вариаций
-                $exactQuery = ShopGood::where('is_active', true)
-                    ->where(function($q) use ($searchLower) {
-                        $q->whereRaw('LOWER(name) LIKE ?', ['%' . $searchLower . '%'])
-                          ->orWhereRaw('LOWER(sku) LIKE ?', ['%' . $searchLower . '%'])
-                          ->orWhereHas('variations', function($varQuery) use ($searchLower) {
-                              $varQuery->where('is_active', true)
-                                  ->whereRaw('LOWER(sku) LIKE ?', ['%' . $searchLower . '%']);
-                          });
-                    });
-                $hasExact = $exactQuery->exists();
+                $search = trim((string)$request->input('search'));
+                $searchLower = mb_strtolower($search);
 
-                if ($hasExact) {
-                    // Ограничиваем выборку точной фразой
-                    $query->where(function($q) use ($searchLower) {
-                        $q->whereRaw('LOWER(name) LIKE ?', ['%' . $searchLower . '%'])
-                          ->orWhereRaw('LOWER(sku) LIKE ?', ['%' . $searchLower . '%'])
-                          ->orWhereHas('variations', function($varQuery) use ($searchLower) {
-                              $varQuery->where('is_active', true)
-                                  ->whereRaw('LOWER(sku) LIKE ?', ['%' . $searchLower . '%']);
-                          });
-                    });
+                $words = preg_split('/\s+/', $searchLower);
+                $words = array_values(array_filter(array_map('trim', $words), function ($w) {
+                    return mb_strlen($w) >= 2;
+                }));
+
+                if (count($words) === 0) {
+                    $query->whereRaw('1 = 0');
                 } else {
-                    // Этап 1.5: если все слова найдены в полях name/sku/sku вариаций — показываем такие результаты
-                    $words = preg_split('/\s+/', $searchLower);
-                    $words = array_values(array_filter(array_map('trim', $words), function($w) {
-                        return mb_strlen($w) >= 2;
-                    }));
-                    if (count($words) > 0) {
-                        $testAllWordsQuery = ShopGood::where('is_active', true);
+                    $query->where(function ($q) use ($words) {
                         foreach ($words as $w) {
-                            $testAllWordsQuery->where(function($qw) use ($w) {
+                            $q->where(function ($qw) use ($w) {
                                 $qw->whereRaw('LOWER(name) LIKE ?', ['%' . $w . '%'])
                                    ->orWhereRaw('LOWER(sku) LIKE ?', ['%' . $w . '%'])
-                                   ->orWhereHas('variations', function($varQuery) use ($w) {
-                                        $varQuery->where('is_active', true)
-                                                 ->whereRaw('LOWER(sku) LIKE ?', ['%' . $w . '%']);
+                                   ->orWhereHas('variations', function ($varQuery) use ($w) {
+                                       $varQuery->where('is_active', true)
+                                                ->whereRaw('LOWER(sku) LIKE ?', ['%' . $w . '%']);
                                    });
                             });
                         }
-                        $hasAllWords = $testAllWordsQuery->exists();
-                        if ($hasAllWords) {
-                            $query->where(function($q) use ($words) {
-                                foreach ($words as $w) {
-                                    $q->where(function($qw) use ($w) {
-                                        $qw->whereRaw('LOWER(name) LIKE ?', ['%' . $w . '%'])
-                                           ->orWhereRaw('LOWER(sku) LIKE ?', ['%' . $w . '%'])
-                                           ->orWhereHas('variations', function($varQuery) use ($w) {
-                                                $varQuery->where('is_active', true)
-                                                         ->whereRaw('LOWER(sku) LIKE ?', ['%' . $w . '%']);
-                                           });
-                                    });
-                                }
-                            });
-                        } else {
-                            // Иначе требуем присутствие 75% слов в названии
-                            $threshold = (int)ceil(count($words) * 0.75);
-                            $sumExprParts = [];
-                            foreach ($words as $w) {
-                                $sumExprParts[] = "CASE WHEN LOWER(name) LIKE '%" . addslashes($w) . "%' THEN 1 ELSE 0 END";
-                            }
-                            $sumExpr = implode(' + ', $sumExprParts);
-                            $query->whereRaw("({$sumExpr}) >= {$threshold}");
-                        }
-                    } else {
-                        // Если нет валидных слов, используем простой поиск по фразе
-                        $query->where(function($q) use ($searchLower) {
-                            $q->whereRaw('LOWER(name) LIKE ?', ['%' . $searchLower . '%'])
-                              ->orWhereRaw('LOWER(sku) LIKE ?', ['%' . $searchLower . '%'])
-                              ->orWhereHas('variations', function($varQuery) use ($searchLower) {
-                                  $varQuery->where('is_active', true)
-                                      ->whereRaw('LOWER(sku) LIKE ?', ['%' . $searchLower . '%']);
-                              });
-                        });
-                    }
+                    });
                 }
             }
 
