@@ -318,8 +318,8 @@ class ShopPaymentController extends Controller
                 'order_bonus_points' => $orderData['order_bonus_points'] ?? 0,
                 'ip_address' => $ip,
                 'user_agent' => $userAgent,
-                'payment_status_id' => ShopPaymentStatus::where('name', 'paid')->value('id'),
-                'status_id' => ShopOrderStatus::where('name', 'confirmed')->value('id') ?? ShopOrderStatus::where('name', 'pending')->value('id'),
+                'payment_status_id' => ShopPaymentStatus::where('name', 'pending')->value('id'),
+                'status_id' => ShopOrderStatus::where('name', 'pending')->value('id') ?? ShopOrderStatus::where('name', 'confirmed')->value('id'),
             ]);
             return $order;
         } catch (\Exception $e) {
@@ -660,6 +660,14 @@ class ShopPaymentController extends Controller
                             ],
                             'response_data' => $data,
                         ]);
+                        try {
+                            app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+                        } catch (\Exception $e) {
+                            \Log::error('YooKassa two-stage: failed to send order_created notification', [
+                                'order_id' => $order->id ?? null,
+                                'error' => $e->getMessage(),
+                            ]);
+                        }
                         return response()->json([
                             'success' => true,
                             'two_stage_pay' => true,
@@ -921,6 +929,14 @@ class ShopPaymentController extends Controller
                                 ],
                                 'response_data' => $data,
                             ]);
+                            try {
+                                app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+                            } catch (\Exception $e) {
+                                \Log::error('Yandex Pay two-stage: failed to send order_created notification', [
+                                    'order_id' => $order->id ?? null,
+                                    'error' => $e->getMessage(),
+                                ]);
+                            }
                             return response()->json([
                                 'success' => true,
                                 'two_stage_pay' => true,
@@ -1031,6 +1047,14 @@ class ShopPaymentController extends Controller
                             ],
                             'response_data' => $init['response_data'] ?? null,
                         ]);
+                        try {
+                            app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+                        } catch (\Exception $e) {
+                            \Log::error('T-Bank eacq two-stage: failed to send order_created notification', [
+                                'order_id' => $order->id ?? null,
+                                'error' => $e->getMessage(),
+                            ]);
+                        }
                         return response()->json([
                             'success' => true,
                             'two_stage_pay' => true,
@@ -1194,6 +1218,14 @@ class ShopPaymentController extends Controller
                             'response_data' => $result['response_data'] ?? null,
                             'status' => 'pending',
                         ]);
+                        try {
+                            app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+                        } catch (\Exception $e) {
+                            \Log::error('T-Bank Dolyame two-stage: failed to send order_created notification', [
+                                'order_id' => $order->id ?? null,
+                                'error' => $e->getMessage(),
+                            ]);
+                        }
                         return response()->json([
                             'success' => true,
                             'two_stage_pay' => true,
