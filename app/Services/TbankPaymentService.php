@@ -52,8 +52,8 @@ class TbankPaymentService
             $orderIdForGateway = $orderId ?: $orderNumber;
             $isDolyami = strtoupper($this->settings['pay_type'] ?? '') === 'DOLYAMI';
             $paymentTypeParam = $isDolyami ? 'tbank_dolyame' : 'tbank_eacq';
-            $successUrl = url('/public/shop/payment/return?payment_type=' . $paymentTypeParam . '&status=success&order_number=' . urlencode($orderNumber));
-            $failUrl = url('/public/shop/payment/return?payment_type=' . $paymentTypeParam . '&status=fail&order_number=' . urlencode($orderNumber));
+            $successUrl = url('/api/public/shop/payment/return?payment_type=' . $paymentTypeParam . '&status=success&order_number=' . urlencode($orderNumber));
+            $failUrl = url('/api/public/shop/payment/return?payment_type=' . $paymentTypeParam . '&status=fail&order_number=' . urlencode($orderNumber));
             $payload = [
                 'TerminalKey' => $this->settings['terminal_key'],
                 'Amount' => (int) round($totalAmount * 100),
