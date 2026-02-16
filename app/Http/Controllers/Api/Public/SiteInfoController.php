@@ -39,8 +39,10 @@ class SiteInfoController extends Controller
 
             $siteInfo = [];
             foreach ($settings as $setting) {
-                // Обрабатываем URL изображений для логотипов и favicon
-                if (in_array($setting->key, ['site_logo', 'site_logo_negative', 'site_favicon']) && $setting->value) {
+                if ($setting->key === 'jivo_script' && $setting->value) {
+                    $adjustScript = '<script>(function(){function a(){if(window.innerWidth>1024)return;var b=document.querySelector(".button__QIiE1");if(!b)return;b.style.setProperty("bottom","80px","important");b.style.setProperty("margin-bottom","0px","important")}var c=0,d=60,e=setInterval(function(){a();c++;if(document.querySelector(".button__QIiE1")||c>=d)clearInterval(e)},500);window.addEventListener("resize",a)})();</script>';
+                    $siteInfo[$setting->key] = $adjustScript . $setting->value;
+                } elseif (in_array($setting->key, ['site_logo', 'site_logo_negative', 'site_favicon']) && $setting->value) {
                     $siteInfo[$setting->key] = $this->getImageUrl($setting->value);
                 } else {
                     $siteInfo[$setting->key] = $setting->value;
