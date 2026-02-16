@@ -818,22 +818,38 @@ class ShopPaymentController extends Controller
             ]);
             $response = $http->post($apiUrl . '/orders', $payload);
             $data = $response->json();
-            if ($response->successful() && isset($data['confirmation']['confirmation_url'])) {
-                $paymentUrl = $data['confirmation']['confirmation_url'];
-                $cacheKey = 'payment:init:yandex_pay:' . ($data['id'] ?? '');
-                Cache::put($cacheKey, [
-                    'order_number' => $orderNumber,
-                    'order_data' => $orderData,
-                    'payment_method_id' => $paymentMethod->id,
-                    'amount' => $orderData['total_amount'] ?? 0,
-                    'gateway_response' => $data,
-                    'ip' => $request->ip(),
-                    'user_agent' => $request->userAgent(),
-                ], now()->addDays(2));
-                return response()->json([
-                    'success' => true,
-                    'payment_url' => $paymentUrl,
-                ]);
+
+            if ($response->successful()) {
+                $paymentUrl = null;
+                $yandexOrderId = null;
+
+                if (isset($data['confirmation']['confirmation_url'])) {
+                    $paymentUrl = $data['confirmation']['confirmation_url'];
+                    $yandexOrderId = $data['id'] ?? ($data['orderId'] ?? null);
+                } elseif (isset($data['data']) && is_array($data['data']) && !empty($data['data']['paymentUrl'])) {
+                    $paymentUrl = $data['data']['paymentUrl'];
+                    $yandexOrderId = $data['data']['orderId'] ?? $data['data']['id'] ?? ($data['id'] ?? null);
+                } elseif (isset($data['paymentUrl'])) {
+                    $paymentUrl = $data['paymentUrl'];
+                    $yandexOrderId = $data['orderId'] ?? $data['id'] ?? null;
+                }
+
+                if ($paymentUrl) {
+                    $cacheKey = 'payment:init:yandex_pay:' . ($yandexOrderId ?: ($data['id'] ?? $orderNumber));
+                    Cache::put($cacheKey, [
+                        'order_number' => $orderNumber,
+                        'order_data' => $orderData,
+                        'payment_method_id' => $paymentMethod->id,
+                        'amount' => $orderData['total_amount'] ?? 0,
+                        'gateway_response' => $data,
+                        'ip' => $request->ip(),
+                        'user_agent' => $request->userAgent(),
+                    ], now()->addDays(2));
+                    return response()->json([
+                        'success' => true,
+                        'payment_url' => $paymentUrl,
+                    ]);
+                }
             }
             \Illuminate\Support\Facades\Log::error('Yandex Pay create order failed', [
                 'status' => $response->status(),
