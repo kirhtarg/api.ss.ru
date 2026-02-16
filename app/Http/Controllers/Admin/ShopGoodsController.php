@@ -1076,6 +1076,21 @@ class ShopGoodsController extends Controller
             $query->orderBy($sortBy, $sortDirection);
         }
 
+        // ids_only: вернуть только список ID (для массового выбора)
+        $idsOnly = $request->has('ids_only') && $request->get('ids_only') === '1';
+        if ($idsOnly) {
+            $limit = (int)$request->get('limit', 10000);
+            if ($limit <= 0) {
+                $limit = 10000;
+            }
+            $limit = min($limit, 10000);
+            $ids = $query->select('shop_goods.id')->limit($limit)->pluck('shop_goods.id')->toArray();
+            return response()->json([
+                'success' => true,
+                'ids' => $ids,
+            ]);
+        }
+
         // Проверяем, запрошена ли не пагинированная выборка для экспорта
         $forExport = $request->has('for_export') && $request->get('for_export') === '1';
         $countOnly = $request->has('count_only') && $request->get('count_only') === '1';
