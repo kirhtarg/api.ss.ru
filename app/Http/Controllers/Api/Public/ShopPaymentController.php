@@ -231,9 +231,17 @@ class ShopPaymentController extends Controller
                 }
             }
 
-            // Если заказ создать не удалось — возвращаем максимально честный статус
+            // Если заказ создать не удалось — возвращаем статус, максимально близкий к ответу банка
             $statusParam = 'tbank_processing';
-            if ($status === 'fail') {
+            if ($status === 'success') {
+                $statusParam = 'tbank_success';
+                Log::warning('T-Bank return: success status but order still not created after all draft attempts', [
+                    'payment_type' => $paymentType,
+                    'status' => $status,
+                    'raw_status' => $rawStatus ?? null,
+                    'order_number' => $orderNumber,
+                ]);
+            } elseif ($status === 'fail') {
                 $statusParam = 'tbank_failed';
             }
 
@@ -619,8 +627,6 @@ class ShopPaymentController extends Controller
                 }
             }
 
-        // Для онлайн-оплат больше не создаем заказ заранее — создаем только транзакцию и уходим на оплату.
-        // Исключение: банковский перевод (transfer) — создаем заказ сразу, т.к. нет внешнего платежа.
         if ($paymentMethod->type === 'transfer') {
             $order = ShopOrder::create([
                 'order_number' => $this->generateOrderNumber(),
@@ -665,22 +671,32 @@ class ShopPaymentController extends Controller
             return $this->handleBankTransfer($order, $paymentMethod);
         }
 
-        // Генерируем номер заказа для платежной системы (без записи в БД)
-        $ephemeralOrderNumber = $this->generateOrderNumber();
+        if ($paymentMethod->type === 'cash') {
+            return response()->json(['success' => true, 'message' => 'Оплата наличными не требует внешнего платежа.'], 200);
+        }
 
-        // --- Обработка разных платежных методов (через транзакцию, без предварительного заказа) ---
+        $orderNumber = $this->generateOrderNumber();
+        $order = $this->createOrderFromPayload(
+            $orderData,
+            $paymentMethod->id,
+            $orderNumber,
+            $request->ip(),
+            $request->userAgent()
+        );
+        if (!$order || !$order->id) {
+            return response()->json(['success' => false, 'message' => 'Failed to create order'], 500);
+        }
+
         switch ($paymentMethod->type) {
             case 'tbank_dolyame':
-                return $this->initTbankDolyamePayment($ephemeralOrderNumber, $orderData, $paymentMethod, $request->input('return_url'), $request);
+                return $this->handleTbankDolyamePayment($order, $paymentMethod);
             case 'tbank_eacq':
-                return $this->initTbankEacqPayment($ephemeralOrderNumber, $orderData, $paymentMethod, $request->input('return_url'), $request);
+                return $this->handleTbankEacqPayment($order, $paymentMethod);
             case 'yookassa':
-                return $this->initYookassaPayment($ephemeralOrderNumber, $orderData, $paymentMethod, $request->input('return_url'), $request);
+                return $this->handleYookassaPayment($order, $paymentMethod);
             case 'yandex_pay':
             case 'yandex_split':
-                return $this->initYandexPayPayment($ephemeralOrderNumber, $orderData, $paymentMethod, $request->input('return_url'), $request);
-            case 'cash':
-                return response()->json(['success' => true, 'message' => 'Оплата наличными не требует внешнего платежа.'], 200);
+                return $this->handleYandexPayPayment($order, $paymentMethod);
             default:
                 return response()->json(['success' => false, 'message' => 'Unsupported payment method'], 400);
         }
@@ -775,6 +791,86 @@ class ShopPaymentController extends Controller
         } catch (\Exception $e) {
             \Log::error('YooKassa create payment failed: ' . $e->getMessage());
             return response()->json(['success' => false, 'message' => 'ЮКасса: ошибка создания платежа'], 500);
+        }
+    }
+
+    protected function handleTbankEacqPayment(ShopOrder $order, ShopPaymentMethod $paymentMethod): \Illuminate\Http\JsonResponse
+    {
+        if (!$paymentMethod->is_active) {
+            return response()->json(['success' => false, 'message' => 'Payment method is inactive'], 400);
+        }
+        $settings = $this->normalizePaymentSettings($paymentMethod->settings);
+        $shouldBeTwoStagePay = $settings['two_stage_pay'] ?? false;
+        if (!$shouldBeTwoStagePay && class_exists(\App\Models\Setting::class)) {
+            $globalTwoStagePaySetting = \App\Models\Setting::where('key', 'two_stage_pay')->value('value');
+            $shouldBeTwoStagePay = $globalTwoStagePaySetting === '1' || $globalTwoStagePaySetting === true || $globalTwoStagePaySetting === 1;
+        }
+        $twoStagePaymentTypesAllowed = ['transfer', 'yandex_pay', 'yandex_split', 'yookassa', 'tbank_dolyame', 'tbank_eacq'];
+        if (empty($settings['terminal_key']) || empty($settings['terminal_password'])) {
+            Log::error('handleTbankEacqPayment: missing terminal_key or terminal_password', ['method_id' => $paymentMethod->id]);
+            return response()->json(['success' => false, 'message' => 'Payment gateway misconfigured'], 500);
+        }
+        $tbankService = new TbankPaymentService($settings);
+        try {
+            $paymentResult = $tbankService->initiatePayment($order);
+            if (isset($paymentResult['success']) && $paymentResult['success']) {
+                $transaction = ShopPaymentTransaction::create([
+                    'order_id' => $order->id,
+                    'payment_method_id' => $paymentMethod->id,
+                    'amount' => $order->total_amount,
+                    'transaction_id' => $paymentResult['transaction_id'] ?? null,
+                    'request_data' => $paymentResult['request_data'] ?? null,
+                    'response_data' => $paymentResult['response_data'] ?? null,
+                    'status' => 'pending',
+                ]);
+                $order->update([
+                    'payment_url' => $paymentResult['payment_url'] ?? null,
+                    'payment_method_id' => $paymentMethod->id,
+                    'payment_status_id' => ShopPaymentStatus::where('name', 'pending')->value('id'),
+                ]);
+                if ($shouldBeTwoStagePay && in_array($paymentMethod->type, $twoStagePaymentTypesAllowed)) {
+                    return response()->json([
+                        'success' => true,
+                        'two_stage_pay' => true,
+                        'payment_url' => $paymentResult['payment_url'] ?? null,
+                        'order_id' => $order->id,
+                        'order_number' => $order->order_number,
+                    ]);
+                }
+                return response()->json([
+                    'success' => true,
+                    'payment_url' => $paymentResult['payment_url'] ?? null,
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                    'transaction_id' => $transaction->id,
+                ]);
+            }
+            if (isset($paymentResult['error']) && $paymentResult['error'] === 'connection_timeout') {
+                ShopPaymentTransaction::create([
+                    'order_id' => $order->id,
+                    'payment_method_id' => $paymentMethod->id,
+                    'amount' => $order->total_amount,
+                    'status' => 'pending',
+                    'response_data' => ['message' => 'Gateway unreachable, awaiting manager approval'],
+                ]);
+                $order->update([
+                    'payment_method_id' => $paymentMethod->id,
+                    'payment_status_id' => ShopPaymentStatus::where('name', 'pending')->value('id'),
+                    'payment_url' => null,
+                ]);
+                return response()->json([
+                    'success' => true,
+                    'two_stage_pay' => true,
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                    'message' => 'Gateway unreachable',
+                ]);
+            }
+            Log::error('handleTbankEacqPayment: T-Bank eacq payment initiation failed for order ' . $order->id . ': ' . ($paymentResult['message'] ?? 'Unknown error'), ['payment_result' => $paymentResult]);
+            return response()->json(['success' => false, 'message' => $paymentResult['message'] ?? 'Failed to initiate payment'], 500);
+        } catch (\Exception $e) {
+            Log::error('handleTbankEacqPayment: Exception during T-Bank eacq payment initiation for order ' . $order->id . ': ' . $e->getMessage(), ['exception' => $e]);
+            return response()->json(['success' => false, 'message' => 'An error occurred during payment processing'], 500);
         }
     }
 
