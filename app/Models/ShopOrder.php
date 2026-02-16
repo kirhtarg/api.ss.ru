@@ -15,6 +15,7 @@ class ShopOrder extends Model
         'order_number',
         'user_id',
         'status_id',
+        'payment_status_id',
         'payed',
         'pay_agree',
         'is_active',
@@ -100,6 +101,11 @@ class ShopOrder extends Model
     public function paymentMethod()
     {
         return $this->belongsTo(ShopPaymentMethod::class, 'payment_method_id');
+    }
+
+    public function paymentStatus()
+    {
+        return $this->belongsTo(ShopPaymentStatus::class, 'payment_status_id');
     }
 
     public function deliveryMethod()
