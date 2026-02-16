@@ -53,7 +53,13 @@ class ShopPaymentController extends Controller
         }
 
         $paymentType = $request->get('payment_type');
-        $status = $request->get('status');
+        $rawStatus = $request->get('status');
+        $status = $rawStatus ? strtolower($rawStatus) : null;
+        if ($status === 'ok') {
+            $status = 'success';
+        } elseif (in_array($status, ['failed', 'fail', 'canceled', 'cancelled'], true)) {
+            $status = 'fail';
+        }
         $orderNumber = $request->get('order_number');
 
         // Возврат с Т‑Банка (eacq / Долями) по SuccessURL / FailURL
@@ -61,6 +67,7 @@ class ShopPaymentController extends Controller
             Log::info('T-Bank return callback received', [
                 'payment_type' => $paymentType,
                 'status' => $status,
+                'raw_status' => $rawStatus,
                 'order_number' => $orderNumber,
                 'query' => $request->query(),
             ]);
