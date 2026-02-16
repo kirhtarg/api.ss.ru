@@ -76,6 +76,14 @@ class ShopPaymentController extends Controller
                     if ($paidStatusId) {
                         $order->update(['payment_status_id' => $paidStatusId]);
                     }
+                    try {
+                        app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+                    } catch (\Exception $e) {
+                        \Log::error('T-Bank return: failed to send order_created notification', [
+                            'order_id' => $order->id ?? null,
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
                     return redirect(config('app.frontend_url') . '/payment-status?id=' . $order->id . '&status=tbank_success');
                 }
 
@@ -106,7 +114,6 @@ class ShopPaymentController extends Controller
                         if ($paidStatusId) {
                             $order->update(['payment_status_id' => $paidStatusId]);
                         }
-                        // Создадим запись транзакции (статус paid)
                         $txId = $draft['gateway_response']['PaymentId'] ?? null;
                         ShopPaymentTransaction::create([
                             'order_id' => $order->id,
@@ -117,7 +124,14 @@ class ShopPaymentController extends Controller
                             'request_data' => $draft,
                             'response_data' => ['source' => 'return_success'],
                         ]);
-                        // Очистим кэш-черновик
+                        try {
+                            app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+                        } catch (\Exception $e) {
+                            \Log::error('T-Bank eacq return: failed to send order_created notification', [
+                                'order_id' => $order->id ?? null,
+                                'error' => $e->getMessage(),
+                            ]);
+                        }
                         Cache::forget('payment:init:tbank_eacq:order:' . $orderNumber);
                         if ($txId) {
                             Cache::forget('payment:init:tbank_eacq:' . $txId);
@@ -1564,6 +1578,14 @@ class ShopPaymentController extends Controller
                         'request_data' => $draft,
                         'response_data' => $webhookData,
                     ]);
+                    try {
+                        app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+                    } catch (\Exception $e) {
+                        \Log::error('T-Bank eacq webhook: failed to send order_created notification', [
+                            'order_id' => $order->id ?? null,
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
                     if (!empty($draft['order_number'])) {
                         Cache::forget('payment:init:tbank_eacq:order:' . $draft['order_number']);
                     }
@@ -1645,6 +1667,18 @@ class ShopPaymentController extends Controller
             'response_data' => $webhookData,
             'processed_at' => now(),
         ]);
+
+        if ($newStatus === 'success') {
+            try {
+                app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+            } catch (\Exception $e) {
+                Log::error('T-Bank webhook: failed to send order_created notification after success status', [
+                    'order_id' => $order->id ?? null,
+                    'transaction_id' => $transaction->id ?? null,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
 
         return response('Webhook received', 200);
     }
