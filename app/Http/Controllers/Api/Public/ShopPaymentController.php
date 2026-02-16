@@ -90,6 +90,43 @@ class ShopPaymentController extends Controller
                 return redirect(config('app.frontend_url') . '/payment-status?id=' . $order->id . '&status=tbank_processing');
             }
 
+            // Если заказ не найден, пытаемся создать из черновика в кэше (eacq — одноэтапная оплата)
+            if ($status === 'success' && $orderNumber) {
+                $draft = Cache::get('payment:init:tbank_eacq:order:' . $orderNumber);
+                if ($draft && is_array($draft)) {
+                    $order = $this->createOrderFromPayload(
+                        $draft['order_data'] ?? [],
+                        $draft['payment_method_id'] ?? null,
+                        $draft['order_number'] ?? $orderNumber,
+                        $draft['ip'] ?? null,
+                        $draft['user_agent'] ?? null
+                    );
+                    if ($order) {
+                        $paidStatusId = ShopPaymentStatus::where('name', 'paid')->value('id');
+                        if ($paidStatusId) {
+                            $order->update(['payment_status_id' => $paidStatusId]);
+                        }
+                        // Создадим запись транзакции (статус paid)
+                        $txId = $draft['gateway_response']['PaymentId'] ?? null;
+                        ShopPaymentTransaction::create([
+                            'order_id' => $order->id,
+                            'payment_method_id' => $draft['payment_method_id'] ?? null,
+                            'amount' => $order->total_amount,
+                            'transaction_id' => $txId,
+                            'status' => 'paid',
+                            'request_data' => $draft,
+                            'response_data' => ['source' => 'return_success'],
+                        ]);
+                        // Очистим кэш-черновик
+                        Cache::forget('payment:init:tbank_eacq:order:' . $orderNumber);
+                        if ($txId) {
+                            Cache::forget('payment:init:tbank_eacq:' . $txId);
+                        }
+                        return redirect(config('app.frontend_url') . '/payment-status?id=' . $order->id . '&status=tbank_success');
+                    }
+                }
+            }
+
             return redirect(config('app.frontend_url') . '/payment-status?status=tbank_processing&order_number=' . urlencode((string) $orderNumber));
         }
 
@@ -1099,8 +1136,7 @@ class ShopPaymentController extends Controller
                         ]);
                     }
                 }
-                $cacheKey = 'payment:init:tbank_eacq:' . ($init['transaction_id'] ?? $orderNumber);
-                Cache::put($cacheKey, [
+                $cacheBasePayload = [
                     'order_number' => $orderNumber,
                     'order_data' => $orderData,
                     'payment_method_id' => $paymentMethod->id,
@@ -1108,7 +1144,12 @@ class ShopPaymentController extends Controller
                     'gateway_response' => $init['response_data'] ?? null,
                     'ip' => $request->ip(),
                     'user_agent' => $request->userAgent(),
-                ], now()->addDays(2));
+                ];
+                // Кладём в кэш по двум ключам: по PaymentId (если есть) и по номеру заказа
+                $cacheKeyTx = 'payment:init:tbank_eacq:' . ($init['transaction_id'] ?? $orderNumber);
+                Cache::put($cacheKeyTx, $cacheBasePayload, now()->addDays(2));
+                $cacheKeyByOrder = 'payment:init:tbank_eacq:order:' . $orderNumber;
+                Cache::put($cacheKeyByOrder, $cacheBasePayload, now()->addDays(2));
                 return response()->json([
                     'success' => true,
                     'payment_url' => $init['payment_url'],
@@ -1490,8 +1531,50 @@ class ShopPaymentController extends Controller
         // 2. Поиск соответствующей транзакции
         $transaction = $tbankService->findTransactionByWebhookData($webhookData);
         if (!$transaction) {
-            Log::warning('T-Bank webhook: Transaction not found for webhook data.', ['data' => $webhookData]);
-            return response('Transaction not found', 404);
+            Log::warning('T-Bank webhook: Transaction not found for webhook data, trying draft.', ['data' => $webhookData]);
+            // Попробуем создать заказ из черновика для eacq по PaymentId или OrderId
+            $draft = null;
+            $paymentId = $webhookData['PaymentId'] ?? null;
+            $orderIdParam = $webhookData['OrderId'] ?? null;
+            if ($paymentId) {
+                $draft = Cache::get('payment:init:tbank_eacq:' . $paymentId);
+            }
+            if (!$draft && $orderIdParam) {
+                $draft = Cache::get('payment:init:tbank_eacq:order:' . $orderIdParam);
+            }
+            if ($draft && is_array($draft) && $newStatus === 'success') {
+                $order = $this->createOrderFromPayload(
+                    $draft['order_data'] ?? [],
+                    $draft['payment_method_id'] ?? null,
+                    $draft['order_number'] ?? ($orderIdParam ?: $paymentId ?: $this->generateOrderNumber()),
+                    $draft['ip'] ?? null,
+                    $draft['user_agent'] ?? null
+                );
+                if ($order) {
+                    $paidStatusId = ShopPaymentStatus::where('name', 'paid')->value('id');
+                    if ($paidStatusId) {
+                        $order->update(['payment_status_id' => $paidStatusId]);
+                    }
+                    $transaction = ShopPaymentTransaction::create([
+                        'order_id' => $order->id,
+                        'payment_method_id' => $draft['payment_method_id'] ?? null,
+                        'amount' => $order->total_amount,
+                        'transaction_id' => $paymentId,
+                        'status' => 'paid',
+                        'request_data' => $draft,
+                        'response_data' => $webhookData,
+                    ]);
+                    if (!empty($draft['order_number'])) {
+                        Cache::forget('payment:init:tbank_eacq:order:' . $draft['order_number']);
+                    }
+                    if ($paymentId) {
+                        Cache::forget('payment:init:tbank_eacq:' . $paymentId);
+                    }
+                }
+            }
+            if (!$transaction) {
+                return response('Transaction not found', 404);
+            }
         }
 
         $order = $transaction->order;
