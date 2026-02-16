@@ -26,22 +26,17 @@ class PaymentMethodImageController extends Controller
                 $this->deleteImage($paymentMethod->image_url);
             }
 
-            // Get the uploaded file
             $file = $request->file('image');
             
-            // Generate filename based on payment method ID
             $filename = 'payment_' . $paymentMethod->id . '.jpg';
             
-            // Путь к public фронтенда (из FRONTEND_PATH в .env)
             $imagePath = frontend_public_path('images/payment/');
             
-            // Ensure directory exists
             if (!file_exists($imagePath)) {
                 mkdir($imagePath, 0755, true);
             }
             
             
-            // Process and save image using GD (built-in PHP)
             $imageInfo = getimagesize($file->getPathname());
             $imageType = $imageInfo[2];
             
@@ -72,10 +67,8 @@ class PaymentMethodImageController extends Controller
             $newWidth = (int)($originalWidth * $ratio);
             $newHeight = (int)($originalHeight * $ratio);
             
-            // Create new image
             $newImage = imagecreatetruecolor($newWidth, $newHeight);
             
-            // Preserve transparency for PNG
             if ($imageType == IMAGETYPE_PNG) {
                 imagealphablending($newImage, false);
                 imagesavealpha($newImage, true);
@@ -83,10 +76,8 @@ class PaymentMethodImageController extends Controller
                 imagefilledrectangle($newImage, 0, 0, $newWidth, $newHeight, $transparent);
             }
             
-            // Resize image
             imagecopyresampled($newImage, $sourceImage, 0, 0, 0, 0, $newWidth, $newHeight, $originalWidth, $originalHeight);
             
-            // Save the image
             $fullPath = $imagePath . $filename;
             
             switch ($imageType) {
@@ -101,9 +92,11 @@ class PaymentMethodImageController extends Controller
                     break;
             }
             
-            // Clean up memory
             imagedestroy($sourceImage);
             imagedestroy($newImage);
+
+            $paymentMethod->image_url = '/images/payment/' . $filename;
+            $paymentMethod->save();
 
             return response()->json([
                 'success' => true,
@@ -132,10 +125,12 @@ class PaymentMethodImageController extends Controller
         try {
             $paymentMethod = ShopPaymentMethod::findOrFail($request->payment_method_id);
             
-            // Delete image file
             $imagePath = '/images/payment/payment_' . $paymentMethod->id . '.jpg';
             
             $this->deleteImage($imagePath);
+
+            $paymentMethod->image_url = null;
+            $paymentMethod->save();
 
             return response()->json([
                 'success' => true,

@@ -46,16 +46,51 @@ class ShopPaymentController extends Controller
     public function handlePaymentReturn(Request $request)
     {
         // Логика обработки возврата от платежных систем
-        // Например, для ЮKassa
+
+        // ЮKassa: старый сценарий с order_id в параметрах
         if ($request->has('yookassa_payment_id')) {
-            // Logic for Yookassa return
             return redirect(config('app.frontend_url') . '/payment-status?id=' . $request->get('order_id') . '&status=yookassa_processing');
         }
-        
-        // Логика для Т-Банка (Долями)
-        if ($request->has('tbank_payment_id') || $request->has('order_id')) {
-            // TODO: Проверить статус платежа в Т-Банке, если необходимо, или полагаться на webhook
-            return redirect(config('app.frontend_url') . '/payment-status?id=' . $request->get('order_id') . '&status=tbank_processing');
+
+        $paymentType = $request->get('payment_type');
+        $status = $request->get('status');
+        $orderNumber = $request->get('order_number');
+
+        // Возврат с Т‑Банка (eacq / Долями) по SuccessURL / FailURL
+        if ($paymentType && str_starts_with($paymentType, 'tbank_')) {
+            Log::info('T-Bank return callback received', [
+                'payment_type' => $paymentType,
+                'status' => $status,
+                'order_number' => $orderNumber,
+                'query' => $request->query(),
+            ]);
+
+            $order = null;
+            if ($orderNumber) {
+                $order = ShopOrder::where('order_number', $orderNumber)->first();
+            }
+
+            if ($order) {
+                if ($status === 'success') {
+                    $paidStatusId = ShopPaymentStatus::where('name', 'paid')->value('id');
+                    if ($paidStatusId) {
+                        $order->update(['payment_status_id' => $paidStatusId]);
+                    }
+                    return redirect(config('app.frontend_url') . '/payment-status?id=' . $order->id . '&status=tbank_success');
+                }
+
+                if ($status === 'fail') {
+                    $failedStatusId = ShopPaymentStatus::where('name', 'failed')->value('id');
+                    if ($failedStatusId) {
+                        $order->update(['payment_status_id' => $failedStatusId]);
+                    }
+                    return redirect(config('app.frontend_url') . '/payment-status?id=' . $order->id . '&status=tbank_failed');
+                }
+
+                return redirect(config('app.frontend_url') . '/payment-status?id=' . $order->id . '&status=tbank_processing');
+            }
+
+            return redirect(config('app.frontend_url') . '/payment-status?status=tbank_processing&order_number=' . urlencode((string) $orderNumber));
         }
 
         // Default redirect or error

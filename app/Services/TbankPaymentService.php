@@ -5,6 +5,7 @@ namespace App\Services;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\RequestException;
 use App\Models\ShopOrder;
 use App\Models\ShopPaymentTransaction;
 use Illuminate\Support\Facades\Config;
@@ -110,6 +111,7 @@ class TbankPaymentService
             ]);
             $response = $http->post($apiUrl, $payload);
             $responseData = $response->json();
+            $rawBody = $response->body();
 
             Log::info('T-Bank initiatePayment request sent', ['url' => $apiUrl, 'payload' => $payload]);
             Log::info('T-Bank initiatePayment response received', ['status' => $response->status(), 'body' => $responseData]);
@@ -127,6 +129,7 @@ class TbankPaymentService
                 Log::error('T-Bank API Error during payment initiation for order ' . $order->id . ': ' . $errorMessage, [
                     'response_status' => $response->status(),
                     'response_body' => $responseData,
+                    'response_body_raw' => $rawBody,
                     'settings' => $this->settings,
                 ]);
                 return [
@@ -146,9 +149,14 @@ class TbankPaymentService
                 'message' => 'Платежный шлюз недоступен (таймаут соединения)',
             ];
         } catch (\Exception $e) {
+            $rawBody = null;
+            if ($e instanceof RequestException && $e->response) {
+                $rawBody = $e->response->body();
+            }
             Log::error('Exception during T-Bank payment initiation for order ' . $order->id . ': ' . $e->getMessage(), [
                 'exception' => $e,
                 'settings' => $this->settings,
+                'response_body_raw' => $rawBody,
             ]);
             return [
                 'success' => false,

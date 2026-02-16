@@ -64,9 +64,14 @@ class ShopPaymentController extends Controller
                         'updated_at' => $method->updated_at,
                     ];
                     
-                    // Безопасно получаем image_url
                     try {
-                        $item['image_url'] = $method->image_url;
+                        $imageUrl = $method->image_url;
+                        if ($imageUrl) {
+                            $version = $method->updated_at ? $method->updated_at->timestamp : time();
+                            $item['image_url'] = $imageUrl . '?v=' . $version;
+                        } else {
+                            $item['image_url'] = null;
+                        }
                     } catch (\Exception $e) {
                         \Log::warning('Error getting image_url for payment method ' . $method->id . ': ' . $e->getMessage());
                         $item['image_url'] = null;
@@ -121,9 +126,14 @@ class ShopPaymentController extends Controller
                 'updated_at' => $paymentMethod->updated_at,
             ];
             
-            // Безопасно получаем image_url
             try {
-                $data['image_url'] = $paymentMethod->image_url;
+                $imageUrl = $paymentMethod->image_url;
+                if ($imageUrl) {
+                    $version = $paymentMethod->updated_at ? $paymentMethod->updated_at->timestamp : time();
+                    $data['image_url'] = $imageUrl . '?v=' . $version;
+                } else {
+                    $data['image_url'] = null;
+                }
             } catch (\Exception $e) {
                 \Log::warning('Error getting image_url for payment method ' . $id . ': ' . $e->getMessage());
                 $data['image_url'] = null;
