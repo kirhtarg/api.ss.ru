@@ -121,7 +121,7 @@ return [
 
     'tbank' => [
         'api_url_live' => env('TBANK_API_URL_LIVE', 'https://securepay.tinkoff.ru/v2'),
-        'api_url_test' => env('TBANK_API_URL_TEST', 'https://securepay.tinkoff.ru/v2'),
+        'api_url_test' => env('TBANK_API_URL_TEST', 'https://rest-api-test.tinkoff.ru/v2'),
         'verify_ssl' => env('HTTP_CLIENT_VERIFY', true),
         'ca_bundle_path' => env('HTTP_CLIENT_CA_BUNDLE'),
     ],

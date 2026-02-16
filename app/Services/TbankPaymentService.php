@@ -208,8 +208,7 @@ class TbankPaymentService
     {
         $tokenPayload = $this->pruneNulls($payload);
         $tokenPayload['Password'] = $this->settings['terminal_password'];
-        // По правилам Т-Банка исключаем только Receipt и Token
-        unset($tokenPayload['Receipt'], $tokenPayload['Token']);
+        unset($tokenPayload['Receipt'], $tokenPayload['Token'], $tokenPayload['DATA']);
         ksort($tokenPayload);
         $concatenated = '';
         foreach ($tokenPayload as $value) {
