@@ -16,6 +16,14 @@ class SearchController extends Controller
         $query = $request->get('q', '');
         $limit = min($request->get('limit', 10), 50); // Максимум 50 результатов
 
+        $stockFilter = $request->get('stock_filter');
+        if ($stockFilter === null) {
+            $stockFilter = $request->get('stock');
+        }
+        if (!in_array($stockFilter, ['in_stock', 'with_stock', 'out_of_stock', 'preorder', 'all'], true)) {
+            $stockFilter = null;
+        }
+
 
         if (strlen($query) < 2) {
             return response()->json([
@@ -34,10 +42,10 @@ class SearchController extends Controller
         $remoteQ = $shopRemoteQ ? (int)$shopRemoteQ->value : 1;
         
         // ВРЕМЕННО: Отключаем кеш для проверки качества релевантности
-        $products = $this->searchProducts($query, $limit);
+        $products = $this->searchProducts($query, $limit, $stockFilter);
         $categories = $this->searchCategories($query, $limit);
         $brands = $this->searchBrands($query, $limit);
-        $totalProducts = $this->getTotalProductsCount($query);
+        $totalProducts = $this->getTotalProductsCount($query, $stockFilter);
         $totalCategories = $this->getTotalCategoriesCount($query);
         $totalBrands = $this->getTotalBrandsCount($query);
         $results = [
@@ -54,7 +62,7 @@ class SearchController extends Controller
         return response()->json(['data' => $results]);
     }
 
-    private function searchProducts($query, $limit)
+    private function searchProducts($query, $limit, $stockFilter = null)
     {
         try {
             // Отключаем FULLTEXT полностью, так как индекс может отсутствовать
@@ -136,6 +144,10 @@ class SearchController extends Controller
             // Применяем фильтрацию по остаткам (используем подзапросы, БЕЗ JOIN и GROUP BY)
             // ВАЖНО: применяем ПЕРЕД selectRaw, чтобы фильтр применялся к базовому запросу
             $this->applyStockFilter($productsQuery);
+
+            if ($stockFilter && $stockFilter !== 'all') {
+                $this->applyCustomStockFilter($productsQuery, $stockFilter);
+            }
             
             // Релевантность + подсчет совпадений по словам (по всем токенам)
             $matchParts = [];
@@ -252,7 +264,8 @@ class SearchController extends Controller
                         'description' => $product->description,
                         'found_variation_id' => $foundVariationId,
                         'has_variations' => $hasVariations,
-                        'relevance' => $product->relevance ?? 0
+                        'relevance' => $product->relevance ?? 0,
+                        'is_preorder' => (bool)($product->is_preorder ?? false)
                     ];
                 });
 
@@ -260,7 +273,7 @@ class SearchController extends Controller
         } catch (\Exception $e) {
             // Fallback на простой LIKE поиск при ошибке
             try {
-                return $this->searchProductsFallback($query, $limit);
+                return $this->searchProductsFallback($query, $limit, $stockFilter);
             } catch (\Exception $fallbackError) {
                 return [];
             }
@@ -313,7 +326,7 @@ class SearchController extends Controller
     /**
      * Fallback поиск при ошибке полнотекстового поиска
      */
-    private function searchProductsFallback($query, $limit)
+    private function searchProductsFallback($query, $limit, $stockFilter = null)
     {
         $escapedQuery = DB::getPdo()->quote($query);
         $escapedQuery = trim($escapedQuery, "'");
@@ -404,6 +417,10 @@ class SearchController extends Controller
         
         // Применяем фильтрацию по остаткам (учитывает параметры сайта) - ПОСЛЕ условий поиска
         $this->applyStockFilter($productsQuery);
+
+        if ($stockFilter && $stockFilter !== 'all') {
+            $this->applyCustomStockFilter($productsQuery, $stockFilter);
+        }
         
         $products = $productsQuery
             ->selectRaw('shop_goods.*, 
@@ -459,7 +476,8 @@ class SearchController extends Controller
                     'description' => $product->description,
                     'found_variation_id' => $foundVariationId,
                     'has_variations' => $hasVariations,
-                    'relevance' => $product->relevance ?? 0
+                    'relevance' => $product->relevance ?? 0,
+                    'is_preorder' => (bool)($product->is_preorder ?? false)
                 ];
             });
         
@@ -942,9 +960,67 @@ class SearchController extends Controller
     }
 
     /**
+     * Применить пользовательский фильтр по остаткам (stock_filter) к запросу товаров
+     */
+    private function applyCustomStockFilter($query, $stockFilter)
+    {
+        $shopRemoteQ = Setting::where('key', 'shop_remote_q')->first();
+        $remoteQ = $shopRemoteQ ? (int)$shopRemoteQ->value : 1;
+
+        if ($stockFilter === 'preorder') {
+            $query->where(function($mainQuery) use ($remoteQ) {
+                $mainQuery->where(function($preorderCondition) {
+                    $preorderCondition->where('is_preorder', '=', 1)
+                        ->orWhere('is_preorder', '=', true);
+                });
+
+                $mainQuery->where('stock_quantity', '=', 0);
+
+                if ($remoteQ === 2 || $remoteQ === 3) {
+                    $mainQuery->where(function($remoteCondition) {
+                        $remoteCondition->whereNull('remote_stock_quantity')
+                            ->orWhere('remote_stock_quantity', '=', '0')
+                            ->orWhere('remote_stock_quantity', '=', '')
+                            ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
+                    })
+                    ->where(function($fastRemoteCondition) {
+                        $fastRemoteCondition->whereNull('fast_remote_stock_quantity')
+                            ->orWhere('fast_remote_stock_quantity', '=', '0')
+                            ->orWhere('fast_remote_stock_quantity', '=', '')
+                            ->orWhereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) = 0');
+                    });
+                }
+
+                $mainQuery->whereNotExists(function($varQ) use ($remoteQ) {
+                    $varQ->select(DB::raw(1))
+                        ->from('shop_good_variations')
+                        ->whereColumn('shop_good_variations.good_id', 'shop_goods.id')
+                        ->where(function($subVarQ) use ($remoteQ) {
+                            $subVarQ->where('shop_good_variations.stock_quantity', '>', 0);
+                            if ($remoteQ === 2 || $remoteQ === 3) {
+                                $subVarQ->orWhere(function($remoteVarQ) {
+                                    $remoteVarQ->whereNotNull('shop_good_variations.remote_stock_quantity')
+                                        ->where('shop_good_variations.remote_stock_quantity', '!=', '0')
+                                        ->where('shop_good_variations.remote_stock_quantity', '!=', '')
+                                        ->whereRaw('LENGTH(TRIM(shop_good_variations.remote_stock_quantity)) > 0');
+                                })
+                                ->orWhere(function($fastRemoteVarQ) {
+                                    $fastRemoteVarQ->whereNotNull('shop_good_variations.fast_remote_stock_quantity')
+                                        ->where('shop_good_variations.fast_remote_stock_quantity', '!=', '0')
+                                        ->where('shop_good_variations.fast_remote_stock_quantity', '!=', '')
+                                        ->whereRaw('LENGTH(TRIM(shop_good_variations.fast_remote_stock_quantity)) > 0');
+                                });
+                            }
+                        });
+                });
+            });
+        }
+    }
+
+    /**
      * Получить общее количество товаров по запросу
      */
-    private function getTotalProductsCount($query)
+    private function getTotalProductsCount($query, $stockFilter = null)
     {
         try {
             $escapedQuery = DB::getPdo()->quote($query);
@@ -1035,6 +1111,10 @@ class SearchController extends Controller
             
             // Применяем фильтрацию по остаткам ПОСЛЕ логики поиска
             $this->applyStockFilter($countQuery);
+
+            if ($stockFilter && $stockFilter !== 'all') {
+                $this->applyCustomStockFilter($countQuery, $stockFilter);
+            }
             
             $count = $countQuery->count();
             
