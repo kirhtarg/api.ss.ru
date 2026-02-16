@@ -148,7 +148,31 @@ class ShopPaymentController extends Controller
                 }
             }
 
-            return redirect(config('app.frontend_url') . '/payment-status?status=tbank_processing&order_number=' . urlencode((string) $orderNumber));
+            // Если до сюда дошли, значит:
+            // - заказ ещё не создан (нет записи в БД)
+            //   или не удалось создать его из черновика в кэше
+            // Показываем пользователю статус, максимально близкий к ответу банка
+            $statusParam = 'tbank_processing';
+            if ($status === 'success') {
+                // Банк вернул успешный статус (например, ok/success),
+                // но заказ ещё не создан — считаем оплату успешной для пользователя
+                $statusParam = 'tbank_success';
+                Log::warning('T-Bank return: success status but order not created', [
+                    'payment_type' => $paymentType,
+                    'status' => $status,
+                    'raw_status' => $rawStatus ?? null,
+                    'order_number' => $orderNumber,
+                ]);
+            } elseif ($status === 'fail') {
+                $statusParam = 'tbank_failed';
+            }
+
+            $query = 'status=' . $statusParam;
+            if ($orderNumber) {
+                $query .= '&order_number=' . urlencode((string) $orderNumber);
+            }
+
+            return redirect(config('app.frontend_url') . '/payment-status?' . $query);
         }
 
         // Default redirect or error
