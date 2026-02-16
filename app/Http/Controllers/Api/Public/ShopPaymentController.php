@@ -598,6 +598,13 @@ class ShopPaymentController extends Controller
         }
         $returnUrl = $returnUrl ?: (config('app.frontend_url') . '/checkout?payment=return&payment_type=yookassa');
         $amountValue = number_format($orderData['total_amount'] ?? 0, 2, '.', '');
+        // Определяем двухэтапность
+        $shouldBeTwoStagePay = $settings['two_stage_pay'] ?? false;
+        if (!$shouldBeTwoStagePay && class_exists(\App\Models\Setting::class)) {
+            $globalTwoStagePaySetting = \App\Models\Setting::where('key', 'two_stage_pay')->value('value');
+            $shouldBeTwoStagePay = $globalTwoStagePaySetting === '1' || $globalTwoStagePaySetting === true || $globalTwoStagePaySetting === 1;
+        }
+        $twoStagePaymentTypesAllowed = ['transfer', 'yandex_pay', 'yandex_split', 'yookassa', 'tbank_dolyame', 'tbank_eacq'];
         $payload = [
             'amount' => ['value' => $amountValue, 'currency' => $settings['currency'] ?? 'RUB'],
             'capture' => true,
@@ -623,6 +630,48 @@ class ShopPaymentController extends Controller
             $data = $response->json();
             if ($response->successful() && isset($data['confirmation']['confirmation_url'])) {
                 $paymentUrl = $data['confirmation']['confirmation_url'];
+                // Если включена двухэтапная оплата — создаём заказ и не редиректим
+                if ($shouldBeTwoStagePay && in_array($paymentMethod->type, $twoStagePaymentTypesAllowed)) {
+                    $order = $this->createOrderFromPayload(
+                        $orderData,
+                        $paymentMethod->id,
+                        $orderNumber,
+                        $request->ip(),
+                        $request->userAgent()
+                    );
+                    if ($order) {
+                        $pendingId = ShopPaymentStatus::where('name', 'pending')->value('id');
+                        $order->update([
+                            'payment_url' => $paymentUrl,
+                            'payment_status_id' => $pendingId ?: $order->payment_status_id,
+                            'yookassa_payment_id' => $data['id'] ?? null,
+                        ]);
+                        ShopPaymentTransaction::create([
+                            'order_id' => $order->id,
+                            'payment_method_id' => $paymentMethod->id,
+                            'amount' => $order->total_amount,
+                            'status' => 'pending',
+                            'transaction_id' => $data['id'] ?? null,
+                            'request_data' => [
+                                'order_data' => $orderData,
+                                'order_number' => $orderNumber,
+                                'ip' => $request->ip(),
+                                'user_agent' => $request->userAgent(),
+                            ],
+                            'response_data' => $data,
+                        ]);
+                        return response()->json([
+                            'success' => true,
+                            'two_stage_pay' => true,
+                            'payment_url' => $paymentUrl,
+                            'order_id' => $order->id,
+                            'order_number' => $order->order_number,
+                        ]);
+                    }
+                    // если заказ создать не удалось — падаем в режим черновика
+                }
+
+                // Обычный (одноэтапный) режим — кэшируем данные и редиректим на оплату
                 $cacheKey = 'payment:init:yookassa:' . ($data['id'] ?? '');
                 Cache::put($cacheKey, [
                     'order_number' => $orderNumber,
@@ -781,6 +830,13 @@ class ShopPaymentController extends Controller
         $apiUrl = $isTest ? 'https://sandbox.pay.yandex.ru/api/merchant/v1' : 'https://pay.yandex.ru/api/merchant/v1';
         $returnUrl = $returnUrl ?: (config('app.frontend_url') . '/checkout?payment=return&payment_type=yandex_pay');
         $amountValue = number_format($orderData['total_amount'] ?? 0, 2, '.', '');
+        // Определяем двухэтапность
+        $shouldBeTwoStagePay = $settings['two_stage_pay'] ?? false;
+        if (!$shouldBeTwoStagePay && class_exists(\App\Models\Setting::class)) {
+            $globalTwoStagePaySetting = \App\Models\Setting::where('key', 'two_stage_pay')->value('value');
+            $shouldBeTwoStagePay = $globalTwoStagePaySetting === '1' || $globalTwoStagePaySetting === true || $globalTwoStagePaySetting === 1;
+        }
+        $twoStagePaymentTypesAllowed = ['transfer', 'yandex_pay', 'yandex_split', 'yookassa', 'tbank_dolyame', 'tbank_eacq'];
         $payload = [
             'orderId' => $orderNumber,
             'currencyCode' => $settings['currency'] ?? 'RUB',
@@ -835,6 +891,47 @@ class ShopPaymentController extends Controller
                 }
 
                 if ($paymentUrl) {
+                    // Если включена двухэтапная оплата — создаём заказ и НЕ редиректим
+                    if ($shouldBeTwoStagePay && in_array($paymentMethod->type, $twoStagePaymentTypesAllowed)) {
+                        $order = $this->createOrderFromPayload(
+                            $orderData,
+                            $paymentMethod->id,
+                            $orderNumber,
+                            $request->ip(),
+                            $request->userAgent()
+                        );
+                        if ($order) {
+                            $pendingId = ShopPaymentStatus::where('name', 'pending')->value('id');
+                            $order->update([
+                                'payment_url' => $paymentUrl,
+                                'payment_status_id' => $pendingId ?: $order->payment_status_id,
+                                'yandex_pay_order_id' => $yandexOrderId
+                            ]);
+                            ShopPaymentTransaction::create([
+                                'order_id' => $order->id,
+                                'payment_method_id' => $paymentMethod->id,
+                                'amount' => $order->total_amount,
+                                'transaction_id' => $yandexOrderId,
+                                'status' => 'pending',
+                                'request_data' => [
+                                    'order_data' => $orderData,
+                                    'order_number' => $orderNumber,
+                                    'ip' => $request->ip(),
+                                    'user_agent' => $request->userAgent(),
+                                ],
+                                'response_data' => $data,
+                            ]);
+                            return response()->json([
+                                'success' => true,
+                                'two_stage_pay' => true,
+                                'payment_url' => $paymentUrl,
+                                'order_id' => $order->id,
+                                'order_number' => $order->order_number,
+                            ]);
+                        }
+                        // если заказ создать не удалось — падаем в режим черновика
+                    }
+                    // Обычный (одноэтапный) режим — возвращаем ссылку для редиректа и кэшируем черновик
                     $cacheKey = 'payment:init:yandex_pay:' . ($yandexOrderId ?: ($data['id'] ?? $orderNumber));
                     Cache::put($cacheKey, [
                         'order_number' => $orderNumber,
