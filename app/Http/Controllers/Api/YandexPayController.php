@@ -948,8 +948,11 @@ class YandexPayController extends Controller
                 return;
             }
 
+            $paidStatusId = ShopPaymentStatus::where('name', 'paid')->value('id');
+
             // Обновляем заказ: помечаем как оплаченный и активный
             $updateData = [
+                'payment_status_id' => $paidStatusId ?: $order->payment_status_id,
                 'payed' => true, // Основной статус оплаты заказа
                 'is_active' => true,
                 'status_id' => 2, // Подтвержден
