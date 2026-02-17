@@ -54,6 +54,8 @@ class TbankPaymentService
             $paymentTypeParam = $isDolyami ? 'tbank_dolyame' : 'tbank_eacq';
             $successUrl = url('/api/public/shop/payment/return?payment_type=' . $paymentTypeParam . '&status=success&order_number=' . urlencode($orderNumber));
             $failUrl = url('/api/public/shop/payment/return?payment_type=' . $paymentTypeParam . '&status=fail&order_number=' . urlencode($orderNumber));
+            $ffdVersion = $this->settings['ffd_version'] ?? '1.2';
+
             $payload = [
                 'TerminalKey' => $this->settings['terminal_key'],
                 'Amount' => (int) round($totalAmount * 100),
@@ -65,6 +67,7 @@ class TbankPaymentService
                 'Receipt' => [
                     'Email' => $customerEmail,
                     'Phone' => $customerPhone,
+                    'FfdVersion' => $ffdVersion,
                     'Taxation' => $this->settings['taxation'] ?? 'usn_income_outcome',
                     'Items' => $this->prepareItemsForReceipt($order),
                 ],
