@@ -1078,37 +1078,52 @@ class ShopPaymentController extends Controller
             ]);
             $response = $http->post($apiUrl . '/orders', $payload);
             $data = $response->json();
-            if ($response->successful() && isset($data['confirmation']['confirmation_url'])) {
-                $paymentUrl = $data['confirmation']['confirmation_url'];
-                $order->update([
-                    'payment_method_id' => $paymentMethod->id,
-                    'payment_status_id' => ShopPaymentStatus::where('name', 'pending')->value('id'),
-                    'payment_url' => $paymentUrl,
-                    'yandex_pay_order_id' => $data['id'] ?? null,
-                ]);
-                ShopPaymentTransaction::create([
-                    'order_id' => $order->id,
-                    'payment_method_id' => $paymentMethod->id,
-                    'amount' => $order->total_amount,
-                    'status' => 'pending',
-                    'transaction_id' => $data['id'] ?? null,
-                    'response_data' => $data,
-                ]);
-                if ($shouldBeTwoStagePay && in_array($paymentMethod->type, $twoStagePaymentTypesAllowed)) {
+            if ($response->successful()) {
+                $paymentUrl = null;
+                $yandexOrderId = null;
+
+                if (isset($data['confirmation']['confirmation_url'])) {
+                    $paymentUrl = $data['confirmation']['confirmation_url'];
+                    $yandexOrderId = $data['id'] ?? ($data['orderId'] ?? null);
+                } elseif (isset($data['data']) && is_array($data['data']) && !empty($data['data']['paymentUrl'])) {
+                    $paymentUrl = $data['data']['paymentUrl'];
+                    $yandexOrderId = $data['data']['orderId'] ?? $data['data']['id'] ?? ($data['id'] ?? null);
+                } elseif (isset($data['paymentUrl'])) {
+                    $paymentUrl = $data['paymentUrl'];
+                    $yandexOrderId = $data['orderId'] ?? $data['id'] ?? null;
+                }
+
+                if ($paymentUrl) {
+                    $order->update([
+                        'payment_method_id' => $paymentMethod->id,
+                        'payment_status_id' => ShopPaymentStatus::where('name', 'pending')->value('id'),
+                        'payment_url' => $paymentUrl,
+                        'yandex_pay_order_id' => $yandexOrderId,
+                    ]);
+                    ShopPaymentTransaction::create([
+                        'order_id' => $order->id,
+                        'payment_method_id' => $paymentMethod->id,
+                        'amount' => $order->total_amount,
+                        'status' => 'pending',
+                        'transaction_id' => $yandexOrderId,
+                        'response_data' => $data,
+                    ]);
+                    if ($shouldBeTwoStagePay && in_array($paymentMethod->type, $twoStagePaymentTypesAllowed)) {
+                        return response()->json([
+                            'success' => true,
+                            'two_stage_pay' => true,
+                            'payment_url' => $paymentUrl,
+                            'order_id' => $order->id,
+                            'order_number' => $order->order_number,
+                        ]);
+                    }
                     return response()->json([
                         'success' => true,
-                        'two_stage_pay' => true,
                         'payment_url' => $paymentUrl,
                         'order_id' => $order->id,
                         'order_number' => $order->order_number,
                     ]);
                 }
-                return response()->json([
-                    'success' => true,
-                    'payment_url' => $paymentUrl,
-                    'order_id' => $order->id,
-                    'order_number' => $order->order_number,
-                ]);
             }
             return response()->json([
                 'success' => false,
