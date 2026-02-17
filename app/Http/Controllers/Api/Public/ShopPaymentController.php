@@ -780,6 +780,14 @@ class ShopPaymentController extends Controller
                     'transaction_id' => $data['id'] ?? null,
                     'response_data' => $data,
                 ]);
+                try {
+                    app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+                } catch (\Exception $e) {
+                    \Log::error('YooKassa: failed to send order_created notification', [
+                        'order_id' => $order->id ?? null,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
                 if ($shouldBeTwoStagePay && in_array($paymentMethod->type, $twoStagePaymentTypesAllowed)) {
                     return response()->json([
                         'success' => true,
@@ -1108,6 +1116,14 @@ class ShopPaymentController extends Controller
                         'transaction_id' => $yandexOrderId,
                         'response_data' => $data,
                     ]);
+                    try {
+                        app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+                    } catch (\Exception $e) {
+                        \Log::error('Yandex Pay: failed to send order_created notification', [
+                            'order_id' => $order->id ?? null,
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
                     if ($shouldBeTwoStagePay && in_array($paymentMethod->type, $twoStagePaymentTypesAllowed)) {
                         return response()->json([
                             'success' => true,
@@ -1662,6 +1678,14 @@ class ShopPaymentController extends Controller
                     'payment_method_id' => $paymentMethod->id,
                     'payment_status_id' => ShopPaymentStatus::where('name', 'pending')->value('id'),
                 ]);
+                try {
+                    app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+                } catch (\Exception $e) {
+                    \Log::error('T-Bank Dolyame: failed to send order_created notification', [
+                        'order_id' => $order->id ?? null,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
                 if ($shouldBeTwoStagePay && $isPaymentTypeAllowedForTwoStage) {
                     return response()->json([
                         'success' => true,
