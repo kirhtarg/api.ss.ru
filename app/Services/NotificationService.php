@@ -124,9 +124,21 @@ class NotificationService
      */
     public function notifyOrderCreated(ShopOrder $order): void
     {
+        if ($order->metadata && is_array($order->metadata) && !empty($order->metadata['order_created_notified'])) {
+            return;
+        }
+
         $this->sendNotification('order_created', [
             'order' => $order
         ]);
+
+        $metadata = $order->metadata ?? [];
+        if (!is_array($metadata)) {
+            $metadata = [];
+        }
+        $metadata['order_created_notified'] = true;
+        $order->metadata = $metadata;
+        $order->save();
     }
 
     /**
