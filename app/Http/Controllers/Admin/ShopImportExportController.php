@@ -687,36 +687,13 @@ class ShopImportExportController extends Controller
             $filename = 'robots.txt';
             $filepath = 'exports/' . $filename;
             
-            // Сохраняем локально (для истории/бекапа)
             if (!Storage::disk('public')->exists('exports')) {
                 Storage::disk('public')->makeDirectory('exports');
             }
             Storage::disk('public')->put($filepath, $content);
             
-            // Копируем на фронтенд
-            $frontendPathRelative = config('frontend.path');
-            $frontendPublicUrl = null;
-            $copiedToFrontend = false;
-
-            if ($frontendPathRelative) {
-                $frontendBasePath = base_path($frontendPathRelative);
-                $frontendPublicPath = $frontendBasePath . '/public';
-
-                if (!is_dir($frontendPublicPath)) {
-                     // Пытаемся создать, если нет (для локальной разработки)
-                     @mkdir($frontendPublicPath, 0755, true);
-                }
-
-                if (is_dir($frontendPublicPath)) {
-                    $frontendFilepath = $frontendPublicPath . '/' . $filename;
-                    file_put_contents($frontendFilepath, $content);
-                    $frontendPublicUrl = config('app.frontend_url') . '/' . $filename;
-                    $copiedToFrontend = true;
-                }
-            }
-            
             $url = Storage::disk('public')->url($filepath);
-            $lastModified = time(); // Мы только что создали
+            $lastModified = time();
 
             return response()->json([
                 'success' => true,
@@ -724,7 +701,7 @@ class ShopImportExportController extends Controller
                 'data' => [
                     'filename' => $filename,
                     'download_url' => $url,
-                    'frontend_url' => $frontendPublicUrl,
+                    'frontend_url' => null,
                     'generated_at' => date('Y-m-d H:i:s', $lastModified),
                     'mode' => $mode,
                     'content' => $content
@@ -746,35 +723,16 @@ class ShopImportExportController extends Controller
     {
         try {
             $filename = 'robots.txt';
-            // Проверяем сначала на фронтенде, так как это "боевой" файл
-            $frontendPathRelative = config('frontend.path');
-            $frontendUrl = null;
             $mode = 'unknown';
             $exists = false;
             $lastModified = null;
             $content = '';
 
-            if ($frontendPathRelative) {
-                $frontendBasePath = base_path($frontendPathRelative);
-                $frontendPublicPath = $frontendBasePath . '/public';
-                $frontendFilepath = $frontendPublicPath . '/' . $filename;
-
-                if (is_dir($frontendPublicPath) && file_exists($frontendFilepath)) {
-                    $exists = true;
-                    $content = file_get_contents($frontendFilepath);
-                    $lastModified = filemtime($frontendFilepath);
-                    $frontendUrl = config('app.frontend_url') . '/' . $filename;
-                }
-            }
-            
-            // Если на фронте нет, проверяем локально в экспортах
-            if (!$exists) {
-                $filepath = 'exports/' . $filename;
-                if (Storage::disk('public')->exists($filepath)) {
-                    $exists = true;
-                    $content = Storage::disk('public')->get($filepath);
-                    $lastModified = Storage::disk('public')->lastModified($filepath);
-                }
+            $filepath = 'exports/' . $filename;
+            if (Storage::disk('public')->exists($filepath)) {
+                $exists = true;
+                $content = Storage::disk('public')->get($filepath);
+                $lastModified = Storage::disk('public')->lastModified($filepath);
             }
 
             if ($exists) {
@@ -791,7 +749,7 @@ class ShopImportExportController extends Controller
                     'data' => [
                         'exists' => true,
                         'filename' => $filename,
-                        'frontend_url' => $frontendUrl,
+                        'frontend_url' => null,
                         'generated_at' => date('Y-m-d H:i:s', $lastModified),
                         'mode' => $mode
                     ]
