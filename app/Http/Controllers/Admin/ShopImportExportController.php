@@ -117,14 +117,16 @@ class ShopImportExportController extends Controller
             fwrite($handle, '<?xml version="1.0" encoding="UTF-8"?>' . PHP_EOL);
             fwrite($handle, '<yml_catalog date="' . date('Y-m-d H:i') . '">' . PHP_EOL);
             fwrite($handle, '    <shop>' . PHP_EOL);
+
+            // Название и базовый URL магазина
             $shopSettings = DB::table('settings')
                 ->where('group', 'shop')
-                ->whereIn('key', ['site_name', 'main_site'])
+                ->whereIn('key', ['site_name'])
                 ->pluck('value', 'key')
                 ->toArray();
 
             $shopName = $shopSettings['site_name'] ?? 'Skate & Snow';
-            $mainSite = $shopSettings['main_site'] ?? config('app.frontend_url', config('app.url'));
+            $mainSite = $this->getMainSiteUrl();
 
             fwrite($handle, '        <name>' . htmlspecialchars($shopName) . '</name>' . PHP_EOL);
             fwrite($handle, '        <company>' . htmlspecialchars($shopName) . '</company>' . PHP_EOL);
@@ -178,7 +180,7 @@ class ShopImportExportController extends Controller
             fclose($handle);
 
             // URL фида на фронтенде (Nuxt отдаёт goods_feed.xml через серверный маршрут)
-            $frontendUrl = rtrim(config('app.frontend_url', config('app.url')), '/') . '/' . $filename;
+            $frontendUrl = $this->getMainSiteUrl() . '/' . $filename;
             
             // Получаем метаданные файла
             $url = Storage::disk('public')->url($filepath);
@@ -206,6 +208,28 @@ class ShopImportExportController extends Controller
         }
     }
 
+    private function getMainSiteUrl(): string
+    {
+        static $cached = null;
+
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $mainSite = DB::table('settings')
+            ->where('group', 'shop')
+            ->where('key', 'main_site')
+            ->value('value');
+
+        if (!$mainSite) {
+            $mainSite = config('app.frontend_url', config('app.url'));
+        }
+
+        $cached = rtrim($mainSite, '/');
+
+        return $cached;
+    }
+
     private function getYmlImageUrl($filePath): ?string
     {
         if (!$filePath) {
@@ -216,7 +240,7 @@ class ShopImportExportController extends Controller
             return $filePath;
         }
 
-        $frontendBase = rtrim(config('app.frontend_url', config('app.url')), '/');
+        $frontendBase = $this->getMainSiteUrl();
         $cleanPath = ltrim($filePath, '/');
 
         if (str_starts_with($cleanPath, 'images/')) {
@@ -241,16 +265,7 @@ class ShopImportExportController extends Controller
         
         fwrite($handle, '            <offer id="' . $good->id . '" available="' . $available . '">' . PHP_EOL);
         
-        $mainSite = DB::table('settings')
-            ->where('group', 'shop')
-            ->where('key', 'main_site')
-            ->value('value');
-        if (!$mainSite) {
-            $mainSite = config('app.frontend_url', config('app.url'));
-        }
-        $mainSite = rtrim($mainSite, '/');
-
-        $url = $mainSite . '/product/' . ($good->slug ?? $good->id);
+        $url = $this->getMainSiteUrl() . '/product/' . ($good->slug ?? $good->id);
         fwrite($handle, '                <url>' . htmlspecialchars($url) . '</url>' . PHP_EOL);
         
         // Цена
