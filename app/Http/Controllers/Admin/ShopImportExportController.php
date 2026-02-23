@@ -222,7 +222,7 @@ class ShopImportExportController extends Controller
             ->value('value');
 
         if (!$mainSite) {
-            $mainSite = config('app.frontend_url', config('app.url'));
+            $mainSite = env('FRONTEND_URL', config('app.url'));
         }
 
         $cached = rtrim($mainSite, '/');
