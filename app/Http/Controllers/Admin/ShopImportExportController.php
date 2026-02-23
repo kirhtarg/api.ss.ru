@@ -222,7 +222,7 @@ class ShopImportExportController extends Controller
             ->value('value');
 
         if (!$mainSite) {
-            $mainSite = env('FRONTEND_URL', config('app.url'));
+            $mainSite = env('FRONTEND_URL', 'https://skateandsnow.ru');
         }
 
         $cached = rtrim($mainSite, '/');
