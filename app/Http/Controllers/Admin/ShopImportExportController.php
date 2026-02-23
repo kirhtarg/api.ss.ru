@@ -118,9 +118,9 @@ class ShopImportExportController extends Controller
                 throw new \Exception("Не удалось открыть файл для записи: $fullPath");
             }
 
-            // Пишем заголовок
             fwrite($handle, '<?xml version="1.0" encoding="UTF-8"?>' . PHP_EOL);
             fwrite($handle, '<yml_catalog date="' . date('Y-m-d H:i') . '">' . PHP_EOL);
+            fwrite($handle, '    <!-- build:' . date('c') . ' env=' . config('app.env') . ' -->' . PHP_EOL);
             fwrite($handle, '    <shop>' . PHP_EOL);
 
             // Название и базовый URL магазина
@@ -412,6 +412,7 @@ class ShopImportExportController extends Controller
             $frontendUrl = config('app.frontend_url', 'https://skateandsnow.ru');
             $xml = '<?xml version="1.0" encoding="UTF-8"?>' . PHP_EOL;
             $xml .= '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . PHP_EOL;
+            $xml .= '    <!-- build:' . date('c') . ' env=' . config('app.env') . ' -->' . PHP_EOL;
 
             // 1. Главная страница
             $xml .= '    <url>' . PHP_EOL;

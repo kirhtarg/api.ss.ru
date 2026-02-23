@@ -406,6 +406,10 @@ Route::middleware(['throttle:public'])->group(function () {
     Route::get('/public/contacts/pickup-addresses', [\App\Http\Controllers\Api\Public\ContactController::class, 'getPickupAddresses']);
 });
 
+Route::get('/public/proxy-file/{filename}', [\App\Http\Controllers\Api\Public\FileProxyController::class, 'get'])
+    ->where('filename', '.*');
+
+
 
 
 
