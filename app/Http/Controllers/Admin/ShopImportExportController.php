@@ -228,18 +228,26 @@ class ShopImportExportController extends Controller
 
         $mainSite = is_string($mainSite) ? trim($mainSite) : '';
 
-        // Если в настройках магазина не задан main_site, используем FRONTEND_URL из окружения
-        if ($mainSite === '') {
-            $frontendEnv = env('FRONTEND_URL');
-            if (!is_string($frontendEnv) || trim($frontendEnv) === '') {
-                throw new \RuntimeException('Не задан ни main_site в настройках магазина, ни FRONTEND_URL в окружении');
-            }
-            $mainSite = trim($frontendEnv);
+        // 1. Если main_site задан — используем его как есть
+        if ($mainSite !== '') {
+            $cached = rtrim($mainSite, '/');
+            return $cached;
         }
 
-        $cached = rtrim($mainSite, '/');
+        // 2. Иначе пробуем FRONTEND_URL через конфиг (env подтягивается в config/app.php)
+        $frontendUrl = config('app.frontend_url');
+        $frontendUrl = is_string($frontendUrl) ? trim($frontendUrl) : '';
+
+        if ($frontendUrl === '') {
+            throw new \RuntimeException(
+                'Не задан домен магазина: ни main_site в настройках, ни app.frontend_url в конфиге'
+            );
+        }
+
+        $cached = rtrim($frontendUrl, '/');
 
         return $cached;
+
     }
 
     private function getYmlImageUrl($filePath): ?string
