@@ -176,26 +176,9 @@ class ShopImportExportController extends Controller
             fwrite($handle, '</yml_catalog>');
             
             fclose($handle);
-            
-            // Копируем файл на фронтенд
-            $frontendPathRelative = config('frontend.path');
-            $frontendUrl = null;
-            
-            if ($frontendPathRelative) {
-                $frontendBasePath = base_path($frontendPathRelative);
-                $frontendPublicPath = $frontendBasePath . '/public';
-                
-                // Создаем папку public, если её нет (стандарт для Nuxt 3)
-                if (!file_exists($frontendPublicPath)) {
-                    @mkdir($frontendPublicPath, 0755, true);
-                }
-                
-                if (is_dir($frontendPublicPath)) {
-                    $frontendFilepath = $frontendPublicPath . '/' . $filename;
-                    copy($fullPath, $frontendFilepath);
-                    $frontendUrl = config('app.frontend_url') . '/' . $filename;
-                }
-            }
+
+            // URL фида на фронтенде (Nuxt отдаёт goods_feed.xml через серверный маршрут)
+            $frontendUrl = rtrim(config('app.frontend_url', config('app.url')), '/') . '/' . $filename;
             
             // Получаем метаданные файла
             $url = Storage::disk('public')->url($filepath);
