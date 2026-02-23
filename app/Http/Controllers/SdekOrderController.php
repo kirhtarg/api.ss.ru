@@ -7,6 +7,7 @@ use App\Models\ShopOrder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use App\Models\Setting;
 
 class SdekOrderController extends Controller
 {
@@ -23,6 +24,7 @@ class SdekOrderController extends Controller
     public function createOrder(Request $request)
     {
         try {
+
             // Валидация входных данных
             $validator = Validator::make($request->all(), [
                 'order_number' => 'required|string|max:255',
@@ -31,8 +33,10 @@ class SdekOrderController extends Controller
                 'customer_email' => 'required|email|max:255',
                 'customer_phone' => 'nullable|string|max:20',
                 'customer_company' => 'nullable|string|max:255',
-                'city_code' => 'required|string',
-                'delivery_address' => 'required|string|max:500',
+                // city_code может приходить числом или строкой
+                'city_code' => 'required',
+                // адрес обязательно проверяем отдельно в зависимости от pvz_code
+                'delivery_address' => 'nullable',
                 'pvz_code' => 'nullable|string|max:50',
                 'comment' => 'nullable|string|max:1000',
                 'packages' => 'required|array|min:1',
@@ -42,7 +46,9 @@ class SdekOrderController extends Controller
                 'packages.*.width' => 'required|numeric|min:1',
                 'packages.*.height' => 'required|numeric|min:1',
                 'packages.*.comment' => 'nullable|string|max:500',
-                'services' => 'nullable|array'
+                'services' => 'nullable|array',
+                'delivery_recipient_cost' => 'nullable|array',
+                'delivery_recipient_cost.value' => 'nullable|numeric|min:0'
             ]);
 
             if ($validator->fails()) {
@@ -54,6 +60,22 @@ class SdekOrderController extends Controller
                 ], 422);
             }
 
+            $pvzCode = $request->input('pvz_code');
+            $deliveryAddress = $request->input('delivery_address');
+            if (!$pvzCode) {
+                if (!is_string($deliveryAddress) || trim($deliveryAddress) === '') {
+                    $message = 'Не указан адрес доставки';
+                    Log::error('SdekOrderController: Address required when pvz_code is empty');
+                    return response()->json([
+                        'success' => false,
+                        'message' => $message,
+                        'errors' => [
+                            'delivery_address' => [$message]
+                        ]
+                    ], 422);
+                }
+            }
+            
                 $orderData = $request->all();
                 
                 $result = $this->cdekService->createOrder($orderData);
@@ -158,6 +180,26 @@ class SdekOrderController extends Controller
                     }
                 }
                 
+                // Если после всех проверок статус INVALID — считаем, что заказ не создан
+                $hasInvalidErrors = false;
+                if ($deliveryStatus) {
+                    $state = $deliveryStatus['request_state'] ?? null;
+                    $code = $deliveryStatus['code'] ?? null;
+                    if ($state === 'INVALID' || $code === 'INVALID') {
+                        $hasInvalidErrors = true;
+                    }
+                }
+                
+                if ($hasInvalidErrors) {
+                    return response()->json([
+                        'success' => false,
+                        'data' => $result['data'],
+                        'delivery_status' => $deliveryStatus,
+                        'message' => $deliveryStatus['name'] ?? 'Ошибка создания заказа в СДЭК',
+                        'errors' => $deliveryStatus['errors'] ?? []
+                    ], 400);
+                }
+                
                 // Обновляем заказ в базе данных
                 if ($cdekOrderUuid && isset($orderData['order_number'])) {
                     // Пытаемся обновить заказ с несколькими попытками (на случай, если заказ еще не успел сохраниться)
@@ -189,17 +231,27 @@ class SdekOrderController extends Controller
                                 $updateData = [
                                     'cdek_order_uuid' => $cdekOrderUuid
                                 ];
-                                
-                                // Сохраняем delivery_status в формате JSON
+
+                                if (isset($orderData['delivery_recipient_cost']) && is_array($orderData['delivery_recipient_cost'])) {
+                                    $deliveryCostValue = $orderData['delivery_recipient_cost']['value'] ?? null;
+                                    if ($deliveryCostValue !== null && is_numeric($deliveryCostValue)) {
+                                        $updateData['delivery_cost'] = (float)$deliveryCostValue;
+                                    }
+                                }
+
+                                if (isset($orderData['delivery_cost_for_order'])) {
+                                    $deliveryCostForOrder = $orderData['delivery_cost_for_order'];
+                                    if ($deliveryCostForOrder !== null && is_numeric($deliveryCostForOrder)) {
+                                        $updateData['delivery_cost'] = (float)$deliveryCostForOrder;
+                                    }
+                                }
+
                                 if ($deliveryStatus) {
                                     $updateData['delivery_status'] = json_encode($deliveryStatus, JSON_UNESCAPED_UNICODE);
                                 }
                                 
                                 $order->update($updateData);
-                                
-                                // Проверяем, что данные сохранились
                                 $order->refresh();
-                                
                                 $orderUpdated = true;
                             }
                         } catch (\Exception $e) {

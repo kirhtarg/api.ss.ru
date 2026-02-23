@@ -13,8 +13,8 @@ class DeliveryController extends Controller
     public function getCdekSettings()
     {
         try {
-            // Получаем активные настройки СДЭК
-            $settings = ShopCdekSettings::getActive();
+            // Получаем активные настройки СДЭК; если нет активных — используем первую запись как фолбэк
+            $settings = ShopCdekSettings::getActive() ?? ShopCdekSettings::first();
 
             if (!$settings) {
                 return response()->json([
@@ -28,6 +28,8 @@ class DeliveryController extends Controller
                 'success' => true,
                 'data' => [
                     'cash_on_delivery_enabled' => $settings->cash_on_delivery_enabled ?? false,
+                    'customer_pays_delivery' => $settings->customer_pays_delivery ?? false,
+                    'disable_order_creation' => $settings->disable_order_creation ?? false,
                     // Можно добавить другие публичные настройки в будущем
                 ],
             ]);

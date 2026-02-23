@@ -424,7 +424,10 @@ class ShopOrdersController extends Controller
                 'customer_name' => 'sometimes|string|max:255',
                 'customer_email' => 'sometimes|email|max:255',
                 'customer_phone' => 'sometimes|string|max:20',
+                'shipping_method' => 'sometimes|string|max:100',
                 'shipping_address' => 'sometimes|string',
+                'delivery_cost' => 'sometimes|numeric',
+                'metadata' => 'sometimes|array',
                 'notes' => 'sometimes|string',
             ]);
 
@@ -458,8 +461,19 @@ class ShopOrdersController extends Controller
             if ($request->filled('customer_phone')) {
                 $order->customer_phone = $request->get('customer_phone');
             }
+            if ($request->filled('shipping_method')) {
+                $order->shipping_method = $request->get('shipping_method');
+            }
             if ($request->filled('shipping_address')) {
                 $order->shipping_address = $request->get('shipping_address');
+            }
+            if ($request->filled('delivery_cost')) {
+                $order->delivery_cost = (float) $request->get('delivery_cost');
+            }
+            if ($request->has('metadata') && is_array($request->get('metadata'))) {
+                $metadata = $order->metadata ?? [];
+                $newMetadata = $request->get('metadata');
+                $order->metadata = array_merge($metadata, $newMetadata);
             }
             if ($request->filled('notes')) {
                 $order->notes = $request->get('notes');

@@ -55,6 +55,8 @@ class OrderController extends Controller
                     'promo_code_discount_amount' => $order->promo_code_discount_amount,
                     'birthday_discount_amount' => $order->birthday_discount_amount,
                     'total_discount_amount' => $order->total_discount_amount,
+                    // Дополнительные данные для витрины
+                    'metadata' => $order->metadata,
                     'customer' => [
                         'name' => $order->customer_name ?? '',
                         'email' => $order->customer_email ?? '',

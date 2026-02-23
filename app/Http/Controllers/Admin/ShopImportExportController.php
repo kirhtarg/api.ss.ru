@@ -214,9 +214,31 @@ class ShopImportExportController extends Controller
         }
     }
 
-    /**
-     * Запись одного товара в YML
-     */
+    private function getYmlImageUrl($filePath): ?string
+    {
+        if (!$filePath) {
+            return null;
+        }
+
+        if (str_starts_with($filePath, 'http')) {
+            return $filePath;
+        }
+
+        $frontendBase = rtrim(config('app.frontend_url', config('app.url')), '/');
+        $cleanPath = ltrim($filePath, '/');
+
+        if (str_starts_with($cleanPath, 'images/')) {
+            return $frontendBase . '/' . $cleanPath;
+        }
+
+        if (str_starts_with($cleanPath, 'storage/')) {
+            $apiBase = rtrim(config('app.url'), '/');
+            return $apiBase . '/' . $cleanPath;
+        }
+
+        return $frontendBase . '/images/' . $cleanPath;
+    }
+
     private function writeOfferToHandle($handle, $good): void
     {
         // Пропускаем товары без цены или имени
@@ -266,20 +288,12 @@ class ShopImportExportController extends Controller
         }
 
         if ($images->isNotEmpty()) {
-            // Сортируем: сначала главное, потом по порядку
             $images = $images->sortBy('sort_order')->sortByDesc('is_main');
 
             foreach ($images as $image) {
-                // Используем file_path или url accessor если есть
                 $path = $image->file_path;
-                if ($path) {
-                    $imgUrl = '';
-                    if (Str::startsWith($path, 'http')) {
-                        $imgUrl = $path;
-                    } else {
-                         // Формируем URL
-                        $imgUrl = config('app.url') . '/storage/' . ltrim($path, '/');
-                    }
+                $imgUrl = $this->getYmlImageUrl($path);
+                if ($imgUrl) {
                     fwrite($handle, '                <picture>' . htmlspecialchars($imgUrl) . '</picture>' . PHP_EOL);
                 }
             }

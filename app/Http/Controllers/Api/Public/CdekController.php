@@ -17,6 +17,49 @@ class CdekController extends Controller
         $this->cdekService = $cdekService;
     }
 
+    public function searchCities(Request $request): JsonResponse
+    {
+        try {
+            $query = $request->get('q', '');
+
+            if (mb_strlen($query) < 2) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Минимум 2 символа для поиска'
+                ], 400);
+            }
+
+            $cities = $this->cdekService->getCities($query);
+
+            if (!$cities || !is_array($cities)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не удалось получить список городов'
+                ], 500);
+            }
+
+            $formatted = [];
+            foreach ($cities as $city) {
+                $formatted[] = [
+                    'code' => $city['code'] ?? null,
+                    'name' => $city['city'] ?? $city['name'] ?? '',
+                    'region' => $city['region'] ?? ($city['region_code'] ?? ''),
+                ];
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $formatted,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('CDEK searchCities error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения городов: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
     /**
      * Получить города СДЭК
      */

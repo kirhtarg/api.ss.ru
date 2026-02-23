@@ -83,9 +83,20 @@ class ShopCdekSettingsController extends Controller
             return $accessCheck;
         }
 
-        $validator = Validator::make($request->all(), [
-            'client_id' => 'required|string|max:255',
-            'client_secret' => 'required|string|max:255',
+        $existing = ShopCdekSettings::first();
+        $data = $request->all();
+        if ($existing) {
+            if (empty($data['client_id'])) {
+                $data['client_id'] = $existing->client_id;
+            }
+            if (empty($data['client_secret'])) {
+                $data['client_secret'] = $existing->client_secret;
+            }
+        }
+
+        $validator = Validator::make($data, [
+            'client_id' => $existing ? 'sometimes|string|max:255' : 'required|string|max:255',
+            'client_secret' => $existing ? 'sometimes|string|max:255' : 'required|string|max:255',
             'sender_company' => 'nullable|string|max:255',
             'sender_name' => 'nullable|string|max:255',
             'sender_phone' => 'nullable|string|max:255',
@@ -103,7 +114,14 @@ class ShopCdekSettingsController extends Controller
             'default_width' => 'nullable|numeric|min:1|max:1000',
             'default_height' => 'nullable|numeric|min:1|max:1000',
             'tariffs' => 'nullable|array',
+            'cash_on_delivery_enabled' => 'sometimes|boolean',
+            'customer_pays_delivery' => 'sometimes|boolean',
+            'disable_order_creation' => 'sometimes|boolean',
+            'always_enable_insurance' => 'sometimes|boolean',
             'is_active' => 'boolean',
+            'cash_on_delivery_enabled' => 'boolean',
+            'customer_pays_delivery' => 'boolean',
+            'disable_order_creation' => 'boolean',
         ]);
 
         if ($validator->fails()) {
@@ -114,21 +132,27 @@ class ShopCdekSettingsController extends Controller
             ], 422);
         }
 
-        // Проверяем валидность ключей СДЭК
-        $keyValidation = $this->validateCdekKeys($request->client_id, $request->client_secret);
-        if (!$keyValidation['valid']) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка валидации ключей СДЭК: ' . $keyValidation['error']
-            ], 422);
+        $shouldValidateKeys = true;
+        if ($existing) {
+            $shouldValidateKeys = ($data['client_id'] ?? null) !== $existing->client_id
+                || ($data['client_secret'] ?? null) !== $existing->client_secret;
+        }
+        if ($shouldValidateKeys && !empty($data['client_id']) && !empty($data['client_secret'])) {
+            $keyValidation = $this->validateCdekKeys($data['client_id'], $data['client_secret']);
+            if (!$keyValidation['valid']) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации ключей СДЭК: ' . $keyValidation['error']
+                ], 422);
+            }
         }
 
         // Ищем существующую запись или создаем новую
-        $settings = ShopCdekSettings::first();
+        $settings = $existing;
         if ($settings) {
-            $settings->update($request->all());
+            $settings->update($data);
         } else {
-            $settings = ShopCdekSettings::create($request->all());
+            $settings = ShopCdekSettings::create($data);
         }
 
         return response()->json([
@@ -170,7 +194,14 @@ class ShopCdekSettingsController extends Controller
             'default_width' => 'nullable|numeric|min:1|max:1000',
             'default_height' => 'nullable|numeric|min:1|max:1000',
             'tariffs' => 'nullable|array',
+            'cash_on_delivery_enabled' => 'sometimes|boolean',
+            'customer_pays_delivery' => 'sometimes|boolean',
+            'disable_order_creation' => 'sometimes|boolean',
+            'always_enable_insurance' => 'sometimes|boolean',
             'is_active' => 'boolean',
+            'cash_on_delivery_enabled' => 'boolean',
+            'customer_pays_delivery' => 'boolean',
+            'disable_order_creation' => 'boolean',
         ]);
 
         if ($validator->fails()) {

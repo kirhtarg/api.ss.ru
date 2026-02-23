@@ -1055,7 +1055,14 @@ class CartController extends Controller
                 'ip_address' => $request->ip(),
                 'user_agent' => $request->userAgent(),
                 'metadata' => [
-                    // Дополнительные метаданные, если нужны
+                    'delivery_city_code' => $request->get('city_code'),
+                    'delivery_city_name' => $request->get('shipping_city') ?? $request->get('customer_city'),
+                    'delivery_tariff_code' => $request->get('cdek_tariff_code'),
+                    'cdek_tariff_code' => $request->get('cdek_tariff_code'),
+                    'cdek_delivery_type' => $request->get('cdek_delivery_type'),
+                    'cdek_pvz_code' => $request->get('cdek_pvz_code'),
+                    'cdek_delivery_address' => $request->get('cdek_delivery_address'),
+                    'cdek_packages' => $request->get('cdek_packages'),
                 ]
             ];
 

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
 use App\Models\Setting;
+use App\Models\ShopCdekSettings;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -115,6 +116,22 @@ class SiteInfoController extends Controller
 
                 return $publicSettings;
             });
+
+            // Добавляем публичную часть настроек СДЭК
+            $cdek = ShopCdekSettings::getActive();
+            if ($cdek) {
+                $publicSettings['cdek_settings'] = [
+                    'default_weight' => $cdek->default_weight !== null ? (float) $cdek->default_weight : null,
+                    'default_length' => $cdek->default_length !== null ? (float) $cdek->default_length : null,
+                    'default_width' => $cdek->default_width !== null ? (float) $cdek->default_width : null,
+                    'default_height' => $cdek->default_height !== null ? (float) $cdek->default_height : null,
+                    'cash_on_delivery_enabled' => (bool) $cdek->cash_on_delivery_enabled,
+                    'customer_pays_delivery' => (bool) $cdek->customer_pays_delivery,
+                    'disable_order_creation' => (bool) $cdek->disable_order_creation,
+                    'always_enable_insurance' => (bool) $cdek->always_enable_insurance,
+                    'sender_city' => $cdek->sender_city,
+                ];
+            }
 
             return response()->json([
                 'success' => true,

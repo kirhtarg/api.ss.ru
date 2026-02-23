@@ -1345,7 +1345,7 @@ class ShopGoodVariationsController extends Controller
         $validator = Validator::make($request->all(), [
             'variation_ids' => 'required|array',
             'variation_ids.*' => 'exists:shop_good_variations,id',
-            'action' => 'required|in:delete,change_stock,change_remote_stock,change_price,change_sale_price,change_demping_price,activate,deactivate,enable_demping,disable_demping',
+            'action' => 'required|in:delete,change_stock,change_remote_stock,change_price,change_sale_price,change_demping_price,activate,deactivate,enable_demping,disable_demping,update_dimensions',
             'data' => 'nullable|array'
         ]);
 
@@ -1459,6 +1459,31 @@ class ShopGoodVariationsController extends Controller
                         }
                         $variation->save();
                         $updatedCount++;
+                    }
+                    break;
+
+                case 'update_dimensions':
+                    foreach ($variations as $variation) {
+                        $updateData = [];
+
+                        if (isset($data['width']) && $data['width'] !== null && $data['width'] !== '') {
+                            $updateData['width'] = (float) $data['width'];
+                        }
+                        if (isset($data['height']) && $data['height'] !== null && $data['height'] !== '') {
+                            $updateData['height'] = (float) $data['height'];
+                        }
+                        if (isset($data['length']) && $data['length'] !== null && $data['length'] !== '') {
+                            $updateData['length'] = (float) $data['length'];
+                        }
+                        if (isset($data['weight']) && $data['weight'] !== null && $data['weight'] !== '') {
+                            $updateData['weight'] = (float) $data['weight'];
+                        }
+
+                        if (!empty($updateData)) {
+                            $variation->fill($updateData);
+                            $variation->save();
+                            $updatedCount++;
+                        }
                     }
                     break;
 

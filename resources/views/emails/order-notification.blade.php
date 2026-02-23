@@ -229,6 +229,21 @@
                         {{ number_format($order->total_amount, 0, ',', ' ') }} ₽
                     </span>
                 </div>
+
+                @php
+                    $method = strtolower($order->shipping_method ?? '');
+                    $isCdek = ($method && (str_contains($method, 'сдэк') || str_contains($method, 'cdek')));
+                    $cdekSettings = \App\Models\ShopCdekSettings::getActive();
+                    $customerPays = $cdekSettings && ($cdekSettings->customer_pays_delivery ?? false);
+                    $approxCost = isset($order->metadata['delivery_cost']) ? (float)$order->metadata['delivery_cost'] : 0;
+                @endphp
+                @if($isCdek && $customerPays)
+                <div style="margin-top: 10px; padding: 12px; background: #FFF8E1; border: 1px solid #FFE082; border-radius: 6px;">
+                    <span style="color: #8D6E63; font-weight: 700;">
+                        ВНИМАНИЕ! При получении заказа Вам необходимо будет оплатить доставку{!! $approxCost > 0 ? ', ориентировочная цена доставки — ' . number_format($approxCost, 0, ',', ' ') . ' ₽' : '' !!}.
+                    </span>
+                </div>
+                @endif
             </div>
 
             <!-- Информация о клиенте -->

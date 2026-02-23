@@ -332,6 +332,7 @@ class ShopCdekController extends Controller
 
                         $costValue = null;
                         $costFormatted = 'Рассчитывается...';
+                        $deliveryMode = null;
 
                         if ($deliveryResult && is_array($deliveryResult)) {
                             // Ищем нужный тариф в результате CDEK API
@@ -339,6 +340,7 @@ class ShopCdekController extends Controller
                                 if ($resultTariff['tariff_code'] == $tariff['tariff_code']) {
                                     $costValue = (float)$resultTariff['delivery_sum'];
                                     $costFormatted = $costValue . ' ₽';
+                                    $deliveryMode = $resultTariff['delivery_mode'] ?? null;
                                     break;
                                 }
                             }
@@ -351,7 +353,8 @@ class ShopCdekController extends Controller
                                 'description' => $tariff['tariff_description'] ?? '',
                                 'cost' => $costFormatted,
                                 'cost_value' => $costValue,
-                                'enabled' => $tariff['enabled'] ?? true
+                                'enabled' => $tariff['enabled'] ?? true,
+                                'delivery_mode' => $deliveryMode
                             ];
                         }
                     }
@@ -374,7 +377,8 @@ class ShopCdekController extends Controller
                                     'description' => $tariff['tariff_description'] ?? '',
                                     'cost' => ($tariff['delivery_sum'] ?? 300) . ' ₽',
                                     'cost_value' => (float)($tariff['delivery_sum'] ?? 300),
-                                    'enabled' => $tariff['enabled'] ?? true
+                                    'enabled' => $tariff['enabled'] ?? true,
+                                    'delivery_mode' => null,
                                 ];
                             }
 
@@ -393,7 +397,8 @@ class ShopCdekController extends Controller
                                     'description' => $resultTariff['tariff_description'] ?? '',
                                     'cost' => $resultTariff['delivery_sum'] . ' ₽',
                                     'cost_value' => (float)$resultTariff['delivery_sum'],
-                                    'enabled' => true
+                                    'enabled' => true,
+                                    'delivery_mode' => $resultTariff['delivery_mode'] ?? null,
                                 ];
                             }
                         }
@@ -429,29 +434,74 @@ class ShopCdekController extends Controller
         foreach ($cartItems as $item) {
             $quantity = $item['quantity'] ?? 1;
 
-            // Получаем размеры товара из базы данных
-            $good = \App\Models\ShopGood::find($item['good_id']);
-            if ($good) {
-                // Используем размеры товара, если они есть, иначе значения по умолчанию
-                $weight = $good->weight > 0 ? $good->weight : ($settings->default_weight ?? 0.5);
-                $length = $good->depth > 0 ? $good->depth : ($settings->default_length ?? 10);
-                $width = $good->width > 0 ? $good->width : ($settings->default_width ?? 10);
-                $height = $good->height > 0 ? $good->height : ($settings->default_height ?? 10);
+            $itemWeight = isset($item['weight']) ? (float)$item['weight'] : null;
+            $itemLength = isset($item['length']) ? (float)$item['length'] : null;
+            $itemWidth = isset($item['width']) ? (float)$item['width'] : null;
+            $itemHeight = isset($item['height']) ? (float)$item['height'] : null;
 
-                // Суммируем вес
-                $totalWeight += $weight * $quantity;
-
-                // Для габаритов берем максимальные значения (товары укладываются рядом)
-                $maxLength = max($maxLength, $length);
-                $maxWidth = max($maxWidth, $width);
-                $maxHeight = max($maxHeight, $height);
+            if ($itemWeight !== null && $itemWeight > 0) {
+                $weight = $itemWeight;
             } else {
-                // Если товар не найден, используем значения по умолчанию
-                $totalWeight += ($settings->default_weight ?? 0.5) * $quantity;
-                $maxLength = max($maxLength, $settings->default_length ?? 10);
-                $maxWidth = max($maxWidth, $settings->default_width ?? 10);
-                $maxHeight = max($maxHeight, $settings->default_height ?? 10);
+                $weight = null;
             }
+
+            if ($itemLength !== null && $itemLength > 0) {
+                $length = $itemLength;
+            } else {
+                $length = null;
+            }
+
+            if ($itemWidth !== null && $itemWidth > 0) {
+                $width = $itemWidth;
+            } else {
+                $width = null;
+            }
+
+            if ($itemHeight !== null && $itemHeight > 0) {
+                $height = $itemHeight;
+            } else {
+                $height = null;
+            }
+
+            if (!($weight !== null && $length !== null && $width !== null && $height !== null)) {
+                $good = null;
+                if (isset($item['good_id'])) {
+                    $good = \App\Models\ShopGood::find($item['good_id']);
+                }
+
+                if ($good) {
+                    if ($weight === null) {
+                        $weight = $good->weight > 0 ? (float)$good->weight : null;
+                    }
+                    if ($length === null) {
+                        $length = $good->depth > 0 ? (float)$good->depth : null;
+                    }
+                    if ($width === null) {
+                        $width = $good->width > 0 ? (float)$good->width : null;
+                    }
+                    if ($height === null) {
+                        $height = $good->height > 0 ? (float)$good->height : null;
+                    }
+                }
+            }
+
+            if ($weight === null || $weight <= 0) {
+                $weight = (float)($settings->default_weight ?? 0.5);
+            }
+            if ($length === null || $length <= 0) {
+                $length = (float)($settings->default_length ?? 10);
+            }
+            if ($width === null || $width <= 0) {
+                $width = (float)($settings->default_width ?? 10);
+            }
+            if ($height === null || $height <= 0) {
+                $height = (float)($settings->default_height ?? 10);
+            }
+
+            $totalWeight += $weight * $quantity;
+            $maxLength = max($maxLength, $length);
+            $maxWidth = max($maxWidth, $width);
+            $maxHeight = max($maxHeight, $height);
         }
 
         $result = [

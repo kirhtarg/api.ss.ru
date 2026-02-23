@@ -135,29 +135,62 @@ class ShopOrder extends Model
             return [];
         }
 
-        // Обогащаем каждый товар дополнительной информацией
         return array_map(function ($item) {
-            // Получаем полную информацию о товаре из базы данных
             $goodId = $item['good_id'] ?? null;
-            
-            
+            $variationId = $item['variation_id'] ?? null;
+
             $goodInfo = $this->getGoodInfo($goodId);
-            
+
             $quantity = $item['quantity'] ?? 1;
             $price = $item['price'] ?? 0;
             $salePrice = $item['sale_price'] ?? $goodInfo['sale_price'] ?? null;
-            
-            // Рассчитываем итоговую стоимость
+
             $total = $item['total'] ?? 0;
             if ($total == 0) {
-                // Если итоговая стоимость не указана, рассчитываем её
                 if ($salePrice && $salePrice > 0) {
                     $total = $salePrice * $quantity;
                 } else {
                     $total = $price * $quantity;
                 }
             }
-            
+
+            $weight = null;
+            $length = null;
+            $width = null;
+            $height = null;
+
+            try {
+                if ($variationId) {
+                    $variationDimensions = DB::table('shop_good_variations')
+                        ->select('weight', 'length', 'width', 'height')
+                        ->where('id', (int) $variationId)
+                        ->first();
+
+                    if ($variationDimensions) {
+                        $weight = $variationDimensions->weight;
+                        $length = $variationDimensions->length;
+                        $width = $variationDimensions->width;
+                        $height = $variationDimensions->height;
+                    }
+                }
+
+                if ($goodId && ($weight === null && $length === null && $width === null && $height === null)) {
+                    $goodDimensions = DB::table('shop_goods')
+                        ->select('weight', 'depth', 'width', 'height')
+                        ->where('id', (int) $goodId)
+                        ->first();
+
+                    if ($goodDimensions) {
+                        $weight = $goodDimensions->weight;
+                        $length = $goodDimensions->depth;
+                        $width = $goodDimensions->width;
+                        $height = $goodDimensions->height;
+                    }
+                }
+            } catch (\Exception $e) {
+                Log::error('Ошибка получения габаритов товара для заказа: ' . $e->getMessage());
+            }
+
             $result = [
                 'id' => $item['id'] ?? null,
                 'good_id' => $goodId,
@@ -165,7 +198,7 @@ class ShopOrder extends Model
                 'good_image' => $item['good_image'] ?? $goodInfo['image'] ?? null,
                 'good_sku' => $item['good_sku'] ?? $goodInfo['sku'] ?? null,
                 'good_slug' => $item['good_slug'] ?? $goodInfo['slug'] ?? null,
-                'variation_id' => $item['variation_id'] ?? null,
+                'variation_id' => $variationId,
                 'variation_name' => $item['variation_name'] ?? null,
                 'variation_sku' => $item['variation_sku'] ?? null,
                 'quantity' => $quantity,
@@ -174,8 +207,12 @@ class ShopOrder extends Model
                 'discount_amount' => $item['discount_amount'] ?? 0,
                 'bonus_points' => $item['bonus_points'] ?? 0,
                 'total' => $total,
+                'weight' => isset($item['weight']) ? $item['weight'] : ($weight !== null ? (float) $weight : null),
+                'length' => isset($item['length']) ? $item['length'] : ($length !== null ? (float) $length : null),
+                'width' => isset($item['width']) ? $item['width'] : ($width !== null ? (float) $width : null),
+                'height' => isset($item['height']) ? $item['height'] : ($height !== null ? (float) $height : null),
             ];
-            
+
             return $result;
         }, $items);
     }

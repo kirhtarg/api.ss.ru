@@ -195,6 +195,9 @@ class CdekService
         }
 
         try {
+            $weightKg = (float)($weight ?? $this->settings->default_weight ?? 1);
+            $weightGrams = (int)round($weightKg * 1000);
+
             $requestData = [
                 'from_location' => [
                     'code' => (int)$fromCityCode
@@ -204,7 +207,7 @@ class CdekService
                 ],
                 'packages' => [
                     [
-                        'weight' => (float)($weight ?? $this->settings->default_weight ?? 1),
+                        'weight' => $weightGrams,
                         'length' => (float)($length ?? $this->settings->default_length ?? 30),
                         'width' => (float)($width ?? $this->settings->default_width ?? 20),
                         'height' => (float)($height ?? $this->settings->default_height ?? 10)
@@ -428,15 +431,29 @@ class CdekService
             // Формируем данные для создания заказа согласно API СДЭК
 
             // Определяем, нужен ли наложенный платеж
-            $isCashOnDelivery = isset($orderData['payment_method']) &&
+            $hasCodFlag = !empty($orderData['cod_enabled']);
+            $hasCodByPaymentMethod = isset($orderData['payment_method']) &&
                 (stripos($orderData['payment_method'], 'получении') !== false ||
                  stripos($orderData['payment_method'], 'наложенный') !== false);
+            $isCashOnDelivery = $hasCodFlag || $hasCodByPaymentMethod;
+
+            $declaredBase = isset($orderData['declared_value'])
+                ? (float)$orderData['declared_value']
+                : (float)($orderData['subtotal'] ?? 0);
+
+            $codAmount = $declaredBase;
+            if ($isCashOnDelivery && isset($orderData['delivery_recipient_cost']['value'])) {
+                $deliveryValue = (float)$orderData['delivery_recipient_cost']['value'];
+                if ($deliveryValue > 0) {
+                    $codAmount += $deliveryValue;
+                }
+            }
 
             $sdekOrderData = [
                 // Номер заказа в системе интернет-магазина (идентификатор ИМ)
                 'number' => $orderData['order_number'] ?? 'ORDER_' . time(),
                 'tariff_code' => $orderData['tariff_code'],
-                'comment' => ($orderData['comment'] ?? '') . ($isCashOnDelivery ? ' (Наложенный платеж: ' . (($orderData['subtotal'] ?? 0) - ($orderData['delivery_cost'] ?? 0)) . ' руб.)' : ''),
+                'comment' => ($orderData['comment'] ?? '') . ($isCashOnDelivery ? ' (Наложенный платеж: ' . $codAmount . ' руб.)' : ''),
                 // developer_key - необязательный параметр, используется для идентификации разработчика
                 'developer_key' => $this->settings->developer_key ?? '',
                 'sender' => [
@@ -463,15 +480,10 @@ class CdekService
                     'address' => $this->getSenderAddress(),
                     'code' => $this->getSenderCityCode()
                 ],
-                'packages' => array_map(function($package) use ($orderData) {
-                        // Определяем, нужен ли наложенный платеж
-                        $isCashOnDelivery = isset($orderData['payment_method']) &&
-                            (stripos($orderData['payment_method'], 'получении') !== false ||
-                             stripos($orderData['payment_method'], 'наложенный') !== false);
+                'packages' => array_map(function($package) use ($orderData, $isCashOnDelivery) {
 
-                        // Стоимость товара для наложенного платежа
-                        $itemCost = $isCashOnDelivery ? ($package['cost'] ?? 0) : 0;
-                        $paymentValue = $isCashOnDelivery ? ($package['cost'] ?? 0) : 0;
+                        $declaredPackageCost = $package['cost'] ?? 0;
+                        $paymentValue = $isCashOnDelivery ? $declaredPackageCost : 0;
 
                         return [
                             'number' => $package['number'] ?? 'PKG_' . time(),
@@ -480,14 +492,23 @@ class CdekService
                             'width' => $package['width'] ?? 10,
                             'height' => $package['height'] ?? 10,
                             'comment' => $package['comment'] ?? '',
-                            'items' => isset($package['items']) ? array_map(function($item) use ($isCashOnDelivery) {
+                            'items' => isset($package['items']) ? array_map(function($item) use ($isCashOnDelivery, $orderData) {
+                                $itemCost = $item['cost'] ?? 0;
+                                $itemPaymentValue = $isCashOnDelivery ? $itemCost : 0;
+                                if ($isCashOnDelivery && isset($orderData['delivery_recipient_cost']['value'])) {
+                                    $deliveryValue = (float)$orderData['delivery_recipient_cost']['value'];
+                                    if ($deliveryValue > 0 && $itemCost > 0 && isset($orderData['subtotal']) && $orderData['subtotal'] > 0) {
+                                        $proportion = $itemCost / (float)$orderData['subtotal'];
+                                        $itemPaymentValue += $deliveryValue * $proportion;
+                                    }
+                                }
                                 return [
                                     'name' => $item['name'] ?? 'Товар',
                                     'ware_key' => $item['ware_key'] ?? 'ITEM_' . time(),
                                     'payment' => [
-                                        'value' => $isCashOnDelivery ? ($item['cost'] ?? 0) : 0
+                                        'value' => $itemPaymentValue
                                     ],
-                                    'cost' => $isCashOnDelivery ? ($item['cost'] ?? 0) : 0,
+                                    'cost' => $itemCost,
                                     'weight' => $item['weight'] ?? 1000,
                                     'amount' => $item['amount'] ?? 1
                                 ];
@@ -498,7 +519,7 @@ class CdekService
                                     'payment' => [
                                         'value' => $paymentValue
                                     ],
-                                    'cost' => $itemCost,
+                                    'cost' => $declaredPackageCost,
                                     'weight' => $package['weight'] ?? 1000,
                                     'amount' => 1
                                 ]
@@ -507,6 +528,16 @@ class CdekService
                     }, $orderData['packages'] ?? []),
                 'services' => $orderData['services'] ?? []
             ];
+ 
+            // Если указан "кто оплачивает доставку" — добавляем delivery_recipient_cost
+            if (isset($orderData['delivery_recipient_cost']) && is_array($orderData['delivery_recipient_cost'])) {
+                $value = isset($orderData['delivery_recipient_cost']['value']) ? (float)$orderData['delivery_recipient_cost']['value'] : null;
+                if ($value !== null && $value >= 0) {
+                    $sdekOrderData['delivery_recipient_cost'] = [
+                        'value' => $value
+                    ];
+                }
+            }
 
             // Если выбран ПВЗ, добавляем delivery_point и убираем to_location
             if (isset($orderData['pvz_code']) && $orderData['pvz_code']) {

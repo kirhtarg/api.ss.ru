@@ -242,6 +242,26 @@
             <p><strong>Итого к оплате:</strong> <span style="font-size: 18px; font-weight: bold;">{{ number_format($order->total_amount ?? 0, 0, ',', ' ') }} ₽</span></p>
         </div>
 
+        @php
+            $isCdek = false;
+            $methodName = strtolower($order->shipping_method ?? '');
+            if (!empty($order->deliveryMethod) && isset($order->deliveryMethod->type)) {
+                $isCdek = $order->deliveryMethod->type === 'cdek';
+            } elseif ($methodName) {
+                $isCdek = strpos($methodName, 'сдэк') !== false || strpos($methodName, 'cdek') !== false;
+            }
+            $isCod = false;
+            $paymentName = strtolower($order->payment_method ?? '');
+            if ($paymentName) {
+                $isCod = strpos($paymentName, 'получении') !== false || strpos($paymentName, 'наложенный') !== false;
+            }
+        @endphp
+        @if($isCdek && $isCod)
+        <div style="margin: 20px 0; padding: 12px 14px; background: #FFF7ED; border: 1px solid #FDBA74; border-radius: 6px; color: #9A3412;">
+            Доставка через СДЭК с оплатой при получении: стоимость доставки и страхования оплачивается при получении. Итоговая сумма у курьера может отличаться от суммы товаров.
+        </div>
+        @endif
+
         <div class="footer">
             <p>Письмо отправлено {{ \Carbon\Carbon::now()->locale('ru')->isoFormat('D MMMM YYYY, HH:mm') }}</p>
             <p>Спасибо за ваш заказ!</p>

@@ -32,6 +32,9 @@ class ShopCdekSettings extends Model
         'default_height',
         'tariffs',
         'cash_on_delivery_enabled',
+        'customer_pays_delivery',
+        'disable_order_creation',
+        'always_enable_insurance',
         'is_active'
     ];
 
@@ -42,6 +45,9 @@ class ShopCdekSettings extends Model
         'default_width' => 'decimal:2',
         'default_height' => 'decimal:2',
         'cash_on_delivery_enabled' => 'boolean',
+        'customer_pays_delivery' => 'boolean',
+        'disable_order_creation' => 'boolean',
+        'always_enable_insurance' => 'boolean',
         'is_active' => 'boolean'
     ];
 
