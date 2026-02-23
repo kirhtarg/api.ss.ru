@@ -183,9 +183,6 @@ class ShopImportExportController extends Controller
             fwrite($handle, '</yml_catalog>');
             
             fclose($handle);
-
-            // URL фида на фронтенде (Nuxt отдаёт goods_feed.xml через серверный маршрут)
-            $frontendUrl = $this->getMainSiteUrl() . '/' . $filename;
             
             // Получаем метаданные файла
             $url = Storage::disk('public')->url($filepath);
@@ -198,7 +195,7 @@ class ShopImportExportController extends Controller
                 'data' => [
                     'filename' => $filename,
                     'download_url' => $url,
-                    'frontend_url' => $frontendUrl,
+                    'frontend_url' => null,
                     'generated_at' => date('Y-m-d H:i:s', $lastModified),
                     'size' => round($size / 1024, 2) . ' KB',
                     'count' => $count
