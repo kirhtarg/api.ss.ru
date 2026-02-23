@@ -105,6 +105,11 @@ class ShopImportExportController extends Controller
                 Storage::disk('public')->makeDirectory('exports');
             }
 
+            // Удаляем старый файл перед генерацией, чтобы избежать артефактов
+            if (Storage::disk('public')->exists($filepath)) {
+                Storage::disk('public')->delete($filepath);
+            }
+
             // Используем прямой доступ к файлу для потоковой записи
             $fullPath = Storage::disk('public')->path($filepath);
             $handle = fopen($fullPath, 'w');
@@ -221,8 +226,15 @@ class ShopImportExportController extends Controller
             ->where('key', 'main_site')
             ->value('value');
 
-        if (!$mainSite) {
-            $mainSite = env('FRONTEND_URL', 'https://skateandsnow.ru');
+        $mainSite = is_string($mainSite) ? trim($mainSite) : '';
+
+        // Если в настройках магазина не задан main_site, используем FRONTEND_URL из окружения
+        if ($mainSite === '') {
+            $frontendEnv = env('FRONTEND_URL');
+            if (!is_string($frontendEnv) || trim($frontendEnv) === '') {
+                throw new \RuntimeException('Не задан ни main_site в настройках магазина, ни FRONTEND_URL в окружении');
+            }
+            $mainSite = trim($frontendEnv);
         }
 
         $cached = rtrim($mainSite, '/');
