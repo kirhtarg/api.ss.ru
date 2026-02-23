@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\Public\SiteInfoController;
 use App\Http\Controllers\Api\Public\SiteTemplateController;
 use App\Http\Controllers\Api\Public\ShopTemplateController;
 use App\Http\Controllers\Api\Public\SiteMenuController;
+use App\Http\Controllers\Api\Public\SettingsController;
 
 // CORS уже настроен в OPTIONS обработчике выше
 
@@ -397,6 +398,17 @@ Route::match(['OPTIONS'], '/{any}', function (Request $request) {
         ->header('Access-Control-Max-Age', '86400');
 })->where('any', '.*');
 
+// Маршрут для получения robots.txt
+Route::get('/public/get-robots', [\App\Http\Controllers\Api\Public\RobotsController::class, 'getRobots']);
+
+// Маршрут для получения sitemap.xml
+Route::get('/public/get-sitemap', [\App\Http\Controllers\Api\Public\SitemapController::class, 'getSitemap']);
+
+// Маршрут для получения goods_feed.xml
+Route::get('/public/get-goods-feed', [\App\Http\Controllers\Api\Public\GoodsFeedController::class, 'getGoodsFeed']);
+
+
+
 // Маршрут для получения данных контактов для заголовка (публичные, с отдельным rate limiter)
 Route::middleware(['throttle:public'])->group(function () {
     Route::get('/public/contacts/header-data', [\App\Http\Controllers\Api\Public\ContactController::class, 'headerData']);
@@ -405,9 +417,6 @@ Route::middleware(['throttle:public'])->group(function () {
     // Маршрут для получения адресов самовывоза
     Route::get('/public/contacts/pickup-addresses', [\App\Http\Controllers\Api\Public\ContactController::class, 'getPickupAddresses']);
 });
-
-Route::get('/public/proxy-file/{filename}', [\App\Http\Controllers\Api\Public\FileProxyController::class, 'get'])
-    ->where('filename', '.*');
 
 
 
@@ -451,6 +460,13 @@ Route::middleware(['web'])->group(function () {
     Route::get('/auth/google/callback', [\App\Http\Controllers\Auth\GoogleAuthController::class, 'handleGoogleCallback']);
     Route::get('/auth/google/url', [\App\Http\Controllers\Auth\GoogleAuthController::class, 'getGoogleAuthUrl']);
 });
+
+// Маршруты для проксирования SEO файлов
+Route::get('/seo-files/{filename}', [\App\Http\Controllers\Api\Public\FileProxyController::class, 'getSeoFile'])
+    ->where('filename', '.*');
+
+// Простой маршрут для robots.txt
+Route::get('/get-robots', [\App\Http\Controllers\Api\Public\RobotsController::class, 'getRobots']);
 
 // VK OAuth маршруты (требуют сессии)
 Route::middleware(['web'])->group(function () {

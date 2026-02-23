@@ -49,6 +49,11 @@ class SiteInfoController extends Controller
                     $siteInfo[$setting->key] = $setting->value;
                 }
             }
+            $suffSupportSetting = Setting::where('key', 'suff_support')->first();
+            if ($suffSupportSetting) {
+                $siteInfo['suff_support'] = $suffSupportSetting->value;
+            }
+
 
             return response()->json([
                 'success' => true,

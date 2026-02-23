@@ -25,4 +25,10 @@ class FileProxyController extends Controller
             ->header('Pragma', 'no-cache')
             ->header('Expires', '0');
     }
+
+    public function getSeoFile(Request $request, $filename)
+    {
+        // Тот же функционал, но через альтернативный маршрут
+        return $this->get($request, $filename);
+    }
 }

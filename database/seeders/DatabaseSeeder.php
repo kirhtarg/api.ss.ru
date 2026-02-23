@@ -43,6 +43,9 @@ class DatabaseSeeder extends Seeder
             ContactSeeder::class,
             ContactPhoneSeeder::class,
             ContactAddressSeeder::class,
+
+            // Настройки из-за ошибки в проде
+            SuffSupportSettingSeeder::class,
         ]);
     }
 }
