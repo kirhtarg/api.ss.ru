@@ -117,9 +117,18 @@ class ShopImportExportController extends Controller
             fwrite($handle, '<?xml version="1.0" encoding="UTF-8"?>' . PHP_EOL);
             fwrite($handle, '<yml_catalog date="' . date('Y-m-d H:i') . '">' . PHP_EOL);
             fwrite($handle, '    <shop>' . PHP_EOL);
-            fwrite($handle, '        <name>' . htmlspecialchars('Skate & Snow') . '</name>' . PHP_EOL);
-            fwrite($handle, '        <company>' . htmlspecialchars('Skate & Snow') . '</company>' . PHP_EOL);
-            fwrite($handle, '        <url>' . htmlspecialchars(config('app.frontend_url', 'https://skateandsnow.ru')) . '</url>' . PHP_EOL);
+            $shopSettings = DB::table('settings')
+                ->where('group', 'shop')
+                ->whereIn('key', ['site_name', 'main_site'])
+                ->pluck('value', 'key')
+                ->toArray();
+
+            $shopName = $shopSettings['site_name'] ?? 'Skate & Snow';
+            $mainSite = $shopSettings['main_site'] ?? config('app.frontend_url', config('app.url'));
+
+            fwrite($handle, '        <name>' . htmlspecialchars($shopName) . '</name>' . PHP_EOL);
+            fwrite($handle, '        <company>' . htmlspecialchars($shopName) . '</company>' . PHP_EOL);
+            fwrite($handle, '        <url>' . htmlspecialchars($mainSite) . '</url>' . PHP_EOL);
             fwrite($handle, '        <currencies>' . PHP_EOL);
             fwrite($handle, '            <currency id="RUR" rate="1"/>' . PHP_EOL);
             fwrite($handle, '        </currencies>' . PHP_EOL);
@@ -249,8 +258,16 @@ class ShopImportExportController extends Controller
         
         fwrite($handle, '            <offer id="' . $good->id . '" available="' . $available . '">' . PHP_EOL);
         
-        // URL товара
-        $url = config('app.frontend_url', 'https://skateandsnow.ru') . '/product/' . ($good->slug ?? $good->id);
+        $mainSite = DB::table('settings')
+            ->where('group', 'shop')
+            ->where('key', 'main_site')
+            ->value('value');
+        if (!$mainSite) {
+            $mainSite = config('app.frontend_url', config('app.url'));
+        }
+        $mainSite = rtrim($mainSite, '/');
+
+        $url = $mainSite . '/product/' . ($good->slug ?? $good->id);
         fwrite($handle, '                <url>' . htmlspecialchars($url) . '</url>' . PHP_EOL);
         
         // Цена
