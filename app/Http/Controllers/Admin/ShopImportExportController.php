@@ -183,8 +183,27 @@ class ShopImportExportController extends Controller
             fwrite($handle, '</yml_catalog>');
             
             fclose($handle);
-            
-            // Получаем метаданные файла
+
+            // Копируем на фронтенд (основной сайт), чтобы фид был доступен по фронтовому домену
+            $frontendPathRelative = config('frontend.path');
+            $frontendPublicUrl = null;
+
+            if ($frontendPathRelative) {
+                $frontendBasePath = base_path($frontendPathRelative);
+                $frontendPublicPath = $frontendBasePath . '/public';
+
+                if (!file_exists($frontendPublicPath)) {
+                    @mkdir($frontendPublicPath, 0755, true);
+                }
+
+                if (is_dir($frontendPublicPath)) {
+                    $frontendFilepath = $frontendPublicPath . '/' . $filename;
+                    @copy($fullPath, $frontendFilepath);
+                    $frontendPublicUrl = rtrim(config('app.frontend_url'), '/') . '/' . $filename;
+                }
+            }
+
+            // Получаем метаданные файла на API
             $url = Storage::disk('public')->url($filepath);
             $size = Storage::disk('public')->size($filepath);
             $lastModified = Storage::disk('public')->lastModified($filepath);
@@ -195,7 +214,7 @@ class ShopImportExportController extends Controller
                 'data' => [
                     'filename' => $filename,
                     'download_url' => $url,
-                    'frontend_url' => null,
+                    'frontend_url' => $frontendPublicUrl,
                     'generated_at' => date('Y-m-d H:i:s', $lastModified),
                     'size' => round($size / 1024, 2) . ' KB',
                     'count' => $count
