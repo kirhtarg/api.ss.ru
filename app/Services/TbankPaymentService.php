@@ -59,6 +59,7 @@ class TbankPaymentService
         $apiUrl = $this->baseUrl . '/orders/create';
 
         try {
+            Log::info('Dolyame Step 1: Entered payment initiation.');
             $get = function ($obj, string $key, $default = null) {
                 if (is_array($obj)) return $obj[$key] ?? $default;
                 if (is_object($obj)) return $obj->{$key} ?? $default;
@@ -102,6 +103,8 @@ class TbankPaymentService
             $nameParts = explode(' ', trim($customerName), 2);
             $firstName = $nameParts[0] ?: 'Покупатель';
             $lastName = $nameParts[1] ?? '';
+
+            Log::info('Dolyame Step 2: Payload array is about to be created.');
 
             $payload = [
                 'order' => [
@@ -153,7 +156,7 @@ class TbankPaymentService
                 ->withOptions($options);
 
             // Log the request body before sending
-            Log::debug('Dolyame request body:', $payload);
+            Log::info('Dolyame Step 3: Payload created, preparing to send.', $payload);
 
             $response = $http->post($apiUrl, $payload);
             $responseData = $response->json();
