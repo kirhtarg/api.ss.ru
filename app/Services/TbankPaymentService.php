@@ -130,8 +130,8 @@ class TbankPaymentService
             ];
 
             $certPath = $this->settings['dolyame_cert_path'] ?? null;
-            $keyPath = $this->settings['dolyame_private_key_path'] ?? null;
-            $keyPass = $this->settings['dolyame_private_key_password'] ?? null;
+            $keyPath = $this->settings['dolyame_private_key_path'] ?? $this->settings['dolyame_cert_key_path'] ?? null;
+            $keyPass = $this->settings['dolyame_private_key_password'] ?? $this->settings['dolyame_cert_key_password'] ?? null;
 
             if ($certPath && file_exists($certPath)) {
                 $options['cert'] = $certPath;
@@ -145,7 +145,7 @@ class TbankPaymentService
                 Log::error('Dolyame Partner: Certificate key file not found.', ['path' => $keyPath]);
             }
 
-            $login = $this->settings['dolyame_shop_id'] ?? '';
+            $login = $this->settings['dolyame_shop_id'] ?? $this->settings['dolyame_login'] ?? '';
             $password = $this->settings['dolyame_password'] ?? '';
 
             $http = Http::timeout(30)->retry(2, 1000)
