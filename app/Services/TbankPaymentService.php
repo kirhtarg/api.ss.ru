@@ -59,7 +59,6 @@ class TbankPaymentService
         $apiUrl = $this->baseUrl . '/orders/create';
 
         try {
-            Log::debug('Dolyame request body:', $requestBody);
             $get = function ($obj, string $key, $default = null) {
                 if (is_array($obj)) return $obj[$key] ?? $default;
                 if (is_object($obj)) return $obj->{$key} ?? $default;
@@ -152,6 +151,9 @@ class TbankPaymentService
             $http = Http::timeout(30)->retry(2, 1000)
                 ->withBasicAuth($login, $password)
                 ->withOptions($options);
+
+            // Log the request body before sending
+            Log::debug('Dolyame request body:', $payload);
 
             $response = $http->post($apiUrl, $payload);
             $responseData = $response->json();
