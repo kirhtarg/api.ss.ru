@@ -145,7 +145,7 @@ class TbankPaymentService
                 Log::error('Dolyame Partner: Certificate key file not found.', ['path' => $keyPath]);
             }
 
-            $login = $this->settings['dolyame_shop_id'] ?? $this->settings['dolyame_login'] ?? '';
+            $login = $this->settings['dolyame_shop_id'] ?? '';
             $password = $this->settings['dolyame_password'] ?? '';
 
             $http = Http::timeout(30)->retry(2, 1000)
