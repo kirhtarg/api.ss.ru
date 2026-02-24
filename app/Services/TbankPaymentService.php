@@ -22,7 +22,10 @@ class TbankPaymentService
         $this->provider = $settings['dolyame_provider'] ?? 'tbank';
 
         if ($this->provider === 'partner') {
-             $this->baseUrl = rtrim($settings['dolyame_api_url'] ?? 'https://partner.dolyame.ru/v1', '/');
+            $this->baseUrl = rtrim($settings['dolyame_api_url'] ?: 'https://partner.dolyame.ru/v1', '/');
+
+            // Unset keys from the old integration to avoid confusion
+            unset($this->settings['terminal_key'], $this->settings['terminal_password'], $this->settings['api_url_test'], $this->settings['api_url_live']);
         } else { // tbank
             $mode = ($settings['mode'] ?? 'test') === 'live' ? 'live' : 'test';
             if ($mode === 'live') {
