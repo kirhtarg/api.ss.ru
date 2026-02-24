@@ -1796,7 +1796,7 @@ class ShopPaymentController extends Controller
 
         $settings = $this->normalizePaymentSettings($this->getPaymentMethodSettings($webhookData));
         $tbankService = new TbankPaymentService($settings);
-        if (!$tbankService->verifyWebhook($webhookData)) {
+        if (!$tbankService->verifyWebhook($webhookData, $request)) {
             Log::warning('T-Bank webhook verification failed.');
             return response('Invalid signature or token', 400);
         }

@@ -8,31 +8,189 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
 use App\Models\ShopOrder;
 use App\Models\ShopPaymentTransaction;
-use Illuminate\Support\Facades\Config;
+use Illuminate\Http\Request;
 
 class TbankPaymentService
 {
     protected array $settings;
     protected string $baseUrl;
+    protected string $provider;
 
     public function __construct(array $settings)
     {
         $this->settings = $settings;
-        
-        $mode = ($settings['mode'] ?? 'test') === 'live' ? 'live' : 'test';
-        if ($mode === 'live') {
-            $this->baseUrl = $settings['api_url_live']
-                ?? config('services.tbank.api_url_live', 'https://securepay.tinkoff.ru/v2');
-        } else {
-            $this->baseUrl = $settings['api_url_test']
-                ?? config('services.tbank.api_url_test', 'https://securepay.tinkoff.ru/v2');
+        $this->provider = $settings['dolyame_provider'] ?? 'tbank';
+
+        if ($this->provider === 'partner') {
+             $this->baseUrl = rtrim($settings['api_url'] ?? 'https://partner.dolyame.ru/v1', '/');
+        } else { // tbank
+            $mode = ($settings['mode'] ?? 'test') === 'live' ? 'live' : 'test';
+            if ($mode === 'live') {
+                $this->baseUrl = $settings['api_url_live']
+                    ?? config('services.tbank.api_url_live', 'https://securepay.tinkoff.ru/v2');
+            } else {
+                $this->baseUrl = $settings['api_url_test']
+                    ?? config('services.tbank.api_url_test', 'https://securepay.tinkoff.ru/v2');
+            }
         }
     }
 
     /**
-     * Инициирует платеж через API Т-Банка.
+     * Dispatches payment initiation to the correct provider method.
      */
     public function initiatePayment($order): array
+    {
+        if ($this->provider === 'partner') {
+            return $this->initiateDolyamePartnerPayment($order);
+        }
+        
+        return $this->initiateTbankAcquiringPayment($order);
+    }
+
+    /**
+     * Инициирует платеж через API "Долями" (Partner).
+     */
+    protected function initiateDolyamePartnerPayment($order): array
+    {
+        $apiUrl = $this->baseUrl . '/orders/create';
+
+        try {
+            $get = function ($obj, string $key, $default = null) {
+                if (is_array($obj)) return $obj[$key] ?? $default;
+                if (is_object($obj)) return $obj->{$key} ?? $default;
+                return $default;
+            };
+
+            $orderId = $get($order, 'id', null);
+            $orderNumber = (string) $get($order, 'order_number', (string) $orderId);
+            $totalAmount = (float) $get($order, 'total_amount', 0);
+
+            // Prepare items for Dolyame
+            $items = [];
+            $orderItems = is_array($order) ? ($order['items'] ?? []) : (is_object($order) ? ($order->items ?? []) : []);
+            if (is_string($orderItems)) {
+                $decoded = json_decode($orderItems, true);
+                $orderItems = is_array($decoded) ? $decoded : [];
+            }
+            if (!is_array($orderItems)) $orderItems = [];
+
+            foreach ($orderItems as $item) {
+                $items[] = [
+                    'name' => $item['name'] ?? 'Товар',
+                    'price' => round((float)($item['final_price'] ?? $item['price'] ?? 0), 2),
+                    'quantity' => (int)($item['quantity'] ?? 1),
+                    'tax' => $this->settings['item_tax'] ?? 'none',
+                ];
+            }
+
+            $deliveryCost = is_array($order) ? ($order['delivery_cost'] ?? 0) : (is_object($order) ? ($order->delivery_cost ?? 0) : 0);
+            if ($deliveryCost > 0) {
+                 $items[] = [
+                    'name' => 'Доставка',
+                    'price' => round((float)$deliveryCost, 2),
+                    'quantity' => 1,
+                    'tax' => $this->settings['delivery_tax'] ?? 'none',
+                ];
+            }
+
+            // Client info
+            $customerName = $get($order, 'customer_name', '');
+            $nameParts = explode(' ', trim($customerName), 2);
+            $firstName = $nameParts[0] ?: 'Покупатель';
+            $lastName = $nameParts[1] ?? '';
+
+            $payload = [
+                'order' => [
+                    'id' => $orderNumber,
+                    'amount' => round($totalAmount, 2),
+                    'items' => $items,
+                ],
+                'client_info' => [
+                    'first_name' => $firstName,
+                    'last_name' => $lastName,
+                    'email' => $get($order, 'customer_email', ''),
+                    'phone' => $get($order, 'customer_phone', ''),
+                ],
+                'callbacks' => [
+                    'notification_url' => url('/api/webhooks/tbank'),
+                    'success_url' => url('/api/public/shop/payment/return?payment_type=tbank_dolyame&status=success&order_number=' . urlencode($orderNumber)),
+                    'fail_url' => url('/api/public/shop/payment/return?payment_type=tbank_dolyame&status=fail&order_number=' . urlencode($orderNumber)),
+                ],
+            ];
+
+            // Build HTTP client with mTLS and Basic Auth
+            $options = [
+                'connect_timeout' => 10,
+                'curl' => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
+                'verify' => app()->environment('production'),
+            ];
+
+            $certPath = $this->settings['dolyame_cert_path'] ?? null;
+            $keyPath = $this->settings['dolyame_cert_key_path'] ?? null;
+            $keyPass = $this->settings['dolyame_cert_key_password'] ?? null;
+
+            if ($certPath && file_exists($certPath)) {
+                $options['cert'] = $certPath;
+            } else if ($certPath) {
+                Log::error('Dolyame Partner: Certificate file not found.', ['path' => $certPath]);
+            }
+
+            if ($keyPath && file_exists($keyPath)) {
+                $options['ssl_key'] = $keyPass ? [$keyPath, $keyPass] : $keyPath;
+            } else if ($keyPath) {
+                Log::error('Dolyame Partner: Certificate key file not found.', ['path' => $keyPath]);
+            }
+            
+            $login = $this->settings['dolyame_login'] ?? '';
+            $password = $this->settings['dolyame_password'] ?? '';
+
+            $http = Http::timeout(30)->retry(2, 1000)
+                ->withBasicAuth($login, $password)
+                ->withOptions($options);
+
+            $response = $http->post($apiUrl, $payload);
+            $responseData = $response->json();
+            
+            Log::info('Dolyame Partner request sent', ['url' => $apiUrl, 'payload' => $payload, 'options' => $options]);
+            Log::info('Dolyame Partner response received', ['status' => $response->status(), 'body' => $responseData]);
+
+            if ($response->successful() && isset($responseData['link'])) {
+                 return [
+                    'success' => true,
+                    'payment_url' => $responseData['link'],
+                    'transaction_id' => $responseData['id'] ?? null,
+                    'request_data' => $payload,
+                    'response_data' => $responseData,
+                ];
+            } else {
+                 $errorMessage = $responseData['message'] ?? ($responseData['detail'] ?? 'Unknown Dolyame Partner API error');
+                 Log::error('Dolyame Partner API Error for order ' . $orderNumber, [
+                    'response_status' => $response->status(),
+                    'response_body' => $responseData,
+                ]);
+                return [
+                    'success' => false,
+                    'message' => $errorMessage,
+                    'response_data' => $responseData,
+                ];
+            }
+            
+        } catch (\Exception $e) {
+            Log::error('Exception during Dolyame Partner payment initiation for order ' . ($orderNumber ?? 'N/A') . ': ' . $e->getMessage(), [
+                'exception' => $e,
+                'settings' => $this->settings,
+            ]);
+            return [
+                'success' => false,
+                'message' => 'Exception during payment processing: ' . $e->getMessage(),
+            ];
+        }
+    }
+
+    /**
+     * Инициирует платеж через API Т-Банка (Acquiring).
+     */
+    public function initiateTbankAcquiringPayment($order): array
     {
         $apiUrl = $this->baseUrl . '/Init'; 
 
@@ -282,27 +440,44 @@ class TbankPaymentService
     }
     
     /**
-     * Проверяет подлинность webhook-запроса от Т-Банка.
+     * Проверяет подлинность webhook-запроса от Т-Банка или Долями.
      */
-    public function verifyWebhook(array $webhookData): bool
+    public function verifyWebhook(array $webhookData, Request $request): bool
     {
-        if (!isset($webhookData['Token'])) {
-            Log::warning('T-Bank Webhook: Token not found.');
-            return false;
+        if ($this->provider === 'partner') {
+            $signatureHeader = $request->header('Signature');
+            if (!$signatureHeader) {
+                Log::warning('Dolyame Partner Webhook: Signature header not found.');
+                return false;
+            }
+            $secret = $this->settings['dolyame_password'] ?? '';
+            $expectedSignature = base64_encode(hash_hmac('sha256', $request->getContent(), $secret, true));
+
+            if (!hash_equals($expectedSignature, $signatureHeader)) {
+                 Log::warning('Dolyame Partner Webhook: Signature mismatch.', ['expected' => $expectedSignature, 'received' => $signatureHeader]);
+                return false;
+            }
+            return true;
+
+        } else { // 'tbank'
+            if (!isset($webhookData['Token'])) {
+                Log::warning('T-Bank Webhook: Token not found.');
+                return false;
+            }
+
+            $receivedToken = $webhookData['Token'];
+            $payloadForToken = $webhookData;
+            unset($payloadForToken['Token']); // Удаляем токен из данных для проверки
+
+            $expectedToken = $this->generateToken($payloadForToken);
+
+            if (!hash_equals($expectedToken, $receivedToken)) {
+                Log::warning('T-Bank Webhook: Token mismatch.', ['expected' => $expectedToken, 'received' => $receivedToken]);
+                return false;
+            }
+
+            return true;
         }
-
-        $receivedToken = $webhookData['Token'];
-        $payloadForToken = $webhookData;
-        unset($payloadForToken['Token']); // Удаляем токен из данных для проверки
-
-        $expectedToken = $this->generateToken($payloadForToken);
-
-        if (!hash_equals($expectedToken, $receivedToken)) {
-            Log::warning('T-Bank Webhook: Token mismatch.', ['expected' => $expectedToken, 'received' => $receivedToken]);
-            return false;
-        }
-
-        return true;
     }
 
     /**
@@ -310,8 +485,26 @@ class TbankPaymentService
      */
     public function processWebhookStatus(array $webhookData): string
     {
-        $status = $webhookData['Status'] ?? null;
+        $status = $webhookData['status'] ?? ($webhookData['Status'] ?? null);
 
+        if ($this->provider === 'partner') {
+             switch (strtolower($status)) {
+                case 'approved':
+                case 'committed':
+                case 'completed':
+                    return 'success';
+                case 'rejected':
+                case 'canceled':
+                    return 'cancelled'; // Используем 'cancelled' для единообразия
+                case 'wait_for_commit':
+                    return 'pending'; // Это состояние ожидания
+                default:
+                    Log::warning('Dolyame Partner Webhook: Unhandled status.', ['status' => $status]);
+                    return 'failed';
+            }
+        } 
+        
+        // 'tbank' provider logic
         if ($status) {
             switch (strtoupper($status)) {
                 case 'CONFIRMED':
@@ -338,15 +531,37 @@ class TbankPaymentService
      */
     public function findTransactionByWebhookData(array $webhookData): ?ShopPaymentTransaction
     {
-        if (isset($webhookData['PaymentId'])) {
-            return ShopPaymentTransaction::where('transaction_id', $webhookData['PaymentId'])->first();
+        $transactionId = null;
+        if ($this->provider === 'partner') {
+            // В Partner API ID вебхука - это ID операции, который мы сохраняем как transaction_id
+            $transactionId = $webhookData['id'] ?? null;
+        } else { // tbank
+            $transactionId = $webhookData['PaymentId'] ?? null;
         }
 
-        if (isset($webhookData['OrderId'])) {
+        if ($transactionId) {
+            $transaction = ShopPaymentTransaction::where('transaction_id', $transactionId)->first();
+            if ($transaction) {
+                return $transaction;
+            }
+        }
+
+        // Fallback для старого API Т-Банка по OrderId (ID заказа в системе)
+        if ($this->provider === 'tbank' && isset($webhookData['OrderId'])) {
             $order = ShopOrder::find($webhookData['OrderId']);
             if ($order) {
+                // Ищем последнюю транзакцию в статусе pending для этого заказа
                 return $order->paymentTransactions()->where('status', 'pending')->latest()->first();
             }
+        }
+
+        // Fallback для Partner API по OrderId (номер заказа)
+        if ($this->provider === 'partner' && isset($webhookData['order']['id'])) {
+             $orderNumber = $webhookData['order']['id'];
+             $order = ShopOrder::where('order_number', $orderNumber)->first();
+             if ($order) {
+                 return $order->paymentTransactions()->where('status', 'pending')->latest()->first();
+             }
         }
         
         return null;
