@@ -578,73 +578,115 @@ class ShopPaymentController extends Controller
             $orderData = $request->input('order_data');
             $paymentMethod = ShopPaymentMethod::findOrFail($request->payment_method_id);
 
-            // SECURITY FIX: Recalculate item prices from database to prevent zero-price orders
+            // SERVER-SIDE RECALCULATION (AUTHORITATIVE)
             if (isset($orderData['items']) && is_array($orderData['items'])) {
                 $recalculatedSubtotal = 0;
                 
                 foreach ($orderData['items'] as &$item) {
-                    $goodId = $item['good_id'] ?? null;
-                    $variationId = $item['variation_id'] ?? null;
-                    
-                    if ($goodId) {
-                        $good = ShopGood::find($goodId);
-                        if ($good) {
-                            // Determine base prices
-                            $dbPrice = $good->price;
-                            $dbSalePrice = $good->sale_price;
-                            $dbDempingPrice = $good->demping_price;
-                            
-                            // If variation exists, override
-                            if ($variationId) {
-                                $variation = ShopGoodVariation::find($variationId);
-                                if ($variation) {
-                                    $dbPrice = $variation->price;
-                                    $dbSalePrice = $variation->sale_price;
-                                    $dbDempingPrice = $variation->demping_price;
-                                }
-                            }
-                            
-                            // Validate/Override incoming price
-                            // Force DB price if incoming is 0 or invalid
-                            $incomingPrice = $item['price'] ?? 0;
-                            if ($incomingPrice <= 0 && $dbPrice > 0) {
-                                $item['price'] = $dbPrice;
-                            }
-                            
-                            // Update Sale Price from DB
-                            $item['sale_price'] = $dbSalePrice;
-                            
-                            // Recalculate Total for item
-                            $quantity = $item['quantity'] ?? 1;
-                            
-                            // Determine final price for calculation
-                            $finalPrice = $item['price'];
-                            if ($dbSalePrice && $dbSalePrice > 0 && $dbSalePrice < $finalPrice) {
-                                $finalPrice = $dbSalePrice;
-                            }
-                            // Check demping
-                            if (!empty($item['show_demping']) && $dbDempingPrice && $dbDempingPrice > 0) {
-                                $finalPrice = $dbDempingPrice;
-                                $item['demping_price'] = $dbDempingPrice;
-                            }
+                    $price = 0;
+                    $good = ShopGood::find($item['good_id'] ?? null);
+                    if (!$good) continue;
 
-                            // Update item total
-                            $item['total'] = $finalPrice * $quantity;
-                            
-                            $recalculatedSubtotal += $item['total'];
+                    if (isset($item['variation_id']) && $item['variation_id']) {
+                    $variation = \App\Models\ShopGoodVariation::find($item['variation_id']);
+                    if ($variation) {
+                        // Price priority: demping > sale > base
+                        if ($variation->show_demping && $variation->demping_price > 0) {
+                            $price = $variation->demping_price;
+                        } elseif ($variation->sale_price > 0) {
+                            $price = $variation->sale_price;
+                        } else {
+                            $price = $variation->price;
                         }
                     }
+                } else {
+                    // Price priority for base good: demping > sale > base
+                    if ($good->show_demping && $good->demping_price > 0) {
+                        $price = $good->demping_price;
+                    } elseif ($good->sale_price > 0) {
+                        $price = $good->sale_price;
+                    } else {
+                        $price = $good->price;
+                    }
                 }
-                unset($item); // Break reference
-                
-                // If the frontend sent 0 for total (or very low), use our recalculated subtotal
-                // This is a safety net. Ideally we should fully recalculate, but that requires replicating discount logic.
-                if (($orderData['total_amount'] ?? 0) <= 0 && $recalculatedSubtotal > 0) {
-                     $orderData['total_amount'] = $recalculatedSubtotal;
-                     if (($orderData['subtotal'] ?? 0) <= 0) {
-                         $orderData['subtotal'] = $recalculatedSubtotal;
-                     }
+                    
+                    $item['price'] = $price; // Update item price to the correct one
+                    $item['total'] = $price * ($item['quantity'] ?? 1);
+                    $recalculatedSubtotal += $item['total'];
                 }
+                unset($item);
+
+                // Overwrite subtotal with server-calculated value
+                $orderData['subtotal'] = $recalculatedSubtotal;
+
+                // --- Full discount and total recalculation ---
+                $user = isset($orderData['customer_id']) ? \App\Models\User::find($orderData['customer_id']) : null;
+
+                // Initialize discount components
+                $registeredUserDiscountAmount = 0;
+                $promoCodeDiscountAmount = 0;
+                $bonusPointsDiscountAmount = 0;
+                $isFreeDelivery = false;
+
+                // 1. Registered User Discount
+                if ($user && $user->discount > 0) {
+                    $registeredUserDiscountAmount = $recalculatedSubtotal * ($user->discount / 100);
+                }
+
+                $subtotalAfterUserDiscount = $recalculatedSubtotal - $registeredUserDiscountAmount;
+
+                // 2. Promo Code Discount
+                $promoCode = null;
+                $promoCodeString = $orderData['promo_code'] ?? null;
+                if ($promoCodeString) {
+                    $promoCode = \App\Models\Promocode::where('code', $promoCodeString)->first();
+                }
+
+                if ($promoCode) {
+                    $cartItemsForPromo = $orderData['items']; 
+                    $userId = $user ? $user->id : null;
+                    $discountResult = $promoCode->calculateDiscount($subtotalAfterUserDiscount, $cartItemsForPromo, $userId);
+
+                    if ($promoCode->type === 'free_delivery') {
+                        $applicability = $promoCode->isApplicableToOrder($cartItemsForPromo, $subtotalAfterUserDiscount, $userId);
+                        if ($applicability['is_applicable']) {
+                            $isFreeDelivery = true;
+                        }
+                    } elseif (isset($discountResult['discount']) && $discountResult['discount'] > 0) {
+                        $promoCodeDiscountAmount = $discountResult['discount'];
+                    }
+                    
+                    $orderData['promo_code_id'] = $promoCode->id;
+                }
+
+                // 3. Bonus Points Discount
+                if (($orderData['use_bonus_points'] ?? false) && ($orderData['bonus_points_to_use'] ?? 0) > 0 && $user) {
+                    $pointsToUse = (int)$orderData['bonus_points_to_use'];
+                    $baseAmountForBonuses = $subtotalAfterUserDiscount - $promoCodeDiscountAmount;
+                    $userBonus = \App\Models\UserBonus::getOrCreateForUser($user->id);
+
+                    if ($userBonus->points >= $pointsToUse) {
+                        // This rule should be in a setting. For now, assume bonuses can cover up to 50% of the amount.
+                        $maxBonusUsage = $baseAmountForBonuses * 0.5; 
+                        $bonusPointsDiscountAmount = min($pointsToUse, $baseAmountForBonuses, $maxBonusUsage);
+                    }
+                }
+
+                // 4. Final Calculation
+                $deliveryCost = $isFreeDelivery ? 0 : ($orderData['delivery_cost'] ?? 0);
+                $totalDiscount = $registeredUserDiscountAmount + $promoCodeDiscountAmount + $bonusPointsDiscountAmount;
+                $finalTotalAmount = $recalculatedSubtotal - $totalDiscount + $deliveryCost;
+
+                // Overwrite client-sent amounts with authoritative server calculation
+                $orderData['total_amount'] = round($finalTotalAmount, 2);
+                $orderData['total_discount_amount'] = round($totalDiscount, 2);
+                $orderData['registered_user_discount_amount'] = round($registeredUserDiscountAmount, 2);
+                $orderData['promo_code_discount_amount'] = round($promoCodeDiscountAmount, 2);
+                // In the database, bonus_points_to_use is an integer representing the number of points.
+                // The monetary value is what we calculated as bonusPointsDiscountAmount.
+                // Let's assume 1 point = 1 RUB for simplicity.
+                $orderData['bonus_points_to_use'] = (int)round($bonusPointsDiscountAmount);
+                $orderData['delivery_cost'] = round($deliveryCost, 2);
             }
 
         if ($paymentMethod->type === 'transfer') {
