@@ -59,7 +59,6 @@ class TbankPaymentService
         $apiUrl = $this->baseUrl . '/orders/create';
 
         try {
-            Log::info('Dolyame Step 1: Entered payment initiation.');
             $get = function ($obj, string $key, $default = null) {
                 if (is_array($obj)) return $obj[$key] ?? $default;
                 if (is_object($obj)) return $obj->{$key} ?? $default;
@@ -103,8 +102,6 @@ class TbankPaymentService
             $nameParts = explode(' ', trim($customerName), 2);
             $firstName = $nameParts[0] ?: 'Покупатель';
             $lastName = $nameParts[1] ?? '';
-
-            Log::info('Dolyame Step 2: Payload array is about to be created.');
 
             $payload = [
                 'order' => [
@@ -154,9 +151,6 @@ class TbankPaymentService
             $http = Http::timeout(30)->retry(2, 1000)
                 ->withBasicAuth($login, $password)
                 ->withOptions($options);
-
-            // Log the request body before sending
-            Log::info('Dolyame Step 3: Payload created, preparing to send.', $payload);
 
             $response = $http->post($apiUrl, $payload);
             $responseData = $response->json();
@@ -361,6 +355,8 @@ class TbankPaymentService
                 'Quantity' => $quantity,
                 'Amount' => $amountK,
                 'Tax' => $this->settings['item_tax'] ?? 'none',
+                'PaymentMethod' => $this->settings['item_payment_method'] ?? 'full_prepayment',
+                'PaymentObject' => $this->settings['item_payment_object'] ?? 'commodity',
             ];
         }
         
@@ -374,6 +370,8 @@ class TbankPaymentService
                 'Quantity' => 1.0,
                 'Amount' => $deliveryK,
                 'Tax' => $this->settings['delivery_tax'] ?? 'none',
+                'PaymentMethod' => $this->settings['delivery_payment_method'] ?? 'full_prepayment',
+                'PaymentObject' => $this->settings['delivery_payment_object'] ?? 'service',
             ];
         }
 
