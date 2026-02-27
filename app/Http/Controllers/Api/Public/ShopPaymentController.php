@@ -505,7 +505,7 @@ class ShopPaymentController extends Controller
         }
     }
     
-    protected function createOrderFromPayload(array $orderData, ?int $paymentMethodId, string $orderNumber, ?string $ip, ?string $userAgent): ?ShopOrder
+    protected function createOrderFromPayload(array $orderData, ?int $paymentMethodId, string $orderNumber, ?string $ip, ?string $userAgent, ?string $payloadHash): ?ShopOrder
     {
         try {
             $order = ShopOrder::create([
@@ -538,17 +538,18 @@ class ShopPaymentController extends Controller
                 'order_bonus_points' => $orderData['order_bonus_points'] ?? 0,
                 'ip_address' => $ip,
                 'user_agent' => $userAgent,
+                'payload_hash' => $payloadHash,
                 'payment_status_id' => ShopPaymentStatus::where('name', 'pending')->value('id'),
                 'payed' => false,
                 'status_id' => ShopOrderStatus::where('name', 'pending')->value('id') ?? ShopOrderStatus::where('name', 'confirmed')->value('id'),
             ]);
             return $order;
         } catch (\Exception $e) {
-            Log::error('Failed to create order from payload: ' . $e->getMessage());
+            Log::error('Failed to create order from payload: ' . $e->getMessage(), ['exception' => $e]);
             return null;
         }
     }
-    
+
     /**
      * Handle payment creation for various methods.
      *
@@ -559,38 +560,29 @@ class ShopPaymentController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'payment_method_id' => 'required|exists:shop_payment_methods,id',
-            'order_data' => 'required|array', // Validate that order_data is present and is an array
+            'order_data' => 'required|array',
             'order_data.customer_name' => 'required|string',
             'order_data.customer_email' => 'required|email',
-            'order_data.customer_phone' => 'nullable|string',
-            'order_data.total_amount' => 'required|numeric|min:0',
-            'order_data.items' => 'required|array|min:1',
-            'order_data.items.*.good_id' => 'required|exists:shop_goods,id',
-            'order_data.items.*.quantity' => 'required|integer|min:1',
-            // Добавьте больше специфических валидаций для полей order_data при необходимости
         ]);
 
         if ($validator->fails()) {
             return response()->json(['success' => false, 'message' => 'Invalid input', 'errors' => $validator->errors()], 422);
         }
-        
-        // Извлекаем order_data из запроса
-            $orderData = $request->input('order_data');
-            $paymentMethod = ShopPaymentMethod::findOrFail($request->payment_method_id);
 
-            // SERVER-SIDE RECALCULATION (AUTHORITATIVE)
-            if (isset($orderData['items']) && is_array($orderData['items'])) {
-                $recalculatedSubtotal = 0;
-                
-                foreach ($orderData['items'] as &$item) {
-                    $price = 0;
-                    $good = ShopGood::find($item['good_id'] ?? null);
-                    if (!$good) continue;
+        $orderData = $request->input('order_data');
+        $paymentMethod = ShopPaymentMethod::findOrFail($request->payment_method_id);
 
-                    if (isset($item['variation_id']) && $item['variation_id']) {
+        // SERVER-SIDE RECALCULATION (AUTHORITATIVE)
+        if (isset($orderData['items']) && is_array($orderData['items'])) {
+            $recalculatedSubtotal = 0;
+            foreach ($orderData['items'] as &$item) {
+                $price = 0;
+                $good = ShopGood::find($item['good_id'] ?? null);
+                if (!$good) continue;
+
+                if (isset($item['variation_id']) && $item['variation_id']) {
                     $variation = \App\Models\ShopGoodVariation::find($item['variation_id']);
                     if ($variation) {
-                        // Price priority: demping > sale > base
                         if ($variation->show_demping && $variation->demping_price > 0) {
                             $price = $variation->demping_price;
                         } elseif ($variation->sale_price > 0) {
@@ -600,7 +592,6 @@ class ShopPaymentController extends Controller
                         }
                     }
                 } else {
-                    // Price priority for base good: demping > sale > base
                     if ($good->show_demping && $good->demping_price > 0) {
                         $price = $good->demping_price;
                     } elseif ($good->sale_price > 0) {
@@ -609,158 +600,201 @@ class ShopPaymentController extends Controller
                         $price = $good->price;
                     }
                 }
-                    
-                    $item['price'] = $price; // Update item price to the correct one
-                    $item['total'] = $price * ($item['quantity'] ?? 1);
-                    $recalculatedSubtotal += $item['total'];
+                
+                $item['price'] = $price;
+                $item['total'] = $price * ($item['quantity'] ?? 1);
+                $recalculatedSubtotal += $item['total'];
+            }
+            unset($item);
+
+            $orderData['subtotal'] = $recalculatedSubtotal;
+
+            $user = isset($orderData['customer_id']) ? \App\Models\User::find($orderData['customer_id']) : null;
+            $registeredUserDiscountAmount = 0;
+            $promoCodeDiscountAmount = 0;
+            $bonusPointsDiscountAmount = 0;
+            $isFreeDelivery = false;
+
+            if ($user && $user->discount > 0) {
+                $registeredUserDiscountAmount = $recalculatedSubtotal * ($user->discount / 100);
+            }
+            $subtotalAfterUserDiscount = $recalculatedSubtotal - $registeredUserDiscountAmount;
+
+            $promoCode = null;
+            $promoCodeString = $orderData['promo_code'] ?? null;
+            if ($promoCodeString) {
+                $promoCode = \App\Models\Promocode::where('code', $promoCodeString)->first();
+            }
+
+            if ($promoCode) {
+                $cartItemsForPromo = $orderData['items']; 
+                $userId = $user ? $user->id : null;
+                $discountResult = $promoCode->calculateDiscount($subtotalAfterUserDiscount, $cartItemsForPromo, $userId);
+
+                if ($promoCode->type === 'free_delivery') {
+                    $applicability = $promoCode->isApplicableToOrder($cartItemsForPromo, $subtotalAfterUserDiscount, $userId);
+                    if ($applicability['is_applicable']) {
+                        $isFreeDelivery = true;
+                    }
+                } elseif (isset($discountResult['discount']) && $discountResult['discount'] > 0) {
+                    $promoCodeDiscountAmount = $discountResult['discount'];
                 }
-                unset($item);
+                $orderData['promo_code_id'] = $promoCode->id;
+            }
 
-                // Overwrite subtotal with server-calculated value
-                $orderData['subtotal'] = $recalculatedSubtotal;
+            if (($orderData['use_bonus_points'] ?? false) && ($orderData['bonus_points_to_use'] ?? 0) > 0 && $user) {
+                $pointsToUse = (int)$orderData['bonus_points_to_use'];
+                $baseAmountForBonuses = $subtotalAfterUserDiscount - $promoCodeDiscountAmount;
+                $userBonus = \App\Models\UserBonus::getOrCreateForUser($user->id);
 
-                // --- Full discount and total recalculation ---
-                $user = isset($orderData['customer_id']) ? \App\Models\User::find($orderData['customer_id']) : null;
-
-                // Initialize discount components
-                $registeredUserDiscountAmount = 0;
-                $promoCodeDiscountAmount = 0;
-                $bonusPointsDiscountAmount = 0;
-                $isFreeDelivery = false;
-
-                // 1. Registered User Discount
-                if ($user && $user->discount > 0) {
-                    $registeredUserDiscountAmount = $recalculatedSubtotal * ($user->discount / 100);
+                if ($userBonus->points >= $pointsToUse) {
+                    $maxBonusUsage = $baseAmountForBonuses * 0.5; 
+                    $bonusPointsDiscountAmount = min($pointsToUse, $baseAmountForBonuses, $maxBonusUsage);
                 }
+            }
 
-                $subtotalAfterUserDiscount = $recalculatedSubtotal - $registeredUserDiscountAmount;
+            $deliveryCost = $isFreeDelivery ? 0 : ($orderData['delivery_cost'] ?? 0);
+            $totalDiscount = $registeredUserDiscountAmount + $promoCodeDiscountAmount + $bonusPointsDiscountAmount;
+            $finalTotalAmount = $recalculatedSubtotal - $totalDiscount + $deliveryCost;
 
-                // 2. Promo Code Discount
-                $promoCode = null;
-                $promoCodeString = $orderData['promo_code'] ?? null;
-                if ($promoCodeString) {
-                    $promoCode = \App\Models\Promocode::where('code', $promoCodeString)->first();
-                }
+            $orderData['total_amount'] = round($finalTotalAmount, 2);
+            $orderData['total_discount_amount'] = round($totalDiscount, 2);
+            $orderData['registered_user_discount_amount'] = round($registeredUserDiscountAmount, 2);
+            $orderData['promo_code_discount_amount'] = round($promoCodeDiscountAmount, 2);
+            $orderData['bonus_points_to_use'] = (int)round($bonusPointsDiscountAmount);
+            $orderData['delivery_cost'] = round($deliveryCost, 2);
+        }
+        // --- End of Recalculation ---
 
-                if ($promoCode) {
-                    $cartItemsForPromo = $orderData['items']; 
-                    $userId = $user ? $user->id : null;
-                    $discountResult = $promoCode->calculateDiscount($subtotalAfterUserDiscount, $cartItemsForPromo, $userId);
+        // Prevent duplicate orders
+        $payloadHash = md5(json_encode($orderData));
+        $pendingStatusId = ShopPaymentStatus::where('name', 'pending')->value('id');
 
-                    if ($promoCode->type === 'free_delivery') {
-                        $applicability = $promoCode->isApplicableToOrder($cartItemsForPromo, $subtotalAfterUserDiscount, $userId);
-                        if ($applicability['is_applicable']) {
-                            $isFreeDelivery = true;
+        $order = ShopOrder::where('payload_hash', $payloadHash)
+                            ->where('payment_status_id', $pendingStatusId)
+                            ->where('created_at', '>', now()->subMinutes(15))
+                            ->orderBy('id', 'desc')
+                            ->first();
+        
+        if ($order && $order->payment_url) {
+            return response()->json(['success' => true, 'payment_url' => $order->payment_url, 'order_id' => $order->id, 'message' => 'Existing payment URL returned.']);
+        }
+
+        if (!$order) {
+            $order = $this->createOrderFromPayload(
+                $orderData,
+                $paymentMethod->id,
+                $this->generateOrderNumber(),
+                $request->ip(),
+                $request->userAgent(),
+                $payloadHash
+            );
+        }
+
+        if (!$order) {
+            return response()->json(['success' => false, 'message' => 'Failed to create or find an order.'], 500);
+        }
+
+        try {
+            switch ($paymentMethod->type) {
+                case 'tbank_dolyame':
+                case 'tbank_eacq':
+                    $tbankService = new TbankPaymentService($paymentMethod->settings);
+                    $paymentResponse = $tbankService->initiatePayment($order); // Pass the whole order
+
+                    if ($paymentResponse['success']) {
+                        $order->payment_url = $paymentResponse['payment_url'];
+                        $order->save();
+
+                        ShopPaymentTransaction::create([
+                           'order_id' => $order->id,
+                           'payment_method_id' => $paymentMethod->id,
+                           'amount' => $order->total_amount,
+                           'transaction_id' => $paymentResponse['transaction_id'],
+                           'status' => 'pending',
+                           'request_data' => $paymentResponse['request_data'] ?? null,
+                           'response_data' => $paymentResponse['response_data'] ?? null,
+                        ]);
+                        
+                        // Send notification AFTER getting payment URL
+                        app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+
+                        return response()->json(['success' => true, 'payment_url' => $order->payment_url, 'order_id' => $order->id]);
+                    } else {
+                        // Log the error but don't expose details to the client
+                        Log::error('T-Bank initiation failed.', $paymentResponse);
+                        return response()->json(['success' => false, 'message' => $paymentResponse['message'] ?? 'Could not initiate payment.'], 400);
+                    }
+                case 'yookassa':
+                    try {
+                        $yookassaService = new \App\Services\YookassaPaymentService($paymentMethod->settings);
+                        $paymentResponse = $yookassaService->initiatePayment($order, $recalculatedTotalAmount);
+
+                        if ($paymentResponse['success']) {
+                            $order->payment_url = $paymentResponse['payment_url'];
+                            $order->yookassa_payment_id = $paymentResponse['transaction_id'];
+                            $order->save();
+
+                            ShopPaymentTransaction::create([
+                               'order_id' => $order->id,
+                               'payment_method_id' => $paymentMethod->id,
+                               'amount' => $order->total_amount,
+                               'transaction_id' => $paymentResponse['transaction_id'],
+                               'status' => 'pending',
+                               'request_data' => $paymentResponse['request_data'] ?? null,
+                               'response_data' => $paymentResponse['response_data'] ?? null,
+                            ]);
+
+                            // Send notification AFTER getting payment URL
+                            app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+
+                            return response()->json(['success' => true, 'payment_url' => $order->payment_url, 'order_id' => $order->id]);
+                        } else {
+                            Log::error('Yookassa initiation failed.', $paymentResponse);
+                            return response()->json(['success' => false, 'message' => $paymentResponse['message'] ?? 'Could not initiate payment.'], 400);
                         }
-                    } elseif (isset($discountResult['discount']) && $discountResult['discount'] > 0) {
-                        $promoCodeDiscountAmount = $discountResult['discount'];
+                    } catch (\Exception $e) {
+                        Log::error('Yookassa payment initiation error', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+                        return response()->json(['success' => false, 'message' => 'An unexpected error occurred with Yookassa payment.'], 500);
                     }
-                    
-                    $orderData['promo_code_id'] = $promoCode->id;
-                }
+                case 'yandex_pay':\n                case 'yandex_split':\n                    try {\n                        $yandexPayService = new \App\Services\YandexPayService($paymentMethod->settings);\n                        $paymentResponse = $yandexPayService->initiatePayment($order, $recalculatedTotalAmount, $paymentMethod->type);\n\n                        if ($paymentResponse['success']) {\n                            $order->payment_url = $paymentResponse['payment_url'];\n                            $order->yandex_pay_order_id = $paymentResponse['transaction_id'];\n                            $order->save();\n\n                            ShopPaymentTransaction::create([
+                               'order_id' => $order->id,
+                               'payment_method_id' => $paymentMethod->id,
+                               'amount' => $order->total_amount,
+                               'transaction_id' => $paymentResponse['transaction_id'],
+                               'status' => 'pending',
+                               'request_data' => $paymentResponse['request_data'] ?? null,
+                               'response_data' => $paymentResponse['response_data'] ?? null,
+                            ]);
 
-                // 3. Bonus Points Discount
-                if (($orderData['use_bonus_points'] ?? false) && ($orderData['bonus_points_to_use'] ?? 0) > 0 && $user) {
-                    $pointsToUse = (int)$orderData['bonus_points_to_use'];
-                    $baseAmountForBonuses = $subtotalAfterUserDiscount - $promoCodeDiscountAmount;
-                    $userBonus = \App\Models\UserBonus::getOrCreateForUser($user->id);
+                            app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
 
-                    if ($userBonus->points >= $pointsToUse) {
-                        // This rule should be in a setting. For now, assume bonuses can cover up to 50% of the amount.
-                        $maxBonusUsage = $baseAmountForBonuses * 0.5; 
-                        $bonusPointsDiscountAmount = min($pointsToUse, $baseAmountForBonuses, $maxBonusUsage);
+                            return response()->json(['success' => true, 'payment_url' => $order->payment_url, 'order_id' => $order->id]);
+                        } else {\n                            Log::error('Yandex Pay initiation failed.', $paymentResponse);\n                            return response()->json(['success' => false, 'message' => $paymentResponse['message'] ?? 'Could not initiate payment.'], 400);
+                        }\n                    } catch (\Exception $e) {\n                        Log::error('Yandex Pay payment initiation error', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);\n                        return response()->json(['success' => false, 'message' => 'An unexpected error occurred with Yandex Pay payment.'], 500);
                     }
-                }
-
-                // 4. Final Calculation
-                $deliveryCost = $isFreeDelivery ? 0 : ($orderData['delivery_cost'] ?? 0);
-                $totalDiscount = $registeredUserDiscountAmount + $promoCodeDiscountAmount + $bonusPointsDiscountAmount;
-                $finalTotalAmount = $recalculatedSubtotal - $totalDiscount + $deliveryCost;
-
-                // Overwrite client-sent amounts with authoritative server calculation
-                $orderData['total_amount'] = round($finalTotalAmount, 2);
-                $orderData['total_discount_amount'] = round($totalDiscount, 2);
-                $orderData['registered_user_discount_amount'] = round($registeredUserDiscountAmount, 2);
-                $orderData['promo_code_discount_amount'] = round($promoCodeDiscountAmount, 2);
-                // In the database, bonus_points_to_use is an integer representing the number of points.
-                // The monetary value is what we calculated as bonusPointsDiscountAmount.
-                // Let's assume 1 point = 1 RUB for simplicity.
-                $orderData['bonus_points_to_use'] = (int)round($bonusPointsDiscountAmount);
-                $orderData['delivery_cost'] = round($deliveryCost, 2);
+                case 'transfer':
+                    // For bank transfer, we can create the order and return success
+                    $order->payment_status_id = ShopPaymentStatus::where('name', 'pending_confirmation')->value('id');
+                    $order->save();
+                    app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+                    return response()->json(['success' => true, 'order_id' => $order->id, 'message' => 'Order created. Awaiting bank transfer.']);
+                case 'cash':
+                     // For cash, just create the order
+                    $order->payment_status_id = ShopPaymentStatus::where('name', 'pending_confirmation')->value('id');
+                    $order->save();
+                    app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+                    return response()->json(['success' => true, 'order_id' => $order->id, 'message' => 'Order created for cash payment.']);
+                default:
+                    return response()->json(['success' => false, 'message' => 'Unsupported payment method'], 400);
             }
-
-        if ($paymentMethod->type === 'transfer') {
-            $order = ShopOrder::create([
-                'order_number' => $this->generateOrderNumber(),
-                'user_id' => $orderData['customer_id'] ?? null,
-                'customer_name' => $orderData['customer_name'],
-                'customer_email' => $orderData['customer_email'],
-                'customer_phone' => $orderData['customer_phone'] ?? null,
-                'items' => $orderData['items'],
-                'subtotal' => $orderData['subtotal'],
-                'discount_amount' => $orderData['total_discount_amount'] ?? 0,
-                'total_amount' => $orderData['total_amount'],
-                'total_quantity' => array_sum(array_column($orderData['items'], 'quantity')),
-                'payment_method' => $paymentMethod->name,
-                'payment_method_id' => $paymentMethod->id,
-                'shipping_method' => $orderData['shipping_method'] ?? null,
-                'shipping_method_id' => $orderData['shipping_method_id'] ?? null,
-                'shipping_address' => $orderData['shipping_address'] ?? null,
-                'notes' => $orderData['notes'] ?? null,
-                'delivery_cost' => $orderData['delivery_cost'] ?? 0,
-                'sale_discount_amount' => $orderData['sale_discount_amount'] ?? 0,
-                'registered_user_discount_amount' => $orderData['registered_user_discount_amount'] ?? 0,
-                'promo_code_discount_amount' => $orderData['promo_code_discount_amount'] ?? 0,
-                'birthday_discount_amount' => $orderData['birthday_discount_amount'] ?? 0,
-                'total_discount_amount' => $orderData['total_discount_amount'] ?? 0,
-                'promo_code' => $orderData['promo_code'] ?? null,
-                'promo_code_id' => $orderData['promo_code_id'] ?? null,
-                'use_bonus_points' => $orderData['use_bonus_points'] ?? false,
-                'bonus_points_to_use' => $orderData['bonus_points_to_use'] ?? 0,
-                'order_bonus_points' => $orderData['order_bonus_points'] ?? 0,
-                'overtax_amount' => $orderData['overtax_amount'] ?? 0,
-                'overtax_text' => $orderData['overtax_text'] ?? null,
-                'cancellation_request' => $orderData['cancellation_request'] ?? false,
-                'comment' => $orderData['comment'] ?? null, 
-                'ip_address' => $request->ip(),
-                'user_agent' => $request->userAgent(),
-                'payment_status_id' => ShopPaymentStatus::where('name', 'pending')->value('id'),
-                'status_id' => ShopOrderStatus::where('name', 'pending')->value('id'),
+        } catch (\Exception $e) {
+            Log::error('Create Payment failed for method ' . $paymentMethod->type, [
+                'order_id' => $order->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
-            if (!$order || !$order->id) {
-                return response()->json(['success' => false, 'message' => 'Failed to create order'], 500);
-            }
-            return $this->handleBankTransfer($order, $paymentMethod);
-        }
-
-        if ($paymentMethod->type === 'cash') {
-            return response()->json(['success' => true, 'message' => 'Оплата наличными не требует внешнего платежа.'], 200);
-        }
-
-        $orderNumber = $this->generateOrderNumber();
-        $order = $this->createOrderFromPayload(
-            $orderData,
-            $paymentMethod->id,
-            $orderNumber,
-            $request->ip(),
-            $request->userAgent()
-        );
-        if (!$order || !$order->id) {
-            return response()->json(['success' => false, 'message' => 'Failed to create order'], 500);
-        }
-
-        switch ($paymentMethod->type) {
-            case 'tbank_dolyame':
-                return $this->handleTbankDolyamePayment($order, $paymentMethod);
-            case 'tbank_eacq':
-                return $this->handleTbankEacqPayment($order, $paymentMethod);
-            case 'yookassa':
-                return $this->handleYookassaPayment($order, $paymentMethod);
-            case 'yandex_pay':
-            case 'yandex_split':
-                return $this->handleYandexPayPayment($order, $paymentMethod);
-            default:
-                return response()->json(['success' => false, 'message' => 'Unsupported payment method'], 400);
+            return response()->json(['success' => false, 'message' => 'An unexpected error occurred while processing payment.'], 500);
         }
     }
     
