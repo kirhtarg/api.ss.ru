@@ -357,6 +357,7 @@ class TbankPaymentService
                 'Tax' => $this->settings['item_tax'] ?? 'none',
                 'PaymentMethod' => $this->settings['item_payment_method'] ?? 'full_prepayment',
                 'PaymentObject' => $this->settings['item_payment_object'] ?? 'commodity',
+                'MeasurementUnit' => 'шт',
             ];
         }
         
@@ -372,6 +373,7 @@ class TbankPaymentService
                 'Tax' => $this->settings['delivery_tax'] ?? 'none',
                 'PaymentMethod' => $this->settings['delivery_payment_method'] ?? 'full_prepayment',
                 'PaymentObject' => $this->settings['delivery_payment_object'] ?? 'service',
+                'MeasurementUnit' => 'шт',
             ];
         }
 
