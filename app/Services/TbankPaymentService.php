@@ -216,7 +216,6 @@ class TbankPaymentService
             $paymentTypeParam = $isDolyami ? 'tbank_dolyame' : 'tbank_eacq';
             $successUrl = url('/api/public/shop/payment/return?payment_type=' . $paymentTypeParam . '&status=success&order_number=' . urlencode($orderNumber));
             $failUrl = url('/api/public/shop/payment/return?payment_type=' . $paymentTypeParam . '&status=fail&order_number=' . urlencode($orderNumber));
-            $ffdVersion = $this->settings['ffd_version'] ?? '1.2';
 
             $payload = [
                 'TerminalKey' => $this->settings['terminal_key'],
@@ -229,7 +228,6 @@ class TbankPaymentService
                 'Receipt' => [
                     'Email' => $customerEmail,
                     'Phone' => $customerPhone,
-                    'FfdVersion' => $ffdVersion,
                     'Taxation' => $this->settings['taxation'] ?? 'usn_income_outcome',
                     'Items' => $this->prepareItemsForReceipt($order),
                 ],
@@ -237,6 +235,10 @@ class TbankPaymentService
                     'Email' => $customerEmail,
                 ],
             ];
+
+            // Ensure FfdVersion is set, default to 1.2 if empty or not present
+            $ffdVersion = !empty($this->settings['ffd_version']) ? $this->settings['ffd_version'] : '1.2';
+            $payload['Receipt']['FfdVersion'] = $ffdVersion;
             if ($isDolyami) {
                 $payload['PayType'] = 'DOLYAMI';
                 $payload['DATA']['Context'] = '7';
@@ -274,11 +276,13 @@ class TbankPaymentService
                 'curl' => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
                 'connect_timeout' => 10,
             ]);
+
+            Log::info('T-Bank Acquiring: Sending payment request.', ['url' => $apiUrl, 'payload' => $payload]);
+
             $response = $http->post($apiUrl, $payload);
             $responseData = $response->json();
             $rawBody = $response->body();
 
-            Log::info('T-Bank initiatePayment request sent', ['url' => $apiUrl, 'payload' => $payload]);
             Log::info('T-Bank initiatePayment response received', ['status' => $response->status(), 'body' => $responseData]);
 
             if ($response->successful() && ($responseData['Success'] ?? false) === true) {
