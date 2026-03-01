@@ -20,6 +20,71 @@ class ShopCdekController extends Controller
     }
 
     /**
+     * Получить все настройки СДЭК для админ-панели.
+     */
+    public function getSettings(): JsonResponse
+    {
+        try {
+            // Пытаемся найти активные настройки, если их нет - создаем новые или берем первые попавшиеся
+            $settings = \App\Models\ShopCdekSettings::first();
+
+            if (!$settings) {
+                // Если настроек нет вообще, создаем пустые
+                $settings = new \App\Models\ShopCdekSettings();
+                $settings->is_active = true; // Делаем первые настройки активными
+                $settings->save();
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $settings
+            ]);
+        } catch (\Exception $e) {
+            Log::error('CDEK Admin Get Settings Error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения настроек СДЭК: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Сохранить настройки СДЭК из админ-панели.
+     */
+    public function saveSettings(Request $request): JsonResponse
+    {
+        try {
+            $settings = \App\Models\ShopCdekSettings::first();
+            if (!$settings) {
+                $settings = new \App\Models\ShopCdekSettings();
+                $settings->is_active = true;
+            }
+
+            $data = $request->all();
+
+            // Явное преобразование тарифов в JSON, если это массив
+            if (isset($data['tariffs']) && is_array($data['tariffs'])) {
+                $data['tariffs'] = json_encode($data['tariffs']);
+            }
+
+            $settings->fill($data);
+            $settings->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Настройки СДЭК успешно сохранены',
+                'data' => $settings
+            ]);
+        } catch (\Exception $e) {
+            Log::error('CDEK Admin Save Settings Error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка сохранения настроек СДЭК: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Получить список городов СДЭК
      */
     public function getCities(Request $request): JsonResponse
@@ -572,6 +637,58 @@ class ShopCdekController extends Controller
 
         $cdekCode = $cityMapping[$fiasId] ?? 44; // По умолчанию Москва
         return $cdekCode;
+    }
+
+    public function createOrder(Request $request): JsonResponse
+    {
+        try {
+            $validatedData = $request->validate([
+                'order_id' => 'required|integer|exists:shop_orders,id',
+                'tariff_code' => 'required|integer',
+                'delivery_recipient_cost' => 'sometimes|array',
+                'delivery_recipient_cost.value' => 'sometimes|numeric',
+                'delivery_point' => 'sometimes|string',
+                'to_location' => 'required|array',
+                'to_location.code' => 'required|integer',
+                'to_location.address' => 'required|string',
+                'recipient' => 'required|array',
+                'recipient.name' => 'required|string',
+                'recipient.phones' => 'required|array',
+                'recipient.phones.*.number' => 'required|string',
+                'packages' => 'required|array',
+                'cod_enabled' => 'sometimes|boolean',
+                'customer_pays_delivery' => 'sometimes|boolean',
+                'insurance_enabled' => 'sometimes|boolean',
+                'surcharge_enabled' => 'sometimes|boolean',
+                'surcharge_value' => 'sometimes|numeric',
+                'surcharge_type' => 'sometimes|string',
+            ]);
+
+            $order = \App\Models\ShopOrder::findOrFail($validatedData['order_id']);
+
+            $order->surcharge_enabled = $validatedData['surcharge_enabled'] ?? false;
+            $order->surcharge_value = $validatedData['surcharge_value'] ?? null;
+            $order->surcharge_type = $validatedData['surcharge_type'] ?? null;
+            $order->save();
+
+            $cdekOrderData = $this->cdekService->createOrder($validatedData);
+
+            if (isset($cdekOrderData['entity']['uuid'])) {
+                $order->cdek_order_uuid = $cdekOrderData['entity']['uuid'];
+                $order->save();
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $cdekOrderData
+            ]);
+        } catch (\Exception $e) {
+            Log::error('CDEK Create Order Error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка создания заказа СДЭК: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     /**

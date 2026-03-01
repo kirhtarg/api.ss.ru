@@ -456,6 +456,8 @@ class ShopPaymentController extends Controller
         return response()->json([], 200);
     }
 
+
+
     protected function createOrderFromTransaction(ShopPaymentTransaction $transaction, string $gateway = ''): ?ShopOrder
     {
         try {
@@ -1696,9 +1698,18 @@ class ShopPaymentController extends Controller
         $isPaymentTypeAllowedForTwoStage = in_array($paymentMethod->type, $twoStagePaymentTypesAllowed);
 
 
-        if (empty($settings['terminal_key']) || empty($settings['terminal_password'])) {
-            Log::error('handleTbankDolyamePayment: T-Bank payment method ' . $paymentMethod->id . ' is missing terminal_key or terminal_password in settings.');
-            return response()->json(['success' => false, 'message' => 'Payment gateway misconfigured'], 500);
+        $provider = $settings['dolyame_provider'] ?? 'tbank';
+
+        if ($provider === 'partner') {
+            if (empty($settings['dolyame_login1']) || empty($settings['dolyame_password1'])) {
+                Log::error('handleTbankDolyamePayment: Dolyame Partner payment method ' . $paymentMethod->id . ' is missing dolyame_login1 or dolyame_password1 in settings.');
+                return response()->json(['success' => false, 'message' => 'Payment gateway misconfigured (Dolyame Partner)'], 500);
+            }
+        } else {
+            if (empty($settings['terminal_key']) || empty($settings['terminal_password'])) {
+                Log::error('handleTbankDolyamePayment: T-Bank payment method ' . $paymentMethod->id . ' is missing terminal_key or terminal_password in settings.');
+                return response()->json(['success' => false, 'message' => 'Payment gateway misconfigured (T-Bank)'], 500);
+            }
         }
         $tbankService = new TbankPaymentService($settings);
         try {
@@ -2115,5 +2126,55 @@ class ShopPaymentController extends Controller
     {
         Log::info('Dolyame Webhook received', ['payload' => $request->all()]);
         return response('OK', 200);
+    }
+
+    public function yandexPayWebhook(Request $request)
+    {
+        Log::info('Yandex Pay Webhook received', $request->all());
+
+        $event = $request->input('event');
+        $object = $request->input('object');
+
+        if ($event === 'payment.succeeded' && isset($object['status']) && $object['status'] === 'succeeded') {
+            $yandexPaymentId = $object['id'] ?? null;
+            if (!$yandexPaymentId) {
+                Log::warning('Yandex Pay Webhook: payment.succeeded event without payment ID.');
+                return response()->json(['status' => 'error', 'message' => 'No payment ID'], 400);
+            }
+
+            $order = ShopOrder::where('yandex_pay_order_id', $yandexPaymentId)->first();
+
+            if ($order) {
+                if ($order->payed) {
+                    Log::info('Yandex Pay Webhook: Order ' . $order->id . ' is already marked as paid. Ignoring.');
+                    return response()->json(['status' => 'ok']);
+                }
+
+                $paidStatus = ShopPaymentStatus::where('name', 'paid')->first();
+                if ($paidStatus) {
+                    $order->update([
+                        'payment_status_id' => $paidStatus->id,
+                        'payed' => true,
+                    ]);
+
+                    ShopPaymentTransaction::create([
+                        'order_id' => $order->id,
+                        'payment_method_id' => $order->payment_method_id,
+                        'amount' => $object['amount']['value'] ?? $order->total_amount,
+                        'transaction_id' => $yandexPaymentId,
+                        'status' => 'paid',
+                        'response_data' => $request->all(),
+                    ]);
+
+                    Log::info('Yandex Pay Webhook: Order ' . $order->id . ' payment succeeded and status updated.');
+                } else {
+                    Log::error('Yandex Pay Webhook: "paid" payment status not found in database.');
+                }
+            } else {
+                Log::warning('Yandex Pay Webhook: Order not found for yandex_pay_order_id: ' . $yandexPaymentId);
+            }
+        }
+
+        return response()->json(['status' => 'ok']);
     }
 }

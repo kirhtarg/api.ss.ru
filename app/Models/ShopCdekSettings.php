@@ -35,7 +35,10 @@ class ShopCdekSettings extends Model
         'customer_pays_delivery',
         'disable_order_creation',
         'always_enable_insurance',
-        'is_active'
+        'is_active',
+        'surcharge_enabled',
+        'surcharge_value',
+        'surcharge_type'
     ];
 
     protected $casts = [
@@ -48,7 +51,10 @@ class ShopCdekSettings extends Model
         'customer_pays_delivery' => 'boolean',
         'disable_order_creation' => 'boolean',
         'always_enable_insurance' => 'boolean',
-        'is_active' => 'boolean'
+        'is_active' => 'boolean',
+        'surcharge_enabled' => 'boolean',
+        'surcharge_value' => 'decimal:2',
+        'surcharge_type' => 'string'
     ];
 
     /**

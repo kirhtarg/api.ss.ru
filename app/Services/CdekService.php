@@ -449,6 +449,21 @@ class CdekService
                 }
             }
 
+            // Расчет и добавление наценки
+            if (!empty($orderData['surcharge_enabled']) && $isCashOnDelivery) {
+                $surchargeValue = (float)($orderData['surcharge_value'] ?? 0);
+                $surchargeType = $orderData['surcharge_type'] ?? 'fixed';
+                $surchargeAmount = 0;
+
+                if ($surchargeType === 'fixed') {
+                    $surchargeAmount = $surchargeValue;
+                } elseif ($surchargeType === 'percent') {
+                    $surchargeAmount = ($codAmount * $surchargeValue) / 100;
+                }
+
+                $codAmount += ceil($surchargeAmount);
+            }
+
             $sdekOrderData = [
                 // Номер заказа в системе интернет-магазина (идентификатор ИМ)
                 'number' => $orderData['order_number'] ?? 'ORDER_' . time(),

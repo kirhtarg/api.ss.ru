@@ -56,7 +56,10 @@ class ShopOrder extends Model
         'cancellation_request',
         'ip_address',
         'user_agent',
-        'metadata'
+        'metadata',
+        'surcharge_enabled',
+        'surcharge_value',
+        'surcharge_type'
     ];
 
     protected $attributes = [
@@ -84,7 +87,10 @@ class ShopOrder extends Model
         'cancellation_request' => 'boolean',
         'is_active' => 'boolean',
         'delivery_status_id' => 'integer',
-        'metadata' => 'array'
+        'metadata' => 'array',
+        'surcharge_enabled' => 'boolean',
+        'surcharge_value' => 'decimal:2',
+        'surcharge_type' => 'string'
     ];
 
 

@@ -122,6 +122,9 @@ class ShopCdekSettingsController extends Controller
             'cash_on_delivery_enabled' => 'boolean',
             'customer_pays_delivery' => 'boolean',
             'disable_order_creation' => 'boolean',
+            'surcharge_enabled' => 'sometimes|boolean',
+            'surcharge_value' => 'nullable|numeric|min:0',
+            'surcharge_type' => 'nullable|string|in:fixed,percent',
         ]);
 
         if ($validator->fails()) {

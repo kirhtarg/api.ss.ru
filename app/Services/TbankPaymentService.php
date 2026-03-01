@@ -145,8 +145,8 @@ class TbankPaymentService
                 Log::error('Dolyame Partner: Certificate key file not found.', ['path' => $keyPath]);
             }
 
-            $login = $this->settings['dolyame_shop_id'] ?? '';
-            $password = $this->settings['dolyame_password'] ?? '';
+            $login = $this->settings['dolyame_login1'] ?? '';
+            $password = $this->settings['dolyame_password1'] ?? '';
 
             $http = Http::timeout(30)->retry(2, 1000)
                 ->withBasicAuth($login, $password)
@@ -464,7 +464,7 @@ class TbankPaymentService
                 Log::warning('Dolyame Partner Webhook: Signature header not found.');
                 return false;
             }
-            $secret = $this->settings['dolyame_password'] ?? '';
+            $secret = $this->settings['dolyame_password1'] ?? '';
             $expectedSignature = base64_encode(hash_hmac('sha256', $request->getContent(), $secret, true));
 
             if (!hash_equals($expectedSignature, $signatureHeader)) {
