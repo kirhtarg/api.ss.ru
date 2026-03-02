@@ -71,6 +71,7 @@ class TbankPaymentService
     {
         Log::debug('TbankPaymentService: initiateDolyamePartnerPayment called');
         $apiUrl = $this->baseUrl . '/orders/create';
+        Log::debug('Dolyame Partner: Constructed API URL', ['url' => $apiUrl]);
         
         // Debug: Log the settings being used
         Log::debug('Dolyame Partner: initiateDolyamePartnerPayment called', [
@@ -207,6 +208,7 @@ class TbankPaymentService
             }
 
             // Prepare Dolyame-specific payload according to API documentation
+            // Based on the API docs, the structure should be simpler
             $payload = [
                 'order' => [
                     'id' => $orderNumber,
@@ -219,16 +221,20 @@ class TbankPaymentService
                     'last_name' => $lastName,
                     'email' => $customerEmail,
                     'phone' => $phone,
-                    'middle_name' => '', // Добавляем обязательное поле
-                ],
-                'notification_url' => url('/api/webhooks/tbank'),
-                'success_url' => url('/api/public/shop/payment/return?payment_type=tbank_dolyame&status=success&order_number=' . urlencode($orderNumber)),
-                'fail_url' => url('/api/public/shop/payment/return?payment_type=tbank_dolyame&status=fail&order_number=' . urlencode($orderNumber)),
-                'data' => [
-                    'shop_id' => $shopId, // Add shop_id as additional data
-                    'source' => 'api',
+                    'middle_name' => '', // Required field
                 ],
             ];
+            
+            // Add merchant_id if available (required parameter)
+            if ($shopId) {
+                $payload['merchant_id'] = $shopId;
+            }
+            
+            // Add optional callback URLs if needed (these might need to be configured differently)
+            // Note: These might not be required at the root level based on API docs
+            $payload['notification_url'] = url('/api/webhooks/tbank');
+            $payload['success_url'] = url('/api/public/shop/payment/return?payment_type=tbank_dolyame&status=success&order_number=' . urlencode($orderNumber));
+            $payload['fail_url'] = url('/api/public/shop/payment/return?payment_type=tbank_dolyame&status=fail&order_number=' . urlencode($orderNumber));
 
             // Build HTTP client with mTLS and Basic Auth
             $options = [
@@ -253,8 +259,16 @@ class TbankPaymentService
                 Log::error('Dolyame Partner: Certificate key file not found.', ['path' => $keyPath]);
             }
 
-            $login = $this->settings['dolyame_login1'] ?? '';
-            $password = $this->settings['dolyame_password1'] ?? '';
+            $login = $this->settings['dolyame_login'] ?? $this->settings['dolyame_login1'] ?? '';
+            $password = $this->settings['dolyame_password'] ?? $this->settings['dolyame_password1'] ?? '';
+            
+            Log::debug('Dolyame Partner: Authentication parameters', [
+                'login' => $login,
+                'has_login' => !empty($login),
+                'has_password' => !empty($password),
+                'login_source' => isset($this->settings['dolyame_login']) ? 'dolyame_login' : (isset($this->settings['dolyame_login1']) ? 'dolyame_login1' : 'none'),
+                'password_source' => isset($this->settings['dolyame_password']) ? 'dolyame_password' : (isset($this->settings['dolyame_password1']) ? 'dolyame_password1' : 'none'),
+            ]);
 
             // Generate X-Correlation-ID (required header)
             $correlationId = Str::uuid()->toString();
@@ -662,7 +676,7 @@ class TbankPaymentService
                 Log::warning('Dolyame Partner Webhook: Signature header not found.');
                 return false;
             }
-            $secret = $this->settings['dolyame_password1'] ?? '';
+            $secret = $this->settings['dolyame_password'] ?? $this->settings['dolyame_password1'] ?? '';
             $expectedSignature = base64_encode(hash_hmac('sha256', $request->getContent(), $secret, true));
 
             if (!hash_equals($expectedSignature, $signatureHeader)) {
