@@ -262,8 +262,10 @@ class TbankPaymentService
                 Log::error('Dolyame Partner: Certificate key file is missing or not readable.', ['path' => $keyPath]);
             }
 
-            $login = $this->settings['dolyame_login'] ?? '';
-            $password = $this->settings['dolyame_password'] ?? '';
+            // Per user confirmation, the form only contains 'dolyame_login1' and 'dolyame_password1' fields.
+            // These are the ONLY credentials to be used.
+            $login = $this->settings['dolyame_login1'] ?? '';
+            $password = $this->settings['dolyame_password1'] ?? '';
             
             Log::debug('Dolyame Partner: Authentication parameters', [
                 'login' => $login,
