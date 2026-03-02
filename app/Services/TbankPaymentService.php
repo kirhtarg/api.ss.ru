@@ -9,6 +9,7 @@ use Illuminate\Http\Client\RequestException;
 use App\Models\ShopOrder;
 use App\Models\ShopPaymentTransaction;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 class TbankPaymentService
 {
@@ -79,11 +80,33 @@ class TbankPaymentService
             if (!is_array($orderItems)) $orderItems = [];
 
             foreach ($orderItems as $item) {
+                $itemName = trim($item['name'] ?? $item['good_name'] ?? 'Товар');
+                $itemPrice = round((float)($item['final_price'] ?? $item['price'] ?? 0), 2);
+                $itemQuantity = (int)($item['quantity'] ?? 1);
+                
+                if (empty($itemName) || $itemPrice <= 0 || $itemQuantity <= 0) {
+                    Log::warning('Dolyame Partner: Skipping invalid item', [
+                        'name' => $itemName,
+                        'price' => $itemPrice,
+                        'quantity' => $itemQuantity,
+                    ]);
+                    continue;
+                }
+                
                 $items[] = [
-                    'name' => $item['name'] ?? 'Товар',
-                    'price' => round((float)($item['final_price'] ?? $item['price'] ?? 0), 2),
-                    'quantity' => (int)($item['quantity'] ?? 1),
+                    'name' => $itemName,
+                    'price' => $itemPrice,
+                    'quantity' => $itemQuantity,
                     'tax' => $this->settings['item_tax'] ?? 'none',
+                ];
+            }
+
+            // Validate that we have at least one valid item
+            if (empty($items)) {
+                Log::error('Dolyame Partner: No valid items found for order', ['order_items' => $orderItems]);
+                return [
+                    'success' => false,
+                    'message' => 'No valid order items found',
                 ];
             }
 
@@ -103,13 +126,17 @@ class TbankPaymentService
             $firstName = $nameParts[0] ?: 'Покупатель';
             $lastName = $nameParts[1] ?? '';
 
-            // Format phone number for Dolyame API (should be in format 7XXXXXXXXXX)
+            // Format phone number for Dolyame API (should be in format +79993334444)
             $phone = $get($order, 'customer_phone', '');
             $phone = preg_replace('/[^0-9]/', '', $phone);
             if (strlen($phone) === 10 && $phone[0] === '9') {
-                $phone = '7' . $phone;
+                $phone = '+7' . $phone;
             } elseif (strlen($phone) === 11 && $phone[0] === '8') {
-                $phone = '7' . substr($phone, 1);
+                $phone = '+7' . substr($phone, 1);
+            } elseif (strlen($phone) === 11 && $phone[0] === '7') {
+                $phone = '+' . $phone;
+            } else {
+                $phone = '+' . $phone; // Default to adding + prefix
             }
 
             // Get shop settings
@@ -122,12 +149,22 @@ class TbankPaymentService
                 ];
             }
 
+            // Validate order number format (Dolyame might have specific requirements)
+            if (strlen($orderNumber) < 1 || strlen($orderNumber) > 50) {
+                Log::error('Dolyame Partner: Invalid order number length', ['order_number' => $orderNumber]);
+                return [
+                    'success' => false,
+                    'message' => 'Invalid order number format',
+                ];
+            }
+
+            // Prepare Dolyame-specific payload according to API documentation
             $payload = [
                 'order' => [
                     'id' => $orderNumber,
                     'amount' => round($totalAmount, 2),
                     'items' => $items,
-                    'shop_id' => $shopId,
+                    'prepayment_amount' => 0, // Required field for Dolyame
                 ],
                 'client_info' => [
                     'first_name' => $firstName,
@@ -136,10 +173,12 @@ class TbankPaymentService
                     'phone' => $phone,
                     'middle_name' => '', // Добавляем обязательное поле
                 ],
-                'callbacks' => [
-                    'notification_url' => url('/api/webhooks/tbank'),
-                    'success_url' => url('/api/public/shop/payment/return?payment_type=tbank_dolyame&status=success&order_number=' . urlencode($orderNumber)),
-                    'fail_url' => url('/api/public/shop/payment/return?payment_type=tbank_dolyame&status=fail&order_number=' . urlencode($orderNumber)),
+                'notification_url' => url('/api/webhooks/tbank'),
+                'success_url' => url('/api/public/shop/payment/return?payment_type=tbank_dolyame&status=success&order_number=' . urlencode($orderNumber)),
+                'fail_url' => url('/api/public/shop/payment/return?payment_type=tbank_dolyame&status=fail&order_number=' . urlencode($orderNumber)),
+                'data' => [
+                    'shop_id' => $shopId, // Add shop_id as additional data
+                    'source' => 'api',
                 ],
             ];
 
@@ -169,15 +208,87 @@ class TbankPaymentService
             $login = $this->settings['dolyame_login1'] ?? '';
             $password = $this->settings['dolyame_password1'] ?? '';
 
+            // Generate X-Correlation-ID (required header)
+            $correlationId = Str::uuid()->toString();
+
+            // Validate payload before sending
+            if (empty($payload['order']['id']) || empty($payload['order']['amount']) || empty($payload['order']['items'])) {
+                Log::error('Dolyame Partner: Invalid payload structure', ['payload' => $payload]);
+                return [
+                    'success' => false,
+                    'message' => 'Invalid order data structure',
+                ];
+            }
+
+            if (empty($payload['client_info']['email']) || empty($payload['client_info']['phone'])) {
+                Log::error('Dolyame Partner: Missing required client info', ['client_info' => $payload['client_info']]);
+                return [
+                    'success' => false,
+                    'message' => 'Missing required client information (email or phone)',
+                ];
+            }
+
+            // Additional Dolyame-specific validation
+            if (!preg_match('/^\+7\d{10}$/', $payload['client_info']['phone'])) {
+                Log::error('Dolyame Partner: Invalid phone format', ['phone' => $payload['client_info']['phone']]);
+                return [
+                    'success' => false,
+                    'message' => 'Invalid phone format. Must be +79993334444',
+                ];
+            }
+
+            if (!filter_var($payload['client_info']['email'], FILTER_VALIDATE_EMAIL)) {
+                Log::error('Dolyame Partner: Invalid email format', ['email' => $payload['client_info']['email']]);
+                return [
+                    'success' => false,
+                    'message' => 'Invalid email format',
+                ];
+            }
+
+            // Validate items structure for Dolyame
+            foreach ($payload['order']['items'] as $index => $item) {
+                if (empty($item['name']) || !isset($item['price']) || !isset($item['quantity'])) {
+                    Log::error('Dolyame Partner: Invalid item structure', ['item_index' => $index, 'item' => $item]);
+                    return [
+                        'success' => false,
+                        'message' => 'Invalid item structure at index ' . $index,
+                    ];
+                }
+            }
+
+            Log::info('Dolyame Partner: Preparing request', [
+                'url' => $apiUrl,
+                'login' => $login,
+                'has_cert' => !empty($certPath) && file_exists($certPath),
+                'has_key' => !empty($keyPath) && file_exists($keyPath),
+                'payload_structure' => array_keys($payload),
+                'order_structure' => array_keys($payload['order']),
+                'client_info_structure' => array_keys($payload['client_info']),
+                'items_count' => count($payload['order']['items']),
+                'total_amount' => $payload['order']['amount'],
+                'shop_id' => $payload['order']['shop_id'],
+                'phone' => $payload['client_info']['phone'],
+                'email' => $payload['client_info']['email'],
+                'order_id' => $payload['order']['id'],
+            ]);
+
             $http = Http::timeout(30)->retry(2, 1000)
                 ->withBasicAuth($login, $password)
+                ->withHeaders([
+                    'X-Correlation-ID' => $correlationId,
+                ])
                 ->withOptions($options);
 
             $response = $http->post($apiUrl, $payload);
             $responseData = $response->json();
             
-            Log::info('Dolyame Partner request sent', ['url' => $apiUrl, 'payload' => $payload, 'options' => $options]);
-            Log::info('Dolyame Partner response received', ['status' => $response->status(), 'body' => $responseData]);
+            Log::info('Dolyame Partner request completed', [
+                'url' => $apiUrl,
+                'status' => $response->status(),
+                'response_body' => $responseData,
+                'response_headers' => $response->headers(),
+                'correlation_id' => $correlationId,
+            ]);
 
             if ($response->successful() && isset($responseData['link'])) {
                  return [
@@ -189,14 +300,20 @@ class TbankPaymentService
                 ];
             } else {
                  $errorMessage = $responseData['message'] ?? ($responseData['detail'] ?? 'Unknown Dolyame Partner API error');
+                 $errorCode = $responseData['code'] ?? $response->status();
                  Log::error('Dolyame Partner API Error for order ' . $orderNumber, [
                     'response_status' => $response->status(),
                     'response_body' => $responseData,
+                    'request_payload' => $payload, // Log the request payload for debugging
+                    'error_code' => $errorCode,
+                    'error_message' => $errorMessage,
+                    'correlation_id' => $correlationId,
                 ]);
                 return [
                     'success' => false,
                     'message' => $errorMessage,
                     'response_data' => $responseData,
+                    'error_code' => $errorCode,
                 ];
             }
             
