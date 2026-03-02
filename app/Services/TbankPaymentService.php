@@ -32,17 +32,9 @@ class TbankPaymentService
         ]);
 
         if ($this->provider === 'partner') {
-            $mode = $settings['mode'] ?? 'test';
-            if ($mode === 'test') {
-                // Use test endpoint for Dolyame Partner API
-                $dolyameUrl = $settings['dolyame_api_url_test'] ?? $settings['api_url_test'] ?? 'https://partner.dolyame.ru/v1';
-                Log::debug('TbankPaymentService: Using test Dolyame Partner API endpoint', ['url' => $dolyameUrl]);
-            } else {
-                // Use production endpoint
-                $dolyameUrl = $settings['dolyame_api_url'] ?? $settings['api_url'] ?? 'https://partner.dolyame.ru/v1';
-                Log::debug('TbankPaymentService: Using production Dolyame Partner API endpoint', ['url' => $dolyameUrl]);
-            }
+            $dolyameUrl = $this->settings['dolyame_api_url'] ?? $this->settings['api_url'] ?? 'https://partner.dolyame.ru/v1';
             $this->baseUrl = rtrim($dolyameUrl, '/');
+            Log::debug('TbankPaymentService: Using Dolyame Partner API endpoint', ['url' => $this->baseUrl]);
 
             // Unset keys from the old integration to avoid confusion
             unset($this->settings['terminal_key'], $this->settings['terminal_password'], $this->settings['api_url_test'], $this->settings['api_url_live']);
@@ -223,6 +215,7 @@ class TbankPaymentService
                     'id' => $orderNumber,
                     'amount' => round($totalAmount, 2),
                     'items' => $items,
+                    'shop_id' => $shopId, // Moved shop_id inside order object
                     'prepayment_amount' => 0, // Required field for Dolyame
                 ],
                 'client_info' => [
@@ -232,154 +225,58 @@ class TbankPaymentService
                     'phone' => $phone,
                     'middle_name' => '', // Required field
                 ],
+                'notification_url' => url('/api/webhooks/tbank'),
+                'success_url' => url('/api/public/shop/payment/return?payment_type=tbank_dolyame&status=success&order_number=' . urlencode($orderNumber)),
+                'fail_url' => url('/api/public/shop/payment/return?payment_type=tbank_dolyame&status=fail&order_number=' . urlencode($orderNumber)),
             ];
-            
-            // Add merchant_id if available (required parameter)
-            if ($shopId) {
-                $payload['merchant_id'] = $shopId;
-            }
-            
-            // Add optional callback URLs if needed (these might need to be configured differently)
-            // Note: These might not be required at the root level based on API docs
-            $payload['notification_url'] = url('/api/webhooks/tbank');
-            $payload['success_url'] = url('/api/public/shop/payment/return?payment_type=tbank_dolyame&status=success&order_number=' . urlencode($orderNumber));
-            $payload['fail_url'] = url('/api/public/shop/payment/return?payment_type=tbank_dolyame&status=fail&order_number=' . urlencode($orderNumber));
 
-            // Build HTTP client with mTLS and Basic Auth
+            // Build HTTP client with Basic Auth and optional mTLS
             $options = [
                 'connect_timeout' => 10,
                 'curl' => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
-                'verify' => app()->environment('production'),
             ];
 
-            $certPath = $this->settings['dolyame_cert_path'] ?? null;
-            $keyPath = $this->settings['dolyame_private_key_path'] ?? $this->settings['dolyame_cert_key_path'] ?? null;
-            $keyPass = $this->settings['dolyame_private_key_password'] ?? $this->settings['dolyame_cert_key_password'] ?? null;
+            // Only apply mTLS certificates in production environment where files exist
+            if (app()->environment('production')) {
+                $certPath = $this->settings['dolyame_cert_path'] ?? null;
+                $keyPath = $this->settings['dolyame_private_key_path'] ?? $this->settings['dolyame_cert_key_path'] ?? null;
+                $keyPass = $this->settings['dolyame_private_key_password'] ?? $this->settings['dolyame_cert_key_password'] ?? null;
 
-            if ($certPath && file_exists($certPath)) {
-                $options['cert'] = $certPath;
-            } else if ($certPath) {
-                Log::error('Dolyame Partner: Certificate file not found.', ['path' => $certPath]);
-            }
+                Log::debug('Dolyame Partner: Certificate configuration for production', [
+                    'cert_path' => $certPath,
+                    'key_path' => $keyPath,
+                    'cert_exists' => $certPath ? file_exists($certPath) : false,
+                    'key_exists' => $keyPath ? file_exists($keyPath) : false,
+                ]);
 
-            if ($keyPath && file_exists($keyPath)) {
-                $options['ssl_key'] = $keyPass ? [$keyPath, $keyPass] : $keyPath;
-            } else if ($keyPath) {
-                Log::error('Dolyame Partner: Certificate key file not found.', ['path' => $keyPath]);
-            }
+                if ($certPath && file_exists($certPath)) {
+                    $options['cert'] = $certPath;
+                }
 
-            // For test mode, try using test credentials first
-            $mode = $this->settings['mode'] ?? 'test';
-            if ($mode === 'test' && isset($this->settings['dolyame_login1']) && isset($this->settings['dolyame_password1'])) {
-                // Use test credentials
-                $login = $this->settings['dolyame_login1'];
-                $password = $this->settings['dolyame_password1'];
-                Log::debug('Dolyame Partner: Using test credentials', ['login' => $login]);
+                if ($keyPath && file_exists($keyPath)) {
+                    $options['ssl_key'] = $keyPass ? [$keyPath, $keyPass] : $keyPath;
+                }
             } else {
-                // Use production credentials
-                $login = $this->settings['dolyame_login'] ?? $this->settings['dolyame_login1'] ?? '';
-                $password = $this->settings['dolyame_password'] ?? $this->settings['dolyame_password1'] ?? '';
-                Log::debug('Dolyame Partner: Using production credentials', ['login' => $login]);
+                Log::debug('Dolyame Partner: Skipping mTLS certificate for non-production environment');
             }
+
+            $login = $this->settings['dolyame_login'] ?? '';
+            $password = $this->settings['dolyame_password'] ?? '';
             
             Log::debug('Dolyame Partner: Authentication parameters', [
                 'login' => $login,
                 'has_login' => !empty($login),
                 'has_password' => !empty($password),
-                'login_source' => isset($this->settings['dolyame_login']) ? 'dolyame_login' : (isset($this->settings['dolyame_login1']) ? 'dolyame_login1' : 'none'),
-                'password_source' => isset($this->settings['dolyame_password']) ? 'dolyame_password' : (isset($this->settings['dolyame_password1']) ? 'dolyame_password1' : 'none'),
+                'login_source' => isset($this->settings['dolyame_login']) ? 'dolyame_login' : 'none',
+                'password_source' => isset($this->settings['dolyame_password']) ? 'dolyame_password' : 'none',
             ]);
 
             // Generate X-Correlation-ID (required header)
             $correlationId = Str::uuid()->toString();
 
-            // Try different authentication methods for Dolyame Partner API
-            // Method 1: Use login as Bearer token
-            // Method 2: Use shop_id + login as custom header
-            // Method 3: Standard Basic Auth (current)
-            // Method 4: Use API key if available
-            
             $authHeaders = [
                 'X-Correlation-ID' => $correlationId,
             ];
-            
-            // Check if API key is available
-            $apiKey = $this->settings['api_key'] ?? null;
-            
-            if (!empty($apiKey)) {
-                // Use API key authentication
-                $authHeaders['X-API-Key'] = $apiKey;
-                Log::debug('Dolyame Partner: Using API key authentication', ['api_key' => substr($apiKey, 0, 10) . '...']);
-            } elseif (!empty($login) && !empty($password)) {
-                // Add both Basic Auth and custom headers for maximum compatibility
-                $authHeaders['X-Login'] = $login;
-                $authHeaders['X-Shop-ID'] = $shopId;
-                $authHeaders['Authorization'] = 'Bearer ' . $login; // Try Bearer token
-                
-                Log::debug('Dolyame Partner: Using enhanced authentication', [
-                    'login' => $login,
-                    'shop_id' => $shopId,
-                    'auth_method' => 'multi-header',
-                ]);
-            }
-
-            // Validate payload before sending
-            $validationErrors = [];
-            if (empty($payload['order']['id'])) $validationErrors[] = 'order.id is empty';
-            if (empty($payload['order']['amount'])) $validationErrors[] = 'order.amount is empty';
-            if (empty($payload['order']['items']) || !is_array($payload['order']['items']) || count($payload['order']['items']) === 0) $validationErrors[] = 'order.items is empty or invalid';
-            if (empty($payload['client_info']['phone'])) $validationErrors[] = 'client_info.phone is empty';
-            if (empty($payload['client_info']['email'])) $validationErrors[] = 'client_info.email is empty';
-            if (empty($payload['client_info']['first_name'])) $validationErrors[] = 'client_info.first_name is empty';
-            if (empty($payload['client_info']['last_name'])) $validationErrors[] = 'client_info.last_name is empty';
-
-            // Enhanced validation for Dolyame-specific requirements
-            if (!empty($payload['client_info']['phone']) && !preg_match('/^\+7\d{10}$/', $payload['client_info']['phone'])) {
-                $validationErrors[] = 'client_info.phone format invalid (must be +79993334444)';
-            }
-
-            if (!empty($payload['client_info']['email']) && !filter_var($payload['client_info']['email'], FILTER_VALIDATE_EMAIL)) {
-                $validationErrors[] = 'client_info.email format invalid';
-            }
-
-            // Validate items structure
-            foreach ($payload['order']['items'] ?? [] as $index => $item) {
-                if (empty($item['name']) || !isset($item['price']) || !isset($item['quantity'])) {
-                    $validationErrors[] = "order.items[$index] has invalid structure";
-                }
-            }
-
-            if (!empty($validationErrors)) {
-                Log::error('Dolyame Partner: Payload validation failed', [
-                    'validation_errors' => $validationErrors,
-                    'payload' => $payload,
-                ]);
-                return [
-                    'success' => false,
-                    'message' => 'Payload validation failed: ' . implode(', ', $validationErrors),
-                ];
-            }
-
-            Log::info('Dolyame Partner: Preparing request', [
-                'url' => $apiUrl,
-                'login' => $login,
-                'has_api_key' => !empty($apiKey),
-                'has_basic_auth' => empty($apiKey) && !empty($login) && !empty($password),
-                'has_cert' => !empty($certPath) && file_exists($certPath),
-                'has_key' => !empty($keyPath) && file_exists($keyPath),
-                'payload_structure' => array_keys($payload),
-                'order_structure' => array_keys($payload['order'] ?? []),
-                'client_info_structure' => array_keys($payload['client_info'] ?? []),
-                'items_count' => count($payload['order']['items'] ?? []),
-                'total_amount' => $payload['order']['amount'] ?? 0,
-                'shop_id' => $shopId, // Use the variable instead of payload
-                'phone' => $payload['client_info']['phone'] ?? '',
-                'email' => $payload['client_info']['email'] ?? '',
-                'order_id' => $payload['order']['id'] ?? '',
-                'correlation_id' => $correlationId,
-                'validation_errors' => $validationErrors,
-                'full_payload' => $payload, // Log the complete payload for debugging
-            ]);
 
             // Build HTTP client with appropriate authentication
             $http = Http::timeout(30)->retry(2, 1000)
@@ -387,7 +284,7 @@ class TbankPaymentService
                 ->withOptions($options);
             
             // Only add Basic Auth if we're not using API key
-            if (empty($apiKey) && !empty($login) && !empty($password)) {
+            if (!empty($login) && !empty($password)) {
                 $http = $http->withBasicAuth($login, $password);
             }
             
