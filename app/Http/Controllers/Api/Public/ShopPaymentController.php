@@ -1493,6 +1493,10 @@ class ShopPaymentController extends Controller
         }
         $settings = $this->normalizePaymentSettings($paymentMethod->settings);
         $provider = $settings['dolyame_provider'] ?? 'tbank';
+        Log::debug('handleTbankDolyamePayment: provider determined', [
+            'provider' => $provider,
+            'dolyame_provider_setting' => $settings['dolyame_provider'] ?? 'not_set',
+        ]);
         if ($provider === 'partner') {
             if (empty($settings['dolyame_login']) || empty($settings['dolyame_password'])) {
                 \Log::error('Dolyame partner init: missing login or password', ['method_id' => $paymentMethod->id]);
@@ -1674,7 +1678,14 @@ class ShopPaymentController extends Controller
         }
 
         $settings = $this->normalizePaymentSettings($paymentMethod->settings);
-        Log::debug('handleTbankDolyamePayment: settings for payment method', ['method_id' => $paymentMethod->id, 'settings' => $settings]);
+        Log::debug('handleTbankDolyamePayment: settings for payment method', [
+            'method_id' => $paymentMethod->id, 
+            'settings' => $settings,
+            'raw_settings' => $paymentMethod->settings,
+            'settings_keys' => array_keys($settings),
+            'has_shop_id' => isset($settings['shop_id']),
+            'has_dolyame_shop_id' => isset($settings['dolyame_shop_id']),
+        ]);
 
 
         // Определяем, должен ли этот платеж быть двухэтапным.
@@ -1712,6 +1723,11 @@ class ShopPaymentController extends Controller
             }
         }
         $tbankService = new TbankPaymentService($settings);
+        Log::debug('handleTbankDolyamePayment: TbankPaymentService instantiated', [
+            'settings_keys' => array_keys($settings),
+            'provider' => $settings['dolyame_provider'] ?? 'tbank',
+            'settings' => $settings, // Log the full settings to see what's available
+        ]);
         try {
             Log::debug('handleTbankDolyamePayment: Initiating payment via TbankService for order', ['order_id' => $order->id, 'payment_method_id' => $paymentMethod->id]);
             $paymentResult = $tbankService->initiatePayment($order);

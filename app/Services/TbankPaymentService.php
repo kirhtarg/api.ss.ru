@@ -21,6 +21,15 @@ class TbankPaymentService
     {
         $this->settings = $settings;
         $this->provider = $settings['dolyame_provider'] ?? 'tbank';
+        
+        // Debug: Log the settings being passed
+        Log::debug('TbankPaymentService constructor: settings received', [
+            'settings_keys' => array_keys($settings),
+            'provider' => $this->provider,
+            'has_dolyame_provider' => isset($settings['dolyame_provider']),
+            'has_shop_id' => isset($settings['shop_id']),
+            'has_dolyame_shop_id' => isset($settings['dolyame_shop_id']),
+        ]);
 
         if ($this->provider === 'partner') {
             $dolyameUrl = $settings['dolyame_api_url'] ?? $settings['api_url'] ?? '';
@@ -45,10 +54,13 @@ class TbankPaymentService
      */
     public function initiatePayment($order): array
     {
+        Log::debug('TbankPaymentService: initiatePayment called', ['provider' => $this->provider]);
         if ($this->provider === 'partner') {
+            Log::debug('TbankPaymentService: dispatching to initiateDolyamePartnerPayment');
             return $this->initiateDolyamePartnerPayment($order);
         }
         
+        Log::debug('TbankPaymentService: dispatching to initiateTbankAcquiringPayment');
         return $this->initiateTbankAcquiringPayment($order);
     }
 
@@ -57,7 +69,15 @@ class TbankPaymentService
      */
     protected function initiateDolyamePartnerPayment($order): array
     {
+        Log::debug('TbankPaymentService: initiateDolyamePartnerPayment called');
         $apiUrl = $this->baseUrl . '/orders/create';
+        
+        // Debug: Log the settings being used
+        Log::debug('Dolyame Partner: initiateDolyamePartnerPayment called', [
+            'settings_keys' => array_keys($this->settings),
+            'has_dolyame_shop_id' => isset($this->settings['dolyame_shop_id']),
+            'has_shop_id' => isset($this->settings['shop_id']),
+        ]);
 
         try {
             $get = function ($obj, string $key, $default = null) {
@@ -140,7 +160,21 @@ class TbankPaymentService
             }
 
             // Get shop settings
+        Log::debug('Dolyame Partner: About to access shop_id', [
+            'settings_available' => array_keys($this->settings),
+            'dolyame_shop_id_exists' => isset($this->settings['dolyame_shop_id']),
+            'shop_id_exists' => isset($this->settings['shop_id']),
+        ]);
+        
+        try {
             $shopId = $this->settings['dolyame_shop_id'] ?? $this->settings['shop_id'] ?? null;
+        } catch (\Exception $e) {
+            Log::error('Dolyame Partner: Exception accessing shop_id', [
+                'error' => $e->getMessage(),
+                'settings_keys' => array_keys($this->settings),
+            ]);
+            throw $e;
+        }
             if (!$shopId) {
                 Log::error('Dolyame Partner: shop_id is missing in settings');
                 return [
@@ -262,14 +296,15 @@ class TbankPaymentService
                 'has_cert' => !empty($certPath) && file_exists($certPath),
                 'has_key' => !empty($keyPath) && file_exists($keyPath),
                 'payload_structure' => array_keys($payload),
-                'order_structure' => array_keys($payload['order']),
-                'client_info_structure' => array_keys($payload['client_info']),
-                'items_count' => count($payload['order']['items']),
-                'total_amount' => $payload['order']['amount'],
-                'shop_id' => $payload['order']['shop_id'],
-                'phone' => $payload['client_info']['phone'],
-                'email' => $payload['client_info']['email'],
-                'order_id' => $payload['order']['id'],
+                'order_structure' => array_keys($payload['order'] ?? []),
+                'client_info_structure' => array_keys($payload['client_info'] ?? []),
+                'items_count' => count($payload['order']['items'] ?? []),
+                'total_amount' => $payload['order']['amount'] ?? 0,
+                'shop_id' => $shopId, // Use the variable instead of payload
+                'phone' => $payload['client_info']['phone'] ?? '',
+                'email' => $payload['client_info']['email'] ?? '',
+                'order_id' => $payload['order']['id'] ?? '',
+                'correlation_id' => $correlationId,
             ]);
 
             $http = Http::timeout(30)->retry(2, 1000)
@@ -334,6 +369,7 @@ class TbankPaymentService
      */
     public function initiateTbankAcquiringPayment($order): array
     {
+        Log::debug('TbankPaymentService: initiateTbankAcquiringPayment called');
         $apiUrl = $this->baseUrl . '/Init'; 
 
         try {
@@ -356,7 +392,7 @@ class TbankPaymentService
             $failUrl = url('/api/public/shop/payment/return?payment_type=' . $paymentTypeParam . '&status=fail&order_number=' . urlencode($orderNumber));
 
             $payload = [
-                'TerminalKey' => $this->settings['terminal_key'],
+                'TerminalKey' => $this->settings['terminal_key'] ?? '',
                 'Amount' => (int) round($totalAmount * 100),
                 'OrderId' => $orderIdForGateway,
                 'Description' => 'Оплата заказа №' . $orderNumber,
