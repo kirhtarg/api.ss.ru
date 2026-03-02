@@ -103,17 +103,38 @@ class TbankPaymentService
             $firstName = $nameParts[0] ?: 'Покупатель';
             $lastName = $nameParts[1] ?? '';
 
+            // Format phone number for Dolyame API (should be in format 7XXXXXXXXXX)
+            $phone = $get($order, 'customer_phone', '');
+            $phone = preg_replace('/[^0-9]/', '', $phone);
+            if (strlen($phone) === 10 && $phone[0] === '9') {
+                $phone = '7' . $phone;
+            } elseif (strlen($phone) === 11 && $phone[0] === '8') {
+                $phone = '7' . substr($phone, 1);
+            }
+
+            // Get shop settings
+            $shopId = $this->settings['dolyame_shop_id'] ?? $this->settings['shop_id'] ?? null;
+            if (!$shopId) {
+                Log::error('Dolyame Partner: shop_id is missing in settings');
+                return [
+                    'success' => false,
+                    'message' => 'Payment gateway misconfigured: missing shop_id',
+                ];
+            }
+
             $payload = [
                 'order' => [
                     'id' => $orderNumber,
                     'amount' => round($totalAmount, 2),
                     'items' => $items,
+                    'shop_id' => $shopId,
                 ],
                 'client_info' => [
                     'first_name' => $firstName,
                     'last_name' => $lastName,
                     'email' => $get($order, 'customer_email', ''),
-                    'phone' => $get($order, 'customer_phone', ''),
+                    'phone' => $phone,
+                    'middle_name' => '', // Добавляем обязательное поле
                 ],
                 'callbacks' => [
                     'notification_url' => url('/api/webhooks/tbank'),
