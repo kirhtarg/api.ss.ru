@@ -215,8 +215,8 @@ class TbankPaymentService
                     'id' => $orderNumber,
                     'amount' => round($totalAmount, 2),
                     'items' => $items,
-                    'shop_id' => $shopId, // Moved shop_id inside order object
-                    'prepayment_amount' => 0, // Required field for Dolyame
+                    'shop_id' => $shopId,
+                    'prepayment_amount' => 0,
                 ],
                 'client_info' => [
                     'first_name' => $firstName,
@@ -319,21 +319,13 @@ class TbankPaymentService
                  if ($response->status() === 422) {
                      Log::error('Dolyame Partner API Validation Error (422) for order ' . $orderNumber, [
                         'response_status' => $response->status(),
-                        'response_body' => $responseData,
-                        'response_errors' => $responseData['errors'] ?? null,
-                        'response_fields' => $responseData['fields'] ?? null,
-                        'request_payload' => $payload,
-                        'error_code' => $errorCode,
-                        'error_message' => $errorMessage,
+                        'response_body' => $responseData, // This will contain the specific field errors
                         'correlation_id' => $correlationId,
                      ]);
                  } else {
                      Log::error('Dolyame Partner API Error for order ' . $orderNumber, [
                         'response_status' => $response->status(),
                         'response_body' => $responseData,
-                        'request_payload' => $payload,
-                        'error_code' => $errorCode,
-                        'error_message' => $errorMessage,
                         'correlation_id' => $correlationId,
                      ]);
                  }
