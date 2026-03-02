@@ -872,6 +872,17 @@ class ShopPaymentController extends Controller
             return response()->json(['success' => false, 'message' => 'Payment method is inactive'], 400);
         }
         $settings = $this->normalizePaymentSettings($paymentMethod->settings);
+        
+        // Debug: Log the actual settings from database
+        Log::debug('ShopPaymentController: handleTbankEacqPayment settings', [
+            'payment_method_id' => $paymentMethod->id,
+            'raw_settings' => $paymentMethod->settings,
+            'normalized_settings' => $settings,
+            'dolyame_keys' => array_filter(array_keys($settings), function($key) {
+                return strpos($key, 'dolyame') !== false;
+            }),
+        ]);
+        
         $shouldBeTwoStagePay = $settings['two_stage_pay'] ?? false;
         if (!$shouldBeTwoStagePay && class_exists(\App\Models\Setting::class)) {
             $globalTwoStagePaySetting = \App\Models\Setting::where('key', 'two_stage_pay')->value('value');

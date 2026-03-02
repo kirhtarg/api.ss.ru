@@ -22,13 +22,22 @@ class TbankPaymentService
         $this->settings = $settings;
         $this->provider = $settings['dolyame_provider'] ?? 'tbank';
         
+        // Debug: Log ALL settings keys to see what's actually available
+        Log::debug('TbankPaymentService constructor: ALL settings keys', [
+            'all_keys' => array_keys($settings),
+            'dolyame_keys' => array_filter(array_keys($settings), function($key) {
+                return strpos($key, 'dolyame') !== false;
+            }),
+        ]);
+        
         // Debug: Log the settings being passed
         Log::debug('TbankPaymentService constructor: settings received', [
-            'settings_keys' => array_keys($settings),
             'provider' => $this->provider,
             'has_dolyame_provider' => isset($settings['dolyame_provider']),
-            'has_shop_id' => isset($settings['shop_id']),
-            'has_dolyame_shop_id' => isset($settings['dolyame_shop_id']),
+            'has_dolyame_login1' => isset($settings['dolyame_login1']),
+            'has_dolyame_password1' => isset($settings['dolyame_password1']),
+            'has_dolyame_cert_path' => isset($settings['dolyame_cert_path']),
+            'has_api_url' => isset($settings['api_url']) || isset($settings['dolyame_api_url']),
         ]);
 
         if ($this->provider === 'partner') {
@@ -92,7 +101,7 @@ class TbankPaymentService
             $orderNumber = (string) $get($order, 'order_number', (string) $orderId);
             $totalAmount = (float) $get($order, 'total_amount', 0);
 
-            // Prepare items for Dolyame
+            // Prepare items for Dolyame - строгая структура согласно примеру поддержки
             $items = [];
             $orderItems = is_array($order) ? ($order['items'] ?? []) : (is_object($order) ? ($order->items ?? []) : []);
             if (is_string($orderItems)) {
@@ -115,20 +124,26 @@ class TbankPaymentService
                     continue;
                 }
                 
+                // Строгая структура согласно примеру поддержки: только name, quantity, price
                 $items[] = [
                     'name' => $itemName,
                     'price' => $itemPrice,
                     'quantity' => $itemQuantity,
-                    // 'tax' => $this->settings['item_tax'] ?? 'none', // Removed temporarily to test 422 error
                 ];
             }
 
-            // Validate that we have at least one valid item
-            if (empty($items)) {
-                Log::error('Dolyame Partner: No valid items found for order', ['order_items' => $orderItems]);
+            // Валидация: сумма items должна быть равна totalAmount (критично для Dolyame)
+            $itemsTotal = array_sum(array_column($items, 'price'));
+            if (abs($itemsTotal - $totalAmount) > 0.01) {
+                Log::error('Dolyame Partner: Items total does not match order amount', [
+                    'items_total' => $itemsTotal,
+                    'order_amount' => $totalAmount,
+                    'difference' => $itemsTotal - $totalAmount,
+                    'items' => $items,
+                ]);
                 return [
                     'success' => false,
-                    'message' => 'No valid order items found',
+                    'message' => 'Items total amount mismatch',
                 ];
             }
 
@@ -138,7 +153,6 @@ class TbankPaymentService
                     'name' => 'Доставка',
                     'price' => round((float)$deliveryCost, 2),
                     'quantity' => 1,
-                    // 'tax' => $this->settings['delivery_tax'] ?? 'none', // Removed temporarily to test 422 error
                 ];
             }
 
@@ -217,8 +231,6 @@ class TbankPaymentService
                 'login' => $login,
                 'has_login' => !empty($login),
                 'has_password' => !empty($password),
-                'login_source' => isset($this->settings['dolyame_login']) ? 'dolyame_login' : 'none',
-                'password_source' => isset($this->settings['dolyame_password']) ? 'dolyame_password' : 'none',
             ]);
 
             // Generate X-Correlation-ID (required header)
@@ -236,7 +248,27 @@ class TbankPaymentService
             // Only add Basic Auth if we're not using API key
             if (!empty($login) && !empty($password)) {
                 $http = $http->withBasicAuth($login, $password);
+                Log::debug('Dolyame Partner: Basic Auth configured', [
+                    'login' => $login,
+                    'password_length' => strlen($password),
+                ]);
+            } else {
+                Log::error('Dolyame Partner: Missing login or password for Basic Auth', [
+                    'has_login' => !empty($login),
+                    'has_password' => !empty($password),
+                ]);
             }
+            
+            // Логирование полного запроса перед отправкой
+            Log::debug('Dolyame Partner: About to send request', [
+                'url' => $apiUrl,
+                'headers' => $authHeaders,
+                'has_basic_auth' => !empty($login) && !empty($password),
+                'login' => $login,
+                'payload' => $payload,
+                'cert_path' => $certPath ?? 'not_set',
+                'key_path' => $keyPath ?? 'not_set',
+            ]);
             
             $response = $http->post($apiUrl, $payload);
             $responseData = $response->json();
