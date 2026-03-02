@@ -789,8 +789,8 @@ Route::get('/test/oauth', function () {
     Route::get('/yandex-pay/status/{orderId}', [App\Http\Controllers\Api\YandexPayController::class, 'checkPaymentStatus']);
 
     // Webhook для Яндекс Пэй
-    Route::post('/webhooks/yandex-pay', [App\Http\Controllers\Api\YandexPayController::class, 'handleWebhook']);
-    Route::post('/webhooks/yandex-split', [App\Http\Controllers\Api\YandexPayController::class, 'handleWebhook']);
+    Route::post('/webhooks/yandex-pay', [\App\Http\Controllers\Api\Public\ShopPaymentController::class, 'yandexPayWebhook']);
+    Route::post('/webhooks/yandex-split', [\App\Http\Controllers\Api\Public\ShopPaymentController::class, 'yandexPayWebhook']);
 
     // Проверка статуса платежа
     Route::options('/public/shop/payment/check-status', function () {

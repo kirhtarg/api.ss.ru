@@ -6,8 +6,6 @@ use App\Http\Controllers\Controller;
 use App\Models\ShopPaymentMethod;
 use App\Models\ShopOrder;
 use App\Models\ShopPaymentTransaction;
-use App\Models\ShopPaymentStatus;
-use App\Models\ShopOrderStatus;
 use App\Models\Setting;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Http\Request;
@@ -124,7 +122,7 @@ class YandexPayController extends Controller
                 if ($order) {
                     $order->update([
                         'yandex_pay_order_id' => $data['id'],
-                        'payment_status' => 'pending'
+                        'payment_status_id' => 1 // pending
                     ]);
                 }
 
@@ -188,13 +186,7 @@ class YandexPayController extends Controller
             if ($response->successful()) {
                 $data = $response->json();
                 
-                // Обновляем статус заказа в базе данных
                 $order = ShopOrder::where('yandex_pay_order_id', $orderId)->first();
-                if ($order) {
-                    $order->update([
-                        'payment_status' => $this->mapPaymentStatus($data['status'])
-                    ]);
-                }
 
                 return response()->json([
                     'success' => true,
@@ -259,7 +251,7 @@ class YandexPayController extends Controller
                 $order = ShopOrder::where('yandex_pay_order_id', $orderId)->first();
                 if ($order) {
                     $order->update([
-                        'payment_status' => 'cancelled'
+                        'payment_status_id' => 3 // cancelled
                     ]);
                 }
 
@@ -483,7 +475,7 @@ class YandexPayController extends Controller
 
             return response()->json([
                 'order_id' => $orderId,
-                'status' => $order->payment_status ?? 'pending'
+                'status_id' => $order->payment_status_id ?? 1
             ]);
         } catch (\Exception $e) {
             Log::error('YandexPay checkPaymentStatus failed', [
@@ -538,803 +530,56 @@ class YandexPayController extends Controller
                 ], 400);
             }
 
-            $env = ($settings['mode'] ?? 'test') === 'live' ? 'PRODUCTION' : 'SANDBOX';
-            $currency = $request->input('currency', $settings['currency'] ?? 'RUB');
-            $amount = (float) $request->input('amount');
-            $availablePaymentMethods = $request->input('available_payment_methods', ['CARD', 'SPLIT']);
-            $orderId = $request->input('order_id');
-            $forInfoWidgets = $request->input('for_info_widgets', false);
-            $useCreatePayment = $request->input('use_create_payment', false); // Для createPayment нужен totalAmount как строка
+            $apiUrl = $settings['mode'] === 'test' ? $this->testApiUrl : $this->apiUrl;
+            $orderId = 'sdk-order-' . time();
+            $currency = $request->currency ?? $settings['currency'] ?? 'RUB';
+            $availablePaymentMethods = $request->available_payment_methods ?? ['CARD', 'SPLIT'];
 
-            // Use merchant_name from settings or fallback to payment method name
-            $merchantName = $settings['merchant_name'] ?? $paymentMethod->name ?? 'Skate & Snow';
-            
-            // Получаем main_site из настроек сайта
-            $mainSite = Setting::where('key', 'main_site')->value('value');
-            // Если main_site не найден, используем fallback
-            $merchantUrl = $mainSite ?: config('app.frontend_url') ?: $request->getSchemeAndHttpHost();
-            
-            // Build paymentData
-            $paymentData = [
-                'env' => $env,
-                'version' => 2,
-                'countryCode' => 'RU',
-                'currencyCode' => $currency,
-                'merchant' => [
-                    'id' => $settings['merchant_id'],
-                    'name' => $merchantName,
-                    'url' => $merchantUrl // Используем main_site из настроек сайта
-                ],
-                'availablePaymentMethods' => $availablePaymentMethods,
+            $orderData = [
+                'amount' => number_format($request->amount, 2, '.', ''),
+                'currency' => $currency,
+                'order_id' => $orderId,
+                'available_payment_methods' => $availablePaymentMethods
             ];
             
-            // Для createPayment totalAmount должен быть строкой, для createSession - объектом
-            if ($useCreatePayment) {
-                $paymentData['totalAmount'] = (string)round($amount, 2);
-            } else {
-                $paymentData['totalAmount'] = [
-                    'amount' => (string)round($amount, 2),
-                    'currency' => $currency,
+            $payload = [
+                'merchant_id' => $settings['merchant_id'],
+                'order' => $orderData,
+                'signature' => $this->generateSignature($orderData, $settings['secret_key'])
             ];
-            }
             
-            // For info widgets, use only minimal data
-            if ($forInfoWidgets) {
-                // For info widgets, SDK needs only basic payment info
-                // Remove availablePaymentMethods to avoid SDK creating order objects
-                unset($paymentData['availablePaymentMethods']);
-            } else {
-                // For full payment widgets
-                // Add items if provided (from checkout cart items)
-                $items = $request->input('items');
-                if ($items && is_array($items) && count($items) > 0) {
-                    $paymentData['items'] = $items;
-                    
-                    // Add orderId if provided
-                    if ($orderId) {
-                        $paymentData['orderId'] = $orderId;
-                    }
-                    
-                    // Add cart object to make SDK think this is full payment context
-                    $paymentData['cart'] = [
-                        'items' => $items
-                    ];
-                } elseif ($orderId) {
-                    // Add orderId and create fake items for product page
-                    $paymentData['orderId'] = $orderId;
-                    $goodId = $request->input('good_id', 0);
-                    $goodName = $request->input('product_name', 'Product');
-                    $qty = $request->input('qty', 1);
-                    $unitPrice = $qty > 0 ? $amount / $qty : $amount;
-                    
-                    $paymentData['items'] = [
-                        [
-                            'productId' => (string)$goodId,
-                            'name' => $goodName,
-                            'quantity' => [
-                                'count' => (string)$qty,
-                                'label' => 'шт',
-                                'type' => 'FLOAT'
-                            ],
-                            'unitPrice' => [
-                                'amount' => (string)round($unitPrice, 2),
-                                'currency' => $currency
-                            ],
-                            'totalPrice' => [
-                                'amount' => (string)round($amount, 2),
-                                'currency' => $currency
-                            ]
-                        ]
-                    ];
-                    
-                    // Add cart to make SDK recognize Payment context
-                    $paymentData['cart'] = [
-                        'items' => $paymentData['items']
-                    ];
-                    
-                    // Add order object to make SDK recognize Payment context
-                    $paymentData['order'] = [
-                        'id' => $orderId,
-                        'total' => [
-                            'amount' => (string)round($amount, 2)
-                        ]
-                    ];
-                }
-            }
+            return response()->json($payload);
 
-            return response()->json([
-                'success' => true,
-                'data' => $paymentData,
-            ]);
         } catch (\Exception $e) {
             Log::error('YandexPay getPaymentSessionData failed', [
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
             return response()->json([
                 'success' => false,
-                'message' => 'Внутренняя ошибка сервера'
+                'message' => 'Не удалось получить данные сессии'
             ], 500);
         }
     }
+    
 
-    /**
-     * Обработка webhook от Яндекс Пэй
-     * 
-     * Формат уведомления от Яндекс Пэй может быть разным в зависимости от версии API.
-     * Обычно приходит объект с полями: event, object (или data)
-     */
-    public function handleWebhook(Request $request): JsonResponse
-    {
-        try {
-            $data = $request->all();
-            
-            Log::info('YandexPay webhook received', [
-                'ip' => $request->ip(),
-                'data' => $data
-            ]);
-
-            // Проверяем подпись webhook (если требуется)
-            // В тестовом режиме можем пропустить проверку
-            $isProduction = config('app.env') === 'production';
-            if ($isProduction && !$this->verifyWebhookSignature($request)) {
-                Log::warning('YandexPay webhook signature verification failed', [
-                    'ip' => $request->ip()
-                ]);
-                return response()->json(['error' => 'Unauthorized'], 401);
-            }
-
-            // Извлекаем данные события
-            // Формат может быть: { "event": "...", "object": {...} } или { "event": "...", "data": {...} }
-            $event = $data['event'] ?? null;
-            $paymentObject = $data['object'] ?? $data['data'] ?? null;
-
-            if (!$event || !$paymentObject) {
-                Log::warning('Invalid YandexPay webhook format', [
-                    'event' => $event,
-                    'has_object' => !empty($paymentObject)
-                ]);
-                return response()->json(['error' => 'Invalid webhook data'], 400);
-            }
-
-            // Извлекаем ID заказа из Яндекс Пэй
-            $yandexOrderId = $paymentObject['id'] ?? $paymentObject['orderId'] ?? null;
-            $status = $paymentObject['status'] ?? null;
-
-            if (!$yandexOrderId || !$status) {
-                Log::warning('Missing payment data in YandexPay webhook', [
-                    'yandex_order_id' => $yandexOrderId,
-                    'status' => $status
-                ]);
-                return response()->json(['error' => 'Invalid webhook data'], 400);
-            }
-
-            // Находим транзакцию по ID заказа в Яндекс Пэй
-            $transaction = ShopPaymentTransaction::where('transaction_id', $yandexOrderId)->first();
-            
-            if (!$transaction) {
-                // Пробуем найти по yandex_pay_order_id в заказе
-                $order = ShopOrder::where('yandex_pay_order_id', $yandexOrderId)->first();
-                if ($order) {
-                    // Находим payment_method_id для Яндекс Пэй
-                    $paymentMethodIds = ShopPaymentMethod::whereIn('type', ['yandex_pay', 'yandex_split'])
-                        ->pluck('id')
-                        ->toArray();
-                    
-                    if (!empty($paymentMethodIds)) {
-                        $transaction = ShopPaymentTransaction::where('order_id', $order->id)
-                            ->whereIn('payment_method_id', $paymentMethodIds)
-                            ->first();
-                    }
-                }
-            }
-
-            if (!$transaction) {
-                $cacheKey = 'payment:init:yandex_pay:' . $yandexOrderId;
-                $draft = Cache::get($cacheKey);
-                if ($draft && is_array($draft) && in_array($event, ['payment.succeeded','order.succeeded'])) {
-                    try {
-                        $orderData = $draft['order_data'] ?? [];
-                        $order = ShopOrder::create([
-                            'order_number' => $draft['order_number'] ?? ('TX-' . uniqid()),
-                            'user_id' => $orderData['customer_id'] ?? null,
-                            'customer_name' => $orderData['customer_name'] ?? '',
-                            'customer_email' => $orderData['customer_email'] ?? '',
-                            'customer_phone' => $orderData['customer_phone'] ?? null,
-                            'items' => $orderData['items'] ?? [],
-                            'subtotal' => $orderData['subtotal'] ?? 0,
-                            'discount_amount' => $orderData['total_discount_amount'] ?? 0,
-                            'total_amount' => $orderData['total_amount'] ?? 0,
-                            'total_quantity' => isset($orderData['items']) ? array_sum(array_column($orderData['items'], 'quantity')) : 0,
-                            'payment_method' => optional(\App\Models\ShopPaymentMethod::find($draft['payment_method_id'] ?? null))->name,
-                            'payment_method_id' => $draft['payment_method_id'] ?? null,
-                            'shipping_method' => $orderData['shipping_method'] ?? null,
-                            'shipping_method_id' => $orderData['shipping_method_id'] ?? null,
-                            'shipping_address' => $orderData['shipping_address'] ?? null,
-                            'notes' => $orderData['notes'] ?? null,
-                            'delivery_cost' => $orderData['delivery_cost'] ?? 0,
-                            'sale_discount_amount' => $orderData['sale_discount_amount'] ?? 0,
-                            'registered_user_discount_amount' => $orderData['registered_user_discount_amount'] ?? 0,
-                            'promo_code_discount_amount' => $orderData['promo_code_discount_amount'] ?? 0,
-                            'birthday_discount_amount' => $orderData['birthday_discount_amount'] ?? 0,
-                            'total_discount_amount' => $orderData['total_discount_amount'] ?? 0,
-                            'promo_code' => $orderData['promo_code'] ?? null,
-                            'promo_code_id' => $orderData['promo_code_id'] ?? null,
-                            'use_bonus_points' => $orderData['use_bonus_points'] ?? false,
-                            'bonus_points_to_use' => $orderData['bonus_points_to_use'] ?? 0,
-                            'order_bonus_points' => $orderData['order_bonus_points'] ?? 0,
-                            'payment_status_id' => ShopPaymentStatus::where('name', 'paid')->value('id'),
-                            'status_id' => ShopOrderStatus::where('name', 'confirmed')->value('id') ?? ShopOrderStatus::where('name', 'pending')->value('id'),
-                        ]);
-                        ShopPaymentTransaction::create([
-                            'order_id' => $order->id,
-                            'payment_method_id' => $draft['payment_method_id'] ?? null,
-                            'amount' => $draft['amount'] ?? 0,
-                            'transaction_id' => $yandexOrderId,
-                            'status' => 'paid',
-                            'request_data' => $draft,
-                            'response_data' => $data,
-                        ]);
-                        Cache::forget($cacheKey);
-                        // обновим ссылку на заказ в дальнейшем коде
-                        $transaction = ShopPaymentTransaction::where('order_id', $order->id)->where('transaction_id', $yandexOrderId)->first();
-                    } catch (\Exception $e) {
-                        Log::error('YandexPay webhook: failed to create order from cache', ['error' => $e->getMessage()]);
-                    }
-                }
-                if (!$transaction) {
-                    Log::warning('Transaction not found for YandexPay payment', [
-                        'yandex_order_id' => $yandexOrderId,
-                        'event' => $event,
-                        'status' => $status
-                    ]);
-                    return response()->json(['status' => 'ok', 'message' => 'Transaction not found']);
-                }
-            }
-
-            // Получаем заказ; если его нет и статус успешный — создаем его из данных транзакции
-            $order = ShopOrder::find($transaction->order_id);
-            if (!$order && in_array($event, ['payment.succeeded', 'order.succeeded'])) {
-                try {
-                    $orderData = $transaction->request_data['order_data'] ?? null;
-                    if (is_array($orderData)) {
-                        $order = ShopOrder::create([
-                            'order_number' => $transaction->request_data['order_number'] ?? ('TX-' . $transaction->id),
-                            'user_id' => $orderData['customer_id'] ?? null,
-                            'customer_name' => $orderData['customer_name'] ?? '',
-                            'customer_email' => $orderData['customer_email'] ?? '',
-                            'customer_phone' => $orderData['customer_phone'] ?? null,
-                            'items' => $orderData['items'] ?? [],
-                            'subtotal' => $orderData['subtotal'] ?? 0,
-                            'discount_amount' => $orderData['total_discount_amount'] ?? 0,
-                            'total_amount' => $orderData['total_amount'] ?? 0,
-                            'total_quantity' => isset($orderData['items']) ? array_sum(array_column($orderData['items'], 'quantity')) : 0,
-                            'payment_method' => optional($transaction->paymentMethod)->name,
-                            'payment_method_id' => $transaction->payment_method_id,
-                            'shipping_method' => $orderData['shipping_method'] ?? null,
-                            'shipping_method_id' => $orderData['shipping_method_id'] ?? null,
-                            'shipping_address' => $orderData['shipping_address'] ?? null,
-                            'notes' => $orderData['notes'] ?? null,
-                            'delivery_cost' => $orderData['delivery_cost'] ?? 0,
-                            'sale_discount_amount' => $orderData['sale_discount_amount'] ?? 0,
-                            'registered_user_discount_amount' => $orderData['registered_user_discount_amount'] ?? 0,
-                            'promo_code_discount_amount' => $orderData['promo_code_discount_amount'] ?? 0,
-                            'birthday_discount_amount' => $orderData['birthday_discount_amount'] ?? 0,
-                            'total_discount_amount' => $orderData['total_discount_amount'] ?? 0,
-                            'promo_code' => $orderData['promo_code'] ?? null,
-                            'promo_code_id' => $orderData['promo_code_id'] ?? null,
-                            'use_bonus_points' => $orderData['use_bonus_points'] ?? false,
-                            'bonus_points_to_use' => $orderData['bonus_points_to_use'] ?? 0,
-                            'order_bonus_points' => $orderData['order_bonus_points'] ?? 0,
-                            'payment_status_id' => ShopPaymentStatus::where('name', 'paid')->value('id'),
-                            'status_id' => ShopOrderStatus::where('name', 'confirmed')->value('id') ?? ShopOrderStatus::where('name', 'pending')->value('id'),
-                        ]);
-                        $transaction->update(['order_id' => $order->id]);
-                    }
-                } catch (\Exception $e) {
-                    Log::error('YandexPay webhook: failed to create order from transaction', [
-                        'tx_id' => $transaction->id,
-                        'error' => $e->getMessage()
-                    ]);
-                }
-            }
-            if (!$order) {
-                Log::warning('Order not found for transaction', ['transaction_id' => $transaction->id, 'order_id' => $transaction->order_id]);
-                return response()->json(['status' => 'ok', 'message' => 'Order not found']);
-            }
-
-            // Маппим статус из Яндекс Пэй в наш формат
-            $newStatus = $this->mapYandexPayStatus($status);
-            
-            // Обновляем транзакцию
-            $transaction->update([
-                'status' => $newStatus,
-                'response_data' => $data,
-                'processed_at' => now()
-            ]);
-
-            // Обрабатываем событие в зависимости от типа
-            switch ($event) {
-                case 'payment.succeeded':
-                case 'order.succeeded':
-                    // Платеж успешно завершен
-                    $this->handlePaymentSucceeded($order, $transaction, $paymentObject);
-                    break;
-                    
-                case 'payment.canceled':
-                case 'order.canceled':
-                    // Платеж отменен
-                    $this->handlePaymentCanceled($order, $transaction, $paymentObject);
-                    break;
-                    
-                case 'payment.waiting_for_capture':
-                case 'order.waiting_for_capture':
-                    // Платеж ожидает подтверждения (capture)
-                    // Обычно это промежуточный статус, не обновляем payed
-                    Log::info('YandexPay payment waiting for capture', [
-                        'order_id' => $order->id,
-                        'yandex_order_id' => $yandexOrderId
-                    ]);
-                    break;
-                    
-                default:
-                    Log::info('Unhandled YandexPay event', [
-                        'event' => $event,
-                        'order_id' => $order->id,
-                        'yandex_order_id' => $yandexOrderId
-                    ]);
-            }
-
-            // Всегда возвращаем 200, чтобы Яндекс Пэй знала, что уведомление получено
-            return response()->json(['status' => 'ok'], 200);
-
-        } catch (\Exception $e) {
-            Log::error('YandexPay webhook error: ' . $e->getMessage(), [
-                'trace' => $e->getTraceAsString()
-            ]);
-            // Возвращаем 200, чтобы не провоцировать повторные запросы
-            // Но логируем ошибку для отладки
-            return response()->json(['status' => 'ok', 'error' => 'Webhook processing error'], 200);
-        }
-    }
-
-    /**
-     * Проверка подписи webhook
-     */
-    private function verifyWebhookSignature(Request $request): bool
-    {
-        $signature = $request->header('X-Yandex-Pay-Signature');
-        $body = $request->getContent();
-
-        if (!$signature) {
-            return false;
-        }
-
-        // Получаем секретный ключ из настроек
-        $paymentMethod = ShopPaymentMethod::where('type', 'yandex_pay')
-            ->orWhere('type', 'yandex_split')
-            ->where('is_active', true)
-            ->first();
-
-        if (!$paymentMethod) {
-            return false;
-        }
-
-        $settings = $paymentMethod->getApiSettings();
-        $secret = $settings['secret_key'] ?? '';
-
-        $expectedSignature = base64_encode(hash_hmac('sha256', $body, $secret, true));
-        
-        return hash_equals($signature, $expectedSignature);
-    }
-
-    /**
-     * Обработка успешного платежа
-     */
-    private function handlePaymentSucceeded(ShopOrder $order, ShopPaymentTransaction $transaction, array $paymentObject): void
-    {
-        try {
-            // Проверяем двухэтапную оплату
-            $twoStagePay = \App\Models\Setting::where('key', 'two_stage_pay')->first();
-            $isTwoStagePay = $twoStagePay && ($twoStagePay->value === '1' || $twoStagePay->value === true);
-
-            // Если включена двухэтапная оплата и заказ не одобрен, не обрабатываем платеж
-            if ($isTwoStagePay && !$order->pay_agree) {
-                \Illuminate\Support\Facades\Log::warning('YandexPay payment received for unapproved order in two-stage mode', [
-                    'order_id' => $order->id,
-                    'order_number' => $order->order_number,
-                    'payment_id' => $paymentObject['id'] ?? null,
-                    'pay_agree' => $order->pay_agree
-                ]);
-                return;
-            }
-
-            $paidStatusId = ShopPaymentStatus::where('name', 'paid')->value('id');
-
-            // Обновляем заказ: помечаем как оплаченный и активный
-            $updateData = [
-                'payment_status_id' => $paidStatusId ?: $order->payment_status_id,
-                'payed' => true, // Основной статус оплаты заказа
-                'is_active' => true,
-                'status_id' => 2, // Подтвержден
-                'delivery_status_id' => 1, // Создан (остается неизменным)
-                'metadata' => json_encode(array_merge(
-                    json_decode($order->metadata, true) ?? [],
-                    [
-                        'payment_status' => 'paid',
-                        'payment_method' => 'yandex_pay',
-                        'yandex_pay_order_id' => $paymentObject['id'] ?? null,
-                        'paid_at' => now()->toIso8601String()
-                    ]
-                ))
-            ];
-            
-            $order->update($updateData);
-            
-            // Обновляем остатки товаров
-            $this->updateStockQuantities($order);
-
-            // Отправляем уведомления об успешной оплате
-            $this->sendPaymentNotifications($order, $transaction, $paymentObject);
-
-            Log::info('YandexPay order payment successful via webhook', [
-                'order_id' => $order->id,
-                'order_number' => $order->order_number,
-                'transaction_id' => $transaction->id,
-                'yandex_order_id' => $paymentObject['id'] ?? null,
-                'amount' => $paymentObject['amount']['value'] ?? null
-            ]);
-            
-        } catch (\Exception $e) {
-            Log::error('Error handling YandexPay payment succeeded: ' . $e->getMessage(), [
-                'order_id' => $order->id,
-                'transaction_id' => $transaction->id
-            ]);
-            throw $e;
-        }
-    }
-
-    /**
-     * Обработка отмененного платежа
-     */
-    private function handlePaymentCanceled(ShopOrder $order, ShopPaymentTransaction $transaction, array $paymentObject): void
-    {
-        try {
-            // Обновляем заказ: помечаем как неоплаченный и неактивный
-            $updateData = [
-                'payed' => false, // Основной статус оплаты заказа
-                'is_active' => false,
-                'metadata' => json_encode(array_merge(
-                    json_decode($order->metadata, true) ?? [],
-                    [
-                        'payment_status' => 'canceled',
-                        'payment_method' => 'yandex_pay',
-                        'yandex_pay_order_id' => $paymentObject['id'] ?? null,
-                        'canceled_at' => now()->toIso8601String(),
-                        'cancellation_reason' => $paymentObject['cancellation_details']['reason'] ?? null
-                    ]
-                ))
-            ];
-            
-            $order->update($updateData);
-            
-            Log::info('YandexPay order payment canceled via webhook', [
-                'order_id' => $order->id,
-                'order_number' => $order->order_number,
-                'transaction_id' => $transaction->id,
-                'yandex_order_id' => $paymentObject['id'] ?? null,
-                'cancellation_reason' => $paymentObject['cancellation_details']['reason'] ?? null
-            ]);
-            
-        } catch (\Exception $e) {
-            Log::error('Error handling YandexPay payment canceled: ' . $e->getMessage(), [
-                'order_id' => $order->id,
-                'transaction_id' => $transaction->id
-            ]);
-            throw $e;
-        }
-    }
-
-    /**
-     * Обновление остатков товаров при успешной оплате
-     */
-    private function updateStockQuantities(ShopOrder $order): void
-    {
-        try {
-            Log::info('Обновление остатков товаров для заказа YandexPay', [
-                'order_id' => $order->id,
-                'order_number' => $order->order_number
-            ]);
-
-            if (!$order->items) {
-                Log::warning('У заказа нет товаров для обновления остатков', [
-                    'order_id' => $order->id
-                ]);
-                return;
-            }
-
-            $items = is_string($order->items) ? json_decode($order->items, true) : $order->items;
-            
-            if (!is_array($items)) {
-                Log::warning('Товары заказа не являются массивом', [
-                    'order_id' => $order->id,
-                    'items' => $order->items
-                ]);
-                return;
-            }
-
-            foreach ($items as $item) {
-                $goodId = $item['good_id'] ?? null;
-                $quantity = $item['quantity'] ?? 0;
-                $variationId = $item['variation_id'] ?? null;
-
-                if (!$goodId || $quantity <= 0) {
-                    continue;
-                }
-
-                // Обновляем остаток основного товара
-                $this->updateGoodStock($goodId, $quantity, $order->id);
-
-                // Если есть вариация, обновляем её остаток
-                if ($variationId) {
-                    $this->updateVariationStock($variationId, $quantity, $order->id);
-                }
-            }
-
-            Log::info('Остатки товаров успешно обновлены для заказа YandexPay', [
-                'order_id' => $order->id
-            ]);
-
-        } catch (\Exception $e) {
-            Log::error('Ошибка при обновлении остатков товаров YandexPay: ' . $e->getMessage(), [
-                'order_id' => $order->id,
-                'error' => $e->getTraceAsString()
-            ]);
-        }
-    }
-
-    /**
-     * Обновление остатка основного товара
-     */
-    private function updateGoodStock(int $goodId, int $quantity, int $orderId): void
-    {
-        try {
-            $good = \App\Models\ShopGood::find($goodId);
-            
-            if (!$good) {
-                return;
-            }
-
-            $currentStock = $good->stock_quantity ?? 0;
-            $newStock = max(0, $currentStock - $quantity);
-
-            $good->update(['stock_quantity' => $newStock]);
-
-            Log::info('Остаток товара обновлен YandexPay', [
-                'good_id' => $goodId,
-                'old_stock' => $currentStock,
-                'quantity_ordered' => $quantity,
-                'new_stock' => $newStock,
-                'order_id' => $orderId
-            ]);
-
-        } catch (\Exception $e) {
-            Log::error('Ошибка при обновлении остатка товара YandexPay: ' . $e->getMessage(), [
-                'good_id' => $goodId,
-                'order_id' => $orderId
-            ]);
-        }
-    }
-
-    /**
-     * Обновление остатка вариации товара
-     */
-    private function updateVariationStock(int $variationId, int $quantity, int $orderId): void
-    {
-        try {
-            if (!\Illuminate\Support\Facades\Schema::hasTable('shop_good_variations') || 
-                !\Illuminate\Support\Facades\Schema::hasColumn('shop_good_variations', 'stock_quantity')) {
-                return;
-            }
-
-            $variation = \Illuminate\Support\Facades\DB::table('shop_good_variations')->find($variationId);
-            
-            if (!$variation) {
-                return;
-            }
-
-            $currentStock = $variation->stock_quantity ?? 0;
-            $newStock = max(0, $currentStock - $quantity);
-
-            \Illuminate\Support\Facades\DB::table('shop_good_variations')
-                ->where('id', $variationId)
-                ->update(['stock_quantity' => $newStock]);
-
-            Log::info('Остаток вариации товара обновлен YandexPay', [
-                'variation_id' => $variationId,
-                'old_stock' => $currentStock,
-                'quantity_ordered' => $quantity,
-                'new_stock' => $newStock,
-                'order_id' => $orderId
-            ]);
-
-        } catch (\Exception $e) {
-            Log::error('Ошибка при обновлении остатка вариации товара YandexPay: ' . $e->getMessage(), [
-                'variation_id' => $variationId,
-                'order_id' => $orderId
-            ]);
-        }
-    }
 
     /**
      * Валидация настроек платежного метода
      */
     private function validateSettings(array $settings): bool
     {
-        $required = ['merchant_id', 'secret_key', 'mode', 'currency'];
-        
-        foreach ($required as $field) {
-            if (empty($settings[$field])) {
-                return false;
-            }
-        }
-
-        return in_array($settings['mode'], ['test', 'live']) &&
-               in_array($settings['currency'], ['RUB', 'USD', 'EUR']);
+        return !empty($settings['merchant_id']) && !empty($settings['secret_key']);
     }
 
     /**
-     * Маппинг статусов платежей для транзакций
+     * Генерация подписи для Ultimate Widget
      */
-    private function mapPaymentStatus(string $yandexStatus): string
+    private function generateSignature(array $orderData, string $secretKey): string
     {
-        $statusMap = [
-            'pending' => 'pending',
-            'waiting_for_capture' => 'pending',
-            'succeeded' => 'success',
-            'canceled' => 'cancelled'
-        ];
-
-        return $statusMap[$yandexStatus] ?? 'pending';
+        $stringToSign = $orderData['currency'] . $orderData['amount'] . $orderData['order_id'];
+        return base64_encode(hash_hmac('sha256', $stringToSign, $secretKey, true));
     }
 
-    /**
-     * Маппинг статусов Яндекс Пэй в наш формат для транзакций
-     */
-    private function mapYandexPayStatus(string $yandexStatus): string
-    {
-        return match($yandexStatus) {
-            'succeeded' => 'success',
-            'canceled' => 'cancelled',
-            'waiting_for_capture' => 'pending',
-            default => 'pending'
-        };
-    }
 
-    /**
-     * Отправить уведомления об успешной оплате заказа
-     */
-    private function sendPaymentNotifications(ShopOrder $order, ShopPaymentTransaction $transaction, array $paymentObject): void
-    {
-        try {
-            // Отправляем уведомления через систему оповещений (администраторам)
-            $notificationService = app(\App\Services\NotificationService::class);
-            $notificationService->notifyPaymentReceived($order, $transaction, $paymentObject);
-
-            // Отправляем уведомление клиенту через email
-            try {
-                $contacts = $this->getShopContacts();
-                $siteInfo = \App\Services\SiteInfoService::getSiteInfoForEmail();
-
-                // Обогащаем данные товаров названиями
-                $enrichedOrder = $this->enrichOrderItems($order);
-
-                // Отправляем email с подтверждением оплаты
-                \Illuminate\Support\Facades\Mail::to($order->customer_email)->send(new \App\Mail\OrderPaymentConfirmedMail($enrichedOrder, $contacts, $siteInfo));
-
-                Log::info('YandexPay payment confirmation email sent', [
-                    'order_id' => $order->id,
-                    'customer_email' => $order->customer_email
-                ]);
-            } catch (\Exception $e) {
-                Log::error('YandexPay payment confirmation email error', [
-                    'order_id' => $order->id,
-                    'customer_email' => $order->customer_email,
-                    'error' => $e->getMessage()
-                ]);
-            }
-
-        } catch (\Exception $e) {
-            Log::error('YandexPay payment notification error: ' . $e->getMessage());
-        }
-    }
-
-    /**
-     * Получить контакты магазина
-     */
-    private function getShopContacts()
-    {
-        try {
-            $contact = \App\Models\Contact::with(['addresses', 'phones', 'socials'])
-                ->where('is_main', 1)
-                ->first();
-
-            if (!$contact) {
-                return null;
-            }
-
-            // Получаем основные данные
-            $mainAddress = $contact->mainAddress();
-            $mainPhone = $contact->mainPhone();
-
-            // Формируем данные для email
-            return [
-                'name' => $contact->name,
-                'short_name' => $contact->short_name,
-                'legal_name' => $contact->legal_name,
-                'inn' => $contact->inn,
-                'ogrn' => $contact->ogrnip,
-                'kpp' => null,
-                'address' => $mainAddress ? $mainAddress->address : null,
-                'phone' => $mainPhone ? $mainPhone->phone : null,
-                'email' => null,
-                'legal_address' => $contact->legal_address,
-            ];
-
-        } catch (\Exception $e) {
-            Log::error('Error getting shop contacts: ' . $e->getMessage());
-            return null;
-        }
-    }
-
-    /**
-     * Обогатить данные товаров заказа названиями
-     */
-    private function enrichOrderItems($order)
-    {
-        $items = $order->items;
-
-        if (is_string($items)) {
-            $items = json_decode($items, true);
-        }
-
-        if (!$items || !is_array($items)) {
-            return $order;
-        }
-
-        $enrichedItems = [];
-        foreach ($items as $item) {
-            $enrichedItem = $item;
-
-            if (isset($item['good_id'])) {
-                try {
-                    $good = \App\Models\ShopGood::find($item['good_id']);
-                    if ($good) {
-                        $enrichedItem['name'] = $good->name;
-                        $enrichedItem['good_name'] = $good->name;
-
-                        if (isset($item['variation_id']) && $item['variation_id']) {
-                            $variation = \App\Models\ShopGoodVariation::find($item['variation_id']);
-                            if ($variation && $variation->name) {
-                                $enrichedItem['name'] = $good->name . ' (' . $variation->name . ')';
-                                $enrichedItem['good_name'] = $good->name . ' (' . $variation->name . ')';
-                            }
-                        }
-                    }
-                } catch (\Exception $e) {
-                    Log::error('Error enriching item in YandexPayController: ' . $e->getMessage());
-                }
-            }
-
-            $quantity = $item['quantity'] ?? 1;
-            $price = $item['price'] ?? 0;
-            $enrichedItem['total'] = $price * $quantity;
-
-            $enrichedItems[] = $enrichedItem;
-        }
-
-        $enrichedOrder = clone $order;
-        $enrichedOrder->items = $enrichedItems;
-
-        return $enrichedOrder;
-    }
 }

@@ -332,6 +332,92 @@ class ShopPaymentController extends Controller
     }
 
     /**
+     * Handle webhook for Yandex Pay.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\Response
+     */
+    public function yandexPayWebhook(Request $request)
+    {
+        $signature = $request->header('X-Yandex-Pay-Signature');
+        $body = $request->getContent();
+
+        Log::info('Yandex.Pay Webhook received', ['headers' => $request->headers->all(), 'body' => json_decode($body, true)]);
+        
+        $payload = json_decode($body, true);
+        if (!isset($payload['orderId'])) {
+            Log::warning('Yandex.Pay Webhook: orderId not found in payload.', ['payload' => $payload]);
+            return response()->json(['status' => 'error', 'message' => 'orderId not found'], 400);
+        }
+        
+        $order = ShopOrder::where('yandex_pay_order_id', $payload['orderId'])->first();
+        if (!$order) {
+            Log::warning('Yandex.Pay Webhook: Order not found', ['yandex_pay_order_id' => $payload['orderId']]);
+            // Возвращаем 200, чтобы Яндекс не повторял отправку
+            return response()->json(['status' => 'success', 'message' => 'Order not found, but acknowledged']);
+        }
+
+        $paymentMethod = $order->paymentMethod;
+        if (!$paymentMethod) {
+            Log::warning('Yandex.Pay Webhook: Payment method not found for order.', ['order_id' => $order->id]);
+            return response()->json(['status' => 'error', 'message' => 'Payment method not found'], 400);
+        }
+
+        $settings = $this->normalizePaymentSettings($paymentMethod->settings ?? []);
+        if (empty($settings['secret_key'])) {
+            Log::error('Yandex.Pay Webhook: Secret key is not set for the payment method.');
+            return response()->json(['status' => 'error', 'message' => 'Secret key not configured'], 500);
+        }
+
+        $secretKey = $settings['secret_key'];
+        $expectedSignature = hash_hmac('sha256', $body, $secretKey);
+
+        if (!hash_equals($expectedSignature, $signature)) {
+            Log::error('Yandex.Pay Webhook: Invalid signature.', [
+                'expected' => $expectedSignature,
+                'received' => $signature
+            ]);
+            return response()->json(['status' => 'error', 'message' => 'Invalid signature'], 401);
+        }
+        
+        if (isset($payload['status'])) {
+            $newStatusId = $this->mapYandexPaymentStatus($payload['status']);
+            
+            if ($order->payment_status_id !== $newStatusId) {
+                $order->update([
+                    'payment_status_id' => $newStatusId
+                ]);
+
+                // Дополнительно обновляем флаг payed для совместимости
+                if ($newStatusId == 2) { // 2 = paid
+                    $order->update(['payed' => true]);
+                } elseif (in_array($newStatusId, [3, 4])) { // 3 = cancelled, 4 = failed
+                    $order->update(['payed' => false]);
+                }
+                
+                Log::info('Yandex.Pay Webhook: Order status updated.', ['order_id' => $order->id, 'new_status' => $payload['status'], 'new_status_id' => $newStatusId]);
+            }
+        }
+        
+        return response()->json(['status' => 'success'], 200);
+    }
+
+    private function mapYandexPaymentStatus(string $yandexStatus): int
+    {
+        $statusMap = [
+            'pending' => 1,
+            'waiting_for_capture' => 1,
+            'succeeded' => 2,
+            'canceled' => 3,
+            'failed' => 4,
+        ];
+
+        // По умолчанию оставляем статус "в ожидании"
+        return $statusMap[strtolower($yandexStatus)] ?? 1;
+    }
+
+
+    /**
      * Handle webhook for Yookassa.
      *
      * @param  \Illuminate\Http\Request  $request
