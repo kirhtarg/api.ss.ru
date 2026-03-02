@@ -142,63 +142,6 @@ class TbankPaymentService
                 ];
             }
 
-            // Client info
-            $customerName = $get($order, 'customer_name', '');
-            $customerEmail = $get($order, 'customer_email', '');
-            
-            Log::debug('Dolyame Partner: Client info from order', [
-                'customer_name' => $customerName,
-                'customer_email' => $customerEmail,
-                'customer_phone' => $get($order, 'customer_phone', ''),
-            ]);
-            
-            $nameParts = explode(' ', trim($customerName), 2);
-            $firstName = $nameParts[0] ?: 'Покупатель';
-            $lastName = $nameParts[1] ?? '';
-
-            // Format phone number for Dolyame API (should be in format +79993334444)
-            $phone = $get($order, 'customer_phone', '');
-            Log::debug('Dolyame Partner: Raw phone number', ['raw_phone' => $phone]);
-            
-            $phone = preg_replace('/[^0-9]/', '', $phone);
-            Log::debug('Dolyame Partner: Cleaned phone number', ['cleaned_phone' => $phone]);
-            
-            if (strlen($phone) === 10 && $phone[0] === '9') {
-                $phone = '+7' . $phone;
-            } elseif (strlen($phone) === 11 && $phone[0] === '8') {
-                $phone = '+7' . substr($phone, 1);
-            } elseif (strlen($phone) === 11 && $phone[0] === '7') {
-                $phone = '+' . $phone;
-            } else {
-                $phone = '+' . $phone; // Default to adding + prefix
-            }
-            
-            Log::debug('Dolyame Partner: Formatted phone number', ['formatted_phone' => $phone]);
-
-            // Get shop settings
-        Log::debug('Dolyame Partner: About to access shop_id', [
-            'settings_available' => array_keys($this->settings),
-            'dolyame_shop_id_exists' => isset($this->settings['dolyame_shop_id']),
-            'shop_id_exists' => isset($this->settings['shop_id']),
-        ]);
-        
-        try {
-            $shopId = $this->settings['dolyame_shop_id'] ?? $this->settings['shop_id'] ?? null;
-        } catch (\Exception $e) {
-            Log::error('Dolyame Partner: Exception accessing shop_id', [
-                'error' => $e->getMessage(),
-                'settings_keys' => array_keys($this->settings),
-            ]);
-            throw $e;
-        }
-            if (!$shopId) {
-                Log::error('Dolyame Partner: shop_id is missing in settings');
-                return [
-                    'success' => false,
-                    'message' => 'Payment gateway misconfigured: missing shop_id',
-                ];
-            }
-
             // Validate order number format (Dolyame might have specific requirements)
             if (strlen($orderNumber) < 1 || strlen($orderNumber) > 50) {
                 Log::error('Dolyame Partner: Invalid order number length', ['order_number' => $orderNumber]);
@@ -209,21 +152,13 @@ class TbankPaymentService
             }
 
             // Prepare Dolyame-specific payload according to API documentation
-            // Based on the API docs, the structure should be simpler
+            // Based on the support example, simplified structure
             $payload = [
                 'order' => [
                     'id' => $orderNumber,
                     'amount' => round($totalAmount, 2),
                     'items' => $items,
-                    'shop_id' => $shopId,
-                    'prepayment_amount' => 0,
-                ],
-                'client_info' => [
-                    'first_name' => $firstName,
-                    'last_name' => $lastName,
-                    'email' => $customerEmail,
-                    'phone' => $phone,
-                    'middle_name' => '', // Required field
+                    'prepaid_amount' => 0.0, // Changed from prepayment_amount to prepaid_amount
                 ],
                 'notification_url' => url('/api/webhooks/tbank'),
                 'success_url' => url('/api/public/shop/payment/return?payment_type=tbank_dolyame&status=success&order_number=' . urlencode($orderNumber)),
