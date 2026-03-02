@@ -119,7 +119,7 @@ class TbankPaymentService
                     'name' => $itemName,
                     'price' => $itemPrice,
                     'quantity' => $itemQuantity,
-                    'tax' => $this->settings['item_tax'] ?? 'none',
+                    // 'tax' => $this->settings['item_tax'] ?? 'none', // Removed temporarily to test 422 error
                 ];
             }
 
@@ -138,7 +138,7 @@ class TbankPaymentService
                     'name' => 'Доставка',
                     'price' => round((float)$deliveryCost, 2),
                     'quantity' => 1,
-                    'tax' => $this->settings['delivery_tax'] ?? 'none',
+                    // 'tax' => $this->settings['delivery_tax'] ?? 'none', // Removed temporarily to test 422 error
                 ];
             }
 
@@ -164,6 +164,17 @@ class TbankPaymentService
                 'success_url' => url('/api/public/shop/payment/return?payment_type=tbank_dolyame&status=success&order_number=' . urlencode($orderNumber)),
                 'fail_url' => url('/api/public/shop/payment/return?payment_type=tbank_dolyame&status=fail&order_number=' . urlencode($orderNumber)),
             ];
+
+            // Детальное логирование запроса для отладки
+            Log::debug('Dolyame Partner: Full request payload', [
+                'payload' => $payload,
+                'order_number' => $orderNumber,
+                'total_amount' => $totalAmount,
+                'items_count' => count($items),
+                'items' => $items,
+                'items_total' => array_sum(array_column($items, 'price')),
+                'amount_vs_items_diff' => $totalAmount - array_sum(array_column($items, 'price')),
+            ]);
 
             // Build HTTP client with Basic Auth and optional mTLS
             $options = [
