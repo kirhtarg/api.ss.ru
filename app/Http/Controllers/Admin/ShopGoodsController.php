@@ -2569,6 +2569,58 @@ class ShopGoodsController extends Controller
                                     });
                                 }
                             }
+                            
+                            // Теперь удаляем свойства из базы данных, которых нет в отфильтрованном массиве
+                            if (isset($data['properties_to_remove']) && is_array($data['properties_to_remove'])) {
+                                foreach ($data['properties_to_remove'] as $propertyToRemove) {
+                                    $removePropertyId = (int) $propertyToRemove['property_id'];
+                                    $removeShopPropertyValueId = isset($propertyToRemove['shop_property_value_id']) ? (int) $propertyToRemove['shop_property_value_id'] : null;
+                                    $removeValue = isset($propertyToRemove['value']) ? trim($propertyToRemove['value']) : null;
+                                    
+                                    // Проверяем, есть ли это свойство в отфильтрованном массиве
+                                    $stillExists = false;
+                                    foreach ($currentProperties as $existing) {
+                                        if ($existing['property_id'] == $removePropertyId) {
+                                            if ($hasShopValueIdCol && $removeShopPropertyValueId !== null) {
+                                                $existingShopPropertyValueId = isset($existing['shop_property_value_id']) ? (int) $existing['shop_property_value_id'] : null;
+                                                if ($existingShopPropertyValueId == $removeShopPropertyValueId) {
+                                                    $stillExists = true;
+                                                    break;
+                                                }
+                                            } elseif ($hasValueCol && $removeValue !== null) {
+                                                $existingValue = trim($existing['value'] ?? '');
+                                                if ($existingValue === $removeValue) {
+                                                    $stillExists = true;
+                                                    break;
+                                                }
+                                            } else {
+                                                // Если нет значения, проверяем только property_id
+                                                $stillExists = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Если свойство не найдено в отфильтрованном массиве, удаляем его из базы
+                                    if (!$stillExists) {
+                                        $deleteQuery = DB::table('shop_good_properties')
+                                            ->where('good_id', $good->id)
+                                            ->where('property_id', $removePropertyId);
+                                            
+                                        if ($hasVariationIdCol) {
+                                            $deleteQuery->whereNull('variation_id');
+                                        }
+                                        
+                                        if ($hasShopValueIdCol && $removeShopPropertyValueId !== null) {
+                                            $deleteQuery->where('shop_property_value_id', $removeShopPropertyValueId);
+                                        } elseif ($hasValueCol && $removeValue !== null) {
+                                            $deleteQuery->where('value', $removeValue);
+                                        }
+                                        
+                                        $deleteQuery->delete();
+                                    }
+                                }
+                            }
                         }
                         
                         // Добавляем новые свойства (если не установлен флаг очистки всех)
@@ -7944,6 +7996,177 @@ class ShopGoodsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка слияния вариаций: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получение характеристик для удаления (только те, которые присутствуют у выбранных товаров)
+     */
+    public function getPropertiesForRemove(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'good_ids' => 'required|string', // Accept comma-separated string
+            'search' => 'nullable|string|max:255',
+            'page' => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:1|max:100'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            // Convert comma-separated string to array of integers
+            $goodIdsString = $request->input('good_ids', '');
+            $goodIds = array_map('intval', explode(',', $goodIdsString));
+            $goodIds = array_filter($goodIds); // Remove empty values
+
+            if (empty($goodIds)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Необходимо указать хотя бы один ID товара'
+                ], 422);
+            }
+
+            // Проверяем, что все указанные ID товаров существуют
+            $existingGoodIds = DB::table('shop_goods')
+                ->whereIn('id', $goodIds)
+                ->pluck('id')
+                ->toArray();
+
+            if (count($existingGoodIds) !== count($goodIds)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Некоторые указанные ID товаров не существуют'
+                ], 422);
+            }
+
+            $search = $request->input('search', '');
+            $page = $request->input('page', 1);
+            $perPage = $request->input('per_page', 10);
+
+            // Получаем все характеристики и их значения для выбранных товаров
+            $query = DB::table('shop_good_properties as gp')
+                ->join('shop_properties as p', 'gp.property_id', '=', 'p.id')
+                ->join('shop_property_values as pv', 'gp.shop_property_value_id', '=', 'pv.id')
+                ->whereIn('gp.good_id', $goodIds)
+                ->select(
+                    'p.id as property_id',
+                    'p.name as property_name',
+                    'pv.id as property_value_id',
+                    'pv.value as property_value_name',
+                    DB::raw('COUNT(DISTINCT gp.good_id) as count')
+                )
+                ->groupBy('p.id', 'p.name', 'pv.id', 'pv.value')
+                ->orderBy('p.name')
+                ->orderBy('pv.value');
+
+            // Применяем поиск если указан
+            if (!empty($search)) {
+                $query->where(function ($q) use ($search) {
+                    $q->where('p.name', 'like', '%' . $search . '%')
+                      ->orWhere('pv.value', 'like', '%' . $search . '%');
+                });
+            }
+
+            // Получаем общее количество
+            $totalCount = $query->count();
+
+            // Применяем пагинацию
+            $properties = $query->skip(($page - 1) * $perPage)
+                ->take($perPage)
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $properties,
+                'total' => $totalCount,
+                'page' => $page,
+                'per_page' => $perPage
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Ошибка при получении характеристик для удаления: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при получении характеристик'
+            ], 500);
+        }
+    }
+
+    /**
+     * Массовое удаление характеристик у товаров
+     */
+    public function bulkRemoveProperties(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'good_ids' => 'required|array',
+            'good_ids.*' => 'exists:shop_goods,id',
+            'properties' => 'required|array',
+            'properties.*.property_id' => 'required|exists:shop_properties,id',
+            'properties.*.property_value_id' => 'required|exists:shop_property_values,id'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $goodIds = $request->input('good_ids', []);
+            $properties = $request->input('properties', []);
+            $removedCount = 0;
+
+            // Для каждого товара удаляем выбранные характеристики
+            foreach ($goodIds as $goodId) {
+                foreach ($properties as $property) {
+                    $deleted = DB::table('shop_good_properties')
+                        ->where('good_id', $goodId)
+                        ->where('property_id', $property['property_id'])
+                        ->where('shop_property_value_id', $property['property_value_id'])
+                        ->delete();
+
+                    if ($deleted > 0) {
+                        $removedCount++;
+                    }
+                }
+            }
+
+            DB::commit();
+
+            // Логируем действие для каждого товара
+            foreach ($goodIds as $goodId) {
+                $good = ShopGood::find($goodId);
+                if ($good) {
+                    $this->logAudit($good, 'bulk_remove_properties', [
+                        'properties_removed' => $properties,
+                        'removed_count' => $removedCount
+                    ], null);
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Характеристики успешно удалены',
+                'count' => $removedCount
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            \Log::error('Ошибка при массовом удалении характеристик: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при удалении характеристик'
             ], 500);
         }
     }

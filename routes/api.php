@@ -1177,7 +1177,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Загрузка изображений для rich editor (требует аутентификации)
     Route::middleware(['auth:sanctum', 'role:admin,manager'])->group(function () {
-        Route::post('/admin/upload/good-text-image', [\App\Http\Controllers\Admin\UploadController::class, 'uploadGoodTextImage']);
+    Route::post('/admin/upload/good-text-image', [\App\Http\Controllers\Admin\UploadController::class, 'uploadGoodTextImage']);
         Route::post('/admin/upload/color-image', [\App\Http\Controllers\Admin\UploadController::class, 'uploadColorImage']);
         Route::post('/admin/upload-embedded-image', [\App\Http\Controllers\Admin\UploadController::class, 'uploadEmbeddedImage']);
         Route::post('/admin/upload-embedded-images-batch', [\App\Http\Controllers\Admin\UploadController::class, 'uploadEmbeddedImagesBatch']);
@@ -1868,6 +1868,11 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/categories', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'createCategory']);
                 Route::post('/brands', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'createBrand']);
                 Route::post('/labels', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'createLabel']);
+
+                // Получение и удаление характеристик (должно быть перед /{id})
+                Route::get('/properties-for-remove', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getPropertiesForRemove']);
+                Route::post('/bulk-remove-properties', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'bulkRemoveProperties']);
+
                 Route::get('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'show']);
                 Route::post('/', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'store']);
                 Route::put('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'update']);
