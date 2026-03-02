@@ -132,27 +132,19 @@ class TbankPaymentService
                 ];
             }
 
-            // Валидация: сумма items должна быть равна totalAmount (критично для Dolyame)
-            $itemsTotal = array_sum(array_column($items, 'price'));
-            if (abs($itemsTotal - $totalAmount) > 0.01) {
-                Log::error('Dolyame Partner: Items total does not match order amount', [
-                    'items_total' => $itemsTotal,
-                    'order_amount' => $totalAmount,
-                    'difference' => $itemsTotal - $totalAmount,
-                    'items' => $items,
-                ]);
+            // Calculate total amount from items only - no additional delivery needed
+            $totalAmount = array_reduce($items, function ($sum, $item) {
+                return $sum + ($item['price'] * $item['quantity']);
+            }, 0);
+            
+            $totalAmount = round($totalAmount, 2);
+            
+            // Validate that we have at least one valid item
+            if (empty($items)) {
+                Log::error('Dolyame Partner: No valid items found for order', ['order_items' => $orderItems]);
                 return [
                     'success' => false,
-                    'message' => 'Items total amount mismatch',
-                ];
-            }
-
-            $deliveryCost = is_array($order) ? ($order['delivery_cost'] ?? 0) : (is_object($order) ? ($order->delivery_cost ?? 0) : 0);
-            if ($deliveryCost > 0) {
-                 $items[] = [
-                    'name' => 'Доставка',
-                    'price' => round((float)$deliveryCost, 2),
-                    'quantity' => 1,
+                    'message' => 'No valid order items found',
                 ];
             }
 
@@ -186,8 +178,9 @@ class TbankPaymentService
                 'total_amount' => $totalAmount,
                 'items_count' => count($items),
                 'items' => $items,
-                'items_total' => array_sum(array_column($items, 'price')),
-                'amount_vs_items_diff' => $totalAmount - array_sum(array_column($items, 'price')),
+                'items_total' => array_reduce($items, function ($sum, $item) {
+                    return $sum + ($item['price'] * $item['quantity']);
+                }, 0),
             ]);
 
             // Build HTTP client with Basic Auth and optional mTLS
