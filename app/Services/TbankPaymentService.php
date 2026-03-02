@@ -32,8 +32,17 @@ class TbankPaymentService
         ]);
 
         if ($this->provider === 'partner') {
-            $dolyameUrl = $settings['dolyame_api_url'] ?? $settings['api_url'] ?? '';
-            $this->baseUrl = rtrim($dolyameUrl ?: 'https://partner.dolyame.ru/v1', '/');
+            $mode = $settings['mode'] ?? 'test';
+            if ($mode === 'test') {
+                // Use test endpoint for Dolyame Partner API
+                $dolyameUrl = $settings['dolyame_api_url_test'] ?? $settings['api_url_test'] ?? 'https://partner.dolyame.ru/v1';
+                Log::debug('TbankPaymentService: Using test Dolyame Partner API endpoint', ['url' => $dolyameUrl]);
+            } else {
+                // Use production endpoint
+                $dolyameUrl = $settings['dolyame_api_url'] ?? $settings['api_url'] ?? 'https://partner.dolyame.ru/v1';
+                Log::debug('TbankPaymentService: Using production Dolyame Partner API endpoint', ['url' => $dolyameUrl]);
+            }
+            $this->baseUrl = rtrim($dolyameUrl, '/');
 
             // Unset keys from the old integration to avoid confusion
             unset($this->settings['terminal_key'], $this->settings['terminal_password'], $this->settings['api_url_test'], $this->settings['api_url_live']);
@@ -259,8 +268,19 @@ class TbankPaymentService
                 Log::error('Dolyame Partner: Certificate key file not found.', ['path' => $keyPath]);
             }
 
-            $login = $this->settings['dolyame_login'] ?? $this->settings['dolyame_login1'] ?? '';
-            $password = $this->settings['dolyame_password'] ?? $this->settings['dolyame_password1'] ?? '';
+            // For test mode, try using test credentials first
+            $mode = $this->settings['mode'] ?? 'test';
+            if ($mode === 'test' && isset($this->settings['dolyame_login1']) && isset($this->settings['dolyame_password1'])) {
+                // Use test credentials
+                $login = $this->settings['dolyame_login1'];
+                $password = $this->settings['dolyame_password1'];
+                Log::debug('Dolyame Partner: Using test credentials', ['login' => $login]);
+            } else {
+                // Use production credentials
+                $login = $this->settings['dolyame_login'] ?? $this->settings['dolyame_login1'] ?? '';
+                $password = $this->settings['dolyame_password'] ?? $this->settings['dolyame_password1'] ?? '';
+                Log::debug('Dolyame Partner: Using production credentials', ['login' => $login]);
+            }
             
             Log::debug('Dolyame Partner: Authentication parameters', [
                 'login' => $login,
@@ -272,6 +292,36 @@ class TbankPaymentService
 
             // Generate X-Correlation-ID (required header)
             $correlationId = Str::uuid()->toString();
+
+            // Try different authentication methods for Dolyame Partner API
+            // Method 1: Use login as Bearer token
+            // Method 2: Use shop_id + login as custom header
+            // Method 3: Standard Basic Auth (current)
+            // Method 4: Use API key if available
+            
+            $authHeaders = [
+                'X-Correlation-ID' => $correlationId,
+            ];
+            
+            // Check if API key is available
+            $apiKey = $this->settings['api_key'] ?? null;
+            
+            if (!empty($apiKey)) {
+                // Use API key authentication
+                $authHeaders['X-API-Key'] = $apiKey;
+                Log::debug('Dolyame Partner: Using API key authentication', ['api_key' => substr($apiKey, 0, 10) . '...']);
+            } elseif (!empty($login) && !empty($password)) {
+                // Add both Basic Auth and custom headers for maximum compatibility
+                $authHeaders['X-Login'] = $login;
+                $authHeaders['X-Shop-ID'] = $shopId;
+                $authHeaders['Authorization'] = 'Bearer ' . $login; // Try Bearer token
+                
+                Log::debug('Dolyame Partner: Using enhanced authentication', [
+                    'login' => $login,
+                    'shop_id' => $shopId,
+                    'auth_method' => 'multi-header',
+                ]);
+            }
 
             // Validate payload before sending
             $validationErrors = [];
@@ -313,6 +363,8 @@ class TbankPaymentService
             Log::info('Dolyame Partner: Preparing request', [
                 'url' => $apiUrl,
                 'login' => $login,
+                'has_api_key' => !empty($apiKey),
+                'has_basic_auth' => empty($apiKey) && !empty($login) && !empty($password),
                 'has_cert' => !empty($certPath) && file_exists($certPath),
                 'has_key' => !empty($keyPath) && file_exists($keyPath),
                 'payload_structure' => array_keys($payload),
@@ -329,13 +381,16 @@ class TbankPaymentService
                 'full_payload' => $payload, // Log the complete payload for debugging
             ]);
 
+            // Build HTTP client with appropriate authentication
             $http = Http::timeout(30)->retry(2, 1000)
-                ->withBasicAuth($login, $password)
-                ->withHeaders([
-                    'X-Correlation-ID' => $correlationId,
-                ])
+                ->withHeaders($authHeaders)
                 ->withOptions($options);
-
+            
+            // Only add Basic Auth if we're not using API key
+            if (empty($apiKey) && !empty($login) && !empty($password)) {
+                $http = $http->withBasicAuth($login, $password);
+            }
+            
             $response = $http->post($apiUrl, $payload);
             $responseData = $response->json();
             
