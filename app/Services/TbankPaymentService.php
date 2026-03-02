@@ -236,28 +236,30 @@ class TbankPaymentService
                 'curl' => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
             ];
 
-            // Only apply mTLS certificates in production environment where files exist
-            if (app()->environment('production')) {
-                $certPath = $this->settings['dolyame_cert_path'] ?? null;
-                $keyPath = $this->settings['dolyame_private_key_path'] ?? $this->settings['dolyame_cert_key_path'] ?? null;
-                $keyPass = $this->settings['dolyame_private_key_password'] ?? $this->settings['dolyame_cert_key_password'] ?? null;
+            // Apply mTLS certificates and add advanced diagnostics
+            $certPath = $this->settings['dolyame_cert_path'] ?? null;
+            $keyPath = $this->settings['dolyame_private_key_path'] ?? $this->settings['dolyame_cert_key_path'] ?? null;
+            $keyPass = $this->settings['dolyame_private_key_password'] ?? $this->settings['dolyame_cert_key_password'] ?? null;
 
-                Log::debug('Dolyame Partner: Certificate configuration for production', [
-                    'cert_path' => $certPath,
-                    'key_path' => $keyPath,
-                    'cert_exists' => $certPath ? file_exists($certPath) : false,
-                    'key_exists' => $keyPath ? file_exists($keyPath) : false,
-                ]);
+            Log::debug('Dolyame Partner: Certificate path diagnostics', [
+                'cert_path' => $certPath,
+                'key_path' => $keyPath,
+                'cert_exists' => $certPath ? file_exists($certPath) : 'path_not_set',
+                'key_exists' => $keyPath ? file_exists($keyPath) : 'path_not_set',
+                'cert_is_readable' => $certPath ? is_readable($certPath) : 'path_not_set',
+                'key_is_readable' => $keyPath ? is_readable($keyPath) : 'path_not_set',
+            ]);
 
-                if ($certPath && file_exists($certPath)) {
-                    $options['cert'] = $certPath;
-                }
-
-                if ($keyPath && file_exists($keyPath)) {
-                    $options['ssl_key'] = $keyPass ? [$keyPath, $keyPass] : $keyPath;
-                }
+            if ($certPath && file_exists($certPath) && is_readable($certPath)) {
+                $options['cert'] = $certPath;
             } else {
-                Log::debug('Dolyame Partner: Skipping mTLS certificate for non-production environment');
+                Log::error('Dolyame Partner: Certificate file is missing or not readable.', ['path' => $certPath]);
+            }
+
+            if ($keyPath && file_exists($keyPath) && is_readable($keyPath)) {
+                $options['ssl_key'] = $keyPass ? [$keyPath, $keyPass] : $keyPath;
+            } else {
+                Log::error('Dolyame Partner: Certificate key file is missing or not readable.', ['path' => $keyPath]);
             }
 
             $login = $this->settings['dolyame_login'] ?? '';
