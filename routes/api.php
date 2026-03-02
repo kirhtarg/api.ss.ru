@@ -19,7 +19,6 @@ use App\Http\Controllers\Api\Public\SettingsController;
 // Вебхук Т‑Банк (e‑acq и Долями)
 Route::post('/webhooks/tbank', [\App\Http\Controllers\Api\Public\ShopPaymentController::class, 'tbankWebhook']);
 
-
 /*
 |--------------------------------------------------------------------------
 | API Routes
@@ -41,6 +40,9 @@ Route::post('/test-simple-upload', function (Request $request) {
         'files' => count($request->allFiles())
     ]);
 });
+
+// Тестовый маршрут для непривязанных поставщиков (без аутентификации)
+// Route::get('/test-unlinked-suppliers', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getUnlinkedSuppliers']);
 
 // Скачивание экспорт файлов (с middleware для аутентификации через token)
 Route::get('/admin/export-files/{exportFile}/download', [\App\Http\Controllers\Admin\ExportFilesController::class, 'download'])
