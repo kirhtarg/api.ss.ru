@@ -527,6 +527,7 @@ Route::get('/test/oauth', function () {
         return response()->json([], 200);
     });
     Route::get('/public/site-info', [SiteInfoController::class, 'index']);
+    Route::get('/public/favicon', [SiteInfoController::class, 'getFavicon']);
     
     // Публичный роут для получения опубликованных страниц конструктора
     Route::options('/public/page-builder/pages/{slug}', function () {
@@ -1216,6 +1217,10 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // Подписчики на новости (доступны админам)
+    Route::middleware(['auth:sanctum', 'role:admin'])->group(function () {
+        Route::post('/admin/settings/favicon', [\App\Http\Controllers\Admin\SettingController::class, 'uploadFavicon']);
+    });
+
     Route::middleware(['auth:sanctum', 'role:admin'])->prefix('site-newsletter')->group(function () {
         Route::get('/', [\App\Http\Controllers\SiteNewsletterController::class, 'index']);
     });

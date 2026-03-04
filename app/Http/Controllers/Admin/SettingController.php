@@ -8,8 +8,9 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\URL;
-use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Cache;
 
 class SettingController extends Controller
 {
@@ -388,6 +389,76 @@ class SettingController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка загрузки изображения: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function uploadFavicon(Request $request)
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'favicon' => 'required|file|mimes:jpeg,png,jpg,gif,webp,ico,svg|max:5120', // 5MB max
+                'type' => 'required|string',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $file = $request->file('favicon');
+            $faviconType = $request->input('type');
+            $extension = $file->getClientOriginalExtension();
+            $newFileName = 'favicon.' . $extension;
+
+            $frontendPublicPath = frontend_public_path();
+
+            if (!$frontendPublicPath) {
+                throw new \Exception('Путь к публичной директории фронтенда не настроен.');
+            }
+
+            // Удаляем все старые файлы favicon.*
+            $existingFavicons = File::glob($frontendPublicPath . '/favicon.*');
+            foreach ($existingFavicons as $existingFavicon) {
+                File::delete($existingFavicon);
+            }
+
+            // Перемещаем новый файл
+            $file->move($frontendPublicPath, $newFileName);
+
+            // Обновляем или создаем настройки
+            Setting::updateOrCreate(
+                ['key' => 'favicon_file'],
+                ['value' => $newFileName, 'type' => 'string', 'group' => 'general', 'name' => 'Favicon File']
+            );
+            Setting::updateOrCreate(
+                ['key' => 'favicon_type'],
+                ['value' => $faviconType, 'type' => 'string', 'group' => 'general', 'name' => 'Favicon Type']
+            );
+
+            // Удаляем старую настройку site_favicon, если она существует
+            $oldFaviconSetting = Setting::where('key', 'site_favicon')->first();
+            if ($oldFaviconSetting) {
+                $oldFaviconSetting->delete();
+            }
+
+            // Очищаем кэш настроек
+            Cache::forget('site_settings');
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Фавиконка успешно обновлена.',
+                'favicon_file' => $newFileName
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Ошибка загрузки фавиконки: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка сервера при загрузке фавиконки: ' . $e->getMessage()
             ], 500);
         }
     }

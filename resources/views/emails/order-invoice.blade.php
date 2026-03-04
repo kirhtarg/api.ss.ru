@@ -334,8 +334,20 @@
                                     } elseif (isset($item['product_name']) && $item['product_name']) {
                                         $itemName = $item['product_name'];
                                     }
+                                    
+                                    $variationName = '';
+                                    if (isset($item['variation_name']) && $item['variation_name'] && $item['variation_name'] !== $itemName) {
+                                        $variationName = $item['variation_name'];
+                                    }
+                                    $sku = $item['variation_sku'] ?? $item['good_sku'] ?? $item['sku'] ?? '';
                                 @endphp
-                                {{ $itemName }}
+                                <div>{{ $itemName }}</div>
+                                @if(!empty($variationName))
+                                    <div style="font-size: 11px; color: #666; margin-top: 2px;">Вариация: {{ $variationName }}</div>
+                                @endif
+                                @if(!empty($sku))
+                                    <div style="font-size: 11px; color: #666; margin-top: 2px;">Арт: {{ $sku }}</div>
+                                @endif
                             </td>
                             <td class="text-center">{{ $item['quantity'] ?? 1 }}</td>
                             <td class="text-right">{{ number_format($item['price'] ?? 0, 0, ',', ' ') }} ₽</td>

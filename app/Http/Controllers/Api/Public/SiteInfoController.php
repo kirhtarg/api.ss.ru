@@ -9,6 +9,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\File;
 
 class SiteInfoController extends Controller
 {
@@ -29,6 +30,8 @@ class SiteInfoController extends Controller
                           ->orWhere('key', 'yandex_metrika') // Включаем параметр Яндекс.Метрики из любой группы
                           ->orWhere('key', 'jivo_script') // Включаем параметр скрипта Jivo из любой группы
                           ->orWhere('key', 'site_favicon') // Включаем параметр favicon из любой группы
+                  ->orWhere('key', 'favicon_type') // Включаем тип favicon
+                  ->orWhere('key', 'favicon_file') // Включаем файл favicon
                           ->orWhere('key', 'show_counters') // Включаем параметр show_counters из любой группы
                           ->orWhere('key', 'absent_promocode_percent') // Включаем параметр процента промокода за отсутствие товара
                           ->orWhere('key', 'absent_promocode_percent_days') // Включаем параметр дней действия промокода
@@ -49,6 +52,7 @@ class SiteInfoController extends Controller
                     $siteInfo[$setting->key] = $setting->value;
                 }
             }
+
             $suffSupportSetting = Setting::where('key', 'suff_support')->first();
             if ($suffSupportSetting) {
                 $siteInfo['suff_support'] = $suffSupportSetting->value;
@@ -176,6 +180,8 @@ class SiteInfoController extends Controller
                         'site_description',
                         'site_logo',
                         'site_favicon',
+                        'favicon_file',
+                        'favicon_type',
                         'meta_title',
                         'meta_description',
                         'meta_image',
@@ -186,7 +192,7 @@ class SiteInfoController extends Controller
                 $seoSettings = [];
                 foreach ($settings as $setting) {
                     // Обрабатываем URL изображений для логотипов, favicon и meta изображений
-                    if (in_array($setting->key, ['site_logo', 'site_logo_negative', 'site_favicon', 'meta_image']) && $setting->value) {
+                    if (in_array($setting->key, ['site_logo', 'site_logo_negative', 'site_favicon', 'meta_image', 'favicon_file']) && $setting->value) {
                         $seoSettings[$setting->key] = $this->getImageUrl($setting->value);
                     } else {
                         $seoSettings[$setting->key] = $setting->value;
@@ -213,39 +219,23 @@ class SiteInfoController extends Controller
         }
     }
 
-    /**
-     * Получить путь к изображению (относительный, без домена)
-     */
-    private function getImageUrl($filePath)
+    private function getImageUrl($imagePath)
     {
-        if (!$filePath || !is_string($filePath)) {
+        if (!$imagePath) {
             return null;
         }
 
-        try {
-            // Если в пути есть полный URL, извлекаем только относительный путь
-            if (preg_match('/https?:\/\/[^\/]+(.*)/', $filePath, $matches)) {
-                $filePath = $matches[1];
-            }
-
-            // Убираем лишний слэш в начале
-            $filePath = ltrim($filePath, '/');
-
-            // Если путь пустой после обработки
-            if (empty($filePath)) {
-                return null;
-            }
-
-            // Если путь начинается с images/, возвращаем с ведущим слэшем
-            if (str_starts_with($filePath, 'images/')) {
-                return '/' . $filePath;
-            }
-
-            // Возвращаем относительный путь к файлу в папке public/images/
-            return '/images/' . $filePath;
-        } catch (\Exception $e) {
-            Log::error('Ошибка в getImageUrl: ' . $e->getMessage(), ['filePath' => $filePath]);
-            return null;
+        // Если путь уже является полным URL, возвращаем его
+        if (filter_var($imagePath, FILTER_VALIDATE_URL)) {
+            return $imagePath;
         }
+
+        // Получаем базовый URL сайта
+        $siteUrl = config('app.frontend_url', 'https://skateandsnow.ru');
+
+        // Формируем полный URL
+        return rtrim($siteUrl, '/') . '/' . ltrim($imagePath, '/');
     }
+
+
 }

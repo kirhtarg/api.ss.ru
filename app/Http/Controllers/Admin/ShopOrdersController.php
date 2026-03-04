@@ -1498,6 +1498,7 @@ class ShopOrdersController extends Controller
             
             $validator = Validator::make($request->all(), [
                 'good_id' => 'required|integer|exists:shop_goods,id',
+                'variation_id' => 'nullable|integer|exists:shop_good_variations,id',
                 'quantity' => 'required|integer|min:1'
             ]);
 
@@ -1510,10 +1511,22 @@ class ShopOrdersController extends Controller
             }
 
             $goodId = $request->get('good_id');
+            $variationId = $request->get('variation_id');
             $quantity = $request->get('quantity');
             
             // Получаем товар
             $good = \App\Models\ShopGood::findOrFail($goodId);
+            $variation = null;
+            $variationName = '';
+            $price = $good->sale_price ?? $good->price ?? 0;
+
+            if ($variationId) {
+                $variation = \App\Models\ShopGoodVariation::where('id', $variationId)->where('good_id', $goodId)->first();
+                if ($variation) {
+                    $price = $variation->sale_price > 0 ? $variation->sale_price : ($variation->price > 0 ? $variation->price : $price);
+                    $variationName = $this->formatVariationProperties($variation);
+                }
+            }
             
             // Получаем текущие товары заказа
             $items = is_array($order->items) ? $order->items : json_decode($order->items, true);
@@ -1522,13 +1535,11 @@ class ShopOrdersController extends Controller
             // Проверяем, есть ли уже этот товар в заказе
             $existingItemIndex = null;
             foreach ($items as $index => $item) {
-                if (($item['good_id'] ?? null) == $goodId && !isset($item['variation_id'])) {
+                if (($item['good_id'] ?? null) == $goodId && ($item['variation_id'] ?? null) == $variationId) {
                     $existingItemIndex = $index;
                     break;
                 }
             }
-            
-            $price = $good->sale_price ?? $good->price ?? 0;
             
             if ($existingItemIndex !== null) {
                 // Увеличиваем количество существующего товара
@@ -1536,7 +1547,7 @@ class ShopOrdersController extends Controller
                 $items[$existingItemIndex]['total'] = $items[$existingItemIndex]['quantity'] * $price;
             } else {
                 // Добавляем новый товар
-                $items[] = [
+                $newItem = [
                     'good_id' => $goodId,
                     'good_name' => $good->name,
                     'good_slug' => $good->slug ?? null,
@@ -1544,6 +1555,14 @@ class ShopOrdersController extends Controller
                     'price' => $price,
                     'total' => $price * $quantity
                 ];
+                
+                if ($variation) {
+                    $newItem['variation_id'] = $variation->id;
+                    $newItem['variation_name'] = $variationName;
+                    $newItem['variation_sku'] = $variation->sku;
+                }
+                
+                $items[] = $newItem;
             }
             
             // Пересчитываем суммы заказа
@@ -3683,6 +3702,43 @@ class ShopOrdersController extends Controller
 
         } catch (\Exception $e) {
             // Silent fail for email sending
+        }
+    }
+
+    /**
+     * Форматировать параметры вариации
+     */
+    private function formatVariationProperties($variation): string
+    {
+        if (!$variation) {
+            return '';
+        }
+
+        try {
+
+        // Новая схема: формируем строку из атрибутов вариации
+        $rows = DB::table('shop_variation_attributes_values as vav')
+            ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+            ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+            ->where('vav.variation_id', $variation->id)
+            ->select('a.name as attribute_name', 'av.value as value_value')
+            ->orderBy('a.name')
+            ->get();
+
+        if ($rows->count() > 0) {
+            return $rows->map(function ($row) {
+                $propName = $row->attribute_name ?? '';
+                $propValue = $row->value_value ?? '';
+                return $propName . ': ' . $propValue;
+            })->join(', ');
+        }
+
+        // Если нет атрибутов, возвращаем название вариации или пустую строку
+        return $variation->name ?? '';
+
+        } catch (\Exception $e) {
+            // В случае ошибки возвращаем название вариации или пустую строку
+            return $variation->name ?? '';
         }
     }
 }

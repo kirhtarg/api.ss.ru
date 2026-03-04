@@ -1003,6 +1003,15 @@ class CartController extends Controller
                 $newItem['show_demping'] = $showDemping;
                 $newItem['total'] = $itemTotal;
                 
+                // Гарантированно получаем и сохраняем параметры вариации
+                if (!empty($item['variation_id'])) {
+                    $variation = ShopGoodVariation::find($item['variation_id']);
+                    if ($variation) {
+                        $newItem['variation_name'] = $this->formatVariationProperties($variation);
+                        $newItem['variation_sku'] = $variation->sku ?? $newItem['variation_sku'] ?? null;
+                    }
+                }
+                
                 $finalItems[] = $newItem;
                 $recalculatedSubtotal += $itemTotal;
                 $recalculatedTotalQuantity += $quantity;
@@ -1812,12 +1821,22 @@ class CartController extends Controller
                         $enrichedItem['name'] = $good->name;
                         $enrichedItem['good_name'] = $good->name;
 
-                        // Если есть вариация, получаем её название
-                        if (isset($item['variation_id']) && $item['variation_id']) {
+                        // Если есть вариация, получаем её параметры для обогащения названия товара
+                        if (!empty($item['variation_id'])) {
+                            $varName = $item['variation_name'] ?? null;
+                            
                             $variation = ShopGoodVariation::find($item['variation_id']);
-                            if ($variation && $variation->name) {
-                                $enrichedItem['name'] = $good->name . ' (' . $variation->name . ')';
-                                $enrichedItem['good_name'] = $good->name . ' (' . $variation->name . ')';
+                            if (!$varName && $variation) {
+                                $varName = $this->formatVariationProperties($variation);
+                            }
+                            
+                            if ($varName) {
+                                $enrichedItem['name'] = $good->name . ' (' . $varName . ')';
+                                $enrichedItem['good_name'] = $good->name . ' (' . $varName . ')';
+                                $enrichedItem['variation_name'] = $varName;
+                                if ($variation && $variation->sku) {
+                                    $enrichedItem['variation_sku'] = $variation->sku;
+                                }
                             }
                         }
                     }

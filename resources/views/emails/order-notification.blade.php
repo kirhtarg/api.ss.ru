@@ -246,6 +246,62 @@
                 @endif
             </div>
 
+            <!-- Товары в заказе -->
+            <div class="order-card">
+                <h3>🛍️ Состав заказа</h3>
+                <div style="overflow-x: auto;">
+                    <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
+                        <thead>
+                            <tr style="background-color: #f0f2f5;">
+                                <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd; font-size: 14px; color: #555;">Товар</th>
+                                <th style="padding: 10px; text-align: center; border-bottom: 2px solid #ddd; font-size: 14px; color: #555;">Кол-во</th>
+                                <th style="padding: 10px; text-align: right; border-bottom: 2px solid #ddd; font-size: 14px; color: #555;">Сумма</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @if($order->items && (is_array($order->items) || is_string($order->items)))
+                                @php
+                                    $itemsList = is_string($order->items) ? json_decode($order->items, true) : $order->items;
+                                @endphp
+                                @if(is_array($itemsList) && count($itemsList) > 0)
+                                    @foreach($itemsList as $item)
+                                        <tr>
+                                            <td style="padding: 10px; border-bottom: 1px solid #eee; font-size: 14px;">
+                                                @php
+                                                    $itemName = $item['good_name'] ?? $item['name'] ?? $item['title'] ?? $item['product_name'] ?? 'Товар';
+                                                    $variationName = '';
+                                                    if (isset($item['variation_name']) && $item['variation_name'] && $item['variation_name'] !== $itemName) {
+                                                        $variationName = $item['variation_name'];
+                                                    }
+                                                    $sku = $item['variation_sku'] ?? $item['good_sku'] ?? $item['sku'] ?? '';
+                                                @endphp
+                                                <div style="font-weight: 500; color: #333;">{{ $itemName }}</div>
+                                                @if(!empty($variationName))
+                                                    <div style="font-size: 12px; color: #666; margin-top: 3px;">Вариация: {{ $variationName }}</div>
+                                                @endif
+                                                @if(!empty($sku))
+                                                    <div style="font-size: 12px; color: #888; font-family: monospace;">Арт: {{ $sku }}</div>
+                                                @endif
+                                            </td>
+                                            <td style="padding: 10px; text-align: center; border-bottom: 1px solid #eee; font-size: 14px;">
+                                                {{ $item['quantity'] ?? 1 }} шт.
+                                            </td>
+                                            <td style="padding: 10px; text-align: right; border-bottom: 1px solid #eee; font-size: 14px; font-weight: 500;">
+                                                {{ number_format($item['total'] ?? 0, 0, ',', ' ') }} ₽
+                                            </td>
+                                        </tr>
+                                    @endforeach
+                                @endif
+                            @else
+                                <tr>
+                                    <td colspan="3" style="padding: 15px; text-align: center; color: #888;">Товары не найдены</td>
+                                </tr>
+                            @endif
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
             <!-- Информация о клиенте -->
             <div class="order-card">
                 <h3>👤 Информация о клиенте</h3>
