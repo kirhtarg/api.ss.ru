@@ -4,8 +4,8 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopBrand;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 
@@ -22,7 +22,7 @@ class ShopBrandsController extends Controller
         if ($request->filled('search')) {
             $search = $request->get('search');
             $query->where('name', 'like', "%{$search}%")
-                  ->orWhere('description', 'like', "%{$search}%");
+                ->orWhere('description', 'like', "%{$search}%");
         }
 
         // Фильтр по статусу
@@ -32,17 +32,17 @@ class ShopBrandsController extends Controller
 
         // Сортировка по умолчанию по sort_order, затем по названию
         $query->orderBy('sort_order', 'asc')
-              ->orderBy('name', 'asc');
+            ->orderBy('name', 'asc');
 
         // Если запрашиваются конкретные ID (для массовых операций)
         if ($request->has('ids')) {
             $ids = is_array($request->ids) ? $request->ids : [$request->ids];
             $query->whereIn('id', $ids);
             $brands = $query->get();
-            
+
             return response()->json([
                 'success' => true,
-                'data' => $brands
+                'data' => $brands,
             ]);
         }
 
@@ -58,7 +58,7 @@ class ShopBrandsController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $brands
+            'data' => $brands,
         ]);
     }
 
@@ -71,7 +71,7 @@ class ShopBrandsController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $brand
+            'data' => $brand,
         ]);
     }
 
@@ -86,14 +86,14 @@ class ShopBrandsController extends Controller
             'logo' => 'nullable|string|max:255',
             'slug' => 'nullable|string|max:255|unique:shop_brands,slug',
             'is_active' => 'boolean',
-            'sort_order' => 'integer'
+            'sort_order' => 'integer',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -102,7 +102,7 @@ class ShopBrandsController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Бренд успешно создан',
-            'data' => $brand
+            'data' => $brand,
         ], 201);
     }
 
@@ -119,14 +119,14 @@ class ShopBrandsController extends Controller
             'logo' => 'nullable|string|max:255',
             'slug' => ['nullable', 'string', 'max:255', Rule::unique('shop_brands', 'slug')->ignore($id)],
             'is_active' => 'boolean',
-            'sort_order' => 'integer'
+            'sort_order' => 'integer',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -135,7 +135,7 @@ class ShopBrandsController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Бренд успешно обновлен',
-            'data' => $brand
+            'data' => $brand,
         ]);
     }
 
@@ -149,7 +149,7 @@ class ShopBrandsController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Бренд успешно удален'
+            'message' => 'Бренд успешно удален',
         ]);
     }
 
@@ -162,7 +162,7 @@ class ShopBrandsController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $brands
+            'data' => $brands,
         ]);
     }
 
@@ -174,14 +174,14 @@ class ShopBrandsController extends Controller
         $validator = Validator::make($request->all(), [
             'items' => 'required|array',
             'items.*.id' => 'required|exists:shop_brands,id',
-            'items.*.sort_order' => 'required|integer'
+            'items.*.sort_order' => 'required|integer',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -193,12 +193,12 @@ class ShopBrandsController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Порядок брендов успешно обновлен'
+                'message' => 'Порядок брендов успешно обновлен',
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления порядка: ' . $e->getMessage()
+                'message' => 'Ошибка обновления порядка: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -214,14 +214,14 @@ class ShopBrandsController extends Controller
                 'brands.*.name' => 'required|string|max:255',
                 'brands.*.slug' => 'required|string|max:255',
                 'brands.*.description' => 'nullable|string',
-                'brands.*.logo' => 'nullable|string|max:500'
+                'brands.*.logo' => 'nullable|string|max:500',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -243,7 +243,7 @@ class ShopBrandsController extends Controller
                         'name' => $brandData['name'],
                         'slug' => $brandData['slug'],
                         'description' => $brandData['description'] ?? null,
-                        'is_active' => true
+                        'is_active' => true,
                     ];
 
                     if ($existingBrand) {
@@ -252,7 +252,7 @@ class ShopBrandsController extends Controller
                         $existingBrand->description = $brandData['description'] ?? $existingBrand->description;
 
                         // Загружаем логотип, если есть URL
-                        if (!empty($brandData['logo'])) {
+                        if (! empty($brandData['logo'])) {
                             try {
                                 // Проверяем, это URL или путь к файлу
                                 if (filter_var($brandData['logo'], FILTER_VALIDATE_URL)) {
@@ -260,7 +260,7 @@ class ShopBrandsController extends Controller
                                     $imageData = @file_get_contents($brandData['logo']);
                                     if ($imageData !== false) {
                                         // Создаем директорию, если её нет
-                                        if (!is_dir($imagesPath)) {
+                                        if (! is_dir($imagesPath)) {
                                             mkdir($imagesPath, 0755, true);
                                         }
 
@@ -269,18 +269,22 @@ class ShopBrandsController extends Controller
                                         $imageInfo = @getimagesizefromstring($imageData);
                                         if ($imageInfo !== false) {
                                             $mimeType = $imageInfo['mime'];
-                                            if ($mimeType === 'image/jpeg') $extension = 'jpg';
-                                            elseif ($mimeType === 'image/gif') $extension = 'gif';
-                                            elseif ($mimeType === 'image/webp') $extension = 'webp';
+                                            if ($mimeType === 'image/jpeg') {
+                                                $extension = 'jpg';
+                                            } elseif ($mimeType === 'image/gif') {
+                                                $extension = 'gif';
+                                            } elseif ($mimeType === 'image/webp') {
+                                                $extension = 'webp';
+                                            }
                                         }
 
                                         // Сохраняем изображение
-                                        $fileName = 'brand_' . $existingBrand->id . '_' . time() . '.' . $extension;
-                                        $filePath = $imagesPath . '/' . $fileName;
+                                        $fileName = 'brand_'.$existingBrand->id.'_'.time().'.'.$extension;
+                                        $filePath = $imagesPath.'/'.$fileName;
                                         file_put_contents($filePath, $imageData);
 
                                         // Обновляем путь к изображению
-                                        $existingBrand->logo = 'images/shop/brands/' . $fileName;
+                                        $existingBrand->logo = 'images/shop/brands/'.$fileName;
                                     }
                                 } else {
                                     // Если это путь к файлу, просто сохраняем
@@ -298,14 +302,14 @@ class ShopBrandsController extends Controller
                         $newBrand = ShopBrand::create($data);
 
                         // Загружаем логотип, если есть URL
-                        if (!empty($brandData['logo'])) {
+                        if (! empty($brandData['logo'])) {
                             try {
                                 if (filter_var($brandData['logo'], FILTER_VALIDATE_URL)) {
                                     // Загружаем изображение по URL
                                     $imageData = @file_get_contents($brandData['logo']);
                                     if ($imageData !== false) {
                                         // Создаем директорию, если её нет
-                                        if (!is_dir($imagesPath)) {
+                                        if (! is_dir($imagesPath)) {
                                             mkdir($imagesPath, 0755, true);
                                         }
 
@@ -314,18 +318,22 @@ class ShopBrandsController extends Controller
                                         $imageInfo = @getimagesizefromstring($imageData);
                                         if ($imageInfo !== false) {
                                             $mimeType = $imageInfo['mime'];
-                                            if ($mimeType === 'image/jpeg') $extension = 'jpg';
-                                            elseif ($mimeType === 'image/gif') $extension = 'gif';
-                                            elseif ($mimeType === 'image/webp') $extension = 'webp';
+                                            if ($mimeType === 'image/jpeg') {
+                                                $extension = 'jpg';
+                                            } elseif ($mimeType === 'image/gif') {
+                                                $extension = 'gif';
+                                            } elseif ($mimeType === 'image/webp') {
+                                                $extension = 'webp';
+                                            }
                                         }
 
                                         // Сохраняем изображение
-                                        $fileName = 'brand_' . $newBrand->id . '_' . time() . '.' . $extension;
-                                        $filePath = $imagesPath . '/' . $fileName;
+                                        $fileName = 'brand_'.$newBrand->id.'_'.time().'.'.$extension;
+                                        $filePath = $imagesPath.'/'.$fileName;
                                         file_put_contents($filePath, $imageData);
 
                                         // Обновляем путь к изображению
-                                        $newBrand->logo = 'images/shop/brands/' . $fileName;
+                                        $newBrand->logo = 'images/shop/brands/'.$fileName;
                                         $newBrand->save();
                                     }
                                 } else {
@@ -351,13 +359,13 @@ class ShopBrandsController extends Controller
                 'data' => [
                     'created' => $created,
                     'updated' => $updated,
-                    'errors' => $errors
-                ]
+                    'errors' => $errors,
+                ],
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка импорта: ' . $e->getMessage()
+                'message' => 'Ошибка импорта: '.$e->getMessage(),
             ], 500);
         }
     }

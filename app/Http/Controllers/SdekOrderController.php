@@ -2,12 +2,11 @@
 
 namespace App\Http\Controllers;
 
-use App\Services\CdekService;
 use App\Models\ShopOrder;
+use App\Services\CdekService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
-use App\Models\Setting;
 
 class SdekOrderController extends Controller
 {
@@ -48,83 +47,85 @@ class SdekOrderController extends Controller
                 'packages.*.comment' => 'nullable|string|max:500',
                 'services' => 'nullable|array',
                 'delivery_recipient_cost' => 'nullable|array',
-                'delivery_recipient_cost.value' => 'nullable|numeric|min:0'
+                'delivery_recipient_cost.value' => 'nullable|numeric|min:0',
             ]);
 
             if ($validator->fails()) {
                 Log::error('SdekOrderController: Validation failed', $validator->errors()->toArray());
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации данных',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
             $pvzCode = $request->input('pvz_code');
             $deliveryAddress = $request->input('delivery_address');
-            if (!$pvzCode) {
-                if (!is_string($deliveryAddress) || trim($deliveryAddress) === '') {
+            if (! $pvzCode) {
+                if (! is_string($deliveryAddress) || trim($deliveryAddress) === '') {
                     $message = 'Не указан адрес доставки';
                     Log::error('SdekOrderController: Address required when pvz_code is empty');
+
                     return response()->json([
                         'success' => false,
                         'message' => $message,
                         'errors' => [
-                            'delivery_address' => [$message]
-                        ]
+                            'delivery_address' => [$message],
+                        ],
                     ], 422);
                 }
             }
-            
-                $orderData = $request->all();
-                
-                $result = $this->cdekService->createOrder($orderData);
+
+            $orderData = $request->all();
+
+            $result = $this->cdekService->createOrder($orderData);
 
             if ($result['success']) {
                 // Получаем UUID заказа из ответа СДЭК
                 $cdekOrderUuid = null;
                 $deliveryStatus = null;
                 $requestState = null;
-                
+
                 if (isset($result['data']['entity']['uuid'])) {
                     $cdekOrderUuid = $result['data']['entity']['uuid'];
-                    
+
                     // Проверяем статус запроса создания заказа
                     if (isset($result['data']['requests']) && is_array($result['data']['requests']) && count($result['data']['requests']) > 0) {
                         $request = $result['data']['requests'][0];
                         $requestState = $request['state'] ?? null;
-                        
+
                         // Проверяем ошибки в начальном ответе
                         if (isset($request['errors']) && is_array($request['errors']) && count($request['errors']) > 0) {
                             Log::error('SdekOrderController: CDEK order creation errors in initial response', [
                                 'uuid' => $cdekOrderUuid,
                                 'order_number' => $orderData['order_number'] ?? null,
-                                'errors' => $request['errors']
+                                'errors' => $request['errors'],
                             ]);
-                            
+
                             // Сохраняем информацию об ошибках в delivery_status
-                            $errorMessages = array_map(function($error) {
+                            $errorMessages = array_map(function ($error) {
                                 return $error['message'] ?? ($error['code'] ?? 'Unknown error');
                             }, $request['errors']);
-                            
+
                             $deliveryStatus = [
                                 'request_state' => $requestState,
                                 'code' => 'INVALID',
                                 'name' => 'Ошибка создания заказа',
-                                'errors' => $errorMessages
+                                'errors' => $errorMessages,
                             ];
                         }
                     }
-                    
+
                     // Делаем одну быструю проверку статуса заказа (как было в CdekService)
-                    if (!$deliveryStatus && $requestState !== 'INVALID') {
+                    if (! $deliveryStatus && $requestState !== 'INVALID') {
                         try {
                             // Используем ту же логику, что и в CdekService - ждем 5 секунд и проверяем
                             sleep(5);
                             $statusResult = $this->cdekService->getOrderStatus($cdekOrderUuid);
                             if ($statusResult['success'] && isset($statusResult['data'])) {
                                 $statusData = $statusResult['data'];
-                                
+
                                 // Извлекаем статус доставки из entity.statuses (приоритет)
                                 if (isset($statusData['entity']['statuses']) && is_array($statusData['entity']['statuses']) && count($statusData['entity']['statuses']) > 0) {
                                     // Берем последний статус
@@ -145,20 +146,20 @@ class SdekOrderController extends Controller
                                         'city' => $lastStatus['city'] ?? null,
                                     ];
                                 }
-                                
+
                                 // Проверяем ошибки в статусе
                                 if (isset($statusData['requests']) && is_array($statusData['requests']) && count($statusData['requests']) > 0) {
                                     $latestRequest = end($statusData['requests']);
                                     if (isset($latestRequest['errors']) && is_array($latestRequest['errors']) && count($latestRequest['errors']) > 0) {
-                                        $errorMessages = array_map(function($error) {
+                                        $errorMessages = array_map(function ($error) {
                                             return $error['message'] ?? ($error['code'] ?? 'Unknown error');
                                         }, $latestRequest['errors']);
-                                        
+
                                         $deliveryStatus = [
                                             'request_state' => $latestRequest['state'] ?? $requestState,
                                             'code' => 'INVALID',
                                             'name' => 'Ошибка создания заказа',
-                                            'errors' => $errorMessages
+                                            'errors' => $errorMessages,
                                         ];
                                     }
                                 }
@@ -167,19 +168,19 @@ class SdekOrderController extends Controller
                             // Игнорируем ошибки получения статуса
                         }
                     }
-                    
+
                     // Сохраняем статус запроса в delivery_status, если нет статуса доставки
-                    if (!$deliveryStatus && $requestState) {
+                    if (! $deliveryStatus && $requestState) {
                         $deliveryStatus = [
                             'request_state' => $requestState,
                             'code' => $requestState,
-                            'name' => $requestState === 'ACCEPTED' ? 'Принят на обработку' : 
-                                     ($requestState === 'SUCCESSFUL' ? 'Успешно создан' : 
+                            'name' => $requestState === 'ACCEPTED' ? 'Принят на обработку' :
+                                     ($requestState === 'SUCCESSFUL' ? 'Успешно создан' :
                                      ($requestState === 'INVALID' ? 'Ошибка создания' : $requestState)),
                         ];
                     }
                 }
-                
+
                 // Если после всех проверок статус INVALID — считаем, что заказ не создан
                 $hasInvalidErrors = false;
                 if ($deliveryStatus) {
@@ -189,67 +190,67 @@ class SdekOrderController extends Controller
                         $hasInvalidErrors = true;
                     }
                 }
-                
+
                 if ($hasInvalidErrors) {
                     return response()->json([
                         'success' => false,
                         'data' => $result['data'],
                         'delivery_status' => $deliveryStatus,
                         'message' => $deliveryStatus['name'] ?? 'Ошибка создания заказа в СДЭК',
-                        'errors' => $deliveryStatus['errors'] ?? []
+                        'errors' => $deliveryStatus['errors'] ?? [],
                     ], 400);
                 }
-                
+
                 // Обновляем заказ в базе данных
                 if ($cdekOrderUuid && isset($orderData['order_number'])) {
                     // Пытаемся обновить заказ с несколькими попытками (на случай, если заказ еще не успел сохраниться)
                     $maxAttempts = 3;
                     $attempt = 0;
                     $orderUpdated = false;
-                    
-                    while ($attempt < $maxAttempts && !$orderUpdated) {
+
+                    while ($attempt < $maxAttempts && ! $orderUpdated) {
                         try {
                             $attempt++;
-                            
+
                             // Небольшая задержка перед первой попыткой, если это не первая попытка
                             if ($attempt > 1) {
                                 sleep(1);
                             }
-                            
+
                             // Нормализуем order_number для поиска (приводим к строке и убираем пробелы)
-                            $orderNumber = trim((string)$orderData['order_number']);
-                            
+                            $orderNumber = trim((string) $orderData['order_number']);
+
                             // Пытаемся найти заказ по нормализованному номеру
                             $order = ShopOrder::where('order_number', $orderNumber)->first();
-                            
+
                             // Если не нашли, пробуем найти без учета регистра и пробелов
-                            if (!$order) {
+                            if (! $order) {
                                 $order = ShopOrder::whereRaw('TRIM(order_number) = ?', [$orderNumber])->first();
                             }
-                            
+
                             if ($order) {
                                 $updateData = [
-                                    'cdek_order_uuid' => $cdekOrderUuid
+                                    'cdek_order_uuid' => $cdekOrderUuid,
                                 ];
 
                                 if (isset($orderData['delivery_recipient_cost']) && is_array($orderData['delivery_recipient_cost'])) {
                                     $deliveryCostValue = $orderData['delivery_recipient_cost']['value'] ?? null;
                                     if ($deliveryCostValue !== null && is_numeric($deliveryCostValue)) {
-                                        $updateData['delivery_cost'] = (float)$deliveryCostValue;
+                                        $updateData['delivery_cost'] = (float) $deliveryCostValue;
                                     }
                                 }
 
                                 if (isset($orderData['delivery_cost_for_order'])) {
                                     $deliveryCostForOrder = $orderData['delivery_cost_for_order'];
                                     if ($deliveryCostForOrder !== null && is_numeric($deliveryCostForOrder)) {
-                                        $updateData['delivery_cost'] = (float)$deliveryCostForOrder;
+                                        $updateData['delivery_cost'] = (float) $deliveryCostForOrder;
                                     }
                                 }
 
                                 if ($deliveryStatus) {
                                     $updateData['delivery_status'] = json_encode($deliveryStatus, JSON_UNESCAPED_UNICODE);
                                 }
-                                
+
                                 $order->update($updateData);
                                 $order->refresh();
                                 $orderUpdated = true;
@@ -259,9 +260,9 @@ class SdekOrderController extends Controller
                                 'attempt' => $attempt,
                                 'order_number' => $orderData['order_number'],
                                 'error' => $e->getMessage(),
-                                'trace' => $e->getTraceAsString()
+                                'trace' => $e->getTraceAsString(),
                             ]);
-                            
+
                             // Если это последняя попытка, не прерываем процесс, так как заказ в СДЭК уже создан
                             if ($attempt >= $maxAttempts) {
                                 break;
@@ -269,30 +270,30 @@ class SdekOrderController extends Controller
                         }
                     }
                 }
-                
+
                 return response()->json([
                     'success' => true,
                     'data' => $result['data'],
                     'additional_services' => $result['additional_services'] ?? [],
-                    'message' => $result['message']
+                    'message' => $result['message'],
                 ]);
             } else {
                 return response()->json([
                     'success' => false,
                     'message' => $result['message'],
-                    'error' => $result['error'] ?? null
+                    'error' => $result['error'] ?? null,
                 ], 400);
             }
 
         } catch (\Exception $e) {
             Log::error('SdekOrderController: Exception during order creation', [
                 'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Внутренняя ошибка сервера при создании заказа в СДЭК'
+                'message' => 'Внутренняя ошибка сервера при создании заказа в СДЭК',
             ], 500);
         }
     }
@@ -306,7 +307,7 @@ class SdekOrderController extends Controller
             if (empty($orderUuid)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'UUID заказа не указан'
+                    'message' => 'UUID заказа не указан',
                 ], 400);
             }
 
@@ -315,12 +316,12 @@ class SdekOrderController extends Controller
             if ($result['success']) {
                 return response()->json([
                     'success' => true,
-                    'data' => $result['data']
+                    'data' => $result['data'],
                 ]);
             } else {
                 return response()->json([
                     'success' => false,
-                    'message' => $result['message']
+                    'message' => $result['message'],
                 ], 400);
             }
 
@@ -328,12 +329,12 @@ class SdekOrderController extends Controller
             Log::error('SdekOrderController: Exception during status check', [
                 'order_uuid' => $orderUuid,
                 'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Внутренняя ошибка сервера при получении статуса заказа'
+                'message' => 'Внутренняя ошибка сервера при получении статуса заказа',
             ], 500);
         }
     }
@@ -346,10 +347,10 @@ class SdekOrderController extends Controller
         try {
             $request->validate([
                 'tariff_code' => 'required|integer',
-                'total_amount' => 'required|numeric|min:0'
+                'total_amount' => 'required|numeric|min:0',
             ]);
 
-            $cdekService = new CdekService();
+            $cdekService = new CdekService;
             $result = $cdekService->getInsuranceInfo(
                 $request->tariff_code,
                 $request->total_amount
@@ -358,20 +359,21 @@ class SdekOrderController extends Controller
             if ($result['success']) {
                 return response()->json([
                     'success' => true,
-                    'insurance_info' => $result['insurance_info']
+                    'insurance_info' => $result['insurance_info'],
                 ]);
             } else {
                 return response()->json([
                     'success' => false,
-                    'message' => $result['message']
+                    'message' => $result['message'],
                 ], 400);
             }
 
         } catch (\Exception $e) {
-            Log::error('SdekOrderController: Error getting insurance info: ' . $e->getMessage());
+            Log::error('SdekOrderController: Error getting insurance info: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Внутренняя ошибка сервера'
+                'message' => 'Внутренняя ошибка сервера',
             ], 500);
         }
     }
@@ -385,7 +387,7 @@ class SdekOrderController extends Controller
             if (empty($orderUuid)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'UUID заказа не указан'
+                    'message' => 'UUID заказа не указан',
                 ], 400);
             }
 
@@ -395,12 +397,12 @@ class SdekOrderController extends Controller
                 return response()->json([
                     'success' => true,
                     'data' => $result['data'],
-                    'message' => $result['message']
+                    'message' => $result['message'],
                 ]);
             } else {
                 return response()->json([
                     'success' => false,
-                    'message' => $result['message']
+                    'message' => $result['message'],
                 ], 400);
             }
 
@@ -408,12 +410,12 @@ class SdekOrderController extends Controller
             Log::error('SdekOrderController: Exception during order cancellation', [
                 'order_uuid' => $orderUuid,
                 'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Внутренняя ошибка сервера при отмене заказа'
+                'message' => 'Внутренняя ошибка сервера при отмене заказа',
             ], 500);
         }
     }

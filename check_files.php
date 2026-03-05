@@ -22,4 +22,4 @@ foreach ($files as $file) {
     }
 }
 
-echo "\nJobs in queue: " . DB::table('jobs')->count() . "\n";
+echo "\nJobs in queue: ".DB::table('jobs')->count()."\n";

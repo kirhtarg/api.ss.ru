@@ -4,10 +4,10 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopDpdSettings;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Validator;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Validator;
 
 class ShopDpdSettingsController extends Controller
 {
@@ -17,23 +17,23 @@ class ShopDpdSettingsController extends Controller
     private function checkAccess($request)
     {
         $user = $request->user();
-        
+
         // Проверяем авторизацию
-        if (!$user) {
+        if (! $user) {
             return response()->json([
                 'success' => false,
-                'message' => 'Необходима авторизация.'
+                'message' => 'Необходима авторизация.',
             ], 401);
         }
-        
+
         // Проверяем, что пользователь имеет роль admin или shop
-        if (!$user->hasRole('admin') && !$user->hasRole('shop')) {
+        if (! $user->hasRole('admin') && ! $user->hasRole('shop')) {
             return response()->json([
                 'success' => false,
-                'message' => 'Доступ запрещен. Требуется роль администратора или менеджера магазина.'
+                'message' => 'Доступ запрещен. Требуется роль администратора или менеджера магазина.',
             ], 403);
         }
-        
+
         return null;
     }
 
@@ -48,10 +48,10 @@ class ShopDpdSettingsController extends Controller
         }
 
         $settings = ShopDpdSettings::first();
-        
+
         return response()->json([
             'success' => true,
-            'data' => $settings
+            'data' => $settings,
         ]);
     }
 
@@ -66,10 +66,10 @@ class ShopDpdSettingsController extends Controller
         }
 
         $settings = ShopDpdSettings::getActive();
-        
+
         return response()->json([
             'success' => true,
-            'data' => $settings
+            'data' => $settings,
         ]);
     }
 
@@ -108,7 +108,7 @@ class ShopDpdSettingsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -123,7 +123,7 @@ class ShopDpdSettingsController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Настройки DPD сохранены успешно',
-            'data' => $settings
+            'data' => $settings,
         ]);
     }
 
@@ -164,7 +164,7 @@ class ShopDpdSettingsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -173,7 +173,7 @@ class ShopDpdSettingsController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Настройки DPD обновлены успешно',
-            'data' => $settings
+            'data' => $settings,
         ]);
     }
 
@@ -192,7 +192,7 @@ class ShopDpdSettingsController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Настройки DPD удалены успешно'
+            'message' => 'Настройки DPD удалены успешно',
         ]);
     }
 
@@ -207,7 +207,7 @@ class ShopDpdSettingsController extends Controller
         }
 
         $settings = ShopDpdSettings::findOrFail($id);
-        
+
         // Деактивируем все остальные
         ShopDpdSettings::where('id', '!=', $id)
             ->where('is_active', true)
@@ -218,7 +218,7 @@ class ShopDpdSettingsController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Настройки DPD активированы успешно',
-            'data' => $settings
+            'data' => $settings,
         ]);
     }
 
@@ -241,7 +241,7 @@ class ShopDpdSettingsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -253,7 +253,7 @@ class ShopDpdSettingsController extends Controller
             'data' => [
                 'valid' => $validation['valid'],
                 'error' => $validation['error'] ?? null,
-            ]
+            ],
         ]);
     }
 
@@ -278,7 +278,7 @@ class ShopDpdSettingsController extends Controller
             // Если запрос успешен, учетные данные валидны
             if ($response->successful()) {
                 return [
-                    'valid' => true
+                    'valid' => true,
                 ];
             }
 
@@ -286,69 +286,40 @@ class ShopDpdSettingsController extends Controller
             if ($response->status() === 401 || $response->status() === 403) {
                 return [
                     'valid' => false,
-                    'error' => 'Неверные учетные данные'
+                    'error' => 'Неверные учетные данные',
                 ];
             }
 
             // Другие ошибки
             $errorData = $response->json();
             $errorMessage = $errorData['error'] ?? $errorData['message'] ?? 'Ошибка проверки учетных данных';
-            
+
             return [
                 'valid' => false,
-                'error' => $errorMessage
+                'error' => $errorMessage,
             ];
         } catch (\Exception $e) {
             // Если API недоступен или произошла ошибка, проверяем формат данных
             if (empty($clientNumber)) {
                 return [
                     'valid' => false,
-                    'error' => 'Номер клиента обязателен'
+                    'error' => 'Номер клиента обязателен',
                 ];
             }
-            
+
             if (empty($apiKey) || strlen($apiKey) < 10) {
                 return [
                     'valid' => false,
-                    'error' => 'API ключ слишком короткий'
+                    'error' => 'API ключ слишком короткий',
                 ];
             }
-            
+
             // Если формат данных выглядит корректным, но API недоступен,
             // разрешаем учетные данные (в реальной реализации нужно использовать правильный endpoint)
             return [
                 'valid' => true,
-                'error' => null
+                'error' => null,
             ];
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

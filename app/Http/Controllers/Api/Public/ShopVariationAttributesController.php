@@ -22,7 +22,7 @@ class ShopVariationAttributesController extends Controller
 
             // Получаем ВСЕ атрибуты и их значения, используемые в товарах (даже если их нет в текущей выборке)
             // Но подсчитываем количество только для текущей выборки
-            
+
             // 1. Сначала получаем список всех используемых атрибутов и значений
             $allAttributesQuery = DB::table('shop_variation_attributes as a')
                 ->join('shop_variation_attribute_values as av', 'av.attribute_id', '=', 'a.id')
@@ -43,7 +43,7 @@ class ShopVariationAttributesController extends Controller
                         ->where('v.is_active', true)
                         ->where('g.is_active', true);
                 });
-                
+
             $allAttributesData = $allAttributesQuery
                 ->orderBy('a.name')
                 ->orderBy('av.value')
@@ -62,7 +62,7 @@ class ShopVariationAttributesController extends Controller
                     )
                     ->groupBy('vav.attribute_value_id')
                     ->get();
-                    
+
                 foreach ($countsData as $row) {
                     $counts[$row->attribute_value_id] = $row->count;
                 }
@@ -71,12 +71,12 @@ class ShopVariationAttributesController extends Controller
             // Группируем результаты по атрибутам
             $result = [];
             foreach ($allAttributesData as $row) {
-                if (!isset($result[$row->attribute_id])) {
+                if (! isset($result[$row->attribute_id])) {
                     $result[$row->attribute_id] = [
                         'id' => $row->attribute_id,
                         'name' => $row->attribute_name,
                         // 'type' => $row->attribute_type,
-                        'values' => []
+                        'values' => [],
                     ];
                 }
 
@@ -84,19 +84,19 @@ class ShopVariationAttributesController extends Controller
                     'id' => $row->value_id,
                     'value' => $row->value_value,
                     'color' => $row->value_color,
-                    'count' => $counts[$row->value_id] ?? 0
+                    'count' => $counts[$row->value_id] ?? 0,
                 ];
             }
 
             return response()->json([
                 'success' => true,
-                'data' => array_values($result)
+                'data' => array_values($result),
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка загрузки атрибутов вариаций: ' . $e->getMessage()
+                'message' => 'Ошибка загрузки атрибутов вариаций: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -107,17 +107,17 @@ class ShopVariationAttributesController extends Controller
     private function buildGoodsQuery(Request $request)
     {
         $query = ShopGood::where('is_active', true);
-        
+
         // Фильтр по категориям
         if ($request->filled('categories')) {
-            $categoryIds = is_array($request->categories) 
-                ? $request->categories 
+            $categoryIds = is_array($request->categories)
+                ? $request->categories
                 : explode(',', $request->categories);
             $query->whereHas('categories', function ($q) use ($categoryIds) {
                 $q->whereIn('shop_categories.id', $categoryIds);
             });
         }
-        
+
         // Фильтр по одной категории
         if ($request->filled('category_id')) {
             $categoryId = $request->get('category_id');
@@ -125,53 +125,53 @@ class ShopVariationAttributesController extends Controller
                 $q->where('shop_categories.id', $categoryId);
             });
         }
-        
+
         // Фильтр по брендам
         if ($request->filled('brands')) {
-            $brandIds = is_array($request->brands) 
-                ? $request->brands 
+            $brandIds = is_array($request->brands)
+                ? $request->brands
                 : explode(',', $request->brands);
             $query->whereHas('brands', function ($q) use ($brandIds) {
                 $q->whereIn('shop_brands.id', $brandIds);
             });
         }
-        
+
         // Фильтр по цене
         if ($request->filled('min_price')) {
             $query->where('price', '>=', $request->min_price);
         }
-        
+
         if ($request->filled('max_price')) {
             $query->where('price', '<=', $request->max_price);
         }
-        
+
         // Фильтр по поиску
         if ($request->filled('search')) {
             $search = $request->get('search');
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('description', 'like', "%{$search}%");
+                    ->orWhere('description', 'like', "%{$search}%");
             });
         }
 
         // Фильтрация по атрибутам вариаций (для корректного подсчета при выборе нескольких фильтров)
         if ($request->has('attributes')) {
             $attributes = $request->input('attributes');
-            if (is_array($attributes) && !empty($attributes)) {
+            if (is_array($attributes) && ! empty($attributes)) {
                 foreach ($attributes as $attributeId => $values) {
-                    if (is_array($values) && !empty($values)) {
-                        $query->whereHas('variations', function($q) use ($attributeId, $values) {
+                    if (is_array($values) && ! empty($values)) {
+                        $query->whereHas('variations', function ($q) use ($attributeId, $values) {
                             $q->where('is_active', true)
-                              ->whereHas('attributeValues', function($avQ) use ($attributeId, $values) {
-                                  $avQ->where('attribute_id', $attributeId)
-                                      ->whereIn('value', $values);
-                              });
+                                ->whereHas('attributeValues', function ($avQ) use ($attributeId, $values) {
+                                    $avQ->where('attribute_id', $attributeId)
+                                        ->whereIn('value', $values);
+                                });
                         });
                     }
                 }
             }
         }
-        
+
         return $query;
     }
 }

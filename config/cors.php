@@ -44,13 +44,13 @@ return [
         'Origin',
         'X-CSRF-TOKEN',
         'X-XSRF-TOKEN',
-        'X-Session-ID'
+        'X-Session-ID',
     ],
 
     'exposed_headers' => [
         'X-Total-Count',
         'X-Page-Count',
-        'X-Current-Page'
+        'X-Current-Page',
     ],
 
     'max_age' => 0,

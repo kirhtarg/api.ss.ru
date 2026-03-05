@@ -13,7 +13,7 @@ class SrCategory extends Model
         'name',
         'description',
         'icon',
-        'image'
+        'image',
     ];
 
     /**
@@ -38,6 +38,7 @@ class SrCategory extends Model
         if (isset($this->attributes['cards_count'])) {
             return (int) $this->attributes['cards_count'];
         }
+
         return $this->cards()->count();
     }
 }

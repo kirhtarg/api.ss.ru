@@ -14,8 +14,8 @@ return new class extends Migration
         Schema::table('sliders', function (Blueprint $table) {
             // Изменяем ENUM для transition_type, добавляя новые значения
             $table->enum('transition_type', ['fade', 'slide', 'slide_left', 'slide_right', 'zoom'])
-                  ->default('fade')
-                  ->change();
+                ->default('fade')
+                ->change();
         });
     }
 
@@ -27,8 +27,8 @@ return new class extends Migration
         Schema::table('sliders', function (Blueprint $table) {
             // Возвращаем к исходным значениям
             $table->enum('transition_type', ['fade', 'slide', 'zoom'])
-                  ->default('fade')
-                  ->change();
+                ->default('fade')
+                ->change();
         });
     }
 };

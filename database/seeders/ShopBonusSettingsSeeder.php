@@ -26,7 +26,7 @@ class ShopBonusSettingsSeeder extends Seeder
                 'bonus_expiry_days' => 365,
                 'metadata' => json_encode([
                     'description' => 'Стандартная система начисления и списания бонусов',
-                    'created_by' => 'system'
+                    'created_by' => 'system',
                 ]),
                 'created_at' => now(),
                 'updated_at' => now(),
@@ -44,11 +44,11 @@ class ShopBonusSettingsSeeder extends Seeder
                 'bonus_expiry_days' => 730,
                 'metadata' => json_encode([
                     'description' => 'Премиум система с увеличенными процентами',
-                    'created_by' => 'system'
+                    'created_by' => 'system',
                 ]),
                 'created_at' => now(),
                 'updated_at' => now(),
-            ]
+            ],
         ];
 
         foreach ($settings as $setting) {

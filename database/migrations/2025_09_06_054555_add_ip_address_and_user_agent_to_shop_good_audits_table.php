@@ -12,10 +12,10 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('shop_good_audits', function (Blueprint $table) {
-            if (!Schema::hasColumn('shop_good_audits', 'ip_address')) {
+            if (! Schema::hasColumn('shop_good_audits', 'ip_address')) {
                 $table->string('ip_address')->nullable()->after('new_values');
             }
-            if (!Schema::hasColumn('shop_good_audits', 'user_agent')) {
+            if (! Schema::hasColumn('shop_good_audits', 'user_agent')) {
                 $table->text('user_agent')->nullable()->after('ip_address');
             }
         });
@@ -34,8 +34,8 @@ return new class extends Migration
             if (Schema::hasColumn('shop_good_audits', 'user_agent')) {
                 $columnsToDrop[] = 'user_agent';
             }
-            
-            if (!empty($columnsToDrop)) {
+
+            if (! empty($columnsToDrop)) {
                 $table->dropColumn($columnsToDrop);
             }
         });

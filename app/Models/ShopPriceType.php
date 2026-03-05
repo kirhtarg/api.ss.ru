@@ -16,14 +16,14 @@ class ShopPriceType extends Model
         'multiplier',
         'is_active',
         'is_default',
-        'sort_order'
+        'sort_order',
     ];
 
     protected $casts = [
         'multiplier' => 'decimal:4',
         'is_active' => 'boolean',
         'is_default' => 'boolean',
-        'sort_order' => 'integer'
+        'sort_order' => 'integer',
     ];
 
     /**

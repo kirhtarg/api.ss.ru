@@ -20,16 +20,15 @@ class ShopDeliveryMethod extends Model
         'description',
         'settings',
         'sort_order',
-        'is_default'
+        'is_default',
     ];
-
 
     protected $casts = [
         'is_active' => 'boolean',
         'cost' => 'decimal:2',
         'free_from' => 'decimal:2',
         'settings' => 'array',
-        'is_default' => 'boolean'
+        'is_default' => 'boolean',
     ];
 
     /**
@@ -72,7 +71,7 @@ class ShopDeliveryMethod extends Model
         if ($this->isFreeDelivery($orderAmount)) {
             return 0;
         }
-        
+
         return $this->cost;
     }
 }

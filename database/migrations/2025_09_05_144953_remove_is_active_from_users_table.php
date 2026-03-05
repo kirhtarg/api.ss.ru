@@ -2,8 +2,8 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -18,7 +18,7 @@ return new class extends Migration
             ->where('is_active', true)
             ->whereNull('email_verified_at')
             ->update(['email_verified_at' => DB::raw('created_at')]);
-            
+
         // Удаляем колонку is_active
         Schema::table('users', function (Blueprint $table) {
             $table->dropColumn('is_active');
@@ -34,12 +34,12 @@ return new class extends Migration
         Schema::table('users', function (Blueprint $table) {
             $table->boolean('is_active')->default(true);
         });
-        
+
         // Обратная миграция: если email_verified_at заполнено, то is_active = true
         DB::table('users')
             ->whereNotNull('email_verified_at')
             ->update(['is_active' => true]);
-            
+
         // Если email_verified_at пустое, то is_active = false
         DB::table('users')
             ->whereNull('email_verified_at')

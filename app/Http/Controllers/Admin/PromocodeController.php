@@ -6,10 +6,10 @@ use App\Http\Controllers\Controller;
 use App\Models\Promocode;
 use App\Models\ShopCategory;
 use App\Models\ShopGood;
-use Illuminate\Http\Request;
-use Illuminate\Http\JsonResponse;
-use Illuminate\Validation\Rule;
 use Carbon\Carbon;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class PromocodeController extends Controller
 {
@@ -19,8 +19,8 @@ class PromocodeController extends Controller
     public function index(Request $request): JsonResponse
     {
         \Log::info('PromocodeController@index called');
-        \Log::info('Request data: ' . json_encode($request->all()));
-        
+        \Log::info('Request data: '.json_encode($request->all()));
+
         try {
             $query = Promocode::query();
 
@@ -29,8 +29,8 @@ class PromocodeController extends Controller
                 $search = $request->search;
                 $query->where(function ($q) use ($search) {
                     $q->where('code', 'like', "%{$search}%")
-                      ->orWhere('name', 'like', "%{$search}%")
-                      ->orWhere('description', 'like', "%{$search}%");
+                        ->orWhere('name', 'like', "%{$search}%")
+                        ->orWhere('description', 'like', "%{$search}%");
                 });
             }
 
@@ -56,28 +56,28 @@ class PromocodeController extends Controller
             $query->orderBy($sortBy, $sortOrder);
 
             $perPage = $request->get('per_page', 15);
-            
+
             // Отладка: проверим, сколько промокодов в базе
             $totalCount = Promocode::count();
-            \Log::info('Total promocodes in database: ' . $totalCount);
-            
+            \Log::info('Total promocodes in database: '.$totalCount);
+
             $promocodes = $query->with(['categories', 'goods', 'user'])->paginate($perPage);
-            
-            \Log::info('Query result count: ' . $promocodes->count());
-            \Log::info('Query SQL: ' . $query->toSql());
-            \Log::info('Query bindings: ' . json_encode($query->getBindings()));
+
+            \Log::info('Query result count: '.$promocodes->count());
+            \Log::info('Query SQL: '.$query->toSql());
+            \Log::info('Query bindings: '.json_encode($query->getBindings()));
 
             return response()->json([
                 'success' => true,
-                'data' => $promocodes
+                'data' => $promocodes,
             ]);
         } catch (\Exception $e) {
-            \Log::error('Error in PromocodeController@index: ' . $e->getMessage());
-            \Log::error('Stack trace: ' . $e->getTraceAsString());
-            
+            \Log::error('Error in PromocodeController@index: '.$e->getMessage());
+            \Log::error('Stack trace: '.$e->getTraceAsString());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка загрузки промокодов: ' . $e->getMessage()
+                'message' => 'Ошибка загрузки промокодов: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -88,18 +88,19 @@ class PromocodeController extends Controller
     public function show($id): JsonResponse
     {
         $promocode = Promocode::find($id);
-        
-        if (!$promocode) {
+
+        if (! $promocode) {
             return response()->json([
                 'success' => false,
-                'message' => 'Промокод не найден'
+                'message' => 'Промокод не найден',
             ], 404);
         }
-        
+
         $promocode->load(['categories', 'goods', 'user']);
+
         return response()->json([
             'success' => true,
-            'data' => $promocode
+            'data' => $promocode,
         ]);
     }
 
@@ -131,10 +132,10 @@ class PromocodeController extends Controller
         ]);
 
         // Валидация value для определенных типов
-        if (in_array($validated['type'], ['percentage', 'fixed_amount']) && !$validated['value']) {
+        if (in_array($validated['type'], ['percentage', 'fixed_amount']) && ! $validated['value']) {
             return response()->json([
                 'success' => false,
-                'message' => 'Поле "Значение" обязательно для выбранного типа промокода'
+                'message' => 'Поле "Значение" обязательно для выбранного типа промокода',
             ], 422);
         }
 
@@ -154,10 +155,10 @@ class PromocodeController extends Controller
         $promocode = Promocode::create($validated);
 
         // Синхронизируем связи many-to-many
-        if (!empty($categoryIds)) {
+        if (! empty($categoryIds)) {
             $promocode->categories()->attach($categoryIds);
         }
-        if (!empty($goodIds)) {
+        if (! empty($goodIds)) {
             $promocode->goods()->attach($goodIds);
         }
 
@@ -167,7 +168,7 @@ class PromocodeController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Промокод успешно создан',
-            'data' => $promocode
+            'data' => $promocode,
         ], 201);
     }
 
@@ -177,11 +178,11 @@ class PromocodeController extends Controller
     public function update(Request $request, $id): JsonResponse
     {
         $promocode = Promocode::find($id);
-        
-        if (!$promocode) {
+
+        if (! $promocode) {
             return response()->json([
                 'success' => false,
-                'message' => 'Промокод не найден'
+                'message' => 'Промокод не найден',
             ], 404);
         }
 
@@ -208,10 +209,10 @@ class PromocodeController extends Controller
         ]);
 
         // Валидация value для определенных типов
-        if (in_array($validated['type'], ['percentage', 'fixed_amount']) && !$validated['value']) {
+        if (in_array($validated['type'], ['percentage', 'fixed_amount']) && ! $validated['value']) {
             return response()->json([
                 'success' => false,
-                'message' => 'Поле "Значение" обязательно для выбранного типа промокода'
+                'message' => 'Поле "Значение" обязательно для выбранного типа промокода',
             ], 422);
         }
 
@@ -244,7 +245,7 @@ class PromocodeController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Промокод успешно обновлен',
-            'data' => $promocode
+            'data' => $promocode,
         ]);
     }
 
@@ -255,26 +256,26 @@ class PromocodeController extends Controller
     {
         try {
             $promocode = Promocode::find($id);
-            
-            if (!$promocode) {
+
+            if (! $promocode) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Промокод не найден'
+                    'message' => 'Промокод не найден',
                 ], 404);
             }
-            
+
             // Удаляем промокод (даже если он использовался)
             // Связи many-to-many будут удалены автоматически благодаря onDelete('cascade')
             $promocode->delete();
 
             return response()->json([
                 'success' => true,
-                'message' => 'Промокод успешно удален'
+                'message' => 'Промокод успешно удален',
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при удалении промокода: ' . $e->getMessage()
+                'message' => 'Ошибка при удалении промокода: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -290,24 +291,24 @@ class PromocodeController extends Controller
             $recentUsage = $promocode->usages()
                 ->where('used_at', '>=', Carbon::now()->subDays(30))
                 ->count();
-            
+
             // Статистика по пользователям
             $uniqueUsers = $promocode->usages()
                 ->whereNotNull('user_id')
                 ->distinct('user_id')
                 ->count('user_id');
-            
+
             // Общая сумма скидок
             $totalDiscountAmount = $promocode->usages()
                 ->sum('discount_amount');
-            
+
             // Статистика по периодам (последние 7 дней, 30 дней, все время)
             $usageByPeriod = [
                 'last_7_days' => $promocode->usages()
                     ->where('used_at', '>=', Carbon::now()->subDays(7))
                     ->count(),
                 'last_30_days' => $recentUsage,
-                'all_time' => $totalUsage
+                'all_time' => $totalUsage,
             ];
 
             $stats = [
@@ -322,15 +323,15 @@ class PromocodeController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $stats
+                'data' => $stats,
             ]);
         } catch (\Exception $e) {
-            \Log::error('Error in PromocodeController@stats: ' . $e->getMessage());
-            \Log::error('Stack trace: ' . $e->getTraceAsString());
-            
+            \Log::error('Error in PromocodeController@stats: '.$e->getMessage());
+            \Log::error('Stack trace: '.$e->getTraceAsString());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка загрузки статистики: ' . $e->getMessage()
+                'message' => 'Ошибка загрузки статистики: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -349,8 +350,8 @@ class PromocodeController extends Controller
             'data' => [
                 'categories' => $categories,
                 'goods' => $goods,
-                'users' => $users
-            ]
+                'users' => $users,
+            ],
         ]);
     }
 
@@ -384,9 +385,9 @@ class PromocodeController extends Controller
             case 'users':
                 $query = \App\Models\User::select('id', 'name', 'email');
                 if ($search) {
-                    $query->where(function($q) use ($search) {
+                    $query->where(function ($q) use ($search) {
                         $q->where('name', 'like', "%{$search}%")
-                          ->orWhere('email', 'like', "%{$search}%");
+                            ->orWhere('email', 'like', "%{$search}%");
                     });
                 }
                 $results = $query->orderBy('name')->limit(20)->get();
@@ -395,13 +396,13 @@ class PromocodeController extends Controller
             default:
                 return response()->json([
                     'success' => false,
-                    'message' => 'Неверный тип поиска'
+                    'message' => 'Неверный тип поиска',
                 ], 400);
         }
 
         return response()->json([
             'success' => true,
-            'data' => $results
+            'data' => $results,
         ]);
     }
 }

@@ -39,7 +39,7 @@ class PropertyValue extends Model
      */
     public function getColorHexAttribute(): ?string
     {
-        return $this->color ? '#' . ltrim($this->color, '#') : null;
+        return $this->color ? '#'.ltrim($this->color, '#') : null;
     }
 
     /**

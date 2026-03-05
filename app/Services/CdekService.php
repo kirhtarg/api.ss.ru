@@ -9,8 +9,11 @@ use Illuminate\Support\Facades\Log;
 class CdekService
 {
     private $settings;
+
     private $apiUrl;
+
     private $sslVerify;
+
     private $timeout;
 
     public function __construct()
@@ -27,35 +30,37 @@ class CdekService
     public function getCities($query = '')
     {
         try {
-            if (!$this->settings) {
+            if (! $this->settings) {
                 return null;
             }
 
             // Получаем токен авторизации
             $token = $this->getAccessToken();
-            if (!$token) {
+            if (! $token) {
                 return null;
             }
 
             // Используем правильный endpoint из документации СДЭК с параметром city
-            $url = $this->apiUrl . '/location/cities?country_codes=RU&city=' . rawurlencode($query);
+            $url = $this->apiUrl.'/location/cities?country_codes=RU&city='.rawurlencode($query);
 
             $response = Http::withOptions([
                 'verify' => $this->sslVerify,
                 'timeout' => $this->timeout,
             ])->withHeaders([
-                'Authorization' => 'Bearer ' . $token
+                'Authorization' => 'Bearer '.$token,
             ])->get($url);
 
-        if ($response->successful()) {
-            return $response->json();
-        }
+            if ($response->successful()) {
+                return $response->json();
+            }
 
-        Log::warning('CdekService: Unsuccessful response: ' . $response->status());
-        return null;
+            Log::warning('CdekService: Unsuccessful response: '.$response->status());
+
+            return null;
         } catch (\Exception $e) {
-            Log::error('Ошибка получения городов СДЭК: ' . $e->getMessage());
-            Log::error('CdekService: Exception stack: ' . $e->getTraceAsString());
+            Log::error('Ошибка получения городов СДЭК: '.$e->getMessage());
+            Log::error('CdekService: Exception stack: '.$e->getTraceAsString());
+
             return null;
         }
     }
@@ -66,38 +71,38 @@ class CdekService
     public function getPickupPoints($cityCode)
     {
         try {
-            if (!$this->settings) {
+            if (! $this->settings) {
                 return null;
             }
 
             // Получаем токен авторизации
-        $token = $this->getAccessToken();
-            if (!$token) {
+            $token = $this->getAccessToken();
+            if (! $token) {
                 return null;
             }
 
             // Проверяем, является ли $cityCode уже числовым кодом
             $numericCityCode = $cityCode;
-            if (!is_numeric($cityCode)) {
+            if (! is_numeric($cityCode)) {
                 // Если это не числовой код, получаем его из API СДЭК
                 $numericCityCode = $this->getNumericCityCode($cityCode, $token);
-                if (!$numericCityCode) {
+                if (! $numericCityCode) {
                     return null;
                 }
             }
 
             // Используем реальный API СДЭК как в папке cdek
-            $url = $this->apiUrl . '/deliverypoints?city_code=' . $numericCityCode;
+            $url = $this->apiUrl.'/deliverypoints?city_code='.$numericCityCode;
 
             $response = Http::withOptions([
                 'verify' => $this->sslVerify,
                 'timeout' => $this->timeout,
             ])->withHeaders([
-                'Authorization' => 'Bearer ' . $token
+                'Authorization' => 'Bearer '.$token,
             ])->get($url);
 
-        if ($response->successful()) {
-            $data = $response->json();
+            if ($response->successful()) {
+                $data = $response->json();
 
                 // Обрабатываем ответ как в папке cdek
                 $points = $data['delivery_points'] ?? $data;
@@ -114,9 +119,9 @@ class CdekService
                             'phone' => $point['phone'] ?? '',
                             'location' => [
                                 'latitude' => $point['location']['latitude'] ?? $point['latitude'] ?? 0,
-                                'longitude' => $point['location']['longitude'] ?? $point['longitude'] ?? 0
+                                'longitude' => $point['location']['longitude'] ?? $point['longitude'] ?? 0,
                             ],
-                            'type' => $point['type'] ?? 'PVZ'
+                            'type' => $point['type'] ?? 'PVZ',
                         ];
                     }
 
@@ -125,11 +130,13 @@ class CdekService
 
                 return $points;
             } else {
-                Log::error('CdekService: API request failed: ' . $response->body());
+                Log::error('CdekService: API request failed: '.$response->body());
+
                 return null;
             }
         } catch (\Exception $e) {
-            Log::error('Ошибка получения пунктов выдачи СДЭК: ' . $e->getMessage());
+            Log::error('Ошибка получения пунктов выдачи СДЭК: '.$e->getMessage());
+
             return null;
         }
     }
@@ -145,19 +152,19 @@ class CdekService
                 'spb' => 'Санкт-Петербург',
                 'moscow' => 'Москва',
                 'orenburg' => 'Оренбург',
-                'ekaterinburg' => 'Екатеринбург'
+                'ekaterinburg' => 'Екатеринбург',
             ];
 
             $searchName = $cityMapping[$cityName] ?? $cityName;
 
             // Используем правильный endpoint из документации СДЭК с параметром city
-            $url = $this->apiUrl . '/location/cities?country_codes=RU&city=' . rawurlencode($searchName);
+            $url = $this->apiUrl.'/location/cities?country_codes=RU&city='.rawurlencode($searchName);
 
             $response = Http::withOptions([
                 'verify' => $this->sslVerify,
                 'timeout' => $this->timeout,
             ])->withHeaders([
-                'Authorization' => 'Bearer ' . $token
+                'Authorization' => 'Bearer '.$token,
             ])->get($url);
 
             if ($response->successful()) {
@@ -167,6 +174,7 @@ class CdekService
                 foreach ($data as $city) {
                     if (isset($city['city']) && $city['city'] === $searchName) {
                         $code = $city['code'];
+
                         return $code;
                     }
                 }
@@ -174,6 +182,7 @@ class CdekService
                 // Если точного совпадения нет, берем первый результат
                 if (isset($data[0]['code'])) {
                     $code = $data[0]['code'];
+
                     return $code;
                 }
             }
@@ -189,50 +198,53 @@ class CdekService
      */
     public function calculateDelivery($fromCityCode, $toCityCode, $weight = null, $length = null, $width = null, $height = null)
     {
-        if (!$this->settings) {
+        if (! $this->settings) {
             Log::warning('CdekService: No active CDEK settings found, using fallback data');
+
             return $this->getFallbackDeliveryData($fromCityCode, $toCityCode);
         }
 
         try {
-            $weightKg = (float)($weight ?? $this->settings->default_weight ?? 1);
-            $weightGrams = (int)round($weightKg * 1000);
+            $weightKg = (float) ($weight ?? $this->settings->default_weight ?? 1);
+            $weightGrams = (int) round($weightKg * 1000);
 
             $requestData = [
                 'from_location' => [
-                    'code' => (int)$fromCityCode
+                    'code' => (int) $fromCityCode,
                 ],
                 'to_location' => [
-                    'code' => (int)$toCityCode
+                    'code' => (int) $toCityCode,
                 ],
                 'packages' => [
                     [
                         'weight' => $weightGrams,
-                        'length' => (float)($length ?? $this->settings->default_length ?? 30),
-                        'width' => (float)($width ?? $this->settings->default_width ?? 20),
-                        'height' => (float)($height ?? $this->settings->default_height ?? 10)
-                    ]
+                        'length' => (float) ($length ?? $this->settings->default_length ?? 30),
+                        'width' => (float) ($width ?? $this->settings->default_width ?? 20),
+                        'height' => (float) ($height ?? $this->settings->default_height ?? 10),
+                    ],
                 ],
-                'tariff_codes' => $this->settings->getActiveTariffCodes()
+                'tariff_codes' => $this->settings->getActiveTariffCodes(),
             ];
 
             $response = Http::withOptions([
                 'verify' => $this->sslVerify,
                 'timeout' => 30, // Уменьшаем таймаут для расчета доставки
             ])->withHeaders([
-                'Authorization' => 'Bearer ' . $this->getAccessToken(),
-            'Content-Type' => 'application/json'
-            ])->post($this->apiUrl . '/calculator/tarifflist', $requestData);
+                'Authorization' => 'Bearer '.$this->getAccessToken(),
+                'Content-Type' => 'application/json',
+            ])->post($this->apiUrl.'/calculator/tarifflist', $requestData);
 
             if ($response->successful()) {
                 $data = $response->json();
                 $result = $this->processDeliveryResponse($data);
+
                 return $result;
             }
 
             return null;
         } catch (\Exception $e) {
-            Log::error('Ошибка расчета доставки СДЭК: ' . $e->getMessage());
+            Log::error('Ошибка расчета доставки СДЭК: '.$e->getMessage());
+
             return null;
         }
     }
@@ -242,13 +254,14 @@ class CdekService
      */
     public function getAccessToken()
     {
-        if (!$this->settings || !$this->settings->client_id || !$this->settings->client_secret) {
+        if (! $this->settings || ! $this->settings->client_id || ! $this->settings->client_secret) {
             Log::error('CDEK API keys are not configured.');
+
             return null;
         }
 
         // Проверяем кэш токена
-        $cacheKey = 'cdek_token_' . $this->settings->client_id;
+        $cacheKey = 'cdek_token_'.$this->settings->client_id;
         $cachedToken = cache()->get($cacheKey);
         if ($cachedToken) {
             return $cachedToken;
@@ -263,9 +276,9 @@ class CdekService
                 $params = [
                     'grant_type' => 'client_credentials',
                     'client_id' => $this->settings->client_id,
-                    'client_secret' => $this->settings->client_secret
+                    'client_secret' => $this->settings->client_secret,
                 ];
-                $url = $this->apiUrl . '/oauth/token?' . http_build_query($params);
+                $url = $this->apiUrl.'/oauth/token?'.http_build_query($params);
 
                 $response = Http::withOptions([
                     'verify' => $this->sslVerify,
@@ -278,6 +291,7 @@ class CdekService
                     if ($token) {
                         // Кэшируем токен на 50 минут (токены СДЭК живут 1 час)
                         cache()->put($cacheKey, $token, 3000);
+
                         return $token;
                     }
                 }
@@ -287,7 +301,7 @@ class CdekService
                     $retryDelay *= 2; // Увеличиваем задержку
                 }
             } catch (\Exception $e) {
-                Log::error("CdekService: Error getting access token on attempt {$attempt}: " . $e->getMessage());
+                Log::error("CdekService: Error getting access token on attempt {$attempt}: ".$e->getMessage());
 
                 if ($attempt < $maxRetries) {
                     sleep($retryDelay);
@@ -297,6 +311,7 @@ class CdekService
         }
 
         Log::error('CdekService: Failed to get access token after all retries');
+
         return null;
     }
 
@@ -305,7 +320,7 @@ class CdekService
      */
     private function processDeliveryResponse($data)
     {
-        if (!isset($data['tariff_codes']) || empty($data['tariff_codes'])) {
+        if (! isset($data['tariff_codes']) || empty($data['tariff_codes'])) {
             return null;
         }
 
@@ -318,7 +333,7 @@ class CdekService
                     'delivery_sum' => $tariff['delivery_sum'],
                     'period_min' => $tariff['period_min'] ?? 1,
                     'period_max' => $tariff['period_max'] ?? 7,
-                    'delivery_mode' => $tariff['delivery_mode'] ?? 1
+                    'delivery_mode' => $tariff['delivery_mode'] ?? 1,
                 ];
             }
         }
@@ -333,11 +348,12 @@ class CdekService
     {
         $deliveryOptions = $this->calculateDelivery($fromCityCode, $toCityCode, $weight, $length, $width, $height);
 
-        if (!$deliveryOptions || empty($deliveryOptions)) {
+        if (! $deliveryOptions || empty($deliveryOptions)) {
             return null;
         }
 
         $minCost = min(array_column($deliveryOptions, 'delivery_sum'));
+
         return $minCost;
     }
 
@@ -353,29 +369,30 @@ class CdekService
                 'tariff_name' => 'СДЭК-Экспресс',
                 'delivery_sum' => 300,
                 'period_min' => 1,
-                'period_max' => 2
+                'period_max' => 2,
             ],
             [
                 'tariff_code' => '233',
                 'tariff_name' => 'СДЭК-Экономичный',
                 'delivery_sum' => 200,
                 'period_min' => 3,
-                'period_max' => 5
+                'period_max' => 5,
             ],
             [
                 'tariff_code' => '234',
                 'tariff_name' => 'СДЭК-Экономичный до двери',
                 'delivery_sum' => 250,
                 'period_min' => 3,
-                'period_max' => 5
-            ]
+                'period_max' => 5,
+            ],
         ];
 
         // Корректируем стоимость в зависимости от расстояния между городами
         $distanceMultiplier = $this->getDistanceMultiplier($fromCityCode, $toCityCode);
 
-        return array_map(function($tariff) use ($distanceMultiplier) {
+        return array_map(function ($tariff) use ($distanceMultiplier) {
             $tariff['delivery_sum'] = round($tariff['delivery_sum'] * $distanceMultiplier);
+
             return $tariff;
         }, $baseTariffs);
     }
@@ -394,8 +411,8 @@ class CdekService
             '65' => ['44' => 2.0, '2' => 1.9, '63' => 1.4, '137' => 1.1], // Новосибирск
         ];
 
-        $from = (string)$fromCityCode;
-        $to = (string)$toCityCode;
+        $from = (string) $fromCityCode;
+        $to = (string) $toCityCode;
 
         if (isset($distanceMap[$from][$to])) {
             return $distanceMap[$from][$to];
@@ -411,47 +428,49 @@ class CdekService
     public function createOrder($orderData)
     {
         try {
-            if (!$this->settings) {
+            if (! $this->settings) {
                 Log::error('CdekService: No active CDEK settings found');
+
                 return [
                     'success' => false,
-                    'message' => 'Настройки СДЭК не найдены'
+                    'message' => 'Настройки СДЭК не найдены',
                 ];
             }
 
             $token = $this->getAccessToken();
-            if (!$token) {
+            if (! $token) {
                 Log::error('CdekService: Failed to get access token for order creation');
+
                 return [
                     'success' => false,
-                    'message' => 'Не удалось получить токен доступа СДЭК'
+                    'message' => 'Не удалось получить токен доступа СДЭК',
                 ];
             }
 
             // Формируем данные для создания заказа согласно API СДЭК
 
             // Определяем, нужен ли наложенный платеж
-            $hasCodFlag = !empty($orderData['cod_enabled']);
+            $hasCodFlag = ! empty($orderData['cod_enabled']);
             $hasCodByPaymentMethod = isset($orderData['payment_method']) &&
                 (stripos($orderData['payment_method'], 'получении') !== false ||
                  stripos($orderData['payment_method'], 'наложенный') !== false);
             $isCashOnDelivery = $hasCodFlag || $hasCodByPaymentMethod;
 
             $declaredBase = isset($orderData['declared_value'])
-                ? (float)$orderData['declared_value']
-                : (float)($orderData['subtotal'] ?? 0);
+                ? (float) $orderData['declared_value']
+                : (float) ($orderData['subtotal'] ?? 0);
 
             $codAmount = $declaredBase;
             if ($isCashOnDelivery && isset($orderData['delivery_recipient_cost']['value'])) {
-                $deliveryValue = (float)$orderData['delivery_recipient_cost']['value'];
+                $deliveryValue = (float) $orderData['delivery_recipient_cost']['value'];
                 if ($deliveryValue > 0) {
                     $codAmount += $deliveryValue;
                 }
             }
 
             // Расчет и добавление наценки
-            if (!empty($orderData['surcharge_enabled']) && $isCashOnDelivery) {
-                $surchargeValue = (float)($orderData['surcharge_value'] ?? 0);
+            if (! empty($orderData['surcharge_enabled']) && $isCashOnDelivery) {
+                $surchargeValue = (float) ($orderData['surcharge_value'] ?? 0);
                 $surchargeType = $orderData['surcharge_type'] ?? 'fixed';
                 $surchargeAmount = 0;
 
@@ -466,9 +485,9 @@ class CdekService
 
             $sdekOrderData = [
                 // Номер заказа в системе интернет-магазина (идентификатор ИМ)
-                'number' => $orderData['order_number'] ?? 'ORDER_' . time(),
+                'number' => $orderData['order_number'] ?? 'ORDER_'.time(),
                 'tariff_code' => $orderData['tariff_code'],
-                'comment' => ($orderData['comment'] ?? '') . ($isCashOnDelivery ? ' (Наложенный платеж: ' . $codAmount . ' руб.)' : ''),
+                'comment' => ($orderData['comment'] ?? '').($isCashOnDelivery ? ' (Наложенный платеж: '.$codAmount.' руб.)' : ''),
                 // developer_key - необязательный параметр, используется для идентификации разработчика
                 'developer_key' => $this->settings->developer_key ?? '',
                 'sender' => [
@@ -477,9 +496,9 @@ class CdekService
                     'email' => $this->settings->sender_email ?? '',
                     'phones' => [
                         [
-                            'number' => $this->settings->sender_phone ?? ''
-                        ]
-                    ]
+                            'number' => $this->settings->sender_phone ?? '',
+                        ],
+                    ],
                 ],
                 'recipient' => [
                     'name' => $orderData['customer_name'],
@@ -487,69 +506,70 @@ class CdekService
                     'email' => $orderData['customer_email'],
                     'phones' => [
                         [
-                            'number' => !empty($orderData['customer_phone']) ? $orderData['customer_phone'] : '0000000000'
-                        ]
-                    ]
+                            'number' => ! empty($orderData['customer_phone']) ? $orderData['customer_phone'] : '0000000000',
+                        ],
+                    ],
                 ],
                 'from_location' => [
                     'address' => $this->getSenderAddress(),
-                    'code' => $this->getSenderCityCode()
+                    'code' => $this->getSenderCityCode(),
                 ],
-                'packages' => array_map(function($package) use ($orderData, $isCashOnDelivery) {
+                'packages' => array_map(function ($package) use ($orderData, $isCashOnDelivery) {
 
-                        $declaredPackageCost = $package['cost'] ?? 0;
-                        $paymentValue = $isCashOnDelivery ? $declaredPackageCost : 0;
+                    $declaredPackageCost = $package['cost'] ?? 0;
+                    $paymentValue = $isCashOnDelivery ? $declaredPackageCost : 0;
 
-                        return [
-                            'number' => $package['number'] ?? 'PKG_' . time(),
-                            'weight' => $package['weight'] ?? 1000,
-                            'length' => $package['length'] ?? 10,
-                            'width' => $package['width'] ?? 10,
-                            'height' => $package['height'] ?? 10,
-                            'comment' => $package['comment'] ?? '',
-                            'items' => isset($package['items']) ? array_map(function($item) use ($isCashOnDelivery, $orderData) {
-                                $itemCost = $item['cost'] ?? 0;
-                                $itemPaymentValue = $isCashOnDelivery ? $itemCost : 0;
-                                if ($isCashOnDelivery && isset($orderData['delivery_recipient_cost']['value'])) {
-                                    $deliveryValue = (float)$orderData['delivery_recipient_cost']['value'];
-                                    if ($deliveryValue > 0 && $itemCost > 0 && isset($orderData['subtotal']) && $orderData['subtotal'] > 0) {
-                                        $proportion = $itemCost / (float)$orderData['subtotal'];
-                                        $itemPaymentValue += $deliveryValue * $proportion;
-                                    }
+                    return [
+                        'number' => $package['number'] ?? 'PKG_'.time(),
+                        'weight' => $package['weight'] ?? 1000,
+                        'length' => $package['length'] ?? 10,
+                        'width' => $package['width'] ?? 10,
+                        'height' => $package['height'] ?? 10,
+                        'comment' => $package['comment'] ?? '',
+                        'items' => isset($package['items']) ? array_map(function ($item) use ($isCashOnDelivery, $orderData) {
+                            $itemCost = $item['cost'] ?? 0;
+                            $itemPaymentValue = $isCashOnDelivery ? $itemCost : 0;
+                            if ($isCashOnDelivery && isset($orderData['delivery_recipient_cost']['value'])) {
+                                $deliveryValue = (float) $orderData['delivery_recipient_cost']['value'];
+                                if ($deliveryValue > 0 && $itemCost > 0 && isset($orderData['subtotal']) && $orderData['subtotal'] > 0) {
+                                    $proportion = $itemCost / (float) $orderData['subtotal'];
+                                    $itemPaymentValue += $deliveryValue * $proportion;
                                 }
-                                return [
-                                    'name' => $item['name'] ?? 'Товар',
-                                    'ware_key' => $item['ware_key'] ?? 'ITEM_' . time(),
-                                    'payment' => [
-                                        'value' => $itemPaymentValue
-                                    ],
-                                    'cost' => $itemCost,
-                                    'weight' => $item['weight'] ?? 1000,
-                                    'amount' => $item['amount'] ?? 1
-                                ];
-                            }, $package['items']) : [
-                                [
-                                    'name' => $package['comment'] ?? 'Товар',
-                                    'ware_key' => $package['number'] ?? 'ITEM_' . time(),
-                                    'payment' => [
-                                        'value' => $paymentValue
-                                    ],
-                                    'cost' => $declaredPackageCost,
-                                    'weight' => $package['weight'] ?? 1000,
-                                    'amount' => 1
-                                ]
-                            ]
-                        ];
-                    }, $orderData['packages'] ?? []),
-                'services' => $orderData['services'] ?? []
+                            }
+
+                            return [
+                                'name' => $item['name'] ?? 'Товар',
+                                'ware_key' => $item['ware_key'] ?? 'ITEM_'.time(),
+                                'payment' => [
+                                    'value' => $itemPaymentValue,
+                                ],
+                                'cost' => $itemCost,
+                                'weight' => $item['weight'] ?? 1000,
+                                'amount' => $item['amount'] ?? 1,
+                            ];
+                        }, $package['items']) : [
+                            [
+                                'name' => $package['comment'] ?? 'Товар',
+                                'ware_key' => $package['number'] ?? 'ITEM_'.time(),
+                                'payment' => [
+                                    'value' => $paymentValue,
+                                ],
+                                'cost' => $declaredPackageCost,
+                                'weight' => $package['weight'] ?? 1000,
+                                'amount' => 1,
+                            ],
+                        ],
+                    ];
+                }, $orderData['packages'] ?? []),
+                'services' => $orderData['services'] ?? [],
             ];
- 
+
             // Если указан "кто оплачивает доставку" — добавляем delivery_recipient_cost
             if (isset($orderData['delivery_recipient_cost']) && is_array($orderData['delivery_recipient_cost'])) {
-                $value = isset($orderData['delivery_recipient_cost']['value']) ? (float)$orderData['delivery_recipient_cost']['value'] : null;
+                $value = isset($orderData['delivery_recipient_cost']['value']) ? (float) $orderData['delivery_recipient_cost']['value'] : null;
                 if ($value !== null && $value >= 0) {
                     $sdekOrderData['delivery_recipient_cost'] = [
-                        'value' => $value
+                        'value' => $value,
                     ];
                 }
             }
@@ -563,21 +583,17 @@ class CdekService
                 // Если не ПВЗ, добавляем to_location с адресом
                 $sdekOrderData['to_location'] = [
                     'address' => $orderData['delivery_address'],
-                    'code' => $orderData['city_code']
+                    'code' => $orderData['city_code'],
                 ];
             }
-
-
-
 
             $response = Http::withOptions([
                 'verify' => $this->sslVerify,
                 'timeout' => $this->timeout,
             ])->withHeaders([
-                'Authorization' => 'Bearer ' . $token,
-                'Content-Type' => 'application/json'
-            ])->post($this->apiUrl . '/orders', $sdekOrderData);
-
+                'Authorization' => 'Bearer '.$token,
+                'Content-Type' => 'application/json',
+            ])->post($this->apiUrl.'/orders', $sdekOrderData);
 
             if ($response->successful()) {
                 $data = $response->json();
@@ -596,7 +612,7 @@ class CdekService
                                     $additionalServices[] = [
                                         'name' => 'Страховка за объявленную стоимость',
                                         'cost' => $service['total_sum'],
-                                        'description' => 'Дополнительный сбор за объявленную стоимость ' . $service['parameter'] . ' руб.'
+                                        'description' => 'Дополнительный сбор за объявленную стоимость '.$service['parameter'].' руб.',
                                     ];
                                 }
                             }
@@ -610,27 +626,27 @@ class CdekService
                     'success' => true,
                     'data' => $data,
                     'additional_services' => $additionalServices,
-                    'message' => 'Заказ в СДЭК успешно создан'
+                    'message' => 'Заказ в СДЭК успешно создан',
                 ];
             } else {
                 $errorData = $response->json();
-                Log::error('CdekService: Order creation failed: ' . json_encode($errorData));
+                Log::error('CdekService: Order creation failed: '.json_encode($errorData));
 
                 return [
                     'success' => false,
                     'error' => $errorData,
-                    'message' => $errorData['message'] ?? 'Ошибка при создании заказа в СДЭК'
+                    'message' => $errorData['message'] ?? 'Ошибка при создании заказа в СДЭК',
                 ];
             }
 
         } catch (\Exception $e) {
-            Log::error('CdekService: Exception during order creation: ' . $e->getMessage());
-            Log::error('CdekService: Exception stack: ' . $e->getTraceAsString());
+            Log::error('CdekService: Exception during order creation: '.$e->getMessage());
+            Log::error('CdekService: Exception stack: '.$e->getTraceAsString());
 
             return [
                 'success' => false,
                 'error' => $e->getMessage(),
-                'message' => 'Ошибка при создании заказа в СДЭК: ' . $e->getMessage()
+                'message' => 'Ошибка при создании заказа в СДЭК: '.$e->getMessage(),
             ];
         }
     }
@@ -641,18 +657,18 @@ class CdekService
     public function getOrderStatus($orderUuid)
     {
         try {
-            if (!$this->settings) {
+            if (! $this->settings) {
                 return [
                     'success' => false,
-                    'message' => 'Настройки СДЭК не найдены'
+                    'message' => 'Настройки СДЭК не найдены',
                 ];
             }
 
             $token = $this->getAccessToken();
-            if (!$token) {
+            if (! $token) {
                 return [
                     'success' => false,
-                    'message' => 'Не удалось получить токен доступа СДЭК'
+                    'message' => 'Не удалось получить токен доступа СДЭК',
                 ];
             }
 
@@ -660,25 +676,25 @@ class CdekService
                 'verify' => $this->sslVerify,
                 'timeout' => $this->timeout,
             ])->withHeaders([
-                'Authorization' => 'Bearer ' . $token
-            ])->get($this->apiUrl . '/orders/' . $orderUuid);
+                'Authorization' => 'Bearer '.$token,
+            ])->get($this->apiUrl.'/orders/'.$orderUuid);
 
             if ($response->successful()) {
                 return [
                     'success' => true,
-                    'data' => $response->json()
+                    'data' => $response->json(),
                 ];
             } else {
                 $statusCode = $response->status();
                 $responseBody = $response->body();
-                
+
                 // Логируем ошибку для отладки
                 Log::warning('CDEK API error', [
                     'status_code' => $statusCode,
                     'response_body' => $responseBody,
-                    'order_uuid' => $orderUuid
+                    'order_uuid' => $orderUuid,
                 ]);
-                
+
                 // Проверяем, является ли ошибка признаком того, что заказ не найден
                 // 404 - заказ не найден
                 // Также проверяем текст ответа на наличие признаков "не найден"
@@ -688,27 +704,28 @@ class CdekService
                 } elseif ($responseBody) {
                     $lowerBody = strtolower($responseBody);
                     // Проверяем различные варианты сообщений об ошибке "не найден"
-                    if (strpos($lowerBody, 'not found') !== false || 
+                    if (strpos($lowerBody, 'not found') !== false ||
                         strpos($lowerBody, 'не найден') !== false ||
                         strpos($lowerBody, 'not_found') !== false ||
                         strpos($lowerBody, 'order not found') !== false) {
                         $isNotFound = true;
                     }
                 }
-                
+
                 return [
                     'success' => false,
                     'message' => 'Ошибка при получении статуса заказа',
                     'not_found' => $isNotFound,
-                    'status_code' => $statusCode
+                    'status_code' => $statusCode,
                 ];
             }
 
         } catch (\Exception $e) {
-            Log::error('CdekService: Error getting order status: ' . $e->getMessage());
+            Log::error('CdekService: Error getting order status: '.$e->getMessage());
+
             return [
                 'success' => false,
-                'message' => 'Ошибка при получении статуса заказа: ' . $e->getMessage()
+                'message' => 'Ошибка при получении статуса заказа: '.$e->getMessage(),
             ];
         }
     }
@@ -719,10 +736,10 @@ class CdekService
     public function getInsuranceInfo($tariffCode, $totalAmount)
     {
         try {
-            if (!$this->settings) {
+            if (! $this->settings) {
                 return [
                     'success' => false,
-                    'message' => 'Настройки СДЭК не найдены'
+                    'message' => 'Настройки СДЭК не найдены',
                 ];
             }
 
@@ -740,15 +757,16 @@ class CdekService
                 'insurance_info' => [
                     'name' => 'Страховка за объявленную стоимость',
                     'cost' => $finalInsuranceCost,
-                    'description' => 'Дополнительный сбор за объявленную стоимость ' . number_format($totalAmount, 0, ',', ' ') . ' руб.'
-                ]
+                    'description' => 'Дополнительный сбор за объявленную стоимость '.number_format($totalAmount, 0, ',', ' ').' руб.',
+                ],
             ];
 
         } catch (\Exception $e) {
-            Log::error('CdekService: Error getting insurance info: ' . $e->getMessage());
+            Log::error('CdekService: Error getting insurance info: '.$e->getMessage());
+
             return [
                 'success' => false,
-                'message' => 'Ошибка при получении информации о страховке: ' . $e->getMessage()
+                'message' => 'Ошибка при получении информации о страховке: '.$e->getMessage(),
             ];
         }
     }
@@ -759,18 +777,18 @@ class CdekService
     public function cancelOrder($orderUuid)
     {
         try {
-            if (!$this->settings) {
+            if (! $this->settings) {
                 return [
                     'success' => false,
-                    'message' => 'Настройки СДЭК не найдены'
+                    'message' => 'Настройки СДЭК не найдены',
                 ];
             }
 
             $token = $this->getAccessToken();
-            if (!$token) {
+            if (! $token) {
                 return [
                     'success' => false,
-                    'message' => 'Не удалось получить токен доступа СДЭК'
+                    'message' => 'Не удалось получить токен доступа СДЭК',
                 ];
             }
 
@@ -778,27 +796,28 @@ class CdekService
                 'verify' => $this->sslVerify,
                 'timeout' => $this->timeout,
             ])->withHeaders([
-                'Authorization' => 'Bearer ' . $token
-            ])->post($this->apiUrl . '/orders/' . $orderUuid . '/cancel');
+                'Authorization' => 'Bearer '.$token,
+            ])->post($this->apiUrl.'/orders/'.$orderUuid.'/cancel');
 
             if ($response->successful()) {
                 return [
                     'success' => true,
                     'data' => $response->json(),
-                    'message' => 'Заказ в СДЭК успешно отменен'
+                    'message' => 'Заказ в СДЭК успешно отменен',
                 ];
             } else {
                 return [
                     'success' => false,
-                    'message' => 'Ошибка при отмене заказа'
+                    'message' => 'Ошибка при отмене заказа',
                 ];
             }
 
         } catch (\Exception $e) {
-            Log::error('CdekService: Error canceling order: ' . $e->getMessage());
+            Log::error('CdekService: Error canceling order: '.$e->getMessage());
+
             return [
                 'success' => false,
-                'message' => 'Ошибка при отмене заказа: ' . $e->getMessage()
+                'message' => 'Ошибка при отмене заказа: '.$e->getMessage(),
             ];
         }
     }
@@ -808,7 +827,7 @@ class CdekService
      */
     private function getSenderAddress()
     {
-        if (!$this->settings) {
+        if (! $this->settings) {
             return '';
         }
 
@@ -821,10 +840,10 @@ class CdekService
         if ($this->settings->sender_street) {
             $street = $this->settings->sender_street;
             if ($this->settings->sender_house) {
-                $street .= ', д. ' . $this->settings->sender_house;
+                $street .= ', д. '.$this->settings->sender_house;
             }
             if ($this->settings->sender_flat) {
-                $street .= ', кв. ' . $this->settings->sender_flat;
+                $street .= ', кв. '.$this->settings->sender_flat;
             }
             $addressParts[] = $street;
         }
@@ -846,28 +865,28 @@ class CdekService
 
     /**
      * Получить штрихкод для заказа СДЭК
-     * 
-     * @param string $orderUuid UUID заказа в СДЭК
-     * @param int $copyCount Количество копий (по умолчанию 1)
-     * @param string $format Формат печати (A4, A5, A6, A7, по умолчанию A4)
-     * @param string $lang Язык (RUS, ENG, по умолчанию RUS)
+     *
+     * @param  string  $orderUuid  UUID заказа в СДЭК
+     * @param  int  $copyCount  Количество копий (по умолчанию 1)
+     * @param  string  $format  Формат печати (A4, A5, A6, A7, по умолчанию A4)
+     * @param  string  $lang  Язык (RUS, ENG, по умолчанию RUS)
      * @return array Результат с URL для скачивания или ошибкой
      */
     public function getBarcode($orderUuid, $copyCount = 1, $format = 'A4', $lang = 'RUS')
     {
         try {
-            if (!$this->settings) {
+            if (! $this->settings) {
                 return [
                     'success' => false,
-                    'message' => 'Настройки СДЭК не найдены'
+                    'message' => 'Настройки СДЭК не найдены',
                 ];
             }
 
             $token = $this->getAccessToken();
-            if (!$token) {
+            if (! $token) {
                 return [
                     'success' => false,
-                    'message' => 'Не удалось получить токен доступа СДЭК'
+                    'message' => 'Не удалось получить токен доступа СДЭК',
                 ];
             }
 
@@ -875,21 +894,21 @@ class CdekService
             $requestData = [
                 'orders' => [
                     [
-                        'order_uuid' => $orderUuid
-                    ]
+                        'order_uuid' => $orderUuid,
+                    ],
                 ],
                 'copy_count' => $copyCount,
                 'format' => $format,
-                'lang' => $lang
+                'lang' => $lang,
             ];
 
             $response = Http::withOptions([
                 'verify' => $this->sslVerify,
                 'timeout' => $this->timeout,
             ])->withHeaders([
-                'Authorization' => 'Bearer ' . $token,
-                'Content-Type' => 'application/json'
-            ])->post($this->apiUrl . '/print/barcodes', $requestData);
+                'Authorization' => 'Bearer '.$token,
+                'Content-Type' => 'application/json',
+            ])->post($this->apiUrl.'/print/barcodes', $requestData);
 
             if ($response->status() === 202) {
                 // Запрос принят, получаем UUID запроса
@@ -899,31 +918,32 @@ class CdekService
                 if ($requestUuid) {
                     // Ждем немного и проверяем статус
                     sleep(2);
-                    
+
                     // Получаем статус генерации
                     $statusResponse = Http::withOptions([
                         'verify' => $this->sslVerify,
                         'timeout' => $this->timeout,
                     ])->withHeaders([
-                        'Authorization' => 'Bearer ' . $token
-                    ])->get($this->apiUrl . '/print/barcodes/' . $requestUuid);
+                        'Authorization' => 'Bearer '.$token,
+                    ])->get($this->apiUrl.'/print/barcodes/'.$requestUuid);
 
                     if ($statusResponse->successful()) {
                         $statusData = $statusResponse->json();
-                        
+
                         // Проверяем статус
                         if (isset($statusData['entity']['statuses'])) {
                             $statuses = $statusData['entity']['statuses'];
                             $lastStatus = end($statuses);
-                            
+
                             if ($lastStatus && $lastStatus['code'] === 'READY') {
                                 // Штрихкод готов, возвращаем URL для скачивания
-                                $pdfUrl = $this->apiUrl . '/print/barcodes/' . $requestUuid . '.pdf';
+                                $pdfUrl = $this->apiUrl.'/print/barcodes/'.$requestUuid.'.pdf';
+
                                 return [
                                     'success' => true,
                                     'url' => $pdfUrl,
                                     'request_uuid' => $requestUuid,
-                                    'message' => 'Штрихкод готов к скачиванию'
+                                    'message' => 'Штрихкод готов к скачиванию',
                                 ];
                             } elseif ($lastStatus && $lastStatus['code'] === 'PROCESSING') {
                                 // Еще обрабатывается
@@ -931,30 +951,31 @@ class CdekService
                                     'success' => false,
                                     'message' => 'Штрихкод еще генерируется, попробуйте позже',
                                     'status' => 'processing',
-                                    'request_uuid' => $requestUuid
+                                    'request_uuid' => $requestUuid,
                                 ];
                             }
                         }
                     }
 
                     // Если статус не готов, возвращаем URL для прямого скачивания (может работать)
-                    $pdfUrl = $this->apiUrl . '/print/barcodes/' . $requestUuid . '.pdf';
+                    $pdfUrl = $this->apiUrl.'/print/barcodes/'.$requestUuid.'.pdf';
+
                     return [
                         'success' => true,
                         'url' => $pdfUrl,
                         'request_uuid' => $requestUuid,
-                        'message' => 'Ссылка на скачивание штрихкода'
+                        'message' => 'Ссылка на скачивание штрихкода',
                     ];
                 }
             }
 
             // Если не получилось через POST, пробуем прямой GET запрос
-            $directUrl = $this->apiUrl . '/print/orders/' . $orderUuid;
+            $directUrl = $this->apiUrl.'/print/orders/'.$orderUuid;
             $directResponse = Http::withOptions([
                 'verify' => $this->sslVerify,
                 'timeout' => $this->timeout,
             ])->withHeaders([
-                'Authorization' => 'Bearer ' . $token
+                'Authorization' => 'Bearer '.$token,
             ])->get($directUrl);
 
             if ($directResponse->successful()) {
@@ -963,61 +984,63 @@ class CdekService
                     return [
                         'success' => true,
                         'url' => $directData['entity']['url'],
-                        'message' => 'Ссылка на скачивание штрихкода'
+                        'message' => 'Ссылка на скачивание штрихкода',
                     ];
                 }
             }
 
             return [
                 'success' => false,
-                'message' => 'Не удалось получить штрихкод: ' . ($response->body() ?? 'Неизвестная ошибка')
+                'message' => 'Не удалось получить штрихкод: '.($response->body() ?? 'Неизвестная ошибка'),
             ];
 
         } catch (\Exception $e) {
-            Log::error('CdekService: Error getting barcode: ' . $e->getMessage());
+            Log::error('CdekService: Error getting barcode: '.$e->getMessage());
+
             return [
                 'success' => false,
-                'message' => 'Ошибка при получении штрихкода: ' . $e->getMessage()
+                'message' => 'Ошибка при получении штрихкода: '.$e->getMessage(),
             ];
         }
     }
 
     /**
      * Получить накладную для заказа СДЭК
-     * 
-     * @param string $orderUuid UUID заказа в СДЭК
-     * @param int $copyCount Количество копий (по умолчанию 2)
-     * @param string $type Тип формы (по умолчанию tpl_russia)
+     *
+     * @param  string  $orderUuid  UUID заказа в СДЭК
+     * @param  int  $copyCount  Количество копий (по умолчанию 2)
+     * @param  string  $type  Тип формы (по умолчанию tpl_russia)
      * @return array Результат с URL для скачивания или ошибкой
      */
     public function getWaybill($orderUuid, $copyCount = 2, $type = 'tpl_russia')
     {
         try {
-            if (!$this->settings) {
+            if (! $this->settings) {
                 return [
                     'success' => false,
-                    'message' => 'Настройки СДЭК не найдены'
+                    'message' => 'Настройки СДЭК не найдены',
                 ];
             }
 
             $token = $this->getAccessToken();
-            if (!$token) {
+            if (! $token) {
                 return [
                     'success' => false,
-                    'message' => 'Не удалось получить токен доступа СДЭК'
+                    'message' => 'Не удалось получить токен доступа СДЭК',
                 ];
             }
 
             // Сначала получаем информацию о заказе, чтобы получить cdek_number
             $orderInfo = $this->getOrderStatus($orderUuid);
-            
-            if (!$orderInfo['success']) {
+
+            if (! $orderInfo['success']) {
                 // Если не удалось получить информацию, пробуем прямой URL
-                $pdfUrl = $this->apiUrl . '/print/orders/' . $orderUuid . '.pdf';
+                $pdfUrl = $this->apiUrl.'/print/orders/'.$orderUuid.'.pdf';
+
                 return [
                     'success' => true,
                     'url' => $pdfUrl,
-                    'message' => 'Ссылка на скачивание накладной'
+                    'message' => 'Ссылка на скачивание накладной',
                 ];
             }
 
@@ -1029,20 +1052,20 @@ class CdekService
                 'orders' => [
                     [
                         'order_uuid' => $orderUuid,
-                        'cdek_number' => $cdekNumber
-                    ]
+                        'cdek_number' => $cdekNumber,
+                    ],
                 ],
                 'copy_count' => $copyCount,
-                'type' => $type
+                'type' => $type,
             ];
 
             $response = Http::withOptions([
                 'verify' => $this->sslVerify,
                 'timeout' => $this->timeout,
             ])->withHeaders([
-                'Authorization' => 'Bearer ' . $token,
-                'Content-Type' => 'application/json'
-            ])->post($this->apiUrl . '/print/orders', $requestData);
+                'Authorization' => 'Bearer '.$token,
+                'Content-Type' => 'application/json',
+            ])->post($this->apiUrl.'/print/orders', $requestData);
 
             if ($response->status() === 202) {
                 // Запрос принят, получаем UUID запроса
@@ -1052,31 +1075,32 @@ class CdekService
                 if ($requestUuid) {
                     // Ждем немного и проверяем статус
                     sleep(2);
-                    
+
                     // Получаем статус генерации
                     $statusResponse = Http::withOptions([
                         'verify' => $this->sslVerify,
                         'timeout' => $this->timeout,
                     ])->withHeaders([
-                        'Authorization' => 'Bearer ' . $token
-                    ])->get($this->apiUrl . '/print/orders/' . $requestUuid);
+                        'Authorization' => 'Bearer '.$token,
+                    ])->get($this->apiUrl.'/print/orders/'.$requestUuid);
 
                     if ($statusResponse->successful()) {
                         $statusData = $statusResponse->json();
-                        
+
                         // Проверяем статус
                         if (isset($statusData['entity']['statuses'])) {
                             $statuses = $statusData['entity']['statuses'];
                             $lastStatus = end($statuses);
-                            
+
                             if ($lastStatus && $lastStatus['code'] === 'READY') {
                                 // Накладная готова, возвращаем URL для скачивания
-                                $pdfUrl = $this->apiUrl . '/print/orders/' . $requestUuid . '.pdf';
+                                $pdfUrl = $this->apiUrl.'/print/orders/'.$requestUuid.'.pdf';
+
                                 return [
                                     'success' => true,
                                     'url' => $pdfUrl,
                                     'request_uuid' => $requestUuid,
-                                    'message' => 'Накладная готова к скачиванию'
+                                    'message' => 'Накладная готова к скачиванию',
                                 ];
                             } elseif ($lastStatus && $lastStatus['code'] === 'PROCESSING') {
                                 // Еще обрабатывается
@@ -1084,36 +1108,39 @@ class CdekService
                                     'success' => false,
                                     'message' => 'Накладная еще генерируется, попробуйте позже',
                                     'status' => 'processing',
-                                    'request_uuid' => $requestUuid
+                                    'request_uuid' => $requestUuid,
                                 ];
                             }
                         }
                     }
 
                     // Если статус не готов, возвращаем URL для прямого скачивания (может работать)
-                    $pdfUrl = $this->apiUrl . '/print/orders/' . $requestUuid . '.pdf';
+                    $pdfUrl = $this->apiUrl.'/print/orders/'.$requestUuid.'.pdf';
+
                     return [
                         'success' => true,
                         'url' => $pdfUrl,
                         'request_uuid' => $requestUuid,
-                        'message' => 'Ссылка на скачивание накладной'
+                        'message' => 'Ссылка на скачивание накладной',
                     ];
                 }
             }
 
             // Если POST не сработал, пробуем прямой GET запрос
-            $directUrl = $this->apiUrl . '/print/orders/' . $orderUuid . '.pdf';
+            $directUrl = $this->apiUrl.'/print/orders/'.$orderUuid.'.pdf';
+
             return [
                 'success' => true,
                 'url' => $directUrl,
-                'message' => 'Ссылка на скачивание накладной'
+                'message' => 'Ссылка на скачивание накладной',
             ];
 
         } catch (\Exception $e) {
-            Log::error('CdekService: Error getting waybill: ' . $e->getMessage());
+            Log::error('CdekService: Error getting waybill: '.$e->getMessage());
+
             return [
                 'success' => false,
-                'message' => 'Ошибка при получении накладной: ' . $e->getMessage()
+                'message' => 'Ошибка при получении накладной: '.$e->getMessage(),
             ];
         }
     }

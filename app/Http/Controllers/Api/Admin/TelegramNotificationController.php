@@ -5,8 +5,8 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\TelegramNotification;
 use App\Services\TelegramService;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
 class TelegramNotificationController extends Controller
@@ -44,12 +44,12 @@ class TelegramNotificationController extends Controller
             // Поиск
             if ($request->has('search') && $request->get('search')) {
                 $search = $request->get('search');
-                $query->where(function($q) use ($search) {
+                $query->where(function ($q) use ($search) {
                     $q->where('message', 'like', "%{$search}%")
-                      ->orWhere('chat_id', 'like', "%{$search}%")
-                      ->orWhereHas('order', function($orderQuery) use ($search) {
-                          $orderQuery->where('order_number', 'like', "%{$search}%");
-                      });
+                        ->orWhere('chat_id', 'like', "%{$search}%")
+                        ->orWhereHas('order', function ($orderQuery) use ($search) {
+                            $orderQuery->where('order_number', 'like', "%{$search}%");
+                        });
                 });
             }
 
@@ -69,15 +69,15 @@ class TelegramNotificationController extends Controller
                     'current_page' => $notifications->currentPage(),
                     'last_page' => $notifications->lastPage(),
                     'per_page' => $notifications->perPage(),
-                    'total' => $notifications->total()
-                ]
+                    'total' => $notifications->total(),
+                ],
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка получения уведомлений',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -92,14 +92,14 @@ class TelegramNotificationController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $notification
+                'data' => $notification,
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Уведомление не найдено',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 404);
         }
     }
@@ -112,14 +112,14 @@ class TelegramNotificationController extends Controller
         try {
             $validator = Validator::make($request->all(), [
                 'chat_id' => 'required|string',
-                'message' => 'required|string|max:4000'
+                'message' => 'required|string|max:4000',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -132,13 +132,13 @@ class TelegramNotificationController extends Controller
                 return response()->json([
                     'success' => true,
                     'message' => 'Тестовое уведомление отправлено успешно',
-                    'data' => $result
+                    'data' => $result,
                 ]);
             } else {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка отправки уведомления',
-                    'error' => $result['error'] ?? 'Unknown error'
+                    'error' => $result['error'] ?? 'Unknown error',
                 ], 400);
             }
 
@@ -146,7 +146,7 @@ class TelegramNotificationController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка отправки тестового уведомления',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -162,14 +162,14 @@ class TelegramNotificationController extends Controller
             if ($notification->status === 'sent') {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Уведомление уже отправлено'
+                    'message' => 'Уведомление уже отправлено',
                 ], 400);
             }
 
             if ($notification->attempts >= 3) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Превышено максимальное количество попыток'
+                    'message' => 'Превышено максимальное количество попыток',
                 ], 400);
             }
 
@@ -180,16 +180,18 @@ class TelegramNotificationController extends Controller
 
             if ($result['success']) {
                 $notification->markAsSent();
+
                 return response()->json([
                     'success' => true,
-                    'message' => 'Уведомление отправлено успешно'
+                    'message' => 'Уведомление отправлено успешно',
                 ]);
             } else {
                 $notification->markAsFailed($result['error'] ?? 'Unknown error');
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка отправки уведомления',
-                    'error' => $result['error'] ?? 'Unknown error'
+                    'error' => $result['error'] ?? 'Unknown error',
                 ], 400);
             }
 
@@ -197,7 +199,7 @@ class TelegramNotificationController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка повторной отправки уведомления',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -213,14 +215,14 @@ class TelegramNotificationController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => "Обработано уведомлений: {$processed}",
-                'processed' => $processed
+                'processed' => $processed,
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка обработки уведомлений',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -243,19 +245,19 @@ class TelegramNotificationController extends Controller
                 'by_status' => TelegramNotification::selectRaw('status, count(*) as count')
                     ->groupBy('status')
                     ->get()
-                    ->pluck('count', 'status')
+                    ->pluck('count', 'status'),
             ];
 
             return response()->json([
                 'success' => true,
-                'data' => $stats
+                'data' => $stats,
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка получения статистики',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -271,14 +273,14 @@ class TelegramNotificationController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Уведомление удалено успешно'
+                'message' => 'Уведомление удалено успешно',
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка удаления уведомления',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }

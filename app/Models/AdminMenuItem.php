@@ -16,13 +16,13 @@ class AdminMenuItem extends Model
         'description',
         'order',
         'is_active',
-        'in_menu'
+        'in_menu',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
         'in_menu' => 'boolean',
-        'order' => 'integer'
+        'order' => 'integer',
     ];
 
     /**

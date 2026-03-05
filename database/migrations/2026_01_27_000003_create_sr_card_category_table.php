@@ -16,11 +16,11 @@ return new class extends Migration
             $table->unsignedBigInteger('sr_card_id');
             $table->unsignedBigInteger('sr_category_id');
             $table->timestamps();
-            
+
             // Внешние ключи
             $table->foreign('sr_card_id')->references('id')->on('sr_cards')->onDelete('cascade');
             $table->foreign('sr_category_id')->references('id')->on('sr_categories')->onDelete('cascade');
-            
+
             // Уникальная комбинация
             $table->unique(['sr_card_id', 'sr_category_id']);
         });

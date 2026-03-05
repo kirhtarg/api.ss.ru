@@ -18,7 +18,7 @@ return new class extends Migration
             $table->string('image')->nullable()->comment('Путь к изображению карты');
             $table->unsignedBigInteger('category_id')->nullable();
             $table->timestamps();
-            
+
             // Добавляем внешний ключ только если таблица категорий существует
             if (Schema::hasTable('sr_categories')) {
                 $table->foreign('category_id')->references('id')->on('sr_categories')->onDelete('set null');

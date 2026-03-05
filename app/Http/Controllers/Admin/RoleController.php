@@ -5,8 +5,8 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Role;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 
 class RoleController extends Controller
 {
@@ -20,13 +20,14 @@ class RoleController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $roles
+                'data' => $roles,
             ]);
         } catch (\Exception $e) {
-            Log::error('Ошибка получения ролей: ' . $e->getMessage());
+            Log::error('Ошибка получения ролей: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения ролей: ' . $e->getMessage()
+                'message' => 'Ошибка получения ролей: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -39,22 +40,23 @@ class RoleController extends Controller
         try {
             $role = Role::find($id);
 
-            if (!$role) {
+            if (! $role) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Роль не найдена'
+                    'message' => 'Роль не найдена',
                 ], 404);
             }
 
             return response()->json([
                 'success' => true,
-                'data' => $role
+                'data' => $role,
             ]);
         } catch (\Exception $e) {
-            Log::error('Ошибка получения роли: ' . $e->getMessage());
+            Log::error('Ошибка получения роли: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения роли: ' . $e->getMessage()
+                'message' => 'Ошибка получения роли: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -70,14 +72,14 @@ class RoleController extends Controller
                 'display_name' => 'required|string|max:255',
                 'description' => 'nullable|string|max:1000',
                 'permissions' => 'nullable|array',
-                'is_active' => 'boolean'
+                'is_active' => 'boolean',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -86,7 +88,7 @@ class RoleController extends Controller
             if (in_array($request->name, $systemRoles)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Нельзя создать роль с системным именем'
+                    'message' => 'Нельзя создать роль с системным именем',
                 ], 422);
             }
 
@@ -95,21 +97,22 @@ class RoleController extends Controller
                 'display_name' => $request->display_name,
                 'description' => $request->description,
                 'permissions' => $request->permissions ?: [],
-                'is_active' => $request->is_active ?? true
+                'is_active' => $request->is_active ?? true,
             ]);
 
-            Log::info('Создана новая роль: ' . $role->name);
+            Log::info('Создана новая роль: '.$role->name);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Роль успешно создана',
-                'data' => $role
+                'data' => $role,
             ], 201);
         } catch (\Exception $e) {
-            Log::error('Ошибка создания роли: ' . $e->getMessage());
+            Log::error('Ошибка создания роли: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания роли: ' . $e->getMessage()
+                'message' => 'Ошибка создания роли: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -122,10 +125,10 @@ class RoleController extends Controller
         try {
             $role = Role::find($id);
 
-            if (!$role) {
+            if (! $role) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Роль не найдена'
+                    'message' => 'Роль не найдена',
                 ], 404);
             }
 
@@ -134,23 +137,23 @@ class RoleController extends Controller
             if (in_array($role->name, $systemRoles)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Нельзя редактировать системные роли'
+                    'message' => 'Нельзя редактировать системные роли',
                 ], 422);
             }
 
             $validator = Validator::make($request->all(), [
-                'name' => 'required|string|max:255|unique:roles,name,' . $id,
+                'name' => 'required|string|max:255|unique:roles,name,'.$id,
                 'display_name' => 'required|string|max:255',
                 'description' => 'nullable|string|max:1000',
                 'permissions' => 'nullable|array',
-                'is_active' => 'boolean'
+                'is_active' => 'boolean',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -159,21 +162,22 @@ class RoleController extends Controller
                 'display_name' => $request->display_name,
                 'description' => $request->description,
                 'permissions' => $request->permissions ?: [],
-                'is_active' => $request->is_active ?? $role->is_active
+                'is_active' => $request->is_active ?? $role->is_active,
             ]);
 
-            Log::info('Обновлена роль: ' . $role->name);
+            Log::info('Обновлена роль: '.$role->name);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Роль успешно обновлена',
-                'data' => $role
+                'data' => $role,
             ]);
         } catch (\Exception $e) {
-            Log::error('Ошибка обновления роли: ' . $e->getMessage());
+            Log::error('Ошибка обновления роли: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления роли: ' . $e->getMessage()
+                'message' => 'Ошибка обновления роли: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -186,10 +190,10 @@ class RoleController extends Controller
         try {
             $role = Role::find($id);
 
-            if (!$role) {
+            if (! $role) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Роль не найдена'
+                    'message' => 'Роль не найдена',
                 ], 404);
             }
 
@@ -198,7 +202,7 @@ class RoleController extends Controller
             if (in_array($role->name, $systemRoles)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Нельзя удалить системные роли'
+                    'message' => 'Нельзя удалить системные роли',
                 ], 422);
             }
 
@@ -206,24 +210,25 @@ class RoleController extends Controller
             if ($role->users()->count() > 0) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Нельзя удалить роль, которая назначена пользователям'
+                    'message' => 'Нельзя удалить роль, которая назначена пользователям',
                 ], 422);
             }
 
             $roleName = $role->name;
             $role->delete();
 
-            Log::info('Удалена роль: ' . $roleName);
+            Log::info('Удалена роль: '.$roleName);
 
             return response()->json([
                 'success' => true,
-                'message' => 'Роль успешно удалена'
+                'message' => 'Роль успешно удалена',
             ]);
         } catch (\Exception $e) {
-            Log::error('Ошибка удаления роли: ' . $e->getMessage());
+            Log::error('Ошибка удаления роли: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления роли: ' . $e->getMessage()
+                'message' => 'Ошибка удаления роли: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -236,10 +241,10 @@ class RoleController extends Controller
         try {
             $role = Role::find($id);
 
-            if (!$role) {
+            if (! $role) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Роль не найдена'
+                    'message' => 'Роль не найдена',
                 ], 404);
             }
 
@@ -248,41 +253,42 @@ class RoleController extends Controller
             if (in_array($role->name, $systemRoles)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Нельзя изменить статус системных ролей'
+                    'message' => 'Нельзя изменить статус системных ролей',
                 ], 422);
             }
 
             $validator = Validator::make($request->all(), [
-                'is_active' => 'required|boolean'
+                'is_active' => 'required|boolean',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
             $role->update([
-                'is_active' => $request->is_active
+                'is_active' => $request->is_active,
             ]);
 
-            Log::info('Изменен статус роли: ' . $role->name . ' на ' . ($request->is_active ? 'активна' : 'неактивна'));
+            Log::info('Изменен статус роли: '.$role->name.' на '.($request->is_active ? 'активна' : 'неактивна'));
 
             return response()->json([
                 'success' => true,
                 'message' => 'Статус роли успешно обновлен',
                 'data' => [
                     'id' => $role->id,
-                    'is_active' => $role->is_active
-                ]
+                    'is_active' => $role->is_active,
+                ],
             ]);
         } catch (\Exception $e) {
-            Log::error('Ошибка обновления статуса роли: ' . $e->getMessage());
+            Log::error('Ошибка обновления статуса роли: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления статуса роли: ' . $e->getMessage()
+                'message' => 'Ошибка обновления статуса роли: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -298,18 +304,19 @@ class RoleController extends Controller
                 'active_roles' => Role::where('is_active', true)->count(),
                 'system_roles' => Role::whereIn('name', ['admin', 'user'])->count(),
                 'custom_roles' => Role::whereNotIn('name', ['admin', 'user'])->count(),
-                'roles_with_users' => Role::whereHas('users')->count()
+                'roles_with_users' => Role::whereHas('users')->count(),
             ];
 
             return response()->json([
                 'success' => true,
-                'data' => $stats
+                'data' => $stats,
             ]);
         } catch (\Exception $e) {
-            Log::error('Ошибка получения статистики ролей: ' . $e->getMessage());
+            Log::error('Ошибка получения статистики ролей: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения статистики ролей: ' . $e->getMessage()
+                'message' => 'Ошибка получения статистики ролей: '.$e->getMessage(),
             ], 500);
         }
     }

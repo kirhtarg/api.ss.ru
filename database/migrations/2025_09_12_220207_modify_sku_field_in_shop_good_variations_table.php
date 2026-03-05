@@ -18,7 +18,7 @@ return new class extends Migration
                     $table->dropUnique('shop_good_variations_sku_unique');
                 });
             }
-            
+
             // Делаем поле sku nullable
             Schema::table('shop_good_variations', function (Blueprint $table) {
                 $table->string('sku')->nullable()->change();
@@ -36,9 +36,9 @@ return new class extends Migration
                 // Возвращаем поле sku как NOT NULL
                 $table->string('sku')->nullable(false)->change();
             });
-            
+
             // Возвращаем уникальный индекс для поля sku, если его нет
-            if (!Schema::hasIndex('shop_good_variations', 'shop_good_variations_sku_unique')) {
+            if (! Schema::hasIndex('shop_good_variations', 'shop_good_variations_sku_unique')) {
                 Schema::table('shop_good_variations', function (Blueprint $table) {
                     $table->unique('sku', 'shop_good_variations_sku_unique');
                 });

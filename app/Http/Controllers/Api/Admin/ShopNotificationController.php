@@ -5,16 +5,17 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\ShopNotificationChannel;
 use App\Models\ShopNotificationEvent;
-use App\Services\TelegramService;
 use App\Services\EmailNotificationService;
-use Illuminate\Http\Request;
+use App\Services\TelegramService;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Validator;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 
 class ShopNotificationController extends Controller
 {
     protected TelegramService $telegramService;
+
     protected EmailNotificationService $emailService;
 
     public function __construct(
@@ -37,13 +38,14 @@ class ShopNotificationController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $channels
+                'data' => $channels,
             ]);
         } catch (\Exception $e) {
-            Log::error('Error fetching notification channels: ' . $e->getMessage());
+            Log::error('Error fetching notification channels: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения каналов оповещений'
+                'message' => 'Ошибка получения каналов оповещений',
             ], 500);
         }
     }
@@ -58,12 +60,12 @@ class ShopNotificationController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $channel
+                'data' => $channel,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Канал оповещений не найден'
+                'message' => 'Канал оповещений не найден',
             ], 404);
         }
     }
@@ -76,7 +78,7 @@ class ShopNotificationController extends Controller
         try {
             // Подготовка данных для валидации
             $data = $request->all();
-            
+
             // Преобразуем is_active в boolean если нужно
             if (isset($data['is_active'])) {
                 $data['is_active'] = filter_var($data['is_active'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
@@ -84,7 +86,7 @@ class ShopNotificationController extends Controller
                     $data['is_active'] = true; // По умолчанию
                 }
             }
-            
+
             // Очищаем поля, которые не нужны для данного типа
             if ($data['type'] === 'email') {
                 $data['telegram_chat_id'] = null;
@@ -93,7 +95,7 @@ class ShopNotificationController extends Controller
             } else {
                 $data['email'] = null;
             }
-            
+
             $validator = Validator::make($data, [
                 'type' => 'required|in:email,telegram',
                 'name' => 'required|string|max:255',
@@ -106,14 +108,14 @@ class ShopNotificationController extends Controller
                 'skip_bot_check' => 'sometimes|boolean', // Флаг для пропуска проверки бота
                 'events' => 'nullable|array',
                 'events.*.event_type' => 'required|in:order_created,cancellation_request,order_cancelled,preorder_created,site_message',
-                'events.*.is_enabled' => 'sometimes|boolean'
+                'events.*.is_enabled' => 'sometimes|boolean',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -126,7 +128,7 @@ class ShopNotificationController extends Controller
                 'telegram_bot_username' => $data['telegram_bot_username'] ?? null,
                 'is_active' => $data['is_active'] ?? true,
                 'description' => $data['description'] ?? null,
-                'settings' => $data['settings'] ?? []
+                'settings' => $data['settings'] ?? [],
             ]);
 
             // Создаем события для канала
@@ -135,7 +137,7 @@ class ShopNotificationController extends Controller
                     ShopNotificationEvent::create([
                         'channel_id' => $channel->id,
                         'event_type' => $eventData['event_type'],
-                        'is_enabled' => $eventData['is_enabled'] ?? true
+                        'is_enabled' => $eventData['is_enabled'] ?? true,
                     ]);
                 }
             } else {
@@ -145,13 +147,13 @@ class ShopNotificationController extends Controller
                     'cancellation_request',
                     'order_cancelled',
                     'preorder_created',
-                    'site_message'
+                    'site_message',
                 ];
                 foreach ($defaultEvents as $eventType) {
                     ShopNotificationEvent::create([
                         'channel_id' => $channel->id,
                         'event_type' => $eventType,
-                        'is_enabled' => true
+                        'is_enabled' => true,
                     ]);
                 }
             }
@@ -161,13 +163,14 @@ class ShopNotificationController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Канал оповещений создан',
-                'data' => $channel
+                'data' => $channel,
             ], 201);
         } catch (\Exception $e) {
-            Log::error('Error creating notification channel: ' . $e->getMessage());
+            Log::error('Error creating notification channel: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания канала оповещений: ' . $e->getMessage()
+                'message' => 'Ошибка создания канала оповещений: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -182,7 +185,7 @@ class ShopNotificationController extends Controller
 
             // Подготовка данных для валидации
             $data = $request->all();
-            
+
             // Преобразуем is_active в boolean если нужно
             if (isset($data['is_active'])) {
                 $data['is_active'] = filter_var($data['is_active'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
@@ -190,7 +193,7 @@ class ShopNotificationController extends Controller
                     $data['is_active'] = $channel->is_active; // Оставляем текущее значение
                 }
             }
-            
+
             $validator = Validator::make($data, [
                 'type' => 'sometimes|in:email,telegram',
                 'name' => 'sometimes|string|max:255',
@@ -202,14 +205,14 @@ class ShopNotificationController extends Controller
                 'description' => 'nullable|string',
                 'events' => 'nullable|array',
                 'events.*.event_type' => 'required|in:order_created,cancellation_request,order_cancelled,preorder_created,site_message',
-                'events.*.is_enabled' => 'sometimes|boolean'
+                'events.*.is_enabled' => 'sometimes|boolean',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -218,9 +221,9 @@ class ShopNotificationController extends Controller
                 'name' => $data['name'] ?? $channel->name,
                 'is_active' => $data['is_active'] ?? $channel->is_active,
                 'description' => $data['description'] ?? $channel->description,
-                'settings' => $data['settings'] ?? $channel->settings
+                'settings' => $data['settings'] ?? $channel->settings,
             ];
-            
+
             // Обновляем поля в зависимости от типа
             if (($data['type'] ?? $channel->type) === 'email') {
                 $updateData['email'] = $data['email'] ?? $channel->email;
@@ -233,20 +236,20 @@ class ShopNotificationController extends Controller
                 $updateData['telegram_bot_username'] = $data['telegram_bot_username'] ?? $channel->telegram_bot_username;
                 $updateData['email'] = null;
             }
-            
+
             $channel->update($updateData);
 
             // Обновляем события
             if ($request->has('events') && is_array($request->events)) {
                 // Удаляем старые события
                 $channel->events()->delete();
-                
+
                 // Создаем новые события
                 foreach ($request->events as $eventData) {
                     ShopNotificationEvent::create([
                         'channel_id' => $channel->id,
                         'event_type' => $eventData['event_type'],
-                        'is_enabled' => $eventData['is_enabled'] ?? true
+                        'is_enabled' => $eventData['is_enabled'] ?? true,
                     ]);
                 }
             }
@@ -256,13 +259,14 @@ class ShopNotificationController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Канал оповещений обновлен',
-                'data' => $channel
+                'data' => $channel,
             ]);
         } catch (\Exception $e) {
-            Log::error('Error updating notification channel: ' . $e->getMessage());
+            Log::error('Error updating notification channel: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления канала оповещений: ' . $e->getMessage()
+                'message' => 'Ошибка обновления канала оповещений: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -278,13 +282,14 @@ class ShopNotificationController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Канал оповещений удален'
+                'message' => 'Канал оповещений удален',
             ]);
         } catch (\Exception $e) {
-            Log::error('Error deleting notification channel: ' . $e->getMessage());
+            Log::error('Error deleting notification channel: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления канала оповещений'
+                'message' => 'Ошибка удаления канала оповещений',
             ], 500);
         }
     }
@@ -296,14 +301,14 @@ class ShopNotificationController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
-                'is_active' => 'required|boolean'
+                'is_active' => 'required|boolean',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -314,13 +319,14 @@ class ShopNotificationController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => $request->is_active ? 'Канал активирован' : 'Канал деактивирован',
-                'data' => $channel->load('events')
+                'data' => $channel->load('events'),
             ]);
         } catch (\Exception $e) {
-            Log::error('Error toggling notification channel active status: ' . $e->getMessage());
+            Log::error('Error toggling notification channel active status: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка изменения статуса канала'
+                'message' => 'Ошибка изменения статуса канала',
             ], 500);
         }
     }
@@ -333,14 +339,14 @@ class ShopNotificationController extends Controller
         try {
             $validator = Validator::make($request->all(), [
                 'bot_token' => 'required|string',
-                'chat_id' => 'required|string'
+                'chat_id' => 'required|string',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -350,13 +356,13 @@ class ShopNotificationController extends Controller
                 $botInfo = $this->telegramService->getBotInfo($request->bot_token);
             } catch (\Exception $e) {
                 // Игнорируем ошибки получения информации о боте - это не критично для тестирования
-                Log::info('Could not get bot info for testing, proceeding anyway: ' . $e->getMessage());
+                Log::info('Could not get bot info for testing, proceeding anyway: '.$e->getMessage());
             }
 
             // Получаем информацию о сайте для тестового сообщения
             $siteName = config('app.name', 'Магазин');
             $siteUrl = config('app.url', '');
-            
+
             // Пытаемся получить название сайта из настроек
             try {
                 $siteNameSetting = \App\Models\Setting::where('key', 'site_name')->first();
@@ -366,7 +372,7 @@ class ShopNotificationController extends Controller
             } catch (\Exception $e) {
                 // Игнорируем ошибки получения настроек
             }
-            
+
             // Получаем URL фронтенда
             try {
                 $frontendUrl = config('app.frontend_url', env('FRONTEND_URL', ''));
@@ -376,7 +382,7 @@ class ShopNotificationController extends Controller
             } catch (\Exception $e) {
                 // Игнорируем ошибки
             }
-            
+
             // Отправляем тестовое сообщение (это главное действие тестирования)
             $testMessage = "✅ <b>Тестовое сообщение</b>\n\n";
             $testMessage .= "Это тестовое сообщение для проверки подключения Telegram бота.\n\n";
@@ -385,7 +391,7 @@ class ShopNotificationController extends Controller
                 $testMessage .= "🌐 <b>Сайт:</b> {$siteUrl}\n";
             }
             $testMessage .= "\nЕсли вы получили это сообщение, значит канал оповещений настроен правильно!";
-            
+
             $result = $this->telegramService->sendMessageWithToken(
                 $request->bot_token,
                 $request->chat_id,
@@ -396,36 +402,37 @@ class ShopNotificationController extends Controller
                 return response()->json([
                     'success' => true,
                     'message' => 'Тестовое сообщение отправлено успешно',
-                    'bot_info' => $botInfo && $botInfo['success'] ? $botInfo['data'] : null
+                    'bot_info' => $botInfo && $botInfo['success'] ? $botInfo['data'] : null,
                 ]);
             } else {
                 // Если отправка не удалась, возвращаем детальную ошибку
                 $errorMessage = $result['error'] ?? 'Unknown error';
                 $isSslError = $result['is_ssl_error'] ?? false;
-                
+
                 // Улучшаем сообщение об ошибке
                 if ($isSslError) {
                     $errorMessage = 'Ошибка SSL сертификата при отправке сообщения. Это проблема конфигурации сервера. Проверьте настройки SSL или обратитесь к администратору сервера.';
-                } elseif (str_contains(strtolower($errorMessage), 'chat not found') || 
+                } elseif (str_contains(strtolower($errorMessage), 'chat not found') ||
                           str_contains(strtolower($errorMessage), 'chat_id')) {
                     $errorMessage = 'Не удалось отправить сообщение. Проверьте правильность Chat ID. Убедитесь, что вы отправили хотя бы одно сообщение боту перед использованием Chat ID.';
-                } elseif (str_contains(strtolower($errorMessage), 'unauthorized') || 
+                } elseif (str_contains(strtolower($errorMessage), 'unauthorized') ||
                           str_contains(strtolower($errorMessage), 'invalid token')) {
                     $errorMessage = 'Неверный токен бота. Проверьте правильность Bot Token.';
                 }
-                
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Не удалось отправить тестовое сообщение',
                     'error' => $errorMessage,
-                    'bot_info' => $botInfo && $botInfo['success'] ? $botInfo['data'] : null
+                    'bot_info' => $botInfo && $botInfo['success'] ? $botInfo['data'] : null,
                 ], 400);
             }
         } catch (\Exception $e) {
-            Log::error('Error testing Telegram connection: ' . $e->getMessage());
+            Log::error('Error testing Telegram connection: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка тестирования подключения: ' . $e->getMessage()
+                'message' => 'Ошибка тестирования подключения: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -437,21 +444,21 @@ class ShopNotificationController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
-                'email' => 'required|email'
+                'email' => 'required|email',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
             // Получаем информацию о сайте для тестового сообщения
             $siteName = config('app.name', 'Магазин');
             $siteUrl = config('app.url', '');
-            
+
             // Пытаемся получить название сайта из настроек
             try {
                 $siteNameSetting = \App\Models\Setting::where('key', 'site_name')->first();
@@ -461,7 +468,7 @@ class ShopNotificationController extends Controller
             } catch (\Exception $e) {
                 // Игнорируем ошибки получения настроек
             }
-            
+
             // Получаем URL фронтенда
             try {
                 $frontendUrl = config('app.frontend_url', env('FRONTEND_URL', ''));
@@ -471,7 +478,7 @@ class ShopNotificationController extends Controller
             } catch (\Exception $e) {
                 // Игнорируем ошибки
             }
-            
+
             $subject = "Тестовое сообщение - Оповещения магазина {$siteName}";
             $message = "Это тестовое сообщение для проверки отправки email уведомлений.\n\n";
             $message .= "Магазин: {$siteName}\n";
@@ -479,36 +486,37 @@ class ShopNotificationController extends Controller
                 $message .= "Сайт: {$siteUrl}\n";
             }
             $message .= "\nЕсли вы получили это сообщение, значит канал оповещений настроен правильно!";
-            
+
             $result = $this->emailService->send($request->email, $subject, $message);
 
             if ($result['success']) {
                 return response()->json([
                     'success' => true,
-                    'message' => 'Тестовое email сообщение отправлено успешно'
+                    'message' => 'Тестовое email сообщение отправлено успешно',
                 ]);
             } else {
                 // Возвращаем более детальную информацию об ошибке
                 $errorMessage = $result['error'] ?? 'Unknown error';
-                
+
                 // Проверяем, не связана ли ошибка с настройками SMTP
-                if (str_contains(strtolower($errorMessage), 'connection') || 
+                if (str_contains(strtolower($errorMessage), 'connection') ||
                     str_contains(strtolower($errorMessage), 'smtp') ||
                     str_contains(strtolower($errorMessage), 'mail')) {
                     $errorMessage .= '. Проверьте настройки SMTP в .env файле (MAIL_HOST, MAIL_PORT, MAIL_USERNAME, MAIL_PASSWORD)';
                 }
-                
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Не удалось отправить тестовое email сообщение',
-                    'error' => $errorMessage
+                    'error' => $errorMessage,
                 ], 400);
             }
         } catch (\Exception $e) {
-            Log::error('Error testing Email connection: ' . $e->getMessage());
+            Log::error('Error testing Email connection: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка тестирования отправки email: ' . $e->getMessage()
+                'message' => 'Ошибка тестирования отправки email: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -520,14 +528,14 @@ class ShopNotificationController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
-                'bot_token' => 'required|string'
+                'bot_token' => 'required|string',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -536,35 +544,35 @@ class ShopNotificationController extends Controller
             if ($botInfo['success']) {
                 return response()->json([
                     'success' => true,
-                    'data' => $botInfo['data']
+                    'data' => $botInfo['data'],
                 ]);
             } else {
                 $isTimeout = $botInfo['is_timeout'] ?? false;
                 $canSkipCheck = $botInfo['can_skip_check'] ?? true;
-                
+
                 $message = 'Не удалось получить информацию о боте. ';
                 if ($isTimeout) {
                     $message .= 'Таймаут подключения к Telegram API. Проверьте интернет-соединение или попробуйте позже.';
                 } else {
                     $message .= 'Возможные причины: блокировка Telegram API на сервере, проблемы с DNS, или временная недоступность сервиса. Вы можете сохранить канал без проверки.';
                 }
-                
+
                 return response()->json([
                     'success' => false,
                     'message' => $message,
                     'error' => $botInfo['error'] ?? 'Unknown error',
                     'is_timeout' => $isTimeout,
                     'is_ssl_error' => $botInfo['is_ssl_error'] ?? false,
-                    'can_skip_check' => $canSkipCheck
+                    'can_skip_check' => $canSkipCheck,
                 ], 400);
             }
         } catch (\Exception $e) {
-            Log::error('Error getting bot info: ' . $e->getMessage());
+            Log::error('Error getting bot info: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения информации о боте: ' . $e->getMessage()
+                'message' => 'Ошибка получения информации о боте: '.$e->getMessage(),
             ], 500);
         }
     }
 }
-

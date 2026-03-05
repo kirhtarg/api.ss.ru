@@ -6,10 +6,10 @@ $kernel = $app->make(Illuminate\Contracts\Console\Kernel::class);
 $kernel->bootstrap();
 
 $tables = DB::select('SHOW TABLES');
-echo "Tables with 'site' or 'setting':" . PHP_EOL;
+echo "Tables with 'site' or 'setting':".PHP_EOL;
 foreach ($tables as $table) {
     $tableName = current($table);
     if (strpos($tableName, 'site') !== false || strpos($tableName, 'setting') !== false) {
-        echo $tableName . PHP_EOL;
+        echo $tableName.PHP_EOL;
     }
 }

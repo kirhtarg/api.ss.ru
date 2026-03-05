@@ -11,7 +11,7 @@ class SitemapController extends Controller
     public function getSitemap(Request $request)
     {
         $filePath = 'public/exports/sitemap.xml';
-        if (!Storage::exists($filePath)) {
+        if (! Storage::exists($filePath)) {
             $content = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
@@ -20,6 +20,7 @@ class SitemapController extends Controller
     <priority>1.0</priority>
   </url>
 </urlset>`;
+
             return response($content, 200)
                 ->header('Content-Type', 'application/xml; charset=utf-8')
                 ->header('Cache-Control', 'no-cache, no-store, must-revalidate')
@@ -27,6 +28,7 @@ class SitemapController extends Controller
                 ->header('Expires', '0');
         }
         $file = Storage::get($filePath);
+
         return response($file, 200)
             ->header('Content-Type', 'application/xml; charset=utf-8')
             ->header('Cache-Control', 'no-cache, no-store, must-revalidate')

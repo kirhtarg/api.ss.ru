@@ -20,7 +20,7 @@ return new class extends Migration
             $table->boolean('is_default')->default(false);
             $table->integer('sort_order')->default(0);
             $table->timestamps();
-            
+
             // Индексы для производительности
             $table->index(['is_active', 'sort_order']);
             $table->index('is_default');

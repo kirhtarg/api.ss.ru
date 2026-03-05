@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::table('shop_orders', function (Blueprint $table) {
             // Добавляем поле shipping_method_id после shipping_method
-            if (!Schema::hasColumn('shop_orders', 'shipping_method_id')) {
+            if (! Schema::hasColumn('shop_orders', 'shipping_method_id')) {
                 $table->unsignedBigInteger('shipping_method_id')->nullable()->after('shipping_method');
                 $table->foreign('shipping_method_id')->references('id')->on('shop_delivery_methods')->onDelete('set null');
                 $table->index('shipping_method_id');
@@ -35,4 +35,3 @@ return new class extends Migration
         });
     }
 };
-

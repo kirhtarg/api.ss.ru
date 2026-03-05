@@ -14,12 +14,12 @@ class ShopNotificationEvent extends Model
         'channel_id',
         'event_type',
         'is_enabled',
-        'template'
+        'template',
     ];
 
     protected $casts = [
         'is_enabled' => 'boolean',
-        'template' => 'array'
+        'template' => 'array',
     ];
 
     /**
@@ -51,7 +51,7 @@ class ShopNotificationEvent extends Model
      */
     public function getEventNameAttribute(): string
     {
-        return match($this->event_type) {
+        return match ($this->event_type) {
             'order_created' => 'Заказ создан',
             'cancellation_request' => 'Заявка на отмену оплаченного заказа',
             'order_cancelled' => 'Заказ отменен пользователем',
@@ -61,4 +61,3 @@ class ShopNotificationEvent extends Model
         };
     }
 }
-

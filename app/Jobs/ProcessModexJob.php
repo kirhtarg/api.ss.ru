@@ -6,28 +6,27 @@ use App\Models\ExportFile;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Queue\SerializesModels;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
-use PhpOffice\PhpSpreadsheet\Spreadsheet;
-use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
-use PhpOffice\PhpSpreadsheet\IOFactory;
-use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
-use PhpOffice\PhpSpreadsheet\Cell\DataType;
-use PhpOffice\PhpSpreadsheet\Settings;
-use OpenSpout\Reader\XLSX\Reader as XlsxReader;
-use OpenSpout\Reader\XLSX\Options as XlsxOptions;
-use OpenSpout\Reader\CSV\Reader as CsvReader;
+use Illuminate\Support\Facades\Storage;
+use OpenSpout\Common\Entity\Cell;
+use OpenSpout\Common\Entity\Row;
 use OpenSpout\Reader\CSV\Options as CsvOptions;
+use OpenSpout\Reader\CSV\Reader as CsvReader;
+use OpenSpout\Reader\XLSX\Options as XlsxOptions;
+use OpenSpout\Reader\XLSX\Reader as XlsxReader;
 use OpenSpout\Writer\XLSX\Options;
 use OpenSpout\Writer\XLSX\Writer;
-use OpenSpout\Common\Entity\Row;
-use OpenSpout\Common\Entity\Cell;
+use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
+use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class ProcessModexJob implements ShouldQueue
 {
     use Queueable, SerializesModels;
 
     public $timeout = 7200; // 2 часа таймаут
+
     public $tries = 3; // 3 попытки
 
     protected ExportFile $modexFile;
@@ -50,8 +49,8 @@ class ProcessModexJob implements ShouldQueue
             $config = $this->modexFile->export_config ?? [];
             $inputFilePath = $config['input_file_path'] ?? null;
 
-            if (!$inputFilePath || !Storage::exists($inputFilePath)) {
-                throw new \Exception('Input file not found: ' . $inputFilePath);
+            if (! $inputFilePath || ! Storage::exists($inputFilePath)) {
+                throw new \Exception('Input file not found: '.$inputFilePath);
             }
 
             // Увеличиваем лимит памяти и времени выполнения для обработки больших Excel файлов
@@ -66,7 +65,7 @@ class ProcessModexJob implements ShouldQueue
 
             // Получаем исходный файл
             $inputFilePath = $config['input_file_path'] ?? null;
-            if (!$inputFilePath || !Storage::exists($inputFilePath)) {
+            if (! $inputFilePath || ! Storage::exists($inputFilePath)) {
                 throw new \Exception('Исходный файл не найден');
             }
 
@@ -77,18 +76,19 @@ class ProcessModexJob implements ShouldQueue
             // Clear stat cache to ensure file existence check is fresh
             clearstatcache();
 
-            if (!$tempOutputPath || (!Storage::exists($tempOutputPath) && !file_exists(Storage::path($tempOutputPath)))) {
+            if (! $tempOutputPath || (! Storage::exists($tempOutputPath) && ! file_exists(Storage::path($tempOutputPath)))) {
                 Log::error('Temp output file not created', ['path' => $tempOutputPath]);
-                throw new \Exception('Failed to create temp output file: ' . ($tempOutputPath ?? 'null'));
+                throw new \Exception('Failed to create temp output file: '.($tempOutputPath ?? 'null'));
             }
             try {
                 $conf = $this->modexFile->export_config ?? [];
                 $conf['temp_output_path'] = $tempOutputPath;
                 $this->modexFile->update(['export_config' => $conf]);
-            } catch (\Throwable $e) {}
+            } catch (\Throwable $e) {
+            }
 
             // Сохраняем результат как XLSX
-            $outputFilePath = 'modex/' . $this->modexFile->filename;
+            $outputFilePath = 'modex/'.$this->modexFile->filename;
             if (Storage::exists($outputFilePath)) {
                 Storage::delete($outputFilePath);
             }
@@ -96,30 +96,30 @@ class ProcessModexJob implements ShouldQueue
             try {
                 $src = Storage::path($tempOutputPath);
                 $dst = Storage::path($outputFilePath);
-                if (!is_dir(dirname($dst))) {
+                if (! is_dir(dirname($dst))) {
                     mkdir(dirname($dst), 0755, true);
                 }
-                if (!copy($src, $dst)) {
+                if (! copy($src, $dst)) {
                     throw new \Exception('copy() failed');
                 }
             } catch (\Throwable $e) {
-                throw new \Exception('Failed to save output file: ' . $e->getMessage());
+                throw new \Exception('Failed to save output file: '.$e->getMessage());
             }
             Storage::delete($tempOutputPath);
 
             // Получаем размер файла
             clearstatcache();
             $fileSize = Storage::size($outputFilePath);
-            Log::info('File processed. Size: ' . $fileSize . ' bytes');
-            
+            Log::info('File processed. Size: '.$fileSize.' bytes');
+
             // Get final row count from config (updated in processModexFile)
             $this->modexFile->refresh();
             $conf = $this->modexFile->export_config ?? [];
-            $dataRows = (int)($conf['progress_rows'] ?? 0);
-            
+            $dataRows = (int) ($conf['progress_rows'] ?? 0);
+
             // If we have headers, actual data rows is count - 1
             if ($dataRows > 0) {
-                 $dataRows--; 
+                $dataRows--;
             }
 
             $conf['total_rows'] = $dataRows;
@@ -131,7 +131,7 @@ class ProcessModexJob implements ShouldQueue
                 'file_path' => $outputFilePath,
                 'file_size' => $fileSize,
                 'total_rows' => $dataRows,
-                'error_message' => null
+                'error_message' => null,
             ]);
 
             // Удаляем временный входной файл
@@ -140,18 +140,17 @@ class ProcessModexJob implements ShouldQueue
         } catch (\Throwable $e) {
             $this->modexFile->update([
                 'status' => 'failed',
-                'error_message' => 'Job Failed: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine()
+                'error_message' => 'Job Failed: '.$e->getMessage().' in '.$e->getFile().':'.$e->getLine(),
             ]);
 
             Log::error('ProcessModexJob Failed', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
             throw $e;
         }
     }
-
 
     /**
      * Handle a job failure.
@@ -161,15 +160,15 @@ class ProcessModexJob implements ShouldQueue
         try {
             $this->modexFile->update([
                 'status' => 'failed',
-                'error_message' => 'Job Failed (Max Attempts): ' . $exception->getMessage()
+                'error_message' => 'Job Failed (Max Attempts): '.$exception->getMessage(),
             ]);
         } catch (\Throwable $e) {
-            Log::error('Failed to update status in failed(): ' . $e->getMessage());
+            Log::error('Failed to update status in failed(): '.$e->getMessage());
         }
 
         Log::error('ProcessModexJob Final Failure', [
             'file_id' => $this->modexFile->id,
-            'error' => $exception->getMessage()
+            'error' => $exception->getMessage(),
         ]);
     }
 
@@ -181,17 +180,18 @@ class ProcessModexJob implements ShouldQueue
         $rules = $config['rules'] ?? [];
 
         if (empty($rules)) {
-            $tempOut = 'temp/modex_out_' . time() . '_' . uniqid() . '.xlsx';
+            $tempOut = 'temp/modex_out_'.time().'_'.uniqid().'.xlsx';
             // Since inputFilePath is absolute, we can just read it and write to storage
             Storage::put($tempOut, file_get_contents($inputFilePath));
+
             return $tempOut;
         }
 
         // --- PHASE 1: Analyze & Write to Temp CSV ---
-        if (!Storage::exists('temp')) {
+        if (! Storage::exists('temp')) {
             Storage::makeDirectory('temp');
         }
-        $tempCsvPath = Storage::path('temp/modex_temp_' . uniqid() . '.csv');
+        $tempCsvPath = Storage::path('temp/modex_temp_'.uniqid().'.csv');
         $csvHandle = fopen($tempCsvPath, 'w');
         fwrite($csvHandle, "\xEF\xBB\xBF"); // BOM
 
@@ -200,17 +200,20 @@ class ProcessModexJob implements ShouldQueue
             $conf = $this->modexFile->export_config ?? [];
             $conf['phase'] = 'collecting';
             $this->modexFile->update(['export_config' => $conf]);
-        } catch (\Throwable $e) {}
-        
+        } catch (\Throwable $e) {
+        }
+
         $ruleMaxCols = [];
         $headers = [];
         $progressRows = 0;
-        
+
         // Open Reader for Pass 1
         $reader = $this->getReaderForFile($inputFilePath);
-        
+
         foreach ($reader->getSheetIterator() as $sheet) {
-            if ($sheet->getIndex() > 0) break; // Only first sheet
+            if ($sheet->getIndex() > 0) {
+                break;
+            } // Only first sheet
 
             foreach ($sheet->getRowIterator() as $row) {
                 try {
@@ -221,14 +224,14 @@ class ProcessModexJob implements ShouldQueue
                         if ($val instanceof \DateTimeInterface) {
                             $val = $val->format('Y-m-d H:i:s');
                         }
-                        $rowData[] = (string)$val;
+                        $rowData[] = (string) $val;
                     }
-                    
+
                     // Headers (Row 1)
                     if ($progressRows === 0) {
                         $headers = $rowData;
                         $progressRows++;
-                        
+
                         // Skip DB update for headers to avoid "1" progress confusion
                         continue;
                     }
@@ -243,28 +246,29 @@ class ProcessModexJob implements ShouldQueue
                         $cellValue = ($colIndex !== -1) ? ($rowData[$colIndex] ?? '') : '';
 
                         $ruleResult = $this->applyModexRule($ruleKey, $cellValue, $params);
-                        
+
                         $count = 0;
                         if ($ruleResult !== null) {
                             $count = is_array($ruleResult) ? count($ruleResult) : 1;
                         }
-                        
-                        if (!isset($ruleMaxCols[$ruleIndex])) {
+
+                        if (! isset($ruleMaxCols[$ruleIndex])) {
                             $ruleMaxCols[$ruleIndex] = 0;
                         }
                         if ($count > $ruleMaxCols[$ruleIndex]) {
                             $ruleMaxCols[$ruleIndex] = $count;
                         }
                     }
-                    
+
                     $progressRows++;
                     // UPDATE FREQUENTLY AT START, THEN EVERY 10 ROWS
                     if ($progressRows <= 100 || $progressRows % 10 === 0) {
-                         try {
+                        try {
                             $currentConfig = $this->modexFile->export_config ?? [];
                             $currentConfig['progress_rows'] = $progressRows;
                             $this->modexFile->update(['export_config' => $currentConfig]);
-                        } catch (\Throwable $e) {}
+                        } catch (\Throwable $e) {
+                        }
                     }
                 } catch (\Throwable $e) {
                     throw $e;
@@ -272,55 +276,66 @@ class ProcessModexJob implements ShouldQueue
             }
         }
         $reader->close();
-        
+
         // Calculate New Headers
         $newHeaders = $headers;
         foreach ($rules as $ruleIndex => $rule) {
             $params = $rule['params'] ?? [];
             $maxCols = $ruleMaxCols[$ruleIndex] ?? 0;
-            if ($maxCols === 0) continue;
+            if ($maxCols === 0) {
+                continue;
+            }
 
             $ruleKey = $rule['ruleKey'] ?? '';
             if ($ruleKey === 'extractBetweenFragments') {
                 $name = $params['newColumnName'] ?? 'New Column';
                 if ($maxCols > 1) {
-                    for ($i = 0; $i < $maxCols; $i++) $newHeaders[] = $name . ' ' . ($i + 1);
+                    for ($i = 0; $i < $maxCols; $i++) {
+                        $newHeaders[] = $name.' '.($i + 1);
+                    }
                 } else {
                     $newHeaders[] = $name;
                 }
             } elseif ($ruleKey === 'splitByDelimiter') {
                 $prefix = $params['newColumnsPrefix'] ?? 'Column';
-                for ($i = 0; $i < $maxCols; $i++) $newHeaders[] = $prefix . ' ' . ($i + 1);
+                for ($i = 0; $i < $maxCols; $i++) {
+                    $newHeaders[] = $prefix.' '.($i + 1);
+                }
             } else {
-                for ($i = 0; $i < $maxCols; $i++) $newHeaders[] = 'Rule ' . $ruleIndex . ' - ' . ($i + 1);
+                for ($i = 0; $i < $maxCols; $i++) {
+                    $newHeaders[] = 'Rule '.$ruleIndex.' - '.($i + 1);
+                }
             }
         }
 
         // Pass 2: Write to CSV
         fputcsv($csvHandle, $newHeaders);
-        
-        $removeTagsGlobal = (bool)($config['removeTags'] ?? $config['removeTagsAll'] ?? false);
+
+        $removeTagsGlobal = (bool) ($config['removeTags'] ?? $config['removeTagsAll'] ?? false);
         $progressRows = 0;
-        
+
         // Re-open Reader for Pass 2
         $reader = $this->getReaderForFile($inputFilePath);
-        
+
         foreach ($reader->getSheetIterator() as $sheet) {
-            if ($sheet->getIndex() > 0) break; 
+            if ($sheet->getIndex() > 0) {
+                break;
+            }
 
             foreach ($sheet->getRowIterator() as $row) {
                 // Extract row data
-                    $rowData = [];
-                    foreach ($row->cells as $cell) {
-                        $val = $cell->getValue();
+                $rowData = [];
+                foreach ($row->cells as $cell) {
+                    $val = $cell->getValue();
                     if ($val instanceof \DateTimeInterface) {
                         $val = $val->format('Y-m-d H:i:s');
                     }
-                    $rowData[] = (string)$val;
+                    $rowData[] = (string) $val;
                 }
-                
+
                 if ($progressRows === 0) { // Skip Header
                     $progressRows++;
+
                     continue;
                 }
 
@@ -334,7 +349,9 @@ class ProcessModexJob implements ShouldQueue
                 $extraColumns = [];
                 foreach ($rules as $ruleIndex => $rule) {
                     $maxCols = $ruleMaxCols[$ruleIndex] ?? 0;
-                    if ($maxCols === 0) continue;
+                    if ($maxCols === 0) {
+                        continue;
+                    }
 
                     $ruleKey = $rule['ruleKey'] ?? '';
                     $sourceColumn = $rule['sourceColumn'] ?? '';
@@ -344,21 +361,21 @@ class ProcessModexJob implements ShouldQueue
                     $cellValue = ($colIndex !== -1) ? ($rowData[$colIndex] ?? '') : '';
 
                     $ruleResult = $this->applyModexRule($ruleKey, $cellValue, $params);
-                    
+
                     $data = [];
                     if ($ruleResult !== null) {
                         $data = is_array($ruleResult) ? $ruleResult : [$ruleResult];
                     }
-                    
+
                     while (count($data) < $maxCols) {
                         $data[] = '';
                     }
-                    
+
                     foreach ($data as $val) {
-                        $extraColumns[] = (string)$val;
+                        $extraColumns[] = (string) $val;
                     }
                 }
-                
+
                 $finalRow = array_merge($rowData, $extraColumns);
 
                 if ($removeTagsGlobal) {
@@ -371,67 +388,79 @@ class ProcessModexJob implements ShouldQueue
 
                 $progressRows++;
                 if ($progressRows <= 100 || $progressRows % 10 === 0) {
-                     try {
+                    try {
                         $currentConfig = $this->modexFile->export_config ?? [];
                         $currentConfig['progress_rows'] = $progressRows;
                         $this->modexFile->update(['export_config' => $currentConfig]);
-                    } catch (\Throwable $e) {}
+                    } catch (\Throwable $e) {
+                    }
                 }
             }
         }
         $reader->close();
         fclose($csvHandle);
-        
+
         // Save CSV path
         try {
             $currentConfig = $this->modexFile->export_config ?? [];
             $currentConfig['temp_csv_path'] = str_replace(storage_path('app/'), '', $tempCsvPath);
             $this->modexFile->update(['export_config' => $currentConfig]);
-        } catch (\Throwable $e) {}
+        } catch (\Throwable $e) {
+        }
 
         // --- PHASE 3: CSV to XLSX ---
-        
+
         // Update Phase to generating
         try {
             $conf = $this->modexFile->export_config ?? [];
             $conf['phase'] = 'generating';
             $this->modexFile->update(['export_config' => $conf]);
-        } catch (\Throwable $e) {}
+        } catch (\Throwable $e) {
+        }
 
         gc_collect_cycles();
-        
-        $tempOut = 'temp/modex_out_' . time() . '_' . uniqid() . '.xlsx';
+
+        $tempOut = 'temp/modex_out_'.time().'_'.uniqid().'.xlsx';
         $fullOutputPath = Storage::path($tempOut);
-        
+
         $dir = dirname($fullOutputPath);
-        if (!is_dir($dir)) mkdir($dir, 0755, true);
+        if (! is_dir($dir)) {
+            mkdir($dir, 0755, true);
+        }
 
         try {
-            $options = new Options();
+            $options = new Options;
             $writer = new Writer($options);
             $writer->openToFile($fullOutputPath);
 
             $csvHandle = fopen($tempCsvPath, 'r');
             $bom = fread($csvHandle, 3);
-            if ($bom !== "\xEF\xBB\xBF") rewind($csvHandle);
+            if ($bom !== "\xEF\xBB\xBF") {
+                rewind($csvHandle);
+            }
 
             $rowIndex = 0;
             while (($data = fgetcsv($csvHandle)) !== false) {
-                 $cells = array_map(function($value) {
-                     $strVal = (string)$value;
-                     if (str_starts_with($strVal, '=')) $strVal = ' ' . $strVal;
-                     return Cell::fromValue($strVal);
-                 }, $data);
-                 
-                 $row = new Row($cells);
-                 $writer->addRow($row);
-                 
-                 $rowIndex++;
-                 if ($rowIndex % 5000 === 0) gc_collect_cycles();
+                $cells = array_map(function ($value) {
+                    $strVal = (string) $value;
+                    if (str_starts_with($strVal, '=')) {
+                        $strVal = ' '.$strVal;
+                    }
+
+                    return Cell::fromValue($strVal);
+                }, $data);
+
+                $row = new Row($cells);
+                $writer->addRow($row);
+
+                $rowIndex++;
+                if ($rowIndex % 5000 === 0) {
+                    gc_collect_cycles();
+                }
             }
             fclose($csvHandle);
             $writer->close();
-            
+
             @unlink($tempCsvPath);
 
             // Update model immediately
@@ -442,7 +471,7 @@ class ProcessModexJob implements ShouldQueue
                     'file_path' => $tempOut,
                     'file_size' => $finalSize,
                     'total_rows' => $rowIndex,
-                    'export_config' => array_merge($this->modexFile->export_config ?? [], ['phase' => 'completed', 'progress_rows' => $rowIndex])
+                    'export_config' => array_merge($this->modexFile->export_config ?? [], ['phase' => 'completed', 'progress_rows' => $rowIndex]),
                 ]);
             } catch (\Throwable $e) {
                 // Log silently if needed or ignore
@@ -459,16 +488,16 @@ class ProcessModexJob implements ShouldQueue
     {
         $extension = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
         if ($extension === 'csv') {
-            $options = new CsvOptions();
+            $options = new CsvOptions;
             $reader = new CsvReader($options);
         } else {
-            $options = new XlsxOptions();
+            $options = new XlsxOptions;
             $reader = new XlsxReader($options);
         }
         $reader->open($filePath);
+
         return $reader;
     }
-
 
     /**
      * Найти индекс колонки
@@ -477,24 +506,25 @@ class ProcessModexJob implements ShouldQueue
     {
         // 1. Try column letters (A, B, C...)
         if (preg_match('/^[A-Z]+$/i', $sourceColumn)) {
-             try {
-                 return Coordinate::columnIndexFromString($sourceColumn) - 1;
-             } catch (\Exception $e) {}
+            try {
+                return Coordinate::columnIndexFromString($sourceColumn) - 1;
+            } catch (\Exception $e) {
+            }
         }
-        
+
         // 2. Try header name (case-insensitive)
         foreach ($headers as $index => $header) {
             if (strcasecmp(trim($header), trim($sourceColumn)) === 0) {
                 return $index;
             }
         }
-        
+
         // 3. Try numeric index
         if (is_numeric($sourceColumn)) {
-             $asNum = (int)$sourceColumn;
-             if ($asNum >= 0 && $asNum < count($headers)) {
-                 return $asNum;
-             }
+            $asNum = (int) $sourceColumn;
+            if ($asNum >= 0 && $asNum < count($headers)) {
+                return $asNum;
+            }
         }
 
         return -1;
@@ -512,7 +542,6 @@ class ProcessModexJob implements ShouldQueue
         };
     }
 
-
     /**
      * Применить правило "Извлечь между разделителями"
      */
@@ -524,7 +553,7 @@ class ProcessModexJob implements ShouldQueue
         $removeTags = $params['removeTags'] ?? false;
         $deleteFragmentsAfter = $params['deleteFragmentsAfter'] ?? '';
 
-        if (!$startFragment || !$delimitersTextarea) {
+        if (! $startFragment || ! $delimitersTextarea) {
             return null;
         }
 
@@ -535,7 +564,7 @@ class ProcessModexJob implements ShouldQueue
 
         // Парсим разделители
         $delimiters = $this->parseDelimiters($delimitersTextarea);
-        
+
         // Если нужно искать кавычки, добавляем их в список разделителей
         if ($searchQuotes) {
             $delimiters[] = '"';
@@ -548,7 +577,7 @@ class ProcessModexJob implements ShouldQueue
         }
 
         $afterStart = substr($cellValue, $startPos + strlen($startFragment));
-        
+
         // Удаляем пробелы в начале найденной строки
         $afterStart = ltrim($afterStart);
 
@@ -584,7 +613,7 @@ class ProcessModexJob implements ShouldQueue
         $removeTags = $params['removeTags'] ?? false;
         $deleteFragmentsAfter = $params['deleteFragmentsAfter'] ?? '';
 
-        if (!$delimiter) {
+        if (! $delimiter) {
             return null;
         }
 
@@ -618,12 +647,12 @@ class ProcessModexJob implements ShouldQueue
         // Заменяем переносы строк на запятые, чтобы избежать проблем с парсингом
         // и поддержать списки разделителей с новой строки
         $normalized = str_replace(["\r", "\n"], ',', $textarea);
-        
+
         // Парсим CSV строку
         $delimiters = str_getcsv($normalized);
-        
+
         // Фильтруем пустые значения, но сохраняем пробелы
-        return array_unique(array_filter($delimiters, function($v) {
+        return array_unique(array_filter($delimiters, function ($v) {
             return $v !== null && $v !== '';
         }));
     }

@@ -15,13 +15,13 @@ class UserBonus extends Model
         'user_id',
         'points',
         'total_earned',
-        'total_spent'
+        'total_spent',
     ];
 
     protected $casts = [
         'points' => 'integer',
         'total_earned' => 'integer',
-        'total_spent' => 'integer'
+        'total_spent' => 'integer',
     ];
 
     /**
@@ -55,7 +55,7 @@ class UserBonus extends Model
             'description' => $description,
             'order_id' => $orderId,
             'expires_at' => $expiresAt,
-            'metadata' => $metadata
+            'metadata' => $metadata,
         ]);
     }
 
@@ -77,7 +77,7 @@ class UserBonus extends Model
             'points' => -$points,
             'description' => $description,
             'order_id' => $orderId,
-            'metadata' => $metadata
+            'metadata' => $metadata,
         ]);
     }
 
@@ -91,7 +91,7 @@ class UserBonus extends Model
             [
                 'points' => 0,
                 'total_earned' => 0,
-                'total_spent' => 0
+                'total_spent' => 0,
             ]
         );
     }
@@ -128,13 +128,13 @@ class UserBonus extends Model
 
         if ($expiredPoints > 0) {
             $this->save();
-            
+
             // Создаем транзакцию истечения
             $this->transactions()->create([
                 'type' => 'expire',
                 'points' => -$expiredPoints,
                 'description' => 'Истечение бонусных баллов',
-                'metadata' => ['expired_count' => $expiredTransactions->count()]
+                'metadata' => ['expired_count' => $expiredTransactions->count()],
             ]);
         }
 

@@ -222,7 +222,6 @@ class AdminMenuItemSeeder extends Seeder
                 'updated_at' => '2025-09-15 08:33:31',
             ],
 
-
             [
                 'id' => 18,
                 'page_id' => 2,
@@ -311,17 +310,3 @@ class AdminMenuItemSeeder extends Seeder
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-

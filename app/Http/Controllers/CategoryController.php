@@ -2,14 +2,14 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\ShopCategory;
 use App\Models\Shop\Property;
-use Illuminate\Http\Request;
+use App\Models\ShopCategory;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Schema;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Validator;
 
 class CategoryController extends Controller
 {
@@ -55,7 +55,7 @@ class CategoryController extends Controller
             // Сортировка
             $sortBy = $request->get('sort_by', 'sort_order');
             $sortDirection = $request->get('sort_direction', 'asc');
-            
+
             if (in_array($sortBy, ['name', 'created_at', 'sort_order'])) {
                 $query->orderBy($sortBy, $sortDirection);
             } else {
@@ -69,19 +69,20 @@ class CategoryController extends Controller
                 $propertiesCount = DB::table('shop_category_property')
                     ->where('category_id', $category->id)
                     ->count();
-                
+
                 $category->properties_count = $propertiesCount;
+
                 return $category;
             });
 
             return response()->json([
                 'success' => true,
-                'data' => $categories
+                'data' => $categories,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении категорий: ' . $e->getMessage()
+                'message' => 'Ошибка при получении категорий: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -111,19 +112,20 @@ class CategoryController extends Controller
                 $propertiesCount = DB::table('shop_category_property')
                     ->where('category_id', $category->id)
                     ->count();
-                
+
                 $category->properties_count = $propertiesCount;
+
                 return $category;
             });
 
             return response()->json([
                 'success' => true,
-                'data' => $categories
+                'data' => $categories,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении активных категорий: ' . $e->getMessage()
+                'message' => 'Ошибка при получении активных категорий: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -140,10 +142,10 @@ class CategoryController extends Controller
             }
             $category = ShopCategory::with($withRelations)->find($id);
 
-            if (!$category) {
+            if (! $category) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Категория не найдена'
+                    'message' => 'Категория не найдена',
                 ], 404);
             }
 
@@ -154,12 +156,12 @@ class CategoryController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $category
+                'data' => $category,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении категории: ' . $e->getMessage()
+                'message' => 'Ошибка при получении категории: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -183,20 +185,20 @@ class CategoryController extends Controller
                 'in_figure_img' => 'nullable|string',
                 'in_figure_text' => 'nullable|string',
                 'sort_order' => 'integer|min:0',
-                'parent_id' => 'nullable|integer|exists:shop_categories,id'
+                'parent_id' => 'nullable|integer|exists:shop_categories,id',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
             // Подготавливаем данные для создания
             $data = $request->all();
-            
+
             // Обрабатываем parent_id - если передано null или пустая строка, устанавливаем null
             if (isset($data['parent_id']) && ($data['parent_id'] === '' || $data['parent_id'] === null)) {
                 $data['parent_id'] = null;
@@ -205,12 +207,12 @@ class CategoryController extends Controller
             // Автоматически генерируем slug из названия, если не передан
             if (empty($data['slug'])) {
                 $data['slug'] = \Illuminate\Support\Str::slug($data['name']);
-                
+
                 // Проверяем уникальность slug
                 $counter = 1;
                 $originalSlug = $data['slug'];
                 while (ShopCategory::where('slug', $data['slug'])->exists()) {
-                    $data['slug'] = $originalSlug . '-' . $counter;
+                    $data['slug'] = $originalSlug.'-'.$counter;
                     $counter++;
                 }
             }
@@ -223,12 +225,12 @@ class CategoryController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Категория успешно создана',
-                'data' => $category
+                'data' => $category,
             ], 201);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при создании категории: ' . $e->getMessage()
+                'message' => 'Ошибка при создании категории: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -241,10 +243,10 @@ class CategoryController extends Controller
         try {
             $category = ShopCategory::find($id);
 
-            if (!$category) {
+            if (! $category) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Категория не найдена'
+                    'message' => 'Категория не найдена',
                 ], 404);
             }
 
@@ -253,7 +255,7 @@ class CategoryController extends Controller
                 'description' => 'nullable|string',
                 'image' => 'nullable|string',
                 'icon' => 'nullable|string|max:255',
-                'slug' => 'nullable|string|max:255|unique:shop_categories,slug,' . $id,
+                'slug' => 'nullable|string|max:255|unique:shop_categories,slug,'.$id,
                 'is_active' => 'boolean',
                 'is_main' => 'boolean',
                 'in_catalog' => 'boolean',
@@ -261,20 +263,20 @@ class CategoryController extends Controller
                 'in_figure_img' => 'nullable|string',
                 'in_figure_text' => 'nullable|string',
                 'sort_order' => 'integer|min:0',
-                'parent_id' => 'nullable|integer|exists:shop_categories,id'
+                'parent_id' => 'nullable|integer|exists:shop_categories,id',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
             // Подготавливаем данные для обновления
             $data = $request->all();
-            
+
             // Обрабатываем parent_id - если передано null или пустая строка, устанавливаем null
             if (isset($data['parent_id']) && ($data['parent_id'] === '' || $data['parent_id'] === null)) {
                 $data['parent_id'] = null;
@@ -283,12 +285,12 @@ class CategoryController extends Controller
             // Автоматически генерируем slug из названия, если не передан и изменилось название
             if (empty($data['slug']) && isset($data['name']) && $data['name'] !== $category->name) {
                 $data['slug'] = \Illuminate\Support\Str::slug($data['name']);
-                
+
                 // Проверяем уникальность slug
                 $counter = 1;
                 $originalSlug = $data['slug'];
                 while (ShopCategory::where('slug', $data['slug'])->where('id', '!=', $id)->exists()) {
-                    $data['slug'] = $originalSlug . '-' . $counter;
+                    $data['slug'] = $originalSlug.'-'.$counter;
                     $counter++;
                 }
             }
@@ -301,12 +303,12 @@ class CategoryController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Категория успешно обновлена',
-                'data' => $category
+                'data' => $category,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при обновлении категории: ' . $e->getMessage()
+                'message' => 'Ошибка при обновлении категории: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -319,10 +321,10 @@ class CategoryController extends Controller
         try {
             $category = ShopCategory::find($id);
 
-            if (!$category) {
+            if (! $category) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Категория не найдена'
+                    'message' => 'Категория не найдена',
                 ], 404);
             }
 
@@ -330,7 +332,7 @@ class CategoryController extends Controller
             if ($category->children()->count() > 0) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Нельзя удалить категорию, у которой есть дочерние категории'
+                    'message' => 'Нельзя удалить категорию, у которой есть дочерние категории',
                 ], 400);
             }
 
@@ -338,12 +340,12 @@ class CategoryController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Категория успешно удалена'
+                'message' => 'Категория успешно удалена',
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при удалении категории: ' . $e->getMessage()
+                'message' => 'Ошибка при удалении категории: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -355,22 +357,22 @@ class CategoryController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
-                'direction' => 'required|in:asc,desc'
+                'direction' => 'required|in:asc,desc',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
             $direction = $request->input('direction');
-            
+
             // Получаем все категории и сортируем по названию
             $categories = ShopCategory::orderBy('name', $direction)->get();
-            
+
             // Обновляем sort_order для каждой категории
             foreach ($categories as $index => $category) {
                 $category->update(['sort_order' => $index]);
@@ -379,12 +381,12 @@ class CategoryController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Категории отсортированы по алфавиту',
-                'data' => $categories
+                'data' => $categories,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при сортировке категорий: ' . $e->getMessage()
+                'message' => 'Ошибка при сортировке категорий: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -396,19 +398,19 @@ class CategoryController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
-                'image' => 'required|image|mimes:jpeg,png,jpg,gif|max:2048'
+                'image' => 'required|image|mimes:jpeg,png,jpg,gif|max:2048',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
             $file = $request->file('image');
-            $fileName = time() . '_' . $file->getClientOriginalName();
+            $fileName = time().'_'.$file->getClientOriginalName();
             $path = $file->storeAs('categories', $fileName, 'public');
 
             return response()->json([
@@ -416,13 +418,13 @@ class CategoryController extends Controller
                 'message' => 'Изображение успешно загружено',
                 'data' => [
                     'path' => $path,
-                    'url' => Storage::url($path)
-                ]
+                    'url' => Storage::url($path),
+                ],
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при загрузке изображения: ' . $e->getMessage()
+                'message' => 'Ошибка при загрузке изображения: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -439,14 +441,14 @@ class CategoryController extends Controller
                 'categories.*.slug' => 'required|string|max:255',
                 'categories.*.description' => 'nullable|string',
                 'categories.*.parent' => 'nullable|string',
-                'categories.*.image_url' => 'nullable|url'
+                'categories.*.image_url' => 'nullable|url',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -465,7 +467,7 @@ class CategoryController extends Controller
 
                     // Ищем родительскую категорию по имени
                     $parentId = null;
-                    if (!empty($categoryData['parent'])) {
+                    if (! empty($categoryData['parent'])) {
                         $parentCategory = ShopCategory::where('name', $categoryData['parent'])->first();
                         if ($parentCategory) {
                             $parentId = $parentCategory->id;
@@ -478,7 +480,7 @@ class CategoryController extends Controller
                         'slug' => $categoryData['slug'],
                         'description' => $categoryData['description'] ?? null,
                         'parent_id' => $parentId,
-                        'is_active' => true
+                        'is_active' => true,
                     ];
 
                     if ($existingCategory) {
@@ -488,12 +490,12 @@ class CategoryController extends Controller
                         $existingCategory->parent_id = $parentId ?? $existingCategory->parent_id;
 
                         // Загружаем изображение, если есть ссылка
-                        if (!empty($categoryData['image_url'])) {
+                        if (! empty($categoryData['image_url'])) {
                             try {
                                 $imageData = file_get_contents($categoryData['image_url']);
                                 if ($imageData !== false) {
                                     // Создаем директорию, если её нет
-                                    if (!is_dir($imagesPath)) {
+                                    if (! is_dir($imagesPath)) {
                                         mkdir($imagesPath, 0755, true);
                                     }
 
@@ -502,18 +504,22 @@ class CategoryController extends Controller
                                     $imageInfo = @getimagesizefromstring($imageData);
                                     if ($imageInfo !== false) {
                                         $mimeType = $imageInfo['mime'];
-                                        if ($mimeType === 'image/jpeg') $extension = 'jpg';
-                                        elseif ($mimeType === 'image/gif') $extension = 'gif';
-                                        elseif ($mimeType === 'image/webp') $extension = 'webp';
+                                        if ($mimeType === 'image/jpeg') {
+                                            $extension = 'jpg';
+                                        } elseif ($mimeType === 'image/gif') {
+                                            $extension = 'gif';
+                                        } elseif ($mimeType === 'image/webp') {
+                                            $extension = 'webp';
+                                        }
                                     }
 
                                     // Сохраняем изображение
-                                    $fileName = 'category_' . $existingCategory->id . '.' . $extension;
-                                    $filePath = $imagesPath . '/' . $fileName;
+                                    $fileName = 'category_'.$existingCategory->id.'.'.$extension;
+                                    $filePath = $imagesPath.'/'.$fileName;
                                     file_put_contents($filePath, $imageData);
 
                                     // Обновляем путь к изображению
-                                    $existingCategory->image = 'images/categories/' . $fileName;
+                                    $existingCategory->image = 'images/categories/'.$fileName;
                                 }
                             } catch (\Exception $e) {
                                 $errors[] = "Категория \"{$categoryData['name']}\": ошибка загрузки изображения - {$e->getMessage()}";
@@ -527,12 +533,12 @@ class CategoryController extends Controller
                         $newCategory = ShopCategory::create($data);
 
                         // Загружаем изображение, если есть ссылка
-                        if (!empty($categoryData['image_url'])) {
+                        if (! empty($categoryData['image_url'])) {
                             try {
                                 $imageData = file_get_contents($categoryData['image_url']);
                                 if ($imageData !== false) {
                                     // Создаем директорию, если её нет
-                                    if (!is_dir($imagesPath)) {
+                                    if (! is_dir($imagesPath)) {
                                         mkdir($imagesPath, 0755, true);
                                     }
 
@@ -541,18 +547,22 @@ class CategoryController extends Controller
                                     $imageInfo = @getimagesizefromstring($imageData);
                                     if ($imageInfo !== false) {
                                         $mimeType = $imageInfo['mime'];
-                                        if ($mimeType === 'image/jpeg') $extension = 'jpg';
-                                        elseif ($mimeType === 'image/gif') $extension = 'gif';
-                                        elseif ($mimeType === 'image/webp') $extension = 'webp';
+                                        if ($mimeType === 'image/jpeg') {
+                                            $extension = 'jpg';
+                                        } elseif ($mimeType === 'image/gif') {
+                                            $extension = 'gif';
+                                        } elseif ($mimeType === 'image/webp') {
+                                            $extension = 'webp';
+                                        }
                                     }
 
                                     // Сохраняем изображение
-                                    $fileName = 'category_' . $newCategory->id . '.' . $extension;
-                                    $filePath = $imagesPath . '/' . $fileName;
+                                    $fileName = 'category_'.$newCategory->id.'.'.$extension;
+                                    $filePath = $imagesPath.'/'.$fileName;
                                     file_put_contents($filePath, $imageData);
 
                                     // Обновляем путь к изображению
-                                    $newCategory->image = 'images/categories/' . $fileName;
+                                    $newCategory->image = 'images/categories/'.$fileName;
                                     $newCategory->save();
                                 }
                             } catch (\Exception $e) {
@@ -563,7 +573,7 @@ class CategoryController extends Controller
                         $created++;
                     }
                 } catch (\Exception $e) {
-                    $errors[] = "Строка " . ($index + 1) . " (\"{$categoryData['name']}\"): {$e->getMessage()}";
+                    $errors[] = 'Строка '.($index + 1)." (\"{$categoryData['name']}\"): {$e->getMessage()}";
                 }
             }
 
@@ -574,13 +584,13 @@ class CategoryController extends Controller
                     'created' => $created,
                     'updated' => $updated,
                     'errors' => $errors,
-                    'total' => count($categoriesData)
-                ]
+                    'total' => count($categoriesData),
+                ],
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при импорте категорий: ' . $e->getMessage()
+                'message' => 'Ошибка при импорте категорий: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -594,14 +604,14 @@ class CategoryController extends Controller
             $validator = Validator::make($request->all(), [
                 'category_ids' => 'required|array|min:1',
                 'category_ids.*' => 'required|integer|exists:shop_categories,id',
-                'parent_id' => 'required|integer|exists:shop_categories,id'
+                'parent_id' => 'required|integer|exists:shop_categories,id',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -612,7 +622,7 @@ class CategoryController extends Controller
             if (in_array($parentId, $categoryIds)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Родительская категория не может быть среди обновляемых категорий'
+                    'message' => 'Родительская категория не может быть среди обновляемых категорий',
                 ], 422);
             }
 
@@ -624,7 +634,7 @@ class CategoryController extends Controller
                     if (in_array($categoryId, $parentPath)) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Невозможно создать циклическую зависимость'
+                            'message' => 'Невозможно создать циклическую зависимость',
                         ], 422);
                     }
                 }
@@ -639,13 +649,13 @@ class CategoryController extends Controller
                 'message' => "Успешно добавлено категорий к родительской категории: {$updated}",
                 'data' => [
                     'updated' => $updated,
-                    'total' => count($categoryIds)
-                ]
+                    'total' => count($categoryIds),
+                ],
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при добавлении категорий к родительской категории: ' . $e->getMessage()
+                'message' => 'Ошибка при добавлении категорий к родительской категории: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -659,14 +669,14 @@ class CategoryController extends Controller
             $validator = Validator::make($request->all(), [
                 'category_ids' => 'required|array|min:1',
                 'category_ids.*' => 'required|integer|exists:shop_categories,id',
-                'parent_id' => 'required|integer|exists:shop_categories,id'
+                'parent_id' => 'required|integer|exists:shop_categories,id',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -677,7 +687,7 @@ class CategoryController extends Controller
             if (in_array($parentId, $categoryIds)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Родительская категория не может быть среди обновляемых категорий'
+                    'message' => 'Родительская категория не может быть среди обновляемых категорий',
                 ], 422);
             }
 
@@ -689,7 +699,7 @@ class CategoryController extends Controller
                     if (in_array($categoryId, $parentPath)) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Невозможно создать циклическую зависимость'
+                            'message' => 'Невозможно создать циклическую зависимость',
                         ], 422);
                     }
                 }
@@ -704,13 +714,13 @@ class CategoryController extends Controller
                 'message' => "Успешно обновлено категорий: {$updated}",
                 'data' => [
                     'updated' => $updated,
-                    'total' => count($categoryIds)
-                ]
+                    'total' => count($categoryIds),
+                ],
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при батч-обновлении категорий: ' . $e->getMessage()
+                'message' => 'Ошибка при батч-обновлении категорий: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -725,7 +735,7 @@ class CategoryController extends Controller
 
         while ($current->parent_id) {
             $current = ShopCategory::find($current->parent_id);
-            if (!$current) {
+            if (! $current) {
                 break;
             }
             $path[] = $current->id;
@@ -753,14 +763,14 @@ class CategoryController extends Controller
                         ->active()
                         ->ordered()
                         ->get();
-                    
+
                     $category->children = $children->isEmpty() ? [] : $buildTree($children);
-                    
+
                     // Добавляем счетчик характеристик
                     $category->properties_count = DB::table('shop_category_property')
                         ->where('category_id', $category->id)
                         ->count();
-                    
+
                     return $category;
                 });
             };
@@ -769,12 +779,12 @@ class CategoryController extends Controller
 
             return response()->json([
                 'success' => true,
-                'categories' => $tree
+                'categories' => $tree,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения дерева категорий: ' . $e->getMessage()
+                'message' => 'Ошибка получения дерева категорий: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -787,15 +797,15 @@ class CategoryController extends Controller
         try {
             $category = ShopCategory::findOrFail($id);
             $properties = $category->properties()->get();
-            
+
             return response()->json([
                 'success' => true,
-                'properties' => $properties
+                'properties' => $properties,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения характеристик: ' . $e->getMessage()
+                'message' => 'Ошибка получения характеристик: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -828,35 +838,35 @@ class CategoryController extends Controller
             if (empty($categoryIds)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Не указаны ID категорий'
+                    'message' => 'Не указаны ID категорий',
                 ], 400);
             }
 
             // Фильтруем только валидные ID
-            $categoryIds = array_filter($categoryIds, function($id) {
+            $categoryIds = array_filter($categoryIds, function ($id) {
                 return $id > 0;
             });
 
             if (empty($categoryIds)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Некорректные ID категорий'
+                    'message' => 'Некорректные ID категорий',
                 ], 400);
             }
 
             // Оптимизированный запрос: получаем все уникальные характеристики категорий одним запросом
             // с eager loading значений
-            $properties = Property::whereHas('categories', function($query) use ($categoryIds) {
+            $properties = Property::whereHas('categories', function ($query) use ($categoryIds) {
                 $query->whereIn('shop_categories.id', $categoryIds);
             })
-            ->with(['activeValues' => function($query) {
-                $query->orderBy('sort_order')->orderBy('value');
-            }])
-            ->orderBy('name')
-            ->get();
+                ->with(['activeValues' => function ($query) {
+                    $query->orderBy('sort_order')->orderBy('value');
+                }])
+                ->orderBy('name')
+                ->get();
 
             // Формируем результат с информацией о категориях, к которым привязана каждая характеристика
-            $result = $properties->map(function($property) use ($categoryIds) {
+            $result = $properties->map(function ($property) use ($categoryIds) {
                 // Получаем ID категорий, к которым привязана эта характеристика
                 $propertyCategoryIds = DB::table('shop_category_property')
                     ->where('property_id', $property->id)
@@ -877,25 +887,25 @@ class CategoryController extends Controller
                     'description' => $property->description,
                     'category_ids' => $propertyCategoryIds,
                     'category_names' => $categoryNames,
-                    'values' => $property->activeValues->map(function($value) {
+                    'values' => $property->activeValues->map(function ($value) {
                         return [
                             'id' => $value->id,
                             'value' => $value->value,
                             'color' => $value->color,
-                            'sort_order' => $value->sort_order
+                            'sort_order' => $value->sort_order,
                         ];
-                    })->toArray()
+                    })->toArray(),
                 ];
             });
 
             return response()->json([
                 'success' => true,
-                'data' => $result
+                'data' => $result,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения характеристик категорий: ' . $e->getMessage()
+                'message' => 'Ошибка получения характеристик категорий: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -908,14 +918,14 @@ class CategoryController extends Controller
         // Разрешаем пустой массив - это означает удаление всех характеристик
         $validator = Validator::make($request->all(), [
             'property_ids' => 'nullable|array',
-            'property_ids.*' => 'required_with:property_ids|integer|exists:shop_properties,id'
+            'property_ids.*' => 'required_with:property_ids|integer|exists:shop_properties,id',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -924,22 +934,22 @@ class CategoryController extends Controller
             // Если property_ids не передан или null, используем пустой массив (удаление всех связей)
             $propertyIds = $request->input('property_ids', []);
             $category->properties()->sync($propertyIds);
-            
+
             $properties = $category->properties()->get();
-            
+
             // Обновляем счетчик характеристик
             $category->properties_count = $properties->count();
-            
+
             return response()->json([
                 'success' => true,
                 'message' => 'Характеристики успешно привязаны',
                 'properties' => $properties,
-                'properties_count' => $category->properties_count
+                'properties_count' => $category->properties_count,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка привязки характеристик: ' . $e->getMessage()
+                'message' => 'Ошибка привязки характеристик: '.$e->getMessage(),
             ], 500);
         }
     }

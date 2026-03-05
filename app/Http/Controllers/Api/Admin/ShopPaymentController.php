@@ -4,8 +4,8 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopPaymentMethod;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
 class ShopPaymentController extends Controller
@@ -31,9 +31,9 @@ class ShopPaymentController extends Controller
             // Поиск
             if ($request->has('search') && $request->get('search')) {
                 $search = $request->get('search');
-                $query->where(function($q) use ($search) {
+                $query->where(function ($q) use ($search) {
                     $q->where('name', 'like', "%{$search}%")
-                      ->orWhere('description', 'like', "%{$search}%");
+                        ->orWhere('description', 'like', "%{$search}%");
                 });
             }
 
@@ -63,23 +63,24 @@ class ShopPaymentController extends Controller
                         'created_at' => $method->created_at,
                         'updated_at' => $method->updated_at,
                     ];
-                    
+
                     try {
                         $imageUrl = $method->image_url;
                         if ($imageUrl) {
                             $version = $method->updated_at ? $method->updated_at->timestamp : time();
-                            $item['image_url'] = $imageUrl . '?v=' . $version;
+                            $item['image_url'] = $imageUrl.'?v='.$version;
                         } else {
                             $item['image_url'] = null;
                         }
                     } catch (\Exception $e) {
-                        \Log::warning('Error getting image_url for payment method ' . $method->id . ': ' . $e->getMessage());
+                        \Log::warning('Error getting image_url for payment method '.$method->id.': '.$e->getMessage());
                         $item['image_url'] = null;
                     }
-                    
+
                     $items[] = $item;
                 } catch (\Exception $e) {
-                    \Log::error('Error serializing payment method item: ' . $e->getMessage());
+                    \Log::error('Error serializing payment method item: '.$e->getMessage());
+
                     continue;
                 }
             }
@@ -91,15 +92,15 @@ class ShopPaymentController extends Controller
                     'current_page' => $paymentMethods->currentPage(),
                     'last_page' => $paymentMethods->lastPage(),
                     'per_page' => $paymentMethods->perPage(),
-                    'total' => $paymentMethods->total()
-                ]
+                    'total' => $paymentMethods->total(),
+                ],
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка получения способов оплаты',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -125,30 +126,30 @@ class ShopPaymentController extends Controller
                 'created_at' => $paymentMethod->created_at,
                 'updated_at' => $paymentMethod->updated_at,
             ];
-            
+
             try {
                 $imageUrl = $paymentMethod->image_url;
                 if ($imageUrl) {
                     $version = $paymentMethod->updated_at ? $paymentMethod->updated_at->timestamp : time();
-                    $data['image_url'] = $imageUrl . '?v=' . $version;
+                    $data['image_url'] = $imageUrl.'?v='.$version;
                 } else {
                     $data['image_url'] = null;
                 }
             } catch (\Exception $e) {
-                \Log::warning('Error getting image_url for payment method ' . $id . ': ' . $e->getMessage());
+                \Log::warning('Error getting image_url for payment method '.$id.': '.$e->getMessage());
                 $data['image_url'] = null;
             }
 
             return response()->json([
                 'success' => true,
-                'data' => $data
+                'data' => $data,
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Способ оплаты не найден',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 404);
         }
     }
@@ -167,7 +168,7 @@ class ShopPaymentController extends Controller
                 'settings' => 'nullable|array',
                 'sort_order' => 'integer|min:0',
                 'is_default' => 'boolean',
-                'can_disable_default' => 'boolean'
+                'can_disable_default' => 'boolean',
             ]);
 
             // Дополнительная валидация для Яндекс Пэй
@@ -182,14 +183,14 @@ class ShopPaymentController extends Controller
                     'additional_settings' => 'nullable|string',
                     'split_min_amount' => 'nullable|numeric|min:0',
                     'split_max_amount' => 'nullable|numeric|min:0|gte:split_min_amount',
-                    'split_settings' => 'nullable|string'
+                    'split_settings' => 'nullable|string',
                 ]);
 
                 if ($yandexValidator->fails()) {
                     return response()->json([
                         'success' => false,
                         'message' => 'Ошибка валидации настроек Яндекс Пэй',
-                        'errors' => $yandexValidator->errors()
+                        'errors' => $yandexValidator->errors(),
                     ], 422);
                 }
             }
@@ -198,7 +199,7 @@ class ShopPaymentController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -212,14 +213,14 @@ class ShopPaymentController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Способ оплаты создан успешно',
-                'data' => $paymentMethod
+                'data' => $paymentMethod,
             ], 201);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка создания способа оплаты',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -240,7 +241,7 @@ class ShopPaymentController extends Controller
                 'settings' => 'nullable|array',
                 'sort_order' => 'integer|min:0',
                 'is_default' => 'boolean',
-                'can_disable_default' => 'boolean'
+                'can_disable_default' => 'boolean',
             ]);
 
             // Дополнительная валидация для Яндекс Пэй
@@ -255,14 +256,14 @@ class ShopPaymentController extends Controller
                     'additional_settings' => 'nullable|string',
                     'split_min_amount' => 'nullable|numeric|min:0',
                     'split_max_amount' => 'nullable|numeric|min:0|gte:split_min_amount',
-                    'split_settings' => 'nullable|string'
+                    'split_settings' => 'nullable|string',
                 ]);
 
                 if ($yandexValidator->fails()) {
                     return response()->json([
                         'success' => false,
                         'message' => 'Ошибка валидации настроек Яндекс Пэй',
-                        'errors' => $yandexValidator->errors()
+                        'errors' => $yandexValidator->errors(),
                     ], 422);
                 }
             }
@@ -271,12 +272,12 @@ class ShopPaymentController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
             // Если устанавливается как способ по умолчанию, снимаем флаг с других
-            if ($request->boolean('is_default') && !$paymentMethod->is_default) {
+            if ($request->boolean('is_default') && ! $paymentMethod->is_default) {
                 ShopPaymentMethod::where('is_default', true)->update(['is_default' => false]);
             }
 
@@ -285,14 +286,14 @@ class ShopPaymentController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Способ оплаты обновлен успешно',
-                'data' => $paymentMethod
+                'data' => $paymentMethod,
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка обновления способа оплаты',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -306,10 +307,10 @@ class ShopPaymentController extends Controller
             $paymentMethod = ShopPaymentMethod::findOrFail($id);
 
             // Нельзя удалить способ по умолчанию, если он не может быть отключен
-            if ($paymentMethod->is_default && !$paymentMethod->can_disable_default) {
+            if ($paymentMethod->is_default && ! $paymentMethod->can_disable_default) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Нельзя удалить этот способ оплаты по умолчанию'
+                    'message' => 'Нельзя удалить этот способ оплаты по умолчанию',
                 ], 400);
             }
 
@@ -319,10 +320,10 @@ class ShopPaymentController extends Controller
                     ->where('is_active', true)
                     ->exists();
 
-                if (!$hasOtherActive) {
+                if (! $hasOtherActive) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Нельзя удалить способ оплаты по умолчанию, если нет других активных способов'
+                        'message' => 'Нельзя удалить способ оплаты по умолчанию, если нет других активных способов',
                     ], 400);
                 }
             }
@@ -331,14 +332,14 @@ class ShopPaymentController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Способ оплаты удален успешно'
+                'message' => 'Способ оплаты удален успешно',
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка удаления способа оплаты',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -352,14 +353,14 @@ class ShopPaymentController extends Controller
             $validator = Validator::make($request->all(), [
                 'items' => 'required|array',
                 'items.*.id' => 'required|integer|exists:shop_payment_methods,id',
-                'items.*.sort_order' => 'required|integer|min:0'
+                'items.*.sort_order' => 'required|integer|min:0',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -370,14 +371,14 @@ class ShopPaymentController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Порядок сортировки обновлен успешно'
+                'message' => 'Порядок сортировки обновлен успешно',
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка обновления порядка сортировки',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }

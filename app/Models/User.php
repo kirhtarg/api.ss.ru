@@ -3,14 +3,14 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class User extends Authenticatable
 {
-    use HasFactory, Notifiable, HasApiTokens;
+    use HasApiTokens, HasFactory, Notifiable;
 
     protected $fillable = [
         'name',
@@ -57,7 +57,7 @@ class User extends Authenticatable
             ->withPivot('is_active', 'assigned_at')
             ->wherePivot('is_active', '!=', 0); // Исключаем только явно неактивные (0 или false)
     }
-    
+
     /**
      * Все роли пользователя (включая неактивные) - для отладки
      */
@@ -117,6 +117,7 @@ class User extends Authenticatable
                 return true;
             }
         }
+
         return false;
     }
 
@@ -130,6 +131,7 @@ class User extends Authenticatable
                 return true;
             }
         }
+
         return false;
     }
 
@@ -139,10 +141,11 @@ class User extends Authenticatable
     public function hasAllPermissions(array $permissions): bool
     {
         foreach ($this->roles as $role) {
-            if (!$role->hasAllPermissions($permissions)) {
+            if (! $role->hasAllPermissions($permissions)) {
                 return false;
             }
         }
+
         return true;
     }
 
@@ -160,5 +163,24 @@ class User extends Authenticatable
     public function updateLastLogin(): void
     {
         $this->update(['last_login_at' => now()]);
+    }
+
+    /**
+     * Проверить наличие локального аватара в папке фронтенда
+     */
+    public function getHasLocalAvatarAttribute(): bool
+    {
+        try {
+            if (! $this->id) {
+                return false;
+            }
+
+            $filename = 'user_'.$this->id.'.jpg';
+            $path = frontend_public_path('images/users/'.$filename);
+
+            return file_exists($path);
+        } catch (\Exception $e) {
+            return false;
+        }
     }
 }

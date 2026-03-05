@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
 use App\Models\Setting;
-use Illuminate\Http\Request;
 
 class SettingsController extends Controller
 {
@@ -18,7 +17,7 @@ class SettingsController extends Controller
     {
         $setting = Setting::where('key', $key)->first();
 
-        if (!$setting) {
+        if (! $setting) {
             return response()->json(['success' => false, 'message' => 'Setting not found'], 404);
         }
 
@@ -27,7 +26,7 @@ class SettingsController extends Controller
             'data' => [
                 'key' => $setting->key,
                 'value' => $setting->value,
-            ]
+            ],
         ]);
     }
 }

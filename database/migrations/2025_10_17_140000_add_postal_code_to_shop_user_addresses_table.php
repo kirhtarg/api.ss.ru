@@ -15,7 +15,7 @@ return new class extends Migration
         if (Schema::hasTable('shop_user_addresses')) {
             Schema::table('shop_user_addresses', function (Blueprint $table) {
                 // Проверяем, существует ли колонка postal_code
-                if (!Schema::hasColumn('shop_user_addresses', 'postal_code')) {
+                if (! Schema::hasColumn('shop_user_addresses', 'postal_code')) {
                     $table->string('postal_code')->nullable()->after('city'); // Почтовый индекс
                 }
             });

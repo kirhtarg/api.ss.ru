@@ -15,7 +15,7 @@ return new class extends Migration
             // Добавляем поле payment_method_id
             $table->unsignedBigInteger('payment_method_id')->nullable()->after('payment_method');
             $table->foreign('payment_method_id')->references('id')->on('shop_payment_methods')->onDelete('set null');
-            
+
             // Добавляем поле yandex_pay_order_id
             $table->string('yandex_pay_order_id')->nullable()->after('payment_method_id');
             $table->index('yandex_pay_order_id');

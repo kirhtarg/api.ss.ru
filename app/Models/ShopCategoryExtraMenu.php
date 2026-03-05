@@ -16,15 +16,15 @@ class ShopCategoryExtraMenu extends Model
     protected $fillable = [
         'category_id',
         'is_active',
-        'title'
+        'title',
     ];
 
     protected $casts = [
-        'is_active' => 'boolean'
+        'is_active' => 'boolean',
     ];
 
     protected $attributes = [
-        'is_active' => false
+        'is_active' => false,
     ];
 
     /**
@@ -51,16 +51,3 @@ class ShopCategoryExtraMenu extends Model
         return $this->hasMany(ShopCategoryExtraMenuSection::class, 'extra_menu_id')->orderBy('sort_order');
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-

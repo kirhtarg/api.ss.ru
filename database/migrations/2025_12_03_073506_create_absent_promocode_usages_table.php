@@ -17,7 +17,7 @@ return new class extends Migration
             $table->foreignId('good_id')->constrained('shop_goods')->onDelete('cascade');
             $table->foreignId('promocode_id')->constrained('promocodes')->onDelete('cascade');
             $table->timestamps();
-            
+
             // Уникальный индекс для предотвращения повторных промокодов для одного товара и пользователя
             $table->unique(['user_id', 'good_id']);
             $table->index('user_id');

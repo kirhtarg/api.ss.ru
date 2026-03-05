@@ -22,7 +22,7 @@ return new class extends Migration
             $table->boolean('is_default')->default(false); // Способ по умолчанию
             $table->boolean('can_disable_default')->default(true); // Можно ли отключить при наличии других
             $table->timestamps();
-            
+
             // Индексы
             $table->index(['is_active', 'sort_order']);
             $table->index('type');

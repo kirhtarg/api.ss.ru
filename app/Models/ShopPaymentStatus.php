@@ -15,12 +15,12 @@ class ShopPaymentStatus extends Model
         'color',
         'is_active',
         'sort_order',
-        'description'
+        'description',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
-        'sort_order' => 'integer'
+        'sort_order' => 'integer',
     ];
 
     public function orders()

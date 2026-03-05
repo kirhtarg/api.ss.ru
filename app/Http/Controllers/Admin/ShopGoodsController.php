@@ -3,28 +3,26 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\ImageDownloadTaskJob;
 use App\Jobs\PostProcessImage;
-use App\Models\ShopGood;
-use App\Models\ShopGoodVariation;
-use App\Models\ShopGoodImage;
 use App\Models\ShopBrand;
-use App\Models\ShopTag;
+use App\Models\ShopCategory;
+use App\Models\ShopGood;
+use App\Models\ShopGoodImage;
+use App\Models\ShopGoodVariation;
 use App\Models\ShopLabel;
 use App\Models\ShopProperty;
 use App\Models\ShopPropertyValue;
-use App\Models\ShopCategory;
-use App\Models\ShopGoodCharacteristic;
-use Illuminate\Support\Str;
-use Illuminate\Http\Request;
+use App\Models\ShopTag;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Validator;
-use Illuminate\Validation\Rule;
-use Illuminate\Support\Facades\Schema;
-use Illuminate\Auth\AuthenticationException;
 use Illuminate\Support\Facades\Redis;
-use App\Jobs\ImageDownloadTaskJob;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 
 class ShopGoodsController extends Controller
 {
@@ -35,12 +33,12 @@ class ShopGoodsController extends Controller
     {
 
         $query = ShopGood::select([
-            'id', 'name', 'slug', 'sku', 'description', 'short_description', 
+            'id', 'name', 'slug', 'sku', 'description', 'short_description',
             'price', 'sale_price', 'demping_price', 'show_demping', 'label_id', 'supplier',
             'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity', 'rating', 'reviews_count',
             'width', 'height', 'depth', 'weight',
-            'is_active', 'is_featured', 'is_new', 'is_sale', 'is_preorder', 'is_show', 'sort_order', 
-            'created_at', 'updated_at'
+            'is_active', 'is_featured', 'is_new', 'is_sale', 'is_preorder', 'is_show', 'sort_order',
+            'created_at', 'updated_at',
         ])->with([
             'categories:id,name',
             'brands:id,name',
@@ -49,7 +47,7 @@ class ShopGoodsController extends Controller
             'properties:id,name,slug',
             'images:id,good_id,file_path,alt_text,is_main,sort_order',
             'variations:id,good_id,name,sku,price,sale_price,demping_price,show_demping,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,is_active,supplier',
-            'variations.images:id,variation_id,file_path,alt_text,is_main,sort_order'
+            'variations.images:id,variation_id,file_path,alt_text,is_main,sort_order',
         ])->withCount('variations');
 
         // Флаг: применять фильтры остатков только к основному товару, игнорируя вариации
@@ -57,7 +55,7 @@ class ShopGoodsController extends Controller
 
         // Загружаем pivot данные для свойств (поддерживаем разные схемы: value или shop_property_value_id)
         $hasValueCol = Schema::hasColumn('shop_good_properties', 'value');
-        $query->with(['properties' => function($query) use ($hasValueCol) {
+        $query->with(['properties' => function ($query) use ($hasValueCol) {
             if ($hasValueCol) {
                 $query->withPivot('shop_property_value_id', 'value');
             } else {
@@ -67,7 +65,7 @@ class ShopGoodsController extends Controller
 
         // Фильтр по массиву ID (для массовой загрузки и экспорта) - должен быть первым
         // Проверяем selected_ids (для экспорта выбранных товаров)
-        if ($request->has('selected_ids') && !empty($request->input('selected_ids'))) {
+        if ($request->has('selected_ids') && ! empty($request->input('selected_ids'))) {
             $selectedIdsRaw = $request->input('selected_ids');
 
             // Если это строка с запятыми, разбиваем на массив
@@ -79,11 +77,11 @@ class ShopGoodsController extends Controller
                 $selectedIds = [$selectedIdsRaw];
             }
 
-            $selectedIds = array_map('intval', array_filter($selectedIds, function($id) {
+            $selectedIds = array_map('intval', array_filter($selectedIds, function ($id) {
                 return is_numeric($id) && $id > 0;
             }));
 
-            if (!empty($selectedIds)) {
+            if (! empty($selectedIds)) {
                 $query->whereIn('id', $selectedIds);
                 // Когда есть selected_ids, пропускаем все остальные фильтры
                 // (экспортируем только выбранные товары без дополнительных фильтров)
@@ -100,24 +98,24 @@ class ShopGoodsController extends Controller
 
             if ($ids !== null) {
                 // Если это не массив, пытаемся преобразовать
-                if (!is_array($ids)) {
+                if (! is_array($ids)) {
                     $ids = [$ids];
                 }
 
-                if (!empty($ids)) {
+                if (! empty($ids)) {
                     $ids = array_map('intval', $ids);
-                    $ids = array_filter($ids, function($id) {
+                    $ids = array_filter($ids, function ($id) {
                         return $id > 0;
                     });
 
-                    if (!empty($ids)) {
+                    if (! empty($ids)) {
                         $query->whereIn('id', $ids);
                     }
                 }
             }
 
             // Применяем фильтры только если нет ids
-            if (!$ids || empty($ids)) {
+            if (! $ids || empty($ids)) {
                 // $this->applyGoodsFilters($query, $request);
             }
         }
@@ -135,19 +133,19 @@ class ShopGoodsController extends Controller
         // Фильтр по названию (точное вхождение текста)
         if ($request->filled('name_search')) {
             $nameSearch = $request->get('name_search');
-            $query->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($nameSearch) . '%']);
+            $query->whereRaw('LOWER(name) LIKE ?', ['%'.mb_strtolower($nameSearch).'%']);
         }
 
         // Фильтр по артикулу (точное вхождение текста) - обновленная логика с учетом вариаций
         if ($request->filled('sku_search')) {
             $skuSearch = $request->get('sku_search');
-            $skuSearchLower = '%' . mb_strtolower($skuSearch) . '%';
-            
-            $query->where(function($mainQuery) use ($skuSearchLower) {
+            $skuSearchLower = '%'.mb_strtolower($skuSearch).'%';
+
+            $query->where(function ($mainQuery) use ($skuSearchLower) {
                 // Поиск по артикулу основного товара
                 $mainQuery->whereRaw('LOWER(sku) LIKE ?', [$skuSearchLower])
                     // Поиск по артикулам вариаций
-                    ->orWhereHas('variations', function($variationQuery) use ($skuSearchLower) {
+                    ->orWhereHas('variations', function ($variationQuery) use ($skuSearchLower) {
                         $variationQuery->whereRaw('LOWER(sku) LIKE ?', [$skuSearchLower]);
                     });
             });
@@ -160,8 +158,8 @@ class ShopGoodsController extends Controller
         // Фильтр: дубли по названию (нормализовано по LOWER(TRIM(name)))
         if ($request->filled('duplicate_names')) {
             $query->whereNotNull('name')
-                  ->whereRaw('LENGTH(TRIM(name)) > 0');
-            
+                ->whereRaw('LENGTH(TRIM(name)) > 0');
+
             // Подключаем подзапрос с группировкой дублей и отфильтровываем по нему
             $duplicatesSubquery = DB::table('shop_goods')
                 ->select(DB::raw('LOWER(TRIM(name)) as norm_name'))
@@ -169,8 +167,8 @@ class ShopGoodsController extends Controller
                 ->whereRaw('LENGTH(TRIM(name)) > 0')
                 ->groupBy(DB::raw('LOWER(TRIM(name))'))
                 ->havingRaw('COUNT(*) > 1');
-            
-            $query->joinSub($duplicatesSubquery, 'dup', function($join) {
+
+            $query->joinSub($duplicatesSubquery, 'dup', function ($join) {
                 $join->on(DB::raw('LOWER(TRIM(shop_goods.name))'), '=', 'dup.norm_name');
             })->distinct('shop_goods.id');
         }
@@ -183,8 +181,8 @@ class ShopGoodsController extends Controller
         // Фильтр по множественным категориям
         if ($request->has('categories')) {
             $categoryIds = $request->input('categories');
-            if (is_array($categoryIds) && !empty($categoryIds)) {
-                $query->whereHas('categories', function($q) use ($categoryIds) {
+            if (is_array($categoryIds) && ! empty($categoryIds)) {
+                $query->whereHas('categories', function ($q) use ($categoryIds) {
                     $q->whereIn('shop_categories.id', $categoryIds);
                 });
             }
@@ -198,8 +196,8 @@ class ShopGoodsController extends Controller
         // Фильтр по множественным брендам
         if ($request->has('brands')) {
             $brandIds = $request->input('brands');
-            if (is_array($brandIds) && !empty($brandIds)) {
-                $query->whereHas('brands', function($q) use ($brandIds) {
+            if (is_array($brandIds) && ! empty($brandIds)) {
+                $query->whereHas('brands', function ($q) use ($brandIds) {
                     $q->whereIn('shop_brands.id', $brandIds);
                 });
             }
@@ -213,8 +211,8 @@ class ShopGoodsController extends Controller
         // Фильтр по множественным тегам
         if ($request->has('tags')) {
             $tagIds = $request->input('tags');
-            if (is_array($tagIds) && !empty($tagIds)) {
-                $query->whereHas('tags', function($q) use ($tagIds) {
+            if (is_array($tagIds) && ! empty($tagIds)) {
+                $query->whereHas('tags', function ($q) use ($tagIds) {
                     $q->whereIn('shop_tags.id', $tagIds);
                 });
             }
@@ -230,17 +228,17 @@ class ShopGoodsController extends Controller
         if ($request->has('suppliers')) {
             $supplierIds = $request->input('suppliers');
             $includeVariations = $request->boolean('suppliers_include_variations', false);
-            
-            if (is_array($supplierIds) && !empty($supplierIds)) {
+
+            if (is_array($supplierIds) && ! empty($supplierIds)) {
                 if ($includeVariations) {
                     // Включаем товары с поставщиками И товары с вариациями с поставщиками
-                    $query->where(function($q) use ($supplierIds) {
+                    $query->where(function ($q) use ($supplierIds) {
                         // Товары с выбранными поставщиками
                         $q->whereIn('supplier', $supplierIds)
                           // Или товары, у которых есть вариации с выбранными поставщиками
-                          ->orWhereHas('variations', function($varQ) use ($supplierIds) {
-                              $varQ->whereIn('supplier', $supplierIds);
-                          });
+                            ->orWhereHas('variations', function ($varQ) use ($supplierIds) {
+                                $varQ->whereIn('supplier', $supplierIds);
+                            });
                     });
                 } else {
                     // Только товары с поставщиками (без учета вариаций)
@@ -252,21 +250,21 @@ class ShopGoodsController extends Controller
         // Фильтр "Без поставщиков"
         if ($request->has('supplier_empty')) {
             $includeVariations = $request->boolean('supplier_empty_include_variations', false);
-            
+
             if ($includeVariations) {
                 // Исключаем товары с поставщиками И товары с вариациями с поставщиками
-                $query->where(function($q) {
+                $query->where(function ($q) {
                     $q->whereNull('supplier')
-                      ->orWhere('supplier', '');
-                })->whereDoesntHave('variations', function($varQ) {
+                        ->orWhere('supplier', '');
+                })->whereDoesntHave('variations', function ($varQ) {
                     $varQ->whereNotNull('supplier')
-                         ->where('supplier', '!=', '');
+                        ->where('supplier', '!=', '');
                 });
             } else {
                 // Только товары без поставщика в основном товаре
-                $query->where(function($q) {
+                $query->where(function ($q) {
                     $q->whereNull('supplier')
-                      ->orWhere('supplier', '');
+                        ->orWhere('supplier', '');
                 });
             }
         }
@@ -276,18 +274,17 @@ class ShopGoodsController extends Controller
         if ($request->has('unlinked_suppliers')) {
             $unlinkedSupplierNames = $request->input('unlinked_suppliers');
             $includeVariations = $request->boolean('unlinked_suppliers_include_variations', false);
-            
-            
-            if (is_array($unlinkedSupplierNames) && !empty($unlinkedSupplierNames)) {
+
+            if (is_array($unlinkedSupplierNames) && ! empty($unlinkedSupplierNames)) {
                 if ($includeVariations) {
                     // Зеркально: показываем товары, у которых НЕТ выбранных поставщиков (включая вариации)
-                    $query->where(function($q) use ($unlinkedSupplierNames) {
+                    $query->where(function ($q) use ($unlinkedSupplierNames) {
                         // Товары без выбранных поставщиков
                         $q->whereNotIn('supplier', $unlinkedSupplierNames)
                           // И товары, у которых нет вариаций с выбранными поставщиками
-                          ->whereDoesntHave('variations', function($varQ) use ($unlinkedSupplierNames) {
-                              $varQ->whereIn('supplier', $unlinkedSupplierNames);
-                          });
+                            ->whereDoesntHave('variations', function ($varQ) use ($unlinkedSupplierNames) {
+                                $varQ->whereIn('supplier', $unlinkedSupplierNames);
+                            });
                     });
                 } else {
                     // Зеркально: показываем товары, у которых НЕТ выбранных поставщиков (только основной товар)
@@ -299,7 +296,7 @@ class ShopGoodsController extends Controller
         // Фильтр по лейблам
         if ($request->has('labels')) {
             $labelIds = $request->input('labels');
-            if (is_array($labelIds) && !empty($labelIds)) {
+            if (is_array($labelIds) && ! empty($labelIds)) {
                 $query->whereIn('label_id', $labelIds);
             }
         }
@@ -311,22 +308,22 @@ class ShopGoodsController extends Controller
                 // Товары с демпингом в основном товаре
                 $query->where('show_demping', true);
             } elseif ($hasDemping === 'false') {
-                $query->where(function($q) {
+                $query->where(function ($q) {
                     $q->where('show_demping', false)
-                      ->orWhereNull('show_demping');
+                        ->orWhereNull('show_demping');
                 });
             } elseif ($hasDemping === 'variations') {
                 // Товары с демпингом в вариациях
-                $query->whereHas('variations', function($q) {
+                $query->whereHas('variations', function ($q) {
                     $q->where('show_demping', true);
                 });
             } elseif ($hasDemping === 'both') {
                 // Товары с демпингом в основном товаре ИЛИ в вариациях (или в обоих)
-                $query->where(function($q) {
+                $query->where(function ($q) {
                     $q->where('show_demping', true)
-                      ->orWhereHas('variations', function($subQ) {
-                          $subQ->where('show_demping', true);
-                      });
+                        ->orWhereHas('variations', function ($subQ) {
+                            $subQ->where('show_demping', true);
+                        });
                 });
             }
         }
@@ -346,11 +343,11 @@ class ShopGoodsController extends Controller
             $hasDempingPrice = $request->get('has_demping_price');
             if ($hasDempingPrice === 'true') {
                 $query->whereNotNull('demping_price')
-                      ->where('demping_price', '>', 0);
+                    ->where('demping_price', '>', 0);
             } elseif ($hasDempingPrice === 'false') {
-                $query->where(function($q) {
+                $query->where(function ($q) {
                     $q->whereNull('demping_price')
-                      ->orWhere('demping_price', '=', 0);
+                        ->orWhere('demping_price', '=', 0);
                 });
             }
         }
@@ -368,7 +365,7 @@ class ShopGoodsController extends Controller
         // Фильтр по цене
         $minPrice = $request->has('min_price') ? $request->get('min_price') : null;
         $maxPrice = $request->has('max_price') ? $request->get('max_price') : null;
-        
+
         if ($minPrice !== null || $maxPrice !== null) {
             $query->priceRange($minPrice, $maxPrice);
         }
@@ -377,28 +374,28 @@ class ShopGoodsController extends Controller
         if ($request->filled('has_sale_price')) {
             $hasSalePrice = $request->get('has_sale_price');
             if ($hasSalePrice === 'true') {
-                $query->where(function($q) {
+                $query->where(function ($q) {
                     // Проверяем акционную цену основного товара
                     $q->whereNotNull('sale_price')
-                      ->where('sale_price', '>', 0)
+                        ->where('sale_price', '>', 0)
                       // Или акционную цену в вариациях
-                      ->orWhereHas('variations', function($varQ) {
-                          $varQ->whereNotNull('sale_price')
-                               ->where('sale_price', '>', 0);
-                      });
+                        ->orWhereHas('variations', function ($varQ) {
+                            $varQ->whereNotNull('sale_price')
+                                ->where('sale_price', '>', 0);
+                        });
                 });
             } elseif ($hasSalePrice === 'false') {
-                $query->where(function($q) {
+                $query->where(function ($q) {
                     // Основной товар без акционной цены
-                    $q->where(function($mainQ) {
+                    $q->where(function ($mainQ) {
                         $mainQ->whereNull('sale_price')
-                              ->orWhere('sale_price', '=', 0);
+                            ->orWhere('sale_price', '=', 0);
                     })
                     // И нет вариаций с акционной ценой
-                    ->whereDoesntHave('variations', function($varQ) {
-                        $varQ->whereNotNull('sale_price')
-                             ->where('sale_price', '>', 0);
-                    });
+                        ->whereDoesntHave('variations', function ($varQ) {
+                            $varQ->whereNotNull('sale_price')
+                                ->where('sale_price', '>', 0);
+                        });
                 });
             }
         }
@@ -406,7 +403,7 @@ class ShopGoodsController extends Controller
         // Фильтр по акционной цене
         $minSalePrice = $request->has('min_sale_price') ? $request->get('min_sale_price') : null;
         $maxSalePrice = $request->has('max_sale_price') ? $request->get('max_sale_price') : null;
-        
+
         if ($minSalePrice !== null || $maxSalePrice !== null) {
             // Точное значение (когда min и max равны)
             if ($minSalePrice !== null && $maxSalePrice !== null && $minSalePrice == $maxSalePrice) {
@@ -417,20 +414,20 @@ class ShopGoodsController extends Controller
                     // Для min_sale_price > 0 (not_zero) - исключаем null и 0
                     if ($minSalePrice > 0) {
                         $query->whereNotNull('sale_price')
-                              ->where('sale_price', '>=', $minSalePrice);
+                            ->where('sale_price', '>=', $minSalePrice);
                     } else {
-                        $query->where(function($q) use ($minSalePrice) {
+                        $query->where(function ($q) use ($minSalePrice) {
                             $q->whereNotNull('sale_price')
-                              ->where('sale_price', '>=', $minSalePrice);
+                                ->where('sale_price', '>=', $minSalePrice);
                         });
                     }
                 }
                 if ($maxSalePrice !== null) {
                     if ($maxSalePrice == 0) {
                         // Фильтр "равна 0" - включаем null и 0
-                        $query->where(function($q) {
+                        $query->where(function ($q) {
                             $q->whereNull('sale_price')
-                              ->orWhere('sale_price', '=', 0);
+                                ->orWhere('sale_price', '=', 0);
                         });
                     } else {
                         // Для max_sale_price > 0
@@ -439,9 +436,9 @@ class ShopGoodsController extends Controller
                             $query->where('sale_price', '<=', $maxSalePrice);
                         } else {
                             // Если нет min или min <= 0, то включаем null в результат
-                            $query->where(function($q) use ($maxSalePrice) {
+                            $query->where(function ($q) use ($maxSalePrice) {
                                 $q->whereNull('sale_price')
-                                  ->orWhere('sale_price', '<=', $maxSalePrice);
+                                    ->orWhere('sale_price', '<=', $maxSalePrice);
                             });
                         }
                     }
@@ -455,65 +452,65 @@ class ShopGoodsController extends Controller
         }
 
         // Фильтр по наличию (in_stock) - новая логика для работы с вариациями
-        if ($request->filled('stock_variations_not_empty') || $request->filled('stock_goods_not_empty') || 
-            $request->filled('stock_variations_empty') || $request->filled('stock_goods_empty') || 
+        if ($request->filled('stock_variations_not_empty') || $request->filled('stock_goods_not_empty') ||
+            $request->filled('stock_variations_empty') || $request->filled('stock_goods_empty') ||
             $request->filled('stock_variations_exact') || $request->filled('stock_goods_exact') ||
             $request->filled('stock_variations_low') || $request->filled('stock_goods_low')) {
-            
+
             // Проверяем, если хотя бы один из параметров включен
             if ($request->get('stock_variations_not_empty') === '1' || $request->get('stock_goods_not_empty') === '1') {
-                $query->where(function($mainQuery) {
+                $query->where(function ($mainQuery) {
                     // Вариант 1: Товары с вариациями - проверяем остатки вариаций (хотя бы одна вариация с остатком > 0)
-                    $mainQuery->whereHas('variations', function($varQ) {
+                    $mainQuery->whereHas('variations', function ($varQ) {
                         $varQ->where('stock_quantity', '>', 0);
                     })
                     // Вариант 2: Товары без вариаций - проверяем остатки основного товара
-                    ->orWhere(function($noVariationsQuery) {
-                        $noVariationsQuery->whereDoesntHave('variations')
-                            ->where('stock_quantity', '>', 0);
-                    });
+                        ->orWhere(function ($noVariationsQuery) {
+                            $noVariationsQuery->whereDoesntHave('variations')
+                                ->where('stock_quantity', '>', 0);
+                        });
                 });
             } elseif ($request->get('stock_variations_empty') === '1' || $request->get('stock_goods_empty') === '1') {
-                $query->where(function($mainQuery) {
+                $query->where(function ($mainQuery) {
                     // Вариант 1: Товары с вариациями - проверяем, что сумма остатков всех вариаций = 0
                     $mainQuery->whereHas('variations')
                         ->whereRaw('(SELECT COALESCE(SUM(stock_quantity), 0) FROM shop_good_variations WHERE good_id = shop_goods.id) = 0')
                     // Вариант 2: Товары без вариаций - проверяем остатки основного товара
-                    ->orWhere(function($noVariationsQuery) {
-                        $noVariationsQuery->whereDoesntHave('variations')
-                            ->where(function($stockQuery) {
-                                $stockQuery->where('stock_quantity', '=', 0)
-                                    ->orWhereNull('stock_quantity');
-                            });
-                    });
+                        ->orWhere(function ($noVariationsQuery) {
+                            $noVariationsQuery->whereDoesntHave('variations')
+                                ->where(function ($stockQuery) {
+                                    $stockQuery->where('stock_quantity', '=', 0)
+                                        ->orWhereNull('stock_quantity');
+                                });
+                        });
                 });
             } elseif ($request->get('stock_variations_low') === '1' || $request->get('stock_goods_low') === '1') {
                 // Меньше 3-х, исключая 0
-                $query->where(function($mainQuery) {
+                $query->where(function ($mainQuery) {
                     // Вариант 1: Товары с вариациями - проверяем, что сумма остатков вариаций < 3 и > 0
                     $mainQuery->whereHas('variations')
                         ->whereRaw('(SELECT COALESCE(SUM(stock_quantity), 0) FROM shop_good_variations WHERE good_id = shop_goods.id) < 3')
                         ->whereRaw('(SELECT COALESCE(SUM(stock_quantity), 0) FROM shop_good_variations WHERE good_id = shop_goods.id) > 0')
                     // Вариант 2: Товары без вариаций - проверяем остатки основного товара
-                    ->orWhere(function($noVariationsQuery) {
-                        $noVariationsQuery->whereDoesntHave('variations')
-                            ->where('stock_quantity', '<', 3)
-                            ->where('stock_quantity', '>', 0);
-                    });
+                        ->orWhere(function ($noVariationsQuery) {
+                            $noVariationsQuery->whereDoesntHave('variations')
+                                ->where('stock_quantity', '<', 3)
+                                ->where('stock_quantity', '>', 0);
+                        });
                 });
             } elseif ($request->filled('stock_variations_exact') || $request->filled('stock_goods_exact')) {
                 $exactValue = $request->get('stock_variations_exact') ?: $request->get('stock_goods_exact');
-                
+
                 if ($exactValue !== '') {
-                    $query->where(function($mainQuery) use ($exactValue) {
+                    $query->where(function ($mainQuery) use ($exactValue) {
                         // Вариант 1: Товары с вариациями - проверяем сумму остатков вариаций
                         $mainQuery->whereHas('variations')
                             ->whereRaw('(SELECT COALESCE(SUM(stock_quantity), 0) FROM shop_good_variations WHERE good_id = shop_goods.id) = ?', [$exactValue])
                         // Вариант 2: Товары без вариаций - проверяем остатки основного товара
-                        ->orWhere(function($noVariationsQuery) use ($exactValue) {
-                            $noVariationsQuery->whereDoesntHave('variations')
-                                ->where('stock_quantity', '=', $exactValue);
-                        });
+                            ->orWhere(function ($noVariationsQuery) use ($exactValue) {
+                                $noVariationsQuery->whereDoesntHave('variations')
+                                    ->where('stock_quantity', '=', $exactValue);
+                            });
                     });
                 }
             }
@@ -525,20 +522,20 @@ class ShopGoodsController extends Controller
             $max = null;
 
             if ($request->filled('stock_quantity_variations_min')) {
-                $min = (int)$request->get('stock_quantity_variations_min');
+                $min = (int) $request->get('stock_quantity_variations_min');
             } elseif ($request->filled('stock_quantity_goods_min')) {
-                $min = (int)$request->get('stock_quantity_goods_min');
+                $min = (int) $request->get('stock_quantity_goods_min');
             }
 
             if ($request->filled('stock_quantity_variations_max')) {
-                $max = (int)$request->get('stock_quantity_variations_max');
+                $max = (int) $request->get('stock_quantity_variations_max');
             } elseif ($request->filled('stock_quantity_goods_max')) {
-                $max = (int)$request->get('stock_quantity_goods_max');
+                $max = (int) $request->get('stock_quantity_goods_max');
             }
 
-            $query->where(function($mainQuery) use ($min, $max) {
+            $query->where(function ($mainQuery) use ($min, $max) {
                 // Вариант 1: Товары с вариациями - проверяем остатки вариаций
-                $mainQuery->whereHas('variations', function($varQ) use ($min, $max) {
+                $mainQuery->whereHas('variations', function ($varQ) use ($min, $max) {
                     if ($min !== null && $max !== null) {
                         if ($min === $max) {
                             $varQ->where('stock_quantity', '=', $min);
@@ -552,22 +549,22 @@ class ShopGoodsController extends Controller
                     }
                 })
                 // Вариант 2: Товары без вариаций - проверяем остатки основного товара
-                ->orWhere(function($noVariationsQuery) use ($min, $max) {
-                    $noVariationsQuery->whereDoesntHave('variations')
-                        ->where(function($stockQuery) use ($min, $max) {
-                            if ($min !== null && $max !== null) {
-                                if ($min === $max) {
-                                    $stockQuery->where('stock_quantity', '=', $min);
-                                } else {
-                                    $stockQuery->whereBetween('stock_quantity', [$min, $max]);
+                    ->orWhere(function ($noVariationsQuery) use ($min, $max) {
+                        $noVariationsQuery->whereDoesntHave('variations')
+                            ->where(function ($stockQuery) use ($min, $max) {
+                                if ($min !== null && $max !== null) {
+                                    if ($min === $max) {
+                                        $stockQuery->where('stock_quantity', '=', $min);
+                                    } else {
+                                        $stockQuery->whereBetween('stock_quantity', [$min, $max]);
+                                    }
+                                } elseif ($min !== null) {
+                                    $stockQuery->where('stock_quantity', '>=', $min);
+                                } elseif ($max !== null) {
+                                    $stockQuery->where('stock_quantity', '<=', $max);
                                 }
-                            } elseif ($min !== null) {
-                                $stockQuery->where('stock_quantity', '>=', $min);
-                            } elseif ($max !== null) {
-                                $stockQuery->where('stock_quantity', '<=', $max);
-                            }
-                        });
-                });
+                            });
+                    });
             });
         }
 
@@ -604,8 +601,8 @@ class ShopGoodsController extends Controller
         // Фильтр по исключению категорий (товары БЕЗ выбранных категорий)
         if ($request->has('exclude_categories')) {
             $excludeCategoryIds = $request->input('exclude_categories');
-            if (is_array($excludeCategoryIds) && !empty($excludeCategoryIds)) {
-                $query->whereDoesntHave('categories', function($q) use ($excludeCategoryIds) {
+            if (is_array($excludeCategoryIds) && ! empty($excludeCategoryIds)) {
+                $query->whereDoesntHave('categories', function ($q) use ($excludeCategoryIds) {
                     $q->whereIn('shop_categories.id', $excludeCategoryIds);
                 });
             }
@@ -614,8 +611,8 @@ class ShopGoodsController extends Controller
         // Фильтр по исключению брендов (товары БЕЗ выбранных брендов)
         if ($request->has('exclude_brands')) {
             $excludeBrandIds = $request->input('exclude_brands');
-            if (is_array($excludeBrandIds) && !empty($excludeBrandIds)) {
-                $query->whereDoesntHave('brands', function($q) use ($excludeBrandIds) {
+            if (is_array($excludeBrandIds) && ! empty($excludeBrandIds)) {
+                $query->whereDoesntHave('brands', function ($q) use ($excludeBrandIds) {
                     $q->whereIn('shop_brands.id', $excludeBrandIds);
                 });
             }
@@ -624,13 +621,13 @@ class ShopGoodsController extends Controller
         // Фильтр по исключению характеристик (товары БЕЗ выбранных характеристик)
         if ($request->has('exclude_properties')) {
             $excludeProperties = $request->input('exclude_properties');
-            if (is_array($excludeProperties) && !empty($excludeProperties)) {
-                $query->where(function($q) use ($excludeProperties) {
+            if (is_array($excludeProperties) && ! empty($excludeProperties)) {
+                $query->where(function ($q) use ($excludeProperties) {
                     foreach ($excludeProperties as $propertyId => $valueIds) {
-                        if (is_array($valueIds) && !empty($valueIds)) {
-                            $q->whereDoesntHave('properties', function($propQuery) use ($propertyId, $valueIds) {
+                        if (is_array($valueIds) && ! empty($valueIds)) {
+                            $q->whereDoesntHave('properties', function ($propQuery) use ($propertyId, $valueIds) {
                                 $propQuery->where('shop_properties.id', $propertyId)
-                                          ->whereIn('shop_good_properties.shop_property_value_id', $valueIds);
+                                    ->whereIn('shop_good_properties.shop_property_value_id', $valueIds);
                             });
                         }
                     }
@@ -641,10 +638,10 @@ class ShopGoodsController extends Controller
         // Фильтр по исключению лейблов (товары БЕЗ выбранных лейблов)
         if ($request->has('exclude_labels')) {
             $excludeLabelIds = $request->input('exclude_labels');
-            if (is_array($excludeLabelIds) && !empty($excludeLabelIds)) {
-                $query->where(function($q) use ($excludeLabelIds) {
+            if (is_array($excludeLabelIds) && ! empty($excludeLabelIds)) {
+                $query->where(function ($q) use ($excludeLabelIds) {
                     $q->whereNull('label_id')
-                      ->orWhereNotIn('label_id', $excludeLabelIds);
+                        ->orWhereNotIn('label_id', $excludeLabelIds);
                 });
             }
         }
@@ -652,8 +649,8 @@ class ShopGoodsController extends Controller
         // Фильтр по исключению тегов (товары БЕЗ выбранных тегов)
         if ($request->has('exclude_tags')) {
             $excludeTagIds = $request->input('exclude_tags');
-            if (is_array($excludeTagIds) && !empty($excludeTagIds)) {
-                $query->whereDoesntHave('tags', function($q) use ($excludeTagIds) {
+            if (is_array($excludeTagIds) && ! empty($excludeTagIds)) {
+                $query->whereDoesntHave('tags', function ($q) use ($excludeTagIds) {
                     $q->whereIn('shop_tags.id', $excludeTagIds);
                 });
             }
@@ -670,36 +667,36 @@ class ShopGoodsController extends Controller
 
         if ($request->filled('description_not_empty')) {
             $query->whereNotNull('description')
-                  ->whereRaw("LENGTH(TRIM($cleanDescExpr)) > 0");
+                ->whereRaw("LENGTH(TRIM($cleanDescExpr)) > 0");
         } elseif ($request->filled('description_empty')) {
-            $query->where(function($q) use ($cleanDescExpr) {
+            $query->where(function ($q) use ($cleanDescExpr) {
                 $q->whereNull('description')
-                  ->orWhereRaw("LENGTH(TRIM($cleanDescExpr)) = 0");
+                    ->orWhereRaw("LENGTH(TRIM($cleanDescExpr)) = 0");
             });
         }
 
         if ($request->filled('short_description_not_empty')) {
             $query->whereNotNull('short_description')
-                  ->whereRaw("LENGTH(TRIM($cleanShortDescExpr)) > 0");
+                ->whereRaw("LENGTH(TRIM($cleanShortDescExpr)) > 0");
         } elseif ($request->filled('short_description_empty')) {
-            $query->where(function($q) use ($cleanShortDescExpr) {
+            $query->where(function ($q) use ($cleanShortDescExpr) {
                 $q->whereNull('short_description')
-                  ->orWhereRaw("LENGTH(TRIM($cleanShortDescExpr)) = 0");
+                    ->orWhereRaw("LENGTH(TRIM($cleanShortDescExpr)) = 0");
             });
         }
 
         if ($request->filled('descriptions_both_not_empty')) {
             $query->whereNotNull('description')
-                  ->whereRaw("LENGTH(TRIM($cleanDescExpr)) > 0")
-                  ->whereNotNull('short_description')
-                  ->whereRaw("LENGTH(TRIM($cleanShortDescExpr)) > 0");
+                ->whereRaw("LENGTH(TRIM($cleanDescExpr)) > 0")
+                ->whereNotNull('short_description')
+                ->whereRaw("LENGTH(TRIM($cleanShortDescExpr)) > 0");
         } elseif ($request->filled('descriptions_both_empty')) {
-            $query->where(function($q) use ($cleanDescExpr) {
+            $query->where(function ($q) use ($cleanDescExpr) {
                 $q->whereNull('description')
-                  ->orWhereRaw("LENGTH(TRIM($cleanDescExpr)) = 0");
-            })->where(function($q) use ($cleanShortDescExpr) {
+                    ->orWhereRaw("LENGTH(TRIM($cleanDescExpr)) = 0");
+            })->where(function ($q) use ($cleanShortDescExpr) {
                 $q->whereNull('short_description')
-                  ->orWhereRaw("LENGTH(TRIM($cleanShortDescExpr)) = 0");
+                    ->orWhereRaw("LENGTH(TRIM($cleanShortDescExpr)) = 0");
             });
         }
 
@@ -708,7 +705,7 @@ class ShopGoodsController extends Controller
             $hasDescription = $request->get('has_description');
             if ($hasDescription === '1' || $hasDescription === 'true') {
                 $query->whereNotNull('description')
-                      ->whereRaw("LENGTH(TRIM($cleanDescExpr)) > 0");
+                    ->whereRaw("LENGTH(TRIM($cleanDescExpr)) > 0");
             }
         }
 
@@ -745,14 +742,14 @@ class ShopGoodsController extends Controller
         // Фильтр по характеристикам (properties[property_id][])
         if ($request->has('properties')) {
             $properties = $request->input('properties');
-            if (is_array($properties) && !empty($properties)) {
+            if (is_array($properties) && ! empty($properties)) {
                 // Логика ИЛИ - товар должен иметь хотя бы одну из выбранных характеристик
-                $query->where(function($q) use ($properties) {
+                $query->where(function ($q) use ($properties) {
                     foreach ($properties as $propertyId => $valueIds) {
-                        if (is_array($valueIds) && !empty($valueIds)) {
-                            $q->orWhereHas('properties', function($propQuery) use ($propertyId, $valueIds) {
+                        if (is_array($valueIds) && ! empty($valueIds)) {
+                            $q->orWhereHas('properties', function ($propQuery) use ($propertyId, $valueIds) {
                                 $propQuery->where('shop_properties.id', $propertyId)
-                                          ->whereIn('shop_good_properties.shop_property_value_id', $valueIds);
+                                    ->whereIn('shop_good_properties.shop_property_value_id', $valueIds);
                             });
                         }
                     }
@@ -768,23 +765,22 @@ class ShopGoodsController extends Controller
             } elseif ($countType === 'with') {
                 $query->whereHas('properties');
             } elseif ($countType === 'exact' && $request->filled('properties_count')) {
-                $exactCount = (int)$request->get('properties_count');
+                $exactCount = (int) $request->get('properties_count');
                 $query->has('properties', '=', $exactCount);
             }
         }
-
 
         // Фильтр по артикулу
         if ($request->filled('sku_filter_type')) {
             $skuFilterType = $request->get('sku_filter_type');
             if ($skuFilterType === 'empty') {
-                $query->where(function($q) {
+                $query->where(function ($q) {
                     $q->whereNull('sku')
-                      ->orWhere('sku', '=', '');
+                        ->orWhere('sku', '=', '');
                 });
             } elseif ($skuFilterType === 'not_empty') {
                 $query->whereNotNull('sku')
-                      ->where('sku', '!=', '');
+                    ->where('sku', '!=', '');
             }
         }
 
@@ -792,63 +788,63 @@ class ShopGoodsController extends Controller
         if ($request->filled('remote_stock_variations_not_empty') && $request->filled('remote_stock_goods_not_empty')) {
             // Проверяем, если хотя бы один из параметров включен
             if ($request->get('remote_stock_variations_not_empty') === '1' || $request->get('remote_stock_goods_not_empty') === '1') {
-                $query->where(function($mainQuery) {
+                $query->where(function ($mainQuery) {
                     // Вариант 1: Товары с вариациями - проверяем остатки вариаций
-                    $mainQuery->whereHas('variations', function($varQ) {
+                    $mainQuery->whereHas('variations', function ($varQ) {
                         $varQ->whereNotNull('remote_stock_quantity')
                             ->where('remote_stock_quantity', '!=', '')
                             ->where('remote_stock_quantity', '!=', '0')
                             ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
                     })
                     // Вариант 2: Товары без вариаций - проверяем остатки основного товара
-                    ->orWhere(function($noVariationsQuery) {
-                        $noVariationsQuery->whereDoesntHave('variations')
-                            ->whereNotNull('remote_stock_quantity')
-                            ->where('remote_stock_quantity', '!=', '')
-                            ->where('remote_stock_quantity', '!=', '0')
-                            ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
-                    });
+                        ->orWhere(function ($noVariationsQuery) {
+                            $noVariationsQuery->whereDoesntHave('variations')
+                                ->whereNotNull('remote_stock_quantity')
+                                ->where('remote_stock_quantity', '!=', '')
+                                ->where('remote_stock_quantity', '!=', '0')
+                                ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                        });
                 });
             }
         } elseif ($request->filled('remote_stock_variations_empty') && $request->filled('remote_stock_goods_empty')) {
             // Проверяем, если хотя бы один из параметров включен
             if ($request->get('remote_stock_variations_empty') === '1' || $request->get('remote_stock_goods_empty') === '1') {
-                $query->where(function($mainQuery) {
+                $query->where(function ($mainQuery) {
                     // Вариант 1: Товары с вариациями - проверяем, что все вариации пустые
                     $mainQuery->whereHas('variations')
-                        ->whereDoesntHave('variations', function($varQ) {
+                        ->whereDoesntHave('variations', function ($varQ) {
                             $varQ->whereNotNull('remote_stock_quantity')
                                 ->where('remote_stock_quantity', '!=', '')
                                 ->where('remote_stock_quantity', '!=', '0')
                                 ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
                         })
                     // Вариант 2: Товары без вариаций - проверяем остатки основного товара
-                    ->orWhere(function($noVariationsQuery) {
-                        $noVariationsQuery->whereDoesntHave('variations')
-                            ->where(function($remoteCondition) {
-                                $remoteCondition->whereNull('remote_stock_quantity')
-                                    ->orWhere('remote_stock_quantity', '=', '0')
-                                    ->orWhere('remote_stock_quantity', '=', '')
-                                    ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
-                            });
-                    });
+                        ->orWhere(function ($noVariationsQuery) {
+                            $noVariationsQuery->whereDoesntHave('variations')
+                                ->where(function ($remoteCondition) {
+                                    $remoteCondition->whereNull('remote_stock_quantity')
+                                        ->orWhere('remote_stock_quantity', '=', '0')
+                                        ->orWhere('remote_stock_quantity', '=', '')
+                                        ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
+                                });
+                        });
                 });
             }
         } elseif ($request->filled('remote_stock_variations_exact') && $request->filled('remote_stock_goods_exact')) {
             $exactValue = $request->get('remote_stock_variations_exact');
-            
+
             // Проверяем, если хотя бы один из параметров включен
             if ($request->get('remote_stock_variations_exact') !== '' || $request->get('remote_stock_goods_exact') !== '') {
-                $query->where(function($mainQuery) use ($exactValue) {
+                $query->where(function ($mainQuery) use ($exactValue) {
                     // Вариант 1: Товары с вариациями - проверяем остатки вариаций
-                    $mainQuery->whereHas('variations', function($varQ) use ($exactValue) {
+                    $mainQuery->whereHas('variations', function ($varQ) use ($exactValue) {
                         $varQ->where('remote_stock_quantity', '=', $exactValue);
                     })
                     // Вариант 2: Товары без вариаций - проверяем остатки основного товара
-                    ->orWhere(function($noVariationsQuery) use ($exactValue) {
-                        $noVariationsQuery->whereDoesntHave('variations')
-                            ->where('remote_stock_quantity', '=', $exactValue);
-                    });
+                        ->orWhere(function ($noVariationsQuery) use ($exactValue) {
+                            $noVariationsQuery->whereDoesntHave('variations')
+                                ->where('remote_stock_quantity', '=', $exactValue);
+                        });
                 });
             }
         }
@@ -857,63 +853,63 @@ class ShopGoodsController extends Controller
         if ($request->filled('fast_remote_stock_variations_not_empty') && $request->filled('fast_remote_stock_goods_not_empty')) {
             // Проверяем, если хотя бы один из параметров включен
             if ($request->get('fast_remote_stock_variations_not_empty') === '1' || $request->get('fast_remote_stock_goods_not_empty') === '1') {
-                $query->where(function($mainQuery) {
+                $query->where(function ($mainQuery) {
                     // Вариант 1: Товары с вариациями - проверяем остатки вариаций
-                    $mainQuery->whereHas('variations', function($varQ) {
+                    $mainQuery->whereHas('variations', function ($varQ) {
                         $varQ->whereNotNull('fast_remote_stock_quantity')
                             ->where('fast_remote_stock_quantity', '!=', '')
                             ->where('fast_remote_stock_quantity', '!=', '0')
                             ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
                     })
                     // Вариант 2: Товары без вариаций - проверяем остатки основного товара
-                    ->orWhere(function($noVariationsQuery) {
-                        $noVariationsQuery->whereDoesntHave('variations')
-                            ->whereNotNull('fast_remote_stock_quantity')
-                            ->where('fast_remote_stock_quantity', '!=', '')
-                            ->where('fast_remote_stock_quantity', '!=', '0')
-                            ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
-                    });
+                        ->orWhere(function ($noVariationsQuery) {
+                            $noVariationsQuery->whereDoesntHave('variations')
+                                ->whereNotNull('fast_remote_stock_quantity')
+                                ->where('fast_remote_stock_quantity', '!=', '')
+                                ->where('fast_remote_stock_quantity', '!=', '0')
+                                ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
+                        });
                 });
             }
         } elseif ($request->filled('fast_remote_stock_variations_empty') && $request->filled('fast_remote_stock_goods_empty')) {
             // Проверяем, если хотя бы один из параметров включен
             if ($request->get('fast_remote_stock_variations_empty') === '1' || $request->get('fast_remote_stock_goods_empty') === '1') {
-                $query->where(function($mainQuery) {
+                $query->where(function ($mainQuery) {
                     // Вариант 1: Товары с вариациями - проверяем, что все вариации пустые
                     $mainQuery->whereHas('variations')
-                        ->whereDoesntHave('variations', function($varQ) {
+                        ->whereDoesntHave('variations', function ($varQ) {
                             $varQ->whereNotNull('fast_remote_stock_quantity')
                                 ->where('fast_remote_stock_quantity', '!=', '')
                                 ->where('fast_remote_stock_quantity', '!=', '0')
                                 ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
                         })
                     // Вариант 2: Товары без вариаций - проверяем остатки основного товара
-                    ->orWhere(function($noVariationsQuery) {
-                        $noVariationsQuery->whereDoesntHave('variations')
-                            ->where(function($fastRemoteCondition) {
-                                $fastRemoteCondition->whereNull('fast_remote_stock_quantity')
-                                    ->orWhere('fast_remote_stock_quantity', '=', '0')
-                                    ->orWhere('fast_remote_stock_quantity', '=', '')
-                                    ->orWhereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) = 0');
-                            });
-                    });
+                        ->orWhere(function ($noVariationsQuery) {
+                            $noVariationsQuery->whereDoesntHave('variations')
+                                ->where(function ($fastRemoteCondition) {
+                                    $fastRemoteCondition->whereNull('fast_remote_stock_quantity')
+                                        ->orWhere('fast_remote_stock_quantity', '=', '0')
+                                        ->orWhere('fast_remote_stock_quantity', '=', '')
+                                        ->orWhereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) = 0');
+                                });
+                        });
                 });
             }
         } elseif ($request->filled('fast_remote_stock_variations_exact') && $request->filled('fast_remote_stock_goods_exact')) {
             $exactValue = $request->get('fast_remote_stock_variations_exact');
-            
+
             // Проверяем, если хотя бы один из параметров включен
             if ($request->get('fast_remote_stock_variations_exact') !== '' || $request->get('fast_remote_stock_goods_exact') !== '') {
-                $query->where(function($mainQuery) use ($exactValue) {
+                $query->where(function ($mainQuery) use ($exactValue) {
                     // Вариант 1: Товары с вариациями - проверяем остатки вариаций
-                    $mainQuery->whereHas('variations', function($varQ) use ($exactValue) {
+                    $mainQuery->whereHas('variations', function ($varQ) use ($exactValue) {
                         $varQ->where('fast_remote_stock_quantity', '=', $exactValue);
                     })
                     // Вариант 2: Товары без вариаций - проверяем остатки основного товара
-                    ->orWhere(function($noVariationsQuery) use ($exactValue) {
-                        $noVariationsQuery->whereDoesntHave('variations')
-                            ->where('fast_remote_stock_quantity', '=', $exactValue);
-                    });
+                        ->orWhere(function ($noVariationsQuery) use ($exactValue) {
+                            $noVariationsQuery->whereDoesntHave('variations')
+                                ->where('fast_remote_stock_quantity', '=', $exactValue);
+                        });
                 });
             }
         }
@@ -922,49 +918,49 @@ class ShopGoodsController extends Controller
         if ($request->filled('stock_variations_not_empty') && $request->filled('stock_goods_not_empty')) {
             // Проверяем, если хотя бы один из параметров включен
             if ($request->get('stock_variations_not_empty') === '1' || $request->get('stock_goods_not_empty') === '1') {
-                $query->where(function($mainQuery) {
+                $query->where(function ($mainQuery) {
                     // Вариант 1: Товары с вариациями - проверяем остатки вариаций (хотя бы одна вариация с остатком > 0)
-                    $mainQuery->whereHas('variations', function($varQ) {
+                    $mainQuery->whereHas('variations', function ($varQ) {
                         $varQ->where('stock_quantity', '>', 0);
                     })
                     // Вариант 2: Товары без вариаций - проверяем остатки основного товара
-                    ->orWhere(function($noVariationsQuery) {
-                        $noVariationsQuery->whereDoesntHave('variations')
-                            ->where('stock_quantity', '>', 0);
-                    });
+                        ->orWhere(function ($noVariationsQuery) {
+                            $noVariationsQuery->whereDoesntHave('variations')
+                                ->where('stock_quantity', '>', 0);
+                        });
                 });
             }
         } elseif ($request->filled('stock_variations_empty') && $request->filled('stock_goods_empty')) {
             // Проверяем, если хотя бы один из параметров включен
             if ($request->get('stock_variations_empty') === '1' || $request->get('stock_goods_empty') === '1') {
-                $query->where(function($mainQuery) {
+                $query->where(function ($mainQuery) {
                     // Вариант 1: Товары с вариациями - проверяем, что сумма остатков всех вариаций = 0
                     $mainQuery->whereHas('variations')
                         ->whereRaw('(SELECT COALESCE(SUM(stock_quantity), 0) FROM shop_good_variations WHERE good_id = shop_goods.id) = 0')
                     // Вариант 2: Товары без вариаций - проверяем остатки основного товара
-                    ->orWhere(function($noVariationsQuery) {
-                        $noVariationsQuery->whereDoesntHave('variations')
-                            ->where(function($stockQuery) {
-                                $stockQuery->where('stock_quantity', '=', 0)
-                                    ->orWhereNull('stock_quantity');
-                            });
-                    });
+                        ->orWhere(function ($noVariationsQuery) {
+                            $noVariationsQuery->whereDoesntHave('variations')
+                                ->where(function ($stockQuery) {
+                                    $stockQuery->where('stock_quantity', '=', 0)
+                                        ->orWhereNull('stock_quantity');
+                                });
+                        });
                 });
             }
         } elseif ($request->filled('stock_variations_exact') && $request->filled('stock_goods_exact')) {
             $exactValue = $request->get('stock_variations_exact');
-            
+
             // Проверяем, если хотя бы один из параметров включен
             if ($request->get('stock_variations_exact') !== '' || $request->get('stock_goods_exact') !== '') {
-                $query->where(function($mainQuery) use ($exactValue) {
+                $query->where(function ($mainQuery) use ($exactValue) {
                     // Вариант 1: Товары с вариациями - проверяем сумму остатков вариаций
                     $mainQuery->whereHas('variations')
                         ->whereRaw('(SELECT COALESCE(SUM(stock_quantity), 0) FROM shop_good_variations WHERE good_id = shop_goods.id) = ?', [$exactValue])
                     // Вариант 2: Товары без вариаций - проверяем остатки основного товара
-                    ->orWhere(function($noVariationsQuery) use ($exactValue) {
-                        $noVariationsQuery->whereDoesntHave('variations')
-                            ->where('stock_quantity', '=', $exactValue);
-                    });
+                        ->orWhere(function ($noVariationsQuery) use ($exactValue) {
+                            $noVariationsQuery->whereDoesntHave('variations')
+                                ->where('stock_quantity', '=', $exactValue);
+                        });
                 });
             }
         }
@@ -976,10 +972,10 @@ class ShopGoodsController extends Controller
                 // Case 1: Products WITH variations: at least ONE variation must be in stock.
                 $q->whereHas('variations', function ($varQ) {
                     $varQ->where('stock_quantity', '>', 0)
-                        ->orWhere(function($remote) {
+                        ->orWhere(function ($remote) {
                             $remote->whereNotNull('remote_stock_quantity')->whereNotIn('remote_stock_quantity', ['0', '']);
                         })
-                        ->orWhere(function($fastRemote) {
+                        ->orWhere(function ($fastRemote) {
                             $fastRemote->whereNotNull('fast_remote_stock_quantity')->whereNotIn('fast_remote_stock_quantity', ['0', '']);
                         });
                 });
@@ -988,45 +984,45 @@ class ShopGoodsController extends Controller
                     $noVars->whereDoesntHave('variations')
                         ->where(function ($stock) {
                             $stock->where('stock_quantity', '>', 0)
-                                ->orWhere(function($remote) {
+                                ->orWhere(function ($remote) {
                                     $remote->whereNotNull('remote_stock_quantity')->whereNotIn('remote_stock_quantity', ['0', '']);
                                 })
-                                ->orWhere(function($fastRemote) {
+                                ->orWhere(function ($fastRemote) {
                                     $fastRemote->whereNotNull('fast_remote_stock_quantity')->whereNotIn('fast_remote_stock_quantity', ['0', '']);
                                 });
                         });
                 });
             });
         } elseif ($request->get('total_stock_variations_both_empty') === '1' && $request->get('total_stock_goods_both_empty') === '1') {
-            
-            $query->where(function($q) {
+
+            $query->where(function ($q) {
                 // Case 1: Products WITH variations: ALL variations must be out of stock.
                 $q->where(function ($withVars) {
                     $withVars->whereHas('variations')
                         ->whereDoesntHave('variations', function ($varQ) {
                             // Find any variation that IS in stock
                             $varQ->where('stock_quantity', '>', 0)
-                                ->orWhere(function($remote) {
+                                ->orWhere(function ($remote) {
                                     $remote->whereNotNull('remote_stock_quantity')->whereNotIn('remote_stock_quantity', ['0', '']);
                                 })
-                                ->orWhere(function($fastRemote) {
+                                ->orWhere(function ($fastRemote) {
                                     $fastRemote->whereNotNull('fast_remote_stock_quantity')->whereNotIn('fast_remote_stock_quantity', ['0', '']);
                                 });
                         });
                 })
                 // Case 2: Products WITHOUT variations: ALL three stock fields must be empty.
-                ->orWhere(function ($noVars) {
-                    $noVars->whereDoesntHave('variations')
-                        ->where(function($stock) {
-                            $stock->where('stock_quantity', '=', 0)->orWhereNull('stock_quantity');
-                        })
-                        ->where(function($remote) {
-                            $remote->whereIn('remote_stock_quantity', ['0', ''])->orWhereNull('remote_stock_quantity');
-                        })
-                        ->where(function($fastRemote) {
-                            $fastRemote->whereIn('fast_remote_stock_quantity', ['0', ''])->orWhereNull('fast_remote_stock_quantity');
-                        });
-                });
+                    ->orWhere(function ($noVars) {
+                        $noVars->whereDoesntHave('variations')
+                            ->where(function ($stock) {
+                                $stock->where('stock_quantity', '=', 0)->orWhereNull('stock_quantity');
+                            })
+                            ->where(function ($remote) {
+                                $remote->whereIn('remote_stock_quantity', ['0', ''])->orWhereNull('remote_stock_quantity');
+                            })
+                            ->where(function ($fastRemote) {
+                                $fastRemote->whereIn('fast_remote_stock_quantity', ['0', ''])->orWhereNull('fast_remote_stock_quantity');
+                            });
+                    });
             });
         }
 
@@ -1037,7 +1033,7 @@ class ShopGoodsController extends Controller
         $allowedSortFields = [
             'id', 'name', 'sku', 'price', 'rating', 'stock_quantity', 'remote_stock_quantity',
             'fast_remote_stock_quantity', 'created_at', 'sort_order', 'supplier', 'slug',
-            'categories', 'brands'
+            'categories', 'brands',
         ];
 
         // Специальная обработка для полей отношений - используем подзапросы для сортировки
@@ -1046,23 +1042,23 @@ class ShopGoodsController extends Controller
                 case 'categories':
                     // Сортировка по первой категории товара (по алфавиту)
                     $query->leftJoin('shop_good_categories', 'shop_goods.id', '=', 'shop_good_categories.good_id')
-                          ->leftJoin('shop_categories', 'shop_good_categories.category_id', '=', 'shop_categories.id')
-                          ->orderByRaw('(SELECT MIN(sc.name) FROM shop_good_categories sgc INNER JOIN shop_categories sc ON sgc.category_id = sc.id WHERE sgc.good_id = shop_goods.id) ' . $sortDirection)
-                          ->select('shop_goods.*')
-                          ->groupBy('shop_goods.id');
+                        ->leftJoin('shop_categories', 'shop_good_categories.category_id', '=', 'shop_categories.id')
+                        ->orderByRaw('(SELECT MIN(sc.name) FROM shop_good_categories sgc INNER JOIN shop_categories sc ON sgc.category_id = sc.id WHERE sgc.good_id = shop_goods.id) '.$sortDirection)
+                        ->select('shop_goods.*')
+                        ->groupBy('shop_goods.id');
                     break;
                 case 'brands':
                     // Сортировка по первой марке товара (по алфавиту)
                     $query->leftJoin('shop_good_brands', 'shop_goods.id', '=', 'shop_good_brands.good_id')
-                          ->leftJoin('shop_brands', 'shop_good_brands.brand_id', '=', 'shop_brands.id')
-                          ->orderByRaw('(SELECT MIN(sb.name) FROM shop_good_brands sgb INNER JOIN shop_brands sb ON sgb.brand_id = sb.id WHERE sgb.good_id = shop_goods.id) ' . $sortDirection)
-                          ->select('shop_goods.*')
-                          ->groupBy('shop_goods.id');
+                        ->leftJoin('shop_brands', 'shop_good_brands.brand_id', '=', 'shop_brands.id')
+                        ->orderByRaw('(SELECT MIN(sb.name) FROM shop_good_brands sgb INNER JOIN shop_brands sb ON sgb.brand_id = sb.id WHERE sgb.good_id = shop_goods.id) '.$sortDirection)
+                        ->select('shop_goods.*')
+                        ->groupBy('shop_goods.id');
                     break;
                 case 'label':
                     $query->leftJoin('shop_labels', 'shop_goods.label_id', '=', 'shop_labels.id')
-                          ->orderBy('shop_labels.name', $sortDirection)
-                          ->select('shop_goods.*');
+                        ->orderBy('shop_labels.name', $sortDirection)
+                        ->select('shop_goods.*');
                     break;
                 case 'tags':
                     // Сортировка по количеству тегов
@@ -1077,12 +1073,13 @@ class ShopGoodsController extends Controller
         // ids_only: вернуть только список ID (для массового выбора)
         $idsOnly = $request->has('ids_only') && $request->get('ids_only') === '1';
         if ($idsOnly) {
-            $limit = (int)$request->get('limit', 30000);
+            $limit = (int) $request->get('limit', 30000);
             if ($limit <= 0) {
                 $limit = 30000;
             }
             $limit = min($limit, 30000);
             $ids = $query->select('shop_goods.id')->limit($limit)->pluck('shop_goods.id')->toArray();
+
             return response()->json([
                 'success' => true,
                 'ids' => $ids,
@@ -1114,7 +1111,7 @@ class ShopGoodsController extends Controller
 
             return response()->json([
                 'success' => true,
-                'count' => $totalRowsCount
+                'count' => $totalRowsCount,
             ]);
         }
 
@@ -1150,25 +1147,24 @@ class ShopGoodsController extends Controller
                         $property->property_value = $propertyValue;
                     } elseif ($hasValueCol && isset($property->pivot) && $property->pivot->value) {
                         // Если свойство использует value напрямую
-                        $property->property_value = (object)[
+                        $property->property_value = (object) [
                             'id' => null,
                             'value' => $property->pivot->value,
-                            'property_id' => $property->id
+                            'property_id' => $property->id,
                         ];
                     }
                 }
             }
 
-
             return response()->json([
                 'success' => true,
                 'data' => $goods,
-                'count' => $totalRowsCount
+                'count' => $totalRowsCount,
             ]);
         }
 
         // Пагинация (если не запрашиваются конкретные ID, используем пагинацию)
-        if (!$request->has('ids')) {
+        if (! $request->has('ids')) {
             // Определяем параметры пагинации
             $perPage = $request->get('per_page', 20);
             $perPage = in_array($perPage, [10, 20, 50, 100, 5000]) ? $perPage : 20;
@@ -1188,19 +1184,17 @@ class ShopGoodsController extends Controller
                     ->count();
             }
 
-    
-
             $goods = $query->paginate($perPage);
 
             // Получаем URL фронтенда для изображений
             $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
-            
+
             // Проверяем, нужно ли загружать изображения вариаций
             $withVariationImages = $request->boolean('with_variation_images', false);
             if ($withVariationImages) {
                 $goods->load('variations.images');
             }
-            
+
             // Проверяем, нужно ли загружать атрибуты вариаций
             $withVariationAttributes = $request->boolean('with_variation_attributes', false);
             if ($withVariationAttributes) {
@@ -1218,17 +1212,17 @@ class ShopGoodsController extends Controller
                                     return [
                                         'attribute' => [
                                             'id' => $row->attribute_id,
-                                            'name' => $row->attribute_name
+                                            'name' => $row->attribute_name,
                                         ],
                                         'value' => [
                                             'id' => $row->value_id,
-                                            'value' => $row->value_value
+                                            'value' => $row->value_value,
                                         ],
                                         'attribute_id' => $row->attribute_id,
                                         'attribute_name' => $row->attribute_name,
                                         'value_id' => $row->value_id,
                                         'value_value' => $row->value_value,
-                                        'value' => $row->value_value
+                                        'value' => $row->value_value,
                                     ];
                                 })
                                 ->toArray();
@@ -1246,14 +1240,14 @@ class ShopGoodsController extends Controller
                         $property->property_value = $propertyValue;
                     } elseif ($hasValueCol && isset($property->pivot) && $property->pivot->value) {
                         // Если свойство использует value напрямую
-                        $property->property_value = (object)[
+                        $property->property_value = (object) [
                             'id' => null,
                             'value' => $property->pivot->value,
-                            'property_id' => $property->id
+                            'property_id' => $property->id,
                         ];
                     }
                 }
-                
+
                 // Обрабатываем изображения товара - добавляем полный URL фронтенда
                 if ($good->images) {
                     foreach ($good->images as $image) {
@@ -1265,27 +1259,27 @@ class ShopGoodsController extends Controller
                                 // Нормализуем путь (заменяем обратные слеши на прямые)
                                 $normalizedPath = str_replace('\\', '/', $image->file_path);
                                 $cleanPath = ltrim($normalizedPath, '/');
-                                
+
                                 // Убираем префикс cms/shop/ если он есть в пути
                                 if (str_starts_with($cleanPath, 'cms/shop/')) {
                                     $cleanPath = substr($cleanPath, strlen('cms/shop/'));
                                 }
-                                
+
                                 // Формируем полный URL - просто добавляем базовый URL фронтенда к file_path
-                                $image->url = rtrim($frontendUrl, '/') . '/' . $cleanPath;
+                                $image->url = rtrim($frontendUrl, '/').'/'.$cleanPath;
                             }
                         }
                     }
                 }
-                
+
                 // Обрабатываем изображения вариаций - добавляем полный URL фронтенда
                 if ($good->variations) {
                     foreach ($good->variations as $variation) {
                         // Загружаем изображения вариации, если они не загружены
-                        if (!$variation->relationLoaded('images')) {
+                        if (! $variation->relationLoaded('images')) {
                             $variation->load('images');
                         }
-                        
+
                         if ($variation->images) {
                             foreach ($variation->images as $image) {
                                 if ($image->file_path) {
@@ -1296,14 +1290,14 @@ class ShopGoodsController extends Controller
                                         // Нормализуем путь (заменяем обратные слеши на прямые)
                                         $normalizedPath = str_replace('\\', '/', $image->file_path);
                                         $cleanPath = ltrim($normalizedPath, '/');
-                                        
+
                                         // Убираем префикс cms/shop/ если он есть в пути
                                         if (str_starts_with($cleanPath, 'cms/shop/')) {
                                             $cleanPath = substr($cleanPath, strlen('cms/shop/'));
                                         }
-                                        
+
                                         // Формируем полный URL - просто добавляем базовый URL фронтенда к file_path
-                                        $image->url = rtrim($frontendUrl, '/') . '/' . $cleanPath;
+                                        $image->url = rtrim($frontendUrl, '/').'/'.$cleanPath;
                                     }
                                 }
                             }
@@ -1317,7 +1311,7 @@ class ShopGoodsController extends Controller
                     $good->variations_stock_sum = $good->variations->sum('stock_quantity');
 
                     // Проверка наличия непустых remote_stock_quantity
-                    $hasRemoteStock = $good->variations->filter(function($variation) {
+                    $hasRemoteStock = $good->variations->filter(function ($variation) {
                         $remoteStock = $variation->remote_stock_quantity;
 
                         $hasRemote = $remoteStock !== null
@@ -1331,7 +1325,7 @@ class ShopGoodsController extends Controller
                     $good->variations_has_remote_stock = $hasRemoteStock;
 
                     // Проверка наличия непустых fast_remote_stock_quantity
-                    $hasFastRemoteStock = $good->variations->filter(function($variation) {
+                    $hasFastRemoteStock = $good->variations->filter(function ($variation) {
                         $fastRemoteStock = $variation->fast_remote_stock_quantity;
 
                         $hasFastRemote = $fastRemoteStock !== null
@@ -1345,7 +1339,7 @@ class ShopGoodsController extends Controller
                     $good->variations_has_fast_remote_stock = $hasFastRemoteStock;
 
                     // Проверка наличия активного демпинга
-                    $hasDemping = $good->variations->filter(function($variation) {
+                    $hasDemping = $good->variations->filter(function ($variation) {
                         return $variation->show_demping === true || $variation->show_demping === 1;
                     })->count() > 0;
 
@@ -1361,11 +1355,11 @@ class ShopGoodsController extends Controller
             $variationsCount = 0;
             if ($request->has('suppliers')) {
                 $supplierIds = $request->input('suppliers');
-                if (is_array($supplierIds) && !empty($supplierIds)) {
+                if (is_array($supplierIds) && ! empty($supplierIds)) {
                     $variationsCount = ShopGoodVariation::whereIn('supplier', $supplierIds)->count();
                 }
             }
-            
+
             $response = [
                 'success' => true,
                 'data' => $goods->items(),
@@ -1375,10 +1369,10 @@ class ShopGoodsController extends Controller
                     'per_page' => $goods->perPage(),
                     'total' => $goods->total(),
                     'from' => $goods->firstItem(),
-                    'to' => $goods->lastItem()
-                ]
+                    'to' => $goods->lastItem(),
+                ],
             ];
-            
+
             // Добавляем количество вариаций, если фильтр по поставщикам активен
             if ($request->has('suppliers')) {
                 $response['variations_count'] = $variationsCount;
@@ -1392,16 +1386,16 @@ class ShopGoodsController extends Controller
         } else {
             // Если запрашиваются конкретные ID, возвращаем все без пагинации
             $goods = $query->get();
-            
+
             // Получаем URL фронтенда для изображений
             $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
-            
+
             // Проверяем, нужно ли загружать изображения вариаций
             $withVariationImages = $request->boolean('with_variation_images', false);
             if ($withVariationImages) {
                 $goods->load('variations.images');
             }
-            
+
             // Проверяем, нужно ли загружать атрибуты вариаций
             $withVariationAttributes = $request->boolean('with_variation_attributes', false);
             if ($withVariationAttributes) {
@@ -1419,17 +1413,17 @@ class ShopGoodsController extends Controller
                                     return [
                                         'attribute' => [
                                             'id' => $row->attribute_id,
-                                            'name' => $row->attribute_name
+                                            'name' => $row->attribute_name,
                                         ],
                                         'value' => [
                                             'id' => $row->value_id,
-                                            'value' => $row->value_value
+                                            'value' => $row->value_value,
                                         ],
                                         'attribute_id' => $row->attribute_id,
                                         'attribute_name' => $row->attribute_name,
                                         'value_id' => $row->value_id,
                                         'value_value' => $row->value_value,
-                                        'value' => $row->value_value
+                                        'value' => $row->value_value,
                                     ];
                                 })
                                 ->toArray();
@@ -1437,7 +1431,7 @@ class ShopGoodsController extends Controller
                     }
                 }
             }
-            
+
             // Загружаем значения свойств для всех товаров
             $hasValueCol = Schema::hasColumn('shop_good_properties', 'value');
             foreach ($goods as $good) {
@@ -1447,14 +1441,14 @@ class ShopGoodsController extends Controller
                         $property->property_value = $propertyValue;
                     } elseif ($hasValueCol && isset($property->pivot) && $property->pivot->value) {
                         // Если свойство использует value напрямую
-                        $property->property_value = (object)[
+                        $property->property_value = (object) [
                             'id' => null,
                             'value' => $property->pivot->value,
-                            'property_id' => $property->id
+                            'property_id' => $property->id,
                         ];
                     }
                 }
-                
+
                 // Обрабатываем изображения товара - добавляем полный URL фронтенда
                 if ($good->images) {
                     foreach ($good->images as $image) {
@@ -1466,22 +1460,22 @@ class ShopGoodsController extends Controller
                                 // Нормализуем путь (заменяем обратные слеши на прямые)
                                 $normalizedPath = str_replace('\\', '/', $image->file_path);
                                 $cleanPath = ltrim($normalizedPath, '/');
-                                
+
                                 // Формируем полный URL - просто добавляем базовый URL фронтенда к file_path
-                                $image->url = rtrim($frontendUrl, '/') . '/' . $cleanPath;
+                                $image->url = rtrim($frontendUrl, '/').'/'.$cleanPath;
                             }
                         }
                     }
                 }
-                
+
                 // Обрабатываем изображения вариаций - добавляем полный URL фронтенда
                 if ($good->variations) {
                     foreach ($good->variations as $variation) {
                         // Загружаем изображения вариации, если они не загружены
-                        if (!$variation->relationLoaded('images')) {
+                        if (! $variation->relationLoaded('images')) {
                             $variation->load('images');
                         }
-                        
+
                         if ($variation->images) {
                             foreach ($variation->images as $image) {
                                 if ($image->file_path) {
@@ -1492,54 +1486,54 @@ class ShopGoodsController extends Controller
                                         // Нормализуем путь (заменяем обратные слеши на прямые)
                                         $normalizedPath = str_replace('\\', '/', $image->file_path);
                                         $cleanPath = ltrim($normalizedPath, '/');
-                                        
+
                                         // Формируем полный URL - просто добавляем базовый URL фронтенда к file_path
-                                        $image->url = rtrim($frontendUrl, '/') . '/' . $cleanPath;
+                                        $image->url = rtrim($frontendUrl, '/').'/'.$cleanPath;
                                     }
                                 }
                             }
                         }
                     }
                 }
-                
+
                 // Добавляем вычисления для вариаций
                 if ($good->variations_count > 0 && $good->variations) {
                     // Сумма остатков вариаций
                     $good->variations_stock_sum = $good->variations->sum('stock_quantity');
-                    
+
                     // Проверка наличия непустых remote_stock_quantity
-                    $hasRemoteStock = $good->variations->filter(function($variation) {
+                    $hasRemoteStock = $good->variations->filter(function ($variation) {
                         $remoteStock = $variation->remote_stock_quantity;
-                        
-                        $hasRemote = $remoteStock !== null 
-                            && $remoteStock !== '' 
+
+                        $hasRemote = $remoteStock !== null
+                            && $remoteStock !== ''
                             && $remoteStock !== '0'
                             && trim($remoteStock) !== '';
-                            
+
                         return $hasRemote;
                     })->count() > 0;
-                    
+
                     $good->variations_has_remote_stock = $hasRemoteStock;
 
                     // Проверка наличия непустых fast_remote_stock_quantity
-                    $hasFastRemoteStock = $good->variations->filter(function($variation) {
+                    $hasFastRemoteStock = $good->variations->filter(function ($variation) {
                         $fastRemoteStock = $variation->fast_remote_stock_quantity;
-                        
-                        $hasFastRemote = $fastRemoteStock !== null 
-                            && $fastRemoteStock !== '' 
+
+                        $hasFastRemote = $fastRemoteStock !== null
+                            && $fastRemoteStock !== ''
                             && $fastRemoteStock !== '0'
                             && trim($fastRemoteStock) !== '';
-                            
+
                         return $hasFastRemote;
                     })->count() > 0;
-                    
+
                     $good->variations_has_fast_remote_stock = $hasFastRemoteStock;
-                    
+
                     // Проверка наличия активного демпинга
-                    $hasDemping = $good->variations->filter(function($variation) {
+                    $hasDemping = $good->variations->filter(function ($variation) {
                         return $variation->show_demping === true || $variation->show_demping === 1;
                     })->count() > 0;
-                    
+
                     $good->variations_has_demping = $hasDemping;
                 } else {
                     $good->variations_stock_sum = 0;
@@ -1548,21 +1542,21 @@ class ShopGoodsController extends Controller
                     $good->variations_has_demping = false;
                 }
             }
-            
+
             // Формируем ответ
             $response = [
                 'success' => true,
-                'data' => $goods->toArray()
+                'data' => $goods->toArray(),
             ];
 
             // Добавляем счетчик групп дублей, если активен фильтр duplicate_names
             if ($request->filled('duplicate_names')) {
-                $names = collect($goods)->map(function($g) {
+                $names = collect($goods)->map(function ($g) {
                     return is_string($g->name ?? null) ? mb_strtolower(trim($g->name)) : '';
-                })->filter(function($n) {
+                })->filter(function ($n) {
                     return $n !== '';
                 });
-                $duplicateGroupsCount = $names->countBy()->filter(function($c) {
+                $duplicateGroupsCount = $names->countBy()->filter(function ($c) {
                     return $c > 1;
                 })->count();
                 $response['duplicate_groups_count'] = $duplicateGroupsCount;
@@ -1588,12 +1582,12 @@ class ShopGoodsController extends Controller
             'stock:id,good_id,warehouse_id,quantity,reserved_quantity,min_quantity',
             'stock.warehouse:id,name',
             'prices:id,good_id,price_type_id,price,sale_price',
-            'prices.priceType:id,name,multiplier'
+            'prices.priceType:id,name,multiplier',
         ])->findOrFail($id);
 
         // Загружаем дополнительные данные для свойств товара
         $hasValueCol = Schema::hasColumn('shop_good_properties', 'value');
-        $good->load(['properties' => function($query) use ($hasValueCol) {
+        $good->load(['properties' => function ($query) use ($hasValueCol) {
             if ($hasValueCol) {
                 $query->withPivot('shop_property_value_id', 'value');
             } else {
@@ -1611,7 +1605,7 @@ class ShopGoodsController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $good
+            'data' => $good,
         ]);
     }
 
@@ -1651,14 +1645,14 @@ class ShopGoodsController extends Controller
             'properties' => 'array',
             'properties.*.property_id' => 'required|exists:shop_properties,id',
             'properties.*.value' => 'nullable|string|max:255',
-            'properties.*.shop_property_value_id' => 'nullable|exists:shop_property_values,id'
+            'properties.*.shop_property_value_id' => 'nullable|exists:shop_property_values,id',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -1670,7 +1664,7 @@ class ShopGoodsController extends Controller
                 'price', 'sale_price', 'demping_price', 'show_demping', 'label_id',
                 'stock_quantity', 'remote_stock_quantity', 'width', 'height',
                 'depth', 'weight', 'meta_title', 'meta_description',
-                'is_active', 'is_featured', 'is_new', 'is_sale', 'sort_order'
+                'is_active', 'is_featured', 'is_new', 'is_sale', 'sort_order',
             ]));
 
             // Привязка категорий
@@ -1695,29 +1689,29 @@ class ShopGoodsController extends Controller
                     if (empty($property['property_id'])) {
                         continue;
                     }
-                    
+
                     $propertyValueId = null;
-                    
+
                     // Если есть shop_property_value_id, используем его
-                    if (!empty($property['shop_property_value_id'])) {
+                    if (! empty($property['shop_property_value_id'])) {
                         $propertyValueId = $property['shop_property_value_id'];
                     }
                     // Если есть value, ищем или создаем запись в shop_property_values
-                    elseif (!empty($property['value'])) {
+                    elseif (! empty($property['value'])) {
                         $propertyValue = \App\Models\Shop\PropertyValue::firstOrCreate([
                             'property_id' => $property['property_id'],
-                            'value' => trim($property['value'])
+                            'value' => trim($property['value']),
                         ], [
                             'is_active' => true,
-                            'sort_order' => 0
+                            'sort_order' => 0,
                         ]);
                         $propertyValueId = $propertyValue->id;
                     }
-                    
+
                     // Привязываем свойство только если есть propertyValueId
                     if ($propertyValueId) {
                         $good->properties()->attach($property['property_id'], [
-                            'shop_property_value_id' => $propertyValueId
+                            'shop_property_value_id' => $propertyValueId,
                         ]);
                     }
                 }
@@ -1731,15 +1725,15 @@ class ShopGoodsController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Товар успешно создан',
-                'data' => $good->load(['categories', 'brands', 'tags', 'properties'])
+                'data' => $good->load(['categories', 'brands', 'tags', 'properties']),
             ], 201);
 
         } catch (\Exception $e) {
             DB::rollBack();
-            
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания товара: ' . $e->getMessage()
+                'message' => 'Ошибка создания товара: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -1788,14 +1782,14 @@ class ShopGoodsController extends Controller
             'properties' => 'array',
             'properties.*.property_id' => 'required|exists:shop_properties,id',
             'properties.*.value' => 'nullable|string|max:255',
-            'properties.*.shop_property_value_id' => 'nullable|exists:shop_property_values,id'
+            'properties.*.shop_property_value_id' => 'nullable|exists:shop_property_values,id',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -1808,23 +1802,23 @@ class ShopGoodsController extends Controller
                 'price', 'sale_price', 'demping_price', 'show_demping', 'label_id',
                 'stock_quantity', 'width', 'height',
                 'depth', 'weight', 'meta_title', 'meta_description',
-                'is_active', 'is_featured', 'is_new', 'is_sale', 'is_preorder', 'is_show', 'sort_order'
+                'is_active', 'is_featured', 'is_new', 'is_sale', 'is_preorder', 'is_show', 'sort_order',
             ]);
-            
+
             // Явно обрабатываем remote_stock_quantity - всегда обновляем, даже если null
             // Используем прямой доступ к полю из JSON тела запроса
             $allRequestData = $request->all();
             if (isset($allRequestData['remote_stock_quantity'])) {
                 $remoteStockValue = $allRequestData['remote_stock_quantity'];
-                $updateData['remote_stock_quantity'] = ($remoteStockValue === '' || $remoteStockValue === null) ? null : (string)$remoteStockValue;
+                $updateData['remote_stock_quantity'] = ($remoteStockValue === '' || $remoteStockValue === null) ? null : (string) $remoteStockValue;
             }
-            
+
             // Явно обрабатываем fast_remote_stock_quantity - всегда обновляем, даже если null
             if (isset($allRequestData['fast_remote_stock_quantity'])) {
                 $fastRemoteStockValue = $allRequestData['fast_remote_stock_quantity'];
-                $updateData['fast_remote_stock_quantity'] = ($fastRemoteStockValue === '' || $fastRemoteStockValue === null) ? null : (string)$fastRemoteStockValue;
+                $updateData['fast_remote_stock_quantity'] = ($fastRemoteStockValue === '' || $fastRemoteStockValue === null) ? null : (string) $fastRemoteStockValue;
             }
-            
+
             // Обновляем товар
             $good->update($updateData);
 
@@ -1869,18 +1863,18 @@ class ShopGoodsController extends Controller
                     // Режим через справочник значений
                     if ($hasShopValueIdCol) {
                         $propertyValueId = null;
-                        if (!empty($property['shop_property_value_id'])) {
+                        if (! empty($property['shop_property_value_id'])) {
                             // Если есть shop_property_value_id и новое значение, обновляем существующее значение
                             $existingValueId = (int) $property['shop_property_value_id'];
                             $existingValue = \App\Models\Shop\PropertyValue::find($existingValueId);
-                            
-                            if (!empty($property['value']) && $existingValue) {
+
+                            if (! empty($property['value']) && $existingValue) {
                                 $valueToSave = trim($property['value']);
                                 // Убираем двоеточие в начале и конце значения перед сохранением
                                 $valueToSave = preg_replace('/^:\s*/', '', $valueToSave);
                                 $valueToSave = preg_replace('/\s*:\s*$/', '', $valueToSave);
                                 $valueToSave = trim($valueToSave);
-                                
+
                                 // Обновляем существующее значение
                                 $existingValue->update(['value' => $valueToSave]);
                                 $propertyValueId = $existingValueId;
@@ -1888,19 +1882,19 @@ class ShopGoodsController extends Controller
                                 // Если значения нет, используем существующий ID
                                 $propertyValueId = $existingValueId;
                             }
-                        } elseif (!empty($property['value'])) {
+                        } elseif (! empty($property['value'])) {
                             $valueToSave = trim($property['value']);
                             // Убираем двоеточие в начале и конце значения перед сохранением
                             $valueToSave = preg_replace('/^:\s*/', '', $valueToSave);
                             $valueToSave = preg_replace('/\s*:\s*$/', '', $valueToSave);
                             $valueToSave = trim($valueToSave);
-                            
+
                             $pv = \App\Models\Shop\PropertyValue::firstOrCreate([
                                 'property_id' => $propertyId,
-                                'value' => $valueToSave
+                                'value' => $valueToSave,
                             ], [
                                 'is_active' => true,
-                                'sort_order' => 0
+                                'sort_order' => 0,
                             ]);
                             $propertyValueId = (int) $pv->id;
                         }
@@ -1919,9 +1913,9 @@ class ShopGoodsController extends Controller
                     // Режим хранения прямого текста значения
                     elseif ($hasValueCol) {
                         $textValue = null;
-                        if (!empty($property['value'])) {
+                        if (! empty($property['value'])) {
                             $textValue = trim($property['value']);
-                        } elseif (!empty($property['shop_property_value_id'])) {
+                        } elseif (! empty($property['shop_property_value_id'])) {
                             $found = \App\Models\Shop\PropertyValue::find((int) $property['shop_property_value_id']);
                             $textValue = $found ? $found->value : null;
                         }
@@ -1949,7 +1943,7 @@ class ShopGoodsController extends Controller
             $good->refresh();
 
             // Подтверждаем результат: возвращаем свойства с pivot
-            $good->load(['properties' => function($q){
+            $good->load(['properties' => function ($q) {
                 $q->withPivot('shop_property_value_id');
             }]);
 
@@ -1960,15 +1954,15 @@ class ShopGoodsController extends Controller
                 'debug' => [
                     'attached_count' => isset($lastSyncData) ? count($lastSyncData) : 0,
                     'attached' => $lastSyncData,
-                ]
+                ],
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
-            
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления товара: ' . $e->getMessage()
+                'message' => 'Ошибка обновления товара: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -1981,26 +1975,26 @@ class ShopGoodsController extends Controller
         $good = ShopGood::findOrFail($id);
 
         $properties = $request->get('properties', []);
-        
+
         // Валидация: массив обязателен, но может быть пустым
         $rules = [
-            'properties' => 'present|array'
+            'properties' => 'present|array',
         ];
-        
+
         // Если массив не пустой, добавляем правила для элементов
-        if (!empty($properties)) {
+        if (! empty($properties)) {
             $rules['properties.*.property_id'] = 'required|exists:shop_properties,id';
             $rules['properties.*.value'] = 'nullable|string|max:255';
             $rules['properties.*.shop_property_value_id'] = 'nullable|exists:shop_property_values,id';
         }
-        
+
         $validator = Validator::make($request->all(), $rules);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -2029,18 +2023,18 @@ class ShopGoodsController extends Controller
 
                 if ($hasShopValueIdCol) {
                     $propertyValueId = null;
-                    if (!empty($property['shop_property_value_id'])) {
+                    if (! empty($property['shop_property_value_id'])) {
                         // Если есть shop_property_value_id и новое значение, обновляем существующее значение
                         $existingValueId = (int) $property['shop_property_value_id'];
                         $existingValue = \App\Models\Shop\PropertyValue::find($existingValueId);
-                        
-                        if (!empty($property['value']) && $existingValue) {
+
+                        if (! empty($property['value']) && $existingValue) {
                             $valueToSave = trim($property['value']);
                             // Убираем двоеточие в начале и конце значения перед сохранением
                             $valueToSave = preg_replace('/^:\s*/', '', $valueToSave);
                             $valueToSave = preg_replace('/\s*:\s*$/', '', $valueToSave);
                             $valueToSave = trim($valueToSave);
-                            
+
                             // Обновляем существующее значение
                             $existingValue->update(['value' => $valueToSave]);
                             $propertyValueId = $existingValueId;
@@ -2048,19 +2042,19 @@ class ShopGoodsController extends Controller
                             // Если значения нет, используем существующий ID
                             $propertyValueId = $existingValueId;
                         }
-                    } elseif (!empty($property['value'])) {
+                    } elseif (! empty($property['value'])) {
                         $valueToSave = trim($property['value']);
                         // Убираем двоеточие в начале и конце значения перед сохранением
                         $valueToSave = preg_replace('/^:\s*/', '', $valueToSave);
                         $valueToSave = preg_replace('/\s*:\s*$/', '', $valueToSave);
                         $valueToSave = trim($valueToSave);
-                        
+
                         $pv = \App\Models\Shop\PropertyValue::firstOrCreate([
                             'property_id' => $propertyId,
-                            'value' => $valueToSave
+                            'value' => $valueToSave,
                         ], [
                             'is_active' => true,
-                            'sort_order' => 0
+                            'sort_order' => 0,
                         ]);
                         $propertyValueId = (int) $pv->id;
                     }
@@ -2076,13 +2070,13 @@ class ShopGoodsController extends Controller
                     }
                 } elseif ($hasValueCol) {
                     $textValue = null;
-                    if (!empty($property['value'])) {
+                    if (! empty($property['value'])) {
                         $textValue = trim($property['value']);
                         // Убираем двоеточие в начале и конце значения
                         $textValue = preg_replace('/^:\s*/', '', $textValue);
                         $textValue = preg_replace('/\s*:\s*$/', '', $textValue);
                         $textValue = trim($textValue);
-                    } elseif (!empty($property['shop_property_value_id'])) {
+                    } elseif (! empty($property['shop_property_value_id'])) {
                         $found = \App\Models\Shop\PropertyValue::find((int) $property['shop_property_value_id']);
                         $textValue = $found ? $found->value : null;
                         if ($textValue) {
@@ -2112,15 +2106,16 @@ class ShopGoodsController extends Controller
                 'message' => 'Свойства обновлены',
                 'data' => [
                     'attached' => $lastSyncData,
-                    'count' => count($lastSyncData)
-                ]
+                    'count' => count($lastSyncData),
+                ],
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления свойств: ' . $e->getMessage()
+                'message' => 'Ошибка обновления свойств: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -2145,15 +2140,15 @@ class ShopGoodsController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Товар успешно удален'
+                'message' => 'Товар успешно удален',
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
-            
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления товара: ' . $e->getMessage()
+                'message' => 'Ошибка удаления товара: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -2192,14 +2187,14 @@ class ShopGoodsController extends Controller
             'data.replace' => 'nullable|string',
             'data.start' => 'nullable|string',
             'data.end' => 'nullable|string',
-            'data.normalize_spaces' => 'nullable|boolean'
+            'data.normalize_spaces' => 'nullable|boolean',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -2215,48 +2210,48 @@ class ShopGoodsController extends Controller
             // Для массового удаления по меткам/поставщикам делаем прямые запросы
             if (in_array($action, ['clear_by_tags', 'clear_by_suppliers'])) {
                 $query = ShopGood::query();
-                
+
                 // Если пришли фильтры в data, используем их для поиска товаров
-                if (!empty($data)) {
+                if (! empty($data)) {
                     // Фильтр по категориям
-                    if (isset($data['categories']) && is_array($data['categories']) && !empty($data['categories'])) {
-                        $query->whereHas('categories', function($q) use ($data) {
+                    if (isset($data['categories']) && is_array($data['categories']) && ! empty($data['categories'])) {
+                        $query->whereHas('categories', function ($q) use ($data) {
                             $q->whereIn('shop_categories.id', $data['categories']);
                         });
                     }
-                    
+
                     // Фильтр по брендам
-                    if (isset($data['brands']) && is_array($data['brands']) && !empty($data['brands'])) {
-                        $query->whereHas('brands', function($q) use ($data) {
+                    if (isset($data['brands']) && is_array($data['brands']) && ! empty($data['brands'])) {
+                        $query->whereHas('brands', function ($q) use ($data) {
                             $q->whereIn('shop_brands.id', $data['brands']);
                         });
                     }
-                    
+
                     // Фильтр по лейблам
-                    if (isset($data['labels']) && is_array($data['labels']) && !empty($data['labels'])) {
+                    if (isset($data['labels']) && is_array($data['labels']) && ! empty($data['labels'])) {
                         $query->whereIn('label_id', $data['labels']);
                     }
-                    
+
                     // Фильтр по тегам
-                    if (isset($data['tags']) && is_array($data['tags']) && !empty($data['tags'])) {
-                        $query->whereHas('tags', function($q) use ($data) {
+                    if (isset($data['tags']) && is_array($data['tags']) && ! empty($data['tags'])) {
+                        $query->whereHas('tags', function ($q) use ($data) {
                             $q->whereIn('shop_tags.id', $data['tags']);
                         });
                     }
-                    
+
                     // Фильтр по поставщикам
-                    if (isset($data['suppliers']) && is_array($data['suppliers']) && !empty($data['suppliers'])) {
+                    if (isset($data['suppliers']) && is_array($data['suppliers']) && ! empty($data['suppliers'])) {
                         $includeVariations = isset($data['suppliers_include_variations']) && $data['suppliers_include_variations'];
-                        
+
                         if ($includeVariations) {
                             // Включаем товары с поставщиками И товары с вариациями с поставщиками
-                            $query->where(function($q) use ($data) {
+                            $query->where(function ($q) use ($data) {
                                 // Товары с выбранными поставщиками
                                 $q->whereIn('supplier', $data['suppliers'])
                                   // Или товары, у которых есть вариации с выбранными поставщиками
-                                  ->orWhereHas('variations', function($varQ) use ($data) {
-                                      $varQ->whereIn('supplier', $data['suppliers']);
-                                  });
+                                    ->orWhereHas('variations', function ($varQ) use ($data) {
+                                        $varQ->whereIn('supplier', $data['suppliers']);
+                                    });
                             });
                         } else {
                             // Только товары с поставщиками (без учета вариаций)
@@ -2265,79 +2260,81 @@ class ShopGoodsController extends Controller
                     }
                 } else {
                     // Если фильтров нет, используем переданные ID
-                    if (!empty($ids)) {
+                    if (! empty($ids)) {
                         $query->whereIn('id', $ids);
                     } else {
                         DB::rollBack();
+
                         return response()->json([
                             'success' => false,
-                            'message' => 'Не указаны ID товаров или фильтры для удаления'
+                            'message' => 'Не указаны ID товаров или фильтры для удаления',
                         ], 400);
                     }
                 }
-                
+
                 // Получаем ID товаров для удаления
                 $goodIds = $query->pluck('id')->toArray();
-                
+
                 // Для поставщиков также получаем ID вариаций с выбранными поставщиками
                 $variationIdsToDelete = [];
-                if ($action === 'clear_by_suppliers' && isset($data['suppliers']) && is_array($data['suppliers']) && !empty($data['suppliers'])) {
+                if ($action === 'clear_by_suppliers' && isset($data['suppliers']) && is_array($data['suppliers']) && ! empty($data['suppliers'])) {
                     // Получаем вариации с выбранными поставщиками (даже если основной товар не имеет этого поставщика)
                     $variationIdsToDelete = ShopGoodVariation::whereIn('supplier', $data['suppliers'])
                         ->pluck('id')
                         ->toArray();
                 }
-                
+
                 if (empty($goodIds) && empty($variationIdsToDelete)) {
                     DB::rollBack();
+
                     return response()->json([
                         'success' => false,
-                        'message' => 'Не найдено товаров или вариаций для удаления'
+                        'message' => 'Не найдено товаров или вариаций для удаления',
                     ], 404);
                 }
-                
+
                 // Удаляем вариации с выбранными поставщиками (если есть)
                 $variationsDeletedBySupplier = 0;
-                if (!empty($variationIdsToDelete)) {
+                if (! empty($variationIdsToDelete)) {
                     // Удаляем изображения этих вариаций
                     ShopGoodImage::whereIn('variation_id', $variationIdsToDelete)->delete();
                     // Удаляем вариации
                     $variationsDeletedBySupplier = ShopGoodVariation::whereIn('id', $variationIdsToDelete)->delete();
                 }
-                
+
                 // Удаляем вариации товаров, которые будут удалены
                 $variationsDeletedByGood = 0;
-                if (!empty($goodIds)) {
+                if (! empty($goodIds)) {
                     $variationsDeletedByGood = ShopGoodVariation::whereIn('good_id', $goodIds)->delete();
                 }
-                
+
                 // Удаляем изображения товаров и вариаций
-                if (!empty($goodIds)) {
+                if (! empty($goodIds)) {
                     ShopGoodImage::whereIn('good_id', $goodIds)->delete();
                 }
-                
+
                 // Удаляем товары
                 $deletedCount = 0;
-                if (!empty($goodIds)) {
+                if (! empty($goodIds)) {
                     $deletedCount = ShopGood::whereIn('id', $goodIds)->delete();
                 }
-                
+
                 $totalVariationsDeleted = $variationsDeletedBySupplier + $variationsDeletedByGood;
 
                 DB::commit();
 
-                $message = "";
+                $message = '';
                 if ($deletedCount > 0) {
                     $message .= "Удалено {$deletedCount} товаров";
                 }
                 if ($totalVariationsDeleted > 0) {
                     if ($message) {
-                        $message .= " и ";
+                        $message .= ' и ';
                     }
                     $message .= "{$totalVariationsDeleted} вариаций";
                 }
-                if (!$message) {
-                    $message = "Нечего удалять";
+                if (! $message) {
+                    $message = 'Нечего удалять';
                 }
 
                 return response()->json([
@@ -2346,7 +2343,7 @@ class ShopGoodsController extends Controller
                     'deleted_count' => $deletedCount,
                     'variations_deleted' => $totalVariationsDeleted,
                     'variations_deleted_by_supplier' => $variationsDeletedBySupplier,
-                    'variations_deleted_by_good' => $variationsDeletedByGood
+                    'variations_deleted_by_good' => $variationsDeletedByGood,
                 ]);
             }
 
@@ -2358,7 +2355,7 @@ class ShopGoodsController extends Controller
                 if (empty($variationIds)) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Не указаны ID вариаций для удаления'
+                        'message' => 'Не указаны ID вариаций для удаления',
                     ], 400);
                 }
 
@@ -2366,17 +2363,16 @@ class ShopGoodsController extends Controller
                 $variationsToDelete = ShopGoodVariation::whereIn('id', $variationIds)
                     ->whereIn('good_id', $ids) // Дополнительная проверка, что вариации принадлежат выбранным товарам
                     ->where('stock_quantity', 0)
-                    ->where(function($query) {
+                    ->where(function ($query) {
                         $query->whereNull('remote_stock_quantity')
-                              ->orWhere('remote_stock_quantity', 0);
+                            ->orWhere('remote_stock_quantity', 0);
                     })
-                    ->where(function($query) {
+                    ->where(function ($query) {
                         $query->whereNull('fast_remote_stock_quantity')
-                              ->orWhere('fast_remote_stock_quantity', 0);
+                            ->orWhere('fast_remote_stock_quantity', 0);
                     })
                     ->with(['images', 'good']) // Загружаем изображения и товар
                     ->get();
-
 
                 $deletedCount = 0;
                 $movedImagesCount = 0;
@@ -2434,7 +2430,7 @@ class ShopGoodsController extends Controller
                     'message' => $message,
                     'deleted_count' => $deletedCount,
                     'moved_images_count' => $movedImagesCount,
-                    'variation_ids' => $variationIds
+                    'variation_ids' => $variationIds,
                 ]);
             }
 
@@ -2443,7 +2439,7 @@ class ShopGoodsController extends Controller
             $deletedVariationsCount = 0; // Счетчик удаленных вариаций для delete_without_supplier
 
             foreach ($goods as $good) {
-                if (!$good) {
+                if (! $good) {
                     continue; // Пропускаем null товары
                 }
                 $oldValues = $good->toArray();
@@ -2452,9 +2448,10 @@ class ShopGoodsController extends Controller
                 if ($action === 'delete') {
                     $this->logAudit($good, 'bulk_deleted', $oldValues, null);
                     $good->delete();
+
                     continue;
                 }
-                
+
                 // Для удаления вариаций без поставщика (товары не удаляем, даже если у товара не останется вариаций)
                 if ($action === 'delete_without_supplier') {
                     // Удаляем только вариации без поставщика
@@ -2467,6 +2464,7 @@ class ShopGoodsController extends Controller
                             $deletedVariationsCount++;
                         }
                     }
+
                     // Явно убеждаемся, что товар не удаляется - просто продолжаем цикл
                     // Товар остается в базе данных, даже если у него не осталось вариаций
                     continue;
@@ -2487,7 +2485,7 @@ class ShopGoodsController extends Controller
                         break;
                     case 'update_categories':
                         $currentCategoryIds = $good->categories()->pluck('shop_categories.id')->toArray();
-                        
+
                         // Если установлен флаг очистки всех категорий
                         if (isset($data['clear_all']) && $data['clear_all']) {
                             $good->categories()->sync([]);
@@ -2496,7 +2494,7 @@ class ShopGoodsController extends Controller
                             if (isset($data['category_ids_to_remove']) && is_array($data['category_ids_to_remove'])) {
                                 $currentCategoryIds = array_diff($currentCategoryIds, $data['category_ids_to_remove']);
                             }
-                            
+
                             // Добавляем новые категории
                             if (isset($data['category_ids']) && is_array($data['category_ids'])) {
                                 $newCategoryIds = $data['category_ids'];
@@ -2505,13 +2503,13 @@ class ShopGoodsController extends Controller
                             } else {
                                 $allCategoryIds = $currentCategoryIds;
                             }
-                            
+
                             $good->categories()->sync($allCategoryIds);
                         }
                         break;
                     case 'update_brands':
                         $currentBrandIds = $good->brands()->pluck('shop_brands.id')->toArray();
-                        
+
                         // Если установлен флаг очистки всех брендов
                         if (isset($data['clear_all']) && $data['clear_all']) {
                             $good->brands()->sync([]);
@@ -2520,7 +2518,7 @@ class ShopGoodsController extends Controller
                             if (isset($data['brand_ids_to_remove']) && is_array($data['brand_ids_to_remove'])) {
                                 $currentBrandIds = array_diff($currentBrandIds, $data['brand_ids_to_remove']);
                             }
-                            
+
                             // Добавляем новые бренды
                             if (isset($data['brand_ids']) && is_array($data['brand_ids'])) {
                                 $newBrandIds = $data['brand_ids'];
@@ -2529,13 +2527,13 @@ class ShopGoodsController extends Controller
                             } else {
                                 $allBrandIds = $currentBrandIds;
                             }
-                            
+
                             $good->brands()->sync($allBrandIds);
                         }
                         break;
                     case 'update_tags':
                         $currentTagIds = $good->tags()->pluck('shop_tags.id')->toArray();
-                        
+
                         // Если установлен флаг очистки всех тегов
                         if (isset($data['clear_all']) && $data['clear_all']) {
                             $good->tags()->sync([]);
@@ -2544,7 +2542,7 @@ class ShopGoodsController extends Controller
                             if (isset($data['tag_ids_to_remove']) && is_array($data['tag_ids_to_remove'])) {
                                 $currentTagIds = array_diff($currentTagIds, $data['tag_ids_to_remove']);
                             }
-                            
+
                             // Добавляем новые теги
                             if (isset($data['tag_ids']) && is_array($data['tag_ids'])) {
                                 $newTagIds = $data['tag_ids'];
@@ -2553,7 +2551,7 @@ class ShopGoodsController extends Controller
                             } else {
                                 $allTagIds = $currentTagIds;
                             }
-                            
+
                             $good->tags()->sync($allTagIds);
                         }
                         break;
@@ -2561,7 +2559,7 @@ class ShopGoodsController extends Controller
                         $hasValueCol = Schema::hasColumn('shop_good_properties', 'value');
                         $hasShopValueIdCol = Schema::hasColumn('shop_good_properties', 'shop_property_value_id');
                         $hasVariationIdCol = Schema::hasColumn('shop_good_properties', 'variation_id');
-                        
+
                         // Получаем текущие свойства товара
                         $currentProperties = [];
                         $existingPropertiesQuery = DB::table('shop_good_properties')->where('good_id', $good->id);
@@ -2569,15 +2567,15 @@ class ShopGoodsController extends Controller
                             $existingPropertiesQuery->whereNull('variation_id');
                         }
                         $existingProperties = $existingPropertiesQuery->get();
-                        
+
                         foreach ($existingProperties as $existingProp) {
                             $currentProperties[] = [
                                 'property_id' => $existingProp->property_id,
                                 'shop_property_value_id' => $existingProp->shop_property_value_id ?? null,
-                                'value' => $existingProp->value ?? null
+                                'value' => $existingProp->value ?? null,
                             ];
                         }
-                        
+
                         // Если установлен флаг очистки всех свойств
                         if (isset($data['clear_all']) && $data['clear_all']) {
                             $deleteQuery = DB::table('shop_good_properties')->where('good_id', $good->id);
@@ -2593,34 +2591,36 @@ class ShopGoodsController extends Controller
                                     $removePropertyId = (int) $propertyToRemove['property_id'];
                                     $removeShopPropertyValueId = isset($propertyToRemove['shop_property_value_id']) ? (int) $propertyToRemove['shop_property_value_id'] : null;
                                     $removeValue = isset($propertyToRemove['value']) ? trim($propertyToRemove['value']) : null;
-                                    
-                                    $currentProperties = array_filter($currentProperties, function($prop) use ($removePropertyId, $removeShopPropertyValueId, $removeValue, $hasShopValueIdCol, $hasValueCol) {
+
+                                    $currentProperties = array_filter($currentProperties, function ($prop) use ($removePropertyId, $removeShopPropertyValueId, $removeValue, $hasShopValueIdCol, $hasValueCol) {
                                         if ($prop['property_id'] != $removePropertyId) {
                                             return true;
                                         }
-                                        
+
                                         if ($hasShopValueIdCol && $removeShopPropertyValueId !== null) {
                                             $propShopPropertyValueId = isset($prop['shop_property_value_id']) ? (int) $prop['shop_property_value_id'] : null;
+
                                             return $propShopPropertyValueId != $removeShopPropertyValueId;
                                         }
-                                        
+
                                         if ($hasValueCol && $removeValue !== null) {
                                             $propValue = trim($prop['value'] ?? '');
+
                                             return $propValue !== $removeValue;
                                         }
-                                        
+
                                         return true;
                                     });
                                 }
                             }
-                            
+
                             // Теперь удаляем свойства из базы данных, которых нет в отфильтрованном массиве
                             if (isset($data['properties_to_remove']) && is_array($data['properties_to_remove'])) {
                                 foreach ($data['properties_to_remove'] as $propertyToRemove) {
                                     $removePropertyId = (int) $propertyToRemove['property_id'];
                                     $removeShopPropertyValueId = isset($propertyToRemove['shop_property_value_id']) ? (int) $propertyToRemove['shop_property_value_id'] : null;
                                     $removeValue = isset($propertyToRemove['value']) ? trim($propertyToRemove['value']) : null;
-                                    
+
                                     // Проверяем, есть ли это свойство в отфильтрованном массиве
                                     $stillExists = false;
                                     foreach ($currentProperties as $existing) {
@@ -2644,31 +2644,31 @@ class ShopGoodsController extends Controller
                                             }
                                         }
                                     }
-                                    
+
                                     // Если свойство не найдено в отфильтрованном массиве, удаляем его из базы
-                                    if (!$stillExists) {
+                                    if (! $stillExists) {
                                         $deleteQuery = DB::table('shop_good_properties')
                                             ->where('good_id', $good->id)
                                             ->where('property_id', $removePropertyId);
-                                            
+
                                         if ($hasVariationIdCol) {
                                             $deleteQuery->whereNull('variation_id');
                                         }
-                                        
+
                                         if ($hasShopValueIdCol && $removeShopPropertyValueId !== null) {
                                             $deleteQuery->where('shop_property_value_id', $removeShopPropertyValueId);
                                         } elseif ($hasValueCol && $removeValue !== null) {
                                             $deleteQuery->where('value', $removeValue);
                                         }
-                                        
+
                                         $deleteQuery->delete();
                                     }
                                 }
                             }
                         }
-                        
+
                         // Добавляем новые свойства (если не установлен флаг очистки всех)
-                        if (!isset($data['clear_all']) || !$data['clear_all']) {
+                        if (! isset($data['clear_all']) || ! $data['clear_all']) {
                             if (isset($data['properties']) && is_array($data['properties'])) {
                                 $incoming = $data['properties'];
 
@@ -2706,11 +2706,11 @@ class ShopGoodsController extends Controller
                                     }
 
                                     // Если свойство с таким значением уже есть, пропускаем добавление
-                                    if (!$exists) {
+                                    if (! $exists) {
                                         // Добавляем свойство напрямую в базу данных
                                         $insertData = [
                                             'good_id' => $good->id,
-                                            'property_id' => $propertyId
+                                            'property_id' => $propertyId,
                                         ];
 
                                         if ($hasShopValueIdCol && $newShopPropertyValueId !== null) {
@@ -2739,7 +2739,7 @@ class ShopGoodsController extends Controller
                             $stockAction = $data['stock_action'];
                             $stockValue = (int) $data['stock_value'];
                             $currentStock = (int) $good->stock_quantity;
-                            
+
                             // Обновляем остаток основного товара
                             if ($stockAction === 'set') {
                                 $good->update(['stock_quantity' => $stockValue]);
@@ -2748,12 +2748,12 @@ class ShopGoodsController extends Controller
                             } elseif ($stockAction === 'subtract') {
                                 $good->update(['stock_quantity' => max(0, $currentStock - $stockValue)]);
                             }
-                            
+
                             // Также обновляем остатки всех вариаций товара
                             $variations = $good->variations()->get();
                             foreach ($variations as $variation) {
                                 $variationCurrentStock = (int) $variation->stock_quantity;
-                                
+
                                 if ($stockAction === 'set') {
                                     $variation->update(['stock_quantity' => $stockValue]);
                                 } elseif ($stockAction === 'add') {
@@ -2767,32 +2767,32 @@ class ShopGoodsController extends Controller
                     case 'update_remote_stock':
                         if (isset($data['remote_stock_quantity'])) {
                             $remoteStockValue = $data['remote_stock_quantity'];
-                            $remoteStockValueFormatted = ($remoteStockValue === '' || $remoteStockValue === null) ? null : (string)$remoteStockValue;
-                            
+                            $remoteStockValueFormatted = ($remoteStockValue === '' || $remoteStockValue === null) ? null : (string) $remoteStockValue;
+
                             // Обновляем остаток у/с основного товара
                             $good->update([
-                                'remote_stock_quantity' => $remoteStockValueFormatted
+                                'remote_stock_quantity' => $remoteStockValueFormatted,
                             ]);
-                            
+
                             // Также обновляем остатки у/с всех вариаций товара
                             $good->variations()->update([
-                                'remote_stock_quantity' => $remoteStockValueFormatted
+                                'remote_stock_quantity' => $remoteStockValueFormatted,
                             ]);
                         }
                         break;
                     case 'update_fast_remote_stock':
                         if (isset($data['fast_remote_stock_quantity'])) {
                             $fastRemoteStockValue = $data['fast_remote_stock_quantity'];
-                            $fastRemoteStockValueFormatted = ($fastRemoteStockValue === '' || $fastRemoteStockValue === null) ? null : (string)$fastRemoteStockValue;
-                            
+                            $fastRemoteStockValueFormatted = ($fastRemoteStockValue === '' || $fastRemoteStockValue === null) ? null : (string) $fastRemoteStockValue;
+
                             // Обновляем быстрый остаток у/с основного товара
                             $good->update([
-                                'fast_remote_stock_quantity' => $fastRemoteStockValueFormatted
+                                'fast_remote_stock_quantity' => $fastRemoteStockValueFormatted,
                             ]);
-                            
+
                             // Также обновляем быстрые остатки у/с всех вариаций товара
                             $good->variations()->update([
-                                'fast_remote_stock_quantity' => $fastRemoteStockValueFormatted
+                                'fast_remote_stock_quantity' => $fastRemoteStockValueFormatted,
                             ]);
                         }
                         break;
@@ -2802,7 +2802,7 @@ class ShopGoodsController extends Controller
                             $priceValue = (float) $data['price_value'];
                             $isPercent = isset($data['price_is_percent']) && $data['price_is_percent'];
                             $currentPrice = (float) $good->price;
-                            
+
                             if ($priceAction === 'set') {
                                 $good->update(['price' => max(0, $priceValue)]);
                             } elseif ($priceAction === 'add') {
@@ -2823,7 +2823,7 @@ class ShopGoodsController extends Controller
                     case 'update_sale_price':
                         if (isset($data['sale_price_action'])) {
                             $salePriceAction = $data['sale_price_action'];
-                            
+
                             // Очистка акционной цены
                             if ($salePriceAction === 'clear') {
                                 $good->update(['sale_price' => null]);
@@ -2832,7 +2832,7 @@ class ShopGoodsController extends Controller
                                 $isPercent = isset($data['sale_price_is_percent']) && $data['sale_price_is_percent'];
                                 $currentPrice = (float) $good->price;
                                 $currentSalePrice = $good->sale_price ? (float) $good->sale_price : 0;
-                                
+
                                 if ($salePriceAction === 'set') {
                                     $newSalePrice = max(0, $salePriceValue);
                                     // Проверяем, чтобы акционная цена была меньше базовой
@@ -2887,7 +2887,7 @@ class ShopGoodsController extends Controller
                     case 'update_demping_price':
                         if (isset($data['demping_price_action'])) {
                             $dempingPriceAction = $data['demping_price_action'];
-                            
+
                             // Очистка демпинговой цены
                             if ($dempingPriceAction === 'clear') {
                                 $good->update(['demping_price' => null]);
@@ -2896,7 +2896,7 @@ class ShopGoodsController extends Controller
                                 $isPercent = isset($data['demping_price_is_percent']) && $data['demping_price_is_percent'];
                                 $currentPrice = (float) $good->price;
                                 $currentDempingPrice = $good->demping_price ? (float) $good->demping_price : 0;
-                                
+
                                 if ($dempingPriceAction === 'set') {
                                     $newDempingPrice = max(0, $dempingPriceValue);
                                     $good->update(['demping_price' => $newDempingPrice]);
@@ -2971,7 +2971,7 @@ class ShopGoodsController extends Controller
                         if (isset($data['is_show'])) {
                             $updateData['is_show'] = (bool) $data['is_show'];
                         }
-                        if (!empty($updateData)) {
+                        if (! empty($updateData)) {
                             $good->update($updateData);
                         }
                         break;
@@ -2981,13 +2981,13 @@ class ShopGoodsController extends Controller
                         }
                         break;
                     case 'remove_after_symbol':
-                        if (isset($data['symbol']) && !empty($data['symbol'])) {
+                        if (isset($data['symbol']) && ! empty($data['symbol'])) {
                             $symbol = $data['symbol'];
                             $name = $good->name;
-                            
+
                             // Находим первое вхождение символа/сочетания
                             $position = mb_strpos($name, $symbol);
-                            
+
                             if ($position !== false) {
                                 // Удаляем символ и всё после него
                                 $newName = mb_substr($name, 0, $position);
@@ -3004,7 +3004,7 @@ class ShopGoodsController extends Controller
                         $start = $data['start'] ?? '';
                         $end = $data['end'] ?? '';
 
-                        if (!in_array($field, ['name', 'description', 'short_description'])) {
+                        if (! in_array($field, ['name', 'description', 'short_description'])) {
                             $field = 'name';
                         }
 
@@ -3012,7 +3012,7 @@ class ShopGoodsController extends Controller
                             $text = $good->name ?? '';
                             $newText = $text;
                             if ($mode === 'start_end' && $start !== '' && $end !== '') {
-                                $pattern = '/' . preg_quote($start, '/') . '.*?' . preg_quote($end, '/') . '/si';
+                                $pattern = '/'.preg_quote($start, '/').'.*?'.preg_quote($end, '/').'/si';
                                 $newText = preg_replace($pattern, $replace, $text);
                             } else {
                                 if ($search !== '' || $normalizeSpaces) {
@@ -3040,7 +3040,7 @@ class ShopGoodsController extends Controller
                             $text = $good->{$field} ?? '';
                             $newText = $text;
                             if ($mode === 'start_end' && $start !== '' && $end !== '') {
-                                $pattern = '/' . preg_quote($start, '/') . '.*?' . preg_quote($end, '/') . '/si';
+                                $pattern = '/'.preg_quote($start, '/').'.*?'.preg_quote($end, '/').'/si';
                                 $newText = preg_replace($pattern, $replace, $text);
                             } elseif ($search !== '') {
                                 $newText = str_ireplace($search, $replace, $text);
@@ -3065,7 +3065,7 @@ class ShopGoodsController extends Controller
                         if (isset($data['weight']) && $data['weight'] !== null && $data['weight'] !== '') {
                             $updateData['weight'] = (float) $data['weight']; // Вес может быть дробным
                         }
-                        if (!empty($updateData)) {
+                        if (! empty($updateData)) {
                             $good->update($updateData);
                         }
                         break;
@@ -3081,7 +3081,7 @@ class ShopGoodsController extends Controller
                             } elseif ($deleteType === 'variations') {
                                 // Удаляем изображения вариаций этого товара
                                 $variationIds = $good->variations()->pluck('id')->toArray();
-                                if (!empty($variationIds)) {
+                                if (! empty($variationIds)) {
                                     ShopGoodImage::whereIn('variation_id', $variationIds)->delete();
                                 }
                             } elseif ($deleteType === 'goods_and_variations') {
@@ -3089,7 +3089,7 @@ class ShopGoodsController extends Controller
                                 ShopGoodImage::where('good_id', $good->id)->delete();
 
                                 $variationIds = $good->variations()->pluck('id')->toArray();
-                                if (!empty($variationIds)) {
+                                if (! empty($variationIds)) {
                                     ShopGoodImage::whereIn('variation_id', $variationIds)->delete();
                                 }
                             }
@@ -3098,7 +3098,7 @@ class ShopGoodsController extends Controller
                 }
 
                 // Аудит для всех действий кроме delete (для delete уже создан выше)
-                $this->logAudit($good, 'bulk_' . $action, $oldValues, $good->fresh()->toArray());
+                $this->logAudit($good, 'bulk_'.$action, $oldValues, $good->fresh()->toArray());
             }
 
             DB::commit();
@@ -3106,7 +3106,7 @@ class ShopGoodsController extends Controller
             // Формируем сообщение в зависимости от действия
             $message = 'Массовое обновление выполнено успешно';
             $responseData = ['success' => true, 'message' => $message];
-            
+
             if ($action === 'delete_without_supplier') {
                 $message = "Удалено вариаций без поставщика: {$deletedVariationsCount}";
                 $responseData['message'] = $message;
@@ -3118,10 +3118,10 @@ class ShopGoodsController extends Controller
 
         } catch (\Exception $e) {
             DB::rollBack();
-            
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка массового обновления: ' . $e->getMessage()
+                'message' => 'Ошибка массового обновления: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -3145,13 +3145,13 @@ class ShopGoodsController extends Controller
         // Фильтр по названию (точное вхождение текста)
         if ($request->filled('name_search')) {
             $nameSearch = $request->get('name_search');
-            $query->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($nameSearch) . '%']);
+            $query->whereRaw('LOWER(name) LIKE ?', ['%'.mb_strtolower($nameSearch).'%']);
         }
 
         // Фильтр по артикулу (точное вхождение текста)
         if ($request->filled('sku_search')) {
             $skuSearch = $request->get('sku_search');
-            $query->whereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($skuSearch) . '%']);
+            $query->whereRaw('LOWER(sku) LIKE ?', ['%'.mb_strtolower($skuSearch).'%']);
         }
 
         // Фильтр по категории
@@ -3162,8 +3162,8 @@ class ShopGoodsController extends Controller
         // Фильтр по множественным категориям
         if ($request->has('categories')) {
             $categoryIds = $request->input('categories');
-            if (is_array($categoryIds) && !empty($categoryIds)) {
-                $query->whereHas('categories', function($q) use ($categoryIds) {
+            if (is_array($categoryIds) && ! empty($categoryIds)) {
+                $query->whereHas('categories', function ($q) use ($categoryIds) {
                     $q->whereIn('shop_categories.id', $categoryIds);
                 });
             }
@@ -3177,8 +3177,8 @@ class ShopGoodsController extends Controller
         // Фильтр по множественным брендам
         if ($request->has('brands')) {
             $brandIds = $request->input('brands');
-            if (is_array($brandIds) && !empty($brandIds)) {
-                $query->whereHas('brands', function($q) use ($brandIds) {
+            if (is_array($brandIds) && ! empty($brandIds)) {
+                $query->whereHas('brands', function ($q) use ($brandIds) {
                     $q->whereIn('shop_brands.id', $brandIds);
                 });
             }
@@ -3187,8 +3187,8 @@ class ShopGoodsController extends Controller
         // Фильтр по тегам
         if ($request->has('tags')) {
             $tagIds = $request->input('tags');
-            if (is_array($tagIds) && !empty($tagIds)) {
-                $query->whereHas('tags', function($q) use ($tagIds) {
+            if (is_array($tagIds) && ! empty($tagIds)) {
+                $query->whereHas('tags', function ($q) use ($tagIds) {
                     $q->whereIn('shop_tags.id', $tagIds);
                 });
             }
@@ -3197,8 +3197,8 @@ class ShopGoodsController extends Controller
         // Исключение тегов
         if ($request->has('exclude_tags')) {
             $excludeTagIds = $request->input('exclude_tags');
-            if (is_array($excludeTagIds) && !empty($excludeTagIds)) {
-                $query->whereDoesntHave('tags', function($q) use ($excludeTagIds) {
+            if (is_array($excludeTagIds) && ! empty($excludeTagIds)) {
+                $query->whereDoesntHave('tags', function ($q) use ($excludeTagIds) {
                     $q->whereIn('shop_tags.id', $excludeTagIds);
                 });
             }
@@ -3207,7 +3207,7 @@ class ShopGoodsController extends Controller
         // Фильтр по лейблам
         if ($request->has('labels')) {
             $labelIds = $request->input('labels');
-            if (is_array($labelIds) && !empty($labelIds)) {
+            if (is_array($labelIds) && ! empty($labelIds)) {
                 $query->whereIn('label_id', $labelIds);
             }
         }
@@ -3217,10 +3217,10 @@ class ShopGoodsController extends Controller
             $properties = $request->input('properties');
             if (is_array($properties)) {
                 foreach ($properties as $propertyId => $valueIds) {
-                    if (is_array($valueIds) && !empty($valueIds)) {
-                        $query->whereHas('properties', function($q) use ($propertyId, $valueIds) {
+                    if (is_array($valueIds) && ! empty($valueIds)) {
+                        $query->whereHas('properties', function ($q) use ($propertyId, $valueIds) {
                             $q->where('shop_properties.id', $propertyId)
-                              ->whereIn('shop_property_value_id', $valueIds);
+                                ->whereIn('shop_property_value_id', $valueIds);
                         });
                     }
                 }
@@ -3282,7 +3282,7 @@ class ShopGoodsController extends Controller
             $countType = $request->get('properties_count_type');
             if ($countType === 'exact' && $request->filled('properties_count')) {
                 $count = (int) $request->get('properties_count');
-                $query->whereHas('properties', function($q) use ($count) {
+                $query->whereHas('properties', function ($q) use ($count) {
                     $q->havingRaw('COUNT(*) = ?', [$count]);
                 }, '=', $count);
             }
@@ -3292,9 +3292,9 @@ class ShopGoodsController extends Controller
         if ($request->filled('sku_filter_type')) {
             $skuFilterType = $request->get('sku_filter_type');
             if ($skuFilterType === 'empty') {
-                $query->where(function($q) {
+                $query->where(function ($q) {
                     $q->whereNull('sku')
-                      ->orWhere('sku', '=', '');
+                        ->orWhere('sku', '=', '');
                 });
             }
         }
@@ -3403,12 +3403,12 @@ class ShopGoodsController extends Controller
         if ($request->has('variation_attribute_names')) {
             $attributeNames = $request->input('variation_attribute_names');
             // Обрабатываем как массив, так и строку
-            if (!is_array($attributeNames)) {
+            if (! is_array($attributeNames)) {
                 $attributeNames = [$attributeNames];
             }
-            if (!empty($attributeNames)) {
+            if (! empty($attributeNames)) {
                 // Фильтруем товары, у которых есть вариации с указанными атрибутами
-                $query->whereExists(function($subQuery) use ($attributeNames) {
+                $query->whereExists(function ($subQuery) use ($attributeNames) {
                     $subQuery->selectRaw('1')
                         ->from('shop_good_variations as v')
                         ->join('shop_variation_attributes_values as vav', 'v.id', '=', 'vav.variation_id')
@@ -3425,19 +3425,19 @@ class ShopGoodsController extends Controller
         if ($request->has('exclude_variation_attribute_names')) {
             $excludeAttributeNames = $request->input('exclude_variation_attribute_names');
             // Обрабатываем как массив, так и строку
-            if (!is_array($excludeAttributeNames)) {
+            if (! is_array($excludeAttributeNames)) {
                 $excludeAttributeNames = [$excludeAttributeNames];
             }
-            if (!empty($excludeAttributeNames)) {
+            if (! empty($excludeAttributeNames)) {
                 // Когда применяется фильтр "БЕЗ атрибутов", показываем ТОЛЬКО товары с вариациями,
                 // которые НЕ имеют указанные атрибуты
                 // Используем подзапрос для точного контроля
-                $query->whereExists(function($subQuery) {
+                $query->whereExists(function ($subQuery) {
                     $subQuery->selectRaw('1')
                         ->from('shop_good_variations')
                         ->whereColumn('good_id', 'shop_goods.id')
                         ->limit(1);
-                })->whereNotExists(function($subQuery) use ($excludeAttributeNames) {
+                })->whereNotExists(function ($subQuery) use ($excludeAttributeNames) {
                     $subQuery->selectRaw('1')
                         ->from('shop_good_variations as v')
                         ->join('shop_variation_attributes_values as vav', 'v.id', '=', 'vav.variation_id')
@@ -3456,10 +3456,10 @@ class ShopGoodsController extends Controller
      */
     public function filters(): JsonResponse
     {
-        $categories = ShopCategory::ordered()->with(['children' => function($query) {
+        $categories = ShopCategory::ordered()->with(['children' => function ($query) {
             $query->orderBy('sort_order', 'asc')
-                  ->orderBy('name', 'asc')
-                  ->select('id', 'name', 'parent_id');
+                ->orderBy('name', 'asc')
+                ->select('id', 'name', 'parent_id');
         }])->get(['id', 'name', 'parent_id']);
         $brands = ShopBrand::active()->ordered()->get(['id', 'name']);
         $tags = ShopTag::active()->ordered()->get(['id', 'name', 'color']);
@@ -3473,8 +3473,8 @@ class ShopGoodsController extends Controller
                 'brands' => $brands,
                 'tags' => $tags,
                 'labels' => $labels,
-                'properties' => $properties
-            ]
+                'properties' => $properties,
+            ],
         ]);
     }
 
@@ -3484,14 +3484,14 @@ class ShopGoodsController extends Controller
     public function createCategory(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255'
+            'name' => 'required|string|max:255',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -3499,19 +3499,19 @@ class ShopGoodsController extends Controller
             $category = ShopCategory::create([
                 'name' => $request->get('name'),
                 'is_active' => true,
-                'sort_order' => ShopCategory::max('sort_order') + 1
+                'sort_order' => ShopCategory::max('sort_order') + 1,
             ]);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Категория успешно создана',
-                'data' => $category
+                'data' => $category,
             ], 201);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания категории: ' . $e->getMessage()
+                'message' => 'Ошибка создания категории: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -3522,14 +3522,14 @@ class ShopGoodsController extends Controller
     public function createBrand(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255'
+            'name' => 'required|string|max:255',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -3537,19 +3537,19 @@ class ShopGoodsController extends Controller
             $brand = ShopBrand::create([
                 'name' => $request->get('name'),
                 'is_active' => true,
-                'sort_order' => ShopBrand::max('sort_order') + 1
+                'sort_order' => ShopBrand::max('sort_order') + 1,
             ]);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Бренд успешно создан',
-                'data' => $brand
+                'data' => $brand,
             ], 201);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания бренда: ' . $e->getMessage()
+                'message' => 'Ошибка создания бренда: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -3561,14 +3561,14 @@ class ShopGoodsController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
-            'color' => 'nullable|string|max:7|regex:/^#[0-9A-Fa-f]{6}$/'
+            'color' => 'nullable|string|max:7|regex:/^#[0-9A-Fa-f]{6}$/',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -3576,19 +3576,19 @@ class ShopGoodsController extends Controller
             $label = ShopLabel::create([
                 'name' => $request->get('name'),
                 'color' => $request->get('color', '#3B82F6'),
-                'sort_order' => ShopLabel::max('sort_order') + 1
+                'sort_order' => ShopLabel::max('sort_order') + 1,
             ]);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Лейбл успешно создан',
-                'data' => $label
+                'data' => $label,
             ], 201);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания лейбла: ' . $e->getMessage()
+                'message' => 'Ошибка создания лейбла: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -3605,14 +3605,14 @@ class ShopGoodsController extends Controller
             'naming' => 'string|in:original,hash',
             'resize' => 'string|in:no_change,crop_proportional,fit_with_white,fit_system,custom',
             'width' => 'nullable|integer|min:1',
-            'height' => 'nullable|integer|min:1'
+            'height' => 'nullable|integer|min:1',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -3625,12 +3625,11 @@ class ShopGoodsController extends Controller
             $width = $request->input('width');
             $height = $request->input('height');
 
-
             // Валидация URL
-            if (!filter_var($imageUrl, FILTER_VALIDATE_URL)) {
+            if (! filter_var($imageUrl, FILTER_VALIDATE_URL)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Неверный формат URL'
+                    'message' => 'Неверный формат URL',
                 ], 400);
             }
 
@@ -3638,11 +3637,11 @@ class ShopGoodsController extends Controller
             $imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'tiff', 'ico'];
             $urlPath = parse_url($imageUrl, PHP_URL_PATH);
             $extension = strtolower(pathinfo($urlPath, PATHINFO_EXTENSION));
-            
-            if (!in_array($extension, $imageExtensions)) {
+
+            if (! in_array($extension, $imageExtensions)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Неподдерживаемый формат изображения'
+                    'message' => 'Неподдерживаемый формат изображения',
                 ], 400);
             }
 
@@ -3650,22 +3649,22 @@ class ShopGoodsController extends Controller
             if ($naming === 'original') {
                 // Используем оригинальное имя файла
                 $originalName = pathinfo(parse_url($imageUrl, PHP_URL_PATH), PATHINFO_FILENAME);
-                $fileName = $originalName . '.' . $extension;
-                
+                $fileName = $originalName.'.'.$extension;
+
                 // Очищаем имя файла от недопустимых символов
                 $fileName = preg_replace('/[^a-zA-Z0-9._-]/', '_', $fileName);
             } else {
                 // Используем хеш
                 $hash = hash('sha256', $imageUrl);
-                $fileName = $hash . '.' . $extension;
+                $fileName = $hash.'.'.$extension;
             }
-            
+
             // Полный путь для сохранения
-            $fullPath = $storagePath . '/' . $fileName;
+            $fullPath = $storagePath.'/'.$fileName;
             // Получаем путь к фронтенду из FRONTEND_PATH в .env
             $frontendPublicPath = frontend_public_path();
-            $storageFullPath = $frontendPublicPath . '/' . ltrim($fullPath, '/');
-            
+            $storageFullPath = $frontendPublicPath.'/'.ltrim($fullPath, '/');
+
             // Проверяем, существует ли файл уже
             if (file_exists($storageFullPath)) {
                 return response()->json([
@@ -3673,38 +3672,38 @@ class ShopGoodsController extends Controller
                     'data' => [
                         'path' => $fullPath,
                         'originalUrl' => $imageUrl,
-                        'skipped' => true
-                    ]
+                        'skipped' => true,
+                    ],
                 ]);
             }
-            
+
             // Создаем директорию если не существует
             $directory = dirname($storageFullPath);
-            if (!\App\Helpers\StorageHelper::createDirectory($directory)) {
+            if (! \App\Helpers\StorageHelper::createDirectory($directory)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Не удалось создать директорию для изображения'
+                    'message' => 'Не удалось создать директорию для изображения',
                 ], 500);
             }
 
             // Скачиваем изображение с помощью cURL для обхода SSL проблем
-            
+
             $downloadResult = $this->downloadImageWithCurl($imageUrl);
-            
-            if (!$downloadResult['success']) {
+
+            if (! $downloadResult['success']) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Не удалось скачать изображение: ' . ($downloadResult['error'] ?: "HTTP {$downloadResult['http_code']}")
+                    'message' => 'Не удалось скачать изображение: '.($downloadResult['error'] ?: "HTTP {$downloadResult['http_code']}"),
                 ], 400);
             }
-            
+
             $imageData = $downloadResult['data'];
 
             // Проверка размера файла (максимум 30MB)
             if (strlen($imageData) > 30 * 1024 * 1024) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Файл слишком большой (максимум 30MB)'
+                    'message' => 'Файл слишком большой (максимум 30MB)',
                 ], 400);
             }
 
@@ -3713,7 +3712,7 @@ class ShopGoodsController extends Controller
             if ($saveResult === false) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Не удалось сохранить файл'
+                    'message' => 'Не удалось сохранить файл',
                 ], 500);
             }
 
@@ -3722,25 +3721,23 @@ class ShopGoodsController extends Controller
                 $this->processImage($storageFullPath, $resize, $width, $height);
             }
 
-
             return response()->json([
                 'success' => true,
                 'data' => [
                     'path' => $fullPath,
                     'originalUrl' => $imageUrl,
                     'size' => strlen($imageData),
-                    'optimized' => $optimize
-                ]
+                    'optimized' => $optimize,
+                ],
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка скачивания изображения: ' . $e->getMessage()
+                'message' => 'Ошибка скачивания изображения: '.$e->getMessage(),
             ], 500);
         }
     }
-
 
     /**
      * Пакетная загрузка изображений
@@ -3759,14 +3756,14 @@ class ShopGoodsController extends Controller
             'concurrency' => 'nullable|integer|min:1|max:20',
             'timeout' => 'nullable|integer|min:5|max:120',
             'connect_timeout' => 'nullable|integer|min:1|max:60',
-            'queue_post_process' => 'nullable|boolean'
+            'queue_post_process' => 'nullable|boolean',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -3774,24 +3771,28 @@ class ShopGoodsController extends Controller
             $imageUrls = $request->input('imageUrls');
             // Очищаем все URL от невалидных UTF-8 символов
             if (is_array($imageUrls)) {
-                $imageUrls = array_map(function($url) {
+                $imageUrls = array_map(function ($url) {
                     $url = mb_convert_encoding($url, 'UTF-8', 'UTF-8');
+
                     return preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $url);
                 }, $imageUrls);
             }
-            
+
             $storagePath = $request->input('storagePath', '/images/shop/goods'); // Исправляем путь по умолчанию
             $optimize = $request->input('optimize', true);
             $naming = $request->input('naming', 'hash');
             $resize = $request->input('resize', 'no_change');
             $width = $request->input('width');
             $height = $request->input('height');
-            $concurrency = (int)($request->input('concurrency', 8));
-            if ($concurrency < 1) $concurrency = 1;
-            if ($concurrency > 20) $concurrency = 20;
-            $timeout = (int)($request->input('timeout', 30));
-            $connectTimeout = (int)($request->input('connect_timeout', 10));
-
+            $concurrency = (int) ($request->input('concurrency', 8));
+            if ($concurrency < 1) {
+                $concurrency = 1;
+            }
+            if ($concurrency > 20) {
+                $concurrency = 20;
+            }
+            $timeout = (int) ($request->input('timeout', 30));
+            $connectTimeout = (int) ($request->input('connect_timeout', 10));
 
             $results = [];
             $errors = [];
@@ -3799,13 +3800,14 @@ class ShopGoodsController extends Controller
 
             // Предварительная подготовка: вычисляем имена файлов и пропускаем существующие, затем скачиваем параллельно
             $frontendPublicPath = frontend_public_path();
-            $cacheKey = 'imgdl_cache:' . md5($storagePath);
+            $cacheKey = 'imgdl_cache:'.md5($storagePath);
             $queue = [];
             foreach ($imageUrls as $index => $imageUrlRaw) {
                 $imageUrl = mb_convert_encoding($imageUrlRaw, 'UTF-8', 'UTF-8');
                 $imageUrl = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $imageUrl);
-                if (!filter_var($imageUrl, FILTER_VALIDATE_URL)) {
+                if (! filter_var($imageUrl, FILTER_VALIDATE_URL)) {
                     $errors[] = ['url' => $imageUrl, 'error' => 'Неверный формат URL'];
+
                     continue;
                 }
 
@@ -3814,10 +3816,11 @@ class ShopGoodsController extends Controller
                     $cached = Redis::hGet($cacheKey, $imageUrl);
                     if (is_string($cached) && $cached !== '') {
                         $cachedRelativePath = $cached;
-                        $cachedAbsolutePath = $frontendPublicPath . '/' . ltrim($cachedRelativePath, '/');
+                        $cachedAbsolutePath = $frontendPublicPath.'/'.ltrim($cachedRelativePath, '/');
                         if (file_exists($cachedAbsolutePath)) {
                             $results[$imageUrl] = $cachedRelativePath;
                             $skipped[] = $imageUrl;
+
                             continue;
                         }
                     }
@@ -3826,29 +3829,31 @@ class ShopGoodsController extends Controller
                 }
                 $urlPath = parse_url($imageUrl, PHP_URL_PATH);
                 $extension = strtolower(pathinfo($urlPath, PATHINFO_EXTENSION));
-                if (!$extension) {
+                if (! $extension) {
                     $extension = 'jpg';
                 }
                 if ($naming === 'original') {
                     $originalName = pathinfo($urlPath, PATHINFO_FILENAME);
                     $originalName = mb_convert_encoding($originalName, 'UTF-8', 'UTF-8');
                     $originalName = preg_replace('/[^\p{L}\p{N}._-]/u', '_', $originalName);
-                    $fileName = preg_replace('/[^a-zA-Z0-9._-]/', '_', $originalName) . '.' . $extension;
+                    $fileName = preg_replace('/[^a-zA-Z0-9._-]/', '_', $originalName).'.'.$extension;
                 } else {
-                    $hash = hash('sha256', $imageUrl . $index);
-                    $fileName = $hash . '.' . $extension;
+                    $hash = hash('sha256', $imageUrl.$index);
+                    $fileName = $hash.'.'.$extension;
                 }
-                $relativePath = rtrim($storagePath, '/') . '/' . $fileName;
-                $absolutePath = $frontendPublicPath . '/' . ltrim($relativePath, '/');
+                $relativePath = rtrim($storagePath, '/').'/'.$fileName;
+                $absolutePath = $frontendPublicPath.'/'.ltrim($relativePath, '/');
                 $normalizedAbsolutePath = realpath($absolutePath) ?: $absolutePath;
                 if (file_exists($normalizedAbsolutePath)) {
                     $results[$imageUrl] = $relativePath;
                     $skipped[] = $imageUrl;
+
                     continue;
                 }
                 $dir = dirname($normalizedAbsolutePath);
-                if (!\App\Helpers\StorageHelper::createDirectory($dir)) {
+                if (! \App\Helpers\StorageHelper::createDirectory($dir)) {
                     $errors[] = ['url' => $imageUrl, 'error' => 'Не удалось создать директорию для изображения'];
+
                     continue;
                 }
                 $queue[] = [
@@ -3856,7 +3861,7 @@ class ShopGoodsController extends Controller
                     'relativePath' => $relativePath,
                     'absolutePath' => $normalizedAbsolutePath,
                     'index' => $index,
-                    'extension' => $extension
+                    'extension' => $extension,
                 ];
             }
 
@@ -3866,7 +3871,8 @@ class ShopGoodsController extends Controller
                 foreach ($results as $url => $path) {
                     $cleanResults[mb_convert_encoding($url, 'UTF-8', 'UTF-8')] = mb_convert_encoding($path, 'UTF-8', 'UTF-8');
                 }
-                $cleanSkipped = array_map(fn($u) => mb_convert_encoding($u, 'UTF-8', 'UTF-8'), $skipped);
+                $cleanSkipped = array_map(fn ($u) => mb_convert_encoding($u, 'UTF-8', 'UTF-8'), $skipped);
+
                 return response()->json([
                     'success' => true,
                     'data' => [
@@ -3876,8 +3882,8 @@ class ShopGoodsController extends Controller
                         'total' => count($imageUrls),
                         'successful' => count($cleanResults),
                         'failed' => count($errors),
-                        'skipped_count' => count($cleanSkipped)
-                    ]
+                        'skipped_count' => count($cleanSkipped),
+                    ],
                 ], 200, [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             }
 
@@ -3905,7 +3911,7 @@ class ShopGoodsController extends Controller
             $active = null;
             $startedAt = microtime(true);
 
-            $createHandle = function($item) use ($timeout, $connectTimeout, $sh) {
+            $createHandle = function ($item) use ($timeout, $connectTimeout, $sh) {
                 $ch = curl_init();
                 $normalizedUrl = $this->normalizeImageUrl($item['url']);
                 curl_setopt($ch, CURLOPT_URL, $normalizedUrl);
@@ -3958,6 +3964,7 @@ class ShopGoodsController extends Controller
                 }
                 // Сохраняем метаданные для последующей обработки
                 curl_setopt($ch, CURLOPT_PRIVATE, json_encode($item));
+
                 return $ch;
             };
 
@@ -3968,7 +3975,7 @@ class ShopGoodsController extends Controller
             for (; $nextIndex < $totalToDownload && count($handles) < $concurrency; $nextIndex++) {
                 $item = $queue[$nextIndex];
                 $ch = $createHandle($item);
-                $handles[(int)$ch] = $ch;
+                $handles[(int) $ch] = $ch;
                 curl_multi_add_handle($mh, $ch);
             }
 
@@ -4003,30 +4010,30 @@ class ShopGoodsController extends Controller
 
                     curl_multi_remove_handle($mh, $ch);
                     curl_close($ch);
-                    unset($handles[(int)$ch]);
+                    unset($handles[(int) $ch]);
 
                     $originalUrl = mb_convert_encoding($item['url'] ?? '', 'UTF-8', 'UTF-8');
 
                     if ($content === false || $httpCode !== 200) {
                         $errors[] = [
                             'url' => $originalUrl,
-                            'error' => $error ? mb_convert_encoding($error, 'UTF-8', 'UTF-8') : "HTTP {$httpCode}"
+                            'error' => $error ? mb_convert_encoding($error, 'UTF-8', 'UTF-8') : "HTTP {$httpCode}",
                         ];
                     } else {
                         if (strlen($content) > 30 * 1024 * 1024) {
                             $errors[] = [
                                 'url' => $originalUrl,
-                                'error' => 'Файл слишком большой (максимум 30MB)'
+                                'error' => 'Файл слишком большой (максимум 30MB)',
                             ];
                         } else {
                             $mimeType = $this->getMimeTypeFromData($content);
                             $allowedMimeTypes = [
-                                'image/jpeg','image/jpg','image/png','image/gif','image/webp','image/bmp','image/svg+xml','image/tiff','image/x-icon'
+                                'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/bmp', 'image/svg+xml', 'image/tiff', 'image/x-icon',
                             ];
-                            if (!in_array($mimeType, $allowedMimeTypes)) {
+                            if (! in_array($mimeType, $allowedMimeTypes)) {
                                 $errors[] = [
                                     'url' => $originalUrl,
-                                    'error' => 'Скачанный контент не является изображением (MIME: ' . $mimeType . ')'
+                                    'error' => 'Скачанный контент не является изображением (MIME: '.$mimeType.')',
                                 ];
                             } else {
                                 file_put_contents($item['absolutePath'], $content);
@@ -4051,7 +4058,7 @@ class ShopGoodsController extends Controller
                     if ($nextIndex < $totalToDownload) {
                         $nextItem = $queue[$nextIndex++];
                         $chNext = $createHandle($nextItem);
-                        $handles[(int)$chNext] = $chNext;
+                        $handles[(int) $chNext] = $chNext;
                         curl_multi_add_handle($mh, $chNext);
                     }
                 }
@@ -4059,7 +4066,7 @@ class ShopGoodsController extends Controller
                 if ($active) {
                     curl_multi_select($mh, 0.5);
                 }
-            } while ($active || !empty($handles));
+            } while ($active || ! empty($handles));
 
             curl_multi_close($mh);
             if ($sh && function_exists('curl_share_close')) {
@@ -4073,11 +4080,12 @@ class ShopGoodsController extends Controller
                 $cleanPath = mb_convert_encoding($path, 'UTF-8', 'UTF-8');
                 $cleanResults[$cleanUrl] = $cleanPath;
             }
-            
-            $cleanSkipped = array_map(function($url) {
+
+            $cleanSkipped = array_map(function ($url) {
                 return mb_convert_encoding($url, 'UTF-8', 'UTF-8');
             }, $skipped);
             $durationMs = (int) round((microtime(true) - $startedAt) * 1000);
+
             return response()->json([
                 'success' => true,
                 'data' => [
@@ -4093,9 +4101,9 @@ class ShopGoodsController extends Controller
                         'concurrency_used' => $concurrency,
                         'timeout_s' => $timeout,
                         'connect_timeout_s' => $connectTimeout,
-                        'to_download' => $totalToDownload
-                    ]
-                ]
+                        'to_download' => $totalToDownload,
+                    ],
+                ],
             ], 200, [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
         } catch (\Exception $e) {
@@ -4103,10 +4111,10 @@ class ShopGoodsController extends Controller
             $errorMessage = $e->getMessage();
             $errorMessage = mb_convert_encoding($errorMessage, 'UTF-8', 'UTF-8');
             $errorMessage = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $errorMessage); // Удаляем управляющие символы
-            
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка пакетной загрузки изображений: ' . $errorMessage
+                'message' => 'Ошибка пакетной загрузки изображений: '.$errorMessage,
             ], 500);
         }
     }
@@ -4124,13 +4132,13 @@ class ShopGoodsController extends Controller
             'height' => 'nullable|integer|min:1',
             'concurrency' => 'nullable|integer|min:1|max:20',
             'timeout' => 'nullable|integer|min:5|max:120',
-            'connect_timeout' => 'nullable|integer|min:1|max:60'
+            'connect_timeout' => 'nullable|integer|min:1|max:60',
         ]);
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
         $taskId = (string) Str::uuid();
@@ -4160,9 +4168,10 @@ class ShopGoodsController extends Controller
         ]);
         Redis::expire($metaKey, 172800);
         ImageDownloadTaskJob::dispatch($taskId, $imageUrls, $storagePath, $options);
+
         return response()->json([
             'success' => true,
-            'data' => ['task_id' => $taskId]
+            'data' => ['task_id' => $taskId],
         ]);
     }
 
@@ -4173,20 +4182,21 @@ class ShopGoodsController extends Controller
         $recentKey = "imgdl:$taskId:recent";
         $pathsKey = "imgdl:$taskId:paths";
         $meta = Redis::hGetAll($metaKey);
-        if (!$meta) {
+        if (! $meta) {
             return response()->json([
                 'success' => false,
-                'message' => 'task_not_found'
+                'message' => 'task_not_found',
             ], 404);
         }
         $errors = Redis::lrange($errorsKey, -50, -1) ?: [];
         $recent = Redis::lrange($recentKey, -50, -1) ?: [];
         $progressPct = 0;
-        $total = (int)($meta['total'] ?? 0);
-        $processed = (int)($meta['success'] ?? 0) + (int)($meta['failed'] ?? 0) + (int)($meta['skipped'] ?? 0);
+        $total = (int) ($meta['total'] ?? 0);
+        $processed = (int) ($meta['success'] ?? 0) + (int) ($meta['failed'] ?? 0) + (int) ($meta['skipped'] ?? 0);
         if ($total > 0) {
             $progressPct = (int) round($processed * 100 / $total);
         }
+
         return response()->json([
             'success' => true,
             'data' => [
@@ -4198,7 +4208,7 @@ class ShopGoodsController extends Controller
                 'errors' => array_map(function ($v) {
                     return json_decode($v, true);
                 }, $errors),
-            ]
+            ],
         ]);
     }
 
@@ -4207,15 +4217,16 @@ class ShopGoodsController extends Controller
         $pathsKey = "imgdl:$taskId:paths";
         $metaKey = "imgdl:$taskId:meta";
         $exists = Redis::hGetAll($metaKey);
-        if (!$exists) {
+        if (! $exists) {
             return response()->json(['success' => false, 'message' => 'task_not_found'], 404);
         }
         $paths = Redis::hGetAll($pathsKey) ?: [];
+
         return response()->json([
             'success' => true,
             'data' => [
-                'paths' => $paths
-            ]
+                'paths' => $paths,
+            ],
         ]);
     }
 
@@ -4229,14 +4240,14 @@ class ShopGoodsController extends Controller
             'path' => 'required|string',
             'resize' => 'string|in:no_change,crop_proportional,fit_with_white,fit_system,custom',
             'width' => 'nullable|integer|min:1',
-            'height' => 'nullable|integer|min:1'
+            'height' => 'nullable|integer|min:1',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -4249,11 +4260,11 @@ class ShopGoodsController extends Controller
 
             // Путь для сохранения на фронтенд (из FRONTEND_PATH в .env)
             $frontendPublicPath = frontend_public_path();
-            $fullPath = $frontendPublicPath . '/' . ltrim($path, '/');
+            $fullPath = $frontendPublicPath.'/'.ltrim($path, '/');
             $dir = dirname($fullPath);
 
             // Создаем директорию если не существует
-            if (!is_dir($dir)) {
+            if (! is_dir($dir)) {
                 mkdir($dir, 0755, true);
             }
 
@@ -4265,24 +4276,22 @@ class ShopGoodsController extends Controller
                 $this->resizeImageFile($fullPath, $width, $height, $resize);
             }
 
-
             return response()->json([
                 'success' => true,
                 'data' => [
                     'path' => $path,
-                    'size' => filesize($fullPath)
-                ]
+                    'size' => filesize($fullPath),
+                ],
             ]);
 
         } catch (\Exception $e) {
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка сохранения изображения: ' . $e->getMessage()
+                'message' => 'Ошибка сохранения изображения: '.$e->getMessage(),
             ], 500);
         }
     }
-
 
     /**
      * Загрузка одного изображения (вспомогательный метод для пакетной загрузки)
@@ -4293,15 +4302,15 @@ class ShopGoodsController extends Controller
             // Очищаем URL от невалидных UTF-8 символов перед обработкой
             $imageUrl = mb_convert_encoding($imageUrl, 'UTF-8', 'UTF-8');
             $imageUrl = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $imageUrl); // Удаляем управляющие символы
-            
+
             // Валидация URL
-            if (!filter_var($imageUrl, FILTER_VALIDATE_URL)) {
+            if (! filter_var($imageUrl, FILTER_VALIDATE_URL)) {
                 $cleanUrl = mb_convert_encoding($imageUrl, 'UTF-8', 'UTF-8');
-                
+
                 return [
                     'success' => false,
                     'originalUrl' => $cleanUrl,
-                    'error' => 'Неверный формат URL'
+                    'error' => 'Неверный формат URL',
                 ];
             }
 
@@ -4309,14 +4318,14 @@ class ShopGoodsController extends Controller
             $imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'tiff', 'ico'];
             $urlPath = parse_url($imageUrl, PHP_URL_PATH);
             $extension = strtolower(pathinfo($urlPath, PATHINFO_EXTENSION));
-            
-            if (!in_array($extension, $imageExtensions)) {
+
+            if (! in_array($extension, $imageExtensions)) {
                 $cleanUrl = mb_convert_encoding($imageUrl, 'UTF-8', 'UTF-8');
-                
+
                 return [
                     'success' => false,
                     'originalUrl' => $cleanUrl,
-                    'error' => 'Неподдерживаемый формат изображения'
+                    'error' => 'Неподдерживаемый формат изображения',
                 ];
             }
 
@@ -4327,21 +4336,21 @@ class ShopGoodsController extends Controller
                 // Очищаем от невалидных UTF-8 символов
                 $originalName = mb_convert_encoding($originalName, 'UTF-8', 'UTF-8');
                 $originalName = preg_replace('/[^\p{L}\p{N}._-]/u', '_', $originalName);
-                $fileName = $originalName . '.' . $extension;
+                $fileName = $originalName.'.'.$extension;
                 // Дополнительная очистка для безопасности
                 $fileName = preg_replace('/[^a-zA-Z0-9._-]/', '_', $fileName);
             } else {
-                $hash = hash('sha256', $imageUrl . $index); // Добавляем индекс для уникальности
-                $fileName = $hash . '.' . $extension;
+                $hash = hash('sha256', $imageUrl.$index); // Добавляем индекс для уникальности
+                $fileName = $hash.'.'.$extension;
             }
-            
+
             // Полный путь для сохранения на фронтенд
-            $fullPath = $storagePath . '/' . $fileName;
+            $fullPath = $storagePath.'/'.$fileName;
             // Получаем путь к фронтенду из FRONTEND_PATH в .env
             $frontendPublicPath = frontend_public_path();
-            $storageFullPath = $frontendPublicPath . '/' . ltrim($fullPath, '/');
+            $storageFullPath = $frontendPublicPath.'/'.ltrim($fullPath, '/');
             $normalizedStorageFullPath = realpath($storageFullPath) ?: $storageFullPath;
-            
+
             // Проверяем, существует ли файл уже (до скачивания, чтобы не тратить время)
             if (file_exists($normalizedStorageFullPath)) {
                 $cleanUrl = mb_convert_encoding($imageUrl, 'UTF-8', 'UTF-8');
@@ -4351,43 +4360,43 @@ class ShopGoodsController extends Controller
                     'success' => true,
                     'originalUrl' => $cleanUrl,
                     'path' => $cleanPath,
-                    'skipped' => true // Флаг, что файл был пропущен (уже существовал)
+                    'skipped' => true, // Флаг, что файл был пропущен (уже существовал)
                 ];
             }
-            
+
             // Создаем директорию если не существует
             $directory = dirname($normalizedStorageFullPath);
-            if (!\App\Helpers\StorageHelper::createDirectory($directory)) {
+            if (! \App\Helpers\StorageHelper::createDirectory($directory)) {
                 $cleanUrl = mb_convert_encoding($imageUrl, 'UTF-8', 'UTF-8');
-                
+
                 return [
                     'success' => false,
                     'originalUrl' => $cleanUrl,
-                    'error' => 'Не удалось создать директорию для изображения'
+                    'error' => 'Не удалось создать директорию для изображения',
                 ];
             }
 
             // Нормализуем URL перед скачиванием
             $normalizedImageUrl = $this->normalizeImageUrl($imageUrl);
-            
+
             // Скачиваем изображение с помощью cURL для обхода SSL проблем
             $downloadResult = $this->downloadImageWithCurl($normalizedImageUrl);
-            
-            if (!$downloadResult['success']) {
+
+            if (! $downloadResult['success']) {
                 // Очищаем сообщение об ошибке от невалидных UTF-8 символов
                 $errorMsg = $downloadResult['error'] ?: "HTTP {$downloadResult['http_code']}";
                 $errorMsg = mb_convert_encoding($errorMsg, 'UTF-8', 'UTF-8');
                 $errorMsg = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $errorMsg);
-                
+
                 $cleanUrl = mb_convert_encoding($imageUrl, 'UTF-8', 'UTF-8');
-                
+
                 return [
                     'success' => false,
                     'originalUrl' => $cleanUrl,
-                    'error' => 'Не удалось скачать изображение: ' . $errorMsg
+                    'error' => 'Не удалось скачать изображение: '.$errorMsg,
                 ];
             }
-            
+
             $imageData = $downloadResult['data'];
 
             // Проверка размера файла (максимум 30MB)
@@ -4397,7 +4406,7 @@ class ShopGoodsController extends Controller
                 return [
                     'success' => false,
                     'originalUrl' => $cleanUrl,
-                    'error' => 'Файл слишком большой (максимум 30MB)'
+                    'error' => 'Файл слишком большой (максимум 30MB)',
                 ];
             }
 
@@ -4412,16 +4421,16 @@ class ShopGoodsController extends Controller
                 'image/bmp',
                 'image/svg+xml',
                 'image/tiff',
-                'image/x-icon'
+                'image/x-icon',
             ];
 
-            if (!in_array($mimeType, $allowedMimeTypes)) {
+            if (! in_array($mimeType, $allowedMimeTypes)) {
                 $cleanUrl = mb_convert_encoding($imageUrl, 'UTF-8', 'UTF-8');
 
                 return [
                     'success' => false,
                     'originalUrl' => $cleanUrl,
-                    'error' => 'Скачанный контент не является изображением (MIME: ' . $mimeType . ')'
+                    'error' => 'Скачанный контент не является изображением (MIME: '.$mimeType.')',
                 ];
             }
 
@@ -4436,12 +4445,12 @@ class ShopGoodsController extends Controller
             // Очищаем URL и путь от невалидных UTF-8 символов перед возвратом
             $cleanUrl = mb_convert_encoding($imageUrl, 'UTF-8', 'UTF-8');
             $cleanPath = mb_convert_encoding($fullPath, 'UTF-8', 'UTF-8');
-            
+
             return [
                 'success' => true,
                 'originalUrl' => $cleanUrl,
                 'path' => $cleanPath,
-                'skipped' => false // Файл был загружен (не существовал ранее)
+                'skipped' => false, // Файл был загружен (не существовал ранее)
             ];
 
         } catch (\Exception $e) {
@@ -4449,14 +4458,15 @@ class ShopGoodsController extends Controller
             $errorMessage = $e->getMessage();
             $errorMessage = mb_convert_encoding($errorMessage, 'UTF-8', 'UTF-8');
             $errorMessage = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $errorMessage); // Удаляем управляющие символы
-            
+
             $cleanUrl = mb_convert_encoding($imageUrl, 'UTF-8', 'UTF-8');
-            
+
             \Log::error("downloadSingleImage error: {$cleanUrl} - {$errorMessage}");
+
             return [
                 'success' => false,
                 'originalUrl' => $cleanUrl,
-                'error' => 'Ошибка: ' . $errorMessage
+                'error' => 'Ошибка: '.$errorMessage,
             ];
         }
     }
@@ -4468,19 +4478,19 @@ class ShopGoodsController extends Controller
     {
         try {
             $imageInfo = getimagesize($filePath);
-            if (!$imageInfo) {
+            if (! $imageInfo) {
                 return;
             }
 
             $width = $imageInfo[0];
             $height = $imageInfo[1];
             $mimeType = $imageInfo['mime'];
-            
+
             // Если изображение слишком большое, уменьшаем его
             if ($width > 2000 || $height > 2000) {
                 $newWidth = $width > $height ? 2000 : intval(2000 * $width / $height);
                 $newHeight = $height > $width ? 2000 : intval(2000 * $height / $width);
-                
+
                 // Создаем новое изображение
                 $sourceImage = null;
                 switch ($mimeType) {
@@ -4497,10 +4507,10 @@ class ShopGoodsController extends Controller
                         $sourceImage = imagecreatefromwebp($filePath);
                         break;
                 }
-                
+
                 if ($sourceImage) {
                     $resizedImage = imagecreatetruecolor($newWidth, $newHeight);
-                    
+
                     // Сохраняем прозрачность для PNG
                     if ($mimeType === 'image/png') {
                         imagealphablending($resizedImage, false);
@@ -4508,9 +4518,9 @@ class ShopGoodsController extends Controller
                         $transparent = imagecolorallocatealpha($resizedImage, 255, 255, 255, 127);
                         imagefilledrectangle($resizedImage, 0, 0, $newWidth, $newHeight, $transparent);
                     }
-                    
+
                     imagecopyresampled($resizedImage, $sourceImage, 0, 0, 0, 0, $newWidth, $newHeight, $width, $height);
-                    
+
                     // Сохраняем оптимизированное изображение
                     switch ($mimeType) {
                         case 'image/jpeg':
@@ -4526,7 +4536,7 @@ class ShopGoodsController extends Controller
                             imagewebp($resizedImage, $filePath, 85); // 85% качество
                             break;
                     }
-                    
+
                     imagedestroy($sourceImage);
                     imagedestroy($resizedImage);
                 }
@@ -4543,7 +4553,7 @@ class ShopGoodsController extends Controller
     {
         // Нормализуем URL перед использованием в cURL
         $normalizedUrl = $this->normalizeImageUrl($imageUrl);
-        
+
         // Сначала пробуем cURL с агрессивными настройками SSL
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $normalizedUrl);
@@ -4551,20 +4561,20 @@ class ShopGoodsController extends Controller
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, 30);
         curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
-        
+
         // Агрессивные настройки SSL для обхода проблем с DH ключом
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
         curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
         curl_setopt($ch, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
         curl_setopt($ch, CURLOPT_SSL_CIPHER_LIST, 'DEFAULT@SECLEVEL=0');
         curl_setopt($ch, CURLOPT_SSL_OPTIONS, CURLSSLOPT_ALLOW_BEAST | CURLSSLOPT_NO_REVOKE);
-        
+
         // Дополнительные настройки для обхода проблем с SSL
         curl_setopt($ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
         curl_setopt($ch, CURLOPT_TCP_KEEPALIVE, 1);
         curl_setopt($ch, CURLOPT_TCP_KEEPIDLE, 10);
         curl_setopt($ch, CURLOPT_TCP_KEEPINTVL, 1);
-        
+
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             'Accept: image/*,*/*;q=0.8',
             'Accept-Language: en-US,en;q=0.5',
@@ -4572,23 +4582,23 @@ class ShopGoodsController extends Controller
             'Connection: keep-alive',
             'Cache-Control: no-cache',
         ]);
-        
+
         $imageData = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $error = curl_error($ch);
         curl_close($ch);
-        
+
         // Если cURL не сработал из-за SSL проблем, пробуем wget
         if ($imageData === false || $httpCode !== 200) {
-            
+
             return $this->downloadImageWithWget($imageUrl);
         }
-        
+
         return [
             'data' => $imageData,
             'http_code' => $httpCode,
             'error' => $error,
-            'success' => $imageData !== false && $httpCode === 200
+            'success' => $imageData !== false && $httpCode === 200,
         ];
     }
 
@@ -4598,48 +4608,46 @@ class ShopGoodsController extends Controller
     private function downloadImageWithWget($imageUrl)
     {
         $tempFile = tempnam(sys_get_temp_dir(), 'image_download_');
-        
+
         try {
             // Нормализуем URL перед передачей в wget
             // Используем функцию normalizeImageUrl, которая делает многократное декодирование
             $normalizedUrl = $this->normalizeImageUrl($imageUrl);
-            
+
             // Используем wget с отключенной проверкой SSL
-            $wgetCommand = "wget --no-check-certificate --timeout=30 --tries=1 -O '{$tempFile}' " . escapeshellarg($normalizedUrl) . " 2>&1";
+            $wgetCommand = "wget --no-check-certificate --timeout=30 --tries=1 -O '{$tempFile}' ".escapeshellarg($normalizedUrl).' 2>&1';
             $output = shell_exec($wgetCommand);
-            
+
             if (file_exists($tempFile) && filesize($tempFile) > 0) {
                 $imageData = file_get_contents($tempFile);
                 unlink($tempFile);
-                
-                
+
                 return [
                     'data' => $imageData,
                     'http_code' => 200,
                     'error' => null,
-                    'success' => true
+                    'success' => true,
                 ];
             } else {
                 unlink($tempFile);
-                
+
                 return [
                     'data' => false,
                     'http_code' => 0,
-                    'error' => 'wget failed: ' . $output,
-                    'success' => false
+                    'error' => 'wget failed: '.$output,
+                    'success' => false,
                 ];
             }
         } catch (\Exception $e) {
             if (file_exists($tempFile)) {
                 unlink($tempFile);
             }
-            
-            
+
             return [
                 'data' => false,
                 'http_code' => 0,
-                'error' => 'wget exception: ' . $e->getMessage(),
-                'success' => false
+                'error' => 'wget exception: '.$e->getMessage(),
+                'success' => false,
             ];
         }
     }
@@ -4652,6 +4660,7 @@ class ShopGoodsController extends Controller
         $finfo = finfo_open(FILEINFO_MIME_TYPE);
         $mimeType = finfo_buffer($finfo, $data);
         finfo_close($finfo);
+
         return $mimeType;
     }
 
@@ -4663,27 +4672,27 @@ class ShopGoodsController extends Controller
         if (empty($url)) {
             return $url;
         }
-        
+
         try {
             // Парсим URL
             $parsed = parse_url($url);
-            
-            if (!$parsed || !isset($parsed['scheme']) || !isset($parsed['host'])) {
+
+            if (! $parsed || ! isset($parsed['scheme']) || ! isset($parsed['host'])) {
                 return $url; // Если не удалось распарсить, возвращаем как есть
             }
-            
+
             // Многократное декодирование пути для исправления двойного/тройного кодирования
             $path = isset($parsed['path']) ? $parsed['path'] : '';
             $previousPath = '';
             $decodeAttempts = 0;
             $maxDecodeAttempts = 5;
-            
+
             while ($decodeAttempts < $maxDecodeAttempts && $path !== $previousPath) {
                 $previousPath = $path;
                 $path = urldecode($path);
                 $decodeAttempts++;
             }
-            
+
             // Нормализуем Unicode символы (NFD -> NFC)
             // Это исправляет проблемы с комбинирующими диакритическими знаками (например, ĭ)
             if (class_exists('Normalizer') && method_exists('Normalizer', 'normalize')) {
@@ -4691,35 +4700,36 @@ class ShopGoodsController extends Controller
             } elseif (function_exists('normalizer_normalize')) {
                 $path = normalizer_normalize($path, \Normalizer::FORM_C);
             }
-            
+
             // Правильно кодируем путь заново
             $pathParts = explode('/', $path);
-            $encodedParts = array_map(function($part) {
+            $encodedParts = array_map(function ($part) {
                 if (empty($part)) {
                     return $part;
                 }
+
                 // Кодируем каждый компонент пути отдельно
                 return rawurlencode($part);
             }, $pathParts);
-            
+
             $encodedPath = implode('/', $encodedParts);
-            
+
             // Восстанавливаем двоеточие в пути (оно должно быть закодировано как %3A)
             $encodedPath = str_replace(':', '%3A', $encodedPath);
-            
+
             // Собираем URL обратно
-            $normalized = $parsed['scheme'] . '://' . $parsed['host'];
+            $normalized = $parsed['scheme'].'://'.$parsed['host'];
             if (isset($parsed['port'])) {
-                $normalized .= ':' . $parsed['port'];
+                $normalized .= ':'.$parsed['port'];
             }
             $normalized .= $encodedPath;
             if (isset($parsed['query'])) {
-                $normalized .= '?' . $parsed['query'];
+                $normalized .= '?'.$parsed['query'];
             }
             if (isset($parsed['fragment'])) {
-                $normalized .= '#' . $parsed['fragment'];
+                $normalized .= '#'.$parsed['fragment'];
             }
-            
+
             return $normalized;
         } catch (\Exception $e) {
             // Если нормализация не удалась, возвращаем исходный URL
@@ -4734,26 +4744,27 @@ class ShopGoodsController extends Controller
     {
         try {
             $imageInfo = getimagesize($filePath);
-            if (!$imageInfo) {
+            if (! $imageInfo) {
                 return;
             }
 
             $originalWidth = $imageInfo[0];
             $originalHeight = $imageInfo[1];
             $mimeType = $imageInfo['mime'];
-            
+
             // Если размеры не заданы, используем оригинальные
-            if (!$width || !$height) {
+            if (! $width || ! $height) {
                 $width = $originalWidth;
                 $height = $originalHeight;
             }
-            
+
             // Если не нужно изменять размер
             if ($resize === 'no_change') {
                 $this->optimizeImage($filePath);
+
                 return;
             }
-            
+
             // Создаем исходное изображение
             $sourceImage = null;
             switch ($mimeType) {
@@ -4770,13 +4781,13 @@ class ShopGoodsController extends Controller
                     $sourceImage = imagecreatefromwebp($filePath);
                     break;
             }
-            
-            if (!$sourceImage) {
+
+            if (! $sourceImage) {
                 return;
             }
-            
+
             $newImage = null;
-            
+
             if ($resize === 'crop_proportional') {
                 // Обрезка с сохранением пропорций (использует системные размеры)
                 $systemWidth = $width ?: $this->getSystemImageWidth();
@@ -4798,7 +4809,7 @@ class ShopGoodsController extends Controller
                 $customHeight = $height ?: $this->getSystemImageHeight();
                 $newImage = $this->cropProportional($sourceImage, $originalWidth, $originalHeight, $customWidth, $customHeight);
             }
-            
+
             if ($newImage) {
                 // Сохраняем обработанное изображение
                 switch ($mimeType) {
@@ -4815,17 +4826,17 @@ class ShopGoodsController extends Controller
                         imagewebp($newImage, $filePath, 85);
                         break;
                 }
-                
+
                 imagedestroy($newImage);
             }
-            
+
             imagedestroy($sourceImage);
-            
+
         } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::warning('Ошибка обработки изображения: ' . $e->getMessage());
+            \Illuminate\Support\Facades\Log::warning('Ошибка обработки изображения: '.$e->getMessage());
         }
     }
-    
+
     /**
      * Обрезка с сохранением пропорций
      */
@@ -4835,14 +4846,14 @@ class ShopGoodsController extends Controller
         $scaleX = $targetWidth / $originalWidth;
         $scaleY = $targetHeight / $originalHeight;
         $scale = max($scaleX, $scaleY); // Берем больший коэффициент
-        
+
         // Вычисляем новые размеры
         $newWidth = intval($originalWidth * $scale);
         $newHeight = intval($originalHeight * $scale);
-        
+
         // Создаем новое изображение
         $newImage = imagecreatetruecolor($targetWidth, $targetHeight);
-        
+
         // Сохраняем прозрачность для PNG
         if (imageistruecolor($sourceImage)) {
             imagealphablending($newImage, false);
@@ -4850,11 +4861,11 @@ class ShopGoodsController extends Controller
             $transparent = imagecolorallocatealpha($newImage, 255, 255, 255, 127);
             imagefilledrectangle($newImage, 0, 0, $targetWidth, $targetHeight, $transparent);
         }
-        
+
         // Вычисляем координаты для обрезки (центрируем)
         $cropX = intval(($newWidth - $targetWidth) / 2);
         $cropY = intval(($newHeight - $targetHeight) / 2);
-        
+
         // Сначала масштабируем
         $scaledImage = imagecreatetruecolor($newWidth, $newHeight);
         if (imageistruecolor($sourceImage)) {
@@ -4862,15 +4873,15 @@ class ShopGoodsController extends Controller
             imagesavealpha($scaledImage, true);
         }
         imagecopyresampled($scaledImage, $sourceImage, 0, 0, 0, 0, $newWidth, $newHeight, $originalWidth, $originalHeight);
-        
+
         // Затем обрезаем
         imagecopy($newImage, $scaledImage, 0, 0, $cropX, $cropY, $targetWidth, $targetHeight);
-        
+
         imagedestroy($scaledImage);
-        
+
         return $newImage;
     }
-    
+
     /**
      * Подгонка под размеры с белым фоном
      */
@@ -4880,20 +4891,20 @@ class ShopGoodsController extends Controller
         $scaleX = $targetWidth / $originalWidth;
         $scaleY = $targetHeight / $originalHeight;
         $scale = min($scaleX, $scaleY); // Берем меньший коэффициент для вписывания
-        
+
         // Вычисляем новые размеры
         $newWidth = intval($originalWidth * $scale);
         $newHeight = intval($originalHeight * $scale);
-        
+
         // Создаем новое изображение с белым фоном
         $newImage = imagecreatetruecolor($targetWidth, $targetHeight);
         $white = imagecolorallocate($newImage, 255, 255, 255);
         imagefill($newImage, 0, 0, $white);
-        
+
         // Вычисляем координаты для центрирования
         $x = intval(($targetWidth - $newWidth) / 2);
         $y = intval(($targetHeight - $newHeight) / 2);
-        
+
         // Сначала масштабируем
         $scaledImage = imagecreatetruecolor($newWidth, $newHeight);
         if (imageistruecolor($sourceImage)) {
@@ -4901,15 +4912,15 @@ class ShopGoodsController extends Controller
             imagesavealpha($scaledImage, true);
         }
         imagecopyresampled($scaledImage, $sourceImage, 0, 0, 0, 0, $newWidth, $newHeight, $originalWidth, $originalHeight);
-        
+
         // Затем вставляем в центр
         imagecopy($newImage, $scaledImage, $x, $y, 0, 0, $newWidth, $newHeight);
-        
+
         imagedestroy($scaledImage);
-        
+
         return $newImage;
     }
-    
+
     /**
      * Подгонка под размеры системы (уменьшение если превышает лимиты)
      */
@@ -4919,19 +4930,19 @@ class ShopGoodsController extends Controller
         if ($originalWidth <= $maxWidth && $originalHeight <= $maxHeight) {
             return $sourceImage;
         }
-        
+
         // Вычисляем коэффициенты масштабирования
         $scaleX = $maxWidth / $originalWidth;
         $scaleY = $maxHeight / $originalHeight;
         $scale = min($scaleX, $scaleY); // Берем меньший коэффициент для вписывания
-        
+
         // Вычисляем новые размеры
         $newWidth = intval($originalWidth * $scale);
         $newHeight = intval($originalHeight * $scale);
-        
+
         // Создаем новое изображение
         $newImage = imagecreatetruecolor($newWidth, $newHeight);
-        
+
         // Сохраняем прозрачность для PNG
         if (imageistruecolor($sourceImage)) {
             imagealphablending($newImage, false);
@@ -4939,29 +4950,31 @@ class ShopGoodsController extends Controller
             $transparent = imagecolorallocatealpha($newImage, 255, 255, 255, 127);
             imagefilledrectangle($newImage, 0, 0, $newWidth, $newHeight, $transparent);
         }
-        
+
         // Масштабируем изображение
         imagecopyresampled($newImage, $sourceImage, 0, 0, 0, 0, $newWidth, $newHeight, $originalWidth, $originalHeight);
-        
+
         return $newImage;
     }
-    
+
     /**
      * Получить системную ширину изображений товаров
      */
     private function getSystemImageWidth()
     {
         $setting = \App\Models\Setting::where('key', 'shop_good_width')->first();
-        return $setting ? (int)$setting->value : 500;
+
+        return $setting ? (int) $setting->value : 500;
     }
-    
+
     /**
      * Получить системную высоту изображений товаров
      */
     private function getSystemImageHeight()
     {
         $setting = \App\Models\Setting::where('key', 'shop_good_height')->first();
-        return $setting ? (int)$setting->value : 500;
+
+        return $setting ? (int) $setting->value : 500;
     }
 
     /**
@@ -4973,14 +4986,14 @@ class ShopGoodsController extends Controller
             'fields' => 'required|array',
             'fields.*' => 'required|string',
             'data' => 'required|array',
-            'data.*' => 'required|array'
+            'data.*' => 'required|array',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Validation failed',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -4990,27 +5003,27 @@ class ShopGoodsController extends Controller
 
         foreach ($data as $index => $item) {
             $query = ShopGood::query();
-            
+
             // Build query for each field
             foreach ($fields as $field) {
                 if (isset($item[$field]) && $item[$field] !== '') {
                     $query->where($field, $item[$field]);
                 }
             }
-            
+
             $existing = $query->first();
-            
+
             $results[] = [
                 'index' => $index,
                 'exists' => $existing !== null,
                 'id' => $existing ? $existing->id : null,
-                'item' => $item
+                'item' => $item,
             ];
         }
 
         return response()->json([
             'success' => true,
-            'data' => $results
+            'data' => $results,
         ]);
     }
 
@@ -5025,7 +5038,7 @@ class ShopGoodsController extends Controller
             'old_values' => $oldValues,
             'new_values' => $newValues,
             'ip_address' => request()->ip(),
-            'user_agent' => request()->userAgent()
+            'user_agent' => request()->userAgent(),
         ]);
     }
 
@@ -5035,12 +5048,12 @@ class ShopGoodsController extends Controller
     private function resizeImageFile($imagePath, $width, $height, $resizeType)
     {
         try {
-            if (!file_exists($imagePath)) {
+            if (! file_exists($imagePath)) {
                 return false;
             }
 
             $imageInfo = getimagesize($imagePath);
-            if (!$imageInfo) {
+            if (! $imageInfo) {
                 return false;
             }
 
@@ -5066,7 +5079,7 @@ class ShopGoodsController extends Controller
                     return false;
             }
 
-            if (!$sourceImage) {
+            if (! $sourceImage) {
                 return false;
             }
 
@@ -5087,8 +5100,9 @@ class ShopGoodsController extends Controller
                     $newImage = $sourceImage;
             }
 
-            if (!$newImage) {
+            if (! $newImage) {
                 imagedestroy($sourceImage);
+
                 return false;
             }
 
@@ -5129,14 +5143,14 @@ class ShopGoodsController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'batch_size' => 'nullable|integer|min:1|max:1000',
-            'offset' => 'nullable|integer|min:0'
+            'offset' => 'nullable|integer|min:0',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -5157,7 +5171,7 @@ class ShopGoodsController extends Controller
                 'success' => 0,
                 'error' => 0,
                 'skipped' => 0,
-                'errors' => [] // Детальная информация об ошибках
+                'errors' => [], // Детальная информация об ошибках
             ];
 
             $hasValueCol = Schema::hasColumn('shop_good_properties', 'value');
@@ -5173,6 +5187,7 @@ class ShopGoodsController extends Controller
                     if (empty($good->description)) {
                         $stats['skipped']++;
                         $stats['processed']++;
+
                         continue;
                     }
 
@@ -5182,6 +5197,7 @@ class ShopGoodsController extends Controller
                     if (empty($parsedProperties)) {
                         $stats['skipped']++;
                         $stats['processed']++;
+
                         continue;
                     }
 
@@ -5202,15 +5218,16 @@ class ShopGoodsController extends Controller
                             \Log::warning('Пропущена характеристика с слишком длинным названием', [
                                 'good_id' => $good->id,
                                 'property_name_length' => mb_strlen($propertyName),
-                                'property_name_preview' => mb_substr($propertyName, 0, 100) . '...'
+                                'property_name_preview' => mb_substr($propertyName, 0, 100).'...',
                             ]);
-                            
+
                             $stats['errors'][] = [
                                 'good_id' => $good->id,
                                 'type' => 'name_too_long',
                                 'message' => "Название характеристики слишком длинное ({$maxNameLength} символов максимум)",
-                                'details' => "Название длиной " . mb_strlen($propertyName) . " символов (показано первые 100: " . mb_substr($propertyName, 0, 100) . "...)"
+                                'details' => 'Название длиной '.mb_strlen($propertyName).' символов (показано первые 100: '.mb_substr($propertyName, 0, 100).'...)',
                             ];
+
                             continue;
                         }
 
@@ -5221,15 +5238,16 @@ class ShopGoodsController extends Controller
                                 'good_id' => $good->id,
                                 'property_name' => $propertyName,
                                 'value_length' => mb_strlen($propertyValue),
-                                'value_preview' => mb_substr($propertyValue, 0, 100) . '...'
+                                'value_preview' => mb_substr($propertyValue, 0, 100).'...',
                             ]);
-                            
+
                             $stats['errors'][] = [
                                 'good_id' => $good->id,
                                 'type' => 'value_too_long',
                                 'message' => "Значение характеристики слишком длинное ({$maxValueLength} символов максимум)",
-                                'details' => "Характеристика '{$propertyName}': значение длиной " . mb_strlen($propertyValue) . " символов (показано первые 100: " . mb_substr($propertyValue, 0, 100) . "...)"
+                                'details' => "Характеристика '{$propertyName}': значение длиной ".mb_strlen($propertyValue).' символов (показано первые 100: '.mb_substr($propertyValue, 0, 100).'...)',
                             ];
+
                             continue;
                         }
 
@@ -5243,21 +5261,21 @@ class ShopGoodsController extends Controller
                             try {
                                 // Нормализуем название: только первое слово с большой буквы
                                 $normalizedName = mb_strtolower($propertyName);
-                                $normalizedName = mb_strtoupper(mb_substr($normalizedName, 0, 1)) . mb_substr($normalizedName, 1);
-                                
+                                $normalizedName = mb_strtoupper(mb_substr($normalizedName, 0, 1)).mb_substr($normalizedName, 1);
+
                                 $property = ShopProperty::whereRaw('LOWER(name) = ?', [strtolower($propertyName)])->first();
 
-                                if (!$property) {
+                                if (! $property) {
                                     $property = ShopProperty::create([
                                         'name' => $normalizedName,
                                         'property_type' => 'string',
-                                        'slug' => \Illuminate\Support\Str::slug($normalizedName)
+                                        'slug' => \Illuminate\Support\Str::slug($normalizedName),
                                     ]);
                                 } else {
                                     // Если свойство существует, обновляем его название на нормализованное (если оно отличается)
                                     if ($property->name !== $normalizedName) {
                                         $property->update([
-                                            'name' => $normalizedName
+                                            'name' => $normalizedName,
                                         ]);
                                     }
                                 }
@@ -5268,19 +5286,20 @@ class ShopGoodsController extends Controller
                                     'good_id' => $good->id,
                                     'property_name' => $propertyName,
                                     'exception' => get_class($e),
-                                    'message' => $e->getMessage()
+                                    'message' => $e->getMessage(),
                                 ]);
+
                                 continue;
                             }
                         }
 
-                        if (!$property) {
+                        if (! $property) {
                             continue;
                         }
 
                         // Ищем или создаем значение свойства
                         $propertyValueModel = null;
-                        $valueCacheKey = $property->id . '_' . strtolower($propertyValue);
+                        $valueCacheKey = $property->id.'_'.strtolower($propertyValue);
 
                         if (isset($propertyValuesCache[$valueCacheKey])) {
                             $propertyValueModel = $propertyValuesCache[$valueCacheKey];
@@ -5290,11 +5309,11 @@ class ShopGoodsController extends Controller
                                     ->whereRaw('LOWER(value) = ?', [strtolower($propertyValue)])
                                     ->first();
 
-                                if (!$propertyValueModel) {
+                                if (! $propertyValueModel) {
                                     $propertyValueModel = ShopPropertyValue::create([
                                         'property_id' => $property->id,
                                         'value' => $propertyValue,
-                                        'is_active' => true
+                                        'is_active' => true,
                                     ]);
                                 }
 
@@ -5306,15 +5325,16 @@ class ShopGoodsController extends Controller
                                     'property_name' => $propertyName,
                                     'property_value' => $propertyValue,
                                     'exception' => get_class($e),
-                                    'message' => $e->getMessage()
+                                    'message' => $e->getMessage(),
                                 ]);
-                                
+
                                 $stats['errors'][] = [
                                     'good_id' => $good->id,
                                     'type' => 'property_value_error',
                                     'message' => $e->getMessage(),
-                                    'details' => "Ошибка при создании значения свойства '{$propertyName}': '{$propertyValue}'"
+                                    'details' => "Ошибка при создании значения свойства '{$propertyName}': '{$propertyValue}'",
                                 ];
+
                                 continue;
                             }
                         }
@@ -5323,13 +5343,13 @@ class ShopGoodsController extends Controller
                             $propertiesToSave[] = [
                                 'property_id' => $property->id,
                                 'shop_property_value_id' => $propertyValueModel->id,
-                                'value' => $propertyValue
+                                'value' => $propertyValue,
                             ];
                         }
                     }
 
                     // Сохраняем свойства товара
-                    if (!empty($propertiesToSave)) {
+                    if (! empty($propertiesToSave)) {
                         DB::beginTransaction();
 
                         try {
@@ -5353,7 +5373,7 @@ class ShopGoodsController extends Controller
                                     'good_id' => $good->id,
                                     'property_id' => $prop['property_id'],
                                     'created_at' => now(),
-                                    'updated_at' => now()
+                                    'updated_at' => now(),
                                 ];
 
                                 // Указываем variation_id как NULL для базовых свойств
@@ -5372,9 +5392,9 @@ class ShopGoodsController extends Controller
                                 // Используем updateOrInsert для избежания дубликатов
                                 $whereConditions = [
                                     'good_id' => $good->id,
-                                    'property_id' => $prop['property_id']
+                                    'property_id' => $prop['property_id'],
                                 ];
-                                
+
                                 if ($hasVariationIdCol) {
                                     $whereConditions['variation_id'] = null;
                                 }
@@ -5386,21 +5406,21 @@ class ShopGoodsController extends Controller
                             $stats['success']++;
                         } catch (\Exception $e) {
                             DB::rollBack();
-                            $errorMessage = 'Ошибка сохранения свойств для товара ' . $good->id . ': ' . $e->getMessage();
+                            $errorMessage = 'Ошибка сохранения свойств для товара '.$good->id.': '.$e->getMessage();
                             \Log::error($errorMessage, [
                                 'good_id' => $good->id,
                                 'exception' => get_class($e),
                                 'message' => $e->getMessage(),
                                 'trace' => $e->getTraceAsString(),
-                                'properties_count' => count($propertiesToSave)
+                                'properties_count' => count($propertiesToSave),
                             ]);
-                            
+
                             $stats['error']++;
                             $stats['errors'][] = [
                                 'good_id' => $good->id,
                                 'type' => 'save_error',
                                 'message' => $e->getMessage(),
-                                'details' => 'Ошибка при сохранении свойств в БД'
+                                'details' => 'Ошибка при сохранении свойств в БД',
                             ];
                         }
                     } else {
@@ -5409,22 +5429,22 @@ class ShopGoodsController extends Controller
 
                     $stats['processed']++;
                 } catch (\Exception $e) {
-                    $errorMessage = 'Ошибка обработки товара ' . $good->id . ': ' . $e->getMessage();
+                    $errorMessage = 'Ошибка обработки товара '.$good->id.': '.$e->getMessage();
                     \Log::error($errorMessage, [
                         'good_id' => $good->id,
                         'exception' => get_class($e),
                         'message' => $e->getMessage(),
                         'trace' => $e->getTraceAsString(),
                         'file' => $e->getFile(),
-                        'line' => $e->getLine()
+                        'line' => $e->getLine(),
                     ]);
-                    
+
                     $stats['error']++;
                     $stats['errors'][] = [
                         'good_id' => $good->id,
                         'type' => 'processing_error',
                         'message' => $e->getMessage(),
-                        'details' => 'Ошибка при парсинге или обработке товара'
+                        'details' => 'Ошибка при парсинге или обработке товара',
                     ];
                     $stats['processed']++;
                 }
@@ -5444,15 +5464,16 @@ class ShopGoodsController extends Controller
                 'message' => 'Парсинг завершен',
                 'data' => [
                     'stats' => $stats,
-                    'has_more' => $goods->count() === $batchSize
-                ]
+                    'has_more' => $goods->count() === $batchSize,
+                ],
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Ошибка массового парсинга: ' . $e->getMessage());
+            Log::error('Ошибка массового парсинга: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка массового парсинга: ' . $e->getMessage()
+                'message' => 'Ошибка массового парсинга: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -5467,12 +5488,12 @@ class ShopGoodsController extends Controller
         }
 
         $results = [];
-        
+
         // Используем DOMDocument для парсинга HTML
         libxml_use_internal_errors(true);
-        
+
         // Оборачиваем в контейнер для корректного парсинга
-        $wrappedHtml = '<div>' . $htmlDescription . '</div>';
+        $wrappedHtml = '<div>'.$htmlDescription.'</div>';
         $dom = new \DOMDocument('1.0', 'UTF-8');
         @$dom->loadHTML(mb_convert_encoding($wrappedHtml, 'HTML-ENTITIES', 'UTF-8'), LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
         libxml_clear_errors();
@@ -5482,17 +5503,17 @@ class ShopGoodsController extends Controller
 
         // Сначала ищем все div-ы с data-block="true" - каждая характеристика в отдельном блоке
         $dataBlockElements = $xpath->query('//div[@data-block="true"]');
-        
+
         if ($dataBlockElements && $dataBlockElements->length > 0) {
             // Обрабатываем каждый div с data-block="true" как отдельную строку
             foreach ($dataBlockElements as $element) {
                 $innerHTML = $this->getInnerHTML($element);
                 $textContent = trim($element->textContent);
 
-                if (!empty($textContent) && mb_strlen($textContent) >= 3) {
+                if (! empty($textContent) && mb_strlen($textContent) >= 3) {
                     $lines[] = [
                         'html' => $innerHTML,
-                        'text' => $textContent
+                        'text' => $textContent,
                     ];
                 }
             }
@@ -5502,7 +5523,7 @@ class ShopGoodsController extends Controller
         if (empty($lines)) {
             // Получаем все блочные элементы верхнего уровня
             $allBlockElements = $xpath->query('//p | //div | //li');
-            
+
             $topLevelElements = [];
 
             if ($allBlockElements && $allBlockElements->length > 0) {
@@ -5519,7 +5540,7 @@ class ShopGoodsController extends Controller
                         $parent = $parent->parentNode;
                     }
 
-                    if (!$isNested) {
+                    if (! $isNested) {
                         $topLevelElements[] = $element;
                     }
                 }
@@ -5546,14 +5567,14 @@ class ShopGoodsController extends Controller
 
                         // Создаем временный DOM для извлечения текста
                         $tempDom = new \DOMDocument('1.0', 'UTF-8');
-                        $tempWrapped = '<div>' . $htmlPart . '</div>';
+                        $tempWrapped = '<div>'.$htmlPart.'</div>';
                         @$tempDom->loadHTML(mb_convert_encoding($tempWrapped, 'HTML-ENTITIES', 'UTF-8'), LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
                         $text = trim($tempDom->textContent);
 
-                        if (!empty($text) && mb_strlen($text) >= 3) {
+                        if (! empty($text) && mb_strlen($text) >= 3) {
                             $lines[] = [
                                 'html' => $htmlPart,
-                                'text' => $text
+                                'text' => $text,
                             ];
                         }
                     }
@@ -5565,26 +5586,26 @@ class ShopGoodsController extends Controller
         if (empty($lines)) {
             $htmlContent = $htmlDescription;
             $textContent = strip_tags($htmlDescription);
-            
+
             // Сначала пробуем разбить по HTML тегам
             $htmlParts = preg_split('/(?:<br\s*\/?>|<\/p>|<\/div>|<\/li>)/i', $htmlContent);
-            
+
             if (count($htmlParts) > 1) {
                 foreach ($htmlParts as $htmlPart) {
                     $htmlPart = trim($htmlPart);
                     if (empty($htmlPart)) {
                         continue;
                     }
-                    
+
                     $tempDom = new \DOMDocument('1.0', 'UTF-8');
-                    $tempWrapped = '<div>' . $htmlPart . '</div>';
+                    $tempWrapped = '<div>'.$htmlPart.'</div>';
                     @$tempDom->loadHTML(mb_convert_encoding($tempWrapped, 'HTML-ENTITIES', 'UTF-8'), LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
                     $text = trim($tempDom->textContent);
-                    
-                    if (!empty($text) && mb_strlen($text) >= 3) {
+
+                    if (! empty($text) && mb_strlen($text) >= 3) {
                         $lines[] = [
                             'html' => $htmlPart,
-                            'text' => $text
+                            'text' => $text,
                         ];
                     }
                 }
@@ -5593,25 +5614,25 @@ class ShopGoodsController extends Controller
                 $textLines = preg_split('/\n/', $textContent);
                 foreach ($textLines as $textLine) {
                     $textLine = trim($textLine);
-                    if (!empty($textLine) && mb_strlen($textLine) >= 3) {
+                    if (! empty($textLine) && mb_strlen($textLine) >= 3) {
                         $lines[] = [
                             'html' => $textLine,
-                            'text' => $textLine
+                            'text' => $textLine,
                         ];
                     }
                 }
             }
         }
-        
+
         // Если все еще нет строк, берем весь контент как одну строку
         if (empty($lines)) {
             $htmlContent = $htmlDescription;
             $textContent = strip_tags($htmlDescription);
-            
-            if (!empty($textContent) && mb_strlen($textContent) >= 3) {
+
+            if (! empty($textContent) && mb_strlen($textContent) >= 3) {
                 $lines[] = [
                     'html' => $htmlContent,
-                    'text' => $textContent
+                    'text' => $textContent,
                 ];
             }
         }
@@ -5629,18 +5650,18 @@ class ShopGoodsController extends Controller
             $propertyValue = '';
 
             // Парсим HTML строки для поиска жирного текста
-            $lineWrapped = '<div>' . $lineHTML . '</div>';
+            $lineWrapped = '<div>'.$lineHTML.'</div>';
             $lineDom = new \DOMDocument('1.0', 'UTF-8');
             libxml_use_internal_errors(true);
             @$lineDom->loadHTML(mb_convert_encoding($lineWrapped, 'HTML-ENTITIES', 'UTF-8'), LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
             libxml_clear_errors();
 
             $lineXpath = new \DOMXPath($lineDom);
-            
+
             // Ищем жирные элементы (strong, b) - сначала стандартные теги
             $boldElements = $lineXpath->query('//strong | //b');
             $boldElement = null;
-            
+
             if ($boldElements && $boldElements->length > 0) {
                 $boldElement = $boldElements->item(0);
             } else {
@@ -5654,7 +5675,7 @@ class ShopGoodsController extends Controller
                             $boldElement = $elem;
                             break;
                         }
-                        
+
                         // Проверяем inline стиль
                         if ($elem->hasAttribute('style')) {
                             $style = $elem->getAttribute('style');
@@ -5663,7 +5684,7 @@ class ShopGoodsController extends Controller
                                 break;
                             }
                         }
-                        
+
                         // Проверяем класс
                         if ($elem->hasAttribute('class')) {
                             $className = $elem->getAttribute('class');
@@ -5680,56 +5701,56 @@ class ShopGoodsController extends Controller
                 // ШАГ 1: Извлекаем ВЕСЬ текст из жирного элемента - это характеристика
                 $propertyName = trim($boldElement->textContent);
                 $propertyName = preg_replace('/\s+/', ' ', $propertyName);
-                
+
                 // Убираем двоеточие в конце названия, если есть
                 $propertyName = preg_replace('/:\s*$/', '', $propertyName);
-                
-                if (!empty($propertyName)) {
+
+                if (! empty($propertyName)) {
                     // ШАГ 2: Ищем значение - сначала пробуем найти следующий sibling элемент
                     $propertyValue = '';
                     $nextSibling = $boldElement->nextSibling;
-                    
+
                     while ($nextSibling) {
                         if ($nextSibling->nodeType === XML_ELEMENT_NODE) {
                             $siblingText = trim($nextSibling->textContent);
-                            if (!empty($siblingText)) {
+                            if (! empty($siblingText)) {
                                 $propertyValue = $siblingText;
                                 break;
                             }
                         } elseif ($nextSibling->nodeType === XML_TEXT_NODE) {
                             $text = trim($nextSibling->textContent);
-                            if (!empty($text)) {
+                            if (! empty($text)) {
                                 $propertyValue = $text;
                                 break;
                             }
                         }
                         $nextSibling = $nextSibling->nextSibling;
                     }
-                    
+
                     // Если не нашли через sibling, пробуем извлечь из родительского элемента
                     if (empty($propertyValue)) {
                         $parent = $boldElement->parentNode;
                         if ($parent) {
                             $parentText = trim($parent->textContent);
                             $boldText = trim($boldElement->textContent);
-                            
+
                             // Убираем название из текста родителя
                             $parentText = str_replace($boldText, '', $parentText);
                             $parentText = preg_replace('/^:\s*/', '', $parentText);
                             $propertyValue = trim($parentText);
                         }
                     }
-                    
+
                     // Если все еще пусто, пробуем найти через HTML позицию
                     if (empty($propertyValue)) {
                         $boldOuterHTML = $this->getOuterHTML($boldElement);
                         $elementIndex = mb_strpos($lineHTML, $boldOuterHTML);
-                        
+
                         if ($elementIndex !== false) {
                             $boldEndIndex = $elementIndex + mb_strlen($boldOuterHTML);
                             $afterBoldHTML = mb_substr($lineHTML, $boldEndIndex);
-                            
-                            $afterBoldWrapped = '<div>' . $afterBoldHTML . '</div>';
+
+                            $afterBoldWrapped = '<div>'.$afterBoldHTML.'</div>';
                             $afterBoldDom = new \DOMDocument('1.0', 'UTF-8');
                             libxml_use_internal_errors(true);
                             @$afterBoldDom->loadHTML(mb_convert_encoding($afterBoldWrapped, 'HTML-ENTITIES', 'UTF-8'), LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
@@ -5737,15 +5758,15 @@ class ShopGoodsController extends Controller
                             $propertyValue = trim($afterBoldDom->textContent);
                         }
                     }
-                    
+
                     // Убираем двоеточие в начале, если есть
                     $propertyValue = preg_replace('/^:\s*/', '', $propertyValue);
-                    
+
                     // Нормализуем пробелы
                     $propertyValue = preg_replace('/\s+/', ' ', trim($propertyValue));
                 }
             }
-            
+
             // Если не нашли через жирный текст, пробуем вариант с двоеточием
             if (empty($propertyName) || empty($propertyValue)) {
                 // Вариант 2: Ищем текст до двоеточия в текстовом представлении
@@ -5754,8 +5775,10 @@ class ShopGoodsController extends Controller
                 if ($colonIndex !== false && $colonIndex > 0 && $colonIndex < mb_strlen($lineText) - 1) {
                     $beforeColon = trim(mb_substr($lineText, 0, $colonIndex));
                     $wordsBeforeColon = preg_split('/\s+/u', $beforeColon);
-                    $wordsBeforeColon = array_filter($wordsBeforeColon, function($w) { return !empty(trim($w)); });
-                    
+                    $wordsBeforeColon = array_filter($wordsBeforeColon, function ($w) {
+                        return ! empty(trim($w));
+                    });
+
                     // Используем двоеточие только если до него не более 3 слов (чтобы не разбивать значения с двоеточием внутри)
                     if (count($wordsBeforeColon) > 0 && count($wordsBeforeColon) <= 3) {
                         $propertyName = $beforeColon;
@@ -5765,21 +5788,23 @@ class ShopGoodsController extends Controller
                         $colonIndex = false;
                     }
                 }
-                
+
                 if ($colonIndex === false) {
                     // Вариант 3: Дополнительная проверка - поиск до первого дефиса (но не более 3-х слов)
                     // Ищем дефис с пробелами вокруг (например: " - " или " -")
                     $dashPattern = '/\s*-\s*/u';
                     $dashMatch = preg_match($dashPattern, $lineText, $matches, PREG_OFFSET_CAPTURE);
-                    
+
                     if ($dashMatch && isset($matches[0]) && isset($matches[0][1])) {
                         $dashIndex = $matches[0][1];
                         $beforeDash = trim(mb_substr($lineText, 0, $dashIndex));
-                        
+
                         // Проверяем, что до дефиса не более 3-х слов
                         $words = preg_split('/\s+/u', $beforeDash);
-                        $words = array_filter($words, function($w) { return !empty(trim($w)); });
-                        
+                        $words = array_filter($words, function ($w) {
+                            return ! empty(trim($w));
+                        });
+
                         if (count($words) > 0 && count($words) <= 3) {
                             $propertyName = $beforeDash;
                             // Берем все после дефиса (включая сам дефис и пробелы)
@@ -5798,7 +5823,7 @@ class ShopGoodsController extends Controller
             // Нормализуем
             $propertyName = preg_replace('/\s+/', ' ', trim($propertyName));
             $propertyValue = preg_replace('/\s+/', ' ', trim($propertyValue));
-            
+
             // Убираем двоеточие в начале и конце значения, если оно там есть (на случай ошибок парсинга)
             $propertyValue = preg_replace('/^:\s*/', '', $propertyValue);
             $propertyValue = preg_replace('/\s*:\s*$/', '', $propertyValue);
@@ -5806,7 +5831,7 @@ class ShopGoodsController extends Controller
 
             // Трансформируем название: только первое слово с большой буквы
             $propertyName = mb_strtolower($propertyName);
-            $propertyName = mb_strtoupper(mb_substr($propertyName, 0, 1)) . mb_substr($propertyName, 1);
+            $propertyName = mb_strtoupper(mb_substr($propertyName, 0, 1)).mb_substr($propertyName, 1);
 
             if (empty($propertyName) || empty($propertyValue) || mb_strlen($propertyName) < 2 || mb_strlen($propertyValue) < 1) {
                 continue;
@@ -5822,10 +5847,10 @@ class ShopGoodsController extends Controller
                 }
             }
 
-            if (!$isDuplicate) {
+            if (! $isDuplicate) {
                 $results[] = [
                     'name' => $propertyName,
-                    'value' => $propertyValue
+                    'value' => $propertyValue,
                 ];
             }
         }
@@ -5843,6 +5868,7 @@ class ShopGoodsController extends Controller
         foreach ($children as $child) {
             $innerHTML .= $element->ownerDocument->saveHTML($child);
         }
+
         return $innerHTML;
     }
 
@@ -5868,12 +5894,12 @@ class ShopGoodsController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $attributesString
+                'data' => $attributesString,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения атрибутов вариации: ' . $e->getMessage()
+                'message' => 'Ошибка получения атрибутов вариации: '.$e->getMessage(),
             ], 404);
         }
     }
@@ -5889,14 +5915,14 @@ class ShopGoodsController extends Controller
                 ->firstOrFail();
 
             $validator = Validator::make($request->all(), [
-                'stock_quantity' => 'required|integer|min:0'
+                'stock_quantity' => 'required|integer|min:0',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -5908,13 +5934,13 @@ class ShopGoodsController extends Controller
                 'message' => 'Остаток обновлен',
                 'data' => [
                     'id' => $variation->id,
-                    'stock_quantity' => $variation->stock_quantity
-                ]
+                    'stock_quantity' => $variation->stock_quantity,
+                ],
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления остатка: ' . $e->getMessage()
+                'message' => 'Ошибка обновления остатка: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -5930,19 +5956,19 @@ class ShopGoodsController extends Controller
                 ->firstOrFail();
 
             $validator = Validator::make($request->all(), [
-                'remote_stock_quantity' => 'nullable|string|max:255'
+                'remote_stock_quantity' => 'nullable|string|max:255',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
             $remoteStockValue = $request->get('remote_stock_quantity');
-            $variation->remote_stock_quantity = ($remoteStockValue === '' || $remoteStockValue === null) ? null : (string)$remoteStockValue;
+            $variation->remote_stock_quantity = ($remoteStockValue === '' || $remoteStockValue === null) ? null : (string) $remoteStockValue;
             $variation->save();
 
             return response()->json([
@@ -5950,13 +5976,13 @@ class ShopGoodsController extends Controller
                 'message' => 'Остаток на у/с обновлен',
                 'data' => [
                     'id' => $variation->id,
-                    'remote_stock_quantity' => $variation->remote_stock_quantity
-                ]
+                    'remote_stock_quantity' => $variation->remote_stock_quantity,
+                ],
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления остатка на у/с: ' . $e->getMessage()
+                'message' => 'Ошибка обновления остатка на у/с: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -5972,19 +5998,19 @@ class ShopGoodsController extends Controller
                 ->firstOrFail();
 
             $validator = Validator::make($request->all(), [
-                'fast_remote_stock_quantity' => 'nullable|string|max:255'
+                'fast_remote_stock_quantity' => 'nullable|string|max:255',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
             $fastRemoteStockValue = $request->get('fast_remote_stock_quantity');
-            $variation->fast_remote_stock_quantity = ($fastRemoteStockValue === '' || $fastRemoteStockValue === null) ? null : (string)$fastRemoteStockValue;
+            $variation->fast_remote_stock_quantity = ($fastRemoteStockValue === '' || $fastRemoteStockValue === null) ? null : (string) $fastRemoteStockValue;
             $variation->save();
 
             return response()->json([
@@ -5992,13 +6018,13 @@ class ShopGoodsController extends Controller
                 'message' => 'Быстрый остаток на у/с обновлен',
                 'data' => [
                     'id' => $variation->id,
-                    'fast_remote_stock_quantity' => $variation->fast_remote_stock_quantity
-                ]
+                    'fast_remote_stock_quantity' => $variation->fast_remote_stock_quantity,
+                ],
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления быстрого остатка на у/с: ' . $e->getMessage()
+                'message' => 'Ошибка обновления быстрого остатка на у/с: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -6016,14 +6042,14 @@ class ShopGoodsController extends Controller
             $validator = Validator::make($request->all(), [
                 'price' => 'required|numeric|min:0',
                 'sale_price' => 'nullable|numeric|min:0',
-                'demping_price' => 'nullable|numeric|min:0'
+                'demping_price' => 'nullable|numeric|min:0',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -6039,13 +6065,13 @@ class ShopGoodsController extends Controller
                     'id' => $variation->id,
                     'price' => $variation->price,
                     'sale_price' => $variation->sale_price,
-                    'demping_price' => $variation->demping_price
-                ]
+                    'demping_price' => $variation->demping_price,
+                ],
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления цен: ' . $e->getMessage()
+                'message' => 'Ошибка обновления цен: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -6061,14 +6087,14 @@ class ShopGoodsController extends Controller
                 ->firstOrFail();
 
             $validator = Validator::make($request->all(), [
-                'show_demping' => 'required|boolean'
+                'show_demping' => 'required|boolean',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -6080,22 +6106,19 @@ class ShopGoodsController extends Controller
                 'message' => 'Демпинг обновлен',
                 'data' => [
                     'id' => $variation->id,
-                    'show_demping' => $variation->show_demping
-                ]
+                    'show_demping' => $variation->show_demping,
+                ],
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления демпинга: ' . $e->getMessage()
+                'message' => 'Ошибка обновления демпинга: '.$e->getMessage(),
             ], 500);
         }
     }
 
     /**
      * Прокси для загрузки YML фидов (обход CORS)
-     * 
-     * @param Request $request
-     * @return JsonResponse
      */
     public function proxyYMLFeed(Request $request): JsonResponse
     {
@@ -6107,14 +6130,14 @@ class ShopGoodsController extends Controller
             $validator = Validator::make($request->all(), [
                 'url' => 'required|url|max:2048',
                 'username' => 'nullable|string|max:255',
-                'password' => 'nullable|string|max:255'
+                'password' => 'nullable|string|max:255',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'error' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -6126,14 +6149,14 @@ class ShopGoodsController extends Controller
             if (empty($url)) {
                 return response()->json([
                     'success' => false,
-                    'error' => 'URL не указан'
+                    'error' => 'URL не указан',
                 ], 400);
             }
-            
-            if (!filter_var($url, FILTER_VALIDATE_URL)) {
+
+            if (! filter_var($url, FILTER_VALIDATE_URL)) {
                 return response()->json([
                     'success' => false,
-                    'error' => 'Некорректный URL'
+                    'error' => 'Некорректный URL',
                 ], 400);
             }
 
@@ -6145,18 +6168,18 @@ class ShopGoodsController extends Controller
             curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
             curl_setopt($ch, CURLOPT_TIMEOUT, 30);
             curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
-            
+
             // Настройки SSL (аналогично методу downloadImage)
             curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
             curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
             curl_setopt($ch, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
             curl_setopt($ch, CURLOPT_SSL_CIPHER_LIST, 'DEFAULT@SECLEVEL=0');
             curl_setopt($ch, CURLOPT_SSL_OPTIONS, CURLSSLOPT_ALLOW_BEAST | CURLSSLOPT_NO_REVOKE);
-            
+
             // HTTP Basic Authentication, если указаны учетные данные
-            if (!empty($username) && !empty($password)) {
+            if (! empty($username) && ! empty($password)) {
                 curl_setopt($ch, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
-                curl_setopt($ch, CURLOPT_USERPWD, $username . ':' . $password);
+                curl_setopt($ch, CURLOPT_USERPWD, $username.':'.$password);
             }
 
             curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
@@ -6166,7 +6189,7 @@ class ShopGoodsController extends Controller
             curl_setopt($ch, CURLOPT_TCP_KEEPINTVL, 1);
             curl_setopt($ch, CURLOPT_HTTPHEADER, [
                 'Accept: application/xml, text/xml, */*',
-                'Accept-Language: ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7'
+                'Accept-Language: ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
             ]);
 
             $xmlContent = curl_exec($ch);
@@ -6178,26 +6201,26 @@ class ShopGoodsController extends Controller
             if ($xmlContent === false || $curlErrno !== 0) {
                 $errorMessage = $curlError ?: 'Неизвестная ошибка cURL';
                 if ($curlErrno) {
-                    $errorMessage .= ' (код ошибки: ' . $curlErrno . ')';
+                    $errorMessage .= ' (код ошибки: '.$curlErrno.')';
                 }
-                
+
                 Log::error('Ошибка cURL при загрузке YML фида', [
                     'url' => $url,
                     'curl_error' => $curlError,
                     'curl_errno' => $curlErrno,
-                    'http_code' => $httpCode
+                    'http_code' => $httpCode,
                 ]);
-                
+
                 return response()->json([
                     'success' => false,
-                    'error' => 'Ошибка загрузки фида: ' . $errorMessage
+                    'error' => 'Ошибка загрузки фида: '.$errorMessage,
                 ], 500);
             }
 
             if ($httpCode !== 200) {
                 return response()->json([
                     'success' => false,
-                    'error' => "Ошибка загрузки фида: HTTP {$httpCode}"
+                    'error' => "Ошибка загрузки фида: HTTP {$httpCode}",
                 ], $httpCode);
             }
 
@@ -6205,7 +6228,7 @@ class ShopGoodsController extends Controller
             if (empty($xmlContent)) {
                 return response()->json([
                     'success' => false,
-                    'error' => 'Фид пуст'
+                    'error' => 'Фид пуст',
                 ], 400);
             }
 
@@ -6213,7 +6236,7 @@ class ShopGoodsController extends Controller
             if (strpos($xmlContent, 'yml_catalog') === false && strpos($xmlContent, '<?xml') === false) {
                 return response()->json([
                     'success' => false,
-                    'error' => 'Файл не является валидным YML фидом'
+                    'error' => 'Файл не является валидным YML фидом',
                 ], 400);
             }
 
@@ -6222,114 +6245,114 @@ class ShopGoodsController extends Controller
                 // Отключаем ошибки libxml для более гибкого парсинга
                 libxml_use_internal_errors(true);
                 $xml = simplexml_load_string($xmlContent);
-                
+
                 if ($xml === false) {
                     $errors = libxml_get_errors();
                     libxml_clear_errors();
-                    $errorMessages = array_map(function($error) {
+                    $errorMessages = array_map(function ($error) {
                         return trim($error->message);
                     }, $errors);
-                    
+
                     return response()->json([
                         'success' => false,
-                        'error' => 'Ошибка парсинга XML: ' . implode('; ', array_slice($errorMessages, 0, 3))
+                        'error' => 'Ошибка парсинга XML: '.implode('; ', array_slice($errorMessages, 0, 3)),
                     ], 400);
                 }
-                
+
                 // Проверяем структуру
-                if (!isset($xml->shop)) {
+                if (! isset($xml->shop)) {
                     return response()->json([
                         'success' => false,
-                        'error' => 'Не найден элемент shop в YML фиде'
+                        'error' => 'Не найден элемент shop в YML фиде',
                     ], 400);
                 }
-                
+
                 // Извлекаем данные о магазине
                 $shopData = [
-                    'name' => (string)($xml->shop->name ?? ''),
-                    'company' => (string)($xml->shop->company ?? ''),
-                    'url' => (string)($xml->shop->url ?? '')
+                    'name' => (string) ($xml->shop->name ?? ''),
+                    'company' => (string) ($xml->shop->company ?? ''),
+                    'url' => (string) ($xml->shop->url ?? ''),
                 ];
-                
+
                 // Извлекаем валюты
                 $currencies = [];
                 if (isset($xml->shop->currencies->currency)) {
                     foreach ($xml->shop->currencies->currency as $currency) {
                         $currencies[] = [
-                            'id' => (string)$currency['id'],
-                            'rate' => (float)($currency['rate'] ?? 1)
+                            'id' => (string) $currency['id'],
+                            'rate' => (float) ($currency['rate'] ?? 1),
                         ];
                     }
                 }
-                
+
                 // Извлекаем категории
                 $categories = [];
                 if (isset($xml->shop->categories->category)) {
                     foreach ($xml->shop->categories->category as $category) {
                         $categories[] = [
-                            'id' => (string)$category['id'],
-                            'name' => trim((string)$category),
-                            'parentId' => isset($category['parentId']) ? (string)$category['parentId'] : null
+                            'id' => (string) $category['id'],
+                            'name' => trim((string) $category),
+                            'parentId' => isset($category['parentId']) ? (string) $category['parentId'] : null,
                         ];
                     }
                 }
-                
+
                 // Извлекаем товары (offers)
                 $offers = [];
                 if (isset($xml->shop->offers->offer)) {
                     foreach ($xml->shop->offers->offer as $offer) {
                         $offerData = [
-                            'id' => (string)$offer['id'],
-                            'available' => (string)($offer['available'] ?? 'false') === 'true'
+                            'id' => (string) $offer['id'],
+                            'available' => (string) ($offer['available'] ?? 'false') === 'true',
                         ];
-                        
+
                         // Основные поля
-                        if (isset($offer->name) && (string)$offer->name !== '') {
-                            $offerData['name'] = trim((string)$offer->name);
+                        if (isset($offer->name) && (string) $offer->name !== '') {
+                            $offerData['name'] = trim((string) $offer->name);
                         }
-                        if (isset($offer->price) && (string)$offer->price !== '') {
-                            $offerData['price'] = (float)$offer->price;
+                        if (isset($offer->price) && (string) $offer->price !== '') {
+                            $offerData['price'] = (float) $offer->price;
                         }
-                        if (isset($offer->currencyId) && (string)$offer->currencyId !== '') {
-                            $offerData['currencyId'] = (string)$offer->currencyId;
+                        if (isset($offer->currencyId) && (string) $offer->currencyId !== '') {
+                            $offerData['currencyId'] = (string) $offer->currencyId;
                         }
-                        if (isset($offer->categoryId) && (string)$offer->categoryId !== '') {
-                            $offerData['categoryId'] = (string)$offer->categoryId;
+                        if (isset($offer->categoryId) && (string) $offer->categoryId !== '') {
+                            $offerData['categoryId'] = (string) $offer->categoryId;
                         }
-                        if (isset($offer->url) && (string)$offer->url !== '') {
-                            $offerData['url'] = (string)$offer->url;
+                        if (isset($offer->url) && (string) $offer->url !== '') {
+                            $offerData['url'] = (string) $offer->url;
                         }
-                        if (isset($offer->vendor) && (string)$offer->vendor !== '') {
-                            $offerData['vendor'] = (string)$offer->vendor;
+                        if (isset($offer->vendor) && (string) $offer->vendor !== '') {
+                            $offerData['vendor'] = (string) $offer->vendor;
                         }
-                        if (isset($offer->model) && (string)$offer->model !== '') {
-                            $offerData['model'] = (string)$offer->model;
+                        if (isset($offer->model) && (string) $offer->model !== '') {
+                            $offerData['model'] = (string) $offer->model;
                         }
-                        if (isset($offer->description) && (string)$offer->description !== '') {
-                            $offerData['description'] = trim((string)$offer->description);
+                        if (isset($offer->description) && (string) $offer->description !== '') {
+                            $offerData['description'] = trim((string) $offer->description);
                         }
-                        if (isset($offer->vendorCode) && (string)$offer->vendorCode !== '') {
-                            $offerData['vendorCode'] = (string)$offer->vendorCode;
+                        if (isset($offer->vendorCode) && (string) $offer->vendorCode !== '') {
+                            $offerData['vendorCode'] = (string) $offer->vendorCode;
                         }
-                        if (isset($offer->barcode) && (string)$offer->barcode !== '') {
-                            $offerData['barcode'] = (string)$offer->barcode;
+                        if (isset($offer->barcode) && (string) $offer->barcode !== '') {
+                            $offerData['barcode'] = (string) $offer->barcode;
                         }
-                        if (isset($offer->oldprice) && (string)$offer->oldprice !== '') {
-                            $offerData['oldprice'] = (float)$offer->oldprice;
+                        if (isset($offer->oldprice) && (string) $offer->oldprice !== '') {
+                            $offerData['oldprice'] = (float) $offer->oldprice;
                         }
-                        if (isset($offer->sales_notes) && (string)$offer->sales_notes !== '') {
-                            $offerData['sales_notes'] = (string)$offer->sales_notes;
+                        if (isset($offer->sales_notes) && (string) $offer->sales_notes !== '') {
+                            $offerData['sales_notes'] = (string) $offer->sales_notes;
                         }
                         if (isset($offer->manufacturer_warranty)) {
-                            $offerData['manufacturer_warranty'] = (string)$offer->manufacturer_warranty === 'true';
+                            $offerData['manufacturer_warranty'] = (string) $offer->manufacturer_warranty === 'true';
                         }
-                        if (isset($offer->country_of_origin) && (string)$offer->country_of_origin !== '') {
-                            $offerData['country_of_origin'] = (string)$offer->country_of_origin;
+                        if (isset($offer->country_of_origin) && (string) $offer->country_of_origin !== '') {
+                            $offerData['country_of_origin'] = (string) $offer->country_of_origin;
                         }
                         if (isset($offer->adult)) {
-                            $offerData['adult'] = (string)$offer->adult === 'true';
+                            $offerData['adult'] = (string) $offer->adult === 'true';
                         }
-                        
+
                         // Изображения (может быть несколько)
                         $pictures = [];
                         if (isset($offer->picture)) {
@@ -6339,14 +6362,14 @@ class ShopGoodsController extends Controller
                             if ($pictureCount > 1) {
                                 // Несколько изображений - итерируем
                                 foreach ($offer->picture as $picture) {
-                                    $pictureUrl = trim((string)$picture);
+                                    $pictureUrl = trim((string) $picture);
                                     if ($pictureUrl) {
                                         $pictures[] = $pictureUrl;
                                     }
                                 }
                             } else {
                                 // Одно изображение
-                                $pictureUrl = trim((string)$offer->picture);
+                                $pictureUrl = trim((string) $offer->picture);
                                 if ($pictureUrl) {
                                     $pictures[] = $pictureUrl;
                                 }
@@ -6358,7 +6381,7 @@ class ShopGoodsController extends Controller
                         } elseif (count($pictures) > 1) {
                             $offerData['picture'] = $pictures;
                         }
-                        
+
                         // Параметры (может быть несколько)
                         $params = [];
                         if (isset($offer->param)) {
@@ -6367,50 +6390,50 @@ class ShopGoodsController extends Controller
                             if ($paramCount > 1) {
                                 // Несколько параметров - итерируем
                                 foreach ($offer->param as $param) {
-                                    $paramName = (string)($param['name'] ?? '');
-                                    $paramValue = trim((string)$param);
+                                    $paramName = (string) ($param['name'] ?? '');
+                                    $paramValue = trim((string) $param);
                                     if ($paramName && $paramValue) {
                                         $params[] = [
                                             'name' => $paramName,
-                                            'value' => $paramValue
+                                            'value' => $paramValue,
                                         ];
                                     }
                                 }
                             } else {
                                 // Один параметр
-                                $paramName = (string)($offer->param['name'] ?? '');
-                                $paramValue = trim((string)$offer->param);
+                                $paramName = (string) ($offer->param['name'] ?? '');
+                                $paramValue = trim((string) $offer->param);
                                 if ($paramName && $paramValue) {
                                     $params[] = [
                                         'name' => $paramName,
-                                        'value' => $paramValue
+                                        'value' => $paramValue,
                                     ];
                                 }
                             }
                         }
-                        if (!empty($params)) {
+                        if (! empty($params)) {
                             $offerData['params'] = $params;
                         }
-                        
+
                         $offers[] = $offerData;
                     }
                 }
-                
+
                 // Формируем результат
                 $ymlData = [
                     'shop' => $shopData,
                     'currencies' => $currencies,
                     'categories' => $categories,
                     'offers' => $offers,
-                    'date' => isset($xml['date']) ? (string)$xml['date'] : null
+                    'date' => isset($xml['date']) ? (string) $xml['date'] : null,
                 ];
-                
+
                 // Возвращаем распарсенные данные
                 return response()->json([
                     'success' => true,
-                    'data' => $ymlData
+                    'data' => $ymlData,
                 ]);
-                
+
             } catch (\Exception $parseError) {
                 // Если парсинг не удался, возвращаем XML для парсинга на клиенте
                 return response()->json([
@@ -6418,16 +6441,16 @@ class ShopGoodsController extends Controller
                     'data' => [
                         'xml' => $xmlContent,
                         'url' => $url,
-                        'size' => strlen($xmlContent)
-                    ]
+                        'size' => strlen($xmlContent),
+                    ],
                 ]);
             }
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'error' => 'Ошибка при загрузке фида: ' . $e->getMessage(),
-                'message' => 'Ошибка при загрузке фида: ' . $e->getMessage()
+                'error' => 'Ошибка при загрузке фида: '.$e->getMessage(),
+                'message' => 'Ошибка при загрузке фида: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -6439,7 +6462,7 @@ class ShopGoodsController extends Controller
     {
         try {
             $request->validate([
-                'file' => 'required|file|mimes:xml,yml|max:51200' // 50MB max
+                'file' => 'required|file|mimes:xml,yml|max:51200', // 50MB max
             ]);
 
             $file = $request->file('file');
@@ -6447,20 +6470,20 @@ class ShopGoodsController extends Controller
             $extension = $file->getClientOriginalExtension();
 
             // Проверяем расширение
-            if (!in_array(strtolower($extension), ['xml', 'yml'])) {
+            if (! in_array(strtolower($extension), ['xml', 'yml'])) {
                 return response()->json([
                     'success' => false,
-                    'error' => 'Файл должен иметь расширение .xml или .yml'
+                    'error' => 'Файл должен иметь расширение .xml или .yml',
                 ], 400);
             }
 
             // Генерируем уникальное имя файла
-            $fileName = 'yml_upload_' . time() . '_' . Str::random(8) . '.' . $extension;
-            $filePath = storage_path('app/temp/' . $fileName);
+            $fileName = 'yml_upload_'.time().'_'.Str::random(8).'.'.$extension;
+            $filePath = storage_path('app/temp/'.$fileName);
 
             // Создаем директорию если не существует
             $directory = dirname($filePath);
-            if (!is_dir($directory)) {
+            if (! is_dir($directory)) {
                 mkdir($directory, 0755, true);
             }
 
@@ -6468,15 +6491,15 @@ class ShopGoodsController extends Controller
             $file->move($directory, basename($filePath));
 
             // Проверяем, что файл сохранен
-            if (!file_exists($filePath)) {
+            if (! file_exists($filePath)) {
                 return response()->json([
                     'success' => false,
-                    'error' => 'Не удалось сохранить файл'
+                    'error' => 'Не удалось сохранить файл',
                 ], 500);
             }
 
             // Возвращаем URL для доступа к файлу
-            $fileUrl = url('/api/admin/shop/goods/temp-yml-file/' . $fileName);
+            $fileUrl = url('/api/admin/shop/goods/temp-yml-file/'.$fileName);
 
             return response()->json([
                 'success' => true,
@@ -6484,14 +6507,14 @@ class ShopGoodsController extends Controller
                     'url' => $fileUrl,
                     'filename' => $fileName,
                     'original_name' => $originalName,
-                    'size' => filesize($filePath)
-                ]
+                    'size' => filesize($filePath),
+                ],
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'error' => 'Ошибка при загрузке файла: ' . $e->getMessage()
+                'error' => 'Ошибка при загрузке файла: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -6503,33 +6526,33 @@ class ShopGoodsController extends Controller
     {
         try {
             // Проверяем формат имени файла для безопасности
-            if (!preg_match('/^yml_upload_\d+_[a-zA-Z0-9]+\.(xml|yml)$/', $filename)) {
+            if (! preg_match('/^yml_upload_\d+_[a-zA-Z0-9]+\.(xml|yml)$/', $filename)) {
                 return response()->json([
                     'success' => false,
-                    'error' => 'Некорректное имя файла'
+                    'error' => 'Некорректное имя файла',
                 ], 400);
             }
 
-            $filePath = storage_path('app/temp/' . $filename);
+            $filePath = storage_path('app/temp/'.$filename);
 
             if (file_exists($filePath)) {
                 unlink($filePath);
 
                 return response()->json([
                     'success' => true,
-                    'message' => 'Файл удален'
+                    'message' => 'Файл удален',
                 ]);
             }
 
             return response()->json([
                 'success' => false,
-                'error' => 'Файл не найден'
+                'error' => 'Файл не найден',
             ], 404);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'error' => 'Ошибка при удалении файла: ' . $e->getMessage()
+                'error' => 'Ошибка при удалении файла: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -6540,18 +6563,18 @@ class ShopGoodsController extends Controller
     public function getTempYMLFile(Request $request, string $filename)
     {
         // Проверяем, что пользователь авторизован через токен (для API запросов)
-        if (!$request->user()) {
+        if (! $request->user()) {
             abort(403, 'Unauthorized');
         }
 
         // Проверяем формат имени файла для безопасности
-        if (!preg_match('/^yml_upload_\d+_[a-zA-Z0-9]+\.(xml|yml)$/', $filename)) {
+        if (! preg_match('/^yml_upload_\d+_[a-zA-Z0-9]+\.(xml|yml)$/', $filename)) {
             abort(404, 'File not found');
         }
 
-        $filePath = storage_path('app/temp/' . $filename);
+        $filePath = storage_path('app/temp/'.$filename);
 
-        if (!file_exists($filePath)) {
+        if (! file_exists($filePath)) {
             abort(404, 'File not found');
         }
 
@@ -6560,7 +6583,7 @@ class ShopGoodsController extends Controller
 
         return response($content, 200, [
             'Content-Type' => 'application/xml',
-            'Content-Disposition' => 'inline; filename="' . $filename . '"'
+            'Content-Disposition' => 'inline; filename="'.$filename.'"',
         ]);
     }
 
@@ -6579,15 +6602,15 @@ class ShopGoodsController extends Controller
                 ->get()
                 ->pluck('products_count', 'category_id')
                 ->toArray();
-            
+
             return response()->json([
                 'success' => true,
-                'data' => $stats
+                'data' => $stats,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения статистики: ' . $e->getMessage()
+                'message' => 'Ошибка получения статистики: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -6608,10 +6631,10 @@ class ShopGoodsController extends Controller
                 ->where('shop_properties.name', '!=', '')
                 ->orderBy('shop_properties.name')
                 ->pluck('shop_properties.name')
-                ->map(function($name) {
+                ->map(function ($name) {
                     return [
                         'id' => $name,
-                        'name' => $name
+                        'name' => $name,
                     ];
                 })
                 ->values()
@@ -6619,12 +6642,12 @@ class ShopGoodsController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $characteristics
+                'data' => $characteristics,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения списка характеристик: ' . $e->getMessage()
+                'message' => 'Ошибка получения списка характеристик: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -6642,14 +6665,14 @@ class ShopGoodsController extends Controller
             'transfer.short_description' => 'nullable|boolean',
             'transfer.variations' => 'nullable|boolean',
             'transfer.images' => 'nullable|boolean',
-            'delete_source' => 'nullable|boolean'
+            'delete_source' => 'nullable|boolean',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -6664,49 +6687,49 @@ class ShopGoodsController extends Controller
             $transferredItems = [];
 
             // Функция для сравнения характеристик вариаций (используется в нескольких местах)
-            $compareVariationAttributes = function($attrs1, $attrs2) {
+            $compareVariationAttributes = function ($attrs1, $attrs2) {
                 if (count($attrs1) !== count($attrs2)) {
                     return false;
                 }
-                
+
                 // Сортируем по attribute_id и value_id для сравнения
-                $sorted1 = collect($attrs1)->sortBy(function($attr) {
-                    return $attr['attribute_id'] . '_' . $attr['value_id'];
+                $sorted1 = collect($attrs1)->sortBy(function ($attr) {
+                    return $attr['attribute_id'].'_'.$attr['value_id'];
                 })->values()->toArray();
-                
-                $sorted2 = collect($attrs2)->sortBy(function($attr) {
-                    return $attr['attribute_id'] . '_' . $attr['value_id'];
+
+                $sorted2 = collect($attrs2)->sortBy(function ($attr) {
+                    return $attr['attribute_id'].'_'.$attr['value_id'];
                 })->values()->toArray();
-                
+
                 return json_encode($sorted1) === json_encode($sorted2);
             };
 
             // Перенос описания
-            if (!empty($transfer['description'])) {
+            if (! empty($transfer['description'])) {
                 $targetGood->description = $sourceGood->description;
                 $transferredItems[] = 'описание';
             }
 
             // Перенос краткого описания
-            if (!empty($transfer['short_description'])) {
+            if (! empty($transfer['short_description'])) {
                 $targetGood->short_description = $sourceGood->short_description;
                 $transferredItems[] = 'краткое описание';
             }
 
             // Сохраняем изменения в основных полях
-            if (!empty($transfer['description']) || !empty($transfer['short_description'])) {
+            if (! empty($transfer['description']) || ! empty($transfer['short_description'])) {
                 $targetGood->save();
             }
 
             // Перенос вариаций
-            if (!empty($transfer['variations']) && $sourceGood->variations) {
+            if (! empty($transfer['variations']) && $sourceGood->variations) {
                 $sourceVariations = $sourceGood->variations;
-                
+
                 // Загружаем атрибуты для всех вариаций источника
                 $sourceVariationIds = $sourceVariations->pluck('id')->toArray();
                 $sourceVariationAttributes = [];
-                
-                if (!empty($sourceVariationIds)) {
+
+                if (! empty($sourceVariationIds)) {
                     $attrsRows = DB::table('shop_variation_attributes_values as vav')
                         ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
                         ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
@@ -6721,14 +6744,14 @@ class ShopGoodsController extends Controller
                         ->get();
 
                     foreach ($attrsRows as $row) {
-                        if (!isset($sourceVariationAttributes[$row->variation_id])) {
+                        if (! isset($sourceVariationAttributes[$row->variation_id])) {
                             $sourceVariationAttributes[$row->variation_id] = [];
                         }
                         $sourceVariationAttributes[$row->variation_id][] = [
                             'attribute_id' => $row->attribute_id,
                             'attribute_name' => $row->attribute_name,
                             'value_id' => $row->value_id,
-                            'value' => $row->value_value
+                            'value' => $row->value_value,
                         ];
                     }
                 }
@@ -6737,8 +6760,8 @@ class ShopGoodsController extends Controller
                 $targetVariations = $targetGood->variations;
                 $targetVariationIds = $targetVariations->pluck('id')->toArray();
                 $targetVariationAttributes = [];
-                
-                if (!empty($targetVariationIds)) {
+
+                if (! empty($targetVariationIds)) {
                     $attrsRows = DB::table('shop_variation_attributes_values as vav')
                         ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
                         ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
@@ -6753,14 +6776,14 @@ class ShopGoodsController extends Controller
                         ->get();
 
                     foreach ($attrsRows as $row) {
-                        if (!isset($targetVariationAttributes[$row->variation_id])) {
+                        if (! isset($targetVariationAttributes[$row->variation_id])) {
                             $targetVariationAttributes[$row->variation_id] = [];
                         }
                         $targetVariationAttributes[$row->variation_id][] = [
                             'attribute_id' => $row->attribute_id,
                             'attribute_name' => $row->attribute_name,
                             'value_id' => $row->value_id,
-                            'value' => $row->value_value
+                            'value' => $row->value_value,
                         ];
                     }
                 }
@@ -6771,7 +6794,7 @@ class ShopGoodsController extends Controller
                 // Создаем вариации для получателя
                 foreach ($sourceVariations as $sourceVariation) {
                     $sourceAttrs = $sourceVariationAttributes[$sourceVariation->id] ?? [];
-                    
+
                     // Проверяем, есть ли уже вариация с такими же характеристиками
                     $duplicateFound = false;
                     foreach ($targetVariations as $targetVariation) {
@@ -6783,7 +6806,7 @@ class ShopGoodsController extends Controller
                         }
                     }
 
-                    if (!$duplicateFound) {
+                    if (! $duplicateFound) {
                         // Создаем новую вариацию
                         $newVariation = \App\Models\ShopGoodVariation::create([
                             'good_id' => $targetGood->id,
@@ -6795,15 +6818,15 @@ class ShopGoodsController extends Controller
                             'show_demping' => $sourceVariation->show_demping,
                             'stock_quantity' => $sourceVariation->stock_quantity,
                             'remote_stock_quantity' => $sourceVariation->remote_stock_quantity,
-                            'is_active' => $sourceVariation->is_active
+                            'is_active' => $sourceVariation->is_active,
                         ]);
 
                         // Копируем атрибуты вариации
-                        if (!empty($sourceAttrs)) {
+                        if (! empty($sourceAttrs)) {
                             foreach ($sourceAttrs as $attr) {
                                 DB::table('shop_variation_attributes_values')->insert([
                                     'variation_id' => $newVariation->id,
-                                    'attribute_value_id' => $attr['value_id']
+                                    'attribute_value_id' => $attr['value_id'],
                                 ]);
                             }
                         }
@@ -6816,7 +6839,7 @@ class ShopGoodsController extends Controller
             }
 
             // Перенос изображений (после операций с вариациями)
-            if (!empty($transfer['images'])) {
+            if (! empty($transfer['images'])) {
                 // Загружаем все вариации с атрибутами для обоих товаров
                 $sourceVariations = ShopGood::with(['variations'])->find($sourceGood->id)->variations;
                 $targetVariations = ShopGood::with(['variations'])->find($targetGood->id)->variations;
@@ -6824,8 +6847,8 @@ class ShopGoodsController extends Controller
                 // Загружаем атрибуты вариаций источника
                 $sourceVariationIds = $sourceVariations->pluck('id')->toArray();
                 $sourceVariationAttributesMap = [];
-                
-                if (!empty($sourceVariationIds)) {
+
+                if (! empty($sourceVariationIds)) {
                     $attrsRows = DB::table('shop_variation_attributes_values as vav')
                         ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
                         ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
@@ -6838,12 +6861,12 @@ class ShopGoodsController extends Controller
                         ->get();
 
                     foreach ($attrsRows as $row) {
-                        if (!isset($sourceVariationAttributesMap[$row->variation_id])) {
+                        if (! isset($sourceVariationAttributesMap[$row->variation_id])) {
                             $sourceVariationAttributesMap[$row->variation_id] = [];
                         }
                         $sourceVariationAttributesMap[$row->variation_id][] = [
                             'attribute_id' => $row->attribute_id,
-                            'value_id' => $row->value_id
+                            'value_id' => $row->value_id,
                         ];
                     }
                 }
@@ -6851,8 +6874,8 @@ class ShopGoodsController extends Controller
                 // Загружаем атрибуты вариаций получателя
                 $targetVariationIds = $targetVariations->pluck('id')->toArray();
                 $targetVariationAttributesMap = [];
-                
-                if (!empty($targetVariationIds)) {
+
+                if (! empty($targetVariationIds)) {
                     $attrsRows = DB::table('shop_variation_attributes_values as vav')
                         ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
                         ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
@@ -6865,24 +6888,25 @@ class ShopGoodsController extends Controller
                         ->get();
 
                     foreach ($attrsRows as $row) {
-                        if (!isset($targetVariationAttributesMap[$row->variation_id])) {
+                        if (! isset($targetVariationAttributesMap[$row->variation_id])) {
                             $targetVariationAttributesMap[$row->variation_id] = [];
                         }
                         $targetVariationAttributesMap[$row->variation_id][] = [
                             'attribute_id' => $row->attribute_id,
-                            'value_id' => $row->value_id
+                            'value_id' => $row->value_id,
                         ];
                     }
                 }
 
                 // Функция для поиска соответствующей вариации получателя по характеристикам
-                $findMatchingVariation = function($sourceAttrs, $targetVariations, $targetVariationAttributesMap) use ($compareVariationAttributes) {
+                $findMatchingVariation = function ($sourceAttrs, $targetVariations, $targetVariationAttributesMap) use ($compareVariationAttributes) {
                     foreach ($targetVariations as $targetVariation) {
                         $targetAttrs = $targetVariationAttributesMap[$targetVariation->id] ?? [];
                         if ($compareVariationAttributes($sourceAttrs, $targetAttrs)) {
                             return $targetVariation->id;
                         }
                     }
+
                     return null;
                 };
 
@@ -6897,7 +6921,7 @@ class ShopGoodsController extends Controller
                         ->where('id', $image->id)
                         ->update([
                             'good_id' => $targetGood->id,
-                            'variation_id' => null
+                            'variation_id' => null,
                         ]);
                 }
 
@@ -6915,7 +6939,7 @@ class ShopGoodsController extends Controller
                             ->where('id', $image->id)
                             ->update([
                                 'good_id' => $targetGood->id,
-                                'variation_id' => $matchingTargetVariationId
+                                'variation_id' => $matchingTargetVariationId,
                             ]);
                     }
                 }
@@ -6931,7 +6955,7 @@ class ShopGoodsController extends Controller
 
             DB::commit();
 
-            $message = 'Данные успешно перенесены: ' . implode(', ', $transferredItems);
+            $message = 'Данные успешно перенесены: '.implode(', ', $transferredItems);
             if ($deleteSource) {
                 $message .= '. Исходный товар удален.';
             }
@@ -6941,16 +6965,17 @@ class ShopGoodsController extends Controller
                 'message' => $message,
                 'data' => [
                     'transferred' => $transferredItems,
-                    'delete_source' => $deleteSource
-                ]
+                    'delete_source' => $deleteSource,
+                ],
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error('Ошибка переноса данных товаров: ' . $e->getMessage());
+            Log::error('Ошибка переноса данных товаров: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка переноса данных: ' . $e->getMessage()
+                'message' => 'Ошибка переноса данных: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -6970,14 +6995,14 @@ class ShopGoodsController extends Controller
             'goods_without_variations.*.update_slug' => 'nullable|boolean',
             'goods_without_variations.*.update_prices' => 'nullable|boolean',
             'goods_without_variations.*.selected_image_ids' => 'nullable|array',
-            'goods_without_variations.*.selected_image_ids.*' => 'exists:shop_good_images,id'
+            'goods_without_variations.*.selected_image_ids.*' => 'exists:shop_good_images,id',
         ]);
 
         if ($basicValidator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации основных полей',
-                'errors' => $basicValidator->errors()
+                'errors' => $basicValidator->errors(),
             ], 422);
         }
 
@@ -6991,24 +7016,24 @@ class ShopGoodsController extends Controller
             $goodsWithoutVariations = $request->input('goods_without_variations', []);
 
             foreach ($goodsWithoutVariations as $index => $goodData) {
-                if (!isset($goodData['variation_ids']) && !isset($goodData['variation_id'])) {
+                if (! isset($goodData['variation_ids']) && ! isset($goodData['variation_id'])) {
                     $validator->errors()->add("goods_without_variations.{$index}.variation_ids", 'Поле variation_ids или variation_id обязательно для заполнения.');
                 }
 
                 if (isset($goodData['variation_ids'])) {
-                    if (!is_array($goodData['variation_ids']) || empty($goodData['variation_ids'])) {
+                    if (! is_array($goodData['variation_ids']) || empty($goodData['variation_ids'])) {
                         $validator->errors()->add("goods_without_variations.{$index}.variation_ids", 'Поле variation_ids должно быть непустым массивом.');
                     } else {
                         foreach ($goodData['variation_ids'] as $varIndex => $variationId) {
-                            if (!is_numeric($variationId) || !\App\Models\ShopGoodVariation::where('id', $variationId)->exists()) {
+                            if (! is_numeric($variationId) || ! \App\Models\ShopGoodVariation::where('id', $variationId)->exists()) {
                                 $validator->errors()->add("goods_without_variations.{$index}.variation_ids.{$varIndex}", 'Указанная вариация не существует.');
                             }
                         }
                     }
                 }
 
-                if (isset($goodData['variation_id']) && !isset($goodData['variation_ids'])) {
-                    if (!is_numeric($goodData['variation_id']) || !\App\Models\ShopGoodVariation::where('id', $goodData['variation_id'])->exists()) {
+                if (isset($goodData['variation_id']) && ! isset($goodData['variation_ids'])) {
+                    if (! is_numeric($goodData['variation_id']) || ! \App\Models\ShopGoodVariation::where('id', $goodData['variation_id'])->exists()) {
                         $validator->errors()->add("goods_without_variations.{$index}.variation_id", 'Указанная вариация не существует.');
                     }
                 }
@@ -7030,7 +7055,7 @@ class ShopGoodsController extends Controller
         if (empty($validGoodsWithoutVariations)) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ни один из указанных товаров не найден'
+                'message' => 'Ни один из указанных товаров не найден',
             ], 422);
         }
 
@@ -7041,7 +7066,7 @@ class ShopGoodsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации после фильтрации товаров',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -7050,12 +7075,12 @@ class ShopGoodsController extends Controller
 
             $goodWithVariations = ShopGood::with(['variations'])->findOrFail($request->good_with_variations_id);
             $goodsWithoutVariations = $validGoodsWithoutVariations; // Используем отфильтрованный массив
-            
+
             // Проверяем, что товар действительно имеет вариации
             if ($goodWithVariations->variations->isEmpty()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Выбранный товар не имеет вариаций'
+                    'message' => 'Выбранный товар не имеет вариаций',
                 ], 422);
             }
 
@@ -7074,7 +7099,7 @@ class ShopGoodsController extends Controller
                     $sourceGoodsData[$goodId] = [
                         'description' => $good->description,
                         'short_description' => $good->short_description,
-                        'slug' => $good->slug
+                        'slug' => $good->slug,
                     ];
                 }
             }
@@ -7115,24 +7140,24 @@ class ShopGoodsController extends Controller
                             ->where('good_id', $goodWithVariations->id)
                             ->firstOrFail();
 
-                    // Сохраняем оригинальное название вариации для истории
-                    $originalVariationName = $variation->name;
+                        // Сохраняем оригинальное название вариации для истории
+                        $originalVariationName = $variation->name;
 
-                    // Обновляем данные вариации данными из товара без вариаций
-                    // НЕ переносим остатки - только основные данные и цены (по выбору)
-                    $updateData = [
-                        'name' => $goodWithoutVariations->name,
-                        'sku' => $goodWithoutVariations->sku,
-                    ];
+                        // Обновляем данные вариации данными из товара без вариаций
+                        // НЕ переносим остатки - только основные данные и цены (по выбору)
+                        $updateData = [
+                            'name' => $goodWithoutVariations->name,
+                            'sku' => $goodWithoutVariations->sku,
+                        ];
 
-                    // Переносим цены только если выбрана соответствующая опция
-                    if ($updatePrices) {
-                        $updateData['price'] = $goodWithoutVariations->price;
-                        $updateData['sale_price'] = $goodWithoutVariations->sale_price;
-                        $updateData['demping_price'] = $goodWithoutVariations->demping_price;
-                    }
+                        // Переносим цены только если выбрана соответствующая опция
+                        if ($updatePrices) {
+                            $updateData['price'] = $goodWithoutVariations->price;
+                            $updateData['sale_price'] = $goodWithoutVariations->sale_price;
+                            $updateData['demping_price'] = $goodWithoutVariations->demping_price;
+                        }
 
-                    $variation->update($updateData);
+                        $variation->update($updateData);
 
                         $updatedVariations[] = $variation->id;
                     } catch (\Exception $e) {
@@ -7143,13 +7168,13 @@ class ShopGoodsController extends Controller
 
                 // Копируем изображения товара в каждую вариацию
                 // Это позволяет каждой вариации иметь свои собственные изображения
-                if (!empty($variationIds)) {
+                if (! empty($variationIds)) {
                     // Получаем изображения товара - либо выбранные, либо все
                     $sourceImagesQuery = DB::table('shop_good_images')
                         ->where('good_id', $goodWithoutVariations->id)
                         ->whereNull('variation_id');
 
-                    if (!empty($selectedImageIds)) {
+                    if (! empty($selectedImageIds)) {
                         $sourceImagesQuery->whereIn('id', $selectedImageIds);
                     }
 
@@ -7169,7 +7194,7 @@ class ShopGoodsController extends Controller
                                 'is_main' => $sourceImage->is_main,
                                 'sort_order' => $sourceImage->sort_order,
                                 'created_at' => now(),
-                                'updated_at' => now()
+                                'updated_at' => now(),
                             ]);
                             $totalImagesCopied++;
                         }
@@ -7181,10 +7206,10 @@ class ShopGoodsController extends Controller
                         'variation_ids' => $variationIds,
                         'images_found' => $imagesFound,
                         'images_copied' => $totalImagesCopied,
-                        'selected_images' => !empty($selectedImageIds),
-                        'note' => !empty($selectedImageIds)
+                        'selected_images' => ! empty($selectedImageIds),
+                        'note' => ! empty($selectedImageIds)
                             ? 'Выбранные изображения скопированы в каждую вариацию'
-                            : 'Все изображения скопированы в каждую вариацию'
+                            : 'Все изображения скопированы в каждую вариацию',
                     ];
                 }
 
@@ -7246,14 +7271,14 @@ class ShopGoodsController extends Controller
                     ->exists();
 
                 if ($existingSlug) {
-                    $skippedFields['slug'] = 'Slug "' . $slug . '" уже используется другим товаром';
+                    $skippedFields['slug'] = 'Slug "'.$slug.'" уже используется другим товаром';
                 } else {
                     $updateFields['slug'] = $slug;
                 }
             }
 
             // Обновляем основной товар, если есть поля для обновления
-            if (!empty($updateFields)) {
+            if (! empty($updateFields)) {
                 $goodWithVariations->update($updateFields);
             }
 
@@ -7275,26 +7300,26 @@ class ShopGoodsController extends Controller
                     'variation_ids' => $info['variation_ids'] ?? [],
                     'images_found' => $info['images_found'],
                     'images_copied' => $info['images_copied'] ?? 0,
-                    'note' => $info['note'] ?? ''
+                    'note' => $info['note'] ?? '',
                 ];
 
                 // Добавляем информацию о финальном количестве изображений для каждой вариации
-                if (!empty($info['variation_ids'])) {
+                if (! empty($info['variation_ids'])) {
                     foreach ($info['variation_ids'] as $varId) {
                         $imagesSummary[] = [
                             'variation_id' => $varId,
                             'images_after_copy' => $variationImagesAfterCopy[$varId] ?? 0,
-                            'note' => 'Финальное количество изображений в вариации'
+                            'note' => 'Финальное количество изображений в вариации',
                         ];
                     }
                 }
             }
 
             // Формируем сообщение с учетом пропущенных полей
-            $message = 'Данные успешно перенесены в вариации. Обновлено вариаций: ' . count($updatedVariations) . '. Удалено товаров: ' . count($goodIdsToDelete);
+            $message = 'Данные успешно перенесены в вариации. Обновлено вариаций: '.count($updatedVariations).'. Удалено товаров: '.count($goodIdsToDelete);
 
-            if (!empty($skippedFields)) {
-                $message .= '. Некоторые поля не удалось обновить: ' . implode(', ', array_values($skippedFields));
+            if (! empty($skippedFields)) {
+                $message .= '. Некоторые поля не удалось обновить: '.implode(', ', array_values($skippedFields));
             }
 
             return response()->json([
@@ -7304,17 +7329,17 @@ class ShopGoodsController extends Controller
                     'updated_variations' => $updatedVariations,
                     'deleted_goods' => $goodIdsToDelete,
                     'images_transfer' => $imagesSummary,
-                    'skipped_fields' => $skippedFields
-                ]
+                    'skipped_fields' => $skippedFields,
+                ],
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error('Ошибка изменения вариации: ' . $e->getMessage());
+            \Log::error('Ошибка изменения вариации: '.$e->getMessage());
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка изменения вариации: ' . $e->getMessage()
+                'message' => 'Ошибка изменения вариации: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -7326,14 +7351,14 @@ class ShopGoodsController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'goods_ids' => 'required|array|min:1',
-            'goods_ids.*' => 'exists:shop_goods,id'
+            'goods_ids.*' => 'exists:shop_goods,id',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -7346,7 +7371,7 @@ class ShopGoodsController extends Controller
             $processedGoods = [];
 
             foreach ($goodsIds as $goodId) {
-                $good = ShopGood::with(['variations' => function($query) {
+                $good = ShopGood::with(['variations' => function ($query) {
                     $query->with('images');
                 }])->findOrFail($goodId);
 
@@ -7364,7 +7389,7 @@ class ShopGoodsController extends Controller
                         // Меняем принадлежность изображения с вариации на товар
                         $image->update([
                             'good_id' => $good->id,
-                            'variation_id' => null
+                            'variation_id' => null,
                         ]);
                         $goodImagesTransferred++;
                         $totalImagesTransferred++;
@@ -7379,7 +7404,7 @@ class ShopGoodsController extends Controller
                     'id' => $good->id,
                     'name' => $good->name,
                     'variations_deleted' => $good->variations->count(),
-                    'images_transferred' => $goodImagesTransferred
+                    'images_transferred' => $goodImagesTransferred,
                 ];
             }
 
@@ -7387,20 +7412,21 @@ class ShopGoodsController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Медиа успешно перенесено из вариаций в основной товар. Удалено вариаций: ' . $totalVariationsDeleted . '. Перенесено изображений: ' . $totalImagesTransferred,
+                'message' => 'Медиа успешно перенесено из вариаций в основной товар. Удалено вариаций: '.$totalVariationsDeleted.'. Перенесено изображений: '.$totalImagesTransferred,
                 'data' => [
                     'processed_goods' => $processedGoods,
                     'total_variations_deleted' => $totalVariationsDeleted,
-                    'total_images_transferred' => $totalImagesTransferred
-                ]
+                    'total_images_transferred' => $totalImagesTransferred,
+                ],
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error('Ошибка переноса медиа из вариаций: ' . $e->getMessage());
+            Log::error('Ошибка переноса медиа из вариаций: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка переноса медиа из вариаций: ' . $e->getMessage()
+                'message' => 'Ошибка переноса медиа из вариаций: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -7412,14 +7438,14 @@ class ShopGoodsController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'ids' => 'required|array|min:1',
-            'ids.*' => 'exists:shop_goods,id'
+            'ids.*' => 'exists:shop_goods,id',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -7439,14 +7465,15 @@ class ShopGoodsController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $result
+                'data' => $result,
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Ошибка получения количества изображений в вариациях: ' . $e->getMessage());
+            Log::error('Ошибка получения количества изображений в вариациях: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения количества изображений в вариациях: ' . $e->getMessage()
+                'message' => 'Ошибка получения количества изображений в вариациях: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -7464,7 +7491,7 @@ class ShopGoodsController extends Controller
                 ->pluck('supplier')
                 ->filter()
                 ->toArray();
-            
+
             // Получаем поставщиков из вариаций
             $suppliersFromVariations = ShopGoodVariation::whereNotNull('supplier')
                 ->where('supplier', '!=', '')
@@ -7472,26 +7499,24 @@ class ShopGoodsController extends Controller
                 ->pluck('supplier')
                 ->filter()
                 ->toArray();
-            
+
             // Объединяем и получаем уникальный список
             $allSuppliers = array_unique(array_merge($suppliersFromGoods, $suppliersFromVariations));
-            
+
             // Сортируем по алфавиту
             sort($allSuppliers);
-            
+
             return response()->json([
                 'success' => true,
-                'data' => array_values($allSuppliers) // array_values для переиндексации массива
+                'data' => array_values($allSuppliers), // array_values для переиндексации массива
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения списка поставщиков: ' . $e->getMessage()
+                'message' => 'Ошибка получения списка поставщиков: '.$e->getMessage(),
             ], 500);
         }
     }
-
-
 
     /**
      * Массовое создание вариаций из товаров
@@ -7510,30 +7535,30 @@ class ShopGoodsController extends Controller
             'goods_mapping.*.attribute_values.*.attribute_id' => 'nullable|exists:shop_variation_attributes,id',
             'goods_mapping.*.attribute_values.*.value_id' => 'nullable|exists:shop_variation_attribute_values,id',
             'goods_mapping.*.attribute_values.*.value' => 'nullable|string|max:255',
-            'goods_mapping.*.attribute_values.*.attribute_name' => 'nullable|string|max:255'
+            'goods_mapping.*.attribute_values.*.attribute_name' => 'nullable|string|max:255',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
-        
+
         // Дополнительная валидация: каждый attribute_value должен иметь либо attribute_id, либо attribute_name
         foreach ($request->goods_mapping as $index => $mapping) {
             foreach ($mapping['attribute_values'] as $valueIndex => $attrValue) {
-                if (!isset($attrValue['attribute_id']) && !isset($attrValue['attribute_name'])) {
+                if (! isset($attrValue['attribute_id']) && ! isset($attrValue['attribute_name'])) {
                     return response()->json([
                         'success' => false,
-                        'message' => "Ошибка валидации: goods_mapping[{$index}].attribute_values[{$valueIndex}] должен содержать либо attribute_id, либо attribute_name"
+                        'message' => "Ошибка валидации: goods_mapping[{$index}].attribute_values[{$valueIndex}] должен содержать либо attribute_id, либо attribute_name",
                     ], 422);
                 }
-                if (!isset($attrValue['value_id']) && !isset($attrValue['value'])) {
+                if (! isset($attrValue['value_id']) && ! isset($attrValue['value'])) {
                     return response()->json([
                         'success' => false,
-                        'message' => "Ошибка валидации: goods_mapping[{$index}].attribute_values[{$valueIndex}] должен содержать либо value_id, либо value"
+                        'message' => "Ошибка валидации: goods_mapping[{$index}].attribute_values[{$valueIndex}] должен содержать либо value_id, либо value",
                     ], 422);
                 }
             }
@@ -7597,8 +7622,9 @@ class ShopGoodsController extends Controller
                     }
                 }
                 $missingAttributes = array_diff($selectedAttributes, $mappingAttributeIds);
-                if (!empty($missingAttributes)) {
+                if (! empty($missingAttributes)) {
                     $errors[] = "Товар ID {$sourceGoodId}: не указаны значения для всех выбранных атрибутов";
+
                     continue;
                 }
 
@@ -7611,18 +7637,19 @@ class ShopGoodsController extends Controller
                     $skippedVariations++;
                     $errors[] = "Товар ID {$sourceGoodId}: вариация с такими атрибутами уже существует";
                     // Если это не главный товар, удаляем его
-                    if (!$isMainGood) {
+                    if (! $isMainGood) {
                         $sourceGood->delete();
                     }
+
                     continue;
                 }
 
                 // Создаем вариацию
                 // Используем название из goods_mapping, если передано, иначе название исходного товара
-                $variationName = isset($mapping['name']) && !empty($mapping['name']) 
-                    ? trim($mapping['name']) 
+                $variationName = isset($mapping['name']) && ! empty($mapping['name'])
+                    ? trim($mapping['name'])
                     : $sourceGood->name;
-                
+
                 $variation = \App\Models\ShopGoodVariation::create([
                     'good_id' => $mainGoodId,
                     'name' => $variationName, // Используем название исходного товара из goods_mapping
@@ -7639,29 +7666,29 @@ class ShopGoodsController extends Controller
                     'height' => $sourceGood->height,
                     'width' => $sourceGood->width,
                     'is_active' => $sourceGood->is_active,
-                    'sort_order' => ++$maxSortOrder
+                    'sort_order' => ++$maxSortOrder,
                 ]);
 
                 // Привязываем значения атрибутов к вариации
                 foreach ($attributeValues as $attrValue) {
                     $attributeValueId = null;
-                    
+
                     // Если есть value_id, используем его
                     if (isset($attrValue['value_id']) && $attrValue['value_id']) {
                         $attributeValueId = $attrValue['value_id'];
-                    } 
+                    }
                     // Если есть value (новое значение), создаем или находим значение атрибута
                     elseif (isset($attrValue['value']) && trim($attrValue['value']) !== '') {
                         $attributeId = $attrValue['attribute_id'] ?? null;
                         $valueText = trim($attrValue['value']);
-                        
+
                         if ($attributeId) {
                             // Ищем существующее значение по тексту
                             $existingValue = DB::table('shop_variation_attribute_values')
                                 ->where('attribute_id', $attributeId)
                                 ->where('value', $valueText)
                                 ->first();
-                            
+
                             if ($existingValue) {
                                 $attributeValueId = $existingValue->id;
                             } else {
@@ -7670,7 +7697,7 @@ class ShopGoodsController extends Controller
                                     'attribute_id' => $attributeId,
                                     'value' => $valueText,
                                     'created_at' => now(),
-                                    'updated_at' => now()
+                                    'updated_at' => now(),
                                 ]);
                             }
                         }
@@ -7679,19 +7706,19 @@ class ShopGoodsController extends Controller
                     elseif (isset($attrValue['attribute_name']) && isset($attrValue['value']) && trim($attrValue['value']) !== '') {
                         $attributeName = trim($attrValue['attribute_name']);
                         $valueText = trim($attrValue['value']);
-                        
+
                         // Находим атрибут по имени
                         $attribute = DB::table('shop_variation_attributes')
                             ->where('name', $attributeName)
                             ->first();
-                        
+
                         if ($attribute) {
                             // Ищем существующее значение по тексту
                             $existingValue = DB::table('shop_variation_attribute_values')
                                 ->where('attribute_id', $attribute->id)
                                 ->where('value', $valueText)
                                 ->first();
-                            
+
                             if ($existingValue) {
                                 $attributeValueId = $existingValue->id;
                             } else {
@@ -7700,19 +7727,19 @@ class ShopGoodsController extends Controller
                                     'attribute_id' => $attribute->id,
                                     'value' => $valueText,
                                     'created_at' => now(),
-                                    'updated_at' => now()
+                                    'updated_at' => now(),
                                 ]);
                             }
                         }
                     }
-                    
+
                     if ($attributeValueId) {
-                    DB::table('shop_variation_attributes_values')->insert([
-                        'variation_id' => $variation->id,
+                        DB::table('shop_variation_attributes_values')->insert([
+                            'variation_id' => $variation->id,
                             'attribute_value_id' => $attributeValueId,
-                        'created_at' => now(),
-                        'updated_at' => now()
-                    ]);
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ]);
                     }
                 }
 
@@ -7722,11 +7749,11 @@ class ShopGoodsController extends Controller
                     ->whereNull('variation_id')
                     ->update([
                         'good_id' => null,
-                        'variation_id' => $variation->id
+                        'variation_id' => $variation->id,
                     ]);
 
                 // Удаляем исходный товар только если это не главный товар
-                if (!$isMainGood) {
+                if (! $isMainGood) {
                     $sourceGood->delete();
                 }
 
@@ -7739,10 +7766,10 @@ class ShopGoodsController extends Controller
             if ($skippedVariations > 0) {
                 $message .= ", пропущено: {$skippedVariations}";
             }
-            if (!empty($errors)) {
-                $message .= ". Ошибки: " . implode('; ', array_slice($errors, 0, 5));
+            if (! empty($errors)) {
+                $message .= '. Ошибки: '.implode('; ', array_slice($errors, 0, 5));
                 if (count($errors) > 5) {
-                    $message .= " и еще " . (count($errors) - 5) . " ошибок";
+                    $message .= ' и еще '.(count($errors) - 5).' ошибок';
                 }
             }
 
@@ -7752,19 +7779,19 @@ class ShopGoodsController extends Controller
                 'data' => [
                     'created_variations' => $createdVariations,
                     'skipped_variations' => $skippedVariations,
-                    'errors' => $errors
-                ]
+                    'errors' => $errors,
+                ],
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error('Error in bulkCreateVariations: ' . $e->getMessage(), [
-                'trace' => $e->getTraceAsString()
+            \Log::error('Error in bulkCreateVariations: '.$e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания вариаций: ' . $e->getMessage()
+                'message' => 'Ошибка создания вариаций: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -7776,7 +7803,7 @@ class ShopGoodsController extends Controller
     {
         // Получаем все вариации товара
         $variations = \App\Models\ShopGoodVariation::where('good_id', $goodId)->get();
-        
+
         if ($variations->isEmpty()) {
             return null;
         }
@@ -7796,7 +7823,7 @@ class ShopGoodsController extends Controller
                     $searchAttributeIds[] = $attribute->id;
                 }
             }
-            
+
             if (isset($attrValue['value_id']) && $attrValue['value_id']) {
                 $searchValueIds[] = $attrValue['value_id'];
             } elseif (isset($attrValue['value']) && trim($attrValue['value']) !== '') {
@@ -7812,7 +7839,7 @@ class ShopGoodsController extends Controller
                         $attributeId = $attribute->id;
                     }
                 }
-                
+
                 if ($attributeId) {
                     $value = DB::table('shop_variation_attribute_values')
                         ->where('attribute_id', $attributeId)
@@ -7873,19 +7900,19 @@ class ShopGoodsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
         $slug = $request->input('slug');
-        
+
         // Простая проверка существования товара со слагом (только проверка, без загрузки данных)
         $exists = ShopGood::where('slug', $slug)->exists();
 
         return response()->json([
             'success' => true,
-            'available' => !$exists,
-            'message' => $exists ? 'Слаг уже используется' : 'Слаг доступен'
+            'available' => ! $exists,
+            'message' => $exists ? 'Слаг уже используется' : 'Слаг доступен',
         ]);
     }
 
@@ -7897,14 +7924,14 @@ class ShopGoodsController extends Controller
         $validator = Validator::make($request->all(), [
             'main_good_id' => 'required|exists:shop_goods,id',
             'donor_good_ids' => 'required|array|min:1',
-            'donor_good_ids.*' => 'exists:shop_goods,id|different:main_good_id'
+            'donor_good_ids.*' => 'exists:shop_goods,id|different:main_good_id',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -7923,7 +7950,7 @@ class ShopGoodsController extends Controller
             if ($donorGoods->isEmpty()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Товары-доноры не найдены'
+                    'message' => 'Товары-доноры не найдены',
                 ], 404);
             }
 
@@ -7935,7 +7962,7 @@ class ShopGoodsController extends Controller
             foreach ($donorGoods as $donorGood) {
                 // Перемещаем все вариации из донора в основной товар
                 $variations = $donorGood->variations;
-                
+
                 if ($variations->isEmpty()) {
                     // Если у товара-донора нет вариаций, просто удаляем его
                     // Сначала удаляем изображения товара
@@ -7956,15 +7983,16 @@ class ShopGoodsController extends Controller
 
                     // Удаляем товар-донор
                     $donorGood->delete();
+
                     continue;
                 }
-                
+
                 foreach ($variations as $variation) {
                     // Обновляем good_id вариации на основной товар
                     // Поставщик (supplier) уже сохранен в поле вариации, он автоматически сохранится
                     $variation->good_id = $mainGoodId;
                     $variation->save();
-                    
+
                     $totalVariationsMoved++;
 
                     // Перемещаем изображения вариации
@@ -8018,19 +8046,19 @@ class ShopGoodsController extends Controller
                     'variations_count' => $totalVariationsMoved,
                     'images_count' => $totalImagesMoved,
                     'videos_count' => $totalVideosMoved,
-                    'deleted_goods_count' => count($donorGoodIds)
-                ]
+                    'deleted_goods_count' => count($donorGoodIds),
+                ],
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error('Ошибка слияния вариаций: ' . $e->getMessage(), [
-                'trace' => $e->getTraceAsString()
+            \Log::error('Ошибка слияния вариаций: '.$e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка слияния вариаций: ' . $e->getMessage()
+                'message' => 'Ошибка слияния вариаций: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -8044,14 +8072,14 @@ class ShopGoodsController extends Controller
             'good_ids' => 'required|string', // Accept comma-separated string
             'search' => 'nullable|string|max:255',
             'page' => 'nullable|integer|min:1',
-            'per_page' => 'nullable|integer|min:1|max:100'
+            'per_page' => 'nullable|integer|min:1|max:100',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -8064,7 +8092,7 @@ class ShopGoodsController extends Controller
             if (empty($goodIds)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Необходимо указать хотя бы один ID товара'
+                    'message' => 'Необходимо указать хотя бы один ID товара',
                 ], 422);
             }
 
@@ -8077,7 +8105,7 @@ class ShopGoodsController extends Controller
             if (count($existingGoodIds) !== count($goodIds)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Некоторые указанные ID товаров не существуют'
+                    'message' => 'Некоторые указанные ID товаров не существуют',
                 ], 422);
             }
 
@@ -8102,10 +8130,10 @@ class ShopGoodsController extends Controller
                 ->orderBy('pv.value');
 
             // Применяем поиск если указан
-            if (!empty($search)) {
+            if (! empty($search)) {
                 $query->where(function ($q) use ($search) {
-                    $q->where('p.name', 'like', '%' . $search . '%')
-                      ->orWhere('pv.value', 'like', '%' . $search . '%');
+                    $q->where('p.name', 'like', '%'.$search.'%')
+                        ->orWhere('pv.value', 'like', '%'.$search.'%');
                 });
             }
 
@@ -8122,14 +8150,15 @@ class ShopGoodsController extends Controller
                 'data' => $properties,
                 'total' => $totalCount,
                 'page' => $page,
-                'per_page' => $perPage
+                'per_page' => $perPage,
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('Ошибка при получении характеристик для удаления: ' . $e->getMessage());
+            \Log::error('Ошибка при получении характеристик для удаления: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении характеристик'
+                'message' => 'Ошибка при получении характеристик',
             ], 500);
         }
     }
@@ -8144,14 +8173,14 @@ class ShopGoodsController extends Controller
             'good_ids.*' => 'exists:shop_goods,id',
             'properties' => 'required|array',
             'properties.*.property_id' => 'required|exists:shop_properties,id',
-            'properties.*.property_value_id' => 'required|exists:shop_property_values,id'
+            'properties.*.property_value_id' => 'required|exists:shop_property_values,id',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -8185,7 +8214,7 @@ class ShopGoodsController extends Controller
                 if ($good) {
                     $this->logAudit($good, 'bulk_remove_properties', [
                         'properties_removed' => $properties,
-                        'removed_count' => $removedCount
+                        'removed_count' => $removedCount,
                     ], null);
                 }
             }
@@ -8193,17 +8222,17 @@ class ShopGoodsController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Характеристики успешно удалены',
-                'count' => $removedCount
+                'count' => $removedCount,
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error('Ошибка при массовом удалении характеристик: ' . $e->getMessage());
+            \Log::error('Ошибка при массовом удалении характеристик: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при удалении характеристик'
+                'message' => 'Ошибка при удалении характеристик',
             ], 500);
         }
     }
-
 }

@@ -38,4 +38,3 @@ class ThrottlePublicRoutes
         return app(ThrottleRequests::class)->handle($request, $next, $limiter);
     }
 }
-

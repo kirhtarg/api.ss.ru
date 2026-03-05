@@ -2,8 +2,8 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Seeder;
 use App\Models\ShopOrderStatus;
+use Illuminate\Database\Seeder;
 
 class ShopOrderStatusSeeder extends Seeder
 {
@@ -21,7 +21,7 @@ class ShopOrderStatusSeeder extends Seeder
                 'is_finished' => false,
                 'is_cancelled' => false,
                 'sort_order' => 1,
-                'description' => 'Заказ принят и находится в обработке'
+                'description' => 'Заказ принят и находится в обработке',
             ],
             [
                 'name' => 'confirmed',
@@ -31,7 +31,7 @@ class ShopOrderStatusSeeder extends Seeder
                 'is_finished' => false,
                 'is_cancelled' => false,
                 'sort_order' => 2,
-                'description' => 'Заказ подтвержден менеджером'
+                'description' => 'Заказ подтвержден менеджером',
             ],
             [
                 'name' => 'paid',
@@ -41,7 +41,7 @@ class ShopOrderStatusSeeder extends Seeder
                 'is_finished' => false,
                 'is_cancelled' => false,
                 'sort_order' => 3,
-                'description' => 'Заказ оплачен'
+                'description' => 'Заказ оплачен',
             ],
             [
                 'name' => 'shipped',
@@ -51,7 +51,7 @@ class ShopOrderStatusSeeder extends Seeder
                 'is_finished' => false,
                 'is_cancelled' => false,
                 'sort_order' => 4,
-                'description' => 'Заказ отправлен покупателю'
+                'description' => 'Заказ отправлен покупателю',
             ],
             [
                 'name' => 'delivered',
@@ -61,7 +61,7 @@ class ShopOrderStatusSeeder extends Seeder
                 'is_finished' => true,
                 'is_cancelled' => false,
                 'sort_order' => 5,
-                'description' => 'Заказ доставлен покупателю'
+                'description' => 'Заказ доставлен покупателю',
             ],
             [
                 'name' => 'cancelled',
@@ -71,7 +71,7 @@ class ShopOrderStatusSeeder extends Seeder
                 'is_finished' => true,
                 'is_cancelled' => true,
                 'sort_order' => 6,
-                'description' => 'Заказ отменен'
+                'description' => 'Заказ отменен',
             ],
             [
                 'name' => 'refunded',
@@ -81,8 +81,8 @@ class ShopOrderStatusSeeder extends Seeder
                 'is_finished' => true,
                 'is_cancelled' => false,
                 'sort_order' => 7,
-                'description' => 'Средства возвращены покупателю'
-            ]
+                'description' => 'Средства возвращены покупателю',
+            ],
         ];
 
         foreach ($statuses as $status) {

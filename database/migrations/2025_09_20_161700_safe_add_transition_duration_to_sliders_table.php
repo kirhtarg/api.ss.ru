@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::table('sliders', function (Blueprint $table) {
             // Проверяем, существует ли колонка, и добавляем только если её нет
-            if (!Schema::hasColumn('sliders', 'transition_duration')) {
+            if (! Schema::hasColumn('sliders', 'transition_duration')) {
                 $table->integer('transition_duration')->default(1000)->after('auto_interval');
             }
         });

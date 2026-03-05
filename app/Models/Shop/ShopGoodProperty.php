@@ -15,7 +15,7 @@ class ShopGoodProperty extends Model
     protected $fillable = [
         'good_id',
         'property_id',
-        'shop_property_value_id'
+        'shop_property_value_id',
     ];
 
     /**

@@ -5,107 +5,107 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Services\ImportLogService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\File;
 
 class ImportLogController extends Controller
 {
     protected $importLogService;
-    
+
     public function __construct(ImportLogService $importLogService)
     {
         $this->importLogService = $importLogService;
     }
+
     /**
      * Получить содержимое лог-файла
      */
     public function getLog(Request $request, $type)
     {
         $allowedTypes = ['import-load', 'import-skip', 'import-update', 'import-error', 'import-variation'];
-        
-        if (!in_array($type, $allowedTypes)) {
+
+        if (! in_array($type, $allowedTypes)) {
             return response()->json(['error' => 'Invalid log type'], 400);
         }
-        
+
         // Используем тот же путь, что и ImportLogService
         $logDir = storage_path('app/public/import-logs');
-        $logPath = $logDir . "/{$type}.log";
-        
-        if (!File::exists($logPath)) {
+        $logPath = $logDir."/{$type}.log";
+
+        if (! File::exists($logPath)) {
             return response()->json(['content' => '', 'lines' => 0]);
         }
-        
+
         $content = File::get($logPath);
         $lines = explode("\n", trim($content));
-        
+
         return response()->json([
             'content' => $content,
             'lines' => count($lines),
-            'lastModified' => File::lastModified($logPath)
+            'lastModified' => File::lastModified($logPath),
         ]);
     }
-    
+
     /**
      * Скачать лог-файл
      */
     public function downloadLog(Request $request, $type)
     {
         $allowedTypes = ['import-load', 'import-skip', 'import-update', 'import-error', 'import-variation'];
-        
-        if (!in_array($type, $allowedTypes)) {
+
+        if (! in_array($type, $allowedTypes)) {
             return response()->json(['error' => 'Invalid log type'], 400);
         }
-        
+
         // Используем тот же путь, что и ImportLogService
         $logDir = storage_path('app/public/import-logs');
-        $logPath = $logDir . "/{$type}.log";
-        
-        if (!File::exists($logPath)) {
+        $logPath = $logDir."/{$type}.log";
+
+        if (! File::exists($logPath)) {
             return response()->json(['error' => 'Log file not found'], 404);
         }
-        
+
         $logLabels = [
             'import-load' => 'Загружено',
             'import-update' => 'Обновлено',
             'import-skip' => 'Пропущено',
             'import-error' => 'Ошибки',
-            'import-variation' => 'Вариации'
+            'import-variation' => 'Вариации',
         ];
-        
+
         $label = $logLabels[$type] ?? $type;
-        $filename = "import-log-{$label}-" . date('Y-m-d_H-i-s') . '.log';
-        
+        $filename = "import-log-{$label}-".date('Y-m-d_H-i-s').'.log';
+
         return response()->download($logPath, $filename, [
             'Content-Type' => 'text/plain; charset=utf-8',
         ]);
     }
-    
+
     /**
      * Очистить лог-файл
      */
     public function clearLog(Request $request, $type)
     {
         $allowedTypes = ['import-load', 'import-skip', 'import-update', 'import-error', 'import-variation'];
-        
-        if (!in_array($type, $allowedTypes)) {
+
+        if (! in_array($type, $allowedTypes)) {
             return response()->json(['error' => 'Invalid log type'], 400);
         }
-        
+
         // Используем тот же путь, что и ImportLogService
         $logDir = storage_path('app/public/import-logs');
-        $logPath = $logDir . "/{$type}.log";
-        
+        $logPath = $logDir."/{$type}.log";
+
         // Создаем директорию если не существует
-        if (!File::exists($logDir)) {
+        if (! File::exists($logDir)) {
             \App\Helpers\StorageHelper::createDirectory($logDir);
         }
-        
+
         // Очищаем файл
         File::put($logPath, '');
-        
+
         return response()->json(['success' => true]);
     }
-    
+
     /**
      * Получить статистику логов
      */
@@ -113,33 +113,33 @@ class ImportLogController extends Controller
     {
         $stats = [];
         $logTypes = ['import-load', 'import-skip', 'import-update', 'import-error', 'import-variation'];
-        
+
         // Используем тот же путь, что и ImportLogService
         $logDir = storage_path('app/public/import-logs');
-        
+
         foreach ($logTypes as $type) {
-            $logPath = $logDir . "/{$type}.log";
-            
+            $logPath = $logDir."/{$type}.log";
+
             if (File::exists($logPath)) {
                 $content = File::get($logPath);
                 $lines = array_filter(explode("\n", trim($content)));
                 $stats[$type] = [
                     'count' => count($lines),
                     'lastModified' => File::lastModified($logPath),
-                    'size' => File::size($logPath)
+                    'size' => File::size($logPath),
                 ];
             } else {
                 $stats[$type] = [
                     'count' => 0,
                     'lastModified' => null,
-                    'size' => 0
+                    'size' => 0,
                 ];
             }
         }
-        
+
         return response()->json($stats);
     }
-    
+
     /**
      * Записать строку в лог загрузки
      */
@@ -148,12 +148,12 @@ class ImportLogController extends Controller
         $count = $request->input('count');
         $sku = $request->input('sku');
         $name = $request->input('name');
-        
+
         $this->importLogService->logLoaded($count, $sku, $name);
-        
+
         return response()->json(['success' => true]);
     }
-    
+
     /**
      * Записать строку в лог обновления
      */
@@ -162,12 +162,12 @@ class ImportLogController extends Controller
         $count = $request->input('count');
         $sku = $request->input('sku');
         $name = $request->input('name');
-        
+
         $this->importLogService->logUpdated($count, $sku, $name);
-        
+
         return response()->json(['success' => true]);
     }
-    
+
     /**
      * Записать строку в лог пропуска
      */
@@ -177,12 +177,12 @@ class ImportLogController extends Controller
         $sku = $request->input('sku');
         $name = $request->input('name');
         $reason = $request->input('reason');
-        
+
         $this->importLogService->logSkipped($count, $sku, $name, $reason);
-        
+
         return response()->json(['success' => true]);
     }
-    
+
     /**
      * Записать строку в лог ошибок
      */
@@ -193,9 +193,9 @@ class ImportLogController extends Controller
         $name = $request->input('name');
         $error = $request->input('error');
         $type = $request->input('type');
-        
+
         // Если передана только строка ошибки (общая ошибка)
-        if ($error && !$count && !$sku && !$name) {
+        if ($error && ! $count && ! $sku && ! $name) {
             if ($type === 'image_loading') {
                 $imageUrl = $request->input('imageUrl');
                 $goodSku = $request->input('goodSku');
@@ -207,46 +207,46 @@ class ImportLogController extends Controller
             // Конкретная ошибка товара
             $this->importLogService->logError($count, $sku, $name, $error);
         }
-        
+
         return response()->json(['success' => true]);
     }
-    
+
     /**
      * Пакетная запись в лог загрузки
      */
     public function logLoadBatch(Request $request)
     {
         $items = $request->input('items', []);
-        
+
         $this->importLogService->logLoadedBatch($items);
-        
+
         return response()->json(['success' => true, 'count' => count($items)]);
     }
-    
+
     /**
      * Пакетная запись в лог обновления
      */
     public function logUpdateBatch(Request $request)
     {
         $items = $request->input('items', []);
-        
+
         $this->importLogService->logUpdatedBatch($items);
-        
+
         return response()->json(['success' => true, 'count' => count($items)]);
     }
-    
+
     /**
      * Пакетная запись в лог пропуска
      */
     public function logSkipBatch(Request $request)
     {
         $items = $request->input('items', []);
-        
+
         $this->importLogService->logSkippedBatch($items);
-        
+
         return response()->json(['success' => true, 'count' => count($items)]);
     }
-    
+
     /**
      * Пакетная запись в лог ошибок
      */
@@ -254,30 +254,30 @@ class ImportLogController extends Controller
     {
         try {
             $items = $request->input('items', []) ?: $request->input('errors', []);
-            
+
             // Разбиваем большие пакеты на части по 2000 записей для оптимизации
             $chunkSize = 2000;
             $chunks = array_chunk($items, $chunkSize);
-            
+
             foreach ($chunks as $chunk) {
                 $this->importLogService->logErrorBatch($chunk);
             }
-            
+
             return response()->json(['success' => true, 'count' => count($items)]);
         } catch (\Exception $e) {
             \Log::error('Ошибка пакетного логирования ошибок', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
-                'items_count' => count($request->input('items', []) ?: $request->input('errors', []))
+                'items_count' => count($request->input('items', []) ?: $request->input('errors', [])),
             ]);
-            
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка логирования: ' . $e->getMessage()
+                'message' => 'Ошибка логирования: '.$e->getMessage(),
             ], 500);
         }
     }
-    
+
     /**
      * Пакетная запись успешных загрузок изображений
      */
@@ -285,31 +285,31 @@ class ImportLogController extends Controller
     {
         try {
             $items = $request->input('items', []);
-            
+
             // Разбиваем большие пакеты на части по 2000 записей для оптимизации
             // Увеличено с 500, так как теперь используется пакетная запись через File::append
             $chunkSize = 2000;
             $chunks = array_chunk($items, $chunkSize);
-            
+
             foreach ($chunks as $chunk) {
                 $this->importLogService->logImageLoadingSuccessBatch($chunk);
             }
-            
+
             return response()->json(['success' => true, 'count' => count($items)]);
         } catch (\Exception $e) {
             \Log::error('Ошибка пакетного логирования успешных изображений', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
-                'items_count' => count($request->input('items', []))
+                'items_count' => count($request->input('items', [])),
             ]);
-            
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка логирования: ' . $e->getMessage()
+                'message' => 'Ошибка логирования: '.$e->getMessage(),
             ], 500);
         }
     }
-    
+
     /**
      * Пакетная запись ошибок загрузки изображений
      */
@@ -317,40 +317,40 @@ class ImportLogController extends Controller
     {
         try {
             $items = $request->input('items', []);
-            
+
             // Разбиваем большие пакеты на части по 2000 записей для оптимизации
             // Увеличено с 500, так как теперь используется пакетная запись через File::append
             $chunkSize = 2000;
             $chunks = array_chunk($items, $chunkSize);
-            
+
             foreach ($chunks as $chunk) {
                 $this->importLogService->logImageLoadingErrorBatch($chunk);
             }
-            
+
             return response()->json(['success' => true, 'count' => count($items)]);
         } catch (\Exception $e) {
             \Log::error('Ошибка пакетного логирования ошибок изображений', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
-                'items_count' => count($request->input('items', []))
+                'items_count' => count($request->input('items', [])),
             ]);
-            
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка логирования: ' . $e->getMessage()
+                'message' => 'Ошибка логирования: '.$e->getMessage(),
             ], 500);
         }
     }
-    
+
     /**
      * Пакетная запись действий с вариациями
      */
     public function logVariationBatch(Request $request)
     {
         $items = $request->input('items', []);
-        
+
         $this->importLogService->logVariationBatch($items);
-        
+
         return response()->json(['success' => true, 'count' => count($items)]);
     }
 }

@@ -7,9 +7,7 @@ use App\Models\Setting;
 use App\Models\ShopCdekSettings;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\File;
 
 class SiteInfoController extends Controller
 {
@@ -26,18 +24,18 @@ class SiteInfoController extends Controller
             $settings = Setting::select('key', 'value', 'type', 'group')
                 ->where(function ($query) {
                     $query->whereIn('group', ['general', 'site', 'auth', 'shop'])
-                          ->orWhere('key', 'site_google_font') // Включаем параметр Google Fonts из любой группы
-                          ->orWhere('key', 'yandex_metrika') // Включаем параметр Яндекс.Метрики из любой группы
-                          ->orWhere('key', 'jivo_script') // Включаем параметр скрипта Jivo из любой группы
-                          ->orWhere('key', 'site_favicon') // Включаем параметр favicon из любой группы
-                  ->orWhere('key', 'favicon_type') // Включаем тип favicon
-                  ->orWhere('key', 'favicon_file') // Включаем файл favicon
-                          ->orWhere('key', 'show_counters') // Включаем параметр show_counters из любой группы
-                          ->orWhere('key', 'absent_promocode_percent') // Включаем параметр процента промокода за отсутствие товара
-                          ->orWhere('key', 'absent_promocode_percent_days') // Включаем параметр дней действия промокода
-                          ->orWhere('key', 'suff_support') // Включаем параметр суффиксов для совместимости со старым сайтом
-                          ->orWhere('key', 'over_tax') // Включаем параметр процента наценки
-                          ->orWhere('key', 'over_text'); // Включаем параметр текста наценки
+                        ->orWhere('key', 'site_google_font') // Включаем параметр Google Fonts из любой группы
+                        ->orWhere('key', 'yandex_metrika') // Включаем параметр Яндекс.Метрики из любой группы
+                        ->orWhere('key', 'jivo_script') // Включаем параметр скрипта Jivo из любой группы
+                        ->orWhere('key', 'site_favicon') // Включаем параметр favicon из любой группы
+                        ->orWhere('key', 'favicon_type') // Включаем тип favicon
+                        ->orWhere('key', 'favicon_file') // Включаем файл favicon
+                        ->orWhere('key', 'show_counters') // Включаем параметр show_counters из любой группы
+                        ->orWhere('key', 'absent_promocode_percent') // Включаем параметр процента промокода за отсутствие товара
+                        ->orWhere('key', 'absent_promocode_percent_days') // Включаем параметр дней действия промокода
+                        ->orWhere('key', 'suff_support') // Включаем параметр суффиксов для совместимости со старым сайтом
+                        ->orWhere('key', 'over_tax') // Включаем параметр процента наценки
+                        ->orWhere('key', 'over_text'); // Включаем параметр текста наценки
                 })
                 ->get();
 
@@ -45,7 +43,7 @@ class SiteInfoController extends Controller
             foreach ($settings as $setting) {
                 if ($setting->key === 'jivo_script' && $setting->value) {
                     $adjustScript = '<script>(function(){function a(){if(window.innerWidth>1024)return;var b=document.querySelector(".button__QIiE1");if(!b)return;b.style.setProperty("bottom","80px","important");b.style.setProperty("margin-bottom","0px","important")}var c=0,d=60,e=setInterval(function(){a();c++;if(document.querySelector(".button__QIiE1")||c>=d)clearInterval(e)},500);window.addEventListener("resize",a)})();</script>';
-                    $siteInfo[$setting->key] = $adjustScript . $setting->value;
+                    $siteInfo[$setting->key] = $adjustScript.$setting->value;
                 } elseif (in_array($setting->key, ['site_logo', 'site_logo_negative', 'site_favicon']) && $setting->value) {
                     $siteInfo[$setting->key] = $this->getImageUrl($setting->value);
                 } else {
@@ -58,24 +56,23 @@ class SiteInfoController extends Controller
                 $siteInfo['suff_support'] = $suffSupportSetting->value;
             }
 
-
             return response()->json([
                 'success' => true,
-                'data' => $siteInfo
+                'data' => $siteInfo,
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Ошибка в SiteInfoController::index: ' . $e->getMessage(), [
+            Log::error('Ошибка в SiteInfoController::index: '.$e->getMessage(), [
                 'trace' => $e->getTraceAsString(),
                 'file' => $e->getFile(),
-                'line' => $e->getLine()
+                'line' => $e->getLine(),
             ]);
 
             // Возвращаем ошибку вместо fallback данных
             return response()->json([
                 'success' => false,
-                'error' => 'Ошибка получения настроек: ' . $e->getMessage(),
-                'data' => []
+                'error' => 'Ошибка получения настроек: '.$e->getMessage(),
+                'data' => [],
             ], 500);
         }
     }
@@ -88,7 +85,7 @@ class SiteInfoController extends Controller
         try {
             // Очищаем кэш для этого API (как в index())
             Cache::forget('site_settings_public');
-            
+
             // Используем кэш для уменьшения нагрузки на базу
             $cacheKey = 'site_settings_public';
             $publicSettings = Cache::remember($cacheKey, 3600, function () {
@@ -96,15 +93,15 @@ class SiteInfoController extends Controller
                 $settings = Setting::select('key', 'value')
                     ->where(function ($query) {
                         $query->where('group', 'global')
-                              ->whereIn('key', [
-                                  'admin_name',
-                                  'site_logo',
-                                  'site_description',
-                                  'site_keywords',
-                                  'contact_email',
-                                  'contact_phone',
-                                  'working_hours'
-                              ]);
+                            ->whereIn('key', [
+                                'admin_name',
+                                'site_logo',
+                                'site_description',
+                                'site_keywords',
+                                'contact_email',
+                                'contact_phone',
+                                'working_hours',
+                            ]);
                     })
                     ->orWhere('key', 'show_counters') // Включаем параметр show_counters из любой группы
                     ->orWhere('key', 'tag_max_bonus') // Включаем параметр повышенного бонуса
@@ -144,17 +141,17 @@ class SiteInfoController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $publicSettings
+                'data' => $publicSettings,
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Ошибка в SiteInfoController::settings: ' . $e->getMessage());
+            Log::error('Ошибка в SiteInfoController::settings: '.$e->getMessage());
 
             // Возвращаем ошибку вместо fallback данных
             return response()->json([
                 'success' => false,
-                'error' => 'Ошибка получения публичных настроек: ' . $e->getMessage(),
-                'data' => []
+                'error' => 'Ошибка получения публичных настроек: '.$e->getMessage(),
+                'data' => [],
             ], 500);
         }
     }
@@ -172,8 +169,8 @@ class SiteInfoController extends Controller
                 $settings = Setting::select('key', 'value', 'group')
                     ->where(function ($query) {
                         $query->where('group', 'general')
-                              ->orWhere('group', 'seo')
-                              ->orWhere('group', 'global');
+                            ->orWhere('group', 'seo')
+                            ->orWhere('group', 'global');
                     })
                     ->whereIn('key', [
                         'site_name',
@@ -185,7 +182,7 @@ class SiteInfoController extends Controller
                         'meta_title',
                         'meta_description',
                         'meta_image',
-                        'meta_keywords'
+                        'meta_keywords',
                     ])
                     ->get();
 
@@ -204,24 +201,24 @@ class SiteInfoController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $seoSettings
+                'data' => $seoSettings,
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Ошибка в SiteInfoController::seo: ' . $e->getMessage());
+            Log::error('Ошибка в SiteInfoController::seo: '.$e->getMessage());
 
             // Возвращаем ошибку вместо fallback данных
             return response()->json([
                 'success' => false,
-                'error' => 'Ошибка получения SEO настроек: ' . $e->getMessage(),
-                'data' => []
+                'error' => 'Ошибка получения SEO настроек: '.$e->getMessage(),
+                'data' => [],
             ], 500);
         }
     }
 
     private function getImageUrl($imagePath)
     {
-        if (!$imagePath) {
+        if (! $imagePath) {
             return null;
         }
 
@@ -234,8 +231,6 @@ class SiteInfoController extends Controller
         $siteUrl = config('app.frontend_url', 'https://skateandsnow.ru');
 
         // Формируем полный URL
-        return rtrim($siteUrl, '/') . '/' . ltrim($imagePath, '/');
+        return rtrim($siteUrl, '/').'/'.ltrim($imagePath, '/');
     }
-
-
 }

@@ -6,9 +6,8 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class ProfileController extends Controller
 {
@@ -20,11 +19,11 @@ class ProfileController extends Controller
         try {
             // Используем $request->user() вместо Auth::user() для более надежной работы
             $user = $request->user();
-            
-            if (!$user) {
+
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не авторизован'
+                    'message' => 'Пользователь не авторизован',
                 ], 401);
             }
 
@@ -35,13 +34,13 @@ class ProfileController extends Controller
                 $roles = DB::table('user_roles')
                     ->join('roles', 'user_roles.role_id', '=', 'roles.id')
                     ->where('user_roles.user_id', $user->id)
-                    ->where(function($query) {
+                    ->where(function ($query) {
                         $query->where('user_roles.is_active', '=', 1)
-                              ->orWhere('user_roles.is_active', '=', true);
+                            ->orWhere('user_roles.is_active', '=', true);
                     })
                     ->pluck('roles.name')
                     ->toArray();
-                    
+
                 // Если прямой запрос не вернул роли, пробуем через связь
                 if (empty($roles)) {
                     try {
@@ -54,31 +53,31 @@ class ProfileController extends Controller
                     }
                 }
             } catch (\Exception $rolesError) {
-                Log::error('Ошибка получения ролей: ' . $rolesError->getMessage(), [
+                Log::error('Ошибка получения ролей: '.$rolesError->getMessage(), [
                     'user_id' => $user->id,
                     'trace' => $rolesError->getTraceAsString(),
                     'file' => $rolesError->getFile(),
-                    'line' => $rolesError->getLine()
+                    'line' => $rolesError->getLine(),
                 ]);
                 $roles = [];
             }
-            
+
             // Безопасное форматирование даты
             $birthday = null;
             if ($user->birthday) {
                 try {
                     $birthday = $user->birthday->format('Y-m-d');
                 } catch (\Exception $e) {
-                    Log::warning('Ошибка форматирования даты рождения: ' . $e->getMessage());
+                    Log::warning('Ошибка форматирования даты рождения: '.$e->getMessage());
                 }
             }
-            
+
             // Формируем данные профиля с безопасной обработкой всех полей
             // is_active преобразуется в boolean через cast, но нам нужно вернуть 1/0
             // Преобразуем boolean обратно в 1/0 для фронтенда
             $isActiveValue = $user->is_active ?? true;
             $isActive = $isActiveValue ? 1 : 0; // Преобразуем boolean в 1/0
-            
+
             $profileData = [
                 'id' => $user->id ?? null,
                 'name' => $user->name ?? '',
@@ -90,27 +89,27 @@ class ProfileController extends Controller
                 'birthday' => $birthday,
                 'avatar_url' => $user->avatar_url ?? null,
                 'is_active' => $isActive, // Возвращаем 1 или 0
-                'role' => !empty($roles) ? $roles[0] : 'admin', // Берем первую роль или admin по умолчанию
+                'role' => ! empty($roles) ? $roles[0] : 'admin', // Берем первую роль или admin по умолчанию
                 'created_at' => $user->created_at ? $user->created_at->toDateTimeString() : null,
-                'updated_at' => $user->updated_at ? $user->updated_at->toDateTimeString() : null
+                'updated_at' => $user->updated_at ? $user->updated_at->toDateTimeString() : null,
             ];
-            
+
             return response()->json([
                 'success' => true,
-                'data' => $profileData
+                'data' => $profileData,
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Ошибка получения профиля: ' . $e->getMessage(), [
+            Log::error('Ошибка получения профиля: '.$e->getMessage(), [
                 'trace' => $e->getTraceAsString(),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
-                'user_id' => $request->user()?->id
+                'user_id' => $request->user()?->id,
             ]);
-            
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения профиля: ' . $e->getMessage()
+                'message' => 'Ошибка получения профиля: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -122,11 +121,11 @@ class ProfileController extends Controller
     {
         $firstName = $user->first_name ?? '';
         $lastName = $user->last_name ?? '';
-        
+
         if ($firstName && $lastName) {
-            return trim($firstName . ' ' . $lastName);
+            return trim($firstName.' '.$lastName);
         }
-        
+
         return $firstName ?: $user->name ?: 'Пользователь';
     }
 }

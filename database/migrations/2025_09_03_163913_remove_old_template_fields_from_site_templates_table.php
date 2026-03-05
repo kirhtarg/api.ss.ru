@@ -2,8 +2,8 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -22,9 +22,9 @@ return new class extends Migration
                     WHERE TABLE_NAME = 'site_templates' 
                     AND CONSTRAINT_NAME LIKE '%_foreign'
                 ");
-                
+
                 $existingForeignKeys = collect($foreignKeys)->pluck('CONSTRAINT_NAME')->toArray();
-                
+
                 if (in_array('site_templates_menu_template_id_foreign', $existingForeignKeys)) {
                     $table->dropForeign(['menu_template_id']);
                 }
@@ -32,7 +32,7 @@ return new class extends Migration
                     $table->dropForeign(['auth_template_id']);
                 }
             });
-            
+
             // Теперь удаляем колонки
             Schema::table('site_templates', function (Blueprint $table) {
                 if (Schema::hasColumn('site_templates', 'menu_template_id')) {
@@ -54,7 +54,7 @@ return new class extends Migration
             // Восстанавливаем старые поля
             $table->unsignedBigInteger('menu_template_id')->nullable();
             $table->unsignedBigInteger('auth_template_id')->nullable();
-            
+
             // Восстанавливаем внешние ключи (если таблицы существуют)
             if (Schema::hasTable('site_menus')) {
                 $table->foreign('menu_template_id')->references('id')->on('site_menus')->onDelete('set null');

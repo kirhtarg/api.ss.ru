@@ -41,7 +41,7 @@ return new class extends Migration
             }
 
             // Восстанавливаем старый уникальный индекс
-            if (!Schema::hasIndex('shop_good_properties', 'shop_good_props_unique')) {
+            if (! Schema::hasIndex('shop_good_properties', 'shop_good_props_unique')) {
                 Schema::table('shop_good_properties', function (Blueprint $table) {
                     $table->unique(['good_id', 'property_id'], 'shop_good_props_unique');
                 });

@@ -17,11 +17,11 @@ class UserPreferencesController extends Controller
     {
         try {
             $user = Auth::user();
-            
-            if (!$user) {
+
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не авторизован'
+                    'message' => 'Пользователь не авторизован',
                 ], 401);
             }
 
@@ -33,13 +33,13 @@ class UserPreferencesController extends Controller
                 'success' => true,
                 'data' => [
                     'goods_table_columns' => $preferences,
-                    'bulk_actions_visibility' => $bulkActionsVisibility
-                ]
+                    'bulk_actions_visibility' => $bulkActionsVisibility,
+                ],
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения настроек: ' . $e->getMessage()
+                'message' => 'Ошибка получения настроек: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -51,11 +51,11 @@ class UserPreferencesController extends Controller
     {
         try {
             $user = Auth::user();
-            
-            if (!$user) {
+
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не авторизован'
+                    'message' => 'Пользователь не авторизован',
                 ], 401);
             }
 
@@ -63,23 +63,23 @@ class UserPreferencesController extends Controller
                 'goods_table_columns' => 'nullable|array',
                 'goods_table_columns.*' => 'boolean',
                 'bulk_actions_visibility' => 'nullable|array',
-                'bulk_actions_visibility.*' => 'boolean'
+                'bulk_actions_visibility.*' => 'boolean',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
             $additionalInfo = $user->additional_info ?? [];
-            
+
             if ($request->has('goods_table_columns')) {
                 $additionalInfo['goods_table_columns'] = $request->input('goods_table_columns');
             }
-            
+
             if ($request->has('bulk_actions_visibility')) {
                 $additionalInfo['bulk_actions_visibility'] = $request->input('bulk_actions_visibility');
             }
@@ -92,16 +92,14 @@ class UserPreferencesController extends Controller
                 'message' => 'Настройки успешно сохранены',
                 'data' => [
                     'goods_table_columns' => $additionalInfo['goods_table_columns'] ?? null,
-                    'bulk_actions_visibility' => $additionalInfo['bulk_actions_visibility'] ?? null
-                ]
+                    'bulk_actions_visibility' => $additionalInfo['bulk_actions_visibility'] ?? null,
+                ],
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка сохранения настроек: ' . $e->getMessage()
+                'message' => 'Ошибка сохранения настроек: '.$e->getMessage(),
             ], 500);
         }
     }
 }
-
-

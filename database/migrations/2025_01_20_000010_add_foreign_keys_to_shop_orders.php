@@ -2,8 +2,8 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -14,10 +14,10 @@ return new class extends Migration
     {
         // Добавляем индексы
         Schema::table('shop_orders', function (Blueprint $table) {
-            if (!Schema::hasIndex('shop_orders', 'shop_orders_payment_status_id_index')) {
+            if (! Schema::hasIndex('shop_orders', 'shop_orders_payment_status_id_index')) {
                 $table->index(['payment_status_id']);
             }
-            if (!Schema::hasIndex('shop_orders', 'shop_orders_delivery_status_id_index')) {
+            if (! Schema::hasIndex('shop_orders', 'shop_orders_delivery_status_id_index')) {
                 $table->index(['delivery_status_id']);
             }
         });
@@ -31,18 +31,18 @@ return new class extends Migration
                 WHERE TABLE_NAME = 'shop_orders' 
                 AND CONSTRAINT_NAME LIKE '%payment_status_id%'
             ");
-            
+
             if (empty($foreignKeys)) {
                 $table->foreign('payment_status_id')->references('id')->on('shop_payment_statuses')->onDelete('restrict');
             }
-            
+
             $foreignKeys = DB::select("
                 SELECT CONSTRAINT_NAME 
                 FROM information_schema.KEY_COLUMN_USAGE 
                 WHERE TABLE_NAME = 'shop_orders' 
                 AND CONSTRAINT_NAME LIKE '%delivery_status_id%'
             ");
-            
+
             if (empty($foreignKeys)) {
                 $table->foreign('delivery_status_id')->references('id')->on('shop_delivery_statuses')->onDelete('restrict');
             }

@@ -6,11 +6,11 @@ use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Models\UserBonus;
 use App\Models\UserBonusTransaction;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Facades\Log;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 
 class UserBonusController extends Controller
 {
@@ -22,10 +22,10 @@ class UserBonusController extends Controller
         try {
             $user = User::find($userId);
 
-            if (!$user) {
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не найден'
+                    'message' => 'Пользователь не найден',
                 ], 404);
             }
 
@@ -40,18 +40,18 @@ class UserBonusController extends Controller
                     'total_earned' => $userBonus->total_earned,
                     'total_spent' => $userBonus->total_spent,
                     'available_points' => $userBonus->getAvailablePoints(),
-                    'user_id' => $user->id
-                ]
+                    'user_id' => $user->id,
+                ],
             ]);
         } catch (\Exception $e) {
-            Log::error('Ошибка получения бонусов пользователя: ' . $e->getMessage(), [
+            Log::error('Ошибка получения бонусов пользователя: '.$e->getMessage(), [
                 'user_id' => $userId,
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения бонусов: ' . $e->getMessage()
+                'message' => 'Ошибка получения бонусов: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -65,23 +65,23 @@ class UserBonusController extends Controller
             $validator = Validator::make($request->all(), [
                 'points' => 'required|integer|min:0',
                 'description' => 'nullable|string|max:500',
-                'adjustment_type' => 'nullable|in:set,add,subtract'
+                'adjustment_type' => 'nullable|in:set,add,subtract',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
             $user = User::find($userId);
 
-            if (!$user) {
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не найден'
+                    'message' => 'Пользователь не найден',
                 ], 404);
             }
 
@@ -112,7 +112,7 @@ class UserBonusController extends Controller
                     case 'subtract':
                         // Вычитаем из текущего значения
                         if ($userBonus->points < $newPoints) {
-                            throw new \Exception('Недостаточно бонусов для списания. Текущий баланс: ' . $userBonus->points);
+                            throw new \Exception('Недостаточно бонусов для списания. Текущий баланс: '.$userBonus->points);
                         }
                         $pointsChange = -$newPoints;
                         $userBonus->points += $pointsChange;
@@ -149,8 +149,8 @@ class UserBonusController extends Controller
                             'admin_adjustment' => true,
                             'adjustment_type' => $adjustmentType,
                             'old_points' => $oldPoints,
-                            'new_points' => $userBonus->points
-                        ]
+                            'new_points' => $userBonus->points,
+                        ],
                     ]);
                 }
 
@@ -166,23 +166,23 @@ class UserBonusController extends Controller
                         'total_spent' => $userBonus->total_spent,
                         'available_points' => $userBonus->getAvailablePoints(),
                         'user_id' => $user->id,
-                        'points_change' => $pointsChange
-                    ]
+                        'points_change' => $pointsChange,
+                    ],
                 ]);
             } catch (\Exception $e) {
                 DB::rollBack();
                 throw $e;
             }
         } catch (\Exception $e) {
-            Log::error('Ошибка обновления бонусов пользователя: ' . $e->getMessage(), [
+            Log::error('Ошибка обновления бонусов пользователя: '.$e->getMessage(), [
                 'user_id' => $userId,
                 'request_data' => $request->all(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления бонусов: ' . $e->getMessage()
+                'message' => 'Ошибка обновления бонусов: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -195,10 +195,10 @@ class UserBonusController extends Controller
         try {
             $user = User::find($userId);
 
-            if (!$user) {
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не найден'
+                    'message' => 'Пользователь не найден',
                 ], 404);
             }
 
@@ -208,19 +208,18 @@ class UserBonusController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $transactions
+                'data' => $transactions,
             ]);
         } catch (\Exception $e) {
-            Log::error('Ошибка получения истории транзакций: ' . $e->getMessage(), [
+            Log::error('Ошибка получения истории транзакций: '.$e->getMessage(), [
                 'user_id' => $userId,
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения истории транзакций: ' . $e->getMessage()
+                'message' => 'Ошибка получения истории транзакций: '.$e->getMessage(),
             ], 500);
         }
     }
 }
-

@@ -83,7 +83,7 @@ class SiteTemplate extends Model
     {
         // Деактивируем все шаблоны
         static::query()->update(['is_active' => false]);
-        
+
         // Активируем текущий
         $this->update(['is_active' => true]);
     }

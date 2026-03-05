@@ -13,6 +13,6 @@ $failed = DB::table('failed_jobs')->get();
 
 foreach ($failed as $job) {
     echo "UUID: {$job->uuid}, Failed at: {$job->failed_at}\n";
-    echo "Exception: " . substr($job->exception, 0, 200) . "...\n";
+    echo 'Exception: '.substr($job->exception, 0, 200)."...\n";
     echo "---\n";
 }

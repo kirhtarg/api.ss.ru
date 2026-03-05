@@ -3,8 +3,8 @@
 namespace App\Services;
 
 use App\Models\ShopNotificationChannel;
-use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 
 class EmailNotificationService
 {
@@ -18,10 +18,10 @@ class EmailNotificationService
             $mailer = config('mail.default');
             if ($mailer === 'log') {
                 // Если используется log драйвер, письмо будет записано в лог, но не отправлено
-                
+
                 return [
                     'success' => true,
-                    'message' => 'Email будет записан в лог (используется log драйвер). Для реальной отправки настройте SMTP в .env'
+                    'message' => 'Email будет записан в лог (используется log драйвер). Для реальной отправки настройте SMTP в .env',
                 ];
             }
 
@@ -32,41 +32,41 @@ class EmailNotificationService
 
             return [
                 'success' => true,
-                'message' => 'Email отправлен успешно'
+                'message' => 'Email отправлен успешно',
             ];
         } catch (\Exception $e) {
             // Определяем тип ошибки для более понятного сообщения
             $errorMessage = $e->getMessage();
             $errorClass = get_class($e);
-            
+
             // Проверяем, связана ли ошибка с SMTP подключением
-            if (str_contains(strtolower($errorMessage), 'connection') || 
+            if (str_contains(strtolower($errorMessage), 'connection') ||
                 str_contains(strtolower($errorMessage), 'smtp') ||
                 str_contains(strtolower($errorMessage), 'stream_socket_client') ||
                 str_contains(strtolower($errorMessage), 'failed to connect') ||
                 str_contains(strtolower($errorMessage), 'connection timed out')) {
-                $errorMessage = 'Ошибка подключения к SMTP серверу: ' . $errorMessage;
+                $errorMessage = 'Ошибка подключения к SMTP серверу: '.$errorMessage;
                 $errorMessage .= '. Проверьте настройки MAIL_HOST, MAIL_PORT, MAIL_USERNAME, MAIL_PASSWORD в .env';
             } elseif (str_contains(strtolower($errorMessage), 'authentication') ||
                       str_contains(strtolower($errorMessage), 'login') ||
                       str_contains(strtolower($errorMessage), 'password') ||
                       str_contains(strtolower($errorMessage), '535') ||
                       str_contains(strtolower($errorMessage), 'auth')) {
-                $errorMessage = 'Ошибка аутентификации SMTP: ' . $errorMessage;
+                $errorMessage = 'Ошибка аутентификации SMTP: '.$errorMessage;
                 $errorMessage .= '. Проверьте MAIL_USERNAME и MAIL_PASSWORD в .env';
             }
-            
-            Log::error('Email notification error: ' . $e->getMessage(), [
+
+            Log::error('Email notification error: '.$e->getMessage(), [
                 'email' => $email,
                 'subject' => $subject,
                 'error' => $e->getMessage(),
                 'error_class' => $errorClass,
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
             return [
                 'success' => false,
-                'error' => $errorMessage
+                'error' => $errorMessage,
             ];
         }
     }
@@ -79,14 +79,14 @@ class EmailNotificationService
         if ($channel->type !== 'email') {
             return [
                 'success' => false,
-                'error' => 'Канал не является email каналом'
+                'error' => 'Канал не является email каналом',
             ];
         }
 
-        if (!$channel->email) {
+        if (! $channel->email) {
             return [
                 'success' => false,
-                'error' => 'Email адрес не указан для канала'
+                'error' => 'Email адрес не указан для канала',
             ];
         }
 
@@ -101,14 +101,14 @@ class EmailNotificationService
         if ($channel->type !== 'email') {
             return [
                 'success' => false,
-                'error' => 'Канал не является email каналом'
+                'error' => 'Канал не является email каналом',
             ];
         }
 
-        if (!$channel->email) {
+        if (! $channel->email) {
             return [
                 'success' => false,
-                'error' => 'Email адрес не указан для канала'
+                'error' => 'Email адрес не указан для канала',
             ];
         }
 
@@ -126,34 +126,35 @@ class EmailNotificationService
             if ($mailer === 'log') {
                 return [
                     'success' => true,
-                    'message' => 'Email будет записан в лог (используется log драйвер). Для реальной отправки настройте SMTP в .env'
+                    'message' => 'Email будет записан в лог (используется log драйвер). Для реальной отправки настройте SMTP в .env',
                 ];
             }
 
             // Получаем информацию о сайте
             $siteInfo = \App\Services\SiteInfoService::getSiteInfoForEmail();
-            
+
             // Для site_message определяем шаблон до подготовки данных
             if ($eventType === 'site_message') {
                 $view = $this->getSiteMessageView($data);
-                if (!$view) {
+                if (! $view) {
                     // Если шаблон не найден, используем обычный текст
                     // Используем обычный текст вместо HTML
                     $textMessage = "Новое сообщение на сайте\n\n";
                     if (isset($data['message']) && is_object($data['message'])) {
                         $msg = $data['message'];
-                        $textMessage .= "Имя: " . ($msg->name ?? 'не указано') . "\n";
-                        $textMessage .= "Телефон: " . ($msg->phone ?? 'не указано') . "\n";
+                        $textMessage .= 'Имя: '.($msg->name ?? 'не указано')."\n";
+                        $textMessage .= 'Телефон: '.($msg->phone ?? 'не указано')."\n";
                         if (isset($msg->message) && $msg->message) {
                             $textMessage .= "Сообщение: {$msg->message}\n";
                         }
-                        $textMessage .= "Тип: " . ($msg->type ?? 'не указан') . "\n";
+                        $textMessage .= 'Тип: '.($msg->type ?? 'не указан')."\n";
                     }
+
                     return $this->send($email, $subject, $textMessage, $data);
                 }
             } else {
                 // Определяем шаблон в зависимости от типа события
-                $view = match($eventType) {
+                $view = match ($eventType) {
                     'order_created' => 'emails.order-notification',
                     'cancellation_request' => 'emails.cancellation-request-notification',
                     'order_cancelled' => 'emails.order-cancelled-notification',
@@ -161,7 +162,7 @@ class EmailNotificationService
                     default => null
                 };
             }
-            
+
             // Подготавливаем данные для шаблона
             // Переименовываем 'message' в 'siteMessage' для избежания конфликта с Laravel Mail
             $viewData = $data;
@@ -179,7 +180,7 @@ class EmailNotificationService
                     $viewData['orderPhoneLink'] = $this->formatPhoneForEmailHtml($viewData['order']->customer_phone);
                 }
                 if (isset($viewData['order']->customer_email)) {
-                    $viewData['orderEmailLink'] = '<a href="mailto:' . htmlspecialchars($viewData['order']->customer_email, ENT_QUOTES, 'UTF-8') . '" style="color: #667eea; text-decoration: none;">' . htmlspecialchars($viewData['order']->customer_email, ENT_QUOTES, 'UTF-8') . '</a>';
+                    $viewData['orderEmailLink'] = '<a href="mailto:'.htmlspecialchars($viewData['order']->customer_email, ENT_QUOTES, 'UTF-8').'" style="color: #667eea; text-decoration: none;">'.htmlspecialchars($viewData['order']->customer_email, ENT_QUOTES, 'UTF-8').'</a>';
                 }
             }
             // Добавляем отформатированные телефоны для предзаказов
@@ -188,20 +189,21 @@ class EmailNotificationService
             }
             $viewData['siteInfo'] = $siteInfo;
 
-            if (!$view) {
+            if (! $view) {
                 // Если шаблон не найден, используем обычный текст
-                return $this->send($email, $subject, 'Уведомление о событии: ' . $eventType, $data);
+                return $this->send($email, $subject, 'Уведомление о событии: '.$eventType, $data);
             }
-            
+
             // Проверяем существование шаблона
-            if (!view()->exists($view)) {
+            if (! view()->exists($view)) {
                 Log::error("View template does not exist: {$view}", [
                     'event_type' => $eventType,
-                    'view' => $view
+                    'view' => $view,
                 ]);
+
                 return [
                     'success' => false,
-                    'error' => "Шаблон {$view} не найден"
+                    'error' => "Шаблон {$view} не найден",
                 ];
             }
 
@@ -210,59 +212,59 @@ class EmailNotificationService
                     $mail->to($email)
                         ->subject($subject);
                 });
-                
-                Log::info("Email sent successfully", [
+
+                Log::info('Email sent successfully', [
                     'email' => $email,
                     'subject' => $subject,
-                    'view' => $view
+                    'view' => $view,
                 ]);
             } catch (\Exception $mailException) {
-                Log::error("Mail::send exception", [
+                Log::error('Mail::send exception', [
                     'email' => $email,
                     'subject' => $subject,
                     'view' => $view,
                     'error' => $mailException->getMessage(),
-                    'trace' => $mailException->getTraceAsString()
+                    'trace' => $mailException->getTraceAsString(),
                 ]);
                 throw $mailException;
             }
 
             return [
                 'success' => true,
-                'message' => 'Email отправлен успешно'
+                'message' => 'Email отправлен успешно',
             ];
         } catch (\Exception $e) {
             // Определяем тип ошибки для более понятного сообщения
             $errorMessage = $e->getMessage();
-            
+
             // Проверяем, связана ли ошибка с SMTP подключением
-            if (str_contains(strtolower($errorMessage), 'connection') || 
+            if (str_contains(strtolower($errorMessage), 'connection') ||
                 str_contains(strtolower($errorMessage), 'smtp') ||
                 str_contains(strtolower($errorMessage), 'stream_socket_client') ||
                 str_contains(strtolower($errorMessage), 'failed to connect') ||
                 str_contains(strtolower($errorMessage), 'connection timed out')) {
-                $errorMessage = 'Ошибка подключения к SMTP серверу: ' . $errorMessage;
+                $errorMessage = 'Ошибка подключения к SMTP серверу: '.$errorMessage;
                 $errorMessage .= '. Проверьте настройки MAIL_HOST, MAIL_PORT, MAIL_USERNAME, MAIL_PASSWORD в .env';
             } elseif (str_contains(strtolower($errorMessage), 'authentication') ||
                       str_contains(strtolower($errorMessage), 'login') ||
                       str_contains(strtolower($errorMessage), 'password') ||
                       str_contains(strtolower($errorMessage), '535') ||
                       str_contains(strtolower($errorMessage), 'auth')) {
-                $errorMessage = 'Ошибка аутентификации SMTP: ' . $errorMessage;
+                $errorMessage = 'Ошибка аутентификации SMTP: '.$errorMessage;
                 $errorMessage .= '. Проверьте MAIL_USERNAME и MAIL_PASSWORD в .env';
             }
-            
-            Log::error('HTML Email notification error: ' . $e->getMessage(), [
+
+            Log::error('HTML Email notification error: '.$e->getMessage(), [
                 'email' => $email,
                 'subject' => $subject,
                 'event_type' => $eventType,
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
             return [
                 'success' => false,
-                'error' => $errorMessage
+                'error' => $errorMessage,
             ];
         }
     }
@@ -273,31 +275,31 @@ class EmailNotificationService
      */
     protected function formatPhoneForEmailHtml(?string $phone): string
     {
-        if (!$phone) {
+        if (! $phone) {
             return 'не указан';
         }
 
         // Убираем все нецифровые символы
         $cleanPhone = preg_replace('/\D/', '', $phone);
-        
+
         // Если номер начинается с 8, заменяем на 7
         if (str_starts_with($cleanPhone, '8')) {
-            $cleanPhone = '7' . substr($cleanPhone, 1);
+            $cleanPhone = '7'.substr($cleanPhone, 1);
         }
-        
+
         // Если номер не начинается с +, добавляем +
-        if (!str_starts_with($cleanPhone, '+')) {
+        if (! str_starts_with($cleanPhone, '+')) {
             // Если номер начинается с 7, добавляем +
             if (str_starts_with($cleanPhone, '7')) {
-                $cleanPhone = '+' . $cleanPhone;
+                $cleanPhone = '+'.$cleanPhone;
             } else {
                 // Если номер не начинается с 7, добавляем +7
-                $cleanPhone = '+7' . $cleanPhone;
+                $cleanPhone = '+7'.$cleanPhone;
             }
         }
-        
+
         // Создаем HTML-ссылку
-        return '<a href="tel:' . htmlspecialchars($cleanPhone, ENT_QUOTES, 'UTF-8') . '" style="color: #667eea; text-decoration: none;">' . htmlspecialchars($cleanPhone, ENT_QUOTES, 'UTF-8') . '</a>';
+        return '<a href="tel:'.htmlspecialchars($cleanPhone, ENT_QUOTES, 'UTF-8').'" style="color: #667eea; text-decoration: none;">'.htmlspecialchars($cleanPhone, ENT_QUOTES, 'UTF-8').'</a>';
     }
 
     /**
@@ -305,28 +307,30 @@ class EmailNotificationService
      */
     protected function getSiteMessageView(array $data): ?string
     {
-        if (!isset($data['message'])) {
+        if (! isset($data['message'])) {
             Log::warning('Site message data missing in getSiteMessageView', [
                 'data_keys' => array_keys($data),
-                'data' => $data
+                'data' => $data,
             ]);
+
             return null;
         }
 
         $message = $data['message'];
-        
+
         // Проверяем, что это объект SiteMessage
-        if (!is_object($message)) {
+        if (! is_object($message)) {
             Log::warning('Invalid message object in getSiteMessageView', [
                 'message_type' => gettype($message),
-                'message' => $message
+                'message' => $message,
             ]);
+
             return null;
         }
-        
+
         // Получаем тип сообщения
         $messageType = null;
-        
+
         // Пробуем разные способы получения типа
         if (property_exists($message, 'type')) {
             $messageType = $message->type;
@@ -349,20 +353,19 @@ class EmailNotificationService
                 // Игнорируем ошибку
             }
         }
-        
-        if (!$messageType) {
+
+        if (! $messageType) {
             return null;
         }
-        
+
         // Определяем шаблон в зависимости от типа сообщения
-        $view = match($messageType) {
+        $view = match ($messageType) {
             'callback' => 'emails.callback-notification',
             'message' => 'emails.site-message-notification',
             'found_cheaper' => 'emails.found-cheaper-notification',
             default => null
         };
-        
+
         return $view;
     }
 }
-

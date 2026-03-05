@@ -35,17 +35,3 @@ class ContactAddressSeeder extends Seeder
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-

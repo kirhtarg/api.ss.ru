@@ -5,8 +5,8 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\SiteTextblock;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 
 class TextblockController extends Controller
 {
@@ -20,12 +20,12 @@ class TextblockController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $textblocks
+                'data' => $textblocks,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения текстовых блоков: ' . $e->getMessage()
+                'message' => 'Ошибка получения текстовых блоков: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -43,13 +43,13 @@ class TextblockController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
         try {
             Log::info('Создание текстового блока', ['data' => $request->all()]);
-            
+
             $textblock = SiteTextblock::create([
                 'name' => $request->name,
                 'text' => $request->text ?? null,
@@ -59,24 +59,24 @@ class TextblockController extends Controller
                 'link_type' => $request->link_type ?? 'internal',
                 'is_active' => $request->is_active ?? true,
             ]);
-            
+
             Log::info('Текстовый блок успешно создан', ['id' => $textblock->id]);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Текстовый блок успешно создан',
-                'data' => $textblock
+                'data' => $textblock,
             ]);
         } catch (\Exception $e) {
             Log::error('Ошибка создания текстового блока', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
-                'data' => $request->all()
+                'data' => $request->all(),
             ]);
-            
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания текстового блока: ' . $e->getMessage()
+                'message' => 'Ошибка создания текстового блока: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -91,12 +91,12 @@ class TextblockController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $textblock
+                'data' => $textblock,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения текстового блока: ' . $e->getMessage()
+                'message' => 'Ошибка получения текстового блока: '.$e->getMessage(),
             ], 404);
         }
     }
@@ -120,13 +120,13 @@ class TextblockController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
         try {
             $textblock = SiteTextblock::findOrFail($id);
-            
+
             // Подготавливаем данные для обновления
             $updateData = $request->only([
                 'name',
@@ -135,9 +135,9 @@ class TextblockController extends Controller
                 'text_color',
                 'link',
                 'link_type',
-                'is_active'
+                'is_active',
             ]);
-            
+
             // Если передано null для text или link, сохраняем null
             if ($request->has('text') && $request->text === '') {
                 $updateData['text'] = null;
@@ -145,18 +145,18 @@ class TextblockController extends Controller
             if ($request->has('link') && $request->link === '') {
                 $updateData['link'] = null;
             }
-            
+
             $textblock->update($updateData);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Текстовый блок успешно обновлен',
-                'data' => $textblock->fresh()
+                'data' => $textblock->fresh(),
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления текстового блока: ' . $e->getMessage()
+                'message' => 'Ошибка обновления текстового блока: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -172,12 +172,12 @@ class TextblockController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Текстовый блок успешно удален'
+                'message' => 'Текстовый блок успешно удален',
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления текстового блока: ' . $e->getMessage()
+                'message' => 'Ошибка удаления текстового блока: '.$e->getMessage(),
             ], 500);
         }
     }

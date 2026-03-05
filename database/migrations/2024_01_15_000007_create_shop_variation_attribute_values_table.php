@@ -19,7 +19,7 @@ return new class extends Migration
             $table->boolean('is_active')->default(true);
             $table->integer('sort_order')->default(0);
             $table->timestamps();
-            
+
             // Индексы для производительности
             $table->index(['attribute_id', 'is_active', 'sort_order'], 'shop_var_attr_vals_attr_active_sort_idx');
             $table->index('value', 'shop_var_attr_vals_value_idx');

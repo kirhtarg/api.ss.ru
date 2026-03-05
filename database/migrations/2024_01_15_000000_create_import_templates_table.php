@@ -18,7 +18,7 @@ return new class extends Migration
             $table->json('settings'); // JSON с настройками импорта
             $table->boolean('is_default')->default(false); // Шаблон по умолчанию
             $table->timestamps();
-            
+
             // Индексы
             $table->index('name');
             $table->index('is_default');

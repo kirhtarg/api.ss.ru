@@ -21,7 +21,7 @@ class ShopPaymentMethodSeeder extends Seeder
                 'description' => 'Оплата наличными при получении заказа',
                 'settings' => json_encode([
                     'available_for' => ['pickup', 'courier'],
-                    'description' => 'Оплата наличными при получении'
+                    'description' => 'Оплата наличными при получении',
                 ]),
                 'sort_order' => 1,
                 'is_default' => true,
@@ -39,7 +39,7 @@ class ShopPaymentMethodSeeder extends Seeder
                     'provider' => 'test_bank',
                     'api_key' => '',
                     'api_url' => '',
-                    'description' => 'Безопасная оплата картой Visa, MasterCard, МИР'
+                    'description' => 'Безопасная оплата картой Visa, MasterCard, МИР',
                 ]),
                 'sort_order' => 2,
                 'is_default' => false,
@@ -57,7 +57,7 @@ class ShopPaymentMethodSeeder extends Seeder
                     'api_key' => 'test_key_12345',
                     'api_url' => 'https://test-bank.example.com/api',
                     'merchant_id' => 'test_merchant',
-                    'description' => 'Тестовая оплата для проверки функционала'
+                    'description' => 'Тестовая оплата для проверки функционала',
                 ]),
                 'sort_order' => 3,
                 'is_default' => false,
@@ -77,7 +77,7 @@ class ShopPaymentMethodSeeder extends Seeder
                     'bik' => '044525225',
                     'inn' => '1234567890',
                     'kpp' => '123456789',
-                    'description' => 'Оплата по реквизитам для юридических лиц'
+                    'description' => 'Оплата по реквизитам для юридических лиц',
                 ]),
                 'sort_order' => 4,
                 'is_default' => false,
@@ -98,7 +98,7 @@ class ShopPaymentMethodSeeder extends Seeder
                     'currency' => 'RUB',
                     'return_url' => 'http://localhost:3000/checkout?payment=return',
                     'additional_settings' => '{"auto_capture": true}',
-                    'description' => 'Безопасная оплата через Ю-Касса'
+                    'description' => 'Безопасная оплата через Ю-Касса',
                 ]),
                 'sort_order' => 5,
                 'is_default' => false,
@@ -120,7 +120,7 @@ class ShopPaymentMethodSeeder extends Seeder
                     'return_url' => 'https://your-site.com/checkout?payment=return',
                     'webhook_url' => 'https://your-site.com/api/webhooks/yandex-pay',
                     'additional_settings' => '{"auto_capture": true, "save_payment_method": false, "split_enabled": false}',
-                    'description' => 'Безопасная оплата через Яндекс Пэй'
+                    'description' => 'Безопасная оплата через Яндекс Пэй',
                 ]),
                 'sort_order' => 6,
                 'is_default' => false,
@@ -144,14 +144,14 @@ class ShopPaymentMethodSeeder extends Seeder
                     'split_min_amount' => '1000.00',
                     'split_max_amount' => '50000.00',
                     'split_settings' => '{"enabled": true, "installments_count": 4, "first_payment_percent": 25}',
-                    'description' => 'Рассрочка без переплат через Яндекс Сплит'
+                    'description' => 'Рассрочка без переплат через Яндекс Сплит',
                 ]),
                 'sort_order' => 7,
                 'is_default' => false,
                 'can_disable_default' => true,
                 'created_at' => now(),
                 'updated_at' => now(),
-            ]
+            ],
         ];
 
         foreach ($paymentMethods as $method) {

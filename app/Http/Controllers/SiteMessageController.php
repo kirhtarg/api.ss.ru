@@ -3,8 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\SiteMessage;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
 class SiteMessageController extends Controller
@@ -36,7 +36,7 @@ class SiteMessageController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $messages
+            'data' => $messages,
         ]);
     }
 
@@ -46,13 +46,13 @@ class SiteMessageController extends Controller
     public function store(Request $request): JsonResponse
     {
         $type = $request->type ?? 'callback';
-        
+
         // Правила валидации в зависимости от типа
         $rules = [
             'name' => 'required|string|max:255',
-            'type' => 'required|in:callback,message,found_cheaper'
+            'type' => 'required|in:callback,message,found_cheaper',
         ];
-        
+
         if ($type === 'found_cheaper') {
             $rules['email'] = 'required|email|max:255';
             $rules['good_link'] = 'required|url|max:500';
@@ -66,14 +66,14 @@ class SiteMessageController extends Controller
             $rules['message'] = 'nullable|string|max:1000';
             $rules['good_id'] = 'nullable|integer|exists:shop_goods,id';
         }
-        
+
         $validator = Validator::make($request->all(), $rules);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -81,9 +81,9 @@ class SiteMessageController extends Controller
         $phone = $request->phone;
         $email = $request->email;
         $ipAddress = $request->ip();
-        
+
         // Проверяем по номеру телефона, email ИЛИ по IP-адресу
-        $lastMessage = SiteMessage::where(function($query) use ($phone, $email, $ipAddress) {
+        $lastMessage = SiteMessage::where(function ($query) use ($phone, $email, $ipAddress) {
             if ($phone) {
                 $query->where('phone', $phone);
             }
@@ -92,19 +92,19 @@ class SiteMessageController extends Controller
             }
             $query->orWhere('ip_address', $ipAddress);
         })
-        ->where('created_at', '>=', now()->subMinute())
-        ->first();
+            ->where('created_at', '>=', now()->subMinute())
+            ->first();
 
         if ($lastMessage) {
             return response()->json([
                 'success' => false,
-                'message' => 'Пожалуйста, подождите минуту перед отправкой следующего сообщения'
+                'message' => 'Пожалуйста, подождите минуту перед отправкой следующего сообщения',
             ], 429);
         }
 
         $messageData = $request->all();
         $messageData['ip_address'] = $ipAddress;
-        
+
         $message = SiteMessage::create($messageData);
 
         // Отправляем уведомления о новом сообщении на сайте
@@ -112,13 +112,13 @@ class SiteMessageController extends Controller
             $notificationService = app(\App\Services\NotificationService::class);
             $notificationService->notifySiteMessage($message);
         } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::error('Site message notification error: ' . $e->getMessage());
+            \Illuminate\Support\Facades\Log::error('Site message notification error: '.$e->getMessage());
         }
 
         return response()->json([
             'success' => true,
             'message' => 'Сообщение успешно отправлено',
-            'data' => $message
+            'data' => $message,
         ], 201);
     }
 
@@ -129,16 +129,16 @@ class SiteMessageController extends Controller
     {
         $message = SiteMessage::find($id);
 
-        if (!$message) {
+        if (! $message) {
             return response()->json([
                 'success' => false,
-                'message' => 'Сообщение не найдено'
+                'message' => 'Сообщение не найдено',
             ], 404);
         }
 
         return response()->json([
             'success' => true,
-            'data' => $message
+            'data' => $message,
         ]);
     }
 
@@ -149,10 +149,10 @@ class SiteMessageController extends Controller
     {
         $message = SiteMessage::find($id);
 
-        if (!$message) {
+        if (! $message) {
             return response()->json([
                 'success' => false,
-                'message' => 'Сообщение не найдено'
+                'message' => 'Сообщение не найдено',
             ], 404);
         }
 
@@ -164,14 +164,14 @@ class SiteMessageController extends Controller
             'type' => 'sometimes|in:callback,message,found_cheaper',
             'is_processed' => 'sometimes|boolean',
             'good_link' => 'sometimes|url|max:500',
-            'good_price' => 'sometimes|numeric|min:0'
+            'good_price' => 'sometimes|numeric|min:0',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -180,7 +180,7 @@ class SiteMessageController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Сообщение обновлено',
-            'data' => $message
+            'data' => $message,
         ]);
     }
 
@@ -191,10 +191,10 @@ class SiteMessageController extends Controller
     {
         $message = SiteMessage::find($id);
 
-        if (!$message) {
+        if (! $message) {
             return response()->json([
                 'success' => false,
-                'message' => 'Сообщение не найдено'
+                'message' => 'Сообщение не найдено',
             ], 404);
         }
 
@@ -202,7 +202,7 @@ class SiteMessageController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Сообщение удалено'
+            'message' => 'Сообщение удалено',
         ]);
     }
 
@@ -213,22 +213,22 @@ class SiteMessageController extends Controller
     {
         $message = SiteMessage::find($id);
 
-        if (!$message) {
+        if (! $message) {
             return response()->json([
                 'success' => false,
-                'message' => 'Сообщение не найдено'
+                'message' => 'Сообщение не найдено',
             ], 404);
         }
 
         $message->update([
             'is_processed' => true,
-            'processed_at' => now()
+            'processed_at' => now(),
         ]);
 
         return response()->json([
             'success' => true,
             'message' => 'Сообщение отмечено как обработанное',
-            'data' => $message
+            'data' => $message,
         ]);
     }
 
@@ -246,12 +246,12 @@ class SiteMessageController extends Controller
             'processed' => SiteMessage::processed()->count(),
             'today' => SiteMessage::whereDate('created_at', today())->count(),
             'this_week' => SiteMessage::whereBetween('created_at', [now()->startOfWeek(), now()->endOfWeek()])->count(),
-            'this_month' => SiteMessage::whereMonth('created_at', now()->month)->count()
+            'this_month' => SiteMessage::whereMonth('created_at', now()->month)->count(),
         ];
 
         return response()->json([
             'success' => true,
-            'data' => $stats
+            'data' => $stats,
         ]);
     }
 }

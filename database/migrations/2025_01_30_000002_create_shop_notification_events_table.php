@@ -19,19 +19,19 @@ return new class extends Migration
                 'cancellation_request',
                 'order_cancelled',
                 'preorder_created',
-                'site_message'
+                'site_message',
             ]);
             $table->boolean('is_enabled')->default(true);
             $table->json('template')->nullable(); // Шаблон сообщения (опционально)
             $table->timestamps();
-            
+
             // Индексы
             $table->index('channel_id');
             $table->index('event_type');
             $table->index('is_enabled');
             $table->index(['channel_id', 'event_type']);
             $table->unique(['channel_id', 'event_type']); // Один канал - одно событие
-            
+
             // Внешние ключи
             $table->foreign('channel_id')->references('id')->on('shop_notification_channels')->onDelete('cascade');
         });
@@ -45,4 +45,3 @@ return new class extends Migration
         Schema::dropIfExists('shop_notification_events');
     }
 };
-

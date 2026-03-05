@@ -2,8 +2,8 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -13,7 +13,7 @@ return new class extends Migration
     public function up(): void
     {
         // Создаем таблицу статусов платежа
-        if (!Schema::hasTable('shop_payment_statuses')) {
+        if (! Schema::hasTable('shop_payment_statuses')) {
             Schema::create('shop_payment_statuses', function (Blueprint $table) {
                 $table->id();
                 $table->string('name', 50)->unique();
@@ -53,7 +53,7 @@ return new class extends Migration
         }
 
         // Создаем таблицу статусов доставки
-        if (!Schema::hasTable('shop_delivery_statuses')) {
+        if (! Schema::hasTable('shop_delivery_statuses')) {
             Schema::create('shop_delivery_statuses', function (Blueprint $table) {
                 $table->id();
                 $table->string('name', 50)->unique();

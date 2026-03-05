@@ -15,7 +15,7 @@ return new class extends Migration
     {
         Schema::table('shop_orders', function (Blueprint $table) {
             // Скидка ко дню рождения
-            if (!Schema::hasColumn('shop_orders', 'birthday_discount_amount')) {
+            if (! Schema::hasColumn('shop_orders', 'birthday_discount_amount')) {
                 $table->decimal('birthday_discount_amount', 10, 2)->default(0)->after('promo_code_discount_amount')->comment('Скидка в честь дня рождения');
             }
         });

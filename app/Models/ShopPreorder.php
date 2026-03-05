@@ -26,13 +26,13 @@ class ShopPreorder extends Model
         'notes',
         'customer_name',
         'customer_email',
-        'customer_phone'
+        'customer_phone',
     ];
 
     protected $casts = [
         'price' => 'decimal:2',
         'total' => 'decimal:2',
-        'quantity' => 'integer'
+        'quantity' => 'integer',
     ];
 
     /**
@@ -105,6 +105,6 @@ class ShopPreorder extends Model
      */
     public function getUniqueKeyAttribute()
     {
-        return $this->good_id . '_' . ($this->variation_id ?? 'main');
+        return $this->good_id.'_'.($this->variation_id ?? 'main');
     }
 }

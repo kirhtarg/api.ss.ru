@@ -4,11 +4,10 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\SrCard;
-use App\Models\SrCategory;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Validator;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 
 class SrCardsController extends Controller
 {
@@ -31,13 +30,14 @@ class SrCardsController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $cards
+                'data' => $cards,
             ]);
         } catch (\Exception $e) {
-            Log::error('SrCardsController::index: ' . $e->getMessage());
+            Log::error('SrCardsController::index: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения карт: ' . $e->getMessage()
+                'message' => 'Ошибка получения карт: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -53,21 +53,21 @@ class SrCardsController extends Controller
                 'description' => 'nullable|string',
                 'image' => 'nullable|string|max:500',
                 'category_ids' => 'nullable|array',
-                'category_ids.*' => 'exists:sr_categories,id'
+                'category_ids.*' => 'exists:sr_categories,id',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
             $card = SrCard::create([
                 'name' => $request->name,
                 'description' => $request->description,
-                'image' => $request->image
+                'image' => $request->image,
             ]);
 
             // Привязываем категории
@@ -80,13 +80,14 @@ class SrCardsController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Карта успешно создана',
-                'data' => $card
+                'data' => $card,
             ], 201);
         } catch (\Exception $e) {
-            Log::error('SrCardsController::store: ' . $e->getMessage());
+            Log::error('SrCardsController::store: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания карты: ' . $e->getMessage()
+                'message' => 'Ошибка создания карты: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -99,10 +100,10 @@ class SrCardsController extends Controller
         try {
             $card = SrCard::find($id);
 
-            if (!$card) {
+            if (! $card) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Карта не найдена'
+                    'message' => 'Карта не найдена',
                 ], 404);
             }
 
@@ -111,14 +112,14 @@ class SrCardsController extends Controller
                 'description' => 'nullable|string',
                 'image' => 'nullable|string|max:500',
                 'category_ids' => 'nullable|array',
-                'category_ids.*' => 'exists:sr_categories,id'
+                'category_ids.*' => 'exists:sr_categories,id',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -135,13 +136,14 @@ class SrCardsController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Карта успешно обновлена',
-                'data' => $card
+                'data' => $card,
             ]);
         } catch (\Exception $e) {
-            Log::error('SrCardsController::update: ' . $e->getMessage());
+            Log::error('SrCardsController::update: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления карты: ' . $e->getMessage()
+                'message' => 'Ошибка обновления карты: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -154,17 +156,17 @@ class SrCardsController extends Controller
         try {
             $card = SrCard::find($id);
 
-            if (!$card) {
+            if (! $card) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Карта не найдена'
+                    'message' => 'Карта не найдена',
                 ], 404);
             }
 
             // Удаляем изображение, если оно есть
             if ($card->image) {
                 $frontendPublicPath = frontend_public_path();
-                $imagePath = $frontendPublicPath . '/' . ltrim($card->image, '/');
+                $imagePath = $frontendPublicPath.'/'.ltrim($card->image, '/');
                 if (file_exists($imagePath)) {
                     @unlink($imagePath);
                 }
@@ -174,13 +176,14 @@ class SrCardsController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Карта успешно удалена'
+                'message' => 'Карта успешно удалена',
             ]);
         } catch (\Exception $e) {
-            Log::error('SrCardsController::destroy: ' . $e->getMessage());
+            Log::error('SrCardsController::destroy: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления карты: ' . $e->getMessage()
+                'message' => 'Ошибка удаления карты: '.$e->getMessage(),
             ], 500);
         }
     }

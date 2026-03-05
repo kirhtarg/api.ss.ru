@@ -19,14 +19,14 @@ class ShopPaymentTransaction extends Model
         'request_data',
         'response_data',
         'error_message',
-        'processed_at'
+        'processed_at',
     ];
 
     protected $casts = [
         'amount' => 'decimal:2',
         'request_data' => 'array',
         'response_data' => 'array',
-        'processed_at' => 'datetime'
+        'processed_at' => 'datetime',
     ];
 
     /**
@@ -78,7 +78,7 @@ class ShopPaymentTransaction extends Model
             'status' => 'success',
             'transaction_id' => $transactionId,
             'response_data' => $responseData,
-            'processed_at' => now()
+            'processed_at' => now(),
         ]);
     }
 
@@ -91,7 +91,7 @@ class ShopPaymentTransaction extends Model
             'status' => 'failed',
             'error_message' => $errorMessage,
             'response_data' => $responseData,
-            'processed_at' => now()
+            'processed_at' => now(),
         ]);
     }
 }

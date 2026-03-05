@@ -6,10 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Mail\EmailVerificationMail;
 use App\Models\User;
 use App\Services\SiteInfoService;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -40,16 +38,16 @@ class AuthController extends Controller
 
             // Генерируем 4-значный код для подтверждения email
             $verificationCode = str_pad(random_int(1000, 9999), 4, '0', STR_PAD_LEFT);
-            
+
             // Сохраняем данные пользователя и код в кеше
             \Illuminate\Support\Facades\Cache::put(
-                'temp_user_data_' . $request->email,
+                'temp_user_data_'.$request->email,
                 $tempUserData,
                 now()->addMinutes(15) // Данные действительны 15 минут
             );
-            
+
             \Illuminate\Support\Facades\Cache::put(
-                'email_verification_code_' . $request->email,
+                'email_verification_code_'.$request->email,
                 $verificationCode,
                 now()->addMinutes(15) // Код действителен 15 минут
             );
@@ -62,7 +60,7 @@ class AuthController extends Controller
                 $this->sendVerificationCodeEmail($tempUser, $verificationCode);
             } catch (\Exception $e) {
                 // Логируем ошибку, но не прерываем регистрацию
-                Log::error('Email sending failed: ' . $e->getMessage());
+                Log::error('Email sending failed: '.$e->getMessage());
             }
 
             return response()->json([
@@ -72,20 +70,20 @@ class AuthController extends Controller
                     'name' => $tempUserData['name'],
                     'email' => $tempUserData['email'],
                     'email_verified_at' => null,
-                ]
+                ],
             ], 201);
 
         } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка регистрации',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -105,8 +103,8 @@ class AuthController extends Controller
 
             // Если пароль передан, используем его (для регистрации в чекауте)
             // Если пароль не передан, генерируем логин и пароль (для быстрой регистрации)
-            $hasPassword = $request->has('password') && !empty($request->password);
-            
+            $hasPassword = $request->has('password') && ! empty($request->password);
+
             if ($hasPassword) {
                 // Регистрация в чекауте - используем пароль пользователя
                 $tempUserData = [
@@ -120,7 +118,7 @@ class AuthController extends Controller
                 // Быстрая регистрация - генерируем логин и пароль
                 $login = $this->generateLogin($request->name, $request->email);
                 $password = $this->generatePassword();
-                
+
                 $tempUserData = [
                     'name' => $request->name,
                     'email' => $request->email,
@@ -134,16 +132,16 @@ class AuthController extends Controller
 
             // Генерируем 4-значный код для подтверждения email
             $verificationCode = str_pad(random_int(1000, 9999), 4, '0', STR_PAD_LEFT);
-            
+
             // Сохраняем данные пользователя и код в кеше
             \Illuminate\Support\Facades\Cache::put(
-                'temp_user_data_' . $request->email,
+                'temp_user_data_'.$request->email,
                 $tempUserData,
                 now()->addMinutes(15) // Данные действительны 15 минут
             );
-            
+
             \Illuminate\Support\Facades\Cache::put(
-                'email_verification_code_' . $request->email,
+                'email_verification_code_'.$request->email,
                 $verificationCode,
                 now()->addMinutes(15) // Код действителен 15 минут
             );
@@ -156,7 +154,7 @@ class AuthController extends Controller
                 $this->sendVerificationCodeEmail($tempUser, $verificationCode);
             } catch (\Exception $e) {
                 // Логируем ошибку, но не прерываем регистрацию
-                Log::error('Email sending failed: ' . $e->getMessage());
+                Log::error('Email sending failed: '.$e->getMessage());
             }
 
             return response()->json([
@@ -166,20 +164,20 @@ class AuthController extends Controller
                     'name' => $tempUserData['name'],
                     'email' => $tempUserData['email'],
                     'email_verified_at' => null,
-                ]
+                ],
             ], 201);
 
         } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка регистрации',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -209,16 +207,16 @@ class AuthController extends Controller
             if ($userRole) {
                 $user->roles()->attach($userRole->id, [
                     'is_active' => true,
-                    'assigned_at' => now()
+                    'assigned_at' => now(),
                 ]);
             }
 
             // Генерируем токен для подтверждения email
             $verificationToken = Str::random(64);
-            
+
             // Сохраняем токен в базе данных (можно использовать кеш или отдельную таблицу)
             \Illuminate\Support\Facades\Cache::put(
-                'email_verification_' . $verificationToken,
+                'email_verification_'.$verificationToken,
                 $user->id,
                 now()->addHours(24) // Токен действителен 24 часа
             );
@@ -228,7 +226,7 @@ class AuthController extends Controller
                 $this->sendVerificationEmail($user, $verificationToken);
             } catch (\Exception $e) {
                 // Логируем ошибку, но не прерываем регистрацию
-                Log::error('Email sending failed: ' . $e->getMessage());
+                Log::error('Email sending failed: '.$e->getMessage());
             }
 
             return response()->json([
@@ -239,20 +237,20 @@ class AuthController extends Controller
                     'name' => $user->name,
                     'email' => $user->email,
                     'email_verified_at' => $user->email_verified_at,
-                ]
+                ],
             ], 201);
 
         } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка регистрации',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -276,19 +274,19 @@ class AuthController extends Controller
                 ->with('roles')
                 ->first();
 
-            if (!$user) {
+            if (! $user) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Пользователь не найден',
-                    'debug' => 'Пользователь с email/именем "' . $loginField . '" не найден'
+                    'debug' => 'Пользователь с email/именем "'.$loginField.'" не найден',
                 ], 401);
             }
 
-            if (!Hash::check($request->password, $user->password)) {
+            if (! Hash::check($request->password, $user->password)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Неверный пароль',
-                    'debug' => 'Пароль не совпадает для пользователя ' . $user->name
+                    'debug' => 'Пароль не совпадает для пользователя '.$user->name,
                 ], 401);
             }
 
@@ -297,17 +295,17 @@ class AuthController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => 'Ваш аккаунт заблокирован. Обратитесь к администратору.',
-                    'error' => 'account_blocked'
+                    'error' => 'account_blocked',
                 ], 403);
             }
 
             // Проверяем подтверждение email
-            if (!$user->email_verified_at) {
+            if (! $user->email_verified_at) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Email не подтвержден',
                     'error' => 'email_not_verified',
-                    'user_email' => $user->email
+                    'user_email' => $user->email,
                 ], 403);
             }
 
@@ -330,20 +328,20 @@ class AuthController extends Controller
                     'permissions' => $permissions,
                     'last_login_at' => null,
                 ],
-                'token' => $token
+                'token' => $token,
             ]);
 
         } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка авторизации',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -358,13 +356,13 @@ class AuthController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Успешный выход'
+                'message' => 'Успешный выход',
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка при выходе',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -389,13 +387,13 @@ class AuthController extends Controller
                     'email_verified_at' => now(),
                     'permissions' => $permissions,
                     'last_login_at' => null,
-                ]
+                ],
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка получения данных пользователя',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -407,7 +405,7 @@ class AuthController extends Controller
     {
         return response()->json([
             'success' => true,
-            'authenticated' => true
+            'authenticated' => true,
         ]);
     }
 
@@ -436,21 +434,21 @@ class AuthController extends Controller
                     'errors' => [
                         'email' => ['Email обязателен для подтверждения'],
                         'code' => ['Код обязателен для подтверждения'],
-                        'token' => ['Токен обязателен для подтверждения']
-                    ]
+                        'token' => ['Токен обязателен для подтверждения'],
+                    ],
                 ], 422);
             }
         } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка подтверждения email',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -465,24 +463,24 @@ class AuthController extends Controller
         ]);
 
         $token = $request->token;
-        
-        // Получаем ID пользователя из кеша по токену
-        $userId = \Illuminate\Support\Facades\Cache::get('email_verification_' . $token);
 
-        if (!$userId) {
+        // Получаем ID пользователя из кеша по токену
+        $userId = \Illuminate\Support\Facades\Cache::get('email_verification_'.$token);
+
+        if (! $userId) {
             return response()->json([
                 'success' => false,
-                'message' => 'Неверный или истекший токен подтверждения'
+                'message' => 'Неверный или истекший токен подтверждения',
             ], 400);
         }
 
         // Находим пользователя
         $user = User::find($userId);
 
-        if (!$user) {
+        if (! $user) {
             return response()->json([
                 'success' => false,
-                'message' => 'Пользователь не найден'
+                'message' => 'Пользователь не найден',
             ], 404);
         }
 
@@ -490,7 +488,7 @@ class AuthController extends Controller
         if ($user->email_verified_at) {
             return response()->json([
                 'success' => false,
-                'message' => 'Email уже подтвержден'
+                'message' => 'Email уже подтвержден',
             ], 400);
         }
 
@@ -505,11 +503,11 @@ class AuthController extends Controller
         try {
             $this->sendWelcomeEmail($user);
         } catch (\Exception $e) {
-            Log::error('Welcome email sending failed: ' . $e->getMessage());
+            Log::error('Welcome email sending failed: '.$e->getMessage());
         }
 
         // Удаляем токен из кеша
-        \Illuminate\Support\Facades\Cache::forget('email_verification_' . $token);
+        \Illuminate\Support\Facades\Cache::forget('email_verification_'.$token);
 
         // Создаем токен для пользователя
         $authToken = $user->createToken('auth-token')->plainTextToken;
@@ -529,8 +527,8 @@ class AuthController extends Controller
                     'role' => $user->roles->first() ? $user->roles->first()->name : 'user',
                     'permissions' => $permissions,
                 ],
-                'token' => $authToken
-            ]
+                'token' => $authToken,
+            ],
         ]);
     }
 
@@ -546,24 +544,24 @@ class AuthController extends Controller
 
         $email = $request->email;
         $code = $request->code;
-        
-        // Получаем сохраненный код из кеша
-        $cachedCode = \Illuminate\Support\Facades\Cache::get('email_verification_code_' . $email);
 
-        if (!$cachedCode || $cachedCode !== $code) {
+        // Получаем сохраненный код из кеша
+        $cachedCode = \Illuminate\Support\Facades\Cache::get('email_verification_code_'.$email);
+
+        if (! $cachedCode || $cachedCode !== $code) {
             return response()->json([
                 'success' => false,
-                'message' => 'Неверный или истекший код подтверждения'
+                'message' => 'Неверный или истекший код подтверждения',
             ], 400);
         }
 
         // Получаем временные данные пользователя из кеша
-        $tempUserData = \Illuminate\Support\Facades\Cache::get('temp_user_data_' . $email);
-        
-        if (!$tempUserData) {
+        $tempUserData = \Illuminate\Support\Facades\Cache::get('temp_user_data_'.$email);
+
+        if (! $tempUserData) {
             return response()->json([
                 'success' => false,
-                'message' => 'Данные регистрации истекли. Пожалуйста, зарегистрируйтесь заново.'
+                'message' => 'Данные регистрации истекли. Пожалуйста, зарегистрируйтесь заново.',
             ], 400);
         }
 
@@ -572,7 +570,7 @@ class AuthController extends Controller
         if ($existingUser) {
             return response()->json([
                 'success' => false,
-                'message' => 'Пользователь с таким email уже существует'
+                'message' => 'Пользователь с таким email уже существует',
             ], 400);
         }
 
@@ -583,12 +581,12 @@ class AuthController extends Controller
             'password' => $tempUserData['password'],
             'email_verified_at' => now(), // Сразу подтверждаем email
         ];
-        
+
         // Добавляем телефон, если он был указан
-        if (isset($tempUserData['phone']) && !empty($tempUserData['phone'])) {
+        if (isset($tempUserData['phone']) && ! empty($tempUserData['phone'])) {
             $userData['phone'] = $tempUserData['phone'];
         }
-        
+
         $user = User::create($userData);
 
         // Привязываем роль 'user' по умолчанию
@@ -596,7 +594,7 @@ class AuthController extends Controller
         if ($userRole) {
             $user->roles()->attach($userRole->id, [
                 'is_active' => true,
-                'assigned_at' => now()
+                'assigned_at' => now(),
             ]);
         }
 
@@ -609,21 +607,21 @@ class AuthController extends Controller
             try {
                 $this->sendCredentialsEmail($user, $tempUserData['login'], $tempUserData['original_password']);
             } catch (\Exception $e) {
-                Log::error('Credentials email sending failed: ' . $e->getMessage());
+                Log::error('Credentials email sending failed: '.$e->getMessage());
             }
-            
+
             // Также отправляем приветственное письмо для быстрой регистрации
             try {
                 $this->sendWelcomeEmail($user);
             } catch (\Exception $e) {
-                Log::error('Welcome email sending failed: ' . $e->getMessage());
+                Log::error('Welcome email sending failed: '.$e->getMessage());
             }
         } else {
             // Регистрация в чекауте (с введенным паролем) - отправляем только приветственное письмо
             try {
                 $this->sendWelcomeEmail($user);
             } catch (\Exception $e) {
-                Log::error('Welcome email sending failed: ' . $e->getMessage());
+                Log::error('Welcome email sending failed: '.$e->getMessage());
             }
         }
 
@@ -634,8 +632,8 @@ class AuthController extends Controller
         $permissions = $this->getUserPermissions($user);
 
         // Удаляем временные данные и код из кеша
-        \Illuminate\Support\Facades\Cache::forget('temp_user_data_' . $email);
-        \Illuminate\Support\Facades\Cache::forget('email_verification_code_' . $email);
+        \Illuminate\Support\Facades\Cache::forget('temp_user_data_'.$email);
+        \Illuminate\Support\Facades\Cache::forget('email_verification_code_'.$email);
 
         return response()->json([
             'success' => true,
@@ -650,8 +648,8 @@ class AuthController extends Controller
                     'role' => $user->roles->first() ? $user->roles->first()->name : 'user',
                     'permissions' => $permissions,
                 ],
-                'token' => $token
-            ]
+                'token' => $token,
+            ],
         ]);
     }
 
@@ -670,16 +668,16 @@ class AuthController extends Controller
             if ($user->email_verified_at) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Email уже подтвержден'
+                    'message' => 'Email уже подтвержден',
                 ], 400);
             }
 
             // Генерируем новый 4-значный код
             $verificationCode = str_pad(random_int(1000, 9999), 4, '0', STR_PAD_LEFT);
-            
+
             // Сохраняем код в кеше
             \Illuminate\Support\Facades\Cache::put(
-                'email_verification_code_' . $user->email,
+                'email_verification_code_'.$user->email,
                 $verificationCode,
                 now()->addMinutes(15)
             );
@@ -689,20 +687,20 @@ class AuthController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Письмо с кодом подтверждения отправлено повторно'
+                'message' => 'Письмо с кодом подтверждения отправлено повторно',
             ]);
 
         } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка отправки письма',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -723,20 +721,20 @@ class AuthController extends Controller
             return response()->json([
                 'success' => true,
                 'exists' => $exists,
-                'message' => $exists ? 'Email найден' : 'Email свободен'
+                'message' => $exists ? 'Email найден' : 'Email свободен',
             ]);
 
         } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка проверки email',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -756,11 +754,11 @@ class AuthController extends Controller
             $normalizedPhone = preg_replace('/[^\d+]/', '', $phone);
             // Если начинается с 8, заменяем на +7
             if (str_starts_with($normalizedPhone, '8')) {
-                $normalizedPhone = '+7' . substr($normalizedPhone, 1);
+                $normalizedPhone = '+7'.substr($normalizedPhone, 1);
             } elseif (str_starts_with($normalizedPhone, '7')) {
-                $normalizedPhone = '+' . $normalizedPhone;
-            } elseif (!str_starts_with($normalizedPhone, '+')) {
-                $normalizedPhone = '+7' . $normalizedPhone;
+                $normalizedPhone = '+'.$normalizedPhone;
+            } elseif (! str_starts_with($normalizedPhone, '+')) {
+                $normalizedPhone = '+7'.$normalizedPhone;
             }
 
             $exists = User::where('phone', $normalizedPhone)->exists();
@@ -768,20 +766,20 @@ class AuthController extends Controller
             return response()->json([
                 'success' => true,
                 'exists' => $exists,
-                'message' => $exists ? 'Телефон найден' : 'Телефон свободен'
+                'message' => $exists ? 'Телефон найден' : 'Телефон свободен',
             ]);
 
         } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка проверки телефона',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -793,22 +791,22 @@ class AuthController extends Controller
     {
         // Получаем информацию о сайте
         $siteInfo = SiteInfoService::getSiteInfoForEmail();
-        
+
         // Получаем информацию о приветственных бонусах
         $bonusesAtReg = \App\Models\Setting::where('key', 'bonuses_at_reg')->first();
-        $bonusAmount = ($bonusesAtReg && $bonusesAtReg->value && $bonusesAtReg->value > 0) 
-            ? (int) $bonusesAtReg->value 
+        $bonusAmount = ($bonusesAtReg && $bonusesAtReg->value && $bonusesAtReg->value > 0)
+            ? (int) $bonusesAtReg->value
             : 0;
-        
+
         // Отправляем простое письмо с кодом
         Mail::send('emails.verification-code', [
             'user' => $user,
             'code' => $code,
             'siteInfo' => $siteInfo,
-            'bonusAmount' => $bonusAmount
+            'bonusAmount' => $bonusAmount,
         ], function ($message) use ($user, $siteInfo) {
             $message->to($user->email, $user->name)
-                    ->subject('Код подтверждения регистрации - ' . ($siteInfo['site_name'] ?? 'Skate & Snow'));
+                ->subject('Код подтверждения регистрации - '.($siteInfo['site_name'] ?? 'Skate & Snow'));
         });
     }
 
@@ -817,11 +815,11 @@ class AuthController extends Controller
      */
     private function sendVerificationEmail(User $user, string $token): void
     {
-        $verificationUrl = config('app.frontend_url') . '/verify-email?token=' . $token;
-        
+        $verificationUrl = config('app.frontend_url').'/verify-email?token='.$token;
+
         // Получаем информацию о сайте
         $siteInfo = SiteInfoService::getSiteInfoForEmail();
-        
+
         // Отправляем красивое HTML письмо
         Mail::send(new EmailVerificationMail($user, $verificationUrl, $siteInfo));
     }
@@ -838,31 +836,33 @@ class AuthController extends Controller
                 ->where('type', 'earn')
                 ->whereJsonContains('metadata->registration_bonus', true)
                 ->first();
-            
+
             if ($existingRegistrationBonus) {
                 Log::info('Welcome bonuses not awarded: user already has registration bonus transaction', [
                     'user_id' => $user->id,
-                    'transaction_id' => $existingRegistrationBonus->id
+                    'transaction_id' => $existingRegistrationBonus->id,
                 ]);
+
                 return; // Приветственные бонусы уже начислены, не начисляем повторно
             }
-            
+
             // Получаем значение bonuses_at_reg из настроек
             $bonusesAtReg = \App\Models\Setting::where('key', 'bonuses_at_reg')->first();
-            
-            if (!$bonusesAtReg || !$bonusesAtReg->value || $bonusesAtReg->value <= 0) {
+
+            if (! $bonusesAtReg || ! $bonusesAtReg->value || $bonusesAtReg->value <= 0) {
                 Log::info('Welcome bonuses not awarded: setting not found or value is 0', [
                     'user_id' => $user->id,
-                    'setting_value' => $bonusesAtReg?->value ?? 'not found'
+                    'setting_value' => $bonusesAtReg?->value ?? 'not found',
                 ]);
+
                 return; // Если настройка не найдена или равна 0, не начисляем бонусы
             }
-            
+
             $bonusAmount = (int) $bonusesAtReg->value;
-            
+
             // Используем модель UserBonus для правильного создания записи и транзакции
             $userBonus = \App\Models\UserBonus::getOrCreateForUser($user->id);
-            
+
             // Добавляем бонусы через метод addPoints, который создаст транзакцию
             $userBonus->addPoints(
                 $bonusAmount,
@@ -871,17 +871,17 @@ class AuthController extends Controller
                 null, // expires_at (без срока действия для приветственных бонусов)
                 ['registration_bonus' => true, 'bonuses_at_reg' => $bonusAmount]
             );
-            
+
             Log::info('Welcome bonuses awarded successfully', [
                 'user_id' => $user->id,
-                'bonus_amount' => $bonusAmount
+                'bonus_amount' => $bonusAmount,
             ]);
-            
+
         } catch (\Exception $e) {
             // Логируем ошибку, но не прерываем регистрацию
-            Log::error('Error awarding welcome bonuses: ' . $e->getMessage(), [
+            Log::error('Error awarding welcome bonuses: '.$e->getMessage(), [
                 'user_id' => $user->id,
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
         }
     }
@@ -910,15 +910,15 @@ class AuthController extends Controller
         // Берем часть email до @ и добавляем случайные цифры
         $emailPart = explode('@', $email)[0];
         $namePart = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $name));
-        
+
         // Ограничиваем длину
         $namePart = substr($namePart, 0, 8);
         $emailPart = substr($emailPart, 0, 6);
-        
+
         // Добавляем случайные цифры
         $randomNumbers = random_int(100, 999);
-        
-        return $namePart . $emailPart . $randomNumbers;
+
+        return $namePart.$emailPart.$randomNumbers;
     }
 
     /**
@@ -930,20 +930,20 @@ class AuthController extends Controller
         $uppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
         $lowercase = 'abcdefghijklmnopqrstuvwxyz';
         $numbers = '0123456789';
-        
+
         $password = '';
-        
+
         // Добавляем минимум по одному символу каждого типа
         $password .= $uppercase[random_int(0, strlen($uppercase) - 1)];
         $password .= $lowercase[random_int(0, strlen($lowercase) - 1)];
         $password .= $numbers[random_int(0, strlen($numbers) - 1)];
-        
+
         // Заполняем остальные 5 символов случайно
-        $allChars = $uppercase . $lowercase . $numbers;
+        $allChars = $uppercase.$lowercase.$numbers;
         for ($i = 0; $i < 5; $i++) {
             $password .= $allChars[random_int(0, strlen($allChars) - 1)];
         }
-        
+
         // Перемешиваем символы
         return str_shuffle($password);
     }
@@ -955,23 +955,23 @@ class AuthController extends Controller
     {
         // Получаем информацию о сайте
         $siteInfo = SiteInfoService::getSiteInfoForEmail();
-        
+
         // Получаем информацию о приветственных бонусах
         $bonusesAtReg = \App\Models\Setting::where('key', 'bonuses_at_reg')->first();
-        $bonusAmount = ($bonusesAtReg && $bonusesAtReg->value && $bonusesAtReg->value > 0) 
-            ? (int) $bonusesAtReg->value 
+        $bonusAmount = ($bonusesAtReg && $bonusesAtReg->value && $bonusesAtReg->value > 0)
+            ? (int) $bonusesAtReg->value
             : 0;
-        
+
         // Отправляем письмо с учетными данными
         Mail::send('emails.credentials', [
             'user' => $user,
             'login' => $login,
             'password' => $password,
             'siteInfo' => $siteInfo,
-            'bonusAmount' => $bonusAmount
+            'bonusAmount' => $bonusAmount,
         ], function ($message) use ($user, $siteInfo) {
             $message->to($user->email, $user->name)
-                    ->subject('Ваши учетные данные - ' . ($siteInfo['site_name'] ?? 'Skate & Snow'));
+                ->subject('Ваши учетные данные - '.($siteInfo['site_name'] ?? 'Skate & Snow'));
         });
     }
 
@@ -982,21 +982,21 @@ class AuthController extends Controller
     {
         // Получаем информацию о сайте
         $siteInfo = SiteInfoService::getSiteInfoForEmail();
-        
+
         // Получаем информацию о приветственных бонусах
         $bonusesAtReg = \App\Models\Setting::where('key', 'bonuses_at_reg')->first();
-        $bonusAmount = ($bonusesAtReg && $bonusesAtReg->value && $bonusesAtReg->value > 0) 
-            ? (int) $bonusesAtReg->value 
+        $bonusAmount = ($bonusesAtReg && $bonusesAtReg->value && $bonusesAtReg->value > 0)
+            ? (int) $bonusesAtReg->value
             : 0;
-        
+
         // Отправляем приветственное письмо
         Mail::send('emails.welcome', [
             'user' => $user,
             'siteInfo' => $siteInfo,
-            'bonusAmount' => $bonusAmount
+            'bonusAmount' => $bonusAmount,
         ], function ($message) use ($user, $siteInfo) {
             $message->to($user->email, $user->name)
-                    ->subject('Добро пожаловать на ' . ($siteInfo['site_name'] ?? 'Skate & Snow') . '!');
+                ->subject('Добро пожаловать на '.($siteInfo['site_name'] ?? 'Skate & Snow').'!');
         });
     }
 
@@ -1013,50 +1013,50 @@ class AuthController extends Controller
             ]);
 
             $email = $request->email;
-            
+
             // Проверяем, существует ли пользователь
             $user = User::where('email', $email)->first();
-            
-            if (!$user) {
+
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь с таким email не найден'
+                    'message' => 'Пользователь с таким email не найден',
                 ], 404);
             }
 
             // Проверяем, зарегистрирован ли пользователь через соцсети или телефон
             $authMethods = [];
-            
-            if (!empty($user->google_id)) {
+
+            if (! empty($user->google_id)) {
                 $authMethods[] = 'google';
             }
-            if (!empty($user->vk_id)) {
+            if (! empty($user->vk_id)) {
                 $authMethods[] = 'vk';
             }
-            if (!empty($user->yandex_id)) {
+            if (! empty($user->yandex_id)) {
                 $authMethods[] = 'yandex';
             }
-            if (!empty($user->phone_verified_at)) {
+            if (! empty($user->phone_verified_at)) {
                 $authMethods[] = 'phone';
             }
-            
+
             // Если пользователь зарегистрирован через соцсеть/телефон и НЕ имеет обычного пароля
             // (проверяем, был ли когда-либо установлен пароль вручную)
-            if (!empty($authMethods)) {
+            if (! empty($authMethods)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Этот аккаунт зарегистрирован через другой способ авторизации',
                     'auth_methods' => $authMethods,
-                    'error' => 'social_auth_account'
+                    'error' => 'social_auth_account',
                 ], 400);
             }
 
             // Генерируем 6-значный код
             $resetCode = str_pad(random_int(100000, 999999), 6, '0', STR_PAD_LEFT);
-            
+
             // Сохраняем код в кеше (действителен 15 минут)
             \Illuminate\Support\Facades\Cache::put(
-                'password_reset_code_' . $email,
+                'password_reset_code_'.$email,
                 $resetCode,
                 now()->addMinutes(15)
             );
@@ -1065,29 +1065,30 @@ class AuthController extends Controller
             try {
                 $this->sendPasswordResetCodeEmail($user, $resetCode);
             } catch (\Exception $e) {
-                Log::error('Password reset email sending failed: ' . $e->getMessage());
+                Log::error('Password reset email sending failed: '.$e->getMessage());
+
                 return response()->json([
                     'success' => false,
-                    'message' => 'Ошибка отправки письма. Попробуйте позже.'
+                    'message' => 'Ошибка отправки письма. Попробуйте позже.',
                 ], 500);
             }
 
             return response()->json([
                 'success' => true,
-                'message' => 'Код для восстановления пароля отправлен на email'
+                'message' => 'Код для восстановления пароля отправлен на email',
             ]);
 
         } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка отправки кода',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -1105,47 +1106,47 @@ class AuthController extends Controller
 
             $email = $request->email;
             $code = $request->code;
-            
-            // Получаем сохраненный код из кеша
-            $cachedCode = \Illuminate\Support\Facades\Cache::get('password_reset_code_' . $email);
 
-            if (!$cachedCode || $cachedCode !== $code) {
+            // Получаем сохраненный код из кеша
+            $cachedCode = \Illuminate\Support\Facades\Cache::get('password_reset_code_'.$email);
+
+            if (! $cachedCode || $cachedCode !== $code) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Неверный или истекший код'
+                    'message' => 'Неверный или истекший код',
                 ], 400);
             }
 
             // Генерируем токен для сброса пароля
             $resetToken = Str::random(64);
-            
+
             // Сохраняем токен в кеше (действителен 15 минут)
             \Illuminate\Support\Facades\Cache::put(
-                'password_reset_token_' . $email,
+                'password_reset_token_'.$email,
                 $resetToken,
                 now()->addMinutes(15)
             );
 
             // Удаляем код из кеша
-            \Illuminate\Support\Facades\Cache::forget('password_reset_code_' . $email);
+            \Illuminate\Support\Facades\Cache::forget('password_reset_code_'.$email);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Код подтвержден',
-                'token' => $resetToken
+                'token' => $resetToken,
             ]);
 
         } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка проверки кода',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -1164,24 +1165,24 @@ class AuthController extends Controller
 
             $email = $request->email;
             $token = $request->token;
-            
-            // Проверяем токен
-            $cachedToken = \Illuminate\Support\Facades\Cache::get('password_reset_token_' . $email);
 
-            if (!$cachedToken || $cachedToken !== $token) {
+            // Проверяем токен
+            $cachedToken = \Illuminate\Support\Facades\Cache::get('password_reset_token_'.$email);
+
+            if (! $cachedToken || $cachedToken !== $token) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Недействительный токен сброса пароля. Попробуйте снова.'
+                    'message' => 'Недействительный токен сброса пароля. Попробуйте снова.',
                 ], 400);
             }
 
             // Находим пользователя
             $user = User::where('email', $email)->first();
-            
-            if (!$user) {
+
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не найден'
+                    'message' => 'Пользователь не найден',
                 ], 404);
             }
 
@@ -1190,31 +1191,31 @@ class AuthController extends Controller
             $user->save();
 
             // Удаляем токен из кеша
-            \Illuminate\Support\Facades\Cache::forget('password_reset_token_' . $email);
+            \Illuminate\Support\Facades\Cache::forget('password_reset_token_'.$email);
 
             // Отправляем уведомление об изменении пароля
             try {
                 $this->sendPasswordChangedEmail($user);
             } catch (\Exception $e) {
-                Log::error('Password changed notification email failed: ' . $e->getMessage());
+                Log::error('Password changed notification email failed: '.$e->getMessage());
             }
 
             return response()->json([
                 'success' => true,
-                'message' => 'Пароль успешно изменён'
+                'message' => 'Пароль успешно изменён',
             ]);
 
         } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка сброса пароля',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -1226,15 +1227,15 @@ class AuthController extends Controller
     {
         // Получаем информацию о сайте
         $siteInfo = SiteInfoService::getSiteInfoForEmail();
-        
+
         // Отправляем письмо с кодом
         Mail::send('emails.password-reset-code', [
             'user' => $user,
             'code' => $code,
-            'siteInfo' => $siteInfo
+            'siteInfo' => $siteInfo,
         ], function ($message) use ($user, $siteInfo) {
             $message->to($user->email, $user->name)
-                    ->subject('Код для восстановления пароля - ' . ($siteInfo['site_name'] ?? 'Skate & Snow'));
+                ->subject('Код для восстановления пароля - '.($siteInfo['site_name'] ?? 'Skate & Snow'));
         });
     }
 
@@ -1245,14 +1246,14 @@ class AuthController extends Controller
     {
         // Получаем информацию о сайте
         $siteInfo = SiteInfoService::getSiteInfoForEmail();
-        
+
         // Отправляем уведомление
         Mail::send('emails.password-changed', [
             'user' => $user,
-            'siteInfo' => $siteInfo
+            'siteInfo' => $siteInfo,
         ], function ($message) use ($user, $siteInfo) {
             $message->to($user->email, $user->name)
-                    ->subject('Пароль изменён - ' . ($siteInfo['site_name'] ?? 'Skate & Snow'));
+                ->subject('Пароль изменён - '.($siteInfo['site_name'] ?? 'Skate & Snow'));
         });
     }
 }

@@ -12,7 +12,7 @@ return new class extends Migration
     public function up(): void
     {
         // Проверяем, что таблица admin_page_role не существует
-        if (!Schema::hasTable('admin_page_role')) {
+        if (! Schema::hasTable('admin_page_role')) {
             Schema::create('admin_page_role', function (Blueprint $table) {
                 $table->id();
                 $table->foreignId('admin_page_id')->constrained('admin_pages')->onDelete('cascade');

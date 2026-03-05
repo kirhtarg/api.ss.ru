@@ -12,12 +12,12 @@ class Role extends Model
         'display_name',
         'description',
         'permissions',
-        'is_active'
+        'is_active',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
-        'permissions' => 'array'
+        'permissions' => 'array',
     ];
 
     /**
@@ -51,10 +51,10 @@ class Role extends Model
      */
     public function hasPermission(string $permission): bool
     {
-        if (!$this->permissions) {
+        if (! $this->permissions) {
             return false;
         }
-        
+
         return in_array($permission, $this->permissions);
     }
 
@@ -63,16 +63,16 @@ class Role extends Model
      */
     public function hasAnyPermission(array $permissions): bool
     {
-        if (!$this->permissions) {
+        if (! $this->permissions) {
             return false;
         }
-        
+
         foreach ($permissions as $permission) {
             if (in_array($permission, $this->permissions)) {
                 return true;
             }
         }
-        
+
         return false;
     }
 
@@ -81,16 +81,16 @@ class Role extends Model
      */
     public function hasAllPermissions(array $permissions): bool
     {
-        if (!$this->permissions) {
+        if (! $this->permissions) {
             return false;
         }
-        
+
         foreach ($permissions as $permission) {
-            if (!in_array($permission, $this->permissions)) {
+            if (! in_array($permission, $this->permissions)) {
                 return false;
             }
         }
-        
+
         return true;
     }
 
@@ -99,11 +99,11 @@ class Role extends Model
      */
     public function addPermission(string $permission): void
     {
-        if (!$this->permissions) {
+        if (! $this->permissions) {
             $this->permissions = [];
         }
-        
-        if (!in_array($permission, $this->permissions)) {
+
+        if (! in_array($permission, $this->permissions)) {
             $this->permissions[] = $permission;
             $this->save();
         }
@@ -115,7 +115,7 @@ class Role extends Model
     public function removePermission(string $permission): void
     {
         if ($this->permissions) {
-            $this->permissions = array_filter($this->permissions, function($p) use ($permission) {
+            $this->permissions = array_filter($this->permissions, function ($p) use ($permission) {
                 return $p !== $permission;
             });
             $this->save();

@@ -20,18 +20,18 @@ return new class extends Migration
                 WHERE TABLE_NAME = 'admin_page_role' 
                 AND CONSTRAINT_NAME LIKE '%_foreign'
             ");
-            
+
             $existingForeignKeys = collect($foreignKeys)->pluck('CONSTRAINT_NAME')->toArray();
-            
-            if (!in_array('admin_page_role_admin_page_id_foreign', $existingForeignKeys) || 
-                !in_array('admin_page_role_role_id_foreign', $existingForeignKeys)) {
-                
+
+            if (! in_array('admin_page_role_admin_page_id_foreign', $existingForeignKeys) ||
+                ! in_array('admin_page_role_role_id_foreign', $existingForeignKeys)) {
+
                 Schema::table('admin_page_role', function (Blueprint $table) {
                     // Добавляем внешние ключи только если их еще нет
-                    if (!in_array('admin_page_role_admin_page_id_foreign', $existingForeignKeys)) {
+                    if (! in_array('admin_page_role_admin_page_id_foreign', $existingForeignKeys)) {
                         $table->foreign('admin_page_id')->references('id')->on('admin_pages')->onDelete('cascade');
                     }
-                    if (!in_array('admin_page_role_role_id_foreign', $existingForeignKeys)) {
+                    if (! in_array('admin_page_role_role_id_foreign', $existingForeignKeys)) {
                         $table->foreign('role_id')->references('id')->on('roles')->onDelete('cascade');
                     }
                 });

@@ -3,13 +3,6 @@
 namespace App\Services;
 
 use App\Models\GoodsImportBackup;
-use App\Models\ShopGood;
-use App\Models\ShopCategory;
-use App\Models\ShopBrand;
-use App\Models\ShopGoodImage;
-use App\Models\ShopPropertyValue;
-use App\Models\ShopGoodProperty;
-use App\Models\ShopGoodVariation;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -29,7 +22,7 @@ class GoodsBackupService
         'shop_good_properties',
         'shop_good_variations',
         'shop_tags',
-        'shop_labels'
+        'shop_labels',
     ];
 
     /**
@@ -40,18 +33,18 @@ class GoodsBackupService
         Log::info('Начало создания резервной копии товаров', [
             'name' => $name,
             'user_id' => $userId,
-            'shop_id' => $shopId
+            'shop_id' => $shopId,
         ]);
 
         // Создаем уникальное имя файла
-        $filename = 'backup_' . date('Y_m_d_H_i_s') . '_' . Str::random(8) . '.json';
+        $filename = 'backup_'.date('Y_m_d_H_i_s').'_'.Str::random(8).'.json';
 
         // Собираем данные из всех таблиц
         $backupData = $this->collectBackupData($shopId);
         $jsonData = json_encode($backupData, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
 
         // Сохраняем файл
-        $backupPath = 'backups/goods_import/' . $filename;
+        $backupPath = 'backups/goods_import/'.$filename;
         Storage::put($backupPath, $jsonData);
 
         // Получаем размер файла
@@ -72,14 +65,14 @@ class GoodsBackupService
             'size' => $fileSize,
             'records_count' => $totalRecords,
             'tables_backed_up' => self::TABLES_TO_BACKUP,
-            'status' => 'completed'
+            'status' => 'completed',
         ]);
 
         Log::info('Резервная копия товаров успешно создана', [
             'backup_id' => $backup->id,
             'filename' => $filename,
             'size' => $fileSize,
-            'records_count' => $totalRecords
+            'records_count' => $totalRecords,
         ]);
 
         return $backup;
@@ -92,18 +85,18 @@ class GoodsBackupService
     {
         Log::info('Начало восстановления резервной копии', [
             'backup_id' => $backup->id,
-            'filename' => $backup->filename
+            'filename' => $backup->filename,
         ]);
 
         // Проверяем, существует ли файл
-        if (!$backup->fileExists()) {
+        if (! $backup->fileExists()) {
             throw new \Exception('Файл резервной копии не найден');
         }
 
         // Читаем данные из файла
-        $backupData = json_decode(Storage::get('backups/goods_import/' . $backup->filename), true);
+        $backupData = json_decode(Storage::get('backups/goods_import/'.$backup->filename), true);
 
-        if (!$backupData) {
+        if (! $backupData) {
             throw new \Exception('Неверный формат файла резервной копии');
         }
 
@@ -114,7 +107,7 @@ class GoodsBackupService
         $this->restoreData($backupData);
 
         Log::info('Резервная копия успешно восстановлена', [
-            'backup_id' => $backup->id
+            'backup_id' => $backup->id,
         ]);
     }
 
@@ -137,12 +130,12 @@ class GoodsBackupService
                 $backupData[$table] = $query->get()->toArray();
 
                 Log::debug("Собраны данные таблицы {$table}", [
-                    'records_count' => count($backupData[$table])
+                    'records_count' => count($backupData[$table]),
                 ]);
 
             } catch (\Exception $e) {
                 Log::warning("Ошибка при сборе данных таблицы {$table}", [
-                    'error' => $e->getMessage()
+                    'error' => $e->getMessage(),
                 ]);
                 $backupData[$table] = [];
             }
@@ -161,7 +154,7 @@ class GoodsBackupService
             'shop_categories',
             'shop_brands',
             'shop_good_images',
-            'shop_good_variations'
+            'shop_good_variations',
         ];
 
         return in_array($table, $tablesWithShopId);
@@ -184,7 +177,7 @@ class GoodsBackupService
             'shop_categories',
             'shop_brands',
             'shop_tags',
-            'shop_labels'
+            'shop_labels',
         ];
 
         foreach ($clearOrder as $table) {
@@ -193,7 +186,7 @@ class GoodsBackupService
                 Log::debug("Таблица {$table} очищена");
             } catch (\Exception $e) {
                 Log::warning("Ошибка при очистке таблицы {$table}", [
-                    'error' => $e->getMessage()
+                    'error' => $e->getMessage(),
                 ]);
             }
         }
@@ -216,12 +209,13 @@ class GoodsBackupService
             'shop_good_properties',
             'shop_good_variations',
             'shop_tags',
-            'shop_labels'
+            'shop_labels',
         ];
 
         foreach ($restoreOrder as $table) {
-            if (!isset($backupData[$table]) || empty($backupData[$table])) {
+            if (! isset($backupData[$table]) || empty($backupData[$table])) {
                 Log::debug("Пропускаем таблицу {$table} - нет данных");
+
                 continue;
             }
 
@@ -237,13 +231,13 @@ class GoodsBackupService
                 }
 
                 Log::debug("Таблица {$table} восстановлена", [
-                    'records_count' => count($records)
+                    'records_count' => count($records),
                 ]);
 
             } catch (\Exception $e) {
                 Log::error("Ошибка при восстановлении таблицы {$table}", [
                     'error' => $e->getMessage(),
-                    'records_count' => count($backupData[$table] ?? [])
+                    'records_count' => count($backupData[$table] ?? []),
                 ]);
 
                 // Продолжаем с другими таблицами, но логируем ошибку
@@ -251,11 +245,3 @@ class GoodsBackupService
         }
     }
 }
-
-
-
-
-
-
-
-

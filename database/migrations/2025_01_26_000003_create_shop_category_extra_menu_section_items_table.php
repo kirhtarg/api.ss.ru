@@ -17,12 +17,12 @@ return new class extends Migration
             $table->foreignId('category_id')->constrained('shop_categories')->onDelete('cascade');
             $table->integer('sort_order')->default(0);
             $table->timestamps();
-            
+
             // Индексы
             $table->index('section_id');
             $table->index('category_id');
             $table->index('sort_order');
-            
+
             // Уникальность - подкатегория не может быть в одном подразделе дважды
             $table->unique(['section_id', 'category_id'], 'extra_menu_section_category_unique');
         });
@@ -36,16 +36,3 @@ return new class extends Migration
         Schema::dropIfExists('shop_category_extra_menu_section_items');
     }
 };
-
-
-
-
-
-
-
-
-
-
-
-
-

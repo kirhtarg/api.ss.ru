@@ -82,11 +82,11 @@ class SiteMenuItem extends Model
     public static function getMenuTree($siteMenuId = null)
     {
         $query = static::active()->root()->ordered();
-        
+
         if ($siteMenuId) {
             $query->where('site_menu_id', $siteMenuId);
         }
-        
+
         return $query->with(['children' => function ($query) {
             $query->active()->ordered();
         }])->get();

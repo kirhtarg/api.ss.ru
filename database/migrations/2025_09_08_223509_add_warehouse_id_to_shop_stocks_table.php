@@ -2,8 +2,8 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -14,7 +14,7 @@ return new class extends Migration
     {
         Schema::table('shop_stocks', function (Blueprint $table) {
             // Добавляем поле warehouse_id если его нет
-            if (!Schema::hasColumn('shop_stocks', 'warehouse_id')) {
+            if (! Schema::hasColumn('shop_stocks', 'warehouse_id')) {
                 $table->foreignId('warehouse_id')->nullable()->after('variation_id')->constrained('shop_warehouses')->onDelete('cascade');
             }
         });
@@ -37,7 +37,7 @@ return new class extends Migration
                     // Игнорируем ошибку, если внешний ключ не существует
                 }
             }
-            
+
             // Затем удаляем колонку
             Schema::table('shop_stocks', function (Blueprint $table) {
                 $table->dropColumn('warehouse_id');

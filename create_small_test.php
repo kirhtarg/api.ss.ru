@@ -5,13 +5,13 @@ require_once 'vendor/autoload.php';
 $app = require_once 'bootstrap/app.php';
 $app->make('Illuminate\Contracts\Console\Kernel')->bootstrap();
 
-use App\Models\ExportFile;
 use App\Jobs\ProcessModexJob;
+use App\Models\ExportFile;
 
 // Создаем тестовый файл с меньшими данными
 $modexFile = ExportFile::create([
     'created_by' => 1,
-    'filename' => 'small_test_' . time() . '.xlsx',
+    'filename' => 'small_test_'.time().'.xlsx',
     'original_filename' => 'small_test_modified.xlsx',
     'format' => 'excel',
     'status' => 'pending',
@@ -28,12 +28,12 @@ $modexFile = ExportFile::create([
                     'searchQuotes' => false,
                     'newColumnName' => 'sku',
                     'removeTags' => false,
-                    'deleteFragmentsAfter' => '"<br","</strong","</p","<br/","<strong","</li"'
-                ]
-            ]
+                    'deleteFragmentsAfter' => '"<br","</strong","</p","<br/","<strong","</li"',
+                ],
+            ],
         ],
-        'input_file_path' => 'temp/test_small.xlsx' // Используем файл, созданный ранее
-    ]
+        'input_file_path' => 'temp/test_small.xlsx', // Используем файл, созданный ранее
+    ],
 ]);
 
 echo "Created small test modex file: {$modexFile->id}\n";

@@ -23,13 +23,13 @@ return new class extends Migration
             $table->text('error_message')->nullable(); // Сообщение об ошибке
             $table->timestamp('processed_at')->nullable(); // Время обработки
             $table->timestamps();
-            
+
             // Индексы
             $table->index(['order_id']);
             $table->index(['payment_method_id']);
             $table->index(['status']);
             $table->index(['transaction_id']);
-            
+
             // Внешние ключи
             $table->foreign('order_id')->references('id')->on('shop_orders')->onDelete('cascade');
             $table->foreign('payment_method_id')->references('id')->on('shop_payment_methods')->onDelete('restrict');

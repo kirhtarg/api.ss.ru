@@ -50,17 +50,3 @@ class ContactPhoneSeeder extends Seeder
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-

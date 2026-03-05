@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Traits\HasGoodsLogging;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -10,7 +11,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ShopGoodVariation extends Model
 {
-    use HasFactory;
+    use HasFactory, HasGoodsLogging;
 
     protected $fillable = [
         'good_id',
@@ -29,7 +30,7 @@ class ShopGoodVariation extends Model
         'height',
         'width',
         'is_active',
-        'sort_order'
+        'sort_order',
     ];
 
     protected $casts = [
@@ -43,7 +44,7 @@ class ShopGoodVariation extends Model
         'height' => 'decimal:2',
         'width' => 'decimal:2',
         'is_active' => 'boolean',
-        'sort_order' => 'integer'
+        'sort_order' => 'integer',
     ];
 
     /**
@@ -128,12 +129,12 @@ class ShopGoodVariation extends Model
         if ($this->show_demping && $this->demping_price && $this->demping_price > 0) {
             return $this->demping_price;
         }
-        
+
         // Если есть акционная цена, используем её
         if ($this->sale_price && $this->sale_price > 0 && $this->sale_price < $this->price) {
             return $this->sale_price;
         }
-        
+
         // Иначе базовая цена
         return $this->price;
     }
@@ -143,10 +144,10 @@ class ShopGoodVariation extends Model
      */
     public function getDiscountPercentAttribute()
     {
-        if (!$this->sale_price || $this->sale_price >= $this->price) {
+        if (! $this->sale_price || $this->sale_price >= $this->price) {
             return 0;
         }
-        
+
         return round((($this->price - $this->sale_price) / $this->price) * 100);
     }
 
@@ -164,10 +165,16 @@ class ShopGoodVariation extends Model
     public function getDimensionsAttribute()
     {
         $dimensions = [];
-        if ($this->width) $dimensions[] = $this->width . '×';
-        if ($this->height) $dimensions[] = $this->height . '×';
-        if ($this->length) $dimensions[] = $this->length;
-        
+        if ($this->width) {
+            $dimensions[] = $this->width.'×';
+        }
+        if ($this->height) {
+            $dimensions[] = $this->height.'×';
+        }
+        if ($this->length) {
+            $dimensions[] = $this->length;
+        }
+
         return implode('', $dimensions) ?: null;
     }
 
@@ -190,7 +197,7 @@ class ShopGoodVariation extends Model
         }
 
         return $rows->map(function ($r) {
-            return ($r->attribute_name ?? 'Attribute') . ': ' . ($r->value_value ?? '');
+            return ($r->attribute_name ?? 'Attribute').': '.($r->value_value ?? '');
         })->join(', ');
     }
 }

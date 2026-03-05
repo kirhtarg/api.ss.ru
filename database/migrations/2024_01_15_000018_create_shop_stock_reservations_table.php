@@ -23,7 +23,7 @@ return new class extends Migration
             $table->foreignId('user_id')->nullable()->constrained('users')->onDelete('set null');
             $table->text('notes')->nullable();
             $table->timestamps();
-            
+
             // Индексы для производительности
             $table->index(['good_id', 'warehouse_id']);
             $table->index(['variation_id', 'warehouse_id']);

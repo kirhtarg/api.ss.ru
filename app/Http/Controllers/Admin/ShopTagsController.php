@@ -4,8 +4,8 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopTag;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 
@@ -32,7 +32,7 @@ class ShopTagsController extends Controller
         // Сортировка
         $sortBy = $request->get('sort_by', 'sort_order');
         $sortDirection = $request->get('sort_direction', 'asc');
-        
+
         if (in_array($sortBy, ['name', 'created_at', 'sort_order'])) {
             $query->orderBy($sortBy, $sortDirection);
         }
@@ -46,8 +46,8 @@ class ShopTagsController extends Controller
                 'current_page' => $tags->currentPage(),
                 'last_page' => $tags->lastPage(),
                 'per_page' => $tags->perPage(),
-                'total' => $tags->total()
-            ]
+                'total' => $tags->total(),
+            ],
         ]);
     }
 
@@ -60,7 +60,7 @@ class ShopTagsController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $tag
+            'data' => $tag,
         ]);
     }
 
@@ -74,14 +74,14 @@ class ShopTagsController extends Controller
             'color' => 'nullable|string|max:7|regex:/^#[0-9A-Fa-f]{6}$/',
             'slug' => 'nullable|string|max:255|unique:shop_tags,slug',
             'is_active' => 'boolean',
-            'sort_order' => 'integer'
+            'sort_order' => 'integer',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -90,7 +90,7 @@ class ShopTagsController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Тег успешно создан',
-            'data' => $tag
+            'data' => $tag,
         ], 201);
     }
 
@@ -106,14 +106,14 @@ class ShopTagsController extends Controller
             'color' => 'nullable|string|max:7|regex:/^#[0-9A-Fa-f]{6}$/',
             'slug' => ['nullable', 'string', 'max:255', Rule::unique('shop_tags', 'slug')->ignore($id)],
             'is_active' => 'boolean',
-            'sort_order' => 'integer'
+            'sort_order' => 'integer',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -122,7 +122,7 @@ class ShopTagsController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Тег успешно обновлен',
-            'data' => $tag
+            'data' => $tag,
         ]);
     }
 
@@ -136,7 +136,7 @@ class ShopTagsController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Тег успешно удален'
+            'message' => 'Тег успешно удален',
         ]);
     }
 
@@ -149,7 +149,7 @@ class ShopTagsController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $tags
+            'data' => $tags,
         ]);
     }
 }

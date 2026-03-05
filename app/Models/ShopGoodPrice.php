@@ -17,14 +17,14 @@ class ShopGoodPrice extends Model
         'price',
         'sale_price',
         'valid_from',
-        'valid_until'
+        'valid_until',
     ];
 
     protected $casts = [
         'price' => 'decimal:2',
         'sale_price' => 'decimal:2',
         'valid_from' => 'datetime',
-        'valid_until' => 'datetime'
+        'valid_until' => 'datetime',
     ];
 
     /**
@@ -58,10 +58,10 @@ class ShopGoodPrice extends Model
     {
         return $query->where(function ($q) {
             $q->whereNull('valid_from')
-              ->orWhere('valid_from', '<=', now());
+                ->orWhere('valid_from', '<=', now());
         })->where(function ($q) {
             $q->whereNull('valid_until')
-              ->orWhere('valid_until', '>=', now());
+                ->orWhere('valid_until', '>=', now());
         });
     }
 

@@ -7,30 +7,30 @@ use Illuminate\Support\Facades\File;
 class ImportLogService
 {
     private $logDir;
-    
+
     public function __construct()
     {
         $this->logDir = storage_path('app/public/import-logs');
-        
+
         // Создаем директорию если не существует
-        if (!\App\Helpers\StorageHelper::createDirectory($this->logDir)) {
+        if (! \App\Helpers\StorageHelper::createDirectory($this->logDir)) {
             \Log::error("Failed to create import logs directory: {$this->logDir}");
         }
     }
-    
+
     /**
      * Очистить все лог-файлы перед новым импортом
      */
     public function clearAllLogs()
     {
         $logTypes = ['import-load', 'import-skip', 'import-update', 'import-error', 'import-variation'];
-        
+
         foreach ($logTypes as $type) {
             $this->clearLog($type);
         }
-        
+
     }
-    
+
     /**
      * Очистить конкретный лог-файл
      */
@@ -38,18 +38,18 @@ class ImportLogService
     {
         try {
             $logPath = $this->getLogPath($type);
-            
+
             // Убеждаемся, что директория существует
-            if (!File::exists($this->logDir)) {
+            if (! File::exists($this->logDir)) {
                 \App\Helpers\StorageHelper::createDirectory($this->logDir);
             }
-            
+
             File::put($logPath, '');
         } catch (\Exception $e) {
-            \Log::error("Failed to clear import log {$type}: " . $e->getMessage());
+            \Log::error("Failed to clear import log {$type}: ".$e->getMessage());
         }
     }
-    
+
     /**
      * Записать успешно загруженную строку
      */
@@ -57,7 +57,7 @@ class ImportLogService
     {
         $this->writeLog('import-load', "{$count} - {$sku} - {$name}");
     }
-    
+
     /**
      * Записать обновленную строку
      */
@@ -65,7 +65,7 @@ class ImportLogService
     {
         $this->writeLog('import-update', "{$count} - {$sku} - {$name}");
     }
-    
+
     /**
      * Записать пропущенную строку
      */
@@ -73,7 +73,7 @@ class ImportLogService
     {
         $this->writeLog('import-skip', "{$count} - {$sku} - {$name} - {$reason}");
     }
-    
+
     /**
      * Записать ошибку
      */
@@ -81,7 +81,7 @@ class ImportLogService
     {
         $this->writeLog('import-error', "{$count} - {$sku} - {$name} - {$error}");
     }
-    
+
     /**
      * Записать общую ошибку импорта
      */
@@ -89,7 +89,7 @@ class ImportLogService
     {
         $this->writeLog('import-error', "GENERAL - GENERAL - GENERAL - {$error}");
     }
-    
+
     /**
      * Записать ошибку загрузки файла
      */
@@ -99,7 +99,7 @@ class ImportLogService
         $sheetName = $sheetName ? " - Лист: {$sheetName}" : '';
         $this->writeLog('import-error', "FILE_LOADING{$fileName}{$sheetName} - FILE_LOADING - FILE_LOADING - {$error}");
     }
-    
+
     /**
      * Записать ошибку загрузки изображения
      */
@@ -109,7 +109,7 @@ class ImportLogService
         $goodSku = $goodSku ? " - Товар: {$goodSku}" : '';
         $this->writeLog('import-error', "IMAGE_LOADING{$imageUrl}{$goodSku} - IMAGE_LOADING - IMAGE_LOADING - {$error}");
     }
-    
+
     /**
      * Записать успешную загрузку изображения
      */
@@ -120,7 +120,7 @@ class ImportLogService
         $goodSku = $goodSku ? " - Товар: {$goodSku}" : '';
         $this->writeLog('import-load', "IMAGE_SUCCESS{$imageUrl}{$filePath}{$goodSku}");
     }
-    
+
     /**
      * Записать пропуск загрузки изображения
      */
@@ -131,7 +131,7 @@ class ImportLogService
         $reason = $reason ?: 'Пропущено';
         $this->writeLog('import-skip', "IMAGE_SKIPPED{$imageUrl}{$goodSku} - {$reason}");
     }
-    
+
     /**
      * Пакетная запись успешных загрузок изображений
      */
@@ -140,23 +140,23 @@ class ImportLogService
         if (empty($items)) {
             return;
         }
-        
+
         try {
             $logPath = $this->getLogPath('import-load');
             $timestamp = now()->format('Y-m-d H:i:s');
-            
+
             // Убеждаемся, что директория существует
-            if (!File::exists($this->logDir)) {
-                if (!\App\Helpers\StorageHelper::createDirectory($this->logDir)) {
+            if (! File::exists($this->logDir)) {
+                if (! \App\Helpers\StorageHelper::createDirectory($this->logDir)) {
                     throw new \Exception("Не удалось создать директорию для логов: {$this->logDir}");
                 }
             }
-            
+
             // Проверяем права на запись
-            if (!is_writable($this->logDir)) {
+            if (! is_writable($this->logDir)) {
                 throw new \Exception("Директория для логов не доступна для записи: {$this->logDir}");
             }
-            
+
             // Собираем все строки в буфер для пакетной записи (быстрее чем построчная запись)
             $logEntries = [];
             foreach ($items as $item) {
@@ -164,39 +164,40 @@ class ImportLogService
                     $imageUrl = $item['imageUrl'] ?? '';
                     $filePath = $item['filePath'] ?? '';
                     $goodSku = $item['goodSku'] ?? '';
-                    
+
                     // Ограничиваем длину URL и пути для избежания проблем
                     $imageUrl = mb_substr($imageUrl, 0, 500);
                     $filePath = mb_substr($filePath, 0, 500);
                     $goodSku = mb_substr($goodSku, 0, 100);
-                    
-                    $logEntries[] = "[{$timestamp}] IMAGE_SUCCESS ({$imageUrl}) - Файл: {$filePath}" . ($goodSku ? " - Товар: {$goodSku}" : '');
+
+                    $logEntries[] = "[{$timestamp}] IMAGE_SUCCESS ({$imageUrl}) - Файл: {$filePath}".($goodSku ? " - Товар: {$goodSku}" : '');
                 } catch (\Exception $e) {
-                    \Log::warning("Ошибка при подготовке элемента для лога успешных изображений", [
+                    \Log::warning('Ошибка при подготовке элемента для лога успешных изображений', [
                         'error' => $e->getMessage(),
-                        'item' => $item
+                        'item' => $item,
                     ]);
+
                     // Продолжаем обработку остальных элементов
                     continue;
                 }
             }
-            
+
             // Записываем все строки одним вызовом (намного быстрее)
-            if (!empty($logEntries)) {
-                $logContent = implode(PHP_EOL, $logEntries) . PHP_EOL;
+            if (! empty($logEntries)) {
+                $logContent = implode(PHP_EOL, $logEntries).PHP_EOL;
                 File::append($logPath, $logContent);
             }
         } catch (\Exception $e) {
-            \Log::error("Критическая ошибка при пакетной записи успешных изображений", [
+            \Log::error('Критическая ошибка при пакетной записи успешных изображений', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
-                'items_count' => count($items)
+                'items_count' => count($items),
             ]);
             // Пробрасываем исключение дальше, чтобы контроллер мог его обработать
             throw $e;
         }
     }
-    
+
     /**
      * Пакетная запись ошибок загрузки изображений
      */
@@ -205,23 +206,23 @@ class ImportLogService
         if (empty($items)) {
             return;
         }
-        
+
         try {
             $logPath = $this->getLogPath('import-error');
             $timestamp = now()->format('Y-m-d H:i:s');
-            
+
             // Убеждаемся, что директория существует
-            if (!File::exists($this->logDir)) {
-                if (!\App\Helpers\StorageHelper::createDirectory($this->logDir)) {
+            if (! File::exists($this->logDir)) {
+                if (! \App\Helpers\StorageHelper::createDirectory($this->logDir)) {
                     throw new \Exception("Не удалось создать директорию для логов: {$this->logDir}");
                 }
             }
-            
+
             // Проверяем права на запись
-            if (!is_writable($this->logDir)) {
+            if (! is_writable($this->logDir)) {
                 throw new \Exception("Директория для логов не доступна для записи: {$this->logDir}");
             }
-            
+
             // Собираем все строки в буфер для пакетной записи (быстрее чем построчная запись)
             $logEntries = [];
             foreach ($items as $item) {
@@ -229,39 +230,40 @@ class ImportLogService
                     $error = $item['error'] ?? 'Неизвестная ошибка';
                     $imageUrl = $item['imageUrl'] ?? '';
                     $goodSku = $item['goodSku'] ?? '';
-                    
+
                     // Ограничиваем длину для избежания проблем
                     $error = mb_substr($error, 0, 500);
                     $imageUrl = mb_substr($imageUrl, 0, 500);
                     $goodSku = mb_substr($goodSku, 0, 100);
-                    
-                    $logEntries[] = "[{$timestamp}] IMAGE_ERROR ({$imageUrl})" . ($goodSku ? " - Товар: {$goodSku}" : '') . " - {$error}";
+
+                    $logEntries[] = "[{$timestamp}] IMAGE_ERROR ({$imageUrl})".($goodSku ? " - Товар: {$goodSku}" : '')." - {$error}";
                 } catch (\Exception $e) {
-                    \Log::warning("Ошибка при подготовке элемента для лога ошибок изображений", [
+                    \Log::warning('Ошибка при подготовке элемента для лога ошибок изображений', [
                         'error' => $e->getMessage(),
-                        'item' => $item
+                        'item' => $item,
                     ]);
+
                     // Продолжаем обработку остальных элементов
                     continue;
                 }
             }
-            
+
             // Записываем все строки одним вызовом (намного быстрее)
-            if (!empty($logEntries)) {
-                $logContent = implode(PHP_EOL, $logEntries) . PHP_EOL;
+            if (! empty($logEntries)) {
+                $logContent = implode(PHP_EOL, $logEntries).PHP_EOL;
                 File::append($logPath, $logContent);
             }
         } catch (\Exception $e) {
-            \Log::error("Критическая ошибка при пакетной записи ошибок изображений", [
+            \Log::error('Критическая ошибка при пакетной записи ошибок изображений', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
-                'items_count' => count($items)
+                'items_count' => count($items),
             ]);
             // Пробрасываем исключение дальше, чтобы контроллер мог его обработать
             throw $e;
         }
     }
-    
+
     /**
      * Записать действие с вариацией
      */
@@ -282,7 +284,7 @@ class ImportLogService
                     $attrParts[] = $attr;
                 }
             }
-            $attributesStr = ' - Атрибуты: ' . implode(', ', $attrParts);
+            $attributesStr = ' - Атрибуты: '.implode(', ', $attrParts);
         }
 
         $message = "{$action} - Товар: {$goodName}{$goodSkuStr}{$variationIdStr}{$attributesStr}{$detailsStr}";
@@ -297,7 +299,7 @@ class ImportLogService
         try {
             $logPath = $this->getLogPath('import-variation');
 
-            if (!File::exists($logPath)) {
+            if (! File::exists($logPath)) {
                 return;
             }
 
@@ -307,7 +309,7 @@ class ImportLogService
             // Находим последнюю непустую строку
             for ($i = count($lines) - 1; $i >= 0; $i--) {
                 $line = trim($lines[$i]);
-                if (!empty($line)) {
+                if (! empty($line)) {
                     // Если в строке еще нет ID вариации, добавляем его
                     if (strpos($line, ' - ID вариации: ') === false) {
                         $lines[$i] = str_replace(' - ID вариации: null', " - ID вариации: {$variationId}", $line);
@@ -319,10 +321,10 @@ class ImportLogService
 
             File::put($logPath, implode("\n", $lines));
         } catch (\Exception $e) {
-            \Log::error("Failed to update last log variation ID: " . $e->getMessage());
+            \Log::error('Failed to update last log variation ID: '.$e->getMessage());
         }
     }
-    
+
     /**
      * Пакетная запись действий с вариациями
      */
@@ -336,11 +338,11 @@ class ImportLogService
             $variationAttributes = $item['variationAttributes'] ?? [];
             $variationId = $item['variationId'] ?? null;
             $details = $item['details'] ?? null;
-            
+
             $goodSkuStr = $goodSku ? " - SKU: {$goodSku}" : '';
             $variationIdStr = $variationId ? " - ID вариации: {$variationId}" : '';
             $detailsStr = $details ? " - {$details}" : '';
-            
+
             // Формируем строку атрибутов
             $attributesStr = '';
             if (is_array($variationAttributes) && count($variationAttributes) > 0) {
@@ -352,17 +354,17 @@ class ImportLogService
                         $attrParts[] = $attr;
                     }
                 }
-                $attributesStr = ' - Атрибуты: ' . implode(', ', $attrParts);
+                $attributesStr = ' - Атрибуты: '.implode(', ', $attrParts);
             }
-            
+
             $lines[] = "{$action} - Товар: {$goodName}{$goodSkuStr}{$variationIdStr}{$attributesStr}{$detailsStr}";
         }
-        
-        if (!empty($lines)) {
+
+        if (! empty($lines)) {
             $this->writeLog('import-variation', implode("\n", $lines));
         }
     }
-    
+
     /**
      * Записать в лог-файл
      */
@@ -371,27 +373,27 @@ class ImportLogService
         try {
             $logPath = $this->getLogPath($type);
             $timestamp = now()->format('Y-m-d H:i:s');
-            $logEntry = "[{$timestamp}] {$message}" . PHP_EOL;
-            
+            $logEntry = "[{$timestamp}] {$message}".PHP_EOL;
+
             // Убеждаемся, что директория существует
-            if (!File::exists($this->logDir)) {
+            if (! File::exists($this->logDir)) {
                 \App\Helpers\StorageHelper::createDirectory($this->logDir);
             }
-            
+
             File::append($logPath, $logEntry);
         } catch (\Exception $e) {
-            \Log::error("Failed to write to import log: " . $e->getMessage());
+            \Log::error('Failed to write to import log: '.$e->getMessage());
         }
     }
-    
+
     /**
      * Получить путь к лог-файлу
      */
     private function getLogPath($type)
     {
-        return $this->logDir . "/{$type}.log";
+        return $this->logDir."/{$type}.log";
     }
-    
+
     /**
      * Пакетная запись в лог загрузки
      */
@@ -404,12 +406,12 @@ class ImportLogService
             $supplierStr = $supplier ? " - Поставщик: {$supplier}" : '';
             $lines[] = "{$item['count']} - {$item['sku']} - {$item['name']}{$supplierStr} - Лист: {$sheet}";
         }
-        
-        if (!empty($lines)) {
+
+        if (! empty($lines)) {
             $this->writeLog('import-load', implode("\n", $lines));
         }
     }
-    
+
     /**
      * Пакетная запись в лог обновления
      */
@@ -424,12 +426,12 @@ class ImportLogService
             $supplierStr = $supplier ? " - Поставщик: {$supplier}" : '';
             $lines[] = "{$item['count']} - {$item['sku']} - {$item['name']}{$goodIdStr}{$supplierStr} - Лист: {$sheet}";
         }
-        
-        if (!empty($lines)) {
+
+        if (! empty($lines)) {
             $this->writeLog('import-update', implode("\n", $lines));
         }
     }
-    
+
     /**
      * Пакетная запись в лог пропуска
      */
@@ -440,12 +442,12 @@ class ImportLogService
             $sheet = $item['sheet'] ?? 'неизвестно';
             $lines[] = "{$item['count']} - {$item['sku']} - {$item['name']} - Лист: {$sheet} - {$item['reason']}";
         }
-        
-        if (!empty($lines)) {
+
+        if (! empty($lines)) {
             $this->writeLog('import-skip', implode("\n", $lines));
         }
     }
-    
+
     /**
      * Пакетная запись в лог ошибок
      */
@@ -454,23 +456,23 @@ class ImportLogService
         if (empty($items)) {
             return;
         }
-        
+
         try {
             $logPath = $this->getLogPath('import-error');
             $timestamp = now()->format('Y-m-d H:i:s');
-            
+
             // Убеждаемся, что директория существует
-            if (!File::exists($this->logDir)) {
-                if (!\App\Helpers\StorageHelper::createDirectory($this->logDir)) {
+            if (! File::exists($this->logDir)) {
+                if (! \App\Helpers\StorageHelper::createDirectory($this->logDir)) {
                     throw new \Exception("Не удалось создать директорию для логов: {$this->logDir}");
                 }
             }
-            
+
             // Проверяем права на запись
-            if (!is_writable($this->logDir)) {
+            if (! is_writable($this->logDir)) {
                 throw new \Exception("Директория для логов не доступна для записи: {$this->logDir}");
             }
-            
+
             // Собираем все строки в буфер для пакетной записи (быстрее чем построчная запись)
             $logEntries = [];
             foreach ($items as $item) {
@@ -485,38 +487,39 @@ class ImportLogService
                         $imageUrl = $item['imageUrl'] ?? '';
                         $goodSku = $item['goodSku'] ?? '';
                         $type = $item['type'] ?? 'general';
-                        
+
                         // Ограничиваем длину для избежания проблем
                         $error = mb_substr($item['error'], 0, 500);
                         $imageUrl = mb_substr($imageUrl, 0, 500);
                         $goodSku = mb_substr($goodSku, 0, 100);
-                        
+
                         if ($type === 'image_loading' && $imageUrl) {
-                            $logEntries[] = "IMAGE_ERROR ({$imageUrl})" . ($goodSku ? " - Товар: {$goodSku}" : '') . " - {$error}";
+                            $logEntries[] = "IMAGE_ERROR ({$imageUrl})".($goodSku ? " - Товар: {$goodSku}" : '')." - {$error}";
                         } else {
-                            $logEntries[] = "ERROR - {$error}" . ($goodSku ? " - Товар: {$goodSku}" : '');
+                            $logEntries[] = "ERROR - {$error}".($goodSku ? " - Товар: {$goodSku}" : '');
                         }
                     }
                 } catch (\Exception $e) {
-                    \Log::warning("Ошибка при подготовке элемента для лога ошибок", [
+                    \Log::warning('Ошибка при подготовке элемента для лога ошибок', [
                         'error' => $e->getMessage(),
-                        'item' => $item
+                        'item' => $item,
                     ]);
+
                     // Продолжаем обработку остальных элементов
                     continue;
                 }
             }
-            
+
             // Записываем все строки одним вызовом (намного быстрее)
-            if (!empty($logEntries)) {
-                $logContent = implode(PHP_EOL, $logEntries) . PHP_EOL;
-                File::append($logPath, "[{$timestamp}] " . $logContent);
+            if (! empty($logEntries)) {
+                $logContent = implode(PHP_EOL, $logEntries).PHP_EOL;
+                File::append($logPath, "[{$timestamp}] ".$logContent);
             }
         } catch (\Exception $e) {
-            \Log::error("Критическая ошибка при пакетной записи ошибок", [
+            \Log::error('Критическая ошибка при пакетной записи ошибок', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
-                'items_count' => count($items)
+                'items_count' => count($items),
             ]);
             // Пробрасываем исключение дальше, чтобы контроллер мог его обработать
             throw $e;
@@ -530,45 +533,45 @@ class ImportLogService
     {
         $stats = [];
         $logTypes = ['import-load', 'import-skip', 'import-update', 'import-error', 'import-variation'];
-        
+
         try {
             // Убеждаемся, что директория существует
-            if (!File::exists($this->logDir)) {
+            if (! File::exists($this->logDir)) {
                 \App\Helpers\StorageHelper::createDirectory($this->logDir);
             }
-            
+
             foreach ($logTypes as $type) {
                 $logPath = $this->getLogPath($type);
-                
+
                 if (File::exists($logPath)) {
                     $content = File::get($logPath);
                     $lines = array_filter(explode("\n", trim($content)));
                     $stats[$type] = [
                         'count' => count($lines),
                         'lastModified' => File::lastModified($logPath),
-                        'size' => File::size($logPath)
+                        'size' => File::size($logPath),
                     ];
                 } else {
                     $stats[$type] = [
                         'count' => 0,
                         'lastModified' => null,
-                        'size' => 0
+                        'size' => 0,
                     ];
                 }
             }
         } catch (\Exception $e) {
-            \Log::error("Failed to get log stats: " . $e->getMessage());
-            
+            \Log::error('Failed to get log stats: '.$e->getMessage());
+
             // Возвращаем пустую статистику в случае ошибки
             foreach ($logTypes as $type) {
                 $stats[$type] = [
                     'count' => 0,
                     'lastModified' => null,
-                    'size' => 0
+                    'size' => 0,
                 ];
             }
         }
-        
+
         return $stats;
     }
 }

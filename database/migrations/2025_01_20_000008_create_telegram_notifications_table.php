@@ -23,13 +23,13 @@ return new class extends Migration
             $table->integer('attempts')->default(0); // Количество попыток отправки
             $table->timestamp('sent_at')->nullable(); // Время отправки
             $table->timestamps();
-            
+
             // Индексы
             $table->index(['type', 'status']);
             $table->index(['order_id']);
             $table->index(['chat_id']);
             $table->index(['status', 'created_at']);
-            
+
             // Внешние ключи
             $table->foreign('order_id')->references('id')->on('shop_orders')->onDelete('cascade');
         });

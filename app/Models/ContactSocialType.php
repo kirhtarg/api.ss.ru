@@ -25,4 +25,3 @@ class ContactSocialType extends Model
         return $this->hasMany(ContactSocial::class, 'social_type');
     }
 }
-

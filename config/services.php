@@ -75,7 +75,7 @@ return [
     'loginbot' => [
         'api_key' => env('LOGINBOT_API_KEY'),
         'api_url' => env('LOGINBOT_API_URL', 'https://api.loginbot.ru/call'),
-      
+
         'from' => env('LOGINBOT_FROM', 'SkateAndSnow'),
     ],
 

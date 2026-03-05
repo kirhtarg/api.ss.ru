@@ -5,14 +5,13 @@ require_once 'vendor/autoload.php';
 $app = require_once 'bootstrap/app.php';
 $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
-use Illuminate\Support\Facades\DB;
-use App\Models\ExportFile;
 use App\Jobs\ProcessModexJob;
+use App\Models\ExportFile;
 
 echo "Checking file 211...\n";
 
 $file = ExportFile::find(211);
-if (!$file) {
+if (! $file) {
     echo "File not found!\n";
     exit(1);
 }

@@ -17,14 +17,14 @@ class ShopPaymentMethod extends Model
         'settings',
         'sort_order',
         'is_default',
-        'can_disable_default'
+        'can_disable_default',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
         'settings' => 'array',
         'is_default' => 'boolean',
-        'can_disable_default' => 'boolean'
+        'can_disable_default' => 'boolean',
     ];
 
     /**
@@ -57,7 +57,8 @@ class ShopPaymentMethod extends Model
     public function getApiSettings()
     {
         $settings = $this->settings ?? [];
-        \Log::info('ShopPaymentMethod getApiSettings for ' . $this->name . ':', $settings);
+        \Log::info('ShopPaymentMethod getApiSettings for '.$this->name.':', $settings);
+
         return $settings;
     }
 
@@ -66,11 +67,11 @@ class ShopPaymentMethod extends Model
      */
     public function canBeDisabled()
     {
-        if (!$this->is_default) {
+        if (! $this->is_default) {
             return true;
         }
 
-        if (!$this->can_disable_default) {
+        if (! $this->can_disable_default) {
             return false;
         }
 
@@ -86,22 +87,23 @@ class ShopPaymentMethod extends Model
     public function getImageUrlAttribute()
     {
         try {
-            if (!$this->id) {
+            if (! $this->id) {
                 return null;
             }
-            
-            $imagePath = '/images/payment/payment_' . $this->id . '.jpg';
-            
+
+            $imagePath = '/images/payment/payment_'.$this->id.'.jpg';
+
             // Проверяем наличие файла в public фронтенда (из FRONTEND_PATH в .env)
             $fullPath = frontend_public_path(ltrim($imagePath, '/'));
-            
+
             if ($fullPath && file_exists($fullPath)) {
                 return $imagePath;
             }
-            
+
             return null;
         } catch (\Exception $e) {
-            \Log::error('Error getting payment method image URL: ' . $e->getMessage());
+            \Log::error('Error getting payment method image URL: '.$e->getMessage());
+
             return null;
         }
     }

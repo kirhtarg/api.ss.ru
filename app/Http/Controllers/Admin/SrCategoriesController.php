@@ -4,10 +4,10 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\SrCategory;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Validator;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 
 class SrCategoriesController extends Controller
 {
@@ -23,13 +23,14 @@ class SrCategoriesController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $categories
+                'data' => $categories,
             ]);
         } catch (\Exception $e) {
-            Log::error('SrCategoriesController::index: ' . $e->getMessage());
+            Log::error('SrCategoriesController::index: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения категорий: ' . $e->getMessage()
+                'message' => 'Ошибка получения категорий: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -44,14 +45,14 @@ class SrCategoriesController extends Controller
                 'name' => 'required|string|max:255',
                 'description' => 'nullable|string',
                 'icon' => 'nullable|string|max:255',
-                'image' => 'nullable|string|max:500'
+                'image' => 'nullable|string|max:500',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -59,7 +60,7 @@ class SrCategoriesController extends Controller
                 'name' => $request->name,
                 'description' => $request->description,
                 'icon' => $request->icon,
-                'image' => $request->image
+                'image' => $request->image,
             ]);
 
             $category->loadCount('cards');
@@ -67,13 +68,14 @@ class SrCategoriesController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Категория успешно создана',
-                'data' => $category
+                'data' => $category,
             ], 201);
         } catch (\Exception $e) {
-            Log::error('SrCategoriesController::store: ' . $e->getMessage());
+            Log::error('SrCategoriesController::store: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания категории: ' . $e->getMessage()
+                'message' => 'Ошибка создания категории: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -86,10 +88,10 @@ class SrCategoriesController extends Controller
         try {
             $category = SrCategory::find($id);
 
-            if (!$category) {
+            if (! $category) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Категория не найдена'
+                    'message' => 'Категория не найдена',
                 ], 404);
             }
 
@@ -97,14 +99,14 @@ class SrCategoriesController extends Controller
                 'name' => 'sometimes|required|string|max:255',
                 'description' => 'nullable|string',
                 'icon' => 'nullable|string|max:255',
-                'image' => 'nullable|string|max:500'
+                'image' => 'nullable|string|max:500',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -114,13 +116,14 @@ class SrCategoriesController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Категория успешно обновлена',
-                'data' => $category
+                'data' => $category,
             ]);
         } catch (\Exception $e) {
-            Log::error('SrCategoriesController::update: ' . $e->getMessage());
+            Log::error('SrCategoriesController::update: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления категории: ' . $e->getMessage()
+                'message' => 'Ошибка обновления категории: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -133,17 +136,17 @@ class SrCategoriesController extends Controller
         try {
             $category = SrCategory::find($id);
 
-            if (!$category) {
+            if (! $category) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Категория не найдена'
+                    'message' => 'Категория не найдена',
                 ], 404);
             }
 
             // Удаляем изображение, если оно есть
             if ($category->image) {
                 $frontendPublicPath = frontend_public_path();
-                $imagePath = $frontendPublicPath . '/' . ltrim($category->image, '/');
+                $imagePath = $frontendPublicPath.'/'.ltrim($category->image, '/');
                 if (file_exists($imagePath)) {
                     @unlink($imagePath);
                 }
@@ -153,13 +156,14 @@ class SrCategoriesController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Категория успешно удалена'
+                'message' => 'Категория успешно удалена',
             ]);
         } catch (\Exception $e) {
-            Log::error('SrCategoriesController::destroy: ' . $e->getMessage());
+            Log::error('SrCategoriesController::destroy: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления категории: ' . $e->getMessage()
+                'message' => 'Ошибка удаления категории: '.$e->getMessage(),
             ], 500);
         }
     }

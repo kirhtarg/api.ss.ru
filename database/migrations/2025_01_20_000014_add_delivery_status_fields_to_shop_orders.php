@@ -12,10 +12,10 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('shop_orders', function (Blueprint $table) {
-            if (!Schema::hasColumn('shop_orders', 'cdek_order_uuid')) {
+            if (! Schema::hasColumn('shop_orders', 'cdek_order_uuid')) {
                 $table->string('cdek_order_uuid', 255)->nullable()->after('shipping_address')->comment('UUID заказа в СДЭК');
             }
-            if (!Schema::hasColumn('shop_orders', 'delivery_status')) {
+            if (! Schema::hasColumn('shop_orders', 'delivery_status')) {
                 $table->text('delivery_status')->nullable()->after('cdek_order_uuid')->comment('Статус доставки (JSON или текст)');
             }
         });
@@ -36,4 +36,3 @@ return new class extends Migration
         });
     }
 };
-

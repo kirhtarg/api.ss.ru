@@ -2,8 +2,8 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -15,7 +15,7 @@ return new class extends Migration
         Schema::table('site_templates', function (Blueprint $table) {
             // Добавляем новое поле menu_id для связи с таблицей site_menus
             $table->unsignedBigInteger('menu_id')->nullable()->after('folder_name');
-            
+
             // Создаем внешний ключ только если таблица site_menus существует
             if (Schema::hasTable('site_menus')) {
                 $table->foreign('menu_id')->references('id')->on('site_menus')->onDelete('set null');
@@ -40,7 +40,7 @@ return new class extends Migration
                     // Игнорируем ошибку, если внешний ключ не существует
                 }
             }
-            
+
             // Затем удаляем колонку
             Schema::table('site_templates', function (Blueprint $table) {
                 $table->dropColumn('menu_id');

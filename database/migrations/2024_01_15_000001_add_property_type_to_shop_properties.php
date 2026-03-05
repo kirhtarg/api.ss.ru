@@ -14,12 +14,12 @@ return new class extends Migration
         // Проверяем, существует ли таблица shop_properties
         if (Schema::hasTable('shop_properties')) {
             // Проверяем, существует ли уже поле property_type
-            if (!Schema::hasColumn('shop_properties', 'property_type')) {
+            if (! Schema::hasColumn('shop_properties', 'property_type')) {
                 Schema::table('shop_properties', function (Blueprint $table) {
                     $table->enum('property_type', ['string', 'color', 'select'])
-                          ->default('string')
-                          ->after('name')
-                          ->comment('Тип свойства: string - строка, color - цвет, select - выбор из списка');
+                        ->default('string')
+                        ->after('name')
+                        ->comment('Тип свойства: string - строка, color - цвет, select - выбор из списка');
                 });
             }
         }

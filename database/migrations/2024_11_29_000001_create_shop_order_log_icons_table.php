@@ -30,7 +30,7 @@ return new class extends Migration
                 'is_active' => true,
                 'sort_order' => 1,
                 'created_at' => now(),
-                'updated_at' => now()
+                'updated_at' => now(),
             ],
             [
                 'name' => 'Положительное действие',
@@ -39,7 +39,7 @@ return new class extends Migration
                 'is_active' => true,
                 'sort_order' => 2,
                 'created_at' => now(),
-                'updated_at' => now()
+                'updated_at' => now(),
             ],
             [
                 'name' => 'Отрицательное действие',
@@ -48,8 +48,8 @@ return new class extends Migration
                 'is_active' => true,
                 'sort_order' => 3,
                 'created_at' => now(),
-                'updated_at' => now()
-            ]
+                'updated_at' => now(),
+            ],
         ]);
     }
 
@@ -61,4 +61,3 @@ return new class extends Migration
         Schema::dropIfExists('shop_order_log_icons');
     }
 };
-

@@ -9,13 +9,13 @@ return new class extends Migration
     public function up(): void
     {
         // Создаем таблицу shop_favorites только если она не существует
-        if (!Schema::hasTable('shop_favorites')) {
+        if (! Schema::hasTable('shop_favorites')) {
             Schema::create('shop_favorites', function (Blueprint $table) {
                 $table->id();
                 $table->unsignedBigInteger('user_id');
                 $table->unsignedBigInteger('good_id');
                 $table->timestamps();
-                
+
                 // Индексы и внешние ключи
                 $table->unique(['user_id', 'good_id'], 'shop_favorites_user_id_good_id_unique');
                 $table->index('user_id', 'shop_favorites_user_id_foreign');

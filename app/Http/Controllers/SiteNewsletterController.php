@@ -4,9 +4,9 @@ namespace App\Http\Controllers;
 
 use App\Models\SiteNewsletterSubscriber;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Validator;
 
 class SiteNewsletterController extends Controller
 {
@@ -16,28 +16,29 @@ class SiteNewsletterController extends Controller
     public function subscribe(Request $request)
     {
         // Rate limiting: максимум 5 попыток в минуту с одного IP
-        $key = 'newsletter_subscribe:' . $request->ip();
+        $key = 'newsletter_subscribe:'.$request->ip();
         if (RateLimiter::tooManyAttempts($key, 5)) {
             $seconds = RateLimiter::availableIn($key);
+
             return response()->json([
                 'success' => false,
-                'message' => "Слишком много попыток подписки. Попробуйте через {$seconds} секунд."
+                'message' => "Слишком много попыток подписки. Попробуйте через {$seconds} секунд.",
             ], 429);
         }
 
         // Валидация
         $validator = Validator::make($request->all(), [
-            'email' => 'required|email|max:255'
+            'email' => 'required|email|max:255',
         ], [
             'email.required' => 'Email обязателен для заполнения',
             'email.email' => 'Введите корректный email адрес',
-            'email.max' => 'Email не должен превышать 255 символов'
+            'email.max' => 'Email не должен превышать 255 символов',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
-                'message' => $validator->errors()->first('email')
+                'message' => $validator->errors()->first('email'),
             ], 422);
         }
 
@@ -51,7 +52,7 @@ class SiteNewsletterController extends Controller
                 if ($existingSubscriber->is_active) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Этот email уже подписан на новости'
+                        'message' => 'Этот email уже подписан на новости',
                     ], 409);
                 } else {
                     // Реактивируем подписку
@@ -60,17 +61,17 @@ class SiteNewsletterController extends Controller
                         'subscribed_at' => now(),
                         'unsubscribed_at' => null,
                         'ip_address' => $request->ip(),
-                        'user_agent' => $request->userAgent()
+                        'user_agent' => $request->userAgent(),
                     ]);
 
                     Log::info('Newsletter subscription reactivated', [
                         'email' => $email,
-                        'ip' => $request->ip()
+                        'ip' => $request->ip(),
                     ]);
 
                     return response()->json([
                         'success' => true,
-                        'message' => 'Подписка успешно возобновлена!'
+                        'message' => 'Подписка успешно возобновлена!',
                     ]);
                 }
             }
@@ -81,12 +82,12 @@ class SiteNewsletterController extends Controller
                 'is_active' => true,
                 'subscribed_at' => now(),
                 'ip_address' => $request->ip(),
-                'user_agent' => $request->userAgent()
+                'user_agent' => $request->userAgent(),
             ]);
 
             Log::info('New newsletter subscription', [
                 'email' => $email,
-                'ip' => $request->ip()
+                'ip' => $request->ip(),
             ]);
 
             // Увеличиваем счетчик попыток
@@ -94,19 +95,19 @@ class SiteNewsletterController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Подписка на новости успешно оформлена!'
+                'message' => 'Подписка на новости успешно оформлена!',
             ]);
 
         } catch (\Exception $e) {
             Log::error('Newsletter subscription error', [
                 'email' => $email,
                 'error' => $e->getMessage(),
-                'ip' => $request->ip()
+                'ip' => $request->ip(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Произошла ошибка при оформлении подписки. Попробуйте позже.'
+                'message' => 'Произошла ошибка при оформлении подписки. Попробуйте позже.',
             ], 500);
         }
     }
@@ -117,13 +118,13 @@ class SiteNewsletterController extends Controller
     public function unsubscribe(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'email' => 'required|email'
+            'email' => 'required|email',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Неверный email адрес'
+                'message' => 'Неверный email адрес',
             ], 422);
         }
 
@@ -132,45 +133,45 @@ class SiteNewsletterController extends Controller
         try {
             $subscriber = SiteNewsletterSubscriber::where('email', $email)->first();
 
-            if (!$subscriber) {
+            if (! $subscriber) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Подписка с таким email не найдена'
+                    'message' => 'Подписка с таким email не найдена',
                 ], 404);
             }
 
-            if (!$subscriber->is_active) {
+            if (! $subscriber->is_active) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Вы уже отписаны от новостей'
+                    'message' => 'Вы уже отписаны от новостей',
                 ], 409);
             }
 
             $subscriber->update([
                 'is_active' => false,
-                'unsubscribed_at' => now()
+                'unsubscribed_at' => now(),
             ]);
 
             Log::info('Newsletter unsubscription', [
                 'email' => $email,
-                'ip' => $request->ip()
+                'ip' => $request->ip(),
             ]);
 
             return response()->json([
                 'success' => true,
-                'message' => 'Вы успешно отписались от новостей'
+                'message' => 'Вы успешно отписались от новостей',
             ]);
 
         } catch (\Exception $e) {
             Log::error('Newsletter unsubscription error', [
                 'email' => $email,
                 'error' => $e->getMessage(),
-                'ip' => $request->ip()
+                'ip' => $request->ip(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Произошла ошибка при отписке. Попробуйте позже.'
+                'message' => 'Произошла ошибка при отписке. Попробуйте позже.',
             ], 500);
         }
     }
@@ -193,7 +194,7 @@ class SiteNewsletterController extends Controller
 
         // Поиск по email
         if ($request->has('search')) {
-            $query->where('email', 'like', '%' . $request->search . '%');
+            $query->where('email', 'like', '%'.$request->search.'%');
         }
 
         // Сортировка
@@ -207,7 +208,7 @@ class SiteNewsletterController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $subscribers
+            'data' => $subscribers,
         ]);
     }
 }

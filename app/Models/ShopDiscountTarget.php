@@ -13,7 +13,7 @@ class ShopDiscountTarget extends Model
     protected $fillable = [
         'discount_id',
         'target_type',
-        'target_id'
+        'target_id',
     ];
 
     /**

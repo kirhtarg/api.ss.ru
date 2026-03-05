@@ -19,19 +19,19 @@ class ShopCategoryExtraMenuFilter extends Model
         'sort_order',
         'price_min',
         'price_max',
-        'characteristic_name'
+        'characteristic_name',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
         'sort_order' => 'integer',
         'price_min' => 'decimal:2',
-        'price_max' => 'decimal:2'
+        'price_max' => 'decimal:2',
     ];
 
     protected $attributes = [
         'is_active' => true,
-        'sort_order' => 0
+        'sort_order' => 0,
     ];
 
     /**
@@ -42,16 +42,3 @@ class ShopCategoryExtraMenuFilter extends Model
         return $this->belongsTo(ShopCategoryExtraMenu::class, 'extra_menu_id');
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-

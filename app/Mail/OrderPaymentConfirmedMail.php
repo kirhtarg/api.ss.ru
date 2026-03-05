@@ -2,24 +2,23 @@
 
 namespace App\Mail;
 
+use App\Models\ShopPaymentMethod;
+use App\Services\InvoicePdfService;
 use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Mail\Mailable;
+use Illuminate\Mail\Mailables\Attachment;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
-use Illuminate\Mail\Mailables\Attachment;
 use Illuminate\Queue\SerializesModels;
-use App\Services\InvoicePdfService;
-use App\Models\ShopPaymentMethod;
-use App\Models\Contact;
-use App\Models\Setting;
 
 class OrderPaymentConfirmedMail extends Mailable
 {
     use Queueable, SerializesModels;
 
     public $order;
+
     public $contacts;
+
     public $siteInfo;
 
     /**
@@ -38,7 +37,7 @@ class OrderPaymentConfirmedMail extends Mailable
     public function envelope(): Envelope
     {
         return new Envelope(
-            subject: 'Подтверждение оплаты заказа №' . $this->order->order_number,
+            subject: 'Подтверждение оплаты заказа №'.$this->order->order_number,
         );
     }
 
@@ -66,7 +65,7 @@ class OrderPaymentConfirmedMail extends Mailable
 
         // Прикрепляем PDF счет/накладную
         try {
-            $pdfService = new InvoicePdfService();
+            $pdfService = new InvoicePdfService;
             $pdfData = [
                 'order_id' => $this->order->order_number,
                 'date' => date('d.m.Y'),
@@ -89,11 +88,11 @@ class OrderPaymentConfirmedMail extends Mailable
 
             $pdfContent = $pdfService->generatePdf($pdfData);
 
-            $attachments[] = Attachment::fromData(fn () => $pdfContent, 'nakladnaya-' . $this->order->order_number . '.pdf')
+            $attachments[] = Attachment::fromData(fn () => $pdfContent, 'nakladnaya-'.$this->order->order_number.'.pdf')
                 ->withMime('application/pdf');
         } catch (\Exception $e) {
             // Если не удалось создать PDF, продолжаем без вложения
-            \Log::error('Failed to generate PDF for payment confirmation email: ' . $e->getMessage());
+            \Log::error('Failed to generate PDF for payment confirmation email: '.$e->getMessage());
         }
 
         return $attachments;

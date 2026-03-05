@@ -46,7 +46,7 @@ class GenerateGoodSlugs extends Command
 
             // Проверяем уникальность slug
             while (ShopGood::where('slug', $slug)->where('id', '!=', $good->id)->exists()) {
-                $slug = $baseSlug . '-' . $counter;
+                $slug = $baseSlug.'-'.$counter;
                 $counter++;
             }
 

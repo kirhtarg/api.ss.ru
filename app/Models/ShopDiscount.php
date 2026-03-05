@@ -21,7 +21,7 @@ class ShopDiscount extends Model
         'ends_at',
         'usage_limit',
         'used_count',
-        'is_active'
+        'is_active',
     ];
 
     protected $casts = [
@@ -32,7 +32,7 @@ class ShopDiscount extends Model
         'ends_at' => 'datetime',
         'usage_limit' => 'integer',
         'used_count' => 'integer',
-        'is_active' => 'boolean'
+        'is_active' => 'boolean',
     ];
 
     /**
@@ -49,8 +49,8 @@ class ShopDiscount extends Model
     public function scopeActive($query)
     {
         return $query->where('is_active', true)
-                    ->where('starts_at', '<=', now())
-                    ->where('ends_at', '>=', now());
+            ->where('starts_at', '<=', now())
+            ->where('ends_at', '>=', now());
     }
 
     /**
@@ -66,7 +66,7 @@ class ShopDiscount extends Model
      */
     public function canBeUsed()
     {
-        if (!$this->is_active) {
+        if (! $this->is_active) {
             return false;
         }
 

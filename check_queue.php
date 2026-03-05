@@ -7,8 +7,8 @@ $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
 use Illuminate\Support\Facades\DB;
 
-echo "Jobs in queue: " . DB::table('jobs')->count() . "\n";
-echo "Failed jobs: " . DB::table('failed_jobs')->count() . "\n";
+echo 'Jobs in queue: '.DB::table('jobs')->count()."\n";
+echo 'Failed jobs: '.DB::table('failed_jobs')->count()."\n";
 
 $jobs = DB::table('jobs')->get();
 foreach ($jobs as $job) {

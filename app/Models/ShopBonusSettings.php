@@ -22,7 +22,7 @@ class ShopBonusSettings extends Model
         'min_bonus_amount',
         'max_bonus_amount',
         'bonus_expiry_days',
-        'metadata'
+        'metadata',
     ];
 
     protected $casts = [
@@ -35,7 +35,7 @@ class ShopBonusSettings extends Model
         'min_bonus_amount' => 'integer',
         'max_bonus_amount' => 'integer',
         'bonus_expiry_days' => 'integer',
-        'metadata' => 'array'
+        'metadata' => 'array',
     ];
 
     /**
@@ -62,7 +62,7 @@ class ShopBonusSettings extends Model
                 'min_bonus_amount' => 1,
                 'max_bonus_amount' => null,
                 'bonus_expiry_days' => 365,
-                'metadata' => []
+                'metadata' => [],
             ]
         );
     }
@@ -77,6 +77,7 @@ class ShopBonusSettings extends Model
         }
 
         $percentage = $isSalePrice ? $this->sale_price_percentage : $this->regular_price_percentage;
+
         return (int) round($orderAmount * ($percentage / 100));
     }
 
@@ -86,11 +87,11 @@ class ShopBonusSettings extends Model
     public function calculateMaxBonusUsage($orderAmount)
     {
         $maxAmount = (int) round($orderAmount * ($this->max_usage_percentage / 100));
-        
+
         if ($this->max_bonus_amount && $maxAmount > $this->max_bonus_amount) {
             return $this->max_bonus_amount;
         }
-        
+
         return max($this->min_bonus_amount, $maxAmount);
     }
 
@@ -108,6 +109,7 @@ class ShopBonusSettings extends Model
         }
 
         $maxUsage = $this->calculateMaxBonusUsage($orderAmount);
+
         return $bonusAmount <= $maxUsage;
     }
 }

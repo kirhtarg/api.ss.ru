@@ -3,14 +3,14 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\ShopGood;
-use App\Models\ShopGoodVariation;
-use App\Models\ShopGoodProperty;
 use App\Models\Shop\Property as ShopProperty;
-use Illuminate\Http\Request;
+use App\Models\ShopGood;
+use App\Models\ShopGoodProperty;
+use App\Models\ShopGoodVariation;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Validator;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 
 class ShopGoodVariationsController extends Controller
 {
@@ -20,14 +20,14 @@ class ShopGoodVariationsController extends Controller
     public function index(Request $request, $goodId): JsonResponse
     {
         $good = ShopGood::findOrFail($goodId);
-        
+
         $variations = $good->variations()
             ->ordered()
             ->get();
 
         // Подтягиваем атрибуты вариаций из новой схемы
         $variationIds = $variations->pluck('id')->all();
-        if (!empty($variationIds)) {
+        if (! empty($variationIds)) {
             $rows = \Illuminate\Support\Facades\DB::table('shop_variation_attributes_values as vav')
                 ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
                 ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
@@ -43,8 +43,8 @@ class ShopGoodVariationsController extends Controller
             $byVariation = [];
             foreach ($rows as $r) {
                 $byVariation[$r->variation_id][] = [
-                    'attribute' => ['id' => (int)$r->attribute_id, 'name' => $r->attribute_name],
-                    'value' => ['id' => (int)$r->value_id, 'value' => $r->value_value],
+                    'attribute' => ['id' => (int) $r->attribute_id, 'name' => $r->attribute_name],
+                    'value' => ['id' => (int) $r->value_id, 'value' => $r->value_value],
                 ];
             }
 
@@ -55,7 +55,7 @@ class ShopGoodVariationsController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $variations
+            'data' => $variations,
         ]);
     }
 
@@ -66,23 +66,25 @@ class ShopGoodVariationsController extends Controller
     {
         try {
             $variationIds = $request->input('variation_ids', []);
-            
-            if (empty($variationIds) || !is_array($variationIds)) {
+
+            if (empty($variationIds) || ! is_array($variationIds)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Не указаны ID вариаций'
+                    'message' => 'Не указаны ID вариаций',
                 ], 400);
             }
 
             // Ограничиваем размер батча
             $variationIds = array_slice($variationIds, 0, 5000);
             $variationIds = array_map('intval', $variationIds);
-            $variationIds = array_filter($variationIds, function($id) { return $id > 0; });
+            $variationIds = array_filter($variationIds, function ($id) {
+                return $id > 0;
+            });
 
             if (empty($variationIds)) {
                 return response()->json([
                     'success' => true,
-                    'data' => []
+                    'data' => [],
                 ]);
             }
 
@@ -93,9 +95,9 @@ class ShopGoodVariationsController extends Controller
                 ->whereIn('vav.variation_id', $variationIds)
                 ->select(
                     'vav.variation_id',
-                    'a.id as attribute_id', 
+                    'a.id as attribute_id',
                     'a.name as attribute_name',
-                    'av.id as value_id', 
+                    'av.id as value_id',
                     'av.value as value_value'
                 )
                 ->orderBy('a.name')
@@ -104,24 +106,24 @@ class ShopGoodVariationsController extends Controller
             // Группируем атрибуты по вариациям
             $byVariation = [];
             foreach ($rows as $r) {
-                if (!isset($byVariation[$r->variation_id])) {
+                if (! isset($byVariation[$r->variation_id])) {
                     $byVariation[$r->variation_id] = [];
                 }
                 $byVariation[$r->variation_id][] = [
-                    'id' => (int)$r->attribute_id,
+                    'id' => (int) $r->attribute_id,
                     'name' => $r->attribute_name,
-                    'value' => $r->value_value
+                    'value' => $r->value_value,
                 ];
             }
 
             return response()->json([
                 'success' => true,
-                'data' => $byVariation
+                'data' => $byVariation,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения атрибутов: ' . $e->getMessage()
+                'message' => 'Ошибка получения атрибутов: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -138,7 +140,7 @@ class ShopGoodVariationsController extends Controller
             ->orderBy('a.name')
             ->get([
                 'a.id', 'a.name', 'a.slug',
-                \Illuminate\Support\Facades\DB::raw('COUNT(vav.id) as usage_count')
+                \Illuminate\Support\Facades\DB::raw('COUNT(vav.id) as usage_count'),
             ]);
 
         // Определяем тип атрибута на основе slug
@@ -171,23 +173,23 @@ class ShopGoodVariationsController extends Controller
 
         $exists = \Illuminate\Support\Facades\DB::table('shop_variation_attributes')
             ->where('name', $name)
-            ->where('id', '!=', (int)$attributeId)
+            ->where('id', '!=', (int) $attributeId)
             ->exists();
         if ($exists) {
             return response()->json(['success' => false, 'message' => 'Атрибут с таким названием уже существует'], 422);
         }
 
         // Перегенерируем slug, если меняем имя
-        $baseSlug = \Illuminate\Support\Str::slug($name) ?: ('attr-' . uniqid());
+        $baseSlug = \Illuminate\Support\Str::slug($name) ?: ('attr-'.uniqid());
         $slug = $baseSlug;
         $i = 2;
-        while (\Illuminate\Support\Facades\DB::table('shop_variation_attributes')->where('slug', $slug)->where('id', '!=', (int)$attributeId)->exists()) {
-            $slug = $baseSlug . '-' . $i;
+        while (\Illuminate\Support\Facades\DB::table('shop_variation_attributes')->where('slug', $slug)->where('id', '!=', (int) $attributeId)->exists()) {
+            $slug = $baseSlug.'-'.$i;
             $i++;
         }
 
         \Illuminate\Support\Facades\DB::table('shop_variation_attributes')
-            ->where('id', (int)$attributeId)
+            ->where('id', (int) $attributeId)
             ->update([
                 'name' => $name,
                 'slug' => $slug,
@@ -196,8 +198,8 @@ class ShopGoodVariationsController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => ['id' => (int)$attributeId, 'name' => $name, 'slug' => $slug],
-            'message' => 'Атрибут обновлен'
+            'data' => ['id' => (int) $attributeId, 'name' => $name, 'slug' => $slug],
+            'message' => 'Атрибут обновлен',
         ]);
     }
 
@@ -209,7 +211,7 @@ class ShopGoodVariationsController extends Controller
         // Проверяем использование
         $inUse = \Illuminate\Support\Facades\DB::table('shop_variation_attributes_values as vav')
             ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
-            ->where('av.attribute_id', (int)$attributeId)
+            ->where('av.attribute_id', (int) $attributeId)
             ->exists();
         if ($inUse) {
             return response()->json(['success' => false, 'message' => 'Атрибут используется в вариациях и не может быть удален'], 409);
@@ -217,16 +219,16 @@ class ShopGoodVariationsController extends Controller
 
         // Удаляем значения атрибута (на всякий случай)
         \Illuminate\Support\Facades\DB::table('shop_variation_attribute_values')
-            ->where('attribute_id', (int)$attributeId)
+            ->where('attribute_id', (int) $attributeId)
             ->delete();
         // Удаляем сам атрибут
         \Illuminate\Support\Facades\DB::table('shop_variation_attributes')
-            ->where('id', (int)$attributeId)
+            ->where('id', (int) $attributeId)
             ->delete();
 
         return response()->json([
             'success' => true,
-            'message' => 'Атрибут удален'
+            'message' => 'Атрибут удален',
         ]);
     }
 
@@ -237,22 +239,21 @@ class ShopGoodVariationsController extends Controller
     {
         // Сначала проверим, существует ли атрибут
         $attribute = \Illuminate\Support\Facades\DB::table('shop_variation_attributes')
-            ->where('id', (int)$attributeId)
+            ->where('id', (int) $attributeId)
             ->first();
 
-        if (!$attribute) {
+        if (! $attribute) {
             return response()->json([
                 'success' => false,
-                'message' => 'Атрибут не найден'
+                'message' => 'Атрибут не найден',
             ], 404);
         }
 
         $values = \Illuminate\Support\Facades\DB::table('shop_variation_attribute_values')
-            ->where('attribute_id', (int)$attributeId)
+            ->where('attribute_id', (int) $attributeId)
             ->select('id', 'value', 'color', 'image_path')
             ->orderBy('value')
             ->get();
-
 
         return response()->json([
             'success' => true,
@@ -265,7 +266,7 @@ class ShopGoodVariationsController extends Controller
      */
     public function createAttributeGlobal(Request $request): JsonResponse
     {
-        $name = trim((string)$request->input('name'));
+        $name = trim((string) $request->input('name'));
         if ($name === '') {
             return response()->json(['success' => false, 'message' => 'Название атрибута обязательно'], 422);
         }
@@ -278,32 +279,32 @@ class ShopGoodVariationsController extends Controller
         // Определяем slug на основе типа или названия
         $type = $request->input('type');
         $slug = '';
-        
+
         if ($type === 'color') {
             // Для типа color используем slug 'color'
             $slug = 'color';
             // Проверяем уникальность slug 'color'
             $i = 2;
             while (\Illuminate\Support\Facades\DB::table('shop_variation_attributes')->where('slug', $slug)->exists()) {
-                $slug = 'color-' . $i;
+                $slug = 'color-'.$i;
                 $i++;
             }
         } elseif ($type === 'select') {
             // Для типа select добавляем префикс 'select-' к slug из названия
-            $baseSlug = 'select-' . (\Illuminate\Support\Str::slug($name) ?: ('attr-' . uniqid()));
+            $baseSlug = 'select-'.(\Illuminate\Support\Str::slug($name) ?: ('attr-'.uniqid()));
             $slug = $baseSlug;
             $i = 2;
             while (\Illuminate\Support\Facades\DB::table('shop_variation_attributes')->where('slug', $slug)->exists()) {
-                $slug = $baseSlug . '-' . $i;
+                $slug = $baseSlug.'-'.$i;
                 $i++;
             }
         } else {
             // Для остальных типов генерируем slug из названия
-            $baseSlug = \Illuminate\Support\Str::slug($name) ?: ('attr-' . uniqid());
+            $baseSlug = \Illuminate\Support\Str::slug($name) ?: ('attr-'.uniqid());
             $slug = $baseSlug;
             $i = 2;
             while (\Illuminate\Support\Facades\DB::table('shop_variation_attributes')->where('slug', $slug)->exists()) {
-                $slug = $baseSlug . '-' . $i;
+                $slug = $baseSlug.'-'.$i;
                 $i++;
             }
         }
@@ -318,7 +319,7 @@ class ShopGoodVariationsController extends Controller
         return response()->json([
             'success' => true,
             'data' => ['id' => $id, 'name' => $name, 'slug' => $slug, 'type' => $type],
-            'message' => 'Атрибут создан'
+            'message' => 'Атрибут создан',
         ]);
     }
 
@@ -327,7 +328,7 @@ class ShopGoodVariationsController extends Controller
      */
     public function createAttribute(Request $request, $goodId): JsonResponse
     {
-        $name = trim((string)$request->input('name'));
+        $name = trim((string) $request->input('name'));
         if ($name === '') {
             return response()->json(['success' => false, 'message' => 'Название атрибута обязательно'], 422);
         }
@@ -340,32 +341,32 @@ class ShopGoodVariationsController extends Controller
         // Определяем slug на основе типа или названия
         $type = $request->input('type');
         $slug = '';
-        
+
         if ($type === 'color') {
             // Для типа color используем slug 'color'
             $slug = 'color';
             // Проверяем уникальность slug 'color'
             $i = 2;
             while (\Illuminate\Support\Facades\DB::table('shop_variation_attributes')->where('slug', $slug)->exists()) {
-                $slug = 'color-' . $i;
+                $slug = 'color-'.$i;
                 $i++;
             }
         } elseif ($type === 'select') {
             // Для типа select добавляем префикс 'select-' к slug из названия
-            $baseSlug = 'select-' . (\Illuminate\Support\Str::slug($name) ?: ('attr-' . uniqid()));
+            $baseSlug = 'select-'.(\Illuminate\Support\Str::slug($name) ?: ('attr-'.uniqid()));
             $slug = $baseSlug;
             $i = 2;
             while (\Illuminate\Support\Facades\DB::table('shop_variation_attributes')->where('slug', $slug)->exists()) {
-                $slug = $baseSlug . '-' . $i;
+                $slug = $baseSlug.'-'.$i;
                 $i++;
             }
         } else {
             // Для остальных типов генерируем slug из названия
-            $baseSlug = \Illuminate\Support\Str::slug($name) ?: ('attr-' . uniqid());
+            $baseSlug = \Illuminate\Support\Str::slug($name) ?: ('attr-'.uniqid());
             $slug = $baseSlug;
             $i = 2;
             while (\Illuminate\Support\Facades\DB::table('shop_variation_attributes')->where('slug', $slug)->exists()) {
-                $slug = $baseSlug . '-' . $i;
+                $slug = $baseSlug.'-'.$i;
                 $i++;
             }
         }
@@ -380,7 +381,7 @@ class ShopGoodVariationsController extends Controller
         return response()->json([
             'success' => true,
             'data' => ['id' => $id, 'name' => $name, 'slug' => $slug, 'type' => $type],
-            'message' => 'Атрибут создан'
+            'message' => 'Атрибут создан',
         ]);
     }
 
@@ -389,19 +390,18 @@ class ShopGoodVariationsController extends Controller
      */
     public function createAttributeValue(Request $request, $goodId, $attributeId): JsonResponse
     {
-        $value = trim((string)$request->input('value'));
+        $value = trim((string) $request->input('value'));
         if ($value === '') {
             return response()->json(['success' => false, 'message' => 'Значение обязательно'], 422);
         }
 
-
-        $attribute = \Illuminate\Support\Facades\DB::table('shop_variation_attributes')->where('id', (int)$attributeId)->first();
-        if (!$attribute) {
+        $attribute = \Illuminate\Support\Facades\DB::table('shop_variation_attributes')->where('id', (int) $attributeId)->first();
+        if (! $attribute) {
             return response()->json(['success' => false, 'message' => 'Атрибут не найден'], 404);
         }
 
         $exists = \Illuminate\Support\Facades\DB::table('shop_variation_attribute_values')
-            ->where('attribute_id', (int)$attributeId)
+            ->where('attribute_id', (int) $attributeId)
             ->where('value', $value)
             ->exists();
         if ($exists) {
@@ -409,7 +409,7 @@ class ShopGoodVariationsController extends Controller
         }
 
         $id = \Illuminate\Support\Facades\DB::table('shop_variation_attribute_values')->insertGetId([
-            'attribute_id' => (int)$attributeId,
+            'attribute_id' => (int) $attributeId,
             'value' => $value,
             'created_at' => now(),
             'updated_at' => now(),
@@ -417,8 +417,8 @@ class ShopGoodVariationsController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => ['id' => $id, 'attribute_id' => (int)$attributeId, 'value' => $value],
-            'message' => 'Значение добавлено'
+            'data' => ['id' => $id, 'attribute_id' => (int) $attributeId, 'value' => $value],
+            'message' => 'Значение добавлено',
         ]);
     }
 
@@ -452,7 +452,7 @@ class ShopGoodVariationsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -476,42 +476,42 @@ class ShopGoodVariationsController extends Controller
                 'height' => $request->get('height') ?: $good->height,
                 'width' => $request->get('width') ?: $good->width,
                 'is_active' => true,
-                'sort_order' => $good->variations()->max('sort_order') + 1
+                'sort_order' => $good->variations()->max('sort_order') + 1,
             ];
-            
+
             // Явно обрабатываем remote_stock_quantity
             if ($request->has('remote_stock_quantity')) {
                 $remoteStockValue = $request->get('remote_stock_quantity');
-                $variationData['remote_stock_quantity'] = ($remoteStockValue === '' || $remoteStockValue === null) ? null : (string)$remoteStockValue;
+                $variationData['remote_stock_quantity'] = ($remoteStockValue === '' || $remoteStockValue === null) ? null : (string) $remoteStockValue;
             }
-            
+
             // Явно обрабатываем fast_remote_stock_quantity
             if ($request->has('fast_remote_stock_quantity')) {
                 $fastRemoteStockValue = $request->get('fast_remote_stock_quantity');
-                $variationData['fast_remote_stock_quantity'] = ($fastRemoteStockValue === '' || $fastRemoteStockValue === null) ? null : (string)$fastRemoteStockValue;
+                $variationData['fast_remote_stock_quantity'] = ($fastRemoteStockValue === '' || $fastRemoteStockValue === null) ? null : (string) $fastRemoteStockValue;
             }
 
             // Проверяем на дубликаты вариаций по комбинации атрибутов
             if ($request->has('attributes') && is_array($request->get('attributes'))) {
-                $requestAttributeValueIds = array_map(function($attr) {
-                    return (int)$attr['value_id'];
+                $requestAttributeValueIds = array_map(function ($attr) {
+                    return (int) $attr['value_id'];
                 }, $request->get('attributes'));
                 sort($requestAttributeValueIds);
-                
+
                 // Получаем все существующие вариации товара
                 $existingVariations = ShopGoodVariation::where('good_id', $goodId)->get();
-                
+
                 foreach ($existingVariations as $existingVariation) {
                     // Получаем атрибуты существующей вариации
                     $existingAttributeValueIds = \Illuminate\Support\Facades\DB::table('shop_variation_attributes_values')
                         ->where('variation_id', $existingVariation->id)
                         ->pluck('attribute_value_id')
-                        ->map(function($id) {
-                            return (int)$id;
+                        ->map(function ($id) {
+                            return (int) $id;
                         })
                         ->toArray();
                     sort($existingAttributeValueIds);
-                    
+
                     // Сравниваем комбинации атрибутов
                     if ($requestAttributeValueIds === $existingAttributeValueIds) {
                         // Формируем строку комбинации для отображения
@@ -524,15 +524,16 @@ class ShopGoodVariationsController extends Controller
                                 ->where('id', $attr['value_id'])
                                 ->first();
                             if ($attribute && $value) {
-                                $combinationParts[] = $attribute->name . ': ' . $value->value;
+                                $combinationParts[] = $attribute->name.': '.$value->value;
                             }
                         }
                         $combination = implode(', ', $combinationParts);
-                        
+
                         DB::rollBack();
+
                         return response()->json([
                             'success' => false,
-                            'message' => 'Такая вариация уже существует: ' . $combination
+                            'message' => 'Такая вариация уже существует: '.$combination,
                         ], 422);
                     }
                 }
@@ -547,7 +548,7 @@ class ShopGoodVariationsController extends Controller
                     if (isset($attrData['attribute_id']) && isset($attrData['value_id'])) {
                         DB::table('shop_variation_attributes_values')->insert([
                             'variation_id' => $variation->id,
-                            'attribute_value_id' => (int)$attrData['value_id'],
+                            'attribute_value_id' => (int) $attrData['value_id'],
                             'created_at' => now(),
                             'updated_at' => now(),
                         ]);
@@ -574,14 +575,15 @@ class ShopGoodVariationsController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Вариация успешно создана',
-                'data' => $variation
+                'data' => $variation,
             ], 201);
 
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания вариации: ' . $e->getMessage()
+                'message' => 'Ошибка создания вариации: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -601,14 +603,14 @@ class ShopGoodVariationsController extends Controller
             'attribute_groups.*.values.*' => 'required|string|max:255',
             'sku_prefix' => 'nullable|string|max:255',
             'base_price' => 'nullable|numeric|min:0',
-            'base_quantity' => 'nullable|integer|min:0'
+            'base_quantity' => 'nullable|integer|min:0',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -617,15 +619,15 @@ class ShopGoodVariationsController extends Controller
 
             // Сгенерируем все комбинации значений по группам
             $groups = $request->get('attribute_groups', []);
-            
+
             $combinations = [[]];
             foreach ($groups as $group) {
                 $next = [];
                 foreach ($combinations as $combo) {
                     foreach ($group['values'] as $val) {
                         $next[] = array_merge($combo, [[
-                            'attribute_id' => (int)$group['attribute_id'],
-                            'value' => trim((string)$val),
+                            'attribute_id' => (int) $group['attribute_id'],
+                            'value' => trim((string) $val),
                         ]]);
                     }
                 }
@@ -644,7 +646,7 @@ class ShopGoodVariationsController extends Controller
                 $variation = ShopGoodVariation::create([
                     'good_id' => $goodId,
                     'name' => $good->name,
-                    'sku' => $skuPrefix ? ($skuPrefix . '-' . $idx) : $good->sku,
+                    'sku' => $skuPrefix ? ($skuPrefix.'-'.$idx) : $good->sku,
                     'price' => $basePrice ?? $good->price,
                     'sale_price' => null,
                     'weight' => $good->weight,
@@ -662,7 +664,7 @@ class ShopGoodVariationsController extends Controller
                         ->where('attribute_id', $pair['attribute_id'])
                         ->where('value', $pair['value'])
                         ->first();
-                    if (!$valRow) {
+                    if (! $valRow) {
                         $valId = DB::table('shop_variation_attribute_values')->insertGetId([
                             'attribute_id' => $pair['attribute_id'],
                             'value' => $pair['value'],
@@ -689,14 +691,15 @@ class ShopGoodVariationsController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Вариации успешно созданы',
-                'data' => $createdIds
+                'data' => $createdIds,
             ], 201);
 
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания вариаций: ' . $e->getMessage()
+                'message' => 'Ошибка создания вариаций: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -720,36 +723,36 @@ class ShopGoodVariationsController extends Controller
             'length' => 'nullable|numeric|min:0',
             'height' => 'nullable|numeric|min:0',
             'width' => 'nullable|numeric|min:0',
-            'is_active' => 'boolean'
+            'is_active' => 'boolean',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
         // Подготавливаем данные для обновления
         $updateData = $request->only([
-            'name', 'sku', 'price', 'sale_price', 'stock_quantity', 'weight', 
-            'length', 'height', 'width', 'is_active'
+            'name', 'sku', 'price', 'sale_price', 'stock_quantity', 'weight',
+            'length', 'height', 'width', 'is_active',
         ]);
-        
+
         // Явно обрабатываем remote_stock_quantity - всегда обновляем, даже если null
         $allRequestData = $request->all();
         if (isset($allRequestData['remote_stock_quantity'])) {
             $remoteStockValue = $allRequestData['remote_stock_quantity'];
-            $updateData['remote_stock_quantity'] = ($remoteStockValue === '' || $remoteStockValue === null) ? null : (string)$remoteStockValue;
+            $updateData['remote_stock_quantity'] = ($remoteStockValue === '' || $remoteStockValue === null) ? null : (string) $remoteStockValue;
         }
-        
+
         // Явно обрабатываем fast_remote_stock_quantity - всегда обновляем, даже если null
         if (isset($allRequestData['fast_remote_stock_quantity'])) {
             $fastRemoteStockValue = $allRequestData['fast_remote_stock_quantity'];
-            $updateData['fast_remote_stock_quantity'] = ($fastRemoteStockValue === '' || $fastRemoteStockValue === null) ? null : (string)$fastRemoteStockValue;
+            $updateData['fast_remote_stock_quantity'] = ($fastRemoteStockValue === '' || $fastRemoteStockValue === null) ? null : (string) $fastRemoteStockValue;
         }
-        
+
         $variation->update($updateData);
 
         // В новой схеме свойства не подгружаем
@@ -757,7 +760,7 @@ class ShopGoodVariationsController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Вариация успешно обновлена',
-            'data' => $variation
+            'data' => $variation,
         ]);
     }
 
@@ -776,7 +779,7 @@ class ShopGoodVariationsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -787,23 +790,23 @@ class ShopGoodVariationsController extends Controller
             $attributes = $request->get('attributes');
 
             foreach ($attributes as $attrData) {
-                $attributeId = (int)$attrData['attribute_id'];
-                $valueId = (int)$attrData['value_id'];
+                $attributeId = (int) $attrData['attribute_id'];
+                $valueId = (int) $attrData['value_id'];
 
                 // Проверяем, что значение принадлежит атрибуту
                 $valueCheck = DB::table('shop_variation_attribute_values')
                     ->where('id', $valueId)
                     ->where('attribute_id', $attributeId)
                     ->exists();
-                
-                if (!$valueCheck) {
+
+                if (! $valueCheck) {
                     throw new \Exception("Значение ID {$valueId} не принадлежит атрибуту ID {$attributeId}");
                 }
 
                 // Ищем существующую связь для этого атрибута
                 // Нам нужно найти запись в shop_variation_attributes_values, которая ссылается на значение,
                 // которое в свою очередь ссылается на этот атрибут.
-                
+
                 // Получаем текущие значения вариации
                 $currentValues = DB::table('shop_variation_attributes_values as vav')
                     ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
@@ -819,7 +822,7 @@ class ShopGoodVariationsController extends Controller
                             ->where('id', $currentValues->id)
                             ->update([
                                 'attribute_value_id' => $valueId,
-                                'updated_at' => now()
+                                'updated_at' => now(),
                             ]);
                     }
                 } else {
@@ -837,14 +840,15 @@ class ShopGoodVariationsController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Атрибуты вариации обновлены'
+                'message' => 'Атрибуты вариации обновлены',
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления атрибутов: ' . $e->getMessage()
+                'message' => 'Ошибка обновления атрибутов: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -855,16 +859,16 @@ class ShopGoodVariationsController extends Controller
     public function destroy($goodId, $variationId): JsonResponse
     {
         $variation = ShopGoodVariation::find($variationId);
-        if (!$variation) {
+        if (! $variation) {
             return response()->json([
                 'success' => false,
-                'message' => 'Вариация не найдена'
+                'message' => 'Вариация не найдена',
             ], 404);
         }
-        if ((int)$variation->good_id !== (int)$goodId) {
+        if ((int) $variation->good_id !== (int) $goodId) {
             return response()->json([
                 'success' => false,
-                'message' => 'Вариация не относится к указанному товару'
+                'message' => 'Вариация не относится к указанному товару',
             ], 404);
         }
 
@@ -883,14 +887,15 @@ class ShopGoodVariationsController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Вариация успешно удалена'
+                'message' => 'Вариация успешно удалена',
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления вариации: ' . $e->getMessage()
+                'message' => 'Ошибка удаления вариации: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -910,22 +915,22 @@ class ShopGoodVariationsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
         try {
             $properties = $request->get('properties', []);
-            
-        // Получаем все вариации товара (свойства больше не грузим из shop_good_properties)
-        $existingVariations = ShopGoodVariation::where('good_id', $goodId)
-            ->get();
+
+            // Получаем все вариации товара (свойства больше не грузим из shop_good_properties)
+            $existingVariations = ShopGoodVariation::where('good_id', $goodId)
+                ->get();
 
             // Проверяем каждую существующую вариацию
             foreach ($existingVariations as $variation) {
                 // $variationProperties = $variation->properties->pluck('value', 'property_id')->toArray(); // Временно отключено
                 // $requestProperties = collect($properties)->pluck('value', 'property_id')->toArray(); // Временно отключено
-                
+
                 // Сравниваем комбинации
                 // Временно отключено - будет исправлено в следующем шаге
                 /*
@@ -937,7 +942,7 @@ class ShopGoodVariationsController extends Controller
                         $combinationParts[] = $propertyModel->name . ': ' . $property['value'];
                     }
                     $combination = implode(', ', $combinationParts);
-                    
+
                     return response()->json([
                         'success' => true,
                         'is_duplicate' => true,
@@ -949,13 +954,13 @@ class ShopGoodVariationsController extends Controller
 
             return response()->json([
                 'success' => true,
-                'is_duplicate' => false
+                'is_duplicate' => false,
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка проверки дублирования: ' . $e->getMessage()
+                'message' => 'Ошибка проверки дублирования: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -974,40 +979,40 @@ class ShopGoodVariationsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
         try {
             $good = ShopGood::findOrFail($goodId);
-            $attributeId = (int)$request->get('attribute_id');
-            $valueId = (int)$request->get('value_id');
-            
+            $attributeId = (int) $request->get('attribute_id');
+            $valueId = (int) $request->get('value_id');
+
             // Проверяем, что значение принадлежит атрибуту
             $value = \Illuminate\Support\Facades\DB::table('shop_variation_attribute_values')
                 ->where('id', $valueId)
                 ->where('attribute_id', $attributeId)
                 ->first();
-            
-            if (!$value) {
+
+            if (! $value) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Значение не принадлежит выбранному атрибуту'
+                    'message' => 'Значение не принадлежит выбранному атрибуту',
                 ], 422);
             }
-            
+
             // Получаем все вариации товара
             $variations = ShopGoodVariation::where('good_id', $goodId)->get();
-            
+
             if ($variations->isEmpty()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'У товара нет вариаций'
+                    'message' => 'У товара нет вариаций',
                 ], 422);
             }
-            
+
             DB::beginTransaction();
-            
+
             $addedCount = 0;
             foreach ($variations as $variation) {
                 // Проверяем, не добавлен ли уже этот атрибут к вариации
@@ -1015,15 +1020,15 @@ class ShopGoodVariationsController extends Controller
                     ->where('variation_id', $variation->id)
                     ->where('attribute_value_id', $valueId)
                     ->exists();
-                
-                if (!$exists) {
+
+                if (! $exists) {
                     // Проверяем, нет ли у вариации другого значения этого атрибута
                     $otherValue = \Illuminate\Support\Facades\DB::table('shop_variation_attributes_values as vav')
                         ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
                         ->where('vav.variation_id', $variation->id)
                         ->where('av.attribute_id', $attributeId)
                         ->first();
-                    
+
                     if ($otherValue) {
                         // Заменяем существующее значение
                         \Illuminate\Support\Facades\DB::table('shop_variation_attributes_values')
@@ -1042,20 +1047,21 @@ class ShopGoodVariationsController extends Controller
                     $addedCount++;
                 }
             }
-            
+
             DB::commit();
-            
+
             return response()->json([
                 'success' => true,
                 'message' => "Атрибут успешно добавлен к {$addedCount} вариациям",
-                'data' => ['added_count' => $addedCount]
+                'data' => ['added_count' => $addedCount],
             ]);
-            
+
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка добавления атрибута: ' . $e->getMessage()
+                'message' => 'Ошибка добавления атрибута: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -1068,14 +1074,14 @@ class ShopGoodVariationsController extends Controller
         $validator = Validator::make($request->all(), [
             'property_id' => 'required|exists:shop_properties,id',
             'values' => 'required|array',
-            'values.*' => 'required|string|max:255'
+            'values.*' => 'required|string|max:255',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -1089,7 +1095,7 @@ class ShopGoodVariationsController extends Controller
             if ($variations->isEmpty()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'У товара нет вариаций'
+                    'message' => 'У товара нет вариаций',
                 ], 400);
             }
 
@@ -1099,20 +1105,20 @@ class ShopGoodVariationsController extends Controller
                     ShopGoodProperty::create([
                         'variation_id' => $variation->id,
                         'property_id' => $propertyId,
-                        'value' => $values[$variation->id]
+                        'value' => $values[$variation->id],
                     ]);
                 }
             }
 
             return response()->json([
                 'success' => true,
-                'message' => 'Свойство успешно добавлено ко всем вариациям'
+                'message' => 'Свойство успешно добавлено ко всем вариациям',
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка добавления свойства: ' . $e->getMessage()
+                'message' => 'Ошибка добавления свойства: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -1124,16 +1130,16 @@ class ShopGoodVariationsController extends Controller
     {
         // Поддерживаем оба варианта для обратной совместимости
         $attributeId = $request->get('attribute_id') ?: $request->get('property_id');
-        
+
         $validator = Validator::make(['attribute_id' => $attributeId], [
-            'attribute_id' => 'required|exists:shop_variation_attributes,id'
+            'attribute_id' => 'required|exists:shop_variation_attributes,id',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -1144,7 +1150,7 @@ class ShopGoodVariationsController extends Controller
             if ($variations->isEmpty()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'У товара нет вариаций'
+                    'message' => 'У товара нет вариаций',
                 ], 400);
             }
 
@@ -1153,11 +1159,11 @@ class ShopGoodVariationsController extends Controller
             // Удаляем атрибут из всех вариаций (новая схема)
             // Находим все значения атрибута
             $attributeValueIds = \Illuminate\Support\Facades\DB::table('shop_variation_attribute_values')
-                ->where('attribute_id', (int)$attributeId)
+                ->where('attribute_id', (int) $attributeId)
                 ->pluck('id')
                 ->toArray();
 
-            if (!empty($attributeValueIds)) {
+            if (! empty($attributeValueIds)) {
                 // Удаляем связи вариаций с этими значениями
                 $deletedCount = \Illuminate\Support\Facades\DB::table('shop_variation_attributes_values')
                     ->whereIn('variation_id', $variationIds)
@@ -1169,14 +1175,14 @@ class ShopGoodVariationsController extends Controller
 
             // Проверяем на дубликаты после удаления атрибута
             $duplicates = $this->findDuplicateVariations($goodId);
-            
+
             $responseData = [
                 'success' => true,
                 'message' => "Атрибут успешно удален из {$deletedCount} вариаций",
-                'duplicates' => $duplicates
+                'duplicates' => $duplicates,
             ];
-            
-            if (!empty($duplicates)) {
+
+            if (! empty($duplicates)) {
                 $responseData['has_duplicates'] = true;
                 $responseData['duplicate_count'] = count($duplicates);
             }
@@ -1186,7 +1192,7 @@ class ShopGoodVariationsController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления атрибута: ' . $e->getMessage()
+                'message' => 'Ошибка удаления атрибута: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -1199,14 +1205,14 @@ class ShopGoodVariationsController extends Controller
         $validator = Validator::make($request->all(), [
             'variations' => 'required|array',
             'variations.*.id' => 'required|exists:shop_good_variations,id',
-            'variations.*.sort_order' => 'required|integer'
+            'variations.*.sort_order' => 'required|integer',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -1218,7 +1224,7 @@ class ShopGoodVariationsController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Порядок вариаций обновлен'
+            'message' => 'Порядок вариаций обновлен',
         ]);
     }
 
@@ -1277,7 +1283,7 @@ class ShopGoodVariationsController extends Controller
 
         // Проверяем каждое свойство
         foreach ($normalizedRequested as $propertyId => $value) {
-            if (!isset($normalizedExisting[$propertyId]) || 
+            if (! isset($normalizedExisting[$propertyId]) ||
                 $normalizedExisting[$propertyId] !== $value) {
                 return false;
             }
@@ -1292,37 +1298,37 @@ class ShopGoodVariationsController extends Controller
     private function findDuplicateVariations($goodId): array
     {
         $variations = ShopGoodVariation::where('good_id', $goodId)->get();
-        
+
         if ($variations->isEmpty()) {
             return [];
         }
 
         // Группируем вариации по комбинации атрибутов
         $variationsByAttributes = [];
-        
+
         foreach ($variations as $variation) {
             // Получаем атрибуты вариации
             $attributeValueIds = \Illuminate\Support\Facades\DB::table('shop_variation_attributes_values')
                 ->where('variation_id', $variation->id)
                 ->pluck('attribute_value_id')
-                ->map(function($id) {
-                    return (int)$id;
+                ->map(function ($id) {
+                    return (int) $id;
                 })
                 ->toArray();
-            
+
             sort($attributeValueIds);
             $key = implode(',', $attributeValueIds);
-            
-            if (!isset($variationsByAttributes[$key])) {
+
+            if (! isset($variationsByAttributes[$key])) {
                 $variationsByAttributes[$key] = [];
             }
-            
+
             $variationsByAttributes[$key][] = [
                 'id' => $variation->id,
                 'sku' => $variation->sku,
                 'name' => $variation->name,
                 'price' => $variation->price,
-                'stock_quantity' => $variation->stock_quantity
+                'stock_quantity' => $variation->stock_quantity,
             ];
         }
 
@@ -1346,14 +1352,14 @@ class ShopGoodVariationsController extends Controller
             'variation_ids' => 'required|array',
             'variation_ids.*' => 'exists:shop_good_variations,id',
             'action' => 'required|in:delete,change_stock,change_remote_stock,change_price,change_sale_price,change_demping_price,activate,deactivate,enable_demping,disable_demping,update_dimensions',
-            'data' => 'nullable|array'
+            'data' => 'nullable|array',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -1371,7 +1377,7 @@ class ShopGoodVariationsController extends Controller
             if ($variations->isEmpty()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Вариации не найдены'
+                    'message' => 'Вариации не найдены',
                 ], 404);
             }
 
@@ -1379,7 +1385,7 @@ class ShopGoodVariationsController extends Controller
 
             switch ($action) {
                 case 'delete':
-                    $variations->each(function($variation) {
+                    $variations->each(function ($variation) {
                         $variation->delete();
                     });
                     $updatedCount = $variations->count();
@@ -1387,10 +1393,10 @@ class ShopGoodVariationsController extends Controller
 
                 case 'change_stock':
                     $type = $data['type'] ?? 'set';
-                    $value = isset($data['value']) ? (int)$data['value'] : 0;
-                    
+                    $value = isset($data['value']) ? (int) $data['value'] : 0;
+
                     foreach ($variations as $variation) {
-                        $currentStock = (int)($variation->stock_quantity ?? 0);
+                        $currentStock = (int) ($variation->stock_quantity ?? 0);
                         if ($type === 'set') {
                             $variation->stock_quantity = $value;
                         } elseif ($type === 'add') {
@@ -1406,7 +1412,7 @@ class ShopGoodVariationsController extends Controller
                 case 'change_remote_stock':
                     $remoteStockValue = $data['value'] ?? null;
                     foreach ($variations as $variation) {
-                        $variation->remote_stock_quantity = $remoteStockValue ? (string)$remoteStockValue : null;
+                        $variation->remote_stock_quantity = $remoteStockValue ? (string) $remoteStockValue : null;
                         $variation->save();
                         $updatedCount++;
                     }
@@ -1414,11 +1420,11 @@ class ShopGoodVariationsController extends Controller
 
                 case 'change_price':
                     $type = $data['type'] ?? 'set';
-                    $value = isset($data['value']) ? (float)$data['value'] : 0;
+                    $value = isset($data['value']) ? (float) $data['value'] : 0;
                     $isPercent = isset($data['is_percent']) && $data['is_percent'];
-                    
+
                     foreach ($variations as $variation) {
-                        $currentPrice = (float)($variation->price ?? 0);
+                        $currentPrice = (float) ($variation->price ?? 0);
                         if ($type === 'set') {
                             $variation->price = max(0, $value);
                         } elseif ($type === 'add') {
@@ -1441,11 +1447,11 @@ class ShopGoodVariationsController extends Controller
 
                 case 'change_sale_price':
                     $type = $data['type'] ?? 'set';
-                    $value = isset($data['value']) ? (float)$data['value'] : 0;
+                    $value = isset($data['value']) ? (float) $data['value'] : 0;
                     $isPercent = isset($data['is_percent']) && $data['is_percent'];
-                    
+
                     foreach ($variations as $variation) {
-                        $basePrice = (float)($variation->price ?? 0);
+                        $basePrice = (float) ($variation->price ?? 0);
                         if ($type === 'clear') {
                             $variation->sale_price = null;
                         } elseif ($type === 'set') {
@@ -1479,7 +1485,7 @@ class ShopGoodVariationsController extends Controller
                             $updateData['weight'] = (float) $data['weight'];
                         }
 
-                        if (!empty($updateData)) {
+                        if (! empty($updateData)) {
                             $variation->fill($updateData);
                             $variation->save();
                             $updatedCount++;
@@ -1489,12 +1495,12 @@ class ShopGoodVariationsController extends Controller
 
                 case 'change_demping_price':
                     $type = $data['type'] ?? 'set';
-                    $value = isset($data['value']) ? (float)$data['value'] : 0;
+                    $value = isset($data['value']) ? (float) $data['value'] : 0;
                     $isPercent = isset($data['is_percent']) && $data['is_percent'];
                     $activateDemping = isset($data['activate_demping']) && $data['activate_demping'];
-                    
+
                     foreach ($variations as $variation) {
-                        $basePrice = (float)($variation->price ?? 0);
+                        $basePrice = (float) ($variation->price ?? 0);
                         if ($type === 'clear') {
                             $variation->demping_price = null;
                         } elseif ($type === 'set') {
@@ -1506,7 +1512,7 @@ class ShopGoodVariationsController extends Controller
                                 $variation->demping_price = max(0, $basePrice - $value);
                             }
                         }
-                        
+
                         if ($activateDemping) {
                             $variation->show_demping = true;
                         }
@@ -1560,14 +1566,15 @@ class ShopGoodVariationsController extends Controller
                 'success' => true,
                 'message' => "Обновлено вариаций: {$updatedCount}",
                 'data' => [
-                    'updated_count' => $updatedCount
-                ]
+                    'updated_count' => $updatedCount,
+                ],
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка массового обновления: ' . $e->getMessage()
+                'message' => 'Ошибка массового обновления: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -1586,15 +1593,15 @@ class ShopGoodVariationsController extends Controller
             'good_ids' => 'nullable|array',
             'good_ids.*' => 'exists:shop_goods,id',
             'action' => 'required|in:delete,change_stock,change_remote_stock,change_price,change_sale_price,change_demping_price,activate,deactivate,enable_demping,disable_demping',
-            'data' => 'nullable|array'
+            'data' => 'nullable|array',
         ]);
 
         // Проверяем, что передан хотя бы один из массивов
-        if (!$request->has('variation_ids') && !$request->has('good_ids')) {
+        if (! $request->has('variation_ids') && ! $request->has('good_ids')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => ['variation_ids' => ['Необходимо передать variation_ids или good_ids']]
+                'errors' => ['variation_ids' => ['Необходимо передать variation_ids или good_ids']],
             ], 422);
         }
 
@@ -1602,7 +1609,7 @@ class ShopGoodVariationsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -1625,7 +1632,7 @@ class ShopGoodVariationsController extends Controller
             if (empty($variationIds)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Вариации не найдены'
+                    'message' => 'Вариации не найдены',
                 ], 404);
             }
 
@@ -1634,7 +1641,7 @@ class ShopGoodVariationsController extends Controller
             if ($variations->isEmpty()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Вариации не найдены'
+                    'message' => 'Вариации не найдены',
                 ], 404);
             }
 
@@ -1642,7 +1649,7 @@ class ShopGoodVariationsController extends Controller
 
             switch ($action) {
                 case 'delete':
-                    $variations->each(function($variation) {
+                    $variations->each(function ($variation) {
                         $variation->delete();
                     });
                     $updatedCount = $variations->count();
@@ -1650,10 +1657,10 @@ class ShopGoodVariationsController extends Controller
 
                 case 'change_stock':
                     $type = $data['type'] ?? 'set';
-                    $value = isset($data['value']) ? (int)$data['value'] : 0;
-                    
+                    $value = isset($data['value']) ? (int) $data['value'] : 0;
+
                     foreach ($variations as $variation) {
-                        $currentStock = (int)($variation->stock_quantity ?? 0);
+                        $currentStock = (int) ($variation->stock_quantity ?? 0);
                         if ($type === 'set') {
                             $variation->stock_quantity = $value;
                         } elseif ($type === 'add') {
@@ -1669,7 +1676,7 @@ class ShopGoodVariationsController extends Controller
                 case 'change_remote_stock':
                     $remoteStockValue = $data['value'] ?? null;
                     foreach ($variations as $variation) {
-                        $variation->remote_stock_quantity = $remoteStockValue ? (string)$remoteStockValue : null;
+                        $variation->remote_stock_quantity = $remoteStockValue ? (string) $remoteStockValue : null;
                         $variation->save();
                         $updatedCount++;
                     }
@@ -1677,11 +1684,11 @@ class ShopGoodVariationsController extends Controller
 
                 case 'change_price':
                     $type = $data['type'] ?? 'set';
-                    $value = isset($data['value']) ? (float)$data['value'] : 0;
+                    $value = isset($data['value']) ? (float) $data['value'] : 0;
                     $isPercent = isset($data['is_percent']) && $data['is_percent'];
-                    
+
                     foreach ($variations as $variation) {
-                        $currentPrice = (float)($variation->price ?? 0);
+                        $currentPrice = (float) ($variation->price ?? 0);
                         if ($type === 'set') {
                             $variation->price = max(0, $value);
                         } elseif ($type === 'add') {
@@ -1704,11 +1711,11 @@ class ShopGoodVariationsController extends Controller
 
                 case 'change_sale_price':
                     $type = $data['type'] ?? 'set';
-                    $value = isset($data['value']) ? (float)$data['value'] : 0;
+                    $value = isset($data['value']) ? (float) $data['value'] : 0;
                     $isPercent = isset($data['is_percent']) && $data['is_percent'];
-                    
+
                     foreach ($variations as $variation) {
-                        $basePrice = (float)($variation->price ?? 0);
+                        $basePrice = (float) ($variation->price ?? 0);
                         if ($type === 'clear') {
                             $variation->sale_price = null;
                         } elseif ($type === 'set') {
@@ -1727,12 +1734,12 @@ class ShopGoodVariationsController extends Controller
 
                 case 'change_demping_price':
                     $type = $data['type'] ?? 'set';
-                    $value = isset($data['value']) ? (float)$data['value'] : 0;
+                    $value = isset($data['value']) ? (float) $data['value'] : 0;
                     $isPercent = isset($data['is_percent']) && $data['is_percent'];
                     $activateDemping = isset($data['activate_demping']) && $data['activate_demping'];
-                    
+
                     foreach ($variations as $variation) {
-                        $basePrice = (float)($variation->price ?? 0);
+                        $basePrice = (float) ($variation->price ?? 0);
                         if ($type === 'clear') {
                             $variation->demping_price = null;
                         } elseif ($type === 'set') {
@@ -1744,7 +1751,7 @@ class ShopGoodVariationsController extends Controller
                                 $variation->demping_price = max(0, $basePrice - $value);
                             }
                         }
-                        
+
                         if ($activateDemping) {
                             $variation->show_demping = true;
                         }
@@ -1798,14 +1805,15 @@ class ShopGoodVariationsController extends Controller
                 'success' => true,
                 'message' => "Обновлено вариаций: {$updatedCount}",
                 'data' => [
-                    'updated_count' => $updatedCount
-                ]
+                    'updated_count' => $updatedCount,
+                ],
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка массового обновления: ' . $e->getMessage()
+                'message' => 'Ошибка массового обновления: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -1817,20 +1825,20 @@ class ShopGoodVariationsController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'good_ids' => 'required|array',
-            'good_ids.*' => 'exists:shop_goods,id'
+            'good_ids.*' => 'exists:shop_goods,id',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
         try {
             $goodIds = $request->get('good_ids');
-            
+
             $variations = ShopGoodVariation::whereIn('good_id', $goodIds)
                 ->select('id', 'good_id')
                 ->get();
@@ -1841,17 +1849,17 @@ class ShopGoodVariationsController extends Controller
                     return $group->pluck('id')->toArray();
                 })->toArray(),
                 'total_count' => $variations->count(),
-                'goods_count' => count($goodIds)
+                'goods_count' => count($goodIds),
             ];
 
             return response()->json([
                 'success' => true,
-                'data' => $result
+                'data' => $result,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения вариаций: ' . $e->getMessage()
+                'message' => 'Ошибка получения вариаций: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -1863,14 +1871,14 @@ class ShopGoodVariationsController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'good_ids' => 'required|array',
-            'good_ids.*' => 'exists:shop_goods,id'
+            'good_ids.*' => 'exists:shop_goods,id',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -1884,13 +1892,13 @@ class ShopGoodVariationsController extends Controller
             // Все вариации с 0 остатком (с изображениями или без)
             $variations = ShopGoodVariation::whereIn('good_id', $goodIds)
                 ->where('stock_quantity', 0)
-                ->where(function($query) {
+                ->where(function ($query) {
                     $query->whereNull('remote_stock_quantity')
-                          ->orWhere('remote_stock_quantity', 0);
+                        ->orWhere('remote_stock_quantity', 0);
                 })
-                ->where(function($query) {
+                ->where(function ($query) {
                     $query->whereNull('fast_remote_stock_quantity')
-                          ->orWhere('fast_remote_stock_quantity', 0);
+                        ->orWhere('fast_remote_stock_quantity', 0);
                 })
                 ->with(['good:id,name,sku', 'images']) // Загружаем данные товара и изображения для отображения
                 ->select([
@@ -1900,7 +1908,7 @@ class ShopGoodVariationsController extends Controller
                     'sku',
                     'stock_quantity',
                     'remote_stock_quantity',
-                    'fast_remote_stock_quantity'
+                    'fast_remote_stock_quantity',
                 ])
                 ->get();
 
@@ -1914,22 +1922,21 @@ class ShopGoodVariationsController extends Controller
                         'stock' => $variation->stock_quantity,
                         'remote_stock' => $variation->remote_stock_quantity,
                         'fast_remote_stock' => $variation->fast_remote_stock_quantity,
-                        'images_count' => $variation->images->count()
+                        'images_count' => $variation->images->count(),
                     ];
                 }),
-                'count' => $variations->count()
+                'count' => $variations->count(),
             ];
 
             return response()->json([
                 'success' => true,
-                'data' => $result
+                'data' => $result,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка поиска вариаций: ' . $e->getMessage()
+                'message' => 'Ошибка поиска вариаций: '.$e->getMessage(),
             ], 500);
         }
     }
-
 }

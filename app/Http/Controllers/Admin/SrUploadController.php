@@ -3,10 +3,10 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Validator;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
 class SrUploadController extends Controller
@@ -19,55 +19,56 @@ class SrUploadController extends Controller
         try {
             // Проверяем, загружается ли файл или URL
             $imageUrl = $request->input('image_url');
-            
+
             if ($imageUrl) {
                 // Загрузка по URL
                 return $this->uploadFromUrl($request, $imageUrl);
             }
-            
+
             // Загрузка файла
             $validator = Validator::make($request->all(), [
                 'image' => 'required|image|mimes:jpeg,png,jpg,gif,webp|max:51200', // 50MB максимум
                 'width' => 'nullable|integer|min:1',
                 'height' => 'nullable|integer|min:1',
-                'image_url' => 'prohibited' // Запрещаем image_url при загрузке файла
+                'image_url' => 'prohibited', // Запрещаем image_url при загрузке файла
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
             $file = $request->file('image');
 
             // Создаем уникальное имя файла
-            $filename = 'sr_' . Str::uuid() . '_' . time() . '.' . $file->getClientOriginalExtension();
+            $filename = 'sr_'.Str::uuid().'_'.time().'.'.$file->getClientOriginalExtension();
 
             // Путь для сохранения на фронтенде
-            $path = 'images/sr/' . $filename;
-            
+            $path = 'images/sr/'.$filename;
+
             // Путь к папке public фронтенда
             $frontendPublicPath = frontend_public_path();
-            $fullPath = $frontendPublicPath . '/' . $path;
+            $fullPath = $frontendPublicPath.'/'.$path;
             $dir = dirname($fullPath);
 
             // Создаем директорию, если её нет
-            if (!is_dir($dir)) {
+            if (! is_dir($dir)) {
                 mkdir($dir, 0755, true);
             }
 
             // Сохраняем файл на фронтенд
             $file->move($dir, $filename);
-            
+
             // Проверяем, что файл действительно создался
-            if (!file_exists($fullPath)) {
-                Log::error('SrUploadController::upload: File was not saved: ' . $fullPath);
+            if (! file_exists($fullPath)) {
+                Log::error('SrUploadController::upload: File was not saved: '.$fullPath);
+
                 return response()->json([
                     'success' => false,
-                    'message' => 'Не удалось сохранить файл'
+                    'message' => 'Не удалось сохранить файл',
                 ], 500);
             }
 
@@ -77,13 +78,13 @@ class SrUploadController extends Controller
             if ($imageInfo) {
                 $imageDimensions = [
                     'width' => $imageInfo[0],
-                    'height' => $imageInfo[1]
+                    'height' => $imageInfo[1],
                 ];
             }
 
             // Если пользователь задал желаемые размеры, изменяем размер изображения при загрузке
-            $requestedWidth = (int)$request->input('width');
-            $requestedHeight = (int)$request->input('height');
+            $requestedWidth = (int) $request->input('width');
+            $requestedHeight = (int) $request->input('height');
 
             if ($requestedWidth > 0 && $requestedHeight > 0) {
                 try {
@@ -95,24 +96,24 @@ class SrUploadController extends Controller
                     if ($imageInfo) {
                         $imageDimensions = [
                             'width' => $imageInfo[0],
-                            'height' => $imageInfo[1]
+                            'height' => $imageInfo[1],
                         ];
                     } else {
                         $imageDimensions = [
                             'width' => $requestedWidth,
-                            'height' => $requestedHeight
+                            'height' => $requestedHeight,
                         ];
                     }
                 } catch (\Exception $e) {
                     // Если изменение размера не удалось, используем оригинальные размеры
-                    Log::error('Не удалось изменить размер изображения: ' . $e->getMessage());
+                    Log::error('Не удалось изменить размер изображения: '.$e->getMessage());
 
                     if (file_exists($fullPath)) {
                         $imageInfo = getimagesize($fullPath);
                         if ($imageInfo) {
                             $imageDimensions = [
                                 'width' => $imageInfo[0],
-                                'height' => $imageInfo[1]
+                                'height' => $imageInfo[1],
                             ];
                         }
                     }
@@ -129,18 +130,19 @@ class SrUploadController extends Controller
                 'message' => $message,
                 'data' => [
                     'path' => $path,
-                    'url' => '/' . ltrim($path, '/'),
+                    'url' => '/'.ltrim($path, '/'),
                     'image_width' => $imageDimensions['width'] ?? null,
                     'image_height' => $imageDimensions['height'] ?? null,
                     'requested_width' => $requestedWidth,
-                    'requested_height' => $requestedHeight
-                ]
+                    'requested_height' => $requestedHeight,
+                ],
             ]);
         } catch (\Exception $e) {
-            Log::error('SrUploadController::upload: ' . $e->getMessage());
+            Log::error('SrUploadController::upload: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка загрузки изображения: ' . $e->getMessage()
+                'message' => 'Ошибка загрузки изображения: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -152,13 +154,13 @@ class SrUploadController extends Controller
     {
         try {
             // Проверяем, что расширение GD установлено
-            if (!extension_loaded('gd')) {
+            if (! extension_loaded('gd')) {
                 throw new \Exception('Расширение GD не установлено. Установите php-gd для работы с изображениями.');
             }
 
             // Получаем информацию об изображении
             $imageInfo = getimagesize($imagePath);
-            if (!$imageInfo) {
+            if (! $imageInfo) {
                 throw new \Exception('Не удалось получить информацию об изображении');
             }
 
@@ -181,10 +183,10 @@ class SrUploadController extends Controller
                     $sourceImage = imagecreatefromwebp($imagePath);
                     break;
                 default:
-                    throw new \Exception('Неподдерживаемый тип изображения: ' . $mimeType);
+                    throw new \Exception('Неподдерживаемый тип изображения: '.$mimeType);
             }
 
-            if (!$sourceImage) {
+            if (! $sourceImage) {
                 throw new \Exception('Не удалось создать изображение из файла');
             }
 
@@ -207,18 +209,18 @@ class SrUploadController extends Controller
             // Вычисляем соотношение для масштабирования с обрезкой
             // Используем max, чтобы изображение полностью покрыло целевой размер
             $ratio = max($width / $originalWidth, $height / $originalHeight);
-            
+
             // Новые размеры после масштабирования (будут больше или равны целевому размеру)
-            $scaledWidth = (int)($originalWidth * $ratio);
-            $scaledHeight = (int)($originalHeight * $ratio);
-            
+            $scaledWidth = (int) ($originalWidth * $ratio);
+            $scaledHeight = (int) ($originalHeight * $ratio);
+
             // Вычисляем координаты для обрезки по центру
-            $srcX = (int)(($scaledWidth - $width) / 2);
-            $srcY = (int)(($scaledHeight - $height) / 2);
-            
+            $srcX = (int) (($scaledWidth - $width) / 2);
+            $srcY = (int) (($scaledHeight - $height) / 2);
+
             // Создаем временное изображение для масштабирования
             $scaledImage = imagecreatetruecolor($scaledWidth, $scaledHeight);
-            
+
             // Сохраняем прозрачность для PNG и GIF
             if (in_array($mimeType, ['image/png', 'image/gif'])) {
                 imagealphablending($scaledImage, false);
@@ -229,16 +231,16 @@ class SrUploadController extends Controller
                 $white = imagecolorallocate($scaledImage, 255, 255, 255);
                 imagefill($scaledImage, 0, 0, $white);
             }
-            
+
             // Масштабируем исходное изображение
             imagecopyresampled(
-                $scaledImage, 
-                $sourceImage, 
-                0, 0, 0, 0, 
-                $scaledWidth, $scaledHeight, 
+                $scaledImage,
+                $sourceImage,
+                0, 0, 0, 0,
+                $scaledWidth, $scaledHeight,
                 $originalWidth, $originalHeight
             );
-            
+
             // Обрезаем масштабированное изображение до нужного размера (копируем центральную часть)
             // Параметры imagecopyresampled:
             // dst_image, src_image, dst_x, dst_y, src_x, src_y, dst_w, dst_h, src_w, src_h
@@ -254,7 +256,7 @@ class SrUploadController extends Controller
                 $width,         // ширина области в исходном изображении
                 $height         // высота области в исходном изображении
             );
-            
+
             // Освобождаем память от временного изображения
             imagedestroy($scaledImage);
 
@@ -279,10 +281,10 @@ class SrUploadController extends Controller
             imagedestroy($sourceImage);
             imagedestroy($newImage);
 
-            if (!$success) {
+            if (! $success) {
                 throw new \Exception('Не удалось сохранить измененное изображение');
             }
-            
+
             // Проверяем, что файл действительно был перезаписан с правильными размерами
             $checkInfo = getimagesize($imagePath);
             if ($checkInfo) {
@@ -295,11 +297,11 @@ class SrUploadController extends Controller
             }
 
         } catch (\Exception $e) {
-            Log::error('Ошибка изменения размера изображения: ' . $e->getMessage());
+            Log::error('Ошибка изменения размера изображения: '.$e->getMessage());
             throw $e;
         }
     }
-    
+
     /**
      * Загрузить изображение по URL и обработать
      */
@@ -309,19 +311,19 @@ class SrUploadController extends Controller
             $validator = Validator::make($request->all(), [
                 'image_url' => 'required|url',
                 'width' => 'nullable|integer|min:1',
-                'height' => 'nullable|integer|min:1'
+                'height' => 'nullable|integer|min:1',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
-            $requestedWidth = (int)$request->input('width');
-            $requestedHeight = (int)$request->input('height');
+            $requestedWidth = (int) $request->input('width');
+            $requestedHeight = (int) $request->input('height');
 
             // Скачиваем изображение
             $imageContent = @file_get_contents($imageUrl);
@@ -340,30 +342,31 @@ class SrUploadController extends Controller
             }
 
             // Создаем уникальное имя файла
-            $filename = 'sr_' . Str::uuid() . '_' . time() . '.' . $extension;
+            $filename = 'sr_'.Str::uuid().'_'.time().'.'.$extension;
 
             // Путь для сохранения на фронтенде
-            $path = 'images/sr/' . $filename;
-            
+            $path = 'images/sr/'.$filename;
+
             // Путь к папке public фронтенда
             $frontendPublicPath = frontend_public_path();
-            $fullPath = $frontendPublicPath . '/' . $path;
+            $fullPath = $frontendPublicPath.'/'.$path;
             $dir = dirname($fullPath);
 
             // Создаем директорию, если её нет
-            if (!is_dir($dir)) {
+            if (! is_dir($dir)) {
                 mkdir($dir, 0755, true);
             }
 
             // Сохраняем временный файл
             file_put_contents($fullPath, $imageContent);
-            
+
             // Проверяем, что файл действительно создался
-            if (!file_exists($fullPath)) {
-                Log::error('SrUploadController::uploadFromUrl: File was not saved: ' . $fullPath);
+            if (! file_exists($fullPath)) {
+                Log::error('SrUploadController::uploadFromUrl: File was not saved: '.$fullPath);
+
                 return response()->json([
                     'success' => false,
-                    'message' => 'Не удалось сохранить файл'
+                    'message' => 'Не удалось сохранить файл',
                 ], 500);
             }
 
@@ -373,7 +376,7 @@ class SrUploadController extends Controller
             if ($imageInfo) {
                 $imageDimensions = [
                     'width' => $imageInfo[0],
-                    'height' => $imageInfo[1]
+                    'height' => $imageInfo[1],
                 ];
             }
 
@@ -388,23 +391,23 @@ class SrUploadController extends Controller
                     if ($imageInfo) {
                         $imageDimensions = [
                             'width' => $imageInfo[0],
-                            'height' => $imageInfo[1]
+                            'height' => $imageInfo[1],
                         ];
                     } else {
                         $imageDimensions = [
                             'width' => $requestedWidth,
-                            'height' => $requestedHeight
+                            'height' => $requestedHeight,
                         ];
                     }
                 } catch (\Exception $e) {
-                    Log::error('Не удалось изменить размер изображения: ' . $e->getMessage() . ' | Trace: ' . $e->getTraceAsString());
+                    Log::error('Не удалось изменить размер изображения: '.$e->getMessage().' | Trace: '.$e->getTraceAsString());
 
                     if (file_exists($fullPath)) {
                         $imageInfo = getimagesize($fullPath);
                         if ($imageInfo) {
                             $imageDimensions = [
                                 'width' => $imageInfo[0],
-                                'height' => $imageInfo[1]
+                                'height' => $imageInfo[1],
                             ];
                         }
                     }
@@ -421,18 +424,19 @@ class SrUploadController extends Controller
                 'message' => $message,
                 'data' => [
                     'path' => $path,
-                    'url' => '/' . ltrim($path, '/'),
+                    'url' => '/'.ltrim($path, '/'),
                     'image_width' => $imageDimensions['width'] ?? null,
                     'image_height' => $imageDimensions['height'] ?? null,
                     'requested_width' => $requestedWidth,
-                    'requested_height' => $requestedHeight
-                ]
+                    'requested_height' => $requestedHeight,
+                ],
             ]);
         } catch (\Exception $e) {
-            Log::error('SrUploadController::uploadFromUrl: ' . $e->getMessage());
+            Log::error('SrUploadController::uploadFromUrl: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка загрузки изображения по URL: ' . $e->getMessage()
+                'message' => 'Ошибка загрузки изображения по URL: '.$e->getMessage(),
             ], 500);
         }
     }

@@ -17,13 +17,13 @@ class UserBonusTransaction extends Model
         'description',
         'order_id',
         'expires_at',
-        'metadata'
+        'metadata',
     ];
 
     protected $casts = [
         'points' => 'integer',
         'expires_at' => 'date',
-        'metadata' => 'array'
+        'metadata' => 'array',
     ];
 
     /**
@@ -79,9 +79,9 @@ class UserBonusTransaction extends Model
      */
     public function scopeActive($query)
     {
-        return $query->where(function($q) {
+        return $query->where(function ($q) {
             $q->whereNull('expires_at')
-              ->orWhere('expires_at', '>', now());
+                ->orWhere('expires_at', '>', now());
         });
     }
 
@@ -106,7 +106,7 @@ class UserBonusTransaction extends Model
      */
     public function getColorAttribute(): string
     {
-        return match($this->type) {
+        return match ($this->type) {
             'earn' => 'green',
             'spend' => 'red',
             'expire' => 'gray',
@@ -120,7 +120,7 @@ class UserBonusTransaction extends Model
      */
     public function getIconAttribute(): string
     {
-        return match($this->type) {
+        return match ($this->type) {
             'earn' => 'mdi:plus-circle',
             'spend' => 'mdi:minus-circle',
             'expire' => 'mdi:clock-outline',

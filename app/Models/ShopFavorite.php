@@ -9,7 +9,7 @@ class ShopFavorite extends Model
 {
     protected $fillable = [
         'user_id',
-        'good_id'
+        'good_id',
     ];
 
     /**

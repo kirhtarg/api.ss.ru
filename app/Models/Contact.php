@@ -53,7 +53,7 @@ class Contact extends Model
      */
     public function mainAddress()
     {
-        return $this->addresses()->where('is_main', true)->first() 
+        return $this->addresses()->where('is_main', true)->first()
             ?? $this->addresses()->first();
     }
 
@@ -62,7 +62,7 @@ class Contact extends Model
      */
     public function mainPhone()
     {
-        return $this->phones()->where('is_main', true)->first() 
+        return $this->phones()->where('is_main', true)->first()
             ?? $this->phones()->first();
     }
 
@@ -71,7 +71,7 @@ class Contact extends Model
      */
     public static function getMainContact()
     {
-        return self::where('is_main', true)->first() 
+        return self::where('is_main', true)->first()
             ?? self::first();
     }
 }

@@ -16,12 +16,12 @@ class AdminSection extends Model
         'description',
         'icon',
         'is_active',
-        'order'
+        'order',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
-        'order' => 'integer'
+        'order' => 'integer',
     ];
 
     /**

@@ -38,7 +38,7 @@ class ShopCdekSettings extends Model
         'is_active',
         'surcharge_enabled',
         'surcharge_value',
-        'surcharge_type'
+        'surcharge_type',
     ];
 
     protected $casts = [
@@ -54,7 +54,7 @@ class ShopCdekSettings extends Model
         'is_active' => 'boolean',
         'surcharge_enabled' => 'boolean',
         'surcharge_value' => 'decimal:2',
-        'surcharge_type' => 'string'
+        'surcharge_type' => 'string',
     ];
 
     /**
@@ -87,7 +87,8 @@ class ShopCdekSettings extends Model
     public function getActiveTariffCodes()
     {
         $tariffs = $this->tariffs ?? [];
-        return array_column(array_filter($tariffs, function($tariff) {
+
+        return array_column(array_filter($tariffs, function ($tariff) {
             return isset($tariff['enabled']) && $tariff['enabled'];
         }), 'tariff_code');
     }

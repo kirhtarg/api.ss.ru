@@ -24,7 +24,7 @@ class ShopDeliveryMethodSeeder extends Seeder
                 'settings' => json_encode([
                     'address' => 'Адрес магазина',
                     'working_hours' => 'Пн-Пт: 10:00-20:00, Сб-Вс: 10:00-18:00',
-                    'phone' => '+7 (999) 123-45-67'
+                    'phone' => '+7 (999) 123-45-67',
                 ]),
                 'sort_order' => 1,
                 'is_default' => true,
@@ -41,7 +41,7 @@ class ShopDeliveryMethodSeeder extends Seeder
                 'description' => 'Доставка курьером по городу',
                 'settings' => json_encode([
                     'delivery_time' => '1-2 дня',
-                    'working_hours' => 'Пн-Пт: 9:00-18:00'
+                    'working_hours' => 'Пн-Пт: 9:00-18:00',
                 ]),
                 'sort_order' => 2,
                 'is_default' => false,
@@ -59,7 +59,7 @@ class ShopDeliveryMethodSeeder extends Seeder
                 'settings' => json_encode([
                     'api_key' => '',
                     'sender_city_id' => '',
-                    'delivery_time' => '2-5 дней'
+                    'delivery_time' => '2-5 дней',
                 ]),
                 'sort_order' => 3,
                 'is_default' => false,
@@ -76,13 +76,13 @@ class ShopDeliveryMethodSeeder extends Seeder
                 'description' => 'Доставка через Почту России',
                 'settings' => json_encode([
                     'delivery_time' => '5-14 дней',
-                    'tracking' => true
+                    'tracking' => true,
                 ]),
                 'sort_order' => 4,
                 'is_default' => false,
                 'created_at' => now(),
                 'updated_at' => now(),
-            ]
+            ],
         ];
 
         foreach ($deliveryMethods as $method) {

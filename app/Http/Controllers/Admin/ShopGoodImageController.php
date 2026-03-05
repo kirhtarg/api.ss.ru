@@ -6,11 +6,10 @@ use App\Http\Controllers\Controller;
 use App\Models\ShopGood;
 use App\Models\ShopGoodImage;
 use App\Models\ShopGoodVariation;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Validator;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
 class ShopGoodImageController extends Controller
@@ -28,12 +27,12 @@ class ShopGoodImageController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $images
+                'data' => $images,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка загрузки изображений: ' . $e->getMessage()
+                'message' => 'Ошибка загрузки изображений: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -50,14 +49,14 @@ class ShopGoodImageController extends Controller
             'upload_type' => 'required|in:original,system_crop,system_fit,custom_fit',
             'custom_width' => 'required_if:upload_type,custom_fit|integer|min:1|max:4000',
             'custom_height' => 'required_if:upload_type,custom_fit|integer|min:1|max:4000',
-            'variation_id' => 'nullable|exists:shop_good_variations,id'
+            'variation_id' => 'nullable|exists:shop_good_variations,id',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -72,32 +71,32 @@ class ShopGoodImageController extends Controller
             // Получаем системные размеры из настроек
             $systemWidth = 800; // По умолчанию
             $systemHeight = 600; // По умолчанию
-            
+
             // Пытаемся получить из настроек
             $widthSetting = \App\Models\Setting::where('key', 'shop_good_width')->first();
             $heightSetting = \App\Models\Setting::where('key', 'shop_good_height')->first();
-            
+
             if ($widthSetting) {
-                $systemWidth = (int)$widthSetting->value;
+                $systemWidth = (int) $widthSetting->value;
             }
             if ($heightSetting) {
-                $systemHeight = (int)$heightSetting->value;
+                $systemHeight = (int) $heightSetting->value;
             }
 
             foreach ($request->file('images') as $file) {
-                $filename = Str::uuid() . '.' . $file->getClientOriginalExtension();
-                $path = 'images/shop/goods/' . $good->id . '/' . $filename;
+                $filename = Str::uuid().'.'.$file->getClientOriginalExtension();
+                $path = 'images/shop/goods/'.$good->id.'/'.$filename;
 
                 // Обрабатываем изображение в зависимости от типа
                 $processedImage = $this->processImage($file, $uploadType, $systemWidth, $systemHeight, $customWidth, $customHeight);
-                
+
                 // Путь к папке public фронтенда
                 $frontendPublicPath = frontend_public_path();
-                $fullPath = $frontendPublicPath . '/' . $path;
+                $fullPath = $frontendPublicPath.'/'.$path;
                 $dir = dirname($fullPath);
 
                 // Создаем директорию, если её нет
-                if (!is_dir($dir)) {
+                if (! is_dir($dir)) {
                     mkdir($dir, 0755, true);
                 }
 
@@ -108,7 +107,7 @@ class ShopGoodImageController extends Controller
                 $imageData = [
                     'file_path' => $path,
                     'alt_text' => $file->getClientOriginalName(),
-                    'sort_order' => 0
+                    'sort_order' => 0,
                 ];
 
                 if ($request->filled('variation_id')) {
@@ -117,13 +116,13 @@ class ShopGoodImageController extends Controller
                         ->findOrFail($request->get('variation_id'));
                     $imageData['variation_id'] = $variation->id;
                     $imageData['good_id'] = null;
-                    
+
                     // Получаем следующий порядок сортировки для вариации
                     $nextSortOrder = ShopGoodImage::where('variation_id', $variation->id)
                         ->whereNull('good_id')
                         ->max('sort_order') + 1;
                     $imageData['sort_order'] = $nextSortOrder;
-                    
+
                     // Первое изображение вариации становится главным
                     $imageData['is_main'] = ShopGoodImage::where('variation_id', $variation->id)
                         ->whereNull('good_id')
@@ -132,11 +131,11 @@ class ShopGoodImageController extends Controller
                     // Для товаров: good_id = ID товара, variation_id = null
                     $imageData['good_id'] = $good->id;
                     $imageData['variation_id'] = null;
-                    
+
                     // Получаем следующий порядок сортировки для товара
                     $nextSortOrder = $good->images()->max('sort_order') + 1;
                     $imageData['sort_order'] = $nextSortOrder;
-                    
+
                     // Первое изображение товара становится главным
                     $imageData['is_main'] = $good->images()->count() === 0;
                 }
@@ -152,14 +151,15 @@ class ShopGoodImageController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Изображения успешно загружены',
-                'data' => $uploadedImages
+                'data' => $uploadedImages,
             ], 201);
 
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка загрузки изображений: ' . $e->getMessage()
+                'message' => 'Ошибка загрузки изображений: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -193,14 +193,15 @@ class ShopGoodImageController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Главное изображение установлено'
+                'message' => 'Главное изображение установлено',
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка установки главного изображения: ' . $e->getMessage()
+                'message' => 'Ошибка установки главного изображения: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -215,7 +216,7 @@ class ShopGoodImageController extends Controller
 
             // Удаляем файл с фронтенда
             $frontendPublicPath = frontend_public_path();
-            $filePath = $frontendPublicPath . '/' . $image->file_path;
+            $filePath = $frontendPublicPath.'/'.$image->file_path;
             if (file_exists($filePath)) {
                 unlink($filePath);
             }
@@ -235,14 +236,15 @@ class ShopGoodImageController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Изображение удалено'
+                'message' => 'Изображение удалено',
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления изображения: ' . $e->getMessage()
+                'message' => 'Ошибка удаления изображения: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -255,25 +257,25 @@ class ShopGoodImageController extends Controller
         $validator = Validator::make($request->all(), [
             'order' => 'required|array',
             'order.*.id' => 'required|integer',
-            'order.*.sort_order' => 'required|integer|min:1'
+            'order.*.sort_order' => 'required|integer|min:1',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
         // Проверяем, что все изображения принадлежат данному товару
         $imageIds = collect($request->get('order'))->pluck('id');
         $existingImages = $good->images()->whereIn('id', $imageIds)->pluck('id');
-        
+
         if ($existingImages->count() !== $imageIds->count()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Некоторые изображения не принадлежат данному товару'
+                'message' => 'Некоторые изображения не принадлежат данному товару',
             ], 422);
         }
 
@@ -290,14 +292,15 @@ class ShopGoodImageController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Порядок изображений обновлен'
+                'message' => 'Порядок изображений обновлен',
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления порядка: ' . $e->getMessage()
+                'message' => 'Ошибка обновления порядка: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -310,12 +313,12 @@ class ShopGoodImageController extends Controller
 
         // Используем Intervention Image для правильной обработки PNG с прозрачностью
         $manager = new \Intervention\Image\ImageManager(
-            new \Intervention\Image\Drivers\Gd\Driver()
+            new \Intervention\Image\Drivers\Gd\Driver
         );
 
         $image = $manager->read($file->getRealPath());
 
-        if (!$image) {
+        if (! $image) {
             throw new \Exception('Не удалось обработать изображение');
         }
 
@@ -341,6 +344,7 @@ class ShopGoodImageController extends Controller
                     $canvas = $manager->create($originalWidth, $originalHeight);
                     $canvas->fill('ffffff'); // Белый фон
                     $canvas->place($image, 'center');
+
                     return $canvas->toJpeg(90);
                 } else {
                     // Для обычных изображений возвращаем как JPEG
@@ -385,11 +389,11 @@ class ShopGoodImageController extends Controller
             $canvas = $manager->create($targetWidth, $targetHeight);
             $canvas->fill('ffffff'); // Белый фон
             $canvas->place($image, 'center');
+
             return $canvas->toJpeg(90);
         } else {
             // Для обычных изображений возвращаем как JPEG
             return $image->toJpeg(90);
         }
     }
-
 }

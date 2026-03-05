@@ -16,15 +16,15 @@ class ShopCategoryExtraMenuSection extends Model
     protected $fillable = [
         'extra_menu_id',
         'title',
-        'sort_order'
+        'sort_order',
     ];
 
     protected $casts = [
-        'sort_order' => 'integer'
+        'sort_order' => 'integer',
     ];
 
     protected $attributes = [
-        'sort_order' => 0
+        'sort_order' => 0,
     ];
 
     /**
@@ -43,16 +43,3 @@ class ShopCategoryExtraMenuSection extends Model
         return $this->hasMany(ShopCategoryExtraMenuSectionItem::class, 'section_id')->orderBy('sort_order');
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-

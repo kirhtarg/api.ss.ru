@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::table('shop_brands', function (Blueprint $table) {
             // Добавляем sort_order только если колонка не существует
-            if (!Schema::hasColumn('shop_brands', 'sort_order')) {
+            if (! Schema::hasColumn('shop_brands', 'sort_order')) {
                 $table->integer('sort_order')->default(0)->after('is_active');
             }
         });

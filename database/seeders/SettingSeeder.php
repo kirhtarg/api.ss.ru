@@ -380,7 +380,6 @@ class SettingSeeder extends Seeder
                 'updated_at' => '2025-09-15 17:25:41',
             ],
 
-
             [
                 'id' => 31,
                 'key' => 'bonuses_at_reg',
@@ -447,7 +446,6 @@ class SettingSeeder extends Seeder
                 'updated_at' => '2025-09-15 17:25:41',
             ],
 
-            
             [
                 'id' => 36,
                 'key' => 'shop_remote_q',
@@ -527,89 +525,89 @@ class SettingSeeder extends Seeder
                 'updated_at' => '2025-09-25 17:25:41',
             ],
             [
-                            'id' => 46,
-                            'key' => 'two_stage_pay',
-                            'name' => 'Оплата после одобрения',
-                            'value' => '0',
-                            'type' => 'boolean',
-                            'group' => 'shop',
-                            'description' => 'Включает возможность оплаты только после одобрения менеджером',
-                            'created_at' => '2025-11-25 17:24:08',
-                            'updated_at' => '2025-11-25 17:25:41',
-                        ],
+                'id' => 46,
+                'key' => 'two_stage_pay',
+                'name' => 'Оплата после одобрения',
+                'value' => '0',
+                'type' => 'boolean',
+                'group' => 'shop',
+                'description' => 'Включает возможность оплаты только после одобрения менеджером',
+                'created_at' => '2025-11-25 17:24:08',
+                'updated_at' => '2025-11-25 17:25:41',
+            ],
             [
-                            'id' => 47,
-                            'key' => 'show_counters',
-                            'name' => 'Показывать счетчики товаров',
-                            'value' => '1',
-                            'type' => 'boolean',
-                            'group' => 'shop',
-                            'description' => 'Включает/выключает отображение счетчиков товаров в каталоге, у категорий и брендов менеджером',
-                            'created_at' => '2025-11-25 17:24:08',
-                            'updated_at' => '2025-11-25 17:25:41',
-                        ],
+                'id' => 47,
+                'key' => 'show_counters',
+                'name' => 'Показывать счетчики товаров',
+                'value' => '1',
+                'type' => 'boolean',
+                'group' => 'shop',
+                'description' => 'Включает/выключает отображение счетчиков товаров в каталоге, у категорий и брендов менеджером',
+                'created_at' => '2025-11-25 17:24:08',
+                'updated_at' => '2025-11-25 17:25:41',
+            ],
             [
-                            'id' => 48,
-                            'key' => 'show_promocode_0',
-                            'name' => 'Показывать промокод при отсутствии товара',
-                            'value' => '1',
-                            'type' => 'boolean',
-                            'group' => 'shop',
-                            'description' => 'Показывать промокод при отсутствии товара, в случае если не разрешен предзаказ',
-                            'created_at' => '2025-11-25 17:24:08',
-                            'updated_at' => '2025-11-25 17:25:41',
-                        ],
+                'id' => 48,
+                'key' => 'show_promocode_0',
+                'name' => 'Показывать промокод при отсутствии товара',
+                'value' => '1',
+                'type' => 'boolean',
+                'group' => 'shop',
+                'description' => 'Показывать промокод при отсутствии товара, в случае если не разрешен предзаказ',
+                'created_at' => '2025-11-25 17:24:08',
+                'updated_at' => '2025-11-25 17:25:41',
+            ],
             [
-                            'id' => 49,
-                            'key' => 'free_delivery_sale',
-                            'name' => 'Бесплатная доставка с акционными товарами',
-                            'value' => '1',
-                            'type' => 'boolean',
-                            'group' => 'shop',
-                            'description' => 'Включает бесплатную доставку (при условии, что она активна) в случае, если в заказе есть акционные товары',
-                            'created_at' => '2025-11-25 17:24:08',
-                            'updated_at' => '2025-11-25 17:25:41',
-                        ],
+                'id' => 49,
+                'key' => 'free_delivery_sale',
+                'name' => 'Бесплатная доставка с акционными товарами',
+                'value' => '1',
+                'type' => 'boolean',
+                'group' => 'shop',
+                'description' => 'Включает бесплатную доставку (при условии, что она активна) в случае, если в заказе есть акционные товары',
+                'created_at' => '2025-11-25 17:24:08',
+                'updated_at' => '2025-11-25 17:25:41',
+            ],
             [
-                            'id' => 50,
-                            'key' => 'birthday_bonuses',
-                            'name' => 'Бонусы в день рождения',
-                            'value' => '0',
-                            'type' => 'number',
-                            'group' => 'shop',
-                            'description' => 'Значение скидки в день рождения пользователя (если указана дата, если 0 - скидка не предоставляется)',
-                            'created_at' => '2025-11-25 17:24:08',
-                            'updated_at' => '2025-11-25 17:25:41',
-                        ],
+                'id' => 50,
+                'key' => 'birthday_bonuses',
+                'name' => 'Бонусы в день рождения',
+                'value' => '0',
+                'type' => 'number',
+                'group' => 'shop',
+                'description' => 'Значение скидки в день рождения пользователя (если указана дата, если 0 - скидка не предоставляется)',
+                'created_at' => '2025-11-25 17:24:08',
+                'updated_at' => '2025-11-25 17:25:41',
+            ],
             [
-                            'id' => 51,
-                            'key' => 'birthday_bonuses_days_from',
-                            'name' => 'Дней скидки до дня рождения',
-                            'value' => '5',
-                            'type' => 'number',
-                            'group' => 'shop',
-                            'description' => 'Дней скидки до дня рождения',
-                            'created_at' => '2025-11-25 17:24:08',
-                            'updated_at' => '2025-11-25 17:25:41',
-                        ],
+                'id' => 51,
+                'key' => 'birthday_bonuses_days_from',
+                'name' => 'Дней скидки до дня рождения',
+                'value' => '5',
+                'type' => 'number',
+                'group' => 'shop',
+                'description' => 'Дней скидки до дня рождения',
+                'created_at' => '2025-11-25 17:24:08',
+                'updated_at' => '2025-11-25 17:25:41',
+            ],
             [
-                            'id' => 52,
-                            'key' => 'birthday_bonuses_days_to',
-                            'name' => 'Дней скидки после дня рождения',
-                            'value' => '5',
-                            'type' => 'number',
-                            'group' => 'shop',
-                            'description' => 'Дней скидки после дня рождения',
-                            'created_at' => '2025-11-25 17:24:08',
-                            'updated_at' => '2025-11-25 17:25:41',
-                        ],
+                'id' => 52,
+                'key' => 'birthday_bonuses_days_to',
+                'name' => 'Дней скидки после дня рождения',
+                'value' => '5',
+                'type' => 'number',
+                'group' => 'shop',
+                'description' => 'Дней скидки после дня рождения',
+                'created_at' => '2025-11-25 17:24:08',
+                'updated_at' => '2025-11-25 17:25:41',
+            ],
         ];
 
         foreach ($settings as $setting) {
             // Удаляем id из массива, чтобы избежать конфликтов
             $settingData = $setting;
             unset($settingData['id']);
-            
+
             DB::table('settings')->updateOrInsert(
                 ['key' => $setting['key']],
                 $settingData
@@ -617,10 +615,3 @@ class SettingSeeder extends Seeder
         }
     }
 }
-
-
-
-
-
-
-

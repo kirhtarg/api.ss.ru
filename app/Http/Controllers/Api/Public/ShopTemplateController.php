@@ -15,28 +15,28 @@ class ShopTemplateController extends Controller
     {
         try {
             $template = ShopTemplate::getActive();
-            
-            if (!$template) {
+
+            if (! $template) {
                 // Если нет активного шаблона, возвращаем дефолтный
                 $template = ShopTemplate::getDefault();
             }
-            
-            if (!$template) {
+
+            if (! $template) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Шаблон магазина не найден'
+                    'message' => 'Шаблон магазина не найден',
                 ], 404);
             }
-            
+
             return response()->json([
                 'success' => true,
-                'data' => $template->getTemplateData()
+                'data' => $template->getTemplateData(),
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения шаблона магазина: ' . $e->getMessage()
+                'message' => 'Ошибка получения шаблона магазина: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -48,28 +48,28 @@ class ShopTemplateController extends Controller
     {
         try {
             $template = ShopTemplate::getActiveCard();
-            
-            if (!$template) {
+
+            if (! $template) {
                 // Если нет активного шаблона для карточек, возвращаем дефолтный
                 $template = ShopTemplate::getDefault();
             }
-            
-            if (!$template) {
+
+            if (! $template) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Шаблон для карточек товаров не найден'
+                    'message' => 'Шаблон для карточек товаров не найден',
                 ], 404);
             }
-            
+
             return response()->json([
                 'success' => true,
-                'data' => $template->getTemplateData()
+                'data' => $template->getTemplateData(),
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения шаблона для карточек: ' . $e->getMessage()
+                'message' => 'Ошибка получения шаблона для карточек: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -81,28 +81,28 @@ class ShopTemplateController extends Controller
     {
         try {
             $template = ShopTemplate::getActivePage();
-            
-            if (!$template) {
+
+            if (! $template) {
                 // Если нет активного шаблона для страниц, возвращаем дефолтный
                 $template = ShopTemplate::getDefault();
             }
-            
-            if (!$template) {
+
+            if (! $template) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Шаблон для страниц товаров не найден'
+                    'message' => 'Шаблон для страниц товаров не найден',
                 ], 404);
             }
-            
+
             return response()->json([
                 'success' => true,
-                'data' => $template->getTemplateData()
+                'data' => $template->getTemplateData(),
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения шаблона для страниц: ' . $e->getMessage()
+                'message' => 'Ошибка получения шаблона для страниц: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -114,28 +114,28 @@ class ShopTemplateController extends Controller
     {
         try {
             $template = ShopTemplate::getActiveBrands();
-            
-            if (!$template) {
+
+            if (! $template) {
                 // Если нет активного шаблона для брендов, возвращаем дефолтный
                 $template = ShopTemplate::getDefault();
             }
-            
-            if (!$template) {
+
+            if (! $template) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Шаблон для страниц брендов не найден'
+                    'message' => 'Шаблон для страниц брендов не найден',
                 ], 404);
             }
-            
+
             return response()->json([
                 'success' => true,
-                'data' => $template->getTemplateData()
+                'data' => $template->getTemplateData(),
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения шаблона для брендов: ' . $e->getMessage()
+                'message' => 'Ошибка получения шаблона для брендов: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -147,28 +147,28 @@ class ShopTemplateController extends Controller
     {
         try {
             $template = ShopTemplate::getActiveCategories();
-            
-            if (!$template) {
+
+            if (! $template) {
                 // Если нет активного шаблона для категорий, возвращаем дефолтный
                 $template = ShopTemplate::getDefault();
             }
-            
-            if (!$template) {
+
+            if (! $template) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Шаблон для страниц категорий не найден'
+                    'message' => 'Шаблон для страниц категорий не найден',
                 ], 404);
             }
-            
+
             return response()->json([
                 'success' => true,
-                'data' => $template->getTemplateData()
+                'data' => $template->getTemplateData(),
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения шаблона для категорий: ' . $e->getMessage()
+                'message' => 'Ошибка получения шаблона для категорий: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -180,7 +180,7 @@ class ShopTemplateController extends Controller
     {
         try {
             $templates = ShopTemplate::ordered()->get();
-            
+
             return response()->json([
                 'success' => true,
                 'data' => $templates->map(function ($template) {
@@ -194,13 +194,13 @@ class ShopTemplateController extends Controller
                         'created_at' => $template->created_at,
                         'updated_at' => $template->updated_at,
                     ];
-                })
+                }),
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения шаблонов магазина: ' . $e->getMessage()
+                'message' => 'Ошибка получения шаблонов магазина: '.$e->getMessage(),
             ], 500);
         }
     }

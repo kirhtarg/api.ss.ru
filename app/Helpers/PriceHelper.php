@@ -13,8 +13,9 @@ class PriceHelper
     {
         $setting = Setting::where('key', 'shop_price_round')->first();
         if ($setting && $setting->value !== null && $setting->value !== '') {
-            return (int)$setting->value;
+            return (int) $setting->value;
         }
+
         return 2; // По умолчанию 2 знака
     }
 
@@ -24,6 +25,7 @@ class PriceHelper
     public static function isRound10Enabled(): bool
     {
         $setting = Setting::where('key', 'shop_round10')->first();
+
         return $setting && ($setting->value == 1 || $setting->value == '1');
     }
 
@@ -41,6 +43,7 @@ class PriceHelper
         // Иначе используем обычное округление по знакам после запятой
         $digits = self::getPriceRoundDigits();
         $multiplier = pow(10, $digits);
+
         return round($price * $multiplier) / $multiplier;
     }
 
@@ -50,7 +53,7 @@ class PriceHelper
     public static function formatPrice(float $price, string $separator = ',', string $thousandsSeparator = ' '): string
     {
         $digits = self::getPriceRoundDigits();
+
         return number_format($price, $digits, $separator, $thousandsSeparator);
     }
 }
-

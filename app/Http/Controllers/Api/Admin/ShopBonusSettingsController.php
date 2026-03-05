@@ -18,35 +18,35 @@ class ShopBonusSettingsController extends Controller
     {
         try {
             $settings = ShopBonusSettings::orderBy('created_at', 'desc')->get();
-            
+
             // Add image_url to each setting if file exists
             $settings = $settings->map(function ($setting) {
-                $imageUrl = '/images/bsys/bsys_' . $setting->id . '.jpg';
+                $imageUrl = '/images/bsys/bsys_'.$setting->id.'.jpg';
                 $imagePath = frontend_public_path(ltrim($imageUrl, '/'));
-                
+
                 if (file_exists($imagePath)) {
                     $setting->image_url = $imageUrl;
                 } else {
                     $setting->image_url = null;
                 }
-                
+
                 return $setting;
             });
 
             return response()->json([
                 'success' => true,
-                'data' => $settings
+                'data' => $settings,
             ]);
 
         } catch (\Exception $e) {
             Log::error('ShopBonusSettingsController: Error getting settings', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения настроек бонусов: ' . $e->getMessage()
+                'message' => 'Ошибка получения настроек бонусов: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -58,11 +58,11 @@ class ShopBonusSettingsController extends Controller
     {
         try {
             $setting = ShopBonusSettings::findOrFail($id);
-            
+
             // Add image_url if file exists
-            $imageUrl = '/images/bsys/bsys_' . $setting->id . '.jpg';
+            $imageUrl = '/images/bsys/bsys_'.$setting->id.'.jpg';
             $imagePath = frontend_public_path(ltrim($imageUrl, '/'));
-            
+
             if (file_exists($imagePath)) {
                 $setting->image_url = $imageUrl;
             } else {
@@ -71,18 +71,18 @@ class ShopBonusSettingsController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $setting
+                'data' => $setting,
             ]);
 
         } catch (\Exception $e) {
             Log::error('ShopBonusSettingsController: Error getting setting', [
                 'id' => $id,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Настройка не найдена'
+                'message' => 'Настройка не найдена',
             ], 404);
         }
     }
@@ -104,14 +104,14 @@ class ShopBonusSettingsController extends Controller
                 'min_bonus_amount' => 'integer|min:1',
                 'max_bonus_amount' => 'nullable|integer|min:1',
                 'bonus_expiry_days' => 'integer|min:1|max:3650',
-                'metadata' => 'nullable|array'
+                'metadata' => 'nullable|array',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -120,18 +120,18 @@ class ShopBonusSettingsController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Настройка бонусов создана',
-                'data' => $setting
+                'data' => $setting,
             ], 201);
 
         } catch (\Exception $e) {
             Log::error('ShopBonusSettingsController: Error creating setting', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания настройки: ' . $e->getMessage()
+                'message' => 'Ошибка создания настройки: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -145,7 +145,7 @@ class ShopBonusSettingsController extends Controller
             $setting = ShopBonusSettings::findOrFail($id);
 
             $validator = Validator::make($request->all(), [
-                'name' => 'required|string|max:255|unique:shop_bonus_settings,name,' . $id,
+                'name' => 'required|string|max:255|unique:shop_bonus_settings,name,'.$id,
                 'regular_price_percentage' => 'required|numeric|min:0|max:100',
                 'sale_price_percentage' => 'required|numeric|min:0|max:100',
                 'max_usage_percentage' => 'required|numeric|min:0|max:100',
@@ -155,14 +155,14 @@ class ShopBonusSettingsController extends Controller
                 'min_bonus_amount' => 'integer|min:1',
                 'max_bonus_amount' => 'nullable|integer|min:1',
                 'bonus_expiry_days' => 'integer|min:1|max:3650',
-                'metadata' => 'nullable|array'
+                'metadata' => 'nullable|array',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -171,19 +171,19 @@ class ShopBonusSettingsController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Настройка обновлена',
-                'data' => $setting
+                'data' => $setting,
             ]);
 
         } catch (\Exception $e) {
             Log::error('ShopBonusSettingsController: Error updating setting', [
                 'id' => $id,
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления настройки: ' . $e->getMessage()
+                'message' => 'Ошибка обновления настройки: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -199,18 +199,18 @@ class ShopBonusSettingsController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Настройка удалена'
+                'message' => 'Настройка удалена',
             ]);
 
         } catch (\Exception $e) {
             Log::error('ShopBonusSettingsController: Error deleting setting', [
                 'id' => $id,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления настройки: ' . $e->getMessage()
+                'message' => 'Ошибка удаления настройки: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -222,24 +222,24 @@ class ShopBonusSettingsController extends Controller
     {
         try {
             $setting = ShopBonusSettings::findOrFail($id);
-            $setting->is_active = !$setting->is_active;
+            $setting->is_active = ! $setting->is_active;
             $setting->save();
 
             return response()->json([
                 'success' => true,
                 'message' => $setting->is_active ? 'Настройка активирована' : 'Настройка деактивирована',
-                'data' => $setting
+                'data' => $setting,
             ]);
 
         } catch (\Exception $e) {
             Log::error('ShopBonusSettingsController: Error toggling setting', [
                 'id' => $id,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка переключения настройки: ' . $e->getMessage()
+                'message' => 'Ошибка переключения настройки: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -252,25 +252,25 @@ class ShopBonusSettingsController extends Controller
         try {
             $setting = ShopBonusSettings::getActiveSettings();
 
-            if (!$setting) {
+            if (! $setting) {
                 // Создаем настройки по умолчанию
                 $setting = ShopBonusSettings::getDefaultSettings();
             }
 
             return response()->json([
                 'success' => true,
-                'data' => $setting
+                'data' => $setting,
             ]);
 
         } catch (\Exception $e) {
             Log::error('ShopBonusSettingsController: Error getting active setting', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения активных настроек: ' . $e->getMessage()
+                'message' => 'Ошибка получения активных настроек: '.$e->getMessage(),
             ], 500);
         }
     }

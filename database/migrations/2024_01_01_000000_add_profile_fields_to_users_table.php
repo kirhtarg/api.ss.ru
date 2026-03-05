@@ -13,29 +13,29 @@ return new class extends Migration
     {
         Schema::table('users', function (Blueprint $table) {
             // Проверяем, существуют ли уже поля
-            if (!Schema::hasColumn('users', 'first_name')) {
+            if (! Schema::hasColumn('users', 'first_name')) {
                 $table->string('first_name', 255)->nullable()->after('name')->comment('Имя пользователя');
             }
-            if (!Schema::hasColumn('users', 'last_name')) {
+            if (! Schema::hasColumn('users', 'last_name')) {
                 $table->string('last_name', 255)->nullable()->after('first_name')->comment('Фамилия пользователя');
             }
-            if (!Schema::hasColumn('users', 'birthday')) {
+            if (! Schema::hasColumn('users', 'birthday')) {
                 $table->date('birthday')->nullable()->after('last_name')->comment('Дата рождения пользователя');
             }
-            if (!Schema::hasColumn('users', 'avatar_url')) {
+            if (! Schema::hasColumn('users', 'avatar_url')) {
                 $table->string('avatar_url', 500)->nullable()->after('birthday')->comment('URL аватара пользователя');
             }
         });
 
         // Добавляем индексы для оптимизации поиска
         Schema::table('users', function (Blueprint $table) {
-            if (!Schema::hasIndex('users', 'idx_users_first_name')) {
+            if (! Schema::hasIndex('users', 'idx_users_first_name')) {
                 $table->index('first_name', 'idx_users_first_name');
             }
-            if (!Schema::hasIndex('users', 'idx_users_last_name')) {
+            if (! Schema::hasIndex('users', 'idx_users_last_name')) {
                 $table->index('last_name', 'idx_users_last_name');
             }
-            if (!Schema::hasIndex('users', 'idx_users_birthday')) {
+            if (! Schema::hasIndex('users', 'idx_users_birthday')) {
                 $table->index('birthday', 'idx_users_birthday');
             }
         });
@@ -73,7 +73,7 @@ return new class extends Migration
             if (Schema::hasIndex('users', 'idx_users_birthday')) {
                 $table->dropIndex('idx_users_birthday');
             }
-            
+
             if (Schema::hasColumn('users', 'first_name')) {
                 $table->dropColumn('first_name');
             }

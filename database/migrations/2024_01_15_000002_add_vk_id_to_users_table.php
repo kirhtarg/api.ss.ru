@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::table('users', function (Blueprint $table) {
             // Проверяем, существует ли колонка vk_id
-            if (!Schema::hasColumn('users', 'vk_id')) {
+            if (! Schema::hasColumn('users', 'vk_id')) {
                 // Если google_id существует, добавляем vk_id после него
                 if (Schema::hasColumn('users', 'google_id')) {
                     $table->string('vk_id')->nullable()->unique()->after('google_id');

@@ -5,9 +5,8 @@ namespace App\Http\Controllers\Api\Public;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 
 class ShopImageController extends Controller
 {
@@ -22,14 +21,14 @@ class ShopImageController extends Controller
                 'good_ids.*' => 'required|integer|exists:shop_goods,id',
                 'include_variations' => 'boolean',
                 'image_types' => 'array',
-                'image_types.*' => 'in:main,all,thumbnails'
+                'image_types.*' => 'in:main,all,thumbnails',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -47,7 +46,7 @@ class ShopImageController extends Controller
                 ->orderBy('id');
 
             // Если нужны только главные изображения
-            if (in_array('main', $imageTypes) && !in_array('all', $imageTypes)) {
+            if (in_array('main', $imageTypes) && ! in_array('all', $imageTypes)) {
                 $query->where('is_main', true);
             }
 
@@ -55,9 +54,9 @@ class ShopImageController extends Controller
 
             // Группируем по товарам
             $goodImages->groupBy('good_id')->each(function ($imagesGroup, $goodId) use ($images) {
-                $mainImage = $imagesGroup->where('is_main', true)->first() 
+                $mainImage = $imagesGroup->where('is_main', true)->first()
                            ?? $imagesGroup->sortBy('sort_order')->first();
-                
+
                 $images->push([
                     'good_id' => (int) $goodId,
                     'main_image' => $mainImage ? $this->getImageUrl($mainImage->file_path) : null,
@@ -67,9 +66,9 @@ class ShopImageController extends Controller
                             'url' => $this->getImageUrl($image->file_path),
                             'alt_text' => $image->alt_text,
                             'is_main' => $image->is_main,
-                            'sort_order' => $image->sort_order
+                            'sort_order' => $image->sort_order,
                         ];
-                    })->toArray()
+                    })->toArray(),
                 ]);
             });
 
@@ -93,7 +92,7 @@ class ShopImageController extends Controller
                                     'url' => $this->getImageUrl($image->file_path),
                                     'alt_text' => $image->alt_text,
                                     'is_main' => $image->is_main,
-                                    'sort_order' => $image->sort_order
+                                    'sort_order' => $image->sort_order,
                                 ];
                             })->toArray();
                         })->toArray();
@@ -103,18 +102,18 @@ class ShopImageController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $images->toArray()
+                'data' => $images->toArray(),
             ]);
 
         } catch (\Exception $e) {
             Log::error('Ошибка получения изображений товаров', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения изображений'
+                'message' => 'Ошибка получения изображений',
             ], 500);
         }
     }
@@ -127,14 +126,14 @@ class ShopImageController extends Controller
         try {
             $validator = Validator::make($request->all(), [
                 'category_ids' => 'required|array|max:50',
-                'category_ids.*' => 'required|integer|exists:shop_categories,id'
+                'category_ids.*' => 'required|integer|exists:shop_categories,id',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -147,24 +146,24 @@ class ShopImageController extends Controller
                     return [
                         'category_id' => $category->id,
                         'name' => $category->name,
-                        'image_url' => $category->image ? $this->getImageUrl($category->image) : null
+                        'image_url' => $category->image ? $this->getImageUrl($category->image) : null,
                     ];
                 });
 
             return response()->json([
                 'success' => true,
-                'data' => $categories->toArray()
+                'data' => $categories->toArray(),
             ]);
 
         } catch (\Exception $e) {
             Log::error('Ошибка получения изображений категорий', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения изображений категорий'
+                'message' => 'Ошибка получения изображений категорий',
             ], 500);
         }
     }
@@ -174,7 +173,7 @@ class ShopImageController extends Controller
      */
     private function getImageUrl($filePath)
     {
-        if (!$filePath) {
+        if (! $filePath) {
             return null;
         }
 
@@ -186,10 +185,10 @@ class ShopImageController extends Controller
         // Убираем лишний префикс images/ если он уже есть
         $cleanPath = ltrim($filePath, '/');
         if (str_starts_with($cleanPath, 'images/')) {
-            return '/' . $cleanPath;
+            return '/'.$cleanPath;
         }
 
         // Возвращаем путь к файлу в папке public/images/
-        return '/images/' . $cleanPath;
+        return '/images/'.$cleanPath;
     }
 }

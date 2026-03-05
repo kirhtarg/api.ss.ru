@@ -18,11 +18,11 @@ return new class extends Migration
             $table->integer('total_earned')->default(0); // Всего заработано за все время
             $table->integer('total_spent')->default(0); // Всего потрачено за все время
             $table->timestamps();
-            
+
             // Индексы
             $table->index('user_id');
             $table->unique('user_id');
-            
+
             // Внешние ключи
             $table->foreign('user_id')->references('id')->on('users')->onDelete('cascade');
         });

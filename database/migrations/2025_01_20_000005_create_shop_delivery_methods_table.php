@@ -23,7 +23,7 @@ return new class extends Migration
             $table->integer('sort_order')->default(0); // Порядок сортировки
             $table->boolean('is_default')->default(false); // Способ по умолчанию
             $table->timestamps();
-            
+
             // Индексы
             $table->index(['is_active', 'sort_order']);
             $table->index('type');

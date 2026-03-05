@@ -3,13 +3,9 @@
 namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
-use Illuminate\Http\JsonResponse;
 use App\Models\ShopOrder;
-use App\Models\ShopOrderItem;
-use App\Models\ShopGood;
-use App\Models\ShopGoodVariation;
-use App\Models\User;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -39,13 +35,13 @@ class ShopOrdersController extends Controller
                 'bonus_points_used' => 'nullable|integer|min:0',
                 'promo_code' => 'nullable|string|max:255',
                 'promo_code_id' => 'nullable|integer|exists:promocodes,id',
-                'promo_code_discount_amount' => 'nullable|numeric|min:0'
+                'promo_code_discount_amount' => 'nullable|numeric|min:0',
             ]);
 
             DB::beginTransaction();
 
             // Генерируем номер заказа
-            $orderNumber = 'ORD-' . date('Ymd') . '-' . str_pad(ShopOrder::count() + 1, 3, '0', STR_PAD_LEFT);
+            $orderNumber = 'ORD-'.date('Ymd').'-'.str_pad(ShopOrder::count() + 1, 3, '0', STR_PAD_LEFT);
 
             // Создаем заказ
             $order = ShopOrder::create([
@@ -73,8 +69,8 @@ class ShopOrdersController extends Controller
                 'user_agent' => $request->userAgent(),
                 'metadata' => [
                     'delivery_cost' => $request->delivery_cost,
-                    'bonus_points_used' => $request->bonus_points_used ?? 0
-                ]
+                    'bonus_points_used' => $request->bonus_points_used ?? 0,
+                ],
             ]);
 
             // Создаем запись об использовании промокода, если он был применен
@@ -87,9 +83,9 @@ class ShopOrdersController extends Controller
                         $appliedTo = [
                             'order_id' => $order->id,
                             'order_number' => $order->order_number,
-                            'items' => $request->items
+                            'items' => $request->items,
                         ];
-                        
+
                         $promocode->recordUsage(
                             auth()->id(),
                             $sessionId,
@@ -97,15 +93,15 @@ class ShopOrdersController extends Controller
                             $discountAmount,
                             $appliedTo
                         );
-                        
+
                         Log::info('Promocode usage recorded', [
                             'promocode_id' => $promocode->id,
                             'order_id' => $order->id,
-                            'discount_amount' => $discountAmount
+                            'discount_amount' => $discountAmount,
                         ]);
                     }
                 } catch (\Exception $e) {
-                    Log::error('Ошибка создания записи об использовании промокода: ' . $e->getMessage());
+                    Log::error('Ошибка создания записи об использовании промокода: '.$e->getMessage());
                     // Не прерываем создание заказа, если ошибка с промокодом
                 }
             }
@@ -115,16 +111,16 @@ class ShopOrdersController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Заказ успешно создан',
-                'order_id' => $order->id
+                'order_id' => $order->id,
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error('Ошибка создания заказа: ' . $e->getMessage());
-            
+            Log::error('Ошибка создания заказа: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при создании заказа'
+                'message' => 'Ошибка при создании заказа',
             ], 500);
         }
     }

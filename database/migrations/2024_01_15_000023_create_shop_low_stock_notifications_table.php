@@ -21,7 +21,7 @@ return new class extends Migration
             $table->boolean('is_sent')->default(false);
             $table->datetime('sent_at')->nullable();
             $table->timestamps();
-            
+
             // Индексы для производительности
             $table->index(['good_id', 'warehouse_id']);
             $table->index(['variation_id', 'warehouse_id']);

@@ -2,16 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\ContactRequest;
 use App\Models\Contact;
-use App\Models\ContactPhone;
 use App\Models\ContactAddress;
+use App\Models\ContactPhone;
 use App\Models\ContactSocial;
 use App\Models\ContactSocialType;
-use App\Http\Requests\ContactRequest;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Validator;
 
 class ContactController extends Controller
 {
@@ -26,7 +24,7 @@ class ContactController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $contacts
+            'data' => $contacts,
         ]);
     }
 
@@ -38,16 +36,16 @@ class ContactController extends Controller
         $contact = Contact::with(['phones', 'addresses', 'socials.socialType'])
             ->find($id);
 
-        if (!$contact) {
+        if (! $contact) {
             return response()->json([
                 'success' => false,
-                'message' => 'Контакт не найден'
+                'message' => 'Контакт не найден',
             ], 404);
         }
 
         return response()->json([
             'success' => true,
-            'data' => $contact
+            'data' => $contact,
         ]);
     }
 
@@ -136,14 +134,15 @@ class ContactController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Контакт успешно создан',
-                'data' => $contact
+                'data' => $contact,
             ], 201);
 
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при создании контакта: ' . $e->getMessage()
+                'message' => 'Ошибка при создании контакта: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -155,10 +154,10 @@ class ContactController extends Controller
     {
         $contact = Contact::find($id);
 
-        if (!$contact) {
+        if (! $contact) {
             return response()->json([
                 'success' => false,
-                'message' => 'Контакт не найден'
+                'message' => 'Контакт не найден',
             ], 404);
         }
 
@@ -246,14 +245,15 @@ class ContactController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Контакт успешно обновлен',
-                'data' => $contact
+                'data' => $contact,
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при обновлении контакта: ' . $e->getMessage()
+                'message' => 'Ошибка при обновлении контакта: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -265,10 +265,10 @@ class ContactController extends Controller
     {
         $contact = Contact::find($id);
 
-        if (!$contact) {
+        if (! $contact) {
             return response()->json([
                 'success' => false,
-                'message' => 'Контакт не найден'
+                'message' => 'Контакт не найден',
             ], 404);
         }
 
@@ -277,13 +277,13 @@ class ContactController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Контакт успешно удален'
+                'message' => 'Контакт успешно удален',
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при удалении контакта: ' . $e->getMessage()
+                'message' => 'Ошибка при удалении контакта: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -297,7 +297,7 @@ class ContactController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $socialTypes
+            'data' => $socialTypes,
         ]);
     }
 
@@ -307,20 +307,20 @@ class ContactController extends Controller
     public function getMainAddress(): JsonResponse
     {
         $mainContact = Contact::getMainContact();
-        
-        if (!$mainContact) {
+
+        if (! $mainContact) {
             return response()->json([
                 'success' => false,
-                'message' => 'Контакты не найдены'
+                'message' => 'Контакты не найдены',
             ], 404);
         }
 
         $mainAddress = $mainContact->mainAddress();
-        
-        if (!$mainAddress) {
+
+        if (! $mainAddress) {
             return response()->json([
                 'success' => false,
-                'message' => 'Адреса не найдены'
+                'message' => 'Адреса не найдены',
             ], 404);
         }
 
@@ -331,8 +331,8 @@ class ContactController extends Controller
                 'address_short' => $mainAddress->address_short,
                 'address' => $mainAddress->address,
                 'latitude' => $mainAddress->latitude,
-                'longitude' => $mainAddress->longitude
-            ]
+                'longitude' => $mainAddress->longitude,
+            ],
         ]);
     }
 
@@ -342,20 +342,20 @@ class ContactController extends Controller
     public function getMainPhone(): JsonResponse
     {
         $mainContact = Contact::getMainContact();
-        
-        if (!$mainContact) {
+
+        if (! $mainContact) {
             return response()->json([
                 'success' => false,
-                'message' => 'Контакты не найдены'
+                'message' => 'Контакты не найдены',
             ], 404);
         }
 
         $mainPhone = $mainContact->mainPhone();
-        
-        if (!$mainPhone) {
+
+        if (! $mainPhone) {
             return response()->json([
                 'success' => false,
-                'message' => 'Телефоны не найдены'
+                'message' => 'Телефоны не найдены',
             ], 404);
         }
 
@@ -364,8 +364,8 @@ class ContactController extends Controller
             'data' => [
                 'contact_name' => $mainContact->name,
                 'phone_name' => $mainPhone->phone_name,
-                'phone_number' => $mainPhone->phone_number
-            ]
+                'phone_number' => $mainPhone->phone_number,
+            ],
         ]);
     }
 
@@ -375,20 +375,20 @@ class ContactController extends Controller
     public function getMainContactPhones(): JsonResponse
     {
         $mainContact = Contact::getMainContact();
-        
-        if (!$mainContact) {
+
+        if (! $mainContact) {
             return response()->json([
                 'success' => false,
-                'message' => 'Контакты не найдены'
+                'message' => 'Контакты не найдены',
             ], 404);
         }
 
         $phones = $mainContact->phones()->orderBy('is_main', 'desc')->get();
-        
+
         if ($phones->isEmpty()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Телефоны не найдены'
+                'message' => 'Телефоны не найдены',
             ], 404);
         }
 
@@ -401,10 +401,10 @@ class ContactController extends Controller
                         'id' => $phone->id,
                         'phone_name' => $phone->phone_name,
                         'phone_number' => $phone->phone_number,
-                        'is_main' => $phone->is_main
+                        'is_main' => $phone->is_main,
                     ];
-                })
-            ]
+                }),
+            ],
         ]);
     }
 
@@ -414,11 +414,11 @@ class ContactController extends Controller
     public function getHeaderData(): JsonResponse
     {
         $mainContact = Contact::getMainContact();
-        
-        if (!$mainContact) {
+
+        if (! $mainContact) {
             return response()->json([
                 'success' => false,
-                'message' => 'Контакты не найдены'
+                'message' => 'Контакты не найдены',
             ], 404);
         }
 
@@ -435,9 +435,9 @@ class ContactController extends Controller
                 'howtogo' => $mainAddress->howtogo,
                 'work_mode' => $mainAddress->work_mode,
                 'is_main' => $mainAddress->is_main,
-                'contact_name' => $mainContact->name
+                'contact_name' => $mainContact->name,
             ];
-            
+
         }
 
         // Получаем основной телефон
@@ -448,7 +448,7 @@ class ContactController extends Controller
                 'id' => $mainPhone->id,
                 'phone_name' => $mainPhone->phone_name,
                 'phone_number' => $mainPhone->phone_number,
-                'is_main' => $mainPhone->is_main
+                'is_main' => $mainPhone->is_main,
             ];
         }
 
@@ -459,7 +459,7 @@ class ContactController extends Controller
                 'id' => $phone->id,
                 'phone_name' => $phone->phone_name,
                 'phone_number' => $phone->phone_number,
-                'is_main' => $phone->is_main
+                'is_main' => $phone->is_main,
             ];
         });
 
@@ -473,8 +473,8 @@ class ContactController extends Controller
                 'legal_name' => $mainContact->legal_name,
                 'inn' => $mainContact->inn,
                 'ogrnip' => $mainContact->ogrnip,
-                'legal_address' => $mainContact->legal_address
-            ]
+                'legal_address' => $mainContact->legal_address,
+            ],
         ]);
     }
 }

@@ -2,11 +2,11 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\AdminPage;
+use App\Models\User;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
-use App\Models\AdminPage;
-use App\Models\User;
 
 class CheckShopAccess
 {
@@ -19,10 +19,10 @@ class CheckShopAccess
     {
         // Получаем пользователя из токена
         $user = $request->user();
-        if (!$user) {
+        if (! $user) {
             return response()->json([
                 'success' => false,
-                'message' => 'Пользователь не аутентифицирован'
+                'message' => 'Пользователь не аутентифицирован',
             ], 401);
         }
 
@@ -33,18 +33,18 @@ class CheckShopAccess
 
         // Получаем страницу shop
         $shopPage = AdminPage::where('slug', 'shop')->first();
-        if (!$shopPage) {
+        if (! $shopPage) {
             return response()->json([
                 'success' => false,
-                'message' => 'Страница shop не найдена'
+                'message' => 'Страница shop не найдена',
             ], 404);
         }
 
         // Проверяем доступ пользователя к странице shop
-        if (!$this->userHasAccessToShop($user, $shopPage)) {
+        if (! $this->userHasAccessToShop($user, $shopPage)) {
             return response()->json([
                 'success' => false,
-                'message' => 'Доступ к операциям с категориями запрещен. Необходим доступ к разделу shop.'
+                'message' => 'Доступ к операциям с категориями запрещен. Необходим доступ к разделу shop.',
             ], 403);
         }
 
@@ -63,7 +63,7 @@ class CheckShopAccess
 
         // Проверяем роли пользователя
         $userRoles = $user->roles;
-        
+
         foreach ($userRoles as $role) {
             if ($shopPage->roles()->where('role_id', $role->id)->exists()) {
                 return true;

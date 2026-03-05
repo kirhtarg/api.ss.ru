@@ -3,18 +3,16 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\ConstructorBlockSetting;
 use App\Models\ConstructorPage;
 use App\Models\ConstructorPageVersion;
-use App\Models\ConstructorBlockSetting;
 use App\Models\PageSettingsTemplate;
-use App\Models\Slider;
-use App\Models\ShopGood;
-use App\Models\ShopCategory;
-use App\Models\ShopBrand;
 use App\Models\ShopBonusSettings;
+use App\Models\ShopBrand;
+use App\Models\ShopCategory;
+use App\Models\Slider;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Str;
 
 class PageBuilderController extends Controller
 {
@@ -30,9 +28,9 @@ class PageBuilderController extends Controller
                     try {
                         $versionsCount = ConstructorPageVersion::where('page_id', $page->id)->count();
                     } catch (\Exception $e) {
-                        \Log::error('Error counting versions for page ' . $page->id, [
+                        \Log::error('Error counting versions for page '.$page->id, [
                             'error' => $e->getMessage(),
-                            'page_id' => $page->id
+                            'page_id' => $page->id,
                         ]);
                         $versionsCount = 0;
                     }
@@ -45,18 +43,18 @@ class PageBuilderController extends Controller
                         'published_at' => $page->published_at,
                         'updated_at' => $page->updated_at,
                         'blocks_count' => $this->countBlocks($page->structure),
-                        'versions_count' => $versionsCount
+                        'versions_count' => $versionsCount,
                     ];
                 });
 
             return response()->json([
                 'success' => true,
-                'data' => $pages
+                'data' => $pages,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения страниц: ' . $e->getMessage()
+                'message' => 'Ошибка получения страниц: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -71,12 +69,12 @@ class PageBuilderController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $page
+                'data' => $page,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Страница не найдена'
+                'message' => 'Страница не найдена',
             ], 404);
         }
     }
@@ -94,7 +92,7 @@ class PageBuilderController extends Controller
             'headers' => $request->headers->all(),
             'user_id' => auth()->id(),
             'user' => auth()->user() ? auth()->user()->toArray() : null,
-            'auth_header' => $request->header('Authorization')
+            'auth_header' => $request->header('Authorization'),
         ]);
 
         $validator = Validator::make($request->all(), [
@@ -103,7 +101,7 @@ class PageBuilderController extends Controller
             'meta_title' => 'nullable|string|max:255',
             'meta_description' => 'nullable|string|max:500',
             'css_class' => 'nullable|string|max:255',
-            'structure' => 'nullable|array' // Temporarily make structure optional for testing
+            'structure' => 'nullable|array', // Temporarily make structure optional for testing
         ]);
 
         if ($validator->fails()) {
@@ -111,12 +109,13 @@ class PageBuilderController extends Controller
                 'request_all' => $request->all(),
                 'request_has_structure' => $request->has('structure'),
                 'structure_value' => $request->input('structure'),
-                'errors' => $validator->errors()->toArray()
+                'errors' => $validator->errors()->toArray(),
             ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -126,12 +125,12 @@ class PageBuilderController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $page,
-                'message' => 'Страница создана'
+                'message' => 'Страница создана',
             ], 201);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания страницы: ' . $e->getMessage()
+                'message' => 'Ошибка создания страницы: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -145,46 +144,46 @@ class PageBuilderController extends Controller
 
         $validator = Validator::make($request->all(), [
             'title' => 'required|string|max:255',
-            'slug' => 'required|string|max:255|unique:constructor_pages,slug,' . $id,
+            'slug' => 'required|string|max:255|unique:constructor_pages,slug,'.$id,
             'meta_title' => 'nullable|string|max:255',
             'meta_description' => 'nullable|string|max:500',
             'css_class' => 'nullable|string|max:255',
             'structure' => 'required|array',
             'settings' => 'nullable|array',
-            'is_published' => 'boolean'
+            'is_published' => 'boolean',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
         try {
             $data = $request->all();
-            
+
             // Обрабатываем settings - удаляем background_color если он null
             if (isset($data['settings']) && is_array($data['settings'])) {
-                if (isset($data['settings']['background_color']) && 
-                    ($data['settings']['background_color'] === null || 
+                if (isset($data['settings']['background_color']) &&
+                    ($data['settings']['background_color'] === null ||
                      $data['settings']['background_color'] === '')) {
                     unset($data['settings']['background_color']);
                 }
             }
-            
+
             $page->update($data);
 
             return response()->json([
                 'success' => true,
                 'data' => $page,
-                'message' => 'Страница обновлена'
+                'message' => 'Страница обновлена',
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления страницы: ' . $e->getMessage()
+                'message' => 'Ошибка обновления страницы: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -201,7 +200,7 @@ class PageBuilderController extends Controller
             if ($page->is_published) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Нельзя удалить опубликованную страницу'
+                    'message' => 'Нельзя удалить опубликованную страницу',
                 ], 422);
             }
 
@@ -209,12 +208,12 @@ class PageBuilderController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Страница удалена'
+                'message' => 'Страница удалена',
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления страницы: ' . $e->getMessage()
+                'message' => 'Ошибка удаления страницы: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -230,7 +229,7 @@ class PageBuilderController extends Controller
             if (empty($page->slug)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Нельзя опубликовать страницу без URL'
+                    'message' => 'Нельзя опубликовать страницу без URL',
                 ], 422);
             }
 
@@ -240,12 +239,12 @@ class PageBuilderController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $page,
-                'message' => 'Страница опубликована'
+                'message' => 'Страница опубликована',
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка публикации страницы: ' . $e->getMessage()
+                'message' => 'Ошибка публикации страницы: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -264,12 +263,12 @@ class PageBuilderController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $page,
-                'message' => 'Страница снята с публикации'
+                'message' => 'Страница снята с публикации',
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка снятия с публикации: ' . $e->getMessage()
+                'message' => 'Ошибка снятия с публикации: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -283,24 +282,24 @@ class PageBuilderController extends Controller
             $originalPage = ConstructorPage::findOrFail($id);
 
             $duplicatedPage = ConstructorPage::create([
-                'title' => $originalPage->title . ' (Копия)',
-                'slug' => $this->generateUniqueSlug($originalPage->slug . '-copy'),
+                'title' => $originalPage->title.' (Копия)',
+                'slug' => $this->generateUniqueSlug($originalPage->slug.'-copy'),
                 'meta_title' => $originalPage->meta_title,
                 'meta_description' => $originalPage->meta_description,
                 'css_class' => $originalPage->css_class,
                 'structure' => $originalPage->structure,
-                'is_published' => false
+                'is_published' => false,
             ]);
 
             return response()->json([
                 'success' => true,
                 'data' => $duplicatedPage,
-                'message' => 'Страница дублирована'
+                'message' => 'Страница дублирована',
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка дублирования страницы: ' . $e->getMessage()
+                'message' => 'Ошибка дублирования страницы: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -317,7 +316,7 @@ class PageBuilderController extends Controller
             'headers' => $request->headers->all(),
             'auth_header' => $request->header('Authorization'),
             'user_id' => auth()->id(),
-            'user' => auth()->user() ? auth()->user()->toArray() : null
+            'user' => auth()->user() ? auth()->user()->toArray() : null,
         ]);
 
         $slug = $request->query('slug');
@@ -327,19 +326,19 @@ class PageBuilderController extends Controller
             'slug' => $slug,
             'exclude_id' => $excludeId,
             'user_id' => auth()->id(),
-            'user_roles' => auth()->user() ? auth()->user()->roles->pluck('name')->toArray() : null
+            'user_roles' => auth()->user() ? auth()->user()->roles->pluck('name')->toArray() : null,
         ]);
 
         $isUnique = ConstructorPage::isSlugUnique($slug, $excludeId);
 
         \Log::info('PageBuilder checkSlug result', [
             'slug' => $slug,
-            'is_unique' => $isUnique
+            'is_unique' => $isUnique,
         ]);
 
         return response()->json([
             'success' => true,
-            'exists' => !$isUnique
+            'exists' => ! $isUnique,
         ]);
     }
 
@@ -353,12 +352,12 @@ class PageBuilderController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $blocks
+                'data' => $blocks,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения блоков: ' . $e->getMessage()
+                'message' => 'Ошибка получения блоков: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -389,18 +388,18 @@ class PageBuilderController extends Controller
                 default:
                     return response()->json([
                         'success' => false,
-                        'message' => 'Неизвестный тип данных'
+                        'message' => 'Неизвестный тип данных',
                     ], 400);
             }
 
             return response()->json([
                 'success' => true,
-                'data' => $data
+                'data' => $data,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения данных: ' . $e->getMessage()
+                'message' => 'Ошибка получения данных: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -410,7 +409,7 @@ class PageBuilderController extends Controller
      */
     private function countBlocks($structure)
     {
-        if (!$structure || !is_array($structure)) {
+        if (! $structure || ! is_array($structure)) {
             return 0;
         }
 
@@ -436,8 +435,8 @@ class PageBuilderController extends Controller
         $slug = $baseSlug;
         $counter = 1;
 
-        while (!ConstructorPage::isSlugUnique($slug)) {
-            $slug = $baseSlug . '-' . $counter;
+        while (! ConstructorPage::isSlugUnique($slug)) {
+            $slug = $baseSlug.'-'.$counter;
             $counter++;
         }
 
@@ -454,12 +453,12 @@ class PageBuilderController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $templates
+                'data' => $templates,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения шаблонов: ' . $e->getMessage()
+                'message' => 'Ошибка получения шаблонов: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -474,14 +473,14 @@ class PageBuilderController extends Controller
             'description' => 'nullable|string|max:1000',
             'settings' => 'required|array',
             'structure' => 'nullable|array',
-            'sort_order' => 'nullable|integer|min:0'
+            'sort_order' => 'nullable|integer|min:0',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -492,18 +491,18 @@ class PageBuilderController extends Controller
                 'settings' => $request->settings,
                 'structure' => $request->structure,
                 'sort_order' => $request->sort_order ?? 0,
-                'is_active' => true
+                'is_active' => true,
             ]);
 
             return response()->json([
                 'success' => true,
                 'data' => $template,
-                'message' => 'Шаблон сохранен'
+                'message' => 'Шаблон сохранен',
             ], 201);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка сохранения шаблона: ' . $e->getMessage()
+                'message' => 'Ошибка сохранения шаблона: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -518,12 +517,12 @@ class PageBuilderController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $template
+                'data' => $template,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Шаблон не найден'
+                'message' => 'Шаблон не найден',
             ], 404);
         }
     }
@@ -539,12 +538,12 @@ class PageBuilderController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Шаблон удален'
+                'message' => 'Шаблон удален',
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления шаблона: ' . $e->getMessage()
+                'message' => 'Ошибка удаления шаблона: '.$e->getMessage(),
             ], 500);
         }
     }

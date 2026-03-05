@@ -16,19 +16,19 @@ class ShopGoodProperty extends Model
         'good_id',
         'variation_id',
         'property_id',
-        'shop_property_value_id'
+        'shop_property_value_id',
     ];
 
     protected $casts = [
         'good_id' => 'integer',
         'variation_id' => 'integer',
         'property_id' => 'integer',
-        'shop_property_value_id' => 'integer'
+        'shop_property_value_id' => 'integer',
     ];
 
     protected $nullable = [
         'good_id',
-        'shop_property_value_id'
+        'shop_property_value_id',
     ];
 
     /**

@@ -3,7 +3,7 @@
 $logFile = 'storage/logs/laravel.log';
 $cleanLogFile = 'storage/logs/laravel_clean.log';
 
-if (!file_exists($logFile)) {
+if (! file_exists($logFile)) {
     echo "Log file not found\n";
     exit(1);
 }
@@ -27,5 +27,5 @@ foreach ($lines as $line) {
 
 file_put_contents($cleanLogFile, implode("\n", $cleanLines));
 echo "Clean log saved to: $cleanLogFile\n";
-echo "Original lines: " . count($lines) . "\n";
-echo "Clean lines: " . count($cleanLines) . "\n";
+echo 'Original lines: '.count($lines)."\n";
+echo 'Clean lines: '.count($cleanLines)."\n";

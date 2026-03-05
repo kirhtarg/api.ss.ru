@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Api\Public;
 use App\Http\Controllers\Controller;
 use App\Models\Contact;
 use App\Models\ContactAddress;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
 class ContactController extends Controller
@@ -19,18 +18,18 @@ class ContactController extends Controller
             $contact = Contact::with(['addresses', 'phones', 'socials'])
                 ->where('is_main', 1)
                 ->first();
-            
-            if (!$contact) {
+
+            if (! $contact) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Основные контакты не найдены'
+                    'message' => 'Основные контакты не найдены',
                 ], 404);
             }
-            
+
             // Получаем основные данные
             $mainAddress = $contact->mainAddress();
             $mainPhone = $contact->mainPhone();
-            
+
             // Формируем данные для накладной
             $contactData = [
                 'name' => $contact->name,
@@ -44,17 +43,17 @@ class ContactController extends Controller
                 'email' => null, // Email не хранится в таблице contacts
                 'legal_address' => $contact->legal_address,
             ];
-            
+
             return response()->json([
                 'success' => true,
-                'data' => $contactData
+                'data' => $contactData,
             ]);
-            
+
         } catch (\Exception $e) {
-            
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения контактов'
+                'message' => 'Ошибка получения контактов',
             ], 500);
         }
     }
@@ -68,18 +67,18 @@ class ContactController extends Controller
             $contact = Contact::with(['addresses', 'phones', 'socials.socialType'])
                 ->where('is_main', 1)
                 ->first();
-            
-            if (!$contact) {
+
+            if (! $contact) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Основные контакты не найдены'
+                    'message' => 'Основные контакты не найдены',
                 ], 404);
             }
-            
+
             // Получаем основные данные
             $mainAddress = $contact->mainAddress();
             $mainPhone = $contact->mainPhone();
-            
+
             // Формируем данные для заголовка в формате, ожидаемом frontend
             $headerData = [
                 'name' => $contact->name,
@@ -97,25 +96,25 @@ class ContactController extends Controller
                     'howtogo' => $mainAddress->howtogo,
                     'work_mode' => $mainAddress->work_mode,
                     'is_main' => $mainAddress->is_main,
-                    'contact_name' => $mainAddress->contact_name
+                    'contact_name' => $mainAddress->contact_name,
                 ] : null,
                 'main_phone' => $mainPhone ? [
                     'id' => $mainPhone->id,
                     'phone' => $mainPhone->phone_number,
                     'phone_number' => $mainPhone->phone_number,
                     'phone_name' => $mainPhone->phone_name,
-                    'is_main' => $mainPhone->is_main
+                    'is_main' => $mainPhone->is_main,
                 ] : null,
-                'phones' => $contact->phones->map(function($phone) {
+                'phones' => $contact->phones->map(function ($phone) {
                     return [
                         'id' => $phone->id,
                         'phone' => $phone->phone_number,
                         'phone_number' => $phone->phone_number,
                         'phone_name' => $phone->phone_name,
-                        'is_main' => $phone->is_main
+                        'is_main' => $phone->is_main,
                     ];
                 }),
-                'social_networks' => $contact->socials->map(function($social) {
+                'social_networks' => $contact->socials->map(function ($social) {
                     return [
                         'id' => $social->id,
                         'id_contact' => $social->id_contact,
@@ -124,22 +123,22 @@ class ContactController extends Controller
                         'social_type' => $social->socialType ? [
                             'id' => $social->socialType->id,
                             'social' => $social->socialType->social,
-                            'icon' => $social->socialType->icon
-                        ] : null
+                            'icon' => $social->socialType->icon,
+                        ] : null,
                     ];
-                })
+                }),
             ];
-            
+
             return response()->json([
                 'success' => true,
-                'data' => $headerData
+                'data' => $headerData,
             ]);
-            
+
         } catch (\Exception $e) {
-            
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения данных контактов'
+                'message' => 'Ошибка получения данных контактов',
             ], 500);
         }
     }
@@ -169,18 +168,18 @@ class ContactController extends Controller
                         'contact_name' => $address->contact->name ?? null,
                     ];
                 });
-            
+
             return response()->json([
                 'success' => true,
-                'data' => $addresses
+                'data' => $addresses,
             ]);
-            
+
         } catch (\Exception $e) {
-            Log::error('Ошибка получения адресов самовывоза: ' . $e->getMessage());
-            
+            Log::error('Ошибка получения адресов самовывоза: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения адресов самовывоза'
+                'message' => 'Ошибка получения адресов самовывоза',
             ], 500);
         }
     }

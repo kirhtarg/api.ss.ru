@@ -57,99 +57,105 @@ return Application::configure(basePath: dirname(__DIR__))
                 ];
 
                 $allowOrigin = in_array($origin, $allowedOrigins) ? $origin : '*';
-                
+
                 // Функция для добавления CORS заголовков
-                $addCorsHeaders = function($response) use ($allowOrigin) {
+                $addCorsHeaders = function ($response) use ($allowOrigin) {
                     $response->headers->set('Access-Control-Allow-Origin', $allowOrigin);
                     $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
                     $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN, X-Session-ID');
                     $response->headers->set('Access-Control-Allow-Credentials', 'true');
                     $response->headers->set('Access-Control-Max-Age', '86400');
+
                     return $response;
                 };
-                
+
                 // Обработка ошибок авторизации
                 if ($e instanceof \Illuminate\Auth\AuthenticationException) {
                     $authHeader = $request->header('Authorization');
                     $bearerToken = $request->bearerToken();
-                    
+
                     \Illuminate\Support\Facades\Log::info('Global exception handler: AuthenticationException caught', [
                         'message' => $e->getMessage(),
                         'url' => $request->fullUrl(),
                         'method' => $request->method(),
                         'has_auth_header' => $authHeader ? true : false,
-                        'auth_header_preview' => $authHeader ? substr($authHeader, 0, 20) . '...' : null,
+                        'auth_header_preview' => $authHeader ? substr($authHeader, 0, 20).'...' : null,
                         'has_bearer_token' => $bearerToken ? true : false,
                         'bearer_token_length' => $bearerToken ? strlen($bearerToken) : 0,
-                        'bearer_token_preview' => $bearerToken ? substr($bearerToken, 0, 20) . '...' : null,
-                        'headers' => $request->headers->all()
+                        'bearer_token_preview' => $bearerToken ? substr($bearerToken, 0, 20).'...' : null,
+                        'headers' => $request->headers->all(),
                     ]);
                     $response = response()->json([
                         'success' => false,
                         'message' => 'Не авторизован',
-                        'error' => 'Unauthenticated.'
+                        'error' => 'Unauthenticated.',
                     ], 401);
+
                     return $addCorsHeaders($response);
                 }
-                
+
                 // Обработка ошибок валидации
                 if ($e instanceof \Illuminate\Validation\ValidationException) {
                     $response = response()->json([
                         'success' => false,
                         'message' => 'Ошибка валидации',
                         'error' => $e->getMessage(),
-                        'errors' => $e->errors()
+                        'errors' => $e->errors(),
                     ], 422);
+
                     return $addCorsHeaders($response);
                 }
-                
+
                 // Обработка HTTP исключений (404, 403 и т.д.)
                 if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpException) {
                     $statusCode = $e->getStatusCode();
                     $message = $e->getMessage() ?: 'Ошибка запроса';
-                    
+
                     // Для ошибок авторизации возвращаем 401
                     if ($statusCode === 401 || $statusCode === 403) {
                         \Illuminate\Support\Facades\Log::info('Global exception handler: HttpException with 401/403', [
                             'status_code' => $statusCode,
                             'message' => $message,
-                            'url' => $request->fullUrl()
+                            'url' => $request->fullUrl(),
                         ]);
                         $response = response()->json([
                             'success' => false,
                             'message' => 'Не авторизован',
-                            'error' => 'Unauthenticated.'
+                            'error' => 'Unauthenticated.',
                         ], 401);
+
                         return $addCorsHeaders($response);
                     }
-                    
+
                     $response = response()->json([
                         'success' => false,
                         'message' => $message,
-                        'error' => $message
+                        'error' => $message,
                     ], $statusCode);
+
                     return $addCorsHeaders($response);
                 }
-                
+
                 // Логируем все остальные исключения для отладки
                 \Illuminate\Support\Facades\Log::error('Global exception handler: Unhandled exception', [
                     'exception' => get_class($e),
                     'message' => $e->getMessage(),
                     'url' => $request->fullUrl(),
-                    'trace' => $e->getTraceAsString()
+                    'trace' => $e->getTraceAsString(),
                 ]);
-                
+
                 $response = response()->json([
                     'success' => false,
                     'message' => 'Внутренняя ошибка сервера',
-                    'error' => $e->getMessage()
+                    'error' => $e->getMessage(),
                 ], 500);
+
                 return $addCorsHeaders($response);
             }
 
             // Обработка ошибок для веб-запросов (не API)
             $statusCode = 500;
-            
+
             // Определяем статус код ошибки
             if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpException) {
                 $statusCode = $e->getStatusCode();
@@ -159,16 +165,16 @@ return Application::configure(basePath: dirname(__DIR__))
                 // Ошибки валидации обычно 422, но можем обработать как 400
                 $statusCode = 422;
             }
-            
+
             // Получаем настройки сайта для страниц ошибок
             $siteLogo = null;
             $mainSiteUrl = null;
-            
+
             try {
                 $settings = \App\Models\Setting::whereIn('key', ['site_logo', 'main_site'])
                     ->get()
                     ->keyBy('key');
-                
+
                 // Обрабатываем логотип
                 if ($settings->has('site_logo') && $settings['site_logo']->value) {
                     $logoPath = $settings['site_logo']->value;
@@ -180,13 +186,13 @@ return Application::configure(basePath: dirname(__DIR__))
                         $logoPath = str_replace('\\', '/', $logoPath);
                         $logoPath = ltrim($logoPath, '/');
                         if (str_starts_with($logoPath, 'images/')) {
-                            $siteLogo = '/' . $logoPath;
+                            $siteLogo = '/'.$logoPath;
                         } else {
-                            $siteLogo = '/images/' . $logoPath;
+                            $siteLogo = '/images/'.$logoPath;
                         }
                     }
                 }
-                
+
                 // Получаем URL главной страницы
                 if ($settings->has('main_site') && $settings['main_site']->value) {
                     $mainSiteUrl = $settings['main_site']->value;
@@ -199,14 +205,14 @@ return Application::configure(basePath: dirname(__DIR__))
             if ($statusCode === 400 && view()->exists('errors.400')) {
                 return response()->view('errors.400', [
                     'siteLogo' => $siteLogo,
-                    'mainSiteUrl' => $mainSiteUrl
+                    'mainSiteUrl' => $mainSiteUrl,
                 ], 400);
             }
-            
+
             if ($statusCode === 500 && view()->exists('errors.500')) {
                 return response()->view('errors.500', [
                     'siteLogo' => $siteLogo,
-                    'mainSiteUrl' => $mainSiteUrl
+                    'mainSiteUrl' => $mainSiteUrl,
                 ], 500);
             }
         });

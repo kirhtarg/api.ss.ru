@@ -19,14 +19,14 @@ class ConstructorBlockSetting extends Model
         'default_settings',
         'available_settings',
         'is_active',
-        'sort_order'
+        'sort_order',
     ];
 
     protected $casts = [
         'default_settings' => 'array',
         'available_settings' => 'array',
         'is_active' => 'boolean',
-        'sort_order' => 'integer'
+        'sort_order' => 'integer',
     ];
 
     /**

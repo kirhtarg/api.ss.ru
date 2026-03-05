@@ -4,8 +4,8 @@ namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
 use App\Models\CookieConsent;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
@@ -18,14 +18,14 @@ class CookieConsentController extends Controller
     {
         $sessionId = $request->cookie('cookie_consent_session') ?? Str::uuid()->toString();
         $ipAddress = $request->ip();
-        
+
         // Проверяем согласие по session_id ИЛИ по IP-адресу
-        $hasConsent = CookieConsent::hasActiveConsent($sessionId) || 
+        $hasConsent = CookieConsent::hasActiveConsent($sessionId) ||
                      CookieConsent::hasActiveConsentByIp($ipAddress);
-        
+
         if ($hasConsent) {
             // Сначала пытаемся найти по session_id, затем по IP
-            $consent = CookieConsent::getActiveConsent($sessionId) ?? 
+            $consent = CookieConsent::getActiveConsent($sessionId) ??
                       CookieConsent::getActiveConsentByIp($ipAddress);
             $allowedTypes = $consent->getAllowedCookieTypes();
         } else {
@@ -62,11 +62,11 @@ class CookieConsentController extends Controller
 
         $sessionId = $request->cookie('cookie_consent_session') ?? Str::uuid()->toString();
         $ipAddress = $request->ip();
-        
+
         // Проверяем, есть ли уже активное согласие по session_id или IP
-        $existingConsent = CookieConsent::getActiveConsent($sessionId) ?? 
+        $existingConsent = CookieConsent::getActiveConsent($sessionId) ??
                           CookieConsent::getActiveConsentByIp($ipAddress);
-        
+
         if ($existingConsent) {
             // Обновляем существующее согласие
             $consent = $existingConsent->updateConsent($request->all());
@@ -100,8 +100,8 @@ class CookieConsentController extends Controller
     public function revokeConsent(Request $request): JsonResponse
     {
         $sessionId = $request->cookie('cookie_consent_session');
-        
-        if (!$sessionId) {
+
+        if (! $sessionId) {
             return response()->json([
                 'success' => false,
                 'message' => 'Сессия не найдена',
@@ -109,8 +109,8 @@ class CookieConsentController extends Controller
         }
 
         $consent = CookieConsent::getActiveConsent($sessionId);
-        
-        if (!$consent) {
+
+        if (! $consent) {
             return response()->json([
                 'success' => false,
                 'message' => 'Активное согласие не найдено',

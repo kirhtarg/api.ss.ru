@@ -5,14 +5,15 @@ namespace App\Jobs;
 use App\Models\ExportFile;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 class AutoFinalizeExportsJob implements ShouldQueue
 {
     use Queueable;
 
     public $timeout = 120; // короткий проход
+
     public $tries = 1;
 
     /**
@@ -23,23 +24,25 @@ class AutoFinalizeExportsJob implements ShouldQueue
         try {
             $stucks = ExportFile::query()
                 ->where('status', 'processing')
-                ->where(function($q) {
+                ->where(function ($q) {
                     $q->whereRaw('JSON_EXTRACT(export_config, "$.total_rows") IS NOT NULL')
-                      ->whereRaw('JSON_EXTRACT(export_config, "$.progress_rows") IS NOT NULL');
+                        ->whereRaw('JSON_EXTRACT(export_config, "$.progress_rows") IS NOT NULL');
                 })
                 ->get();
 
             foreach ($stucks as $file) {
                 $arr = $file->toArray();
                 $conf = $arr['export_config'] ?? [];
-                if (!is_array($conf)) $conf = [];
-                $progress = (int)($conf['progress_rows'] ?? 0);
-                $total = (int)($conf['total_rows'] ?? ($arr['total_rows'] ?? 0));
+                if (! is_array($conf)) {
+                    $conf = [];
+                }
+                $progress = (int) ($conf['progress_rows'] ?? 0);
+                $total = (int) ($conf['total_rows'] ?? ($arr['total_rows'] ?? 0));
 
                 if ($total > 0 && $progress >= $total) {
-                    $expectedPath = 'modex/' . ($arr['filename'] ?? '');
+                    $expectedPath = 'modex/'.($arr['filename'] ?? '');
                     $exists = $expectedPath ? Storage::exists($expectedPath) : false;
-                    if (!$exists) {
+                    if (! $exists) {
                         $temp = $conf['temp_output_path'] ?? null;
                         if ($temp && Storage::exists($temp)) {
                             try {
@@ -60,7 +63,7 @@ class AutoFinalizeExportsJob implements ShouldQueue
                                 'file_path' => $expectedPath,
                                 'file_size' => $size,
                                 'total_rows' => $total,
-                                'error_message' => null
+                                'error_message' => null,
                             ]);
                         } catch (\Throwable $e) {
                             Log::error('AutoFinalize update failed', ['file_id' => $file->id, 'error' => $e->getMessage()]);
@@ -75,6 +78,7 @@ class AutoFinalizeExportsJob implements ShouldQueue
         // Само-переназначение через 60 секунд
         try {
             self::dispatch()->delay(now()->addSeconds(60));
-        } catch (\Throwable $e) {}
+        } catch (\Throwable $e) {
+        }
     }
 }

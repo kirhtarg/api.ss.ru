@@ -4,8 +4,8 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopLabel;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
 class ShopLabelsController extends Controller
@@ -26,7 +26,7 @@ class ShopLabelsController extends Controller
         // Сортировка
         $sortBy = $request->get('sort_by', 'sort_order');
         $sortDirection = $request->get('sort_direction', 'asc');
-        
+
         if (in_array($sortBy, ['name', 'created_at', 'sort_order'])) {
             $query->orderBy($sortBy, $sortDirection);
         }
@@ -40,8 +40,8 @@ class ShopLabelsController extends Controller
                 'current_page' => $labels->currentPage(),
                 'last_page' => $labels->lastPage(),
                 'per_page' => $labels->perPage(),
-                'total' => $labels->total()
-            ]
+                'total' => $labels->total(),
+            ],
         ]);
     }
 
@@ -54,7 +54,7 @@ class ShopLabelsController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $label
+            'data' => $label,
         ]);
     }
 
@@ -66,14 +66,14 @@ class ShopLabelsController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'color' => 'nullable|string|max:7|regex:/^#[0-9A-Fa-f]{6}$/',
-            'sort_order' => 'integer'
+            'sort_order' => 'integer',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -82,7 +82,7 @@ class ShopLabelsController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Лейбл успешно создан',
-            'data' => $label
+            'data' => $label,
         ], 201);
     }
 
@@ -96,14 +96,14 @@ class ShopLabelsController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'color' => 'nullable|string|max:7|regex:/^#[0-9A-Fa-f]{6}$/',
-            'sort_order' => 'integer'
+            'sort_order' => 'integer',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -112,7 +112,7 @@ class ShopLabelsController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Лейбл успешно обновлен',
-            'data' => $label
+            'data' => $label,
         ]);
     }
 
@@ -126,7 +126,7 @@ class ShopLabelsController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Лейбл успешно удален'
+            'message' => 'Лейбл успешно удален',
         ]);
     }
 
@@ -139,8 +139,7 @@ class ShopLabelsController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $labels
+            'data' => $labels,
         ]);
     }
 }
-

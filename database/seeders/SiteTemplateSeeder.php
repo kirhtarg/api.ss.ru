@@ -49,17 +49,3 @@ class SiteTemplateSeeder extends Seeder
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-

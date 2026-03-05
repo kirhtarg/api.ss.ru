@@ -15,11 +15,11 @@ class SiteTextblock extends Model
         'text_color',
         'link',
         'link_type',
-        'is_active'
+        'is_active',
     ];
 
     protected $casts = [
-        'is_active' => 'boolean'
+        'is_active' => 'boolean',
     ];
 
     /**

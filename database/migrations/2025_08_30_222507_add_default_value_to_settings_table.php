@@ -15,7 +15,7 @@ return new class extends Migration
         if (Schema::hasTable('settings')) {
             Schema::table('settings', function (Blueprint $table) {
                 // Проверяем, существует ли колонка default_value
-                if (!Schema::hasColumn('settings', 'default_value')) {
+                if (! Schema::hasColumn('settings', 'default_value')) {
                     $table->text('default_value')->nullable()->after('value')->comment('Значение по умолчанию для настройки');
                 }
             });
@@ -38,4 +38,3 @@ return new class extends Migration
         }
     }
 };
-

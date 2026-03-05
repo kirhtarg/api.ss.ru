@@ -3,10 +3,10 @@
 namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
-use App\Services\TestBankService;
 use App\Models\ShopPaymentTransaction;
-use Illuminate\Http\Request;
+use App\Services\TestBankService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
 class TestBankController extends Controller
@@ -29,22 +29,22 @@ class TestBankController extends Controller
                 'card_data.expiry' => 'required|string',
                 'card_data.cvv' => 'required|string',
                 'card_data.name' => 'required|string',
-                'card_data.email' => 'nullable|email'
+                'card_data.email' => 'nullable|email',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
             // Валидация карты
-            if (!$this->testBankService->validateCard($request->get('card_data'))) {
+            if (! $this->testBankService->validateCard($request->get('card_data'))) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Неверный номер карты'
+                    'message' => 'Неверный номер карты',
                 ], 400);
             }
 
@@ -52,8 +52,8 @@ class TestBankController extends Controller
                 'order_id' => $request->get('order_id'),
                 'amount' => $request->get('amount'),
                 'description' => "Оплата заказа #{$request->get('order_id')}",
-                'return_url' => config('app.url') . '/order-success',
-                'webhook_url' => config('app.url') . '/api/webhooks/testbank'
+                'return_url' => config('app.url').'/order-success',
+                'webhook_url' => config('app.url').'/api/webhooks/testbank',
             ];
 
             $payment = $this->testBankService->createPayment($orderData, $request->get('card_data'));
@@ -66,7 +66,7 @@ class TestBankController extends Controller
                 'amount' => $request->get('amount'),
                 'transaction_id' => $payment['transaction_id'] ?? null,
                 'request_data' => $request->all(),
-                'response_data' => $payment
+                'response_data' => $payment,
             ]);
 
             return response()->json([
@@ -74,14 +74,14 @@ class TestBankController extends Controller
                 'data' => [
                     'transaction_id' => $transaction->id,
                     'payment_id' => $payment['payment_id'] ?? null,
-                    'status' => $payment['status'] ?? 'pending'
-                ]
+                    'status' => $payment['status'] ?? 'pending',
+                ],
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage()
+                'message' => $e->getMessage(),
             ], 500);
         }
     }
@@ -105,14 +105,14 @@ class TestBankController extends Controller
                 'success' => true,
                 'data' => [
                     'status' => $status['status'],
-                    'transaction_id' => $transaction->transaction_id
-                ]
+                    'transaction_id' => $transaction->transaction_id,
+                ],
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage()
+                'message' => $e->getMessage(),
             ], 500);
         }
     }
@@ -123,13 +123,13 @@ class TestBankController extends Controller
             $data = $request->all();
             $transactionId = $data['transaction_id'] ?? null;
 
-            if (!$transactionId) {
+            if (! $transactionId) {
                 return response()->json(['success' => false, 'message' => 'Transaction ID required'], 400);
             }
 
             $transaction = ShopPaymentTransaction::where('transaction_id', $transactionId)->first();
-            
-            if (!$transaction) {
+
+            if (! $transaction) {
                 return response()->json(['success' => false, 'message' => 'Transaction not found'], 404);
             }
 
@@ -143,7 +143,8 @@ class TestBankController extends Controller
             return response()->json(['success' => true]);
 
         } catch (\Exception $e) {
-            Log::error('TestBank webhook error: ' . $e->getMessage());
+            Log::error('TestBank webhook error: '.$e->getMessage());
+
             return response()->json(['success' => false, 'message' => 'Webhook error'], 500);
         }
     }

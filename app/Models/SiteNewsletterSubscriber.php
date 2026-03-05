@@ -15,13 +15,13 @@ class SiteNewsletterSubscriber extends Model
         'subscribed_at',
         'unsubscribed_at',
         'ip_address',
-        'user_agent'
+        'user_agent',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
         'subscribed_at' => 'datetime',
-        'unsubscribed_at' => 'datetime'
+        'unsubscribed_at' => 'datetime',
     ];
 
     /**

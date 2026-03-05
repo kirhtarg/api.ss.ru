@@ -13,12 +13,12 @@ class ImportTemplate extends Model
         'name',
         'description',
         'settings',
-        'is_default'
+        'is_default',
     ];
 
     protected $casts = [
         'settings' => 'array',
-        'is_default' => 'boolean'
+        'is_default' => 'boolean',
     ];
 
     /**
@@ -36,7 +36,7 @@ class ImportTemplate extends Model
     {
         // Снимаем флаг с других шаблонов
         static::where('is_default', true)->update(['is_default' => false]);
-        
+
         // Устанавливаем флаг для текущего
         $this->update(['is_default' => true]);
     }
@@ -47,11 +47,11 @@ class ImportTemplate extends Model
     public static function getOthers($excludeId = null)
     {
         $query = static::query();
-        
+
         if ($excludeId) {
             $query->where('id', '!=', $excludeId);
         }
-        
+
         return $query->orderBy('name')->get();
     }
 

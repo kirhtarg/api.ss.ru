@@ -3,16 +3,16 @@
 namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 
 class FileProxyController extends Controller
 {
     public function get(Request $request, $filename)
     {
-        $filePath = 'public/exports/' . $filename;
+        $filePath = 'public/exports/'.$filename;
 
-        if (!Storage::exists($filePath)) {
+        if (! Storage::exists($filePath)) {
             return response()->json(['error' => 'File not found.'], 404);
         }
 

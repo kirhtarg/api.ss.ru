@@ -19,12 +19,12 @@ class ShopYMLFeedAutoParsing extends Model
         'auth_password',
         'field_mapping',
         'parse_options',
-        'settings'
+        'settings',
     ];
 
     protected $casts = [
         'field_mapping' => 'array',
         'parse_options' => 'array',
-        'settings' => 'array'
+        'settings' => 'array',
     ];
 }

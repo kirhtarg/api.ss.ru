@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Shop\Property as ShopProperty;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -9,7 +10,6 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Str;
-use App\Models\Shop\Property as ShopProperty;
 
 class ShopGood extends Model
 {
@@ -44,7 +44,7 @@ class ShopGood extends Model
         'is_sale',
         'is_preorder',
         'is_show',
-        'sort_order'
+        'sort_order',
     ];
 
     protected $casts = [
@@ -67,7 +67,7 @@ class ShopGood extends Model
         'is_sale' => 'boolean',
         'is_preorder' => 'boolean',
         'is_show' => 'boolean',
-        'sort_order' => 'integer'
+        'sort_order' => 'integer',
     ];
 
     protected static function boot()
@@ -118,7 +118,6 @@ class ShopGood extends Model
     {
         return $this->belongsTo(ShopLabel::class, 'label_id');
     }
-
 
     /**
      * Свойства товара
@@ -171,7 +170,6 @@ class ShopGood extends Model
     {
         return $this->hasMany(ShopGoodVideo::class, 'good_id');
     }
-
 
     /**
      * Остатки товара
@@ -252,10 +250,10 @@ class ShopGood extends Model
     {
         return $query->where(function ($q) use ($search) {
             $q->where('name', 'like', "%{$search}%")
-              ->orWhere('sku', 'like', "%{$search}%")
-              ->orWhere('slug', 'like', "%{$search}%")
-              ->orWhere('description', 'like', "%{$search}%")
-              ->orWhere('short_description', 'like', "%{$search}%");
+                ->orWhere('sku', 'like', "%{$search}%")
+                ->orWhere('slug', 'like', "%{$search}%")
+                ->orWhere('description', 'like', "%{$search}%")
+                ->orWhere('short_description', 'like', "%{$search}%");
         });
     }
 
@@ -265,9 +263,10 @@ class ShopGood extends Model
     public function scopeSearchNameSku($query, $search)
     {
         $searchLower = mb_strtolower($search);
+
         return $query->where(function ($q) use ($searchLower) {
             $q->whereRaw('LOWER(name) LIKE ?', ["%{$searchLower}%"])
-              ->orWhereRaw('LOWER(sku) LIKE ?', ["%{$searchLower}%"]);
+                ->orWhereRaw('LOWER(sku) LIKE ?', ["%{$searchLower}%"]);
         });
     }
 
@@ -277,32 +276,32 @@ class ShopGood extends Model
     public function scopePriceRange($query, $minPrice, $maxPrice)
     {
         // Преобразуем значения в числа, если они не null
-        $minPriceNum = ($minPrice !== null && $minPrice !== '') ? (float)$minPrice : null;
-        $maxPriceNum = ($maxPrice !== null && $maxPrice !== '') ? (float)$maxPrice : null;
-        
+        $minPriceNum = ($minPrice !== null && $minPrice !== '') ? (float) $minPrice : null;
+        $maxPriceNum = ($maxPrice !== null && $maxPrice !== '') ? (float) $maxPrice : null;
+
         // Если оба значения заданы и они одинаковы (с учетом погрешности), это точное значение
         if ($minPriceNum !== null && $maxPriceNum !== null && abs($minPriceNum - $maxPriceNum) < 0.01) {
-            $query->where(function($q) use ($maxPriceNum) {
+            $query->where(function ($q) use ($maxPriceNum) {
                 // Товары БЕЗ вариаций: проверяем цену основного товара
-                $q->where(function($noVarQ) use ($maxPriceNum) {
+                $q->where(function ($noVarQ) use ($maxPriceNum) {
                     $noVarQ->whereDoesntHave('variations')
-                           ->where('price', '=', $maxPriceNum);
+                        ->where('price', '=', $maxPriceNum);
                 })
                 // Товары С вариациями: проверяем ТОЛЬКО цену вариаций
-                ->orWhere(function($hasVarQ) use ($maxPriceNum) {
-                    $hasVarQ->whereHas('variations')
-                            ->whereHas('variations', function($varQ) use ($maxPriceNum) {
+                    ->orWhere(function ($hasVarQ) use ($maxPriceNum) {
+                        $hasVarQ->whereHas('variations')
+                            ->whereHas('variations', function ($varQ) use ($maxPriceNum) {
                                 $varQ->where('price', '=', $maxPriceNum);
                             });
-                });
+                    });
             });
         } else {
             // Применяем диапазон с учетом вариаций
-            $query->where(function($q) use ($minPriceNum, $maxPriceNum) {
+            $query->where(function ($q) use ($minPriceNum, $maxPriceNum) {
                 // Товары БЕЗ вариаций: проверяем цену основного товара
-                $q->where(function($noVarQ) use ($minPriceNum, $maxPriceNum) {
+                $q->where(function ($noVarQ) use ($minPriceNum, $maxPriceNum) {
                     $noVarQ->whereDoesntHave('variations');
-                    
+
                     if ($minPriceNum !== null && $maxPriceNum !== null) {
                         $noVarQ->whereBetween('price', [$minPriceNum, $maxPriceNum]);
                     } elseif ($minPriceNum !== null) {
@@ -312,9 +311,9 @@ class ShopGood extends Model
                     }
                 })
                 // Товары С вариациями: проверяем ТОЛЬКО цену вариаций
-                ->orWhere(function($hasVarQ) use ($minPriceNum, $maxPriceNum) {
-                    $hasVarQ->whereHas('variations')
-                            ->whereHas('variations', function($varQ) use ($minPriceNum, $maxPriceNum) {
+                    ->orWhere(function ($hasVarQ) use ($minPriceNum, $maxPriceNum) {
+                        $hasVarQ->whereHas('variations')
+                            ->whereHas('variations', function ($varQ) use ($minPriceNum, $maxPriceNum) {
                                 if ($minPriceNum !== null && $maxPriceNum !== null) {
                                     $varQ->whereBetween('price', [$minPriceNum, $maxPriceNum]);
                                 } elseif ($minPriceNum !== null) {
@@ -323,10 +322,10 @@ class ShopGood extends Model
                                     $varQ->where('price', '<=', $maxPriceNum);
                                 }
                             });
-                });
+                    });
             });
         }
-        
+
         return $query;
     }
 
@@ -389,7 +388,7 @@ class ShopGood extends Model
      */
     public function getDiscountPercentAttribute()
     {
-        if (!$this->sale_price || $this->sale_price >= $this->price) {
+        if (! $this->sale_price || $this->sale_price >= $this->price) {
             return 0;
         }
 
@@ -405,6 +404,7 @@ class ShopGood extends Model
         if (isset($this->attributes['length']) && $this->attributes['length'] !== null) {
             return $this->attributes['length'];
         }
+
         // Иначе возвращаем depth для обратной совместимости
         return $this->attributes['depth'] ?? null;
     }
@@ -415,10 +415,16 @@ class ShopGood extends Model
     public function getDimensionsAttribute()
     {
         $dimensions = [];
-        if ($this->width) $dimensions[] = $this->width . '×';
-        if ($this->height) $dimensions[] = $this->height . '×';
+        if ($this->width) {
+            $dimensions[] = $this->width.'×';
+        }
+        if ($this->height) {
+            $dimensions[] = $this->height.'×';
+        }
         $length = $this->length ?? $this->depth ?? null;
-        if ($length) $dimensions[] = $length;
+        if ($length) {
+            $dimensions[] = $length;
+        }
 
         return implode('', $dimensions) ?: null;
     }
@@ -436,7 +442,7 @@ class ShopGood extends Model
      */
     public function getMainImageAttribute()
     {
-        if (!$this->relationLoaded('images')) {
+        if (! $this->relationLoaded('images')) {
             return null;
         }
 
@@ -444,7 +450,7 @@ class ShopGood extends Model
         $mainImage = $this->images->where('is_main', true)->first();
 
         // Если главного нет, берем первое
-        if (!$mainImage) {
+        if (! $mainImage) {
             $mainImage = $this->images->sortBy('sort_order')->first();
         }
 

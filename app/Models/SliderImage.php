@@ -15,12 +15,12 @@ class SliderImage extends Model
         'link',
         'link_type',
         'is_active',
-        'sort_order'
+        'sort_order',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
-        'sort_order' => 'integer'
+        'sort_order' => 'integer',
     ];
 
     /**
@@ -53,6 +53,6 @@ class SliderImage extends Model
     public function getImageUrlAttribute(): string
     {
         // Возвращаем путь от корня фронтенда
-        return '/images/sliders/' . $this->image_path;
+        return '/images/sliders/'.$this->image_path;
     }
 }

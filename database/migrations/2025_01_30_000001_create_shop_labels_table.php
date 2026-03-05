@@ -17,7 +17,7 @@ return new class extends Migration
             $table->string('color', 7)->default('#3B82F6'); // HEX цвет
             $table->integer('sort_order')->default(0);
             $table->timestamps();
-            
+
             // Индексы для производительности
             $table->index('sort_order');
         });
@@ -31,4 +31,3 @@ return new class extends Migration
         Schema::dropIfExists('shop_labels');
     }
 };
-

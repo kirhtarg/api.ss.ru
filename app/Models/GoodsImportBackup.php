@@ -16,7 +16,7 @@ class GoodsImportBackup extends Model
         'records_count',
         'tables_backed_up',
         'status',
-        'error_message'
+        'error_message',
     ];
 
     protected $casts = [
@@ -24,7 +24,7 @@ class GoodsImportBackup extends Model
         'size' => 'integer',
         'records_count' => 'integer',
         'shop_id' => 'integer',
-        'user_id' => 'integer'
+        'user_id' => 'integer',
     ];
 
     /**
@@ -40,7 +40,7 @@ class GoodsImportBackup extends Model
      */
     public function getFilePath(): string
     {
-        return storage_path('app/backups/goods_import/' . $this->filename);
+        return storage_path('app/backups/goods_import/'.$this->filename);
     }
 
     /**
@@ -59,6 +59,7 @@ class GoodsImportBackup extends Model
         if ($this->fileExists()) {
             return unlink($this->getFilePath());
         }
+
         return true;
     }
 }

@@ -17,7 +17,7 @@ return new class extends Migration
             $table->string('title'); // Заголовок подраздела
             $table->integer('sort_order')->default(0);
             $table->timestamps();
-            
+
             // Индексы
             $table->index('extra_menu_id');
             $table->index('sort_order');
@@ -32,16 +32,3 @@ return new class extends Migration
         Schema::dropIfExists('shop_category_extra_menu_sections');
     }
 };
-
-
-
-
-
-
-
-
-
-
-
-
-

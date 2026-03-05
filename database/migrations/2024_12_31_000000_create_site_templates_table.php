@@ -22,7 +22,7 @@ return new class extends Migration
             $table->json('settings')->nullable()->comment('Настройки шаблона в JSON');
             $table->integer('sort_order')->default(0)->comment('Порядок сортировки');
             $table->timestamps();
-            
+
             // Внешние ключи (создаем только если таблицы существуют)
             if (Schema::hasTable('site_menus')) {
                 $table->foreign('menu_template_id')->references('id')->on('site_menus')->onDelete('set null');
@@ -30,7 +30,7 @@ return new class extends Migration
             if (Schema::hasTable('site_auth_blocks')) {
                 $table->foreign('auth_template_id')->references('id')->on('site_auth_blocks')->onDelete('set null');
             }
-            
+
             // Индексы
             $table->index(['is_active', 'sort_order']);
         });

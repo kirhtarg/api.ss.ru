@@ -17,7 +17,7 @@ class ShopTemplateController extends Controller
     {
         try {
             $templates = ShopTemplate::ordered()->get();
-            
+
             return response()->json([
                 'success' => true,
                 'data' => $templates->map(function ($template) {
@@ -31,13 +31,13 @@ class ShopTemplateController extends Controller
                         'created_at' => $template->created_at,
                         'updated_at' => $template->updated_at,
                     ];
-                })
+                }),
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения шаблонов магазина: ' . $e->getMessage()
+                'message' => 'Ошибка получения шаблонов магазина: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -54,19 +54,19 @@ class ShopTemplateController extends Controller
                 'folder_name' => 'required|string|max:255|unique:shop_templates,folder_name',
                 'is_active' => 'boolean',
                 'settings' => 'nullable|array',
-                'sort_order' => 'integer|min:0'
+                'sort_order' => 'integer|min:0',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
             $data = $request->only([
-                'name', 'description', 'folder_name', 'is_active', 'settings', 'sort_order'
+                'name', 'description', 'folder_name', 'is_active', 'settings', 'sort_order',
             ]);
 
             // Если активируем шаблон, деактивируем все остальные
@@ -79,13 +79,13 @@ class ShopTemplateController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Шаблон магазина создан',
-                'data' => $template->getTemplateData()
+                'data' => $template->getTemplateData(),
             ], 201);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания шаблона магазина: ' . $e->getMessage()
+                'message' => 'Ошибка создания шаблона магазина: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -98,13 +98,13 @@ class ShopTemplateController extends Controller
         try {
             return response()->json([
                 'success' => true,
-                'data' => $shopTemplate->getTemplateData()
+                'data' => $shopTemplate->getTemplateData(),
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения шаблона магазина: ' . $e->getMessage()
+                'message' => 'Ошибка получения шаблона магазина: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -118,22 +118,22 @@ class ShopTemplateController extends Controller
             $validator = Validator::make($request->all(), [
                 'name' => 'required|string|max:255',
                 'description' => 'nullable|string',
-                'folder_name' => 'required|string|max:255|unique:shop_templates,folder_name,' . $shopTemplate->id,
+                'folder_name' => 'required|string|max:255|unique:shop_templates,folder_name,'.$shopTemplate->id,
                 'is_active' => 'boolean',
                 'settings' => 'nullable|array',
-                'sort_order' => 'integer|min:0'
+                'sort_order' => 'integer|min:0',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
             $data = $request->only([
-                'name', 'description', 'folder_name', 'is_active', 'settings', 'sort_order'
+                'name', 'description', 'folder_name', 'is_active', 'settings', 'sort_order',
             ]);
 
             // Если активируем шаблон, деактивируем все остальные
@@ -146,13 +146,13 @@ class ShopTemplateController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Шаблон магазина обновлен',
-                'data' => $shopTemplate->getTemplateData()
+                'data' => $shopTemplate->getTemplateData(),
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления шаблона магазина: ' . $e->getMessage()
+                'message' => 'Ошибка обновления шаблона магазина: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -167,7 +167,7 @@ class ShopTemplateController extends Controller
             if ($shopTemplate->is_active) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Нельзя удалить активный шаблон'
+                    'message' => 'Нельзя удалить активный шаблон',
                 ], 422);
             }
 
@@ -175,13 +175,13 @@ class ShopTemplateController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Шаблон магазина удален'
+                'message' => 'Шаблон магазина удален',
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления шаблона магазина: ' . $e->getMessage()
+                'message' => 'Ошибка удаления шаблона магазина: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -196,13 +196,13 @@ class ShopTemplateController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Шаблон магазина активирован'
+                'message' => 'Шаблон магазина активирован',
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка активации шаблона магазина: ' . $e->getMessage()
+                'message' => 'Ошибка активации шаблона магазина: '.$e->getMessage(),
             ], 500);
         }
     }

@@ -3,12 +3,13 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 
 class TestBankService
 {
     private $apiUrl;
+
     private $apiKey;
+
     private $merchantId;
 
     public function __construct()
@@ -32,25 +33,25 @@ class TestBankService
             'cardholder_name' => $cardData['name'],
             'email' => $cardData['email'] ?? null,
             'return_url' => $orderData['return_url'],
-            'webhook_url' => $orderData['webhook_url']
+            'webhook_url' => $orderData['webhook_url'],
         ];
 
         $response = Http::withHeaders([
             'Authorization' => "Bearer {$this->apiKey}",
-            'Content-Type' => 'application/json'
+            'Content-Type' => 'application/json',
         ])->post("{$this->apiUrl}/payments", $data);
 
         if ($response->successful()) {
             return $response->json();
         }
 
-        throw new \Exception('Ошибка создания платежа: ' . $response->body());
+        throw new \Exception('Ошибка создания платежа: '.$response->body());
     }
 
     public function getPaymentStatus($paymentId)
     {
         $response = Http::withHeaders([
-            'Authorization' => "Bearer {$this->apiKey}"
+            'Authorization' => "Bearer {$this->apiKey}",
         ])->get("{$this->apiUrl}/payments/{$paymentId}");
 
         if ($response->successful()) {
@@ -69,7 +70,7 @@ class TestBankService
 
         $response = Http::withHeaders([
             'Authorization' => "Bearer {$this->apiKey}",
-            'Content-Type' => 'application/json'
+            'Content-Type' => 'application/json',
         ])->post("{$this->apiUrl}/refunds", $data);
 
         if ($response->successful()) {
@@ -83,24 +84,24 @@ class TestBankService
     {
         // Валидация номера карты по алгоритму Луна
         $number = preg_replace('/\D/', '', $cardData['number']);
-        
+
         if (strlen($number) < 13 || strlen($number) > 19) {
             return false;
         }
 
         $sum = 0;
         $length = strlen($number);
-        
+
         for ($i = 0; $i < $length; $i++) {
             $digit = (int) $number[$length - $i - 1];
-            
+
             if ($i % 2 === 1) {
                 $digit *= 2;
                 if ($digit > 9) {
                     $digit -= 9;
                 }
             }
-            
+
             $sum += $digit;
         }
 

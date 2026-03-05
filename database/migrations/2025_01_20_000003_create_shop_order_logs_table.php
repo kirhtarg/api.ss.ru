@@ -22,7 +22,7 @@ return new class extends Migration
             $table->foreignId('user_id')->nullable()->constrained('users')->onDelete('set null'); // ID пользователя (админа)
             $table->string('user_name')->nullable(); // Имя пользователя для отображения
             $table->timestamp('created_at')->nullable();
-            
+
             // Индексы
             $table->index(['order_id', 'created_at']);
         });
@@ -36,4 +36,3 @@ return new class extends Migration
         Schema::dropIfExists('shop_order_logs');
     }
 };
-

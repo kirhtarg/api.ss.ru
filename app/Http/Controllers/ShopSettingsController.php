@@ -2,9 +2,7 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 
 class ShopSettingsController extends Controller
 {
@@ -23,22 +21,22 @@ class ShopSettingsController extends Controller
             $bonusesAtReg = DB::table('settings')
                 ->where('key', 'bonuses_at_reg')
                 ->value('value');
-            
+
             if ($bonusesAtReg !== null) {
                 $settings['bonuses_at_reg'] = $bonusesAtReg;
             }
 
             return response()->json([
                 'success' => true,
-                'data' => $settings
+                'data' => $settings,
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('Ошибка получения настроек магазина: ' . $e->getMessage());
-            
+            \Log::error('Ошибка получения настроек магазина: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения настроек'
+                'message' => 'Ошибка получения настроек',
             ], 500);
         }
     }
@@ -57,7 +55,7 @@ class ShopSettingsController extends Controller
             if ($setting === null) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Настройка не найдена'
+                    'message' => 'Настройка не найдена',
                 ], 404);
             }
 
@@ -65,16 +63,16 @@ class ShopSettingsController extends Controller
                 'success' => true,
                 'data' => [
                     'key' => $key,
-                    'value' => $setting
-                ]
+                    'value' => $setting,
+                ],
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('Ошибка получения настройки магазина: ' . $e->getMessage());
-            
+            \Log::error('Ошибка получения настройки магазина: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения настройки'
+                'message' => 'Ошибка получения настройки',
             ], 500);
         }
     }

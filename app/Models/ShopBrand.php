@@ -17,12 +17,12 @@ class ShopBrand extends Model
         'logo',
         'slug',
         'is_active',
-        'sort_order'
+        'sort_order',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
-        'sort_order' => 'integer'
+        'sort_order' => 'integer',
     ];
 
     protected static function boot()
@@ -33,12 +33,12 @@ class ShopBrand extends Model
             if (empty($brand->slug)) {
                 $brand->slug = Str::slug($brand->name);
             }
-            
+
             // Проверяем уникальность slug и добавляем суффикс если нужно
             $originalSlug = $brand->slug;
             $counter = 1;
             while (static::where('slug', $brand->slug)->exists()) {
-                $brand->slug = $originalSlug . '-' . $counter;
+                $brand->slug = $originalSlug.'-'.$counter;
                 $counter++;
             }
         });
@@ -47,13 +47,13 @@ class ShopBrand extends Model
             if ($brand->isDirty('name') && empty($brand->slug)) {
                 $brand->slug = Str::slug($brand->name);
             }
-            
+
             // Проверяем уникальность slug при обновлении
             if ($brand->isDirty('slug')) {
                 $originalSlug = $brand->slug;
                 $counter = 1;
                 while (static::where('slug', $brand->slug)->where('id', '!=', $brand->id)->exists()) {
-                    $brand->slug = $originalSlug . '-' . $counter;
+                    $brand->slug = $originalSlug.'-'.$counter;
                     $counter++;
                 }
             }

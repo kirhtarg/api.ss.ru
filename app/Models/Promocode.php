@@ -2,11 +2,11 @@
 
 namespace App\Models;
 
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
-use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Promocode extends Model
 {
@@ -78,6 +78,7 @@ class Promocode extends Model
 
     /**
      * Связь с пользователями (many-to-many, для обратной совместимости)
+     *
      * @deprecated Используйте user_id для персональных промокодов
      */
     public function users(): BelongsToMany
@@ -98,12 +99,12 @@ class Promocode extends Model
      */
     public function isActive(): bool
     {
-        if (!$this->is_active) {
+        if (! $this->is_active) {
             return false;
         }
 
         $now = Carbon::now();
-        
+
         if ($this->starts_at && $now->lt($this->starts_at)) {
             return false;
         }
@@ -123,21 +124,22 @@ class Promocode extends Model
     {
         $errors = [];
 
-        if (!$this->isActive()) {
-            if (!$this->is_active) {
-                $errors[] = "Промокод неактивен";
+        if (! $this->isActive()) {
+            if (! $this->is_active) {
+                $errors[] = 'Промокод неактивен';
             } else {
                 $now = Carbon::now();
                 if ($this->starts_at && $now->lt($this->starts_at)) {
-                    $errors[] = "Промокод еще не начал действовать";
+                    $errors[] = 'Промокод еще не начал действовать';
                 }
                 if ($this->expires_at && $now->gt($this->expires_at)) {
-                    $errors[] = "Срок действия промокода истек";
+                    $errors[] = 'Срок действия промокода истек';
                 }
             }
+
             return [
                 'can_use' => false,
-                'errors' => $errors
+                'errors' => $errors,
             ];
         }
 
@@ -146,16 +148,17 @@ class Promocode extends Model
             $totalUsageCount = $this->usages()->count();
             if ($totalUsageCount >= $this->usage_limit) {
                 $errors[] = "Лимит использований промокода исчерпан ({$this->usage_limit} из {$this->usage_limit})";
+
                 return [
                     'can_use' => false,
-                    'errors' => $errors
+                    'errors' => $errors,
                 ];
             }
         }
 
         return [
             'can_use' => true,
-            'errors' => []
+            'errors' => [],
         ];
     }
 
@@ -166,29 +169,30 @@ class Promocode extends Model
     public function canBeUsedByUser(?int $userId = null, ?string $sessionId = null): array
     {
         $generalCheck = $this->canBeUsed();
-        if (!$generalCheck['can_use']) {
+        if (! $generalCheck['can_use']) {
             return $generalCheck;
         }
 
         $errors = [];
 
-        if (!$this->usage_limit_per_user) {
+        if (! $this->usage_limit_per_user) {
             return [
                 'can_use' => true,
-                'errors' => []
+                'errors' => [],
             ];
         }
 
-        if (!$userId && !$sessionId) {
-            $errors[] = "Необходима авторизация для использования этого промокода";
+        if (! $userId && ! $sessionId) {
+            $errors[] = 'Необходима авторизация для использования этого промокода';
+
             return [
                 'can_use' => false,
-                'errors' => $errors
+                'errors' => $errors,
             ];
         }
 
         $query = $this->usages();
-        
+
         if ($userId) {
             $query->where('user_id', $userId);
         } elseif ($sessionId) {
@@ -199,15 +203,16 @@ class Promocode extends Model
 
         if ($userUsageCount >= $this->usage_limit_per_user) {
             $errors[] = "Вы уже использовали этот промокод максимальное количество раз ({$this->usage_limit_per_user})";
+
             return [
                 'can_use' => false,
-                'errors' => $errors
+                'errors' => $errors,
             ];
         }
 
         return [
             'can_use' => true,
-            'errors' => []
+            'errors' => [],
         ];
     }
 
@@ -220,21 +225,21 @@ class Promocode extends Model
 
         // Проверка минимальной суммы заказа
         if ($this->min_order_amount && $orderAmount < $this->min_order_amount) {
-            $errors[] = "Минимальная сумма заказа для этого промокода: " . number_format($this->min_order_amount, 2, '.', ' ') . " ₽";
+            $errors[] = 'Минимальная сумма заказа для этого промокода: '.number_format($this->min_order_amount, 2, '.', ' ').' ₽';
         }
 
         // Проверка персональных промокодов (через user_id)
         if ($this->user_id !== null) {
-            if (!$userId) {
+            if (! $userId) {
                 \Illuminate\Support\Facades\Log::warning('Promocode user check failed: no userId', [
                     'promocode_id' => $this->id,
                 ]);
-                $errors[] = "Этот промокод доступен только для определенных пользователей";
+                $errors[] = 'Этот промокод доступен только для определенных пользователей';
             } else {
                 // Проверяем, соответствует ли user_id промокода текущему пользователю
-                $userIdInt = (int)$userId;
-                $promocodeUserId = (int)$this->user_id;
-                
+                $userIdInt = (int) $userId;
+                $promocodeUserId = (int) $this->user_id;
+
                 // Для персональных промокодов просто сравниваем user_id
                 if ($userIdInt !== $promocodeUserId) {
                     \Illuminate\Support\Facades\Log::warning('Promocode user check failed: user mismatch', [
@@ -242,7 +247,7 @@ class Promocode extends Model
                         'user_id' => $userIdInt,
                         'promocode_user_id' => $promocodeUserId,
                     ]);
-                    $errors[] = "Этот промокод доступен только для определенных пользователей";
+                    $errors[] = 'Этот промокод доступен только для определенных пользователей';
                 }
             }
         }
@@ -256,20 +261,20 @@ class Promocode extends Model
         if (count($categoryIds) > 0) {
             // Загружаем категории с их данными (название, slug)
             $categories = $this->categories()->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug')->get();
-            $applicableCategories = $categories->map(function($category) {
+            $applicableCategories = $categories->map(function ($category) {
                 return [
                     'id' => $category->id,
                     'name' => $category->name,
                     'slug' => $category->slug,
                 ];
             })->toArray();
-            
+
             $hasApplicableCategory = false;
             foreach ($cartItems as $item) {
                 $itemCategories = $item['categories'] ?? [];
-                
+
                 // Нормализуем категории товара: если это массив объектов, извлекаем id
-                if (is_array($itemCategories) && !empty($itemCategories)) {
+                if (is_array($itemCategories) && ! empty($itemCategories)) {
                     $normalizedCategories = [];
                     foreach ($itemCategories as $categoryId) {
                         if (is_array($categoryId) && isset($categoryId['id'])) {
@@ -280,8 +285,8 @@ class Promocode extends Model
                     }
                     $itemCategories = $normalizedCategories;
                 }
-                
-                if (is_array($itemCategories) && !empty($itemCategories)) {
+
+                if (is_array($itemCategories) && ! empty($itemCategories)) {
                     foreach ($itemCategories as $categoryId) {
                         // Приводим к int для корректного сравнения
                         $categoryIdInt = (int) $categoryId;
@@ -293,8 +298,8 @@ class Promocode extends Model
                     }
                 }
             }
-            if (!$hasApplicableCategory) {
-                $errors[] = "Промокод применим только к товарам из определенных категорий";
+            if (! $hasApplicableCategory) {
+                $errors[] = 'Промокод применим только к товарам из определенных категорий';
             }
         }
 
@@ -308,8 +313,8 @@ class Promocode extends Model
                     break;
                 }
             }
-            if (!$hasApplicableGood) {
-                $errors[] = "Промокод применим только к определенным товарам";
+            if (! $hasApplicableGood) {
+                $errors[] = 'Промокод применим только к определенным товарам';
             }
         }
 
@@ -322,15 +327,15 @@ class Promocode extends Model
                     break;
                 }
             }
-            if (!$hasApplicableVariation) {
-                $errors[] = "Промокод применим только к определенным вариациям товаров";
+            if (! $hasApplicableVariation) {
+                $errors[] = 'Промокод применим только к определенным вариациям товаров';
             }
         }
 
         return [
             'is_applicable' => count($errors) === 0,
             'errors' => $errors,
-            'applicable_categories' => $applicableCategories // Информация о категориях, к которым применим промокод
+            'applicable_categories' => $applicableCategories, // Информация о категориях, к которым применим промокод
         ];
     }
 
@@ -340,16 +345,16 @@ class Promocode extends Model
     public function calculateDiscount(float $orderAmount, array $cartItems = [], ?int $userId = null): array
     {
         $applicability = $this->isApplicableToOrder($cartItems, $orderAmount, $userId);
-        if (!$applicability['is_applicable']) {
+        if (! $applicability['is_applicable']) {
             return [
                 'discount' => 0,
-                'errors' => $applicability['errors']
+                'errors' => $applicability['errors'],
             ];
         }
 
         // Определяем, какие товары подходят под ограничения промокода
         $applicableItems = $this->getApplicableCartItems($cartItems);
-        
+
         // Рассчитываем сумму только для подходящих товаров
         $applicableAmount = 0;
         foreach ($applicableItems as $item) {
@@ -366,7 +371,7 @@ class Promocode extends Model
         if ($applicableAmount <= 0) {
             return [
                 'discount' => 0,
-                'errors' => []
+                'errors' => [],
             ];
         }
 
@@ -400,7 +405,7 @@ class Promocode extends Model
 
         return [
             'discount' => \App\Helpers\PriceHelper::roundPrice($discount),
-            'errors' => []
+            'errors' => [],
         ];
     }
 
@@ -427,9 +432,9 @@ class Promocode extends Model
             }
 
             // Проверка по категориям (приоритет 2)
-            if (!$isApplicable && count($categoryIds) > 0) {
+            if (! $isApplicable && count($categoryIds) > 0) {
                 $itemCategories = $item['categories'] ?? [];
-                if (is_array($itemCategories) && !empty($itemCategories)) {
+                if (is_array($itemCategories) && ! empty($itemCategories)) {
                     foreach ($itemCategories as $categoryId) {
                         $categoryIdInt = (int) $categoryId;
                         if (in_array($categoryIdInt, $categoryIds)) {
@@ -441,7 +446,7 @@ class Promocode extends Model
             }
 
             // Проверка по вариациям (приоритет 3)
-            if (!$isApplicable && !empty($variationIds)) {
+            if (! $isApplicable && ! empty($variationIds)) {
                 if (isset($item['variation_id']) && in_array($item['variation_id'], $variationIds)) {
                     $isApplicable = true;
                 }
@@ -495,7 +500,7 @@ class Promocode extends Model
     public function getUserUsageCount(?int $userId = null, ?string $sessionId = null): int
     {
         $query = $this->usages();
-        
+
         if ($userId) {
             $query->where('user_id', $userId);
         } elseif ($sessionId) {

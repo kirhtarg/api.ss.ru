@@ -16,14 +16,14 @@ class Slider extends Model
         'title_position',
         'text_position',
         'is_active',
-        'sort_order'
+        'sort_order',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
         'auto_interval' => 'integer',
         'transition_duration' => 'integer',
-        'sort_order' => 'integer'
+        'sort_order' => 'integer',
     ];
 
     /**

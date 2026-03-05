@@ -15,7 +15,7 @@ return new class extends Migration
         if (Schema::hasTable('sliders')) {
             Schema::table('sliders', function (Blueprint $table) {
                 // Проверяем, существует ли колонка show_text_block
-                if (!Schema::hasColumn('sliders', 'show_text_block')) {
+                if (! Schema::hasColumn('sliders', 'show_text_block')) {
                     $table->boolean('show_text_block')->default(true)->after('text_position');
                 }
             });

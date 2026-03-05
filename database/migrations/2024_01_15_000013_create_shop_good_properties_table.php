@@ -17,10 +17,10 @@ return new class extends Migration
             $table->foreignId('property_id')->constrained('shop_properties')->onDelete('cascade');
             $table->text('value');
             $table->timestamps();
-            
+
             // Уникальный индекс для предотвращения дублирования
             $table->unique(['good_id', 'property_id'], 'shop_good_props_unique');
-            
+
             // Индексы для производительности
             $table->index('good_id');
             $table->index('property_id');

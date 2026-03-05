@@ -13,16 +13,16 @@ return new class extends Migration
     {
         Schema::table('shop_good_variations', function (Blueprint $table) {
             // Добавляем колонку length, если её нет
-            if (!Schema::hasColumn('shop_good_variations', 'length')) {
+            if (! Schema::hasColumn('shop_good_variations', 'length')) {
                 $table->decimal('length', 8, 2)->nullable()->after('weight')
-                      ->comment('Длина товара в см');
+                    ->comment('Длина товара в см');
             }
-            
+
             // Переименовываем depth в width, если depth существует, а width нет
-            if (Schema::hasColumn('shop_good_variations', 'depth') && !Schema::hasColumn('shop_good_variations', 'width')) {
+            if (Schema::hasColumn('shop_good_variations', 'depth') && ! Schema::hasColumn('shop_good_variations', 'width')) {
                 $table->renameColumn('depth', 'width');
             }
-            
+
             // Если есть и depth, и width, то удаляем depth
             if (Schema::hasColumn('shop_good_variations', 'depth') && Schema::hasColumn('shop_good_variations', 'width')) {
                 $table->dropColumn('depth');
@@ -40,9 +40,9 @@ return new class extends Migration
             if (Schema::hasColumn('shop_good_variations', 'length')) {
                 $table->dropColumn('length');
             }
-            
+
             // Возвращаем width обратно в depth, если это было сделано
-            if (Schema::hasColumn('shop_good_variations', 'width') && !Schema::hasColumn('shop_good_variations', 'depth')) {
+            if (Schema::hasColumn('shop_good_variations', 'width') && ! Schema::hasColumn('shop_good_variations', 'depth')) {
                 $table->renameColumn('width', 'depth');
             }
         });

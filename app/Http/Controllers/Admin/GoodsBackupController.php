@@ -5,11 +5,10 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\GoodsImportBackup;
 use App\Services\GoodsBackupService;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 
 class GoodsBackupController extends Controller
@@ -34,17 +33,17 @@ class GoodsBackupController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $backups
+                'data' => $backups,
             ]);
         } catch (\Exception $e) {
             Log::error('Ошибка получения списка резервных копий', [
                 'error' => $e->getMessage(),
-                'user_id' => auth()->id()
+                'user_id' => auth()->id(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения списка резервных копий'
+                'message' => 'Ошибка получения списка резервных копий',
             ], 500);
         }
     }
@@ -55,14 +54,14 @@ class GoodsBackupController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255'
+            'name' => 'required|string|max:255',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Неверные данные',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -78,7 +77,7 @@ class GoodsBackupController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $backup,
-                'message' => 'Резервная копия успешно создана'
+                'message' => 'Резервная копия успешно создана',
             ]);
 
         } catch (\Exception $e) {
@@ -86,12 +85,12 @@ class GoodsBackupController extends Controller
 
             Log::error('Ошибка создания резервной копии', [
                 'error' => $e->getMessage(),
-                'user_id' => auth()->id()
+                'user_id' => auth()->id(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания резервной копии: ' . $e->getMessage()
+                'message' => 'Ошибка создания резервной копии: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -105,13 +104,13 @@ class GoodsBackupController extends Controller
         if ($backup->user_id !== auth()->id()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Доступ запрещен'
+                'message' => 'Доступ запрещен',
             ], 403);
         }
 
         return response()->json([
             'success' => true,
-            'data' => $backup->load('user')
+            'data' => $backup->load('user'),
         ]);
     }
 
@@ -124,7 +123,7 @@ class GoodsBackupController extends Controller
         if ($backup->user_id !== auth()->id()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Доступ запрещен'
+                'message' => 'Доступ запрещен',
             ], 403);
         }
 
@@ -136,7 +135,7 @@ class GoodsBackupController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Резервная копия успешно восстановлена'
+                'message' => 'Резервная копия успешно восстановлена',
             ]);
 
         } catch (\Exception $e) {
@@ -145,12 +144,12 @@ class GoodsBackupController extends Controller
             Log::error('Ошибка восстановления резервной копии', [
                 'backup_id' => $backup->id,
                 'error' => $e->getMessage(),
-                'user_id' => auth()->id()
+                'user_id' => auth()->id(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка восстановления резервной копии: ' . $e->getMessage()
+                'message' => 'Ошибка восстановления резервной копии: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -164,7 +163,7 @@ class GoodsBackupController extends Controller
         if ($backup->user_id !== auth()->id()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Доступ запрещен'
+                'message' => 'Доступ запрещен',
             ], 403);
         }
 
@@ -177,19 +176,19 @@ class GoodsBackupController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Резервная копия удалена'
+                'message' => 'Резервная копия удалена',
             ]);
 
         } catch (\Exception $e) {
             Log::error('Ошибка удаления резервной копии', [
                 'backup_id' => $backup->id,
                 'error' => $e->getMessage(),
-                'user_id' => auth()->id()
+                'user_id' => auth()->id(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления резервной копии'
+                'message' => 'Ошибка удаления резервной копии',
             ], 500);
         }
     }

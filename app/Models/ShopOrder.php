@@ -59,7 +59,7 @@ class ShopOrder extends Model
         'metadata',
         'surcharge_enabled',
         'surcharge_value',
-        'surcharge_type'
+        'surcharge_type',
     ];
 
     protected $attributes = [
@@ -90,9 +90,8 @@ class ShopOrder extends Model
         'metadata' => 'array',
         'surcharge_enabled' => 'boolean',
         'surcharge_value' => 'decimal:2',
-        'surcharge_type' => 'string'
+        'surcharge_type' => 'string',
     ];
-
 
     public function user()
     {
@@ -131,13 +130,13 @@ class ShopOrder extends Model
 
     public function getItemsWithDetails()
     {
-        if (!$this->items) {
+        if (! $this->items) {
             return [];
         }
 
         $items = is_string($this->items) ? json_decode($this->items, true) : $this->items;
-        
-        if (!is_array($items)) {
+
+        if (! is_array($items)) {
             return [];
         }
 
@@ -194,7 +193,7 @@ class ShopOrder extends Model
                     }
                 }
             } catch (\Exception $e) {
-                Log::error('Ошибка получения габаритов товара для заказа: ' . $e->getMessage());
+                Log::error('Ошибка получения габаритов товара для заказа: '.$e->getMessage());
             }
 
             $result = [
@@ -225,13 +224,13 @@ class ShopOrder extends Model
 
     private function getGoodInfo($goodId)
     {
-        if (!$goodId) {
+        if (! $goodId) {
             return [
-                'name' => null, 
-                'image' => null, 
+                'name' => null,
+                'image' => null,
                 'sku' => null,
                 'slug' => null,
-                'sale_price' => null
+                'sale_price' => null,
             ];
         }
 
@@ -239,30 +238,30 @@ class ShopOrder extends Model
             // Сначала получаем основную информацию о товаре (всегда нужна)
             $good = DB::table('shop_goods')
                 ->select('name', 'sku', 'slug', 'sale_price')
-                ->where('id', (int)$goodId)
+                ->where('id', (int) $goodId)
                 ->first();
 
-            if (!$good) {
+            if (! $good) {
                 return [
-                    'name' => null, 
-                    'image' => null, 
+                    'name' => null,
+                    'image' => null,
                     'sku' => null,
                     'slug' => null,
-                    'sale_price' => null
+                    'sale_price' => null,
                 ];
             }
 
             // Получаем главное изображение товара
             $mainImage = DB::table('shop_good_images')
-                ->where('good_id', (int)$goodId)
+                ->where('good_id', (int) $goodId)
                 ->whereNull('variation_id')
                 ->where('is_main', true)
                 ->value('file_path');
 
             // Если главного изображения нет, берем первое доступное
-            if (!$mainImage) {
+            if (! $mainImage) {
                 $mainImage = DB::table('shop_good_images')
-                    ->where('good_id', (int)$goodId)
+                    ->where('good_id', (int) $goodId)
                     ->whereNull('variation_id')
                     ->orderBy('sort_order')
                     ->value('file_path');
@@ -272,8 +271,8 @@ class ShopOrder extends Model
             if ($mainImage) {
                 // Добавляем ведущий слэш если его нет
                 $imageUrl = $mainImage;
-                if (!str_starts_with($imageUrl, '/')) {
-                    $imageUrl = '/' . $imageUrl;
+                if (! str_starts_with($imageUrl, '/')) {
+                    $imageUrl = '/'.$imageUrl;
                 }
             }
 
@@ -282,16 +281,17 @@ class ShopOrder extends Model
                 'image' => $imageUrl,
                 'sku' => $good->sku ?? null,
                 'slug' => $good->slug ?? null,
-                'sale_price' => $good->sale_price ?? null
+                'sale_price' => $good->sale_price ?? null,
             ];
         } catch (\Exception $e) {
-            Log::error('Ошибка получения информации о товаре: ' . $e->getMessage());
+            Log::error('Ошибка получения информации о товаре: '.$e->getMessage());
+
             return [
-                'name' => null, 
-                'image' => null, 
+                'name' => null,
+                'image' => null,
                 'sku' => null,
                 'slug' => null,
-                'sale_price' => null
+                'sale_price' => null,
             ];
         }
     }

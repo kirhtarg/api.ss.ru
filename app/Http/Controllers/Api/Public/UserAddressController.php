@@ -4,8 +4,8 @@ namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopUserAddress;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 
@@ -18,10 +18,10 @@ class UserAddressController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user) {
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не авторизован'
+                    'message' => 'Пользователь не авторизован',
                 ], 401);
             }
 
@@ -31,12 +31,12 @@ class UserAddressController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $addresses
+                'data' => $addresses,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении адресов: ' . $e->getMessage()
+                'message' => 'Ошибка при получении адресов: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -48,10 +48,10 @@ class UserAddressController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user) {
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не авторизован'
+                    'message' => 'Пользователь не авторизован',
                 ], 401);
             }
 
@@ -65,14 +65,14 @@ class UserAddressController extends Controller
                 'entrance' => 'nullable|string|max:50',
                 'intercom' => 'nullable|string|max:50',
                 'comment' => 'nullable|string|max:1000',
-                'is_default' => 'boolean'
+                'is_default' => 'boolean',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -90,12 +90,12 @@ class UserAddressController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Адрес успешно создан',
-                'data' => $address
+                'data' => $address,
             ], 201);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при создании адреса: ' . $e->getMessage()
+                'message' => 'Ошибка при создании адреса: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -107,10 +107,10 @@ class UserAddressController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user) {
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не авторизован'
+                    'message' => 'Пользователь не авторизован',
                 ], 401);
             }
 
@@ -118,10 +118,10 @@ class UserAddressController extends Controller
                 ->where('user_id', $user->id)
                 ->first();
 
-            if (!$address) {
+            if (! $address) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Адрес не найден'
+                    'message' => 'Адрес не найден',
                 ], 404);
             }
 
@@ -135,14 +135,14 @@ class UserAddressController extends Controller
                 'entrance' => 'nullable|string|max:50',
                 'intercom' => 'nullable|string|max:50',
                 'comment' => 'nullable|string|max:1000',
-                'is_default' => 'boolean'
+                'is_default' => 'boolean',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -160,12 +160,12 @@ class UserAddressController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Адрес успешно обновлен',
-                'data' => $address
+                'data' => $address,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при обновлении адреса: ' . $e->getMessage()
+                'message' => 'Ошибка при обновлении адреса: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -177,10 +177,10 @@ class UserAddressController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user) {
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не авторизован'
+                    'message' => 'Пользователь не авторизован',
                 ], 401);
             }
 
@@ -188,10 +188,10 @@ class UserAddressController extends Controller
                 ->where('user_id', $user->id)
                 ->first();
 
-            if (!$address) {
+            if (! $address) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Адрес не найден'
+                    'message' => 'Адрес не найден',
                 ], 404);
             }
 
@@ -199,12 +199,12 @@ class UserAddressController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Адрес успешно удален'
+                'message' => 'Адрес успешно удален',
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при удалении адреса: ' . $e->getMessage()
+                'message' => 'Ошибка при удалении адреса: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -216,13 +216,14 @@ class UserAddressController extends Controller
     {
         try {
             \Log::info('setDefault called', ['address_id' => $id]);
-            
+
             $user = Auth::user();
-            if (!$user) {
+            if (! $user) {
                 \Log::error('User not authenticated');
+
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не авторизован'
+                    'message' => 'Пользователь не авторизован',
                 ], 401);
             }
 
@@ -232,11 +233,12 @@ class UserAddressController extends Controller
                 ->where('user_id', $user->id)
                 ->first();
 
-            if (!$address) {
+            if (! $address) {
                 \Log::error('Address not found', ['address_id' => $id, 'user_id' => $user->id]);
+
                 return response()->json([
                     'success' => false,
-                    'message' => 'Адрес не найден'
+                    'message' => 'Адрес не найден',
                 ], 404);
             }
 
@@ -245,34 +247,35 @@ class UserAddressController extends Controller
             // Сбрасываем флаг у всех адресов пользователя
             $updatedCount = ShopUserAddress::where('user_id', $user->id)
                 ->update(['is_default' => false]);
-            
+
             \Log::info('Reset default flags', ['updated_count' => $updatedCount]);
 
             // Устанавливаем выбранный адрес как адрес по умолчанию
             $address->is_default = true;
             $address->save();
-            
+
             \Log::info('Set address as default', ['address_id' => $id]);
-            
+
             // Обновляем объект из базы данных
             $address->refresh();
-            
+
             \Log::info('Address after update', ['address' => $address->toArray()]);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Адрес установлен по умолчанию',
-                'data' => $address
+                'data' => $address,
             ]);
         } catch (\Exception $e) {
             \Log::error('Error in setDefault', [
                 'message' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
-                'address_id' => $id
+                'address_id' => $id,
             ]);
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при установке адреса по умолчанию: ' . $e->getMessage()
+                'message' => 'Ошибка при установке адреса по умолчанию: '.$e->getMessage(),
             ], 500);
         }
     }

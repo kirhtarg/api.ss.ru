@@ -13,8 +13,11 @@ class PostProcessImage implements ShouldQueue
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public string $path;
+
     public string $resize;
+
     public ?int $width;
+
     public ?int $height;
 
     public function __construct(string $path, string $resize = 'no_change', ?int $width = null, ?int $height = null)
@@ -30,12 +33,12 @@ class PostProcessImage implements ShouldQueue
     public function handle(): void
     {
         $filePath = $this->path;
-        if (!file_exists($filePath)) {
+        if (! file_exists($filePath)) {
             return;
         }
 
         $imageInfo = @getimagesize($filePath);
-        if (!$imageInfo) {
+        if (! $imageInfo) {
             return;
         }
 
@@ -48,6 +51,7 @@ class PostProcessImage implements ShouldQueue
 
         if ($this->resize === 'no_change') {
             $this->optimize($filePath, $mimeType, $originalWidth, $originalHeight);
+
             return;
         }
 
@@ -69,7 +73,7 @@ class PostProcessImage implements ShouldQueue
                 break;
         }
 
-        if (!$sourceImage) {
+        if (! $sourceImage) {
             return;
         }
 
@@ -129,7 +133,7 @@ class PostProcessImage implements ShouldQueue
                 }
                 break;
         }
-        if (!$sourceImage) {
+        if (! $sourceImage) {
             return;
         }
         $resizedImage = @imagecreatetruecolor($newWidth, $newHeight);
@@ -177,6 +181,7 @@ class PostProcessImage implements ShouldQueue
         $cropX = intval(($newWidth - $targetWidth) / 2);
         $cropY = intval(($newHeight - $targetHeight) / 2);
         @imagecopyresampled($newImage, $sourceImage, -$cropX, -$cropY, 0, 0, $newWidth, $newHeight, $originalWidth, $originalHeight);
+
         return $newImage;
     }
 
@@ -193,6 +198,7 @@ class PostProcessImage implements ShouldQueue
         $dstX = intval(($targetWidth - $newWidth) / 2);
         $dstY = intval(($targetHeight - $newHeight) / 2);
         @imagecopyresampled($newImage, $sourceImage, $dstX, $dstY, 0, 0, $newWidth, $newHeight, $originalWidth, $originalHeight);
+
         return $newImage;
     }
 
@@ -211,6 +217,7 @@ class PostProcessImage implements ShouldQueue
             @imagefilledrectangle($newImage, 0, 0, $newWidth, $newHeight, $transparent);
         }
         @imagecopyresampled($newImage, $sourceImage, 0, 0, 0, 0, $newWidth, $newHeight, $originalWidth, $originalHeight);
+
         return $newImage;
     }
 }

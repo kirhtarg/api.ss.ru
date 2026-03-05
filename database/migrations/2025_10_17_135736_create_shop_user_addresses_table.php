@@ -24,11 +24,11 @@ return new class extends Migration
             $table->text('comment')->nullable(); // Комментарий к адресу
             $table->boolean('is_default')->default(false); // Адрес по умолчанию
             $table->timestamps();
-            
+
             // Индексы
             $table->index('user_id');
             $table->index(['user_id', 'is_default']);
-            
+
             // Внешний ключ
             $table->foreign('user_id')->references('id')->on('users')->onDelete('cascade');
         });

@@ -16,10 +16,10 @@ return new class extends Migration
             $table->foreignId('good_id')->constrained('shop_goods')->onDelete('cascade');
             $table->foreignId('brand_id')->constrained('shop_brands')->onDelete('cascade');
             $table->timestamps();
-            
+
             // Уникальный индекс для предотвращения дублирования
             $table->unique(['good_id', 'brand_id'], 'shop_good_brands_unique');
-            
+
             // Индексы для производительности
             $table->index('good_id');
             $table->index('brand_id');

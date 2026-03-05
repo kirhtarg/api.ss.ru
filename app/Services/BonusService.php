@@ -2,12 +2,11 @@
 
 namespace App\Services;
 
+use App\Models\ShopOrder;
 use App\Models\User;
 use App\Models\UserBonus;
 use App\Models\UserBonusTransaction;
-use App\Models\ShopOrder;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\Log;
 
 class BonusService
 {
@@ -16,9 +15,10 @@ class BonusService
      */
     public function getBonusBalance(User $user): float
     {
-        
+
         try {
             $userBonus = UserBonus::firstOrCreate(['user_id' => $user->id]);
+
             return $userBonus->points;
         } catch (\Exception $e) {
             throw $e;
@@ -40,25 +40,25 @@ class BonusService
      */
     public function awardOrderBonuses(ShopOrder $order): void
     {
-        if (!$order->user_id) {
+        if (! $order->user_id) {
             return; // Только для зарегистрированных пользователей
         }
 
         $userBonus = UserBonus::getOrCreateForUser($order->user_id);
         $settings = \App\Models\ShopBonusSettings::getActiveSettings();
 
-        if (!$settings) {
+        if (! $settings) {
             $settings = \App\Models\ShopBonusSettings::getDefaultSettings();
         }
 
         // Определяем, является ли цена акционной (упрощенная логика)
         $isSalePrice = $order->metadata['is_sale_price'] ?? false;
-        
+
         $bonusPoints = $settings->calculateOrderBonus($order->total_amount, $isSalePrice);
-        
+
         if ($bonusPoints > 0) {
             $expiresAt = Carbon::now()->addDays($settings->bonus_expiry_days);
-            
+
             $userBonus->addPoints(
                 $bonusPoints,
                 "Начисление бонусов за заказ #{$order->order_number}",
@@ -68,7 +68,7 @@ class BonusService
                     'order_amount' => $order->total_amount,
                     'bonus_rate' => $isSalePrice ? $settings->sale_price_percentage : $settings->regular_price_percentage,
                     'calculated_points' => $bonusPoints,
-                    'is_sale_price' => $isSalePrice
+                    'is_sale_price' => $isSalePrice,
                 ]
             );
         }
@@ -80,10 +80,10 @@ class BonusService
     public function awardRegistrationBonuses(int $userId): void
     {
         $userBonus = UserBonus::getOrCreateForUser($userId);
-        
+
         $bonusPoints = 100; // 100 баллов за регистрацию
         $expiresAt = Carbon::now()->addYear();
-        
+
         $userBonus->addPoints(
             $bonusPoints,
             'Бонусы за регистрацию',
@@ -96,13 +96,13 @@ class BonusService
     /**
      * Начислить бонусы за отзыв
      */
-    public function awardReviewBonuses(int $userId, int $orderId = null): void
+    public function awardReviewBonuses(int $userId, ?int $orderId = null): void
     {
         $userBonus = UserBonus::getOrCreateForUser($userId);
-        
+
         $bonusPoints = 50; // 50 баллов за отзыв
         $expiresAt = Carbon::now()->addYear();
-        
+
         $userBonus->addPoints(
             $bonusPoints,
             'Бонусы за отзыв о товаре',
@@ -118,7 +118,7 @@ class BonusService
     public function spendBonusesOnOrder(int $userId, int $pointsToSpend, ShopOrder $order): void
     {
         $userBonus = UserBonus::getOrCreateForUser($userId);
-        
+
         if ($userBonus->getAvailablePoints() < $pointsToSpend) {
             throw new \Exception('Недостаточно бонусных баллов');
         }
@@ -129,7 +129,7 @@ class BonusService
             $order->id,
             [
                 'order_amount' => $order->total_amount,
-                'bonus_discount' => $pointsToSpend
+                'bonus_discount' => $pointsToSpend,
             ]
         );
     }
@@ -139,12 +139,12 @@ class BonusService
      */
     public function refundOrderBonuses(ShopOrder $order): void
     {
-        if (!$order->user_id) {
+        if (! $order->user_id) {
             return;
         }
 
         $userBonus = UserBonus::getOrCreateForUser($order->user_id);
-        
+
         // Находим транзакции по этому заказу
         $spentTransactions = $userBonus->transactions()
             ->where('order_id', $order->id)
@@ -153,7 +153,7 @@ class BonusService
 
         foreach ($spentTransactions as $transaction) {
             $refundPoints = abs($transaction->points);
-            
+
             $userBonus->addPoints(
                 $refundPoints,
                 "Возврат бонусов за отмененный заказ #{$order->order_number}",
@@ -171,7 +171,7 @@ class BonusService
     {
         $userBonus = UserBonus::getOrCreateForUser($userId);
         $userBonus->cleanExpiredPoints(); // Очищаем истекшие бонусы
-        
+
         return $userBonus->getAvailablePoints();
     }
 
@@ -192,13 +192,13 @@ class BonusService
     public function getUserBonusStats(int $userId): array
     {
         $userBonus = UserBonus::getOrCreateForUser($userId);
-        
+
         return [
             'current_points' => $userBonus->points,
             'available_points' => $userBonus->getAvailablePoints(),
             'total_earned' => $userBonus->total_earned,
             'total_spent' => $userBonus->total_spent,
-            'expired_points' => $userBonus->total_earned - $userBonus->total_spent - $userBonus->points
+            'expired_points' => $userBonus->total_earned - $userBonus->total_spent - $userBonus->points,
         ];
     }
 
@@ -208,14 +208,14 @@ class BonusService
     public function cleanAllExpiredBonuses(): int
     {
         $totalCleaned = 0;
-        
+
         $userBonuses = UserBonus::where('points', '>', 0)->get();
-        
+
         foreach ($userBonuses as $userBonus) {
             $cleaned = $userBonus->cleanExpiredPoints();
             $totalCleaned += $cleaned;
         }
-        
+
         return $totalCleaned;
     }
 
@@ -225,10 +225,10 @@ class BonusService
     public function calculateMaxUsableBonuses(int $userId, float $orderAmount): int
     {
         $availablePoints = $this->getUserAvailableBonuses($userId);
-        
+
         // Можно использовать максимум 50% от суммы заказа бонусами
         $maxFromOrder = (int) round($orderAmount * 0.5);
-        
+
         return min($availablePoints, $maxFromOrder);
     }
 
@@ -239,7 +239,7 @@ class BonusService
     {
         $availablePoints = $this->getUserAvailableBonuses($userId);
         $minOrderAmount = 1000; // Минимальная сумма заказа для использования бонусов
-        
+
         return $availablePoints > 0 && $orderAmount >= $minOrderAmount;
     }
 
@@ -249,46 +249,45 @@ class BonusService
     public function deductBonuses(int $userId, float $points): array
     {
         try {
-            
+
             $userBonus = UserBonus::where('user_id', $userId)->first();
-            
-            if (!$userBonus) {
+
+            if (! $userBonus) {
                 return [
                     'success' => false,
-                    'message' => 'У пользователя нет бонусного счета'
+                    'message' => 'У пользователя нет бонусного счета',
                 ];
             }
 
             if ($userBonus->points < $points) {
                 return [
                     'success' => false,
-                    'message' => 'Недостаточно бонусов на счету'
+                    'message' => 'Недостаточно бонусов на счету',
                 ];
             }
 
             // Списываем бонусы
             $userBonus->decrement('points', $points);
-            
+
             // Создаем запись о транзакции
             UserBonusTransaction::create([
                 'user_id' => $userId,
                 'type' => 'deduction',
                 'points' => -$points,
                 'description' => 'Списание бонусов за заказ',
-                'order_id' => null
+                'order_id' => null,
             ]);
-
 
             return [
                 'success' => true,
-                'remaining_points' => $userBonus->fresh()->points
+                'remaining_points' => $userBonus->fresh()->points,
             ];
 
         } catch (\Exception $e) {
-            
+
             return [
                 'success' => false,
-                'message' => 'Ошибка при списании бонусов: ' . $e->getMessage()
+                'message' => 'Ошибка при списании бонусов: '.$e->getMessage(),
             ];
         }
     }

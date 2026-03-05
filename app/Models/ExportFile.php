@@ -18,13 +18,13 @@ class ExportFile extends Model
         'total_rows',
         'file_size',
         'error_message',
-        'export_config'
+        'export_config',
     ];
 
     protected $casts = [
         'export_config' => 'array',
         'total_rows' => 'integer',
-        'file_size' => 'integer'
+        'file_size' => 'integer',
     ];
 
     /**
@@ -73,13 +73,15 @@ class ExportFile extends Model
     public function formatFileSize(): string
     {
         $bytes = $this->file_size;
-        if ($bytes === 0) return '0 B';
+        if ($bytes === 0) {
+            return '0 B';
+        }
 
         $k = 1024;
         $sizes = ['B', 'KB', 'MB', 'GB'];
         $i = floor(log($bytes) / log($k));
 
-        return round($bytes / pow($k, $i), 1) . ' ' . $sizes[$i];
+        return round($bytes / pow($k, $i), 1).' '.$sizes[$i];
     }
 
     /**
@@ -87,7 +89,7 @@ class ExportFile extends Model
      */
     public function getStatusText(): string
     {
-        return match($this->status) {
+        return match ($this->status) {
             'pending' => 'Ожидает',
             'processing' => 'Обрабатывается',
             'completed' => 'Готов',

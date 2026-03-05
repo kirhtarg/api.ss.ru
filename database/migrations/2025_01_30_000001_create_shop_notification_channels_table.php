@@ -23,7 +23,7 @@ return new class extends Migration
             $table->json('settings')->nullable(); // Дополнительные настройки (SMTP для email и т.д.)
             $table->text('description')->nullable(); // Описание канала
             $table->timestamps();
-            
+
             // Индексы
             $table->index('type');
             $table->index('is_active');
@@ -39,4 +39,3 @@ return new class extends Migration
         Schema::dropIfExists('shop_notification_channels');
     }
 };
-

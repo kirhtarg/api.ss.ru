@@ -2,11 +2,11 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\AdminPage;
+use App\Models\User;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
-use App\Models\AdminPage;
-use App\Models\User;
 
 class CheckPageAccess
 {
@@ -15,36 +15,36 @@ class CheckPageAccess
      *
      * @param  \Closure(\Illuminate\Http\Request): (\Symfony\Component\HttpFoundation\Response)  $next
      */
-    public function handle(Request $request, Closure $next, string $pageSlug = null): Response
+    public function handle(Request $request, Closure $next, ?string $pageSlug = null): Response
     {
         // Если slug страницы не указан, пропускаем
-        if (!$pageSlug) {
+        if (! $pageSlug) {
             return $next($request);
         }
 
         // Получаем пользователя из токена
         $user = $request->user();
-        if (!$user) {
+        if (! $user) {
             return response()->json([
                 'success' => false,
-                'message' => 'Пользователь не аутентифицирован'
+                'message' => 'Пользователь не аутентифицирован',
             ], 401);
         }
 
         // Получаем страницу по slug
         $page = AdminPage::where('slug', $pageSlug)->first();
-        if (!$page) {
+        if (! $page) {
             return response()->json([
                 'success' => false,
-                'message' => 'Страница не найдена'
+                'message' => 'Страница не найдена',
             ], 404);
         }
 
         // Проверяем доступ пользователя к странице
-        if (!$this->userHasAccessToPage($user, $page)) {
+        if (! $this->userHasAccessToPage($user, $page)) {
             return response()->json([
                 'success' => false,
-                'message' => 'Доступ запрещен'
+                'message' => 'Доступ запрещен',
             ], 403);
         }
 
@@ -63,7 +63,7 @@ class CheckPageAccess
 
         // Проверяем роли пользователя
         $userRoles = $user->roles;
-        
+
         foreach ($userRoles as $role) {
             if ($page->roles()->where('role_id', $role->id)->exists()) {
                 return true;

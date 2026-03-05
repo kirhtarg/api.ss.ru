@@ -23,8 +23,8 @@ class QueueStatusController extends Controller
             'data' => [
                 'pending' => $pendingJobs,
                 'failed' => $failedJobs,
-                'status' => $pendingJobs > 0 ? 'working' : 'idle'
-            ]
+                'status' => $pendingJobs > 0 ? 'working' : 'idle',
+            ],
         ]);
     }
 
@@ -32,14 +32,15 @@ class QueueStatusController extends Controller
     {
         try {
             Artisan::call('queue:restart');
+
             return response()->json([
                 'success' => true,
-                'message' => 'Сигнал перезапуска очереди отправлен'
+                'message' => 'Сигнал перезапуска очереди отправлен',
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при перезапуске очереди: ' . $e->getMessage()
+                'message' => 'Ошибка при перезапуске очереди: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -48,14 +49,15 @@ class QueueStatusController extends Controller
     {
         try {
             Artisan::call('queue:retry', ['all']);
+
             return response()->json([
                 'success' => true,
-                'message' => 'Запущен повтор всех неудачных задач'
+                'message' => 'Запущен повтор всех неудачных задач',
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при повторе задач: ' . $e->getMessage()
+                'message' => 'Ошибка при повторе задач: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -66,15 +68,16 @@ class QueueStatusController extends Controller
             $deleted = DB::table('failed_jobs')
                 ->where('payload', 'like', '%App\\\\Jobs\\\\ProcessModexJob%')
                 ->delete();
+
             return response()->json([
                 'success' => true,
                 'message' => 'Очищены ошибки очереди модекса',
-                'deleted' => $deleted
+                'deleted' => $deleted,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка очистки ошибок очереди: ' . $e->getMessage()
+                'message' => 'Ошибка очистки ошибок очереди: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -85,15 +88,16 @@ class QueueStatusController extends Controller
             $deleted = DB::table('jobs')
                 ->where('payload', 'like', '%App\\\\Jobs\\\\ProcessModexJob%')
                 ->delete();
+
             return response()->json([
                 'success' => true,
                 'message' => 'Очищены задачи очереди модекса',
-                'deleted' => $deleted
+                'deleted' => $deleted,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка очистки задач очереди: ' . $e->getMessage()
+                'message' => 'Ошибка очистки задач очереди: '.$e->getMessage(),
             ], 500);
         }
     }

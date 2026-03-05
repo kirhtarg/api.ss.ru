@@ -21,7 +21,7 @@ return new class extends Migration
             $table->string('ip_address')->nullable();
             $table->text('user_agent')->nullable();
             $table->timestamps();
-            
+
             // Индексы для производительности
             $table->index(['good_id', 'created_at']);
             $table->index('user_id');

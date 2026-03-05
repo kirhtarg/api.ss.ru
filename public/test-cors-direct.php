@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Прямой тест CORS
  * Откройте: https://api.skateandsnow-test.ru/api/test-cors-direct.php
@@ -30,6 +31,5 @@ echo json_encode([
         'max_input_vars' => ini_get('max_input_vars'),
         'memory_limit' => ini_get('memory_limit'),
         'max_execution_time' => ini_get('max_execution_time'),
-    ]
+    ],
 ], JSON_PRETTY_PRINT);
-

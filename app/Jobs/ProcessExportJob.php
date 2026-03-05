@@ -7,23 +7,24 @@ use App\Models\ShopGood;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
-use PhpOffice\PhpSpreadsheet\Spreadsheet;
-use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
-use OpenSpout\Writer\XLSX\Options as XlsxOptions;
-use OpenSpout\Writer\XLSX\Writer as XlsxWriter;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
+use OpenSpout\Common\Entity\Cell;
+use OpenSpout\Common\Entity\Row;
 use OpenSpout\Writer\CSV\Options as CsvOptions;
 use OpenSpout\Writer\CSV\Writer as CsvWriter;
-use OpenSpout\Common\Entity\Row;
-use OpenSpout\Common\Entity\Cell;
+use OpenSpout\Writer\XLSX\Options as XlsxOptions;
+use OpenSpout\Writer\XLSX\Writer as XlsxWriter;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class ProcessExportJob implements ShouldQueue
 {
     use Queueable;
 
     public $timeout = 7200; // 2 часа таймаут
+
     public $tries = 3; // 3 попытки
 
     protected ExportFile $exportFile;
@@ -51,12 +52,12 @@ class ProcessExportJob implements ShouldQueue
             // Получаем конфигурацию экспорта
             $config = $this->exportFile->export_config ?? [];
 
-            $filePath = 'exports/' . $this->exportFile->filename;
+            $filePath = 'exports/'.$this->exportFile->filename;
             $fullPath = Storage::path($filePath);
-            
+
             // Создаем директорию, если её нет
             $directory = dirname($fullPath);
-            if (!file_exists($directory)) {
+            if (! file_exists($directory)) {
                 mkdir($directory, 0755, true);
             }
 
@@ -70,7 +71,7 @@ class ProcessExportJob implements ShouldQueue
 
             if ($useStreaming) {
                 $totalRows = $this->streamExport($config, $fullPath, $this->exportFile->format);
-                
+
                 if (file_exists($fullPath)) {
                     $fileSize = filesize($fullPath);
                 } else {
@@ -99,19 +100,19 @@ class ProcessExportJob implements ShouldQueue
                 'status' => 'completed',
                 'file_path' => $filePath,
                 'file_size' => $fileSize,
-                'total_rows' => $totalRows
+                'total_rows' => $totalRows,
             ]);
 
         } catch (\Exception $e) {
             Log::error('Export job failed', [
                 'export_file_id' => $this->exportFile->id,
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
             $this->exportFile->update([
                 'status' => 'failed',
-                'error_message' => $e->getMessage()
+                'error_message' => $e->getMessage(),
             ]);
 
             throw $e;
@@ -126,25 +127,25 @@ class ProcessExportJob implements ShouldQueue
         $writer = null;
 
         if ($format === 'csv' || $format === 'txt') {
-            $options = new CsvOptions();
+            $options = new CsvOptions;
             if ($format === 'txt') {
                 $options->setFieldDelimiter("\t");
             }
             $writer = new CsvWriter($options);
         } else {
-            $options = new XlsxOptions();
+            $options = new XlsxOptions;
             $writer = new XlsxWriter($options);
         }
 
         $writer->openToFile($filePath);
 
         $query = $this->getExportQuery($config);
-        
+
         // Считаем общее количество строк для корректного отображения прогресса
         try {
             $totalCount = $query->count();
             $this->exportFile->update([
-                'total_rows' => $totalCount
+                'total_rows' => $totalCount,
             ]);
         } catch (\Throwable $e) {
             // Если не удалось посчитать (сложный запрос), оставляем 0
@@ -153,18 +154,21 @@ class ProcessExportJob implements ShouldQueue
         $processedRows = 0;
         $headersWritten = false;
 
-        $query->chunk(500, function($goods) use ($writer, $config, &$processedRows, &$headersWritten) {
+        $query->chunk(500, function ($goods) use ($writer, $config, &$processedRows, &$headersWritten) {
             $data = $this->processChunk($goods, $config);
-            
-            if (empty($data)) return;
+
+            if (empty($data)) {
+                return;
+            }
 
             // Записываем заголовки (из первого чанка)
-            if (!$headersWritten) {
+            if (! $headersWritten) {
                 $firstRow = $data[0];
                 if (is_array($firstRow)) {
                     $headers = array_keys($firstRow);
-                    $headerCells = array_map(function($value) {
-                        $cleanValue = preg_replace('/\{\{\d+\}\}$/', '', (string)$value);
+                    $headerCells = array_map(function ($value) {
+                        $cleanValue = preg_replace('/\{\{\d+\}\}$/', '', (string) $value);
+
                         return Cell::fromValue($cleanValue);
                     }, $headers);
                     $writer->addRow(new Row($headerCells));
@@ -175,42 +179,44 @@ class ProcessExportJob implements ShouldQueue
             // Записываем данные
             foreach ($data as $dataRow) {
                 if (is_array($dataRow)) {
-                    $cells = array_map(function($value) {
+                    $cells = array_map(function ($value) {
                         if (is_array($value) || is_object($value)) {
                             $strVal = json_encode($value, JSON_UNESCAPED_UNICODE);
                         } elseif ($value === null) {
                             $strVal = '';
                         } else {
-                            $strVal = (string)$value;
+                            $strVal = (string) $value;
                         }
-                        
+
                         // Защита от инъекций формул (для всех форматов для безопасности)
                         if (str_starts_with($strVal, '=')) {
-                            $strVal = ' ' . $strVal;
+                            $strVal = ' '.$strVal;
                         }
-                        
+
                         return Cell::fromValue($strVal);
                     }, array_values($dataRow));
-                    
+
                     $writer->addRow(new Row($cells));
-                    
+
                     $processedRows++;
-                    
+
                     // Обновляем прогресс (паттерн Modex: часто в начале, потом реже)
                     if ($processedRows <= 100 || $processedRows % 50 === 0) {
                         try {
                             $conf = $this->exportFile->export_config ?? [];
                             $conf['progress_rows'] = $processedRows;
                             $this->exportFile->update([
-                                'export_config' => $conf
+                                'export_config' => $conf,
                             ]);
-                        } catch (\Throwable $e) {}
+                        } catch (\Throwable $e) {
+                        }
                     }
                 }
             }
         });
 
         $writer->close();
+
         return $processedRows;
     }
 
@@ -221,17 +227,17 @@ class ProcessExportJob implements ShouldQueue
     {
         // Фильтр по массиву ID (для экспорта выбранных товаров) - должен быть первым
         $selectedIds = null;
-        if (isset($config['filters']['selected_ids']) && !empty($config['filters']['selected_ids'])) {
+        if (isset($config['filters']['selected_ids']) && ! empty($config['filters']['selected_ids'])) {
             $selectedIdsRaw = $config['filters']['selected_ids'];
 
             // Убеждаемся, что это массив
-            if (!is_array($selectedIdsRaw)) {
+            if (! is_array($selectedIdsRaw)) {
                 $selectedIdsRaw = is_string($selectedIdsRaw) && strpos($selectedIdsRaw, ',') !== false
                     ? explode(',', $selectedIdsRaw)
                     : [$selectedIdsRaw];
             }
 
-            $selectedIds = array_map('intval', array_filter($selectedIdsRaw, function($id) {
+            $selectedIds = array_map('intval', array_filter($selectedIdsRaw, function ($id) {
                 return is_numeric($id) && $id > 0;
             }));
 
@@ -246,7 +252,7 @@ class ProcessExportJob implements ShouldQueue
             'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity',
             'width', 'height', 'depth', 'weight',
             'is_active', 'is_featured', 'is_new', 'is_sale', 'is_preorder', 'is_show',
-            'created_at'
+            'created_at',
         ])->with([
             'categories:id,name',
             'brands:id,name',
@@ -255,7 +261,7 @@ class ProcessExportJob implements ShouldQueue
             'properties:id,name,slug',
             'images:id,good_id,file_path,alt_text,is_main,sort_order',
             'variations:id,good_id,name,sku,price,sale_price,demping_price,show_demping,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,is_active',
-            'variations.images:id,variation_id,file_path,alt_text,is_main,sort_order'
+            'variations.images:id,variation_id,file_path,alt_text,is_main,sort_order',
         ]);
 
         // Применяем фильтр по выбранным товарам (если указан)
@@ -272,11 +278,11 @@ class ProcessExportJob implements ShouldQueue
         // Загружаем характеристики товаров
         $hasValueCol = Schema::hasColumn('shop_good_properties', 'value');
         if ($hasValueCol) {
-            $query->with(['properties' => function($query) {
+            $query->with(['properties' => function ($query) {
                 $query->withPivot('shop_property_value_id', 'value');
             }]);
         } else {
-            $query->with(['properties' => function($query) {
+            $query->with(['properties' => function ($query) {
                 $query->withPivot('shop_property_value_id');
             }]);
         }
@@ -298,10 +304,10 @@ class ProcessExportJob implements ShouldQueue
                     $propertyValue = \App\Models\Shop\PropertyValue::find($property->pivot->shop_property_value_id);
                     $property->property_value = $propertyValue;
                 } elseif ($hasValueCol && isset($property->pivot) && $property->pivot->value) {
-                    $property->property_value = (object)[
+                    $property->property_value = (object) [
                         'id' => null,
                         'value' => $property->pivot->value,
-                        'property_id' => $property->id
+                        'property_id' => $property->id,
                     ];
                 }
             }
@@ -326,6 +332,7 @@ class ProcessExportJob implements ShouldQueue
     {
         $query = $this->getExportQuery($config);
         $goods = $query->get();
+
         return $this->processChunk($goods, $config);
     }
 
@@ -346,17 +353,17 @@ class ProcessExportJob implements ShouldQueue
                 $query->where('stock_quantity', '=', 0);
             } elseif ($inStock === 'low') {
                 $query->where('stock_quantity', '>', 0)
-                      ->where('stock_quantity', '<', 3);
+                    ->where('stock_quantity', '<', 3);
             } elseif (strpos($inStock, 'exact:') === 0) {
                 // Точное значение остатка в формате exact:value
-                $exactValue = (int)substr($inStock, 6);
+                $exactValue = (int) substr($inStock, 6);
                 $query->where('stock_quantity', '=', $exactValue);
             }
         }
 
         // Базовые фильтры (одиночные значения) - boolean поля
         $booleanFilters = [
-            'is_active', 'is_new', 'is_featured', 'is_sale', 'is_show', 'is_preorder'
+            'is_active', 'is_new', 'is_featured', 'is_sale', 'is_show', 'is_preorder',
         ];
 
         foreach ($booleanFilters as $filterName) {
@@ -373,7 +380,7 @@ class ProcessExportJob implements ShouldQueue
             'has_categories' => 'categories',
             'has_brands' => 'brands',
             'has_tags' => 'tags',
-            'has_label' => 'label'
+            'has_label' => 'label',
         ];
 
         foreach ($relationFilters as $filterName => $relation) {
@@ -388,60 +395,60 @@ class ProcessExportJob implements ShouldQueue
         }
 
         // Фильтр по категории (одиночный)
-        if (isset($filters['category_id']) && !empty($filters['category_id'])) {
-            $query->whereHas('categories', function($q) use ($filters) {
+        if (isset($filters['category_id']) && ! empty($filters['category_id'])) {
+            $query->whereHas('categories', function ($q) use ($filters) {
                 $q->where('categories.id', $filters['category_id']);
             });
         }
 
         // Фильтр по бренду (одиночный)
-        if (isset($filters['brand_id']) && !empty($filters['brand_id'])) {
+        if (isset($filters['brand_id']) && ! empty($filters['brand_id'])) {
             $query->where('brand_id', $filters['brand_id']);
         }
 
         // Множественные фильтры (массивы)
         // Категории - отношение
-        if (isset($filters['categories']) && is_array($filters['categories']) && !empty($filters['categories'])) {
-            $query->whereHas('categories', function($q) use ($filters) {
+        if (isset($filters['categories']) && is_array($filters['categories']) && ! empty($filters['categories'])) {
+            $query->whereHas('categories', function ($q) use ($filters) {
                 $q->whereIn('shop_categories.id', $filters['categories']);
             });
         }
 
         // Бренды - отношение
-        if (isset($filters['brands']) && is_array($filters['brands']) && !empty($filters['brands'])) {
-            $query->whereHas('brands', function($q) use ($filters) {
+        if (isset($filters['brands']) && is_array($filters['brands']) && ! empty($filters['brands'])) {
+            $query->whereHas('brands', function ($q) use ($filters) {
                 $q->whereIn('shop_brands.id', $filters['brands']);
             });
         }
 
         // Теги - отношение
-        if (isset($filters['tags']) && is_array($filters['tags']) && !empty($filters['tags'])) {
-            $query->whereHas('tags', function($q) use ($filters) {
+        if (isset($filters['tags']) && is_array($filters['tags']) && ! empty($filters['tags'])) {
+            $query->whereHas('tags', function ($q) use ($filters) {
                 $q->whereIn('shop_tags.id', $filters['tags']);
             });
         }
 
         // Лейблы - поле label_id
-        if (isset($filters['labels']) && is_array($filters['labels']) && !empty($filters['labels'])) {
+        if (isset($filters['labels']) && is_array($filters['labels']) && ! empty($filters['labels'])) {
             $query->whereIn('label_id', $filters['labels']);
         }
 
         // Поставщики - поле supplier
-        if (isset($filters['suppliers']) && is_array($filters['suppliers']) && !empty($filters['suppliers'])) {
-            $suppliers = array_filter($filters['suppliers'], function($supplier) {
-                return !empty($supplier);
+        if (isset($filters['suppliers']) && is_array($filters['suppliers']) && ! empty($filters['suppliers'])) {
+            $suppliers = array_filter($filters['suppliers'], function ($supplier) {
+                return ! empty($supplier);
             });
-            if (!empty($suppliers)) {
+            if (! empty($suppliers)) {
                 $query->whereIn('supplier', $suppliers);
             }
         }
 
         // Поиск
-        if (isset($filters['search']) && !empty($filters['search'])) {
+        if (isset($filters['search']) && ! empty($filters['search'])) {
             $searchTerm = $filters['search'];
-            $query->where(function($q) use ($searchTerm) {
-                $q->whereRaw('LOWER(name) LIKE ?', ['%' . mb_strtolower($searchTerm) . '%'])
-                  ->orWhereRaw('LOWER(sku) LIKE ?', ['%' . mb_strtolower($searchTerm) . '%']);
+            $query->where(function ($q) use ($searchTerm) {
+                $q->whereRaw('LOWER(name) LIKE ?', ['%'.mb_strtolower($searchTerm).'%'])
+                    ->orWhereRaw('LOWER(sku) LIKE ?', ['%'.mb_strtolower($searchTerm).'%']);
             });
         }
 
@@ -455,16 +462,16 @@ class ProcessExportJob implements ShouldQueue
         $this->applyPriceFilter($query, $filters, 'demping_price', 'min_demping_price', 'max_demping_price');
 
         // Фильтр по артикулу (sku_filter_type)
-        if (isset($filters['sku_filter_type']) && !empty($filters['sku_filter_type'])) {
+        if (isset($filters['sku_filter_type']) && ! empty($filters['sku_filter_type'])) {
             $skuFilterType = $filters['sku_filter_type'];
             if ($skuFilterType === 'empty') {
-                $query->where(function($q) {
+                $query->where(function ($q) {
                     $q->whereNull('sku')
-                      ->orWhere('sku', '=', '');
+                        ->orWhere('sku', '=', '');
                 });
             } elseif ($skuFilterType === 'not_empty') {
                 $query->whereNotNull('sku')
-                      ->where('sku', '!=', '');
+                    ->where('sku', '!=', '');
             }
         }
 
@@ -474,9 +481,9 @@ class ProcessExportJob implements ShouldQueue
             if ($value === 'true') {
                 $query->where('show_demping', true);
             } elseif ($value === 'false') {
-                $query->where(function($q) {
+                $query->where(function ($q) {
                     $q->where('show_demping', false)
-                      ->orWhereNull('show_demping');
+                        ->orWhereNull('show_demping');
                 });
             }
         }
@@ -486,11 +493,11 @@ class ProcessExportJob implements ShouldQueue
             $value = $filters['has_demping_price'];
             if ($value === 'true') {
                 $query->whereNotNull('demping_price')
-                      ->where('demping_price', '>', 0);
+                    ->where('demping_price', '>', 0);
             } elseif ($value === 'false') {
-                $query->where(function($q) {
+                $query->where(function ($q) {
                     $q->whereNull('demping_price')
-                      ->orWhere('demping_price', '=', 0);
+                        ->orWhere('demping_price', '=', 0);
                 });
             }
         }
@@ -499,25 +506,25 @@ class ProcessExportJob implements ShouldQueue
         if (isset($filters['has_sale_price'])) {
             $value = $filters['has_sale_price'];
             if ($value === 'true') {
-                $query->where(function($q) {
+                $query->where(function ($q) {
                     // Проверяем акционную цену основного товара
                     $q->whereNotNull('sale_price')
-                      ->where('sale_price', '>', 0)
+                        ->where('sale_price', '>', 0)
                       // Или акционную цену в вариациях
-                      ->orWhereHas('variations', function($varQ) {
-                          $varQ->whereNotNull('sale_price')
-                               ->where('sale_price', '>', 0);
-                      });
+                        ->orWhereHas('variations', function ($varQ) {
+                            $varQ->whereNotNull('sale_price')
+                                ->where('sale_price', '>', 0);
+                        });
                 });
             } elseif ($value === 'false') {
-                $query->where(function($q) {
+                $query->where(function ($q) {
                     // Основной товар без акционной цены И все вариации без акционной цены
-                    $q->where(function($mainQ) {
+                    $q->where(function ($mainQ) {
                         $mainQ->whereNull('sale_price')
-                              ->orWhere('sale_price', '=', 0);
-                    })->whereDoesntHave('variations', function($varQ) {
+                            ->orWhere('sale_price', '=', 0);
+                    })->whereDoesntHave('variations', function ($varQ) {
                         $varQ->whereNotNull('sale_price')
-                             ->where('sale_price', '>', 0);
+                            ->where('sale_price', '>', 0);
                     });
                 });
             }
@@ -526,19 +533,19 @@ class ProcessExportJob implements ShouldQueue
         // Фильтр по общему остатку (total_stock_not_empty, total_stock_both_empty)
         if (isset($filters['total_stock_not_empty']) && $filters['total_stock_not_empty'] == '1') {
             // В наличии: (нет вариаций И остаток основного товара > 0 или у/с не пустой или у/с быстрый не пустой) ИЛИ (есть вариации И есть вариации с остатком)
-            $query->where(function($mainQuery) {
+            $query->where(function ($mainQuery) {
                 // Вариант 1: Нет вариаций И остаток основного товара > 0 или у/с не пустой или у/с быстрый не пустой
-                $mainQuery->where(function($noVariationsQuery) {
+                $mainQuery->where(function ($noVariationsQuery) {
                     $noVariationsQuery->whereDoesntHave('variations')
-                        ->where(function($stockQuery) {
+                        ->where(function ($stockQuery) {
                             $stockQuery->where('stock_quantity', '>', 0)
-                                ->orWhere(function($remoteCondition) {
+                                ->orWhere(function ($remoteCondition) {
                                     $remoteCondition->whereNotNull('remote_stock_quantity')
                                         ->where('remote_stock_quantity', '!=', '0')
                                         ->where('remote_stock_quantity', '!=', '')
                                         ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
                                 })
-                                ->orWhere(function($fastRemoteCondition) {
+                                ->orWhere(function ($fastRemoteCondition) {
                                     $fastRemoteCondition->whereNotNull('fast_remote_stock_quantity')
                                         ->where('fast_remote_stock_quantity', '!=', '0')
                                         ->where('fast_remote_stock_quantity', '!=', '')
@@ -548,18 +555,18 @@ class ProcessExportJob implements ShouldQueue
                 });
 
                 // Вариант 2: Есть вариации И есть вариации с остатком
-                $mainQuery->orWhere(function($hasVariationsQuery) {
+                $mainQuery->orWhere(function ($hasVariationsQuery) {
                     $hasVariationsQuery->whereHas('variations')
-                        ->whereHas('variations', function($varQ) {
-                            $varQ->where(function($subVarQ) {
+                        ->whereHas('variations', function ($varQ) {
+                            $varQ->where(function ($subVarQ) {
                                 $subVarQ->where('stock_quantity', '>', 0)
-                                    ->orWhere(function($remoteVarQ) {
+                                    ->orWhere(function ($remoteVarQ) {
                                         $remoteVarQ->whereNotNull('remote_stock_quantity')
                                             ->where('remote_stock_quantity', '!=', '0')
                                             ->where('remote_stock_quantity', '!=', '')
                                             ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
                                     })
-                                    ->orWhere(function($fastRemoteVarQ) {
+                                    ->orWhere(function ($fastRemoteVarQ) {
                                         $fastRemoteVarQ->whereNotNull('fast_remote_stock_quantity')
                                             ->where('fast_remote_stock_quantity', '!=', '0')
                                             ->where('fast_remote_stock_quantity', '!=', '')
@@ -571,21 +578,21 @@ class ProcessExportJob implements ShouldQueue
             });
         } elseif (isset($filters['total_stock_both_empty']) && $filters['total_stock_both_empty'] == '1') {
             // Нет в наличии: (нет вариаций И остаток основного товара = 0 и у/с пустой и у/с быстрый пустой) ИЛИ (есть вариации И нет вариаций с остатком)
-            $query->where(function($mainQuery) {
+            $query->where(function ($mainQuery) {
                 // Вариант 1: Нет вариаций И остаток основного товара = 0 и у/с пустой и у/с быстрый пустой
-                $mainQuery->where(function($noVariationsQuery) {
+                $mainQuery->where(function ($noVariationsQuery) {
                     $noVariationsQuery->whereDoesntHave('variations')
                         ->where('stock_quantity', '=', 0)
-                        ->where(function($remoteCondition) {
-                            $remoteCondition->where(function($remoteNull) {
+                        ->where(function ($remoteCondition) {
+                            $remoteCondition->where(function ($remoteNull) {
                                 $remoteNull->whereNull('remote_stock_quantity')
                                     ->orWhere('remote_stock_quantity', '=', '0')
                                     ->orWhere('remote_stock_quantity', '=', '')
                                     ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
                             });
                         })
-                        ->where(function($fastRemoteCondition) {
-                            $fastRemoteCondition->where(function($fastRemoteNull) {
+                        ->where(function ($fastRemoteCondition) {
+                            $fastRemoteCondition->where(function ($fastRemoteNull) {
                                 $fastRemoteNull->whereNull('fast_remote_stock_quantity')
                                     ->orWhere('fast_remote_stock_quantity', '=', '0')
                                     ->orWhere('fast_remote_stock_quantity', '=', '')
@@ -595,18 +602,18 @@ class ProcessExportJob implements ShouldQueue
                 });
 
                 // Вариант 2: Есть вариации И нет вариаций с остатком
-                $mainQuery->orWhere(function($hasVariationsQuery) {
+                $mainQuery->orWhere(function ($hasVariationsQuery) {
                     $hasVariationsQuery->whereHas('variations')
-                        ->whereDoesntHave('variations', function($varQ) {
-                            $varQ->where(function($subVarQ) {
+                        ->whereDoesntHave('variations', function ($varQ) {
+                            $varQ->where(function ($subVarQ) {
                                 $subVarQ->where('stock_quantity', '>', 0)
-                                    ->orWhere(function($remoteVarQ) {
+                                    ->orWhere(function ($remoteVarQ) {
                                         $remoteVarQ->whereNotNull('remote_stock_quantity')
                                             ->where('remote_stock_quantity', '!=', '0')
                                             ->where('remote_stock_quantity', '!=', '')
                                             ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
                                     })
-                                    ->orWhere(function($fastRemoteVarQ) {
+                                    ->orWhere(function ($fastRemoteVarQ) {
                                         $fastRemoteVarQ->whereNotNull('fast_remote_stock_quantity')
                                             ->where('fast_remote_stock_quantity', '!=', '0')
                                             ->where('fast_remote_stock_quantity', '!=', '')
@@ -621,34 +628,34 @@ class ProcessExportJob implements ShouldQueue
         // Фильтр по общему остатку (stock_quantity_min, stock_quantity_max) - для обратной совместимости
         elseif (isset($filters['stock_quantity_min']) || isset($filters['stock_quantity_max'])) {
             if (isset($filters['stock_quantity_min']) && isset($filters['stock_quantity_max'])) {
-                $min = (int)$filters['stock_quantity_min'];
-                $max = (int)$filters['stock_quantity_max'];
+                $min = (int) $filters['stock_quantity_min'];
+                $max = (int) $filters['stock_quantity_max'];
                 if ($min === $max) {
                     $query->where('stock_quantity', '=', $min);
                 } else {
                     $query->whereBetween('stock_quantity', [$min, $max]);
                 }
             } elseif (isset($filters['stock_quantity_min'])) {
-                $query->where('stock_quantity', '>=', (int)$filters['stock_quantity_min']);
+                $query->where('stock_quantity', '>=', (int) $filters['stock_quantity_min']);
             } elseif (isset($filters['stock_quantity_max'])) {
-                $query->where('stock_quantity', '<=', (int)$filters['stock_quantity_max']);
+                $query->where('stock_quantity', '<=', (int) $filters['stock_quantity_max']);
             }
         }
 
         // Фильтр по остатку у/с (remote_stock_quantity)
         // Проверяем как остатки основного товара, так и остатки вариаций
         if (isset($filters['remote_stock_quantity_not_empty']) && $filters['remote_stock_quantity_not_empty']) {
-            $query->where(function($mainQuery) {
+            $query->where(function ($mainQuery) {
                 // Вариант 1: Остаток у/с не пустой в основном товаре
-                $mainQuery->where(function($mainStockQuery) {
+                $mainQuery->where(function ($mainStockQuery) {
                     $mainStockQuery->whereNotNull('remote_stock_quantity')
                         ->where('remote_stock_quantity', '!=', '')
                         ->where('remote_stock_quantity', '!=', '0')
                         ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
                 });
                 // Вариант 2: Есть вариации с остатком у/с не пустым
-                $mainQuery->orWhere(function($variationsQuery) {
-                    $variationsQuery->whereHas('variations', function($varQ) {
+                $mainQuery->orWhere(function ($variationsQuery) {
+                    $variationsQuery->whereHas('variations', function ($varQ) {
                         $varQ->whereNotNull('remote_stock_quantity')
                             ->where('remote_stock_quantity', '!=', '')
                             ->where('remote_stock_quantity', '!=', '0')
@@ -657,29 +664,29 @@ class ProcessExportJob implements ShouldQueue
                 });
             });
         } elseif (isset($filters['remote_stock_quantity_empty']) && $filters['remote_stock_quantity_empty']) {
-            $query->where(function($mainQuery) {
+            $query->where(function ($mainQuery) {
                 // Вариант 1: Остаток у/с пустой в основном товаре И нет вариаций с остатком у/с
-                $mainQuery->where(function($mainStockQuery) {
-                    $mainStockQuery->where(function($remoteCondition) {
+                $mainQuery->where(function ($mainStockQuery) {
+                    $mainStockQuery->where(function ($remoteCondition) {
                         $remoteCondition->whereNull('remote_stock_quantity')
                             ->orWhere('remote_stock_quantity', '=', '0')
                             ->orWhere('remote_stock_quantity', '=', '')
                             ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
                     });
                 })
-                ->whereDoesntHave('variations', function($varQ) {
-                    $varQ->whereNotNull('remote_stock_quantity')
-                        ->where('remote_stock_quantity', '!=', '')
-                        ->where('remote_stock_quantity', '!=', '0')
-                        ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
-                });
+                    ->whereDoesntHave('variations', function ($varQ) {
+                        $varQ->whereNotNull('remote_stock_quantity')
+                            ->where('remote_stock_quantity', '!=', '')
+                            ->where('remote_stock_quantity', '!=', '0')
+                            ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                    });
             });
         } elseif (isset($filters['remote_stock_quantity']) && $filters['remote_stock_quantity'] !== '') {
-            $query->where(function($mainQuery) {
+            $query->where(function ($mainQuery) {
                 // Вариант 1: Точное значение в основном товаре
                 $mainQuery->where('remote_stock_quantity', '=', $filters['remote_stock_quantity']);
                 // Вариант 2: Точное значение в вариациях
-                $mainQuery->orWhereHas('variations', function($varQ) {
+                $mainQuery->orWhereHas('variations', function ($varQ) {
                     $varQ->where('remote_stock_quantity', '=', $filters['remote_stock_quantity']);
                 });
             });
@@ -688,17 +695,17 @@ class ProcessExportJob implements ShouldQueue
         // Фильтр по быстрому остатку у/с (fast_remote_stock_quantity)
         // Проверяем как остатки основного товара, так и остатки вариаций
         if (isset($filters['fast_remote_stock_quantity_not_empty']) && $filters['fast_remote_stock_quantity_not_empty'] == '1') {
-            $query->where(function($mainQuery) {
+            $query->where(function ($mainQuery) {
                 // Вариант 1: Остаток у/с быстро не пустой в основном товаре
-                $mainQuery->where(function($mainStockQuery) {
+                $mainQuery->where(function ($mainStockQuery) {
                     $mainStockQuery->whereNotNull('fast_remote_stock_quantity')
                         ->where('fast_remote_stock_quantity', '!=', '')
                         ->where('fast_remote_stock_quantity', '!=', '0')
                         ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
                 });
                 // Вариант 2: Есть вариации с остатком у/с быстро не пустым
-                $mainQuery->orWhere(function($variationsQuery) {
-                    $variationsQuery->whereHas('variations', function($varQ) {
+                $mainQuery->orWhere(function ($variationsQuery) {
+                    $variationsQuery->whereHas('variations', function ($varQ) {
                         $varQ->whereNotNull('fast_remote_stock_quantity')
                             ->where('fast_remote_stock_quantity', '!=', '')
                             ->where('fast_remote_stock_quantity', '!=', '0')
@@ -707,28 +714,28 @@ class ProcessExportJob implements ShouldQueue
                 });
             });
         } elseif (isset($filters['fast_remote_stock_quantity_empty']) && $filters['fast_remote_stock_quantity_empty'] == '1') {
-            $query->where(function($mainQuery) {
+            $query->where(function ($mainQuery) {
                 // Вариант 1: Остаток у/с быстро пустой в основном товаре И нет вариаций с остатком у/с быстро
-                $mainQuery->where(function($mainStockQuery) {
-                    $mainStockQuery->where(function($fastRemoteCondition) {
+                $mainQuery->where(function ($mainStockQuery) {
+                    $mainStockQuery->where(function ($fastRemoteCondition) {
                         $fastRemoteCondition->whereNull('fast_remote_stock_quantity')
                             ->orWhere('fast_remote_stock_quantity', '=', '0')
                             ->orWhere('fast_remote_stock_quantity', '=', '')
                             ->orWhereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) = 0');
                     });
                 })
-                ->whereDoesntHave('variations', function($varQ) {
-                    $varQ->whereNotNull('fast_remote_stock_quantity')
-                        ->where('fast_remote_stock_quantity', '!=', '')
-                        ->where('fast_remote_stock_quantity', '!=', '0')
-                        ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
-                });
+                    ->whereDoesntHave('variations', function ($varQ) {
+                        $varQ->whereNotNull('fast_remote_stock_quantity')
+                            ->where('fast_remote_stock_quantity', '!=', '')
+                            ->where('fast_remote_stock_quantity', '!=', '0')
+                            ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
+                    });
             });
         }
 
         // Фильтр по именам атрибутов вариаций
-        if (isset($filters['variation_attribute_names']) && is_array($filters['variation_attribute_names']) && !empty($filters['variation_attribute_names'])) {
-            $query->whereExists(function($subQuery) use ($filters) {
+        if (isset($filters['variation_attribute_names']) && is_array($filters['variation_attribute_names']) && ! empty($filters['variation_attribute_names'])) {
+            $query->whereExists(function ($subQuery) use ($filters) {
                 $subQuery->selectRaw('1')
                     ->from('shop_good_variations as v')
                     ->join('shop_variation_attributes_values as vav', 'v.id', '=', 'vav.variation_id')
@@ -741,13 +748,13 @@ class ProcessExportJob implements ShouldQueue
         }
 
         // Фильтр по характеристикам (properties[property_id][])
-        if (isset($filters['properties']) && is_array($filters['properties']) && !empty($filters['properties'])) {
-            $query->where(function($q) use ($filters) {
+        if (isset($filters['properties']) && is_array($filters['properties']) && ! empty($filters['properties'])) {
+            $query->where(function ($q) use ($filters) {
                 foreach ($filters['properties'] as $propertyId => $valueIds) {
-                    if (is_array($valueIds) && !empty($valueIds)) {
-                        $q->orWhereHas('properties', function($propQuery) use ($propertyId, $valueIds) {
+                    if (is_array($valueIds) && ! empty($valueIds)) {
+                        $q->orWhereHas('properties', function ($propQuery) use ($propertyId, $valueIds) {
                             $propQuery->where('shop_properties.id', $propertyId)
-                                      ->whereIn('shop_good_properties.shop_property_value_id', $valueIds);
+                                ->whereIn('shop_good_properties.shop_property_value_id', $valueIds);
                         });
                     }
                 }
@@ -762,7 +769,7 @@ class ProcessExportJob implements ShouldQueue
             } elseif ($countType === 'with') {
                 $query->whereHas('properties');
             } elseif ($countType === 'exact' && isset($filters['properties_count'])) {
-                $exactCount = (int)$filters['properties_count'];
+                $exactCount = (int) $filters['properties_count'];
                 $query->has('properties', '=', $exactCount);
             }
         }
@@ -810,7 +817,9 @@ class ProcessExportJob implements ShouldQueue
             }
         }
 
-        if (empty($allVariationIds)) return;
+        if (empty($allVariationIds)) {
+            return;
+        }
 
         // Загружаем атрибуты батчами
         $variationAttributesMap = [];
@@ -828,21 +837,21 @@ class ProcessExportJob implements ShouldQueue
                 ->groupBy('variation_id');
 
             foreach ($attrsData as $variationId => $attributes) {
-                $variationAttributesMap[$variationId] = $attributes->map(function($attr) {
+                $variationAttributesMap[$variationId] = $attributes->map(function ($attr) {
                     return [
                         'attribute' => [
                             'id' => $attr->attribute_id,
-                            'name' => $attr->attribute_name
+                            'name' => $attr->attribute_name,
                         ],
                         'value' => [
                             'id' => $attr->value_id,
-                            'value' => $attr->value_value
+                            'value' => $attr->value_value,
                         ],
                         'attribute_id' => $attr->attribute_id,
                         'attribute_name' => $attr->attribute_name,
                         'value_id' => $attr->value_id,
                         'value_value' => $attr->value_value,
-                        'value' => $attr->value_value
+                        'value' => $attr->value_value,
                     ];
                 })->toArray();
             }
@@ -868,7 +877,9 @@ class ProcessExportJob implements ShouldQueue
         // Загружаем характеристики вариаций
         $hasVariationIdCol = Schema::hasColumn('shop_good_properties', 'variation_id');
 
-        if (!$hasVariationIdCol) return;
+        if (! $hasVariationIdCol) {
+            return;
+        }
 
         foreach ($goods as $good) {
             if ($good->variations) {
@@ -894,19 +905,19 @@ class ProcessExportJob implements ShouldQueue
                                 'slug' => $row->slug,
                                 'pivot' => (object) [
                                     'shop_property_value_id' => $row->shop_property_value_id,
-                                    'value' => $row->pivot_value
-                                ]
+                                    'value' => $row->pivot_value,
+                                ],
                             ];
 
                             if ($row->shop_property_value_id) {
                                 $property['property_value'] = (object) [
                                     'id' => $row->shop_property_value_id,
-                                    'value' => $row->property_value_value
+                                    'value' => $row->property_value_value,
                                 ];
                             } elseif ($row->pivot_value) {
                                 $property['property_value'] = (object) [
                                     'id' => null,
-                                    'value' => $row->pivot_value
+                                    'value' => $row->pivot_value,
                                 ];
                             }
 
@@ -966,18 +977,18 @@ class ProcessExportJob implements ShouldQueue
         foreach ($fields as $field) {
             $label = $this->getFieldLabel($field, $config);
             $value = $this->getFieldValue($good, $field, $config, $variation, $rowCounter);
-            
+
             // Обработка дублирующихся заголовков (например, при клонировании полей)
             // Добавляем суффикс {{count}} для уникальности ключа массива
             // Этот суффикс будет удален при записи заголовков в файл
             if (isset($labelCounts[$label])) {
                 $labelCounts[$label]++;
-                $uniqueLabel = $label . '{{' . $labelCounts[$label] . '}}';
+                $uniqueLabel = $label.'{{'.$labelCounts[$label].'}}';
             } else {
                 $labelCounts[$label] = 1;
                 $uniqueLabel = $label;
             }
-            
+
             $row[$uniqueLabel] = $value;
         }
 
@@ -990,7 +1001,7 @@ class ProcessExportJob implements ShouldQueue
     protected function getFieldValue($good, string $field, array $config, $variation = null, int $rowCounter = 0)
     {
         $isArray = is_array($good);
-        
+
         // Handle cloned fields
         if (strpos($field, '__clone_') !== false) {
             $field = preg_replace('/__clone_\d+$/', '', $field);
@@ -1006,7 +1017,7 @@ class ProcessExportJob implements ShouldQueue
             case 'name':
                 return $isArray ? ($good['name'] ?? '') : $good->name;
             case 'sku':
-                return (string)($isArray ? ($variation['sku'] ?? '') : ($variation->sku ?? $good->sku));
+                return (string) ($isArray ? ($variation['sku'] ?? '') : ($variation->sku ?? $good->sku));
             case 'description':
                 return $isArray ? ($good['description'] ?? '') : $good->description;
             case 'short_description':
@@ -1028,29 +1039,37 @@ class ProcessExportJob implements ShouldQueue
                 if ($isArray) {
                     $categories = $good['categories'] ?? [];
                     $names = array_column($categories, 'name');
+
                     return implode(', ', array_filter($names));
                 }
+
                 return $good->categories ? $good->categories->pluck('name')->filter()->join(', ') : '';
             case 'brand':
             case 'brands':
                 if ($isArray) {
                     $brands = $good['brands'] ?? [];
                     $names = array_column($brands, 'name');
+
                     return implode(', ', array_filter($names));
                 }
+
                 return $good->brands ? $good->brands->pluck('name')->filter()->join(', ') : '';
             case 'tags':
                 if ($isArray) {
                     $tags = $good['tags'] ?? [];
                     $names = array_column($tags, 'name');
+
                     return implode(', ', array_filter($names));
                 }
+
                 return $good->tags ? $good->tags->pluck('name')->filter()->join(', ') : '';
             case 'label':
                 if ($isArray) {
                     $label = $good['label'] ?? null;
+
                     return $label && isset($label['name']) ? $label['name'] : '';
                 }
+
                 return $good->label && isset($good->label->name) ? $good->label->name : '';
             case 'type':
             case 'model':
@@ -1068,7 +1087,7 @@ class ProcessExportJob implements ShouldQueue
                 // Если есть вариация, сначала ищем изображение в ней
                 if ($variation) {
                     $varImages = $isArray ? ($variation['images'] ?? []) : ($variation->images ?? []);
-                    
+
                     foreach ($varImages as $img) {
                         $isMain = $isArray ? ($img['is_main'] ?? false) : $img->is_main;
                         if ($isMain) {
@@ -1076,16 +1095,16 @@ class ProcessExportJob implements ShouldQueue
                             break;
                         }
                     }
-                    
-                    if (!$mainImg && count($varImages) > 0) {
+
+                    if (! $mainImg && count($varImages) > 0) {
                         $mainImg = is_array($varImages) ? reset($varImages) : $varImages->first();
                     }
                 }
 
                 // Если не нашли в вариации (или это не вариация), ищем в основном товаре
-                if (!$mainImg) {
+                if (! $mainImg) {
                     $images = $isArray ? ($good['images'] ?? []) : ($good->images ?? []);
-                    
+
                     foreach ($images as $img) {
                         $isMain = $isArray ? ($img['is_main'] ?? false) : $img->is_main;
                         if ($isMain) {
@@ -1093,17 +1112,20 @@ class ProcessExportJob implements ShouldQueue
                             break;
                         }
                     }
-                    if (!$mainImg && count($images) > 0) {
+                    if (! $mainImg && count($images) > 0) {
                         $mainImg = is_array($images) ? reset($images) : $images->first();
                     }
                 }
 
                 if ($mainImg) {
                     $path = $isArray ? ($mainImg['file_path'] ?? '') : $mainImg->file_path;
-                    if ($path) return $baseUrl . $path;
+                    if ($path) {
+                        return $baseUrl.$path;
+                    }
                 }
+
                 return '';
-                
+
             default:
                 // Проверяем на кастомные поля (статичные значения из конфигурации)
                 if (isset($config['custom_fields']) && is_array($config['custom_fields'])) {
@@ -1113,7 +1135,7 @@ class ProcessExportJob implements ShouldQueue
                         if (strpos($cleanField, '__clone_') !== false) {
                             $cleanField = preg_replace('/__clone_\d+$/', '', $cleanField);
                         }
-                        
+
                         if (isset($customField['id']) && $customField['id'] === $cleanField) {
                             return $customField['value'] ?? '';
                         }
@@ -1160,9 +1182,10 @@ class ProcessExportJob implements ShouldQueue
     {
         // Возвращаем название поля из конфигурации или стандартное
         $fieldLabels = $config['field_labels'] ?? [];
-        if (!is_array($fieldLabels)) {
+        if (! is_array($fieldLabels)) {
             return $field;
         }
+
         return $fieldLabels[$field] ?? $field;
     }
 
@@ -1171,7 +1194,7 @@ class ProcessExportJob implements ShouldQueue
      */
     protected function formatVariationAttributes($variation): string
     {
-        if (!$variation) {
+        if (! $variation) {
             return '';
         }
 
@@ -1189,10 +1212,10 @@ class ProcessExportJob implements ShouldQueue
         $formatted = [];
         foreach ($attributes as $attr) {
             // Проверяем разные возможные структуры данных
-            $attr = (array)$attr;
+            $attr = (array) $attr;
             $attrName = $attr['attribute_name'] ?? $attr['name'] ?? 'unknown';
             $attrValue = $attr['value_value'] ?? $attr['value'] ?? '';
-            $formatted[] = $attrName . ': ' . $attrValue;
+            $formatted[] = $attrName.': '.$attrValue;
         }
 
         return implode(', ', $formatted);
@@ -1203,7 +1226,7 @@ class ProcessExportJob implements ShouldQueue
      */
     protected function formatGoodProperties($good): string
     {
-        if (!$good || !isset($good->properties)) {
+        if (! $good || ! isset($good->properties)) {
             return '';
         }
 
@@ -1213,7 +1236,7 @@ class ProcessExportJob implements ShouldQueue
             if (isset($property->property_value)) {
                 $value = $property->property_value->value ?? '';
             }
-            $properties[] = $property->name . ': ' . $value;
+            $properties[] = $property->name.': '.$value;
         }
 
         return implode('; ', $properties);
@@ -1231,28 +1254,32 @@ class ProcessExportJob implements ShouldQueue
         if ($variation) {
             $varImages = $isArray ? ($variation['images'] ?? []) : ($variation->images ?? []);
             // Если images - это Collection, преобразуем
-            if (!is_array($varImages) && method_exists($varImages, 'toArray')) {
+            if (! is_array($varImages) && method_exists($varImages, 'toArray')) {
                 $varImages = $varImages; // Iterate directly over collection
             }
-            
+
             foreach ($varImages as $image) {
                 $path = $isArray ? ($image['file_path'] ?? '') : $image->file_path;
-                if ($path) $images[] = $baseUrl . $path;
+                if ($path) {
+                    $images[] = $baseUrl.$path;
+                }
             }
         }
 
         $goodImages = $isArray ? ($good['images'] ?? []) : ($good->images ?? []);
-        
+
         foreach ($goodImages as $image) {
             $imgId = $isArray ? ($image['id'] ?? null) : $image->id;
             $path = $isArray ? ($image['file_path'] ?? '') : $image->file_path;
-            
+
             $skip = false;
             if ($variation) {
                 $varImages = $isArray ? ($variation['images'] ?? []) : ($variation->images ?? []);
                 // Collection contains check
-                if (!$isArray && method_exists($varImages, 'contains')) {
-                    if ($varImages->contains('id', $imgId)) $skip = true;
+                if (! $isArray && method_exists($varImages, 'contains')) {
+                    if ($varImages->contains('id', $imgId)) {
+                        $skip = true;
+                    }
                 } else {
                     foreach ($varImages as $vImg) {
                         $vId = $isArray ? ($vImg['id'] ?? null) : $vImg->id;
@@ -1263,9 +1290,9 @@ class ProcessExportJob implements ShouldQueue
                     }
                 }
             }
-            
-            if (!$skip && $path) {
-                $images[] = $baseUrl . $path;
+
+            if (! $skip && $path) {
+                $images[] = $baseUrl.$path;
             }
         }
 
@@ -1280,7 +1307,7 @@ class ProcessExportJob implements ShouldQueue
         // prop_{property_id}
         $propertyId = str_replace('prop_', '', $field);
 
-        if (!$good || !isset($good->properties)) {
+        if (! $good || ! isset($good->properties)) {
             return '';
         }
 
@@ -1298,7 +1325,7 @@ class ProcessExportJob implements ShouldQueue
      */
     protected function findPropertyByIdOrName($good, string $field): ?string
     {
-        if (!$good || !isset($good->properties)) {
+        if (! $good || ! isset($good->properties)) {
             return null;
         }
 
@@ -1343,7 +1370,7 @@ class ProcessExportJob implements ShouldQueue
                 $brandValue = $good->brands->pluck('name')->join(' ');
             }
 
-            if (!$nameValue || !$brandValue) {
+            if (! $nameValue || ! $brandValue) {
                 return '';
             }
 
@@ -1359,7 +1386,7 @@ class ProcessExportJob implements ShouldQueue
      */
     protected function parseProductName(string $name, string $brand, string $fieldType): string
     {
-        if (!$name || !$brand) {
+        if (! $name || ! $brand) {
             return '';
         }
 
@@ -1371,6 +1398,7 @@ class ProcessExportJob implements ShouldQueue
             if ($brandIndex === false) {
                 return '';
             }
+
             return trim(substr($name, 0, $brandIndex));
         }
 
@@ -1381,7 +1409,7 @@ class ProcessExportJob implements ShouldQueue
             }
 
             $afterBrand = trim(substr($name, $brandIndex + strlen($brand)));
-            if (!$afterBrand) {
+            if (! $afterBrand) {
                 return '';
             }
 
@@ -1394,6 +1422,7 @@ class ProcessExportJob implements ShouldQueue
                 if ($year) {
                     return trim(str_replace($year, '', $afterBrand));
                 }
+
                 return $afterBrand;
             }
         }
@@ -1406,14 +1435,14 @@ class ProcessExportJob implements ShouldQueue
      */
     protected function extractYearFromText(string $text): string
     {
-        if (!$text) {
+        if (! $text) {
             return '';
         }
 
         // Ищем 4-значные числа в диапазоне лет
         preg_match_all('/\b(20\d{2}|19\d{2})\b/', $text, $matches);
 
-        if (!empty($matches[0])) {
+        if (! empty($matches[0])) {
             return $matches[0][0];
         }
 
@@ -1425,7 +1454,7 @@ class ProcessExportJob implements ShouldQueue
      */
     protected function findVariationAttributeByIdOrName($variation, string $field): ?string
     {
-        if (!$variation || !isset($variation->attributes)) {
+        if (! $variation || ! isset($variation->attributes)) {
             return null;
         }
 
@@ -1452,7 +1481,7 @@ class ProcessExportJob implements ShouldQueue
         // attr_{attribute_id} или attr_{attribute_name}
         $attrIdentifier = str_replace('attr_', '', $field);
 
-        if (!$variation || !isset($variation->attributes)) {
+        if (! $variation || ! isset($variation->attributes)) {
             return '';
         }
 
@@ -1486,7 +1515,9 @@ class ProcessExportJob implements ShouldQueue
      */
     protected function generateFileContent(array $data, string $format): string
     {
-        if (empty($data)) return '';
+        if (empty($data)) {
+            return '';
+        }
 
         switch ($format) {
             case 'csv':
@@ -1507,22 +1538,24 @@ class ProcessExportJob implements ShouldQueue
 
         $output = '';
 
-        if (!empty($data)) {
+        if (! empty($data)) {
             $headers = array_keys($data[0]);
-            $output .= implode(',', array_map(function($header) {
+            $output .= implode(',', array_map(function ($header) {
                 // Remove {{...}} suffix
                 $cleanHeader = preg_replace('/\{\{\d+\}\}$/', '', $header);
-                return '"' . str_replace('"', '""', $cleanHeader) . '"';
-            }, $headers)) . "\n";
+
+                return '"'.str_replace('"', '""', $cleanHeader).'"';
+            }, $headers))."\n";
 
             foreach ($data as $row) {
-                $values = array_map(function($value) {
+                $values = array_map(function ($value) {
                     if (is_array($value) || is_object($value)) {
-                        return '"' . json_encode($value) . '"';
+                        return '"'.json_encode($value).'"';
                     }
-                    return '"' . str_replace('"', '""', (string)$value) . '"';
+
+                    return '"'.str_replace('"', '""', (string) $value).'"';
                 }, array_values($row));
-                $output .= implode(',', $values) . "\n";
+                $output .= implode(',', $values)."\n";
             }
         }
 
@@ -1537,21 +1570,22 @@ class ProcessExportJob implements ShouldQueue
         // Простая TXT генерация
         $output = '';
 
-        if (!empty($data)) {
+        if (! empty($data)) {
             $headers = array_keys($data[0]);
-            $cleanHeaders = array_map(function($header) {
+            $cleanHeaders = array_map(function ($header) {
                 return preg_replace('/\{\{\d+\}\}$/', '', $header);
             }, $headers);
-            $output .= implode("\t", $cleanHeaders) . "\n";
+            $output .= implode("\t", $cleanHeaders)."\n";
 
             foreach ($data as $row) {
-                $values = array_map(function($value) {
+                $values = array_map(function ($value) {
                     if (is_array($value) || is_object($value)) {
                         return json_encode($value);
                     }
-                    return (string)$value;
+
+                    return (string) $value;
                 }, array_values($row));
-                $output .= implode("\t", $values) . "\n";
+                $output .= implode("\t", $values)."\n";
             }
         }
 
@@ -1565,24 +1599,24 @@ class ProcessExportJob implements ShouldQueue
     {
         $config = $this->exportFile->export_config ?? [];
         $templatePath = $config['template_path'] ?? null;
-        
+
         if ($templatePath && Storage::exists($templatePath)) {
             // Используем шаблон
             $fullPath = Storage::path($templatePath);
             try {
                 $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($fullPath);
             } catch (\Exception $e) {
-                Log::warning('Failed to load export template: ' . $e->getMessage());
-                $spreadsheet = new Spreadsheet();
+                Log::warning('Failed to load export template: '.$e->getMessage());
+                $spreadsheet = new Spreadsheet;
             }
-            
+
             $sheet = $spreadsheet->getActiveSheet();
-            
-            if (!empty($data)) {
-                $startRow = isset($config['excel_template_start_row']) ? (int)$config['excel_template_start_row'] : 2;
+
+            if (! empty($data)) {
+                $startRow = isset($config['excel_template_start_row']) ? (int) $config['excel_template_start_row'] : 2;
                 $includeHeaders = filter_var($config['excel_template_include_headers'] ?? false, FILTER_VALIDATE_BOOLEAN);
-                $headerRow = isset($config['excel_template_header_row']) ? (int)$config['excel_template_header_row'] : 1;
-                
+                $headerRow = isset($config['excel_template_header_row']) ? (int) $config['excel_template_header_row'] : 1;
+
                 // Записываем заголовки, если нужно
                 if ($includeHeaders) {
                     $firstRow = $data[0];
@@ -1591,16 +1625,16 @@ class ProcessExportJob implements ShouldQueue
                         $col = 'A';
                         foreach ($headers as $header) {
                             $cleanHeader = preg_replace('/\{\{\d+\}\}$/', '', $header);
-                            $sheet->setCellValue($col . $headerRow, $cleanHeader);
+                            $sheet->setCellValue($col.$headerRow, $cleanHeader);
                             $col++;
                         }
                     }
                 }
-                
+
                 // Записываем данные
                 $row = $startRow;
                 $highestColumnIndex = 0;
-                
+
                 // Определяем максимальное количество колонок
                 foreach ($data as $dataRow) {
                     if (is_array($dataRow)) {
@@ -1610,7 +1644,7 @@ class ProcessExportJob implements ShouldQueue
                         }
                     }
                 }
-                
+
                 // Преобразуем индекс в букву (1 -> A, 2 -> B, etc.)
                 $highestColumn = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($highestColumnIndex);
 
@@ -1623,9 +1657,9 @@ class ProcessExportJob implements ShouldQueue
                             } elseif ($value === null) {
                                 $value = '';
                             } else {
-                                $value = (string)$value;
+                                $value = (string) $value;
                             }
-                            $sheet->setCellValue($col . $row, $value);
+                            $sheet->setCellValue($col.$row, $value);
                             $col++;
                         }
                         $row++;
@@ -1637,10 +1671,10 @@ class ProcessExportJob implements ShouldQueue
                 if ($lastRow > $startRow) {
                     try {
                         $styleSourceRange = "A{$startRow}:{$highestColumn}{$startRow}";
-                        $styleTargetRange = "A" . ($startRow + 1) . ":{$highestColumn}{$lastRow}";
+                        $styleTargetRange = 'A'.($startRow + 1).":{$highestColumn}{$lastRow}";
                         $sheet->duplicateStyle($sheet->getStyle($styleSourceRange), $styleTargetRange);
                     } catch (\Exception $e) {
-                        Log::warning('Failed to duplicate styles: ' . $e->getMessage());
+                        Log::warning('Failed to duplicate styles: '.$e->getMessage());
                     }
                 }
             }
@@ -1664,6 +1698,7 @@ class ProcessExportJob implements ShouldQueue
             $this->generateExcelWithSpout($data, $tempPath);
             $content = file_get_contents($tempPath);
             @unlink($tempPath);
+
             return $content;
         }
     }
@@ -1674,17 +1709,18 @@ class ProcessExportJob implements ShouldQueue
      */
     protected function generateExcelWithSpout(array $data, string $filePath): void
     {
-        $options = new XlsxOptions();
+        $options = new XlsxOptions;
         $writer = new XlsxWriter($options);
         $writer->openToFile($filePath);
 
-        if (!empty($data)) {
+        if (! empty($data)) {
             // Записываем заголовки
             $firstRow = $data[0];
             if (is_array($firstRow)) {
                 $headers = array_keys($firstRow);
-                $headerCells = array_map(function($value) {
-                    $cleanValue = preg_replace('/\{\{\d+\}\}$/', '', (string)$value);
+                $headerCells = array_map(function ($value) {
+                    $cleanValue = preg_replace('/\{\{\d+\}\}$/', '', (string) $value);
+
                     return Cell::fromValue($cleanValue);
                 }, $headers);
                 $writer->addRow(new Row($headerCells));
@@ -1693,23 +1729,23 @@ class ProcessExportJob implements ShouldQueue
             // Записываем данные
             foreach ($data as $dataRow) {
                 if (is_array($dataRow)) {
-                    $cells = array_map(function($value) {
+                    $cells = array_map(function ($value) {
                         if (is_array($value) || is_object($value)) {
                             $strVal = json_encode($value, JSON_UNESCAPED_UNICODE);
                         } elseif ($value === null) {
                             $strVal = '';
                         } else {
-                            $strVal = (string)$value;
+                            $strVal = (string) $value;
                         }
-                        
+
                         // Защита от инъекций формул
                         if (str_starts_with($strVal, '=')) {
-                            $strVal = ' ' . $strVal;
+                            $strVal = ' '.$strVal;
                         }
-                        
+
                         return Cell::fromValue($strVal);
                     }, array_values($dataRow));
-                    
+
                     $writer->addRow(new Row($cells));
                 }
             }

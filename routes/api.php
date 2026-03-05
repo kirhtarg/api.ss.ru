@@ -1,18 +1,14 @@
 <?php
 
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Route;
-
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Log;
-use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Admin\ShopGoodImageController;
-use App\Http\Controllers\Api\Public\ContactController;
-use App\Http\Controllers\Api\Public\SiteInfoController;
-use App\Http\Controllers\Api\Public\SiteTemplateController;
 use App\Http\Controllers\Api\Public\ShopTemplateController;
+use App\Http\Controllers\Api\Public\SiteInfoController;
 use App\Http\Controllers\Api\Public\SiteMenuController;
-use App\Http\Controllers\Api\Public\SettingsController;
+use App\Http\Controllers\Api\Public\SiteTemplateController;
+use App\Http\Controllers\Auth\AuthController;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Route;
 
 // CORS уже настроен в OPTIONS обработчике выше
 
@@ -32,12 +28,12 @@ Route::post('/webhooks/tbank', [\App\Http\Controllers\Api\Public\ShopPaymentCont
 
 // DEBUG: Простой тестовый маршрут без аутентификации
 Route::post('/test-simple-upload', function (Request $request) {
-    file_put_contents('F:/Work/Projects/SS/api.ss.ru/storage/logs/laravel.log', "[" . date('Y-m-d H:i:s') . "] SIMPLE_TEST: files=" . count($request->allFiles()) . "\n", FILE_APPEND);
+    file_put_contents('F:/Work/Projects/SS/api.ss.ru/storage/logs/laravel.log', '['.date('Y-m-d H:i:s').'] SIMPLE_TEST: files='.count($request->allFiles())."\n", FILE_APPEND);
 
     return response()->json([
         'success' => true,
         'message' => 'Simple test upload',
-        'files' => count($request->allFiles())
+        'files' => count($request->allFiles()),
     ]);
 });
 
@@ -75,7 +71,7 @@ Route::post('/debug-all-requests', function (Request $request) {
         'full_url' => $request->fullUrl(),
         'headers' => $request->headers->all(),
         'has_auth' => $request->hasHeader('Authorization'),
-        'auth_header' => $request->header('Authorization') ? substr($request->header('Authorization'), 0, 50) . '...' : null,
+        'auth_header' => $request->header('Authorization') ? substr($request->header('Authorization'), 0, 50).'...' : null,
         'files_count' => count($request->allFiles()),
         'user_agent' => $request->userAgent(),
         'ip' => $request->ip(),
@@ -83,7 +79,7 @@ Route::post('/debug-all-requests', function (Request $request) {
         'host' => $request->header('Host'),
     ];
 
-    file_put_contents('F:/Work/Projects/SS/api.ss.ru/debug_all_requests.log', json_encode($logData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . "\n---\n", FILE_APPEND);
+    file_put_contents('F:/Work/Projects/SS/api.ss.ru/debug_all_requests.log', json_encode($logData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)."\n---\n", FILE_APPEND);
 
     return response()->json(['success' => true, 'message' => 'Request logged', 'data' => $logData]);
 });
@@ -95,12 +91,12 @@ Route::get('/debug/php-info', function () {
         'ip' => request()->ip(),
         'user_agent' => request()->userAgent(),
         'log_level' => config('logging.channels.single.level'),
-        'log_path' => storage_path('logs/laravel.log')
+        'log_path' => storage_path('logs/laravel.log'),
     ]);
 
     // Проверяем, можем ли мы записать в файл напрямую
     $logFile = storage_path('logs/laravel.log');
-    $testMessage = "[" . now() . "] local.INFO: DIRECT FILE WRITE TEST: PNG upload debug active\n";
+    $testMessage = '['.now()."] local.INFO: DIRECT FILE WRITE TEST: PNG upload debug active\n";
     file_put_contents($logFile, $testMessage, FILE_APPEND);
 
     return response()->json([
@@ -113,19 +109,20 @@ Route::get('/debug/php-info', function () {
             'max_execution_time' => ini_get('max_execution_time'),
         ],
         'server' => $_SERVER['SERVER_SOFTWARE'] ?? 'Unknown',
-        'log_test' => 'written'
+        'log_test' => 'written',
     ]);
 });
 
 // DEBUG: Тестовый роут для проверки check-slug
-Route::get('/debug-check-slug', function(Request $request) {
+Route::get('/debug-check-slug', function (Request $request) {
     $slug = $request->query('slug');
     \Log::info('Debug check slug called', ['slug' => $slug]);
+
     return response()->json([
         'success' => true,
         'exists' => false,
         'slug' => $slug,
-        'debug' => 'no auth required'
+        'debug' => 'no auth required',
     ]);
 });
 
@@ -155,7 +152,7 @@ Route::prefix('page-builder')->group(function () {
 // DEBUG: Тестовый роут для загрузки изображений товаров без аутентификации
 Route::post('/debug/test-goods-images/{goodId}', function (Request $request, $goodId) {
     $logFile = storage_path('logs/laravel.log');
-    $logMessage = "[" . now() . "] local.INFO: === DEBUG GOODS IMAGES REQUEST === goodId:$goodId, method:" . $request->method() . ", files:" . count($request->allFiles()) . ", origin:" . ($request->header('Origin') ?: 'none') . ", ip:" . $request->ip() . "\n";
+    $logMessage = '['.now()."] local.INFO: === DEBUG GOODS IMAGES REQUEST === goodId:$goodId, method:".$request->method().', files:'.count($request->allFiles()).', origin:'.($request->header('Origin') ?: 'none').', ip:'.$request->ip()."\n";
     file_put_contents($logFile, $logMessage, FILE_APPEND);
 
     if ($request->hasFile('images')) {
@@ -167,22 +164,22 @@ Route::post('/debug/test-goods-images/{goodId}', function (Request $request, $go
             $mimeType = $file->getMimeType();
             $size = $file->getSize();
 
-            $logMessage = "[" . now() . "] local.INFO: File $index: $originalName, $mimeType, $size bytes\n";
+            $logMessage = '['.now()."] local.INFO: File $index: $originalName, $mimeType, $size bytes\n";
             file_put_contents($logFile, $logMessage, FILE_APPEND);
 
             // Проверяем, PNG ли файл
             if (strpos($mimeType, 'png') !== false) {
-                $logMessage = "[" . now() . "] local.INFO: PNG FILE DETECTED: $originalName - processing with white background\n";
+                $logMessage = '['.now()."] local.INFO: PNG FILE DETECTED: $originalName - processing with white background\n";
                 file_put_contents($logFile, $logMessage, FILE_APPEND);
 
                 try {
-                    $manager = new \Intervention\Image\ImageManager(new \Intervention\Image\Drivers\Gd\Driver());
+                    $manager = new \Intervention\Image\ImageManager(new \Intervention\Image\Drivers\Gd\Driver);
                     $image = $manager->read($file);
 
                     $width = $image->width();
                     $height = $image->height();
 
-                    $logMessage = "[" . now() . "] local.INFO: PNG size: {$width}x{$height} - creating white canvas\n";
+                    $logMessage = '['.now()."] local.INFO: PNG size: {$width}x{$height} - creating white canvas\n";
                     file_put_contents($logFile, $logMessage, FILE_APPEND);
 
                     // Создаем белый холст
@@ -195,7 +192,7 @@ Route::post('/debug/test-goods-images/{goodId}', function (Request $request, $go
                     // Конвертируем в JPG
                     $jpgData = $canvas->toJpeg(90);
 
-                    $logMessage = "[" . now() . "] local.INFO: PNG converted to JPG, size: " . strlen($jpgData) . " bytes\n";
+                    $logMessage = '['.now().'] local.INFO: PNG converted to JPG, size: '.strlen($jpgData)." bytes\n";
                     file_put_contents($logFile, $logMessage, FILE_APPEND);
 
                     $results[] = [
@@ -203,15 +200,15 @@ Route::post('/debug/test-goods-images/{goodId}', function (Request $request, $go
                         'original_size' => "{$width}x{$height}",
                         'processed' => true,
                         'jpg_size' => strlen($jpgData),
-                        'status' => 'PNG processed with white background'
+                        'status' => 'PNG processed with white background',
                     ];
                 } catch (\Exception $e) {
-                    $logMessage = "[" . now() . "] local.ERROR: PNG processing error: " . $e->getMessage() . "\n";
+                    $logMessage = '['.now().'] local.ERROR: PNG processing error: '.$e->getMessage()."\n";
                     file_put_contents($logFile, $logMessage, FILE_APPEND);
 
                     $results[] = [
                         'filename' => $originalName,
-                        'error' => $e->getMessage()
+                        'error' => $e->getMessage(),
                     ];
                 }
             } else {
@@ -219,7 +216,7 @@ Route::post('/debug/test-goods-images/{goodId}', function (Request $request, $go
                     'filename' => $originalName,
                     'mime_type' => $mimeType,
                     'processed' => false,
-                    'status' => 'Not a PNG file'
+                    'status' => 'Not a PNG file',
                 ];
             }
         }
@@ -236,10 +233,10 @@ Route::post('/debug/test-goods-images/{goodId}', function (Request $request, $go
                     'file_path' => $filePath,
                     'alt_text' => '',
                     'is_main' => false,
-                    'sort_order' => $index
+                    'sort_order' => $index,
                 ];
 
-                $logMessage = "[" . now() . "] local.INFO: Created mock image: id=" . (99999000 + $index) . ", path=$filePath\n";
+                $logMessage = '['.now().'] local.INFO: Created mock image: id='.(99999000 + $index).", path=$filePath\n";
                 file_put_contents($logFile, $logMessage, FILE_APPEND);
             }
         }
@@ -247,10 +244,10 @@ Route::post('/debug/test-goods-images/{goodId}', function (Request $request, $go
         $response = [
             'success' => true,
             'message' => 'Изображения успешно загружены (DEBUG MODE)',
-            'data' => $mockImages
+            'data' => $mockImages,
         ];
 
-        $logMessage = "[" . now() . "] local.INFO: === DEBUG RESPONSE === " . json_encode($response) . "\n";
+        $logMessage = '['.now().'] local.INFO: === DEBUG RESPONSE === '.json_encode($response)."\n";
         file_put_contents($logFile, $logMessage, FILE_APPEND);
 
         return response()->json($response);
@@ -258,14 +255,14 @@ Route::post('/debug/test-goods-images/{goodId}', function (Request $request, $go
 
     return response()->json([
         'success' => false,
-        'message' => 'No files uploaded'
+        'message' => 'No files uploaded',
     ]);
 });
 
 // DEBUG: Тестовый роут для загрузки изображений без аутентификации
 Route::post('/debug/test-image-upload', function (Request $request) {
     $logFile = storage_path('logs/laravel.log');
-    $logMessage = "[" . now() . "] local.INFO: === DEBUG IMAGE UPLOAD === files:" . count($request->allFiles()) . "\n";
+    $logMessage = '['.now().'] local.INFO: === DEBUG IMAGE UPLOAD === files:'.count($request->allFiles())."\n";
     file_put_contents($logFile, $logMessage, FILE_APPEND);
 
     // Простая обработка файла
@@ -278,27 +275,27 @@ Route::post('/debug/test-image-upload', function (Request $request) {
             $mimeType = $file->getMimeType();
             $size = $file->getSize();
 
-            $logMessage = "[" . now() . "] local.INFO: File $index: $originalName, $mimeType, $size bytes\n";
+            $logMessage = '['.now()."] local.INFO: File $index: $originalName, $mimeType, $size bytes\n";
             file_put_contents($logFile, $logMessage, FILE_APPEND);
 
             // Проверяем, PNG ли файл
             $isPng = strpos($mimeType, 'png') !== false || strpos(strtolower($originalName), '.png') !== false;
-            $logMessage = "[" . now() . "] local.INFO: Checking PNG: mime=$mimeType, name=$originalName, isPng=" . ($isPng ? 'YES' : 'NO') . "\n";
+            $logMessage = '['.now()."] local.INFO: Checking PNG: mime=$mimeType, name=$originalName, isPng=".($isPng ? 'YES' : 'NO')."\n";
             file_put_contents($logFile, $logMessage, FILE_APPEND);
 
             if ($isPng) {
-                $logMessage = "[" . now() . "] local.INFO: PNG FILE DETECTED: $originalName - processing with white background\n";
+                $logMessage = '['.now()."] local.INFO: PNG FILE DETECTED: $originalName - processing with white background\n";
                 file_put_contents($logFile, $logMessage, FILE_APPEND);
 
                 // Имитируем обработку PNG
                 try {
-                    $manager = new \Intervention\Image\ImageManager(new \Intervention\Image\Drivers\Gd\Driver());
+                    $manager = new \Intervention\Image\ImageManager(new \Intervention\Image\Drivers\Gd\Driver);
                     $image = $manager->read($file);
 
                     $width = $image->width();
                     $height = $image->height();
 
-                    $logMessage = "[" . now() . "] local.INFO: PNG size: {$width}x{$height}\n";
+                    $logMessage = '['.now()."] local.INFO: PNG size: {$width}x{$height}\n";
                     file_put_contents($logFile, $logMessage, FILE_APPEND);
 
                     // Создаем белый холст
@@ -311,34 +308,34 @@ Route::post('/debug/test-image-upload', function (Request $request) {
                     // Конвертируем в JPG
                     $jpgData = $canvas->toJpeg(90);
 
-                    $logMessage = "[" . now() . "] local.INFO: PNG converted to JPG, size: " . strlen($jpgData) . " bytes\n";
+                    $logMessage = '['.now().'] local.INFO: PNG converted to JPG, size: '.strlen($jpgData)." bytes\n";
                     file_put_contents($logFile, $logMessage, FILE_APPEND);
 
-                    $logMessage = "[" . now() . "] local.INFO: About to save file - index=$index, goodId=$goodId\n";
+                    $logMessage = '['.now()."] local.INFO: About to save file - index=$index, goodId=$goodId\n";
                     file_put_contents($logFile, $logMessage, FILE_APPEND);
 
                     // Сохраняем файл на диск
                     $frontendPublicPath = frontend_public_path();
                     $filePath = "images/shop/goods/{$goodId}/processed_image_{$index}.jpg";
-                    $fullFilePath = $frontendPublicPath . '/' . $filePath;
+                    $fullFilePath = $frontendPublicPath.'/'.$filePath;
 
-                    $logMessage = "[" . now() . "] local.INFO: Saving file to: frontend=$frontendPublicPath, path=$filePath, full=$fullFilePath\n";
+                    $logMessage = '['.now()."] local.INFO: Saving file to: frontend=$frontendPublicPath, path=$filePath, full=$fullFilePath\n";
                     file_put_contents($logFile, $logMessage, FILE_APPEND);
 
                     // Создаем директорию если не существует
                     $dir = dirname($fullFilePath);
-                    if (!is_dir($dir)) {
+                    if (! is_dir($dir)) {
                         mkdir($dir, 0755, true);
-                        $logMessage = "[" . now() . "] local.INFO: Created directory: $dir\n";
+                        $logMessage = '['.now()."] local.INFO: Created directory: $dir\n";
                         file_put_contents($logFile, $logMessage, FILE_APPEND);
                     }
 
                     $result = file_put_contents($fullFilePath, $jpgData);
                     if ($result === false) {
-                        $logMessage = "[" . now() . "] local.ERROR: Failed to save file: $fullFilePath\n";
+                        $logMessage = '['.now()."] local.ERROR: Failed to save file: $fullFilePath\n";
                         file_put_contents($logFile, $logMessage, FILE_APPEND);
                     } else {
-                        $logMessage = "[" . now() . "] local.INFO: PNG processed to JPG, size: " . strlen($jpgData) . " bytes, saved to: $filePath (written $result bytes)\n";
+                        $logMessage = '['.now().'] local.INFO: PNG processed to JPG, size: '.strlen($jpgData)." bytes, saved to: $filePath (written $result bytes)\n";
                         file_put_contents($logFile, $logMessage, FILE_APPEND);
                     }
 
@@ -347,25 +344,25 @@ Route::post('/debug/test-image-upload', function (Request $request) {
                         'original_size' => "{$width}x{$height}",
                         'processed' => true,
                         'jpg_size' => strlen($jpgData),
-                        'file_saved' => true
+                        'file_saved' => true,
                     ];
 
-                    $logMessage = "[" . now() . "] local.INFO: Added to results: $originalName\n";
+                    $logMessage = '['.now()."] local.INFO: Added to results: $originalName\n";
                     file_put_contents($logFile, $logMessage, FILE_APPEND);
                 } catch (\Exception $e) {
-                    $logMessage = "[" . now() . "] local.ERROR: PNG processing error: " . $e->getMessage() . "\n";
+                    $logMessage = '['.now().'] local.ERROR: PNG processing error: '.$e->getMessage()."\n";
                     file_put_contents($logFile, $logMessage, FILE_APPEND);
 
                     $results[] = [
                         'filename' => $originalName,
-                        'error' => $e->getMessage()
+                        'error' => $e->getMessage(),
                     ];
                 }
             } else {
                 $results[] = [
                     'filename' => $originalName,
                     'mime_type' => $mimeType,
-                    'processed' => false
+                    'processed' => false,
                 ];
             }
         }
@@ -373,16 +370,15 @@ Route::post('/debug/test-image-upload', function (Request $request) {
         return response()->json([
             'success' => true,
             'message' => 'Debug image upload test completed',
-            'results' => $results
+            'results' => $results,
         ]);
     }
 
     return response()->json([
         'success' => false,
-        'message' => 'No files uploaded'
+        'message' => 'No files uploaded',
     ]);
 });
-
 
 // Обработка OPTIONS запросов для CORS - должна быть первой
 Route::match(['OPTIONS'], '/{any}', function (Request $request) {
@@ -409,8 +405,6 @@ Route::get('/public/get-sitemap', [\App\Http\Controllers\Api\Public\SitemapContr
 // Маршрут для получения goods_feed.xml
 Route::get('/public/get-goods-feed', [\App\Http\Controllers\Api\Public\GoodsFeedController::class, 'getGoodsFeed']);
 
-
-
 // Маршрут для получения данных контактов для заголовка (публичные, с отдельным rate limiter)
 Route::middleware(['throttle:public'])->group(function () {
     Route::get('/public/contacts/header-data', [\App\Http\Controllers\Api\Public\ContactController::class, 'headerData']);
@@ -419,10 +413,6 @@ Route::middleware(['throttle:public'])->group(function () {
     // Маршрут для получения адресов самовывоза
     Route::get('/public/contacts/pickup-addresses', [\App\Http\Controllers\Api\Public\ContactController::class, 'getPickupAddresses']);
 });
-
-
-
-
 
 // Публичные маршруты для авторизации (без Sanctum stateful middleware)
 Route::post('/login', [AuthController::class, 'login'])->name('login');
@@ -442,7 +432,6 @@ Route::post('/password/reset', [AuthController::class, 'resetPassword']);
 Route::post('/phone/send-code', [\App\Http\Controllers\Auth\PhoneAuthController::class, 'sendPhoneCode']);
 Route::post('/phone/verify-code', [\App\Http\Controllers\Auth\PhoneAuthController::class, 'verifyPhoneCode']);
 Route::post('/phone/check-status', [\App\Http\Controllers\Auth\PhoneAuthController::class, 'checkCodeStatus']);
-
 
 // Свойства товаров для импорта (временно без middleware для тестирования)
 Route::get('/admin/shop/goods/properties', [\App\Http\Controllers\Admin\ShopPropertiesController::class, 'list']);
@@ -510,25 +499,24 @@ Route::get('/test/oauth', function () {
                 'client_id' => config('services.yandex.client_id') ? 'настроен' : 'не настроен',
                 'client_secret' => config('services.yandex.client_secret') ? 'настроен' : 'не настроен',
                 'redirect' => config('services.yandex.redirect'),
-            ]
+            ],
         ],
         'session' => [
             'driver' => $sessionDriver,
             'table_exists' => $sessionTableExists,
-            'status' => $sessionTableExists ? 'OK' : 'Нужно запустить миграцию'
-        ]
+            'status' => $sessionTableExists ? 'OK' : 'Нужно запустить миграцию',
+        ],
     ]);
 });
 
-
-    // Публичные маршруты для получения информации о сайте (с CORS middleware и отдельным rate limiter)
-    Route::middleware(['cors', 'throttle:public'])->group(function () {
+// Публичные маршруты для получения информации о сайте (с CORS middleware и отдельным rate limiter)
+Route::middleware(['cors', 'throttle:public'])->group(function () {
     Route::options('/public/site-info', function () {
         return response()->json([], 200);
     });
     Route::get('/public/site-info', [SiteInfoController::class, 'index']);
     Route::get('/public/favicon', [SiteInfoController::class, 'getFavicon']);
-    
+
     // Публичный роут для получения опубликованных страниц конструктора
     Route::options('/public/page-builder/pages/{slug}', function () {
         return response()->json([], 200);
@@ -655,7 +643,6 @@ Route::get('/test/oauth', function () {
     });
     Route::post('/public/shop/goods/batch', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getBatch']);
 
-
     // Публичные маршруты для категорий магазина
     Route::options('/public/shop/categories', function () {
         return response()->json([], 200);
@@ -677,7 +664,7 @@ Route::get('/test/oauth', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/categories/{id}/children', [App\Http\Controllers\Api\Public\ShopCategoriesController::class, 'getChildren']);
-    
+
     // Batch endpoint для получения подкатегорий нескольких категорий одним запросом
     Route::options('/public/shop/categories/children/batch', function () {
         return response()->json([], 200);
@@ -782,7 +769,7 @@ Route::get('/test/oauth', function () {
         return response()->json([], 200);
     });
     Route::post('/yandex-pay/session', [App\Http\Controllers\Api\YandexPayController::class, 'createSession']);
-    
+
     // Проверка статуса платежа
     Route::options('/yandex-pay/status/{orderId}', function () {
         return response()->json([], 200);
@@ -1039,13 +1026,13 @@ Route::get('/test/oauth', function () {
                 'data' => [
                     'total_brands' => $brandCount,
                     'active_brands' => $activeBrandCount,
-                    'brands' => $brands
-                ]
+                    'brands' => $brands,
+                ],
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка: ' . $e->getMessage()
+                'message' => 'Ошибка: '.$e->getMessage(),
             ], 500);
         }
     });
@@ -1063,13 +1050,13 @@ Route::get('/test/oauth', function () {
                     'total_goods' => $count,
                     'active_goods' => $activeCount,
                     'in_stock_goods' => $inStockCount,
-                    'message' => 'Товары найдены'
-                ]
+                    'message' => 'Товары найдены',
+                ],
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка: ' . $e->getMessage()
+                'message' => 'Ошибка: '.$e->getMessage(),
             ], 500);
         }
     });
@@ -1123,12 +1110,12 @@ Route::get('/public/debug/settings', function () {
 
         return response()->json([
             'success' => true,
-            'data' => $settings
+            'data' => $settings,
         ]);
     } catch (\Exception $e) {
         return response()->json([
             'success' => false,
-            'message' => 'Ошибка: ' . $e->getMessage()
+            'message' => 'Ошибка: '.$e->getMessage(),
         ], 500);
     }
 });
@@ -1137,7 +1124,6 @@ Route::get('/public/debug/settings', function () {
 Route::options('/public/contacts/header-data', function () {
     return response()->json([], 200);
 });
-
 
 // Публичные маршруты
 Route::get('/contacts/main-address', [\App\Http\Controllers\ContactController::class, 'getMainAddress']);
@@ -1178,7 +1164,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Загрузка изображений для rich editor (требует аутентификации)
     Route::middleware(['auth:sanctum', 'role:admin,manager'])->group(function () {
-    Route::post('/admin/upload/good-text-image', [\App\Http\Controllers\Admin\UploadController::class, 'uploadGoodTextImage']);
+        Route::post('/admin/upload/good-text-image', [\App\Http\Controllers\Admin\UploadController::class, 'uploadGoodTextImage']);
         Route::post('/admin/upload/color-image', [\App\Http\Controllers\Admin\UploadController::class, 'uploadColorImage']);
         Route::post('/admin/upload-embedded-image', [\App\Http\Controllers\Admin\UploadController::class, 'uploadEmbeddedImage']);
         Route::post('/admin/upload-embedded-images-batch', [\App\Http\Controllers\Admin\UploadController::class, 'uploadEmbeddedImagesBatch']);
@@ -1243,7 +1229,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 'successful' => $response->successful(),
                 'headers' => $response->headers(),
                 'body_preview' => substr($response->body(), 0, 1000),
-                'body_length' => strlen($response->body())
+                'body_length' => strlen($response->body()),
             ]);
         } catch (\Exception $e) {
             return response()->json(['error' => $e->getMessage()]);
@@ -1254,7 +1240,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/admin/shop/goods/load-google-sheets', function (Request $request) {
         try {
             $request->validate([
-                'spreadsheetId' => 'required|string'
+                'spreadsheetId' => 'required|string',
             ]);
 
             $spreadsheetId = $request->input('spreadsheetId');
@@ -1269,7 +1255,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
             Log::info('Loading Google Sheets', [
                 'original_id' => $request->input('spreadsheetId'),
-                'extracted_id' => $spreadsheetId
+                'extracted_id' => $spreadsheetId,
             ]);
             $sheets = [];
 
@@ -1309,7 +1295,7 @@ Route::middleware('auth:sanctum')->group(function () {
                             'status' => $response->status(),
                             'successful' => $response->successful(),
                             'body_length' => strlen($response->body()),
-                            'headers' => $response->headers()
+                            'headers' => $response->headers(),
                         ]);
 
                         if ($response->successful()) {
@@ -1319,7 +1305,7 @@ Route::middleware('auth:sanctum')->group(function () {
                             Log::info("CSV data for gid={$gid}", [
                                 'lines_count' => count($lines),
                                 'first_line' => $lines[0] ?? 'empty',
-                                'sample_data' => array_slice($lines, 0, 3)
+                                'sample_data' => array_slice($lines, 0, 3),
                             ]);
 
                             if (count($lines) > 0) {
@@ -1330,14 +1316,14 @@ Route::middleware('auth:sanctum')->group(function () {
                                     'headers_count' => count($headers),
                                     'data_rows' => count($data),
                                     'headers' => $headers,
-                                    'sample_row' => $data[0] ?? 'empty'
+                                    'sample_row' => $data[0] ?? 'empty',
                                 ]);
 
                                 // Проверяем, что лист не пустой
                                 if (count($headers) > 0 && count($data) > 0) {
                                     $sheets[] = [
                                         'gid' => $gid,
-                                        'name' => "Лист " . ($gid + 1),
+                                        'name' => 'Лист '.($gid + 1),
                                         'headers' => $headers,
                                         'data' => $data,
                                     ];
@@ -1353,37 +1339,38 @@ Route::middleware('auth:sanctum')->group(function () {
                             Log::warning("Sheet gid={$gid} failed to load", [
                                 'url' => $csvUrl,
                                 'status' => $response->status(),
-                                'body' => substr($response->body(), 0, 500) // Первые 500 символов
+                                'body' => substr($response->body(), 0, 500), // Первые 500 символов
                             ]);
                         }
                     }
                 } catch (\Exception $e) {
-                    Log::debug("Google Sheets gid {$gid} error: " . $e->getMessage());
+                    Log::debug("Google Sheets gid {$gid} error: ".$e->getMessage());
+
                     continue;
                 }
             }
 
             // Подход 2: Если CSV не работает, пробуем HTML export
             if (empty($sheets)) {
-                Log::info("CSV export failed, trying HTML export");
+                Log::info('CSV export failed, trying HTML export');
 
                 try {
                     $htmlUrl = "https://docs.google.com/spreadsheets/d/{$spreadsheetId}/export?format=html&gid=0";
-                    Log::info("Trying HTML export", ['url' => $htmlUrl]);
+                    Log::info('Trying HTML export', ['url' => $htmlUrl]);
 
                     $response = \Illuminate\Support\Facades\Http::timeout(30)->get($htmlUrl);
 
                     if ($response->successful()) {
-                        Log::info("HTML export successful", [
+                        Log::info('HTML export successful', [
                             'status' => $response->status(),
-                            'body_length' => strlen($response->body())
+                            'body_length' => strlen($response->body()),
                         ]);
 
                         // Парсим HTML таблицу
                         $html = $response->body();
                         if (preg_match('/<table[^>]*>(.*?)<\/table>/s', $html, $matches)) {
                             $tableHtml = $matches[1];
-                            Log::info("Found HTML table", ['table_length' => strlen($tableHtml)]);
+                            Log::info('Found HTML table', ['table_length' => strlen($tableHtml)]);
 
                             // Простой парсинг HTML таблицы
                             if (preg_match_all('/<tr[^>]*>(.*?)<\/tr>/s', $tableHtml, $rows)) {
@@ -1392,7 +1379,7 @@ Route::middleware('auth:sanctum')->group(function () {
                                     if (preg_match_all('/<t[hd][^>]*>(.*?)<\/t[hd]>/s', $rowHtml, $cells)) {
                                         $rowData = array_map('strip_tags', $cells[1]);
                                         $rowData = array_map('trim', $rowData);
-                                        if (!empty(array_filter($rowData))) {
+                                        if (! empty(array_filter($rowData))) {
                                             $data[] = $rowData;
                                         }
                                     }
@@ -1404,20 +1391,20 @@ Route::middleware('auth:sanctum')->group(function () {
 
                                     $sheets[] = [
                                         'gid' => 0,
-                                        'name' => "Лист 1",
+                                        'name' => 'Лист 1',
                                         'headers' => $headers,
                                         'data' => $rows,
                                     ];
-                                    Log::info("HTML sheet added successfully", [
+                                    Log::info('HTML sheet added successfully', [
                                         'headers_count' => count($headers),
-                                        'rows_count' => count($rows)
+                                        'rows_count' => count($rows),
                                     ]);
                                 }
                             }
                         }
                     }
                 } catch (\Exception $e) {
-                    Log::error("HTML export failed: " . $e->getMessage());
+                    Log::error('HTML export failed: '.$e->getMessage());
                 }
             }
 
@@ -1425,7 +1412,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Log::warning('No sheets found in Google Sheets', [
                     'spreadsheetId' => $spreadsheetId,
                     'tried_gids' => $gidsToTry,
-                    'total_attempts' => count($gidsToTry)
+                    'total_attempts' => count($gidsToTry),
                 ]);
 
                 // Возвращаем детальную информацию для отладки
@@ -1436,33 +1423,32 @@ Route::middleware('auth:sanctum')->group(function () {
                         'spreadsheetId' => $spreadsheetId,
                         'tried_gids' => $gidsToTry,
                         'total_attempts' => count($gidsToTry),
-                        'suggestion' => 'Проверьте, что таблица публично доступна для чтения'
-                    ]
+                        'suggestion' => 'Проверьте, что таблица публично доступна для чтения',
+                    ],
                 ], 404);
             }
 
             Log::info('Google Sheets loaded successfully', [
                 'spreadsheetId' => $spreadsheetId,
-                'sheetsCount' => count($sheets)
+                'sheetsCount' => count($sheets),
             ]);
 
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'sheets' => $sheets
-                ]
+                    'sheets' => $sheets,
+                ],
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Ошибка загрузки Google Sheets: ' . $e->getMessage());
+            Log::error('Ошибка загрузки Google Sheets: '.$e->getMessage());
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка загрузки данных: ' . $e->getMessage()
+                'message' => 'Ошибка загрузки данных: '.$e->getMessage(),
             ], 500);
         }
     });
-
 
     // Маршруты для администраторов и менеджеров
     Route::middleware(['auth:sanctum', 'role:admin,manager'])->prefix('admin')->group(function () {
@@ -1492,7 +1478,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::prefix('export')->group(function () {
             Route::post('/sitemap', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'generateSitemap']);
             Route::get('/sitemap/status', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getSitemapStatus']);
-            
+
             Route::post('/robots', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'generateRobots']);
             Route::get('/robots/status', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getRobotsStatus']);
         });
@@ -1502,7 +1488,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/', function () {
                 $pending = \Illuminate\Support\Facades\DB::table('jobs')->count();
                 $failed = \Illuminate\Support\Facades\DB::table('failed_jobs')->count();
-                
+
                 $workerActive = false;
                 $debugOutput = [];
                 try {
@@ -1510,7 +1496,7 @@ Route::middleware('auth:sanctum')->group(function () {
                         $output = [];
                         exec('wmic process where "name=\'php.exe\'" get commandline 2>&1', $output);
                         $debugOutput = []; // Debug disabled
-                        
+
                         // Check line by line
                         foreach ($output as $line) {
                             if (stripos($line, 'queue:work') !== false || stripos($line, 'queue:listen') !== false) {
@@ -1518,9 +1504,9 @@ Route::middleware('auth:sanctum')->group(function () {
                                 break;
                             }
                         }
-                        
+
                         // Double check with full string just in case
-                        if (!$workerActive) {
+                        if (! $workerActive) {
                             $fullOutput = implode(' ', $output);
                             if (stripos($fullOutput, 'queue:work') !== false || stripos($fullOutput, 'queue:listen') !== false) {
                                 $workerActive = true;
@@ -1534,7 +1520,7 @@ Route::middleware('auth:sanctum')->group(function () {
                         }
                     }
                 } catch (\Exception $e) {
-                    \Illuminate\Support\Facades\Log::error('Queue worker check failed: ' . $e->getMessage());
+                    \Illuminate\Support\Facades\Log::error('Queue worker check failed: '.$e->getMessage());
                 }
 
                 $status = $workerActive ? ($pending > 0 ? 'working' : 'idle') : 'inactive';
@@ -1546,17 +1532,18 @@ Route::middleware('auth:sanctum')->group(function () {
                         'failed' => $failed,
                         'status' => $status,
                         'worker_active' => $workerActive,
-                        'debug_output' => $debugOutput // Temporary debug info
-                    ]
+                        'debug_output' => $debugOutput, // Temporary debug info
+                    ],
                 ]);
             });
 
             Route::post('/restart', function (\Illuminate\Http\Request $request) {
                 try {
                     \Illuminate\Support\Facades\Artisan::call('queue:restart');
+
                     return response()->json(['success' => true, 'message' => 'Queue restart signal sent']);
                 } catch (\Exception $e) {
-                    return response()->json(['success' => false, 'message' => 'Error restarting queue: ' . $e->getMessage()], 500);
+                    return response()->json(['success' => false, 'message' => 'Error restarting queue: '.$e->getMessage()], 500);
                 }
             });
 
@@ -1569,37 +1556,39 @@ Route::middleware('auth:sanctum')->group(function () {
                     if ($os === 'WIN') {
                         // Windows: запуск в фоне через start /B
                         $command = "start /B \"\" \"$phpPath\" \"$artisanPath\" queue:work --tries=3 --timeout=7200 > NUL 2>&1";
-                        pclose(popen($command, "r"));
+                        pclose(popen($command, 'r'));
                     } else {
                         // Linux/Unix: запуск в фоне через nohup
                         $command = "nohup \"$phpPath\" \"$artisanPath\" queue:work --tries=3 --timeout=7200 > /dev/null 2>&1 &";
                         exec($command);
                     }
-                    
+
                     // Даем немного времени на запуск
                     sleep(1);
-                    
+
                     return response()->json(['success' => true, 'message' => 'Queue worker started']);
                 } catch (\Exception $e) {
-                    return response()->json(['success' => false, 'message' => 'Error starting queue: ' . $e->getMessage()], 500);
+                    return response()->json(['success' => false, 'message' => 'Error starting queue: '.$e->getMessage()], 500);
                 }
             });
 
             Route::post('/clear-pending', function () {
                 try {
                     \Illuminate\Support\Facades\Artisan::call('queue:clear', ['--force' => true]);
+
                     return response()->json(['success' => true, 'message' => 'Очередь задач очищена']);
                 } catch (\Exception $e) {
-                    return response()->json(['success' => false, 'message' => 'Ошибка очистки очереди: ' . $e->getMessage()], 500);
+                    return response()->json(['success' => false, 'message' => 'Ошибка очистки очереди: '.$e->getMessage()], 500);
                 }
             });
 
             Route::post('/clear-failed', function () {
                 try {
                     \Illuminate\Support\Facades\Artisan::call('queue:flush');
+
                     return response()->json(['success' => true, 'message' => 'Список неудачных задач очищен']);
                 } catch (\Exception $e) {
-                    return response()->json(['success' => false, 'message' => 'Ошибка очистки неудачных задач: ' . $e->getMessage()], 500);
+                    return response()->json(['success' => false, 'message' => 'Ошибка очистки неудачных задач: '.$e->getMessage()], 500);
                 }
             });
         });
@@ -1612,21 +1601,21 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Profile management
         Route::get('/profile', [\App\Http\Controllers\Api\Admin\ProfileController::class, 'index']);
-        
+
         // Тестовый endpoint для диагностики профиля
         Route::get('/profile/debug', function (Request $request) {
             try {
                 $user = $request->user();
-                if (!$user) {
+                if (! $user) {
                     return response()->json(['error' => 'User not authenticated'], 401);
                 }
-                
+
                 $result = [
                     'user_id' => $user->id,
                     'user_name' => $user->name,
                     'user_email' => $user->email,
                 ];
-                
+
                 // Пробуем получить роли через прямой запрос
                 try {
                     $roles = \Illuminate\Support\Facades\DB::table('user_roles')
@@ -1638,7 +1627,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 } catch (\Exception $e) {
                     $result['roles_direct_error'] = $e->getMessage();
                 }
-                
+
                 // Пробуем получить роли через связь
                 try {
                     $user->load('roles');
@@ -1646,14 +1635,14 @@ Route::middleware('auth:sanctum')->group(function () {
                 } catch (\Exception $e) {
                     $result['roles_relation_error'] = $e->getMessage();
                 }
-                
+
                 return response()->json($result);
             } catch (\Exception $e) {
                 return response()->json([
                     'error' => $e->getMessage(),
                     'trace' => $e->getTraceAsString(),
                     'file' => $e->getFile(),
-                    'line' => $e->getLine()
+                    'line' => $e->getLine(),
                 ], 500);
             }
         });
@@ -1683,7 +1672,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     'successful' => $response->successful(),
                     'headers' => $response->headers(),
                     'body_preview' => substr($response->body(), 0, 1000),
-                    'body_length' => strlen($response->body())
+                    'body_length' => strlen($response->body()),
                 ]);
             } catch (\Exception $e) {
                 return response()->json(['error' => $e->getMessage()]);
@@ -1747,15 +1736,16 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('role:admin')->get('/debug/roles', function () {
             try {
                 $roles = \App\Models\Role::all();
+
                 return response()->json([
                     'success' => true,
                     'data' => $roles,
-                    'message' => 'Roles debug info'
+                    'message' => 'Roles debug info',
                 ]);
             } catch (\Exception $e) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Ошибка: ' . $e->getMessage()
+                    'message' => 'Ошибка: '.$e->getMessage(),
                 ], 500);
             }
         });
@@ -1796,7 +1786,7 @@ Route::middleware('auth:sanctum')->group(function () {
             // Батч-операции с категориями - должны быть ПЕРЕД маршрутом /{id}
             Route::put('/add-to-parent', [\App\Http\Controllers\CategoryController::class, 'addToParent']);
             Route::put('/batch-update', [\App\Http\Controllers\CategoryController::class, 'batchUpdate']);
-            
+
             Route::post('/', [\App\Http\Controllers\CategoryController::class, 'store']);
             Route::put('/{id}', [\App\Http\Controllers\CategoryController::class, 'update']);
             Route::put('/{id}/properties', [\App\Http\Controllers\CategoryController::class, 'syncProperties']);
@@ -1822,14 +1812,14 @@ Route::middleware('auth:sanctum')->group(function () {
                     $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
                         'items' => 'required|array',
                         'items.*.id' => 'required|exists:shop_categories,id',
-                        'items.*.sort_order' => 'required|integer|min:0'
+                        'items.*.sort_order' => 'required|integer|min:0',
                     ]);
 
                     if ($validator->fails()) {
                         return response()->json([
                             'success' => false,
                             'message' => 'Ошибка валидации',
-                            'errors' => $validator->errors()
+                            'errors' => $validator->errors(),
                         ], 422);
                     }
 
@@ -1839,12 +1829,12 @@ Route::middleware('auth:sanctum')->group(function () {
 
                     return response()->json([
                         'success' => true,
-                        'message' => 'Порядок категорий успешно обновлен'
+                        'message' => 'Порядок категорий успешно обновлен',
                     ]);
                 } catch (\Exception $e) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Ошибка обновления порядка: ' . $e->getMessage()
+                        'message' => 'Ошибка обновления порядка: '.$e->getMessage(),
                     ], 500);
                 }
             });
@@ -1855,9 +1845,6 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/shop-settings', [\App\Http\Controllers\ShopSettingsController::class, 'getShopSettings']);
             Route::get('/shop-settings/{key}', [\App\Http\Controllers\ShopSettingsController::class, 'getShopSetting']);
         });
-
-
-
 
         // Shop management (для пользователей с доступом к shop) - CORS ПЕРВЫЙ!
         Route::middleware([\App\Http\Middleware\CustomCors::class, 'auth:sanctum', 'role:admin,manager'])->prefix('shop')->group(function () {
@@ -1912,12 +1899,11 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::prefix('import-export')->group(function () {
                     Route::post('/export/csv', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'exportCsv']);
                     Route::post('/export/excel', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'exportExcel']);
-          Route::post('/export/yml', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'exportYml']);
-          Route::get('/export/yml/status', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getYmlStatus']);
-          Route::post('/import/csv', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'importCsv']);
+                    Route::post('/export/yml', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'exportYml']);
+                    Route::get('/export/yml/status', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getYmlStatus']);
+                    Route::post('/import/csv', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'importCsv']);
                     Route::get('/template', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getTemplate']);
                 });
-
 
                 // Скачивание изображений для импорта
                 Route::post('/download-image', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'downloadImage']);
@@ -1962,14 +1948,14 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::put('/{variationId}/price', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'updateVariationPrice']);
                     Route::put('/{variationId}/demping', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'updateVariationDemping']);
                 });
-                
+
                 // Глобальное создание атрибутов вариаций (без привязки к товару)
                 Route::post('/variations/attributes/global', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'createAttributeGlobal']);
                 // Получить список всех характеристик вариаций (без привязки к товару)
                 Route::get('/variations/attributes', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'listAttributes']);
                 // Массовая загрузка атрибутов вариаций
                 Route::post('/variations/attributes/bulk', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'getBulkAttributes']);
-                
+
                 // Глобальное массовое обновление вариаций (без привязки к товару)
                 Route::post('/variations/bulk-update', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'globalBulkUpdate']);
                 // Получить ID вариаций для списка товаров
@@ -2037,13 +2023,13 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::prefix('properties')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'index']);
                 Route::post('/', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'store']);
-                
+
                 // Специфичные маршруты должны быть перед общими с параметрами
                 Route::get('/{property}/goods-count', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'getGoodsCount']);
                 Route::get('/{property}/categories', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'getCategories']);
                 Route::put('/{property}/categories', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'syncCategories']);
                 Route::delete('/{property}/force', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'forceDestroy']);
-                
+
                 Route::put('/{property}', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'update']);
                 Route::delete('/{property}', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'destroy']);
 
@@ -2099,7 +2085,6 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::put('/{id}', [\App\Http\Controllers\Admin\ShopLabelsController::class, 'update']);
                 Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopLabelsController::class, 'destroy']);
             });
-
 
             // Заказы
             Route::prefix('orders')->group(function () {
@@ -2176,7 +2161,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     return response()->json([
                         'success' => true,
                         'message' => 'API работает',
-                        'count' => \App\Models\Promocode::count()
+                        'count' => \App\Models\Promocode::count(),
                     ]);
                 });
                 Route::get('/', [\App\Http\Controllers\Admin\PromocodeController::class, 'index']);
@@ -2281,13 +2266,13 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/statistics', function () {
                 $stats = [
                     'total_users' => \App\Models\User::count(),
-                    'admins' => \App\Models\User::whereHas('roles', function($query) {
+                    'admins' => \App\Models\User::whereHas('roles', function ($query) {
                         $query->where('name', 'admin');
                     })->count(),
-                    'managers' => \App\Models\User::whereHas('roles', function($query) {
+                    'managers' => \App\Models\User::whereHas('roles', function ($query) {
                         $query->where('name', 'manager');
                     })->count(),
-                    'regular_users' => \App\Models\User::whereHas('roles', function($query) {
+                    'regular_users' => \App\Models\User::whereHas('roles', function ($query) {
                         $query->where('name', 'user');
                     })->count(),
                     'recent_registrations' => \App\Models\User::where('created_at', '>=', now()->subDays(7))->count(),
@@ -2296,7 +2281,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 return response()->json([
                     'success' => true,
                     'data' => $stats,
-                    'message' => 'Statistics retrieved successfully'
+                    'message' => 'Statistics retrieved successfully',
                 ]);
             });
 
@@ -2309,8 +2294,6 @@ Route::middleware('auth:sanctum')->group(function () {
             //     Route::delete('/{backup}', [\App\Http\Controllers\Admin\GoodsBackupController::class, 'destroy']);
             // });
         });
-
-
 
         // Modex main routes
         Route::middleware([\App\Http\Middleware\CustomCors::class, 'auth:sanctum', 'role:admin,manager'])->prefix('modex')->group(function () {
@@ -2351,12 +2334,12 @@ Route::middleware('auth:sanctum')->group(function () {
 
                     return response()->json([
                         'success' => true,
-                        'data' => $accessiblePages
+                        'data' => $accessiblePages,
                     ]);
                 } catch (\Exception $e) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Ошибка получения доступных страниц: ' . $e->getMessage()
+                        'message' => 'Ошибка получения доступных страниц: '.$e->getMessage(),
                     ], 500);
                 }
             });
@@ -2368,12 +2351,12 @@ Route::middleware('auth:sanctum')->group(function () {
 
                     return response()->json([
                         'success' => true,
-                        'data' => $pages
+                        'data' => $pages,
                     ]);
                 } catch (\Exception $e) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Ошибка получения списка страниц: ' . $e->getMessage()
+                        'message' => 'Ошибка получения списка страниц: '.$e->getMessage(),
                     ], 500);
                 }
             });
@@ -2396,28 +2379,28 @@ Route::middleware('auth:sanctum')->group(function () {
                                 'is_active' => true,
                                 'created_at' => null,
                                 'updated_at' => null,
-                            ]
+                            ],
                         ]);
                     }
 
                     // Обычная обработка для других страниц
                     $page = \App\Models\AdminPage::where('slug', $slug)->first();
 
-                    if (!$page) {
+                    if (! $page) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Страница не найдена'
+                            'message' => 'Страница не найдена',
                         ], 404);
                     }
 
                     return response()->json([
                         'success' => true,
-                        'data' => $page
+                        'data' => $page,
                     ]);
                 } catch (\Exception $e) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Ошибка получения страницы: ' . $e->getMessage()
+                        'message' => 'Ошибка получения страницы: '.$e->getMessage(),
                     ], 500);
                 }
             });
@@ -2426,265 +2409,265 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::middleware('role:admin')->group(function () {
                 // Создать новую страницу
                 Route::post('/', function (Request $request) {
-                try {
-                    $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
-                        'name' => 'required|string|max:255|unique:admin_pages,name',
-                        'slug' => 'required|string|max:255|unique:admin_pages,slug',
-                        'title' => 'nullable|string|max:255',
-                        'description' => 'nullable|string|max:1000',
-                        'icon' => 'nullable|string|max:255',
-                        'component' => 'nullable|string|max:255',
-                        'order' => 'nullable|integer|min:0',
-                        'is_active' => 'boolean'
-                    ]);
+                    try {
+                        $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
+                            'name' => 'required|string|max:255|unique:admin_pages,name',
+                            'slug' => 'required|string|max:255|unique:admin_pages,slug',
+                            'title' => 'nullable|string|max:255',
+                            'description' => 'nullable|string|max:1000',
+                            'icon' => 'nullable|string|max:255',
+                            'component' => 'nullable|string|max:255',
+                            'order' => 'nullable|integer|min:0',
+                            'is_active' => 'boolean',
+                        ]);
 
-                    if ($validator->fails()) {
+                        if ($validator->fails()) {
+                            return response()->json([
+                                'success' => false,
+                                'message' => 'Ошибка валидации',
+                                'errors' => $validator->errors(),
+                            ], 422);
+                        }
+
+                        $page = \App\Models\AdminPage::create([
+                            'name' => $request->name,
+                            'slug' => $request->slug,
+                            'title' => $request->title,
+                            'description' => $request->description,
+                            'icon' => $request->icon,
+                            'component' => $request->component,
+                            'order' => $request->order ?? 0,
+                            'is_active' => $request->is_active ?? true,
+                        ]);
+
+                        return response()->json([
+                            'success' => true,
+                            'message' => 'Страница успешно создана',
+                            'data' => $page,
+                        ], 201);
+                    } catch (\Exception $e) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Ошибка валидации',
-                            'errors' => $validator->errors()
-                        ], 422);
+                            'message' => 'Ошибка создания страницы: '.$e->getMessage(),
+                        ], 500);
                     }
+                });
 
-                    $page = \App\Models\AdminPage::create([
-                        'name' => $request->name,
-                        'slug' => $request->slug,
-                        'title' => $request->title,
-                        'description' => $request->description,
-                        'icon' => $request->icon,
-                        'component' => $request->component,
-                        'order' => $request->order ?? 0,
-                        'is_active' => $request->is_active ?? true
-                    ]);
+                // Обновить страницу
+                Route::put('/{id}', function (Request $request, $id) {
+                    try {
+                        $page = \App\Models\AdminPage::find($id);
 
-                    return response()->json([
-                        'success' => true,
-                        'message' => 'Страница успешно создана',
-                        'data' => $page
-                    ], 201);
-                } catch (\Exception $e) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Ошибка создания страницы: ' . $e->getMessage()
-                    ], 500);
-                }
-            });
+                        if (! $page) {
+                            return response()->json([
+                                'success' => false,
+                                'message' => 'Страница не найдена',
+                            ], 404);
+                        }
 
-            // Обновить страницу
-            Route::put('/{id}', function (Request $request, $id) {
-                try {
-                    $page = \App\Models\AdminPage::find($id);
+                        $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
+                            'name' => 'required|string|max:255|unique:admin_pages,name,'.$id,
+                            'slug' => 'required|string|max:255|unique:admin_pages,slug,'.$id,
+                            'title' => 'nullable|string|max:255',
+                            'description' => 'nullable|string|max:1000',
+                            'icon' => 'nullable|string|max:255',
+                            'component' => 'nullable|string|max:255',
+                            'order' => 'nullable|integer|min:0',
+                            'is_active' => 'boolean',
+                        ]);
 
-                    if (!$page) {
+                        if ($validator->fails()) {
+                            return response()->json([
+                                'success' => false,
+                                'message' => 'Ошибка валидации',
+                                'errors' => $validator->errors(),
+                            ], 422);
+                        }
+
+                        $page->update([
+                            'name' => $request->name,
+                            'slug' => $request->slug,
+                            'title' => $request->title,
+                            'description' => $request->description,
+                            'icon' => $request->icon,
+                            'component' => $request->component,
+                            'order' => $request->order ?? $page->order,
+                            'is_active' => $request->is_active ?? $page->is_active,
+                        ]);
+
+                        return response()->json([
+                            'success' => true,
+                            'message' => 'Страница успешно обновлена',
+                            'data' => $page,
+                        ]);
+                    } catch (\Exception $e) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Страница не найдена'
-                        ], 404);
+                            'message' => 'Ошибка обновления страницы: '.$e->getMessage(),
+                        ], 500);
                     }
+                });
 
-                    $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
-                        'name' => 'required|string|max:255|unique:admin_pages,name,' . $id,
-                        'slug' => 'required|string|max:255|unique:admin_pages,slug,' . $id,
-                        'title' => 'nullable|string|max:255',
-                        'description' => 'nullable|string|max:1000',
-                        'icon' => 'nullable|string|max:255',
-                        'component' => 'nullable|string|max:255',
-                        'order' => 'nullable|integer|min:0',
-                        'is_active' => 'boolean'
-                    ]);
+                // Удалить страницу
+                Route::delete('/{id}', function ($id) {
+                    try {
+                        $page = \App\Models\AdminPage::find($id);
 
-                    if ($validator->fails()) {
+                        if (! $page) {
+                            return response()->json([
+                                'success' => false,
+                                'message' => 'Страница не найдена',
+                            ], 404);
+                        }
+
+                        $page->delete();
+
+                        return response()->json([
+                            'success' => true,
+                            'message' => 'Страница успешно удалена',
+                        ]);
+                    } catch (\Exception $e) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Ошибка валидации',
-                            'errors' => $validator->errors()
-                        ], 422);
+                            'message' => 'Ошибка удаления страницы: '.$e->getMessage(),
+                        ], 500);
                     }
+                });
 
-                    $page->update([
-                        'name' => $request->name,
-                        'slug' => $request->slug,
-                        'title' => $request->title,
-                        'description' => $request->description,
-                        'icon' => $request->icon,
-                        'component' => $request->component,
-                        'order' => $request->order ?? $page->order,
-                        'is_active' => $request->is_active ?? $page->is_active
-                    ]);
+                // Изменить статус страницы
+                Route::put('/{id}/status', function (Request $request, $id) {
+                    try {
+                        $page = \App\Models\AdminPage::find($id);
 
-                    return response()->json([
-                        'success' => true,
-                        'message' => 'Страница успешно обновлена',
-                        'data' => $page
-                    ]);
-                } catch (\Exception $e) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Ошибка обновления страницы: ' . $e->getMessage()
-                    ], 500);
-                }
-            });
+                        if (! $page) {
+                            return response()->json([
+                                'success' => false,
+                                'message' => 'Страница не найдена',
+                            ], 404);
+                        }
 
-            // Удалить страницу
-            Route::delete('/{id}', function ($id) {
-                try {
-                    $page = \App\Models\AdminPage::find($id);
+                        $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
+                            'is_active' => 'required|boolean',
+                        ]);
 
-                    if (!$page) {
+                        if ($validator->fails()) {
+                            return response()->json([
+                                'success' => false,
+                                'message' => 'Ошибка валидации',
+                                'errors' => $validator->errors(),
+                            ], 422);
+                        }
+
+                        $page->update([
+                            'is_active' => $request->is_active,
+                        ]);
+
+                        return response()->json([
+                            'success' => true,
+                            'message' => 'Статус страницы успешно обновлен',
+                            'data' => [
+                                'id' => $page->id,
+                                'is_active' => $page->is_active,
+                            ],
+                        ]);
+                    } catch (\Exception $e) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Страница не найдена'
-                        ], 404);
+                            'message' => 'Ошибка обновления статуса: '.$e->getMessage(),
+                        ], 500);
                     }
+                });
 
-                    $page->delete();
+                // Изменить порядок страниц
+                Route::post('/order', function (Request $request) {
+                    try {
+                        $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
+                            'items' => 'required|array',
+                            'items.*.id' => 'required|exists:admin_pages,id',
+                            'items.*.order' => 'required|integer|min:0',
+                        ]);
 
-                    return response()->json([
-                        'success' => true,
-                        'message' => 'Страница успешно удалена'
-                    ]);
-                } catch (\Exception $e) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Ошибка удаления страницы: ' . $e->getMessage()
-                    ], 500);
-                }
-            });
+                        if ($validator->fails()) {
+                            return response()->json([
+                                'success' => false,
+                                'message' => 'Ошибка валидации',
+                                'errors' => $validator->errors(),
+                            ], 422);
+                        }
 
-            // Изменить статус страницы
-            Route::put('/{id}/status', function (Request $request, $id) {
-                try {
-                    $page = \App\Models\AdminPage::find($id);
+                        foreach ($request->items as $item) {
+                            \App\Models\AdminPage::where('id', $item['id'])->update(['order' => $item['order']]);
+                        }
 
-                    if (!$page) {
+                        return response()->json([
+                            'success' => true,
+                            'message' => 'Порядок страниц успешно обновлен',
+                        ]);
+                    } catch (\Exception $e) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Страница не найдена'
-                        ], 404);
+                            'message' => 'Ошибка обновления порядка: '.$e->getMessage(),
+                        ], 500);
                     }
+                });
 
-                    $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
-                        'is_active' => 'required|boolean'
-                    ]);
+                // Получение доступа к страницам для ролей
+                Route::get('/access', function () {
+                    try {
+                        $pageAccess = \App\Models\AdminPage::with('roles')->get()->mapWithKeys(function ($page) {
+                            return [$page->id => $page->roles->pluck('id')->toArray()];
+                        });
 
-                    if ($validator->fails()) {
+                        return response()->json([
+                            'success' => true,
+                            'data' => $pageAccess,
+                        ]);
+                    } catch (\Exception $e) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Ошибка валидации',
-                            'errors' => $validator->errors()
-                        ], 422);
+                            'message' => 'Ошибка получения доступа к страницам: '.$e->getMessage(),
+                        ], 500);
                     }
+                });
 
-                    $page->update([
-                        'is_active' => $request->is_active
-                    ]);
+                // Управление доступом к конкретной странице
+                Route::put('/{id}/access', function (Request $request, $id) {
+                    try {
+                        $page = \App\Models\AdminPage::find($id);
+                        if (! $page) {
+                            return response()->json([
+                                'success' => false,
+                                'message' => 'Страница не найдена',
+                            ], 404);
+                        }
 
-                    return response()->json([
-                        'success' => true,
-                        'message' => 'Статус страницы успешно обновлен',
-                        'data' => [
-                            'id' => $page->id,
-                            'is_active' => $page->is_active
-                        ]
-                    ]);
-                } catch (\Exception $e) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Ошибка обновления статуса: ' . $e->getMessage()
-                    ], 500);
-                }
-            });
+                        $request->validate([
+                            'role_ids' => 'array',
+                            'role_ids.*' => 'integer|exists:roles,id',
+                        ]);
 
-            // Изменить порядок страниц
-            Route::post('/order', function (Request $request) {
-                try {
-                    $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
-                        'items' => 'required|array',
-                        'items.*.id' => 'required|exists:admin_pages,id',
-                        'items.*.order' => 'required|integer|min:0'
-                    ]);
+                        // Синхронизируем роли для страницы
+                        $page->roles()->sync($request->input('role_ids', []));
 
-                    if ($validator->fails()) {
+                        return response()->json([
+                            'success' => true,
+                            'message' => 'Доступ к странице обновлен',
+                            'data' => [
+                                'page_id' => $page->id,
+                                'role_ids' => $request->input('role_ids', []),
+                            ],
+                        ]);
+                    } catch (\Exception $e) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Ошибка валидации',
-                            'errors' => $validator->errors()
-                        ], 422);
+                            'message' => 'Ошибка обновления доступа: '.$e->getMessage(),
+                        ], 500);
                     }
-
-                    foreach ($request->items as $item) {
-                        \App\Models\AdminPage::where('id', $item['id'])->update(['order' => $item['order']]);
-                    }
-
-                    return response()->json([
-                        'success' => true,
-                        'message' => 'Порядок страниц успешно обновлен'
-                    ]);
-                } catch (\Exception $e) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Ошибка обновления порядка: ' . $e->getMessage()
-                    ], 500);
-                }
-            });
-
-            // Получение доступа к страницам для ролей
-            Route::get('/access', function () {
-                try {
-                    $pageAccess = \App\Models\AdminPage::with('roles')->get()->mapWithKeys(function ($page) {
-                        return [$page->id => $page->roles->pluck('id')->toArray()];
-                    });
-
-                    return response()->json([
-                        'success' => true,
-                        'data' => $pageAccess
-                    ]);
-                } catch (\Exception $e) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Ошибка получения доступа к страницам: ' . $e->getMessage()
-                    ], 500);
-                }
-            });
-
-            // Управление доступом к конкретной странице
-            Route::put('/{id}/access', function (Request $request, $id) {
-                try {
-                    $page = \App\Models\AdminPage::find($id);
-                    if (!$page) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Страница не найдена'
-                        ], 404);
-                    }
-
-                    $request->validate([
-                        'role_ids' => 'array',
-                        'role_ids.*' => 'integer|exists:roles,id'
-                    ]);
-
-                    // Синхронизируем роли для страницы
-                    $page->roles()->sync($request->input('role_ids', []));
-
-                    return response()->json([
-                        'success' => true,
-                        'message' => 'Доступ к странице обновлен',
-                        'data' => [
-                            'page_id' => $page->id,
-                            'role_ids' => $request->input('role_ids', [])
-                        ]
-                    ]);
-                } catch (\Exception $e) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Ошибка обновления доступа: ' . $e->getMessage()
-                    ], 500);
-                }
+                });
             });
         });
-    });
 
-    // Users management (только для админов)
+        // Users management (только для админов)
         Route::middleware('role:admin')->prefix('users')->group(function () {
             // Получить список всех пользователей
             Route::get('/', function () {
@@ -2693,13 +2676,13 @@ Route::middleware('auth:sanctum')->group(function () {
                     $users = \App\Models\User::with('roles')
                         ->orderBy('created_at', 'desc')
                         ->get();
-                    
+
                     // Получаем все бонусы одним запросом для оптимизации
                     $userIds = $users->pluck('id')->toArray();
                     $bonuses = \App\Models\UserBonus::whereIn('user_id', $userIds)
                         ->pluck('points', 'user_id')
                         ->toArray();
-                    
+
                     // Получаем количество персональных промокодов для каждого пользователя
                     $promocodesCount = \App\Models\Promocode::whereIn('user_id', $userIds)
                         ->whereNotNull('user_id')
@@ -2707,12 +2690,12 @@ Route::middleware('auth:sanctum')->group(function () {
                         ->groupBy('user_id')
                         ->pluck('count', 'user_id')
                         ->toArray();
-                    
+
                     $users = $users->map(function ($user) use ($bonuses, $promocodesCount) {
                         // Получаем бонусы пользователя из предзагруженного массива
                         $bonusPoints = $bonuses[$user->id] ?? 0;
                         $hasPromocodes = isset($promocodesCount[$user->id]) && $promocodesCount[$user->id] > 0;
-                        
+
                         $userData = [
                             'id' => $user->id,
                             'name' => $user->name,
@@ -2744,12 +2727,12 @@ Route::middleware('auth:sanctum')->group(function () {
 
                     return response()->json([
                         'success' => true,
-                        'data' => $users
+                        'data' => $users,
                     ]);
                 } catch (\Exception $e) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Ошибка получения списка пользователей: ' . $e->getMessage()
+                        'message' => 'Ошибка получения списка пользователей: '.$e->getMessage(),
                     ], 500);
                 }
             });
@@ -2774,7 +2757,7 @@ Route::middleware('auth:sanctum')->group(function () {
                         return response()->json([
                             'success' => false,
                             'message' => 'Ошибка валидации',
-                            'errors' => $validator->errors()
+                            'errors' => $validator->errors(),
                         ], 422);
                     }
 
@@ -2803,13 +2786,13 @@ Route::middleware('auth:sanctum')->group(function () {
                     $user = \App\Models\User::create($userData);
 
                     // Привязываем роли
-                    if ($request->has('role') && !empty($request->role)) {
+                    if ($request->has('role') && ! empty($request->role)) {
                         // Если передана одна роль
                         $user->roles()->attach(
                             \App\Models\Role::where('name', $request->role)->first()->id,
                             ['is_active' => true, 'assigned_at' => now()]
                         );
-                    } elseif ($request->has('roles') && !empty($request->roles)) {
+                    } elseif ($request->has('roles') && ! empty($request->roles)) {
                         // Если передан массив ролей
                         $roleIds = \App\Models\Role::whereIn('name', $request->roles)->pluck('id');
                         foreach ($roleIds as $roleId) {
@@ -2839,33 +2822,31 @@ Route::middleware('auth:sanctum')->group(function () {
                             'tech_acc' => $user->tech_acc,
                             'created_at' => $user->created_at,
                             'updated_at' => $user->updated_at,
-                        ]
+                        ],
                     ], 201);
                 } catch (\Exception $e) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Ошибка создания пользователя: ' . $e->getMessage()
+                        'message' => 'Ошибка создания пользователя: '.$e->getMessage(),
                     ], 500);
                 }
             });
-
-
 
             // Обновить пользователя
             Route::put('/{id}', function (Request $request, $id) {
                 try {
                     $user = \App\Models\User::find($id);
 
-                    if (!$user) {
+                    if (! $user) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Пользователь не найден'
+                            'message' => 'Пользователь не найден',
                         ], 404);
                     }
 
                     $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
                         'name' => 'required|string|max:255',
-                        'email' => 'required|email|unique:users,email,' . $id,
+                        'email' => 'required|email|unique:users,email,'.$id,
                         'role' => 'string|exists:roles,name', // Принимаем одну роль
                         'roles' => 'array', // Также поддерживаем массив ролей для совместимости
                         'roles.*' => 'string|exists:roles,name',
@@ -2878,7 +2859,7 @@ Route::middleware('auth:sanctum')->group(function () {
                         return response()->json([
                             'success' => false,
                             'message' => 'Ошибка валидации',
-                            'errors' => $validator->errors()
+                            'errors' => $validator->errors(),
                         ], 422);
                     }
 
@@ -2914,12 +2895,12 @@ Route::middleware('auth:sanctum')->group(function () {
                     $user->update($updateData);
 
                     // Обновляем роли
-                    if ($request->has('role') && !empty($request->role)) {
+                    if ($request->has('role') && ! empty($request->role)) {
                         // Если передана одна роль
                         $user->roles()->sync([
-                            \App\Models\Role::where('name', $request->role)->first()->id
+                            \App\Models\Role::where('name', $request->role)->first()->id,
                         ]);
-                    } elseif ($request->has('roles') && !empty($request->roles)) {
+                    } elseif ($request->has('roles') && ! empty($request->roles)) {
                         // Если передан массив ролей
                         $user->roles()->sync($request->roles);
                     }
@@ -2940,12 +2921,12 @@ Route::middleware('auth:sanctum')->group(function () {
                             'tech_acc' => $user->tech_acc,
                             'created_at' => $user->created_at,
                             'updated_at' => $user->updated_at,
-                        ]
+                        ],
                     ]);
                 } catch (\Exception $e) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Ошибка обновления пользователя: ' . $e->getMessage()
+                        'message' => 'Ошибка обновления пользователя: '.$e->getMessage(),
                     ], 500);
                 }
             });
@@ -2955,10 +2936,10 @@ Route::middleware('auth:sanctum')->group(function () {
                 try {
                     $user = \App\Models\User::find($id);
 
-                    if (!$user) {
+                    if (! $user) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Пользователь не найден'
+                            'message' => 'Пользователь не найден',
                         ], 404);
                     }
 
@@ -2977,13 +2958,13 @@ Route::middleware('auth:sanctum')->group(function () {
                         'message' => 'Статус подтверждения email изменен',
                         'data' => [
                             'id' => $user->id,
-                            'email_verified_at' => $user->email_verified_at
-                        ]
+                            'email_verified_at' => $user->email_verified_at,
+                        ],
                     ]);
                 } catch (\Exception $e) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Ошибка изменения статуса: ' . $e->getMessage()
+                        'message' => 'Ошибка изменения статуса: '.$e->getMessage(),
                     ], 500);
                 }
             });
@@ -2993,15 +2974,15 @@ Route::middleware('auth:sanctum')->group(function () {
                 try {
                     $user = \App\Models\User::find($id);
 
-                    if (!$user) {
+                    if (! $user) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Пользователь не найден'
+                            'message' => 'Пользователь не найден',
                         ], 404);
                     }
 
                     // Переключаем статус блокировки
-                    $user->is_active = !$user->is_active;
+                    $user->is_active = ! $user->is_active;
                     $user->save();
 
                     return response()->json([
@@ -3009,13 +2990,13 @@ Route::middleware('auth:sanctum')->group(function () {
                         'message' => 'Статус блокировки пользователя изменен',
                         'data' => [
                             'id' => $user->id,
-                            'is_active' => $user->is_active
-                        ]
+                            'is_active' => $user->is_active,
+                        ],
                     ]);
                 } catch (\Exception $e) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Ошибка изменения статуса блокировки: ' . $e->getMessage()
+                        'message' => 'Ошибка изменения статуса блокировки: '.$e->getMessage(),
                     ], 500);
                 }
             });
@@ -3025,10 +3006,10 @@ Route::middleware('auth:sanctum')->group(function () {
                 try {
                     $user = \App\Models\User::find($id);
 
-                    if (!$user) {
+                    if (! $user) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Пользователь не найден'
+                            'message' => 'Пользователь не найден',
                         ], 404);
                     }
 
@@ -3041,13 +3022,13 @@ Route::middleware('auth:sanctum')->group(function () {
                         'message' => 'Статус технического аккаунта изменен',
                         'data' => [
                             'id' => $user->id,
-                            'tech_acc' => $user->tech_acc
-                        ]
+                            'tech_acc' => $user->tech_acc,
+                        ],
                     ]);
                 } catch (\Exception $e) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Ошибка изменения статуса технического аккаунта: ' . $e->getMessage()
+                        'message' => 'Ошибка изменения статуса технического аккаунта: '.$e->getMessage(),
                     ], 500);
                 }
             });
@@ -3057,10 +3038,10 @@ Route::middleware('auth:sanctum')->group(function () {
                 try {
                     $user = \App\Models\User::find($id);
 
-                    if (!$user) {
+                    if (! $user) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Пользователь не найден'
+                            'message' => 'Пользователь не найден',
                         ], 404);
                     }
 
@@ -3068,7 +3049,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     if ($user->id === $request->user()->id) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Нельзя удалить самого себя'
+                            'message' => 'Нельзя удалить самого себя',
                         ], 422);
                     }
 
@@ -3077,12 +3058,12 @@ Route::middleware('auth:sanctum')->group(function () {
 
                     return response()->json([
                         'success' => true,
-                        'message' => 'Пользователь успешно удален'
+                        'message' => 'Пользователь успешно удален',
                     ]);
                 } catch (\Exception $e) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Ошибка удаления пользователя: ' . $e->getMessage()
+                        'message' => 'Ошибка удаления пользователя: '.$e->getMessage(),
                     ], 500);
                 }
             });
@@ -3092,19 +3073,19 @@ Route::middleware('auth:sanctum')->group(function () {
                 try {
                     $user = \App\Models\User::find($id);
 
-                    if (!$user) {
+                    if (! $user) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Пользователь не найден'
+                            'message' => 'Пользователь не найден',
                         ], 404);
                     }
 
                     // Проверяем, что текущий пользователь - админ
                     $currentUser = $request->user();
-                    if (!$currentUser || !$currentUser->hasRole('admin')) {
+                    if (! $currentUser || ! $currentUser->hasRole('admin')) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Недостаточно прав доступа'
+                            'message' => 'Недостаточно прав доступа',
                         ], 403);
                     }
 
@@ -3131,7 +3112,7 @@ Route::middleware('auth:sanctum')->group(function () {
                         'role' => $roles[0] ?? 'user',
                         'created_at' => $user->created_at,
                         'updated_at' => $user->updated_at,
-                        'last_login_at' => $user->last_login_at
+                        'last_login_at' => $user->last_login_at,
                     ];
 
                     return response()->json([
@@ -3139,13 +3120,13 @@ Route::middleware('auth:sanctum')->group(function () {
                         'message' => 'Успешный вход как пользователь',
                         'data' => [
                             'token' => $token,
-                            'user' => $userData
-                        ]
+                            'user' => $userData,
+                        ],
                     ]);
                 } catch (\Exception $e) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Ошибка входа как пользователь: ' . $e->getMessage()
+                        'message' => 'Ошибка входа как пользователь: '.$e->getMessage(),
                     ], 500);
                 }
             });
@@ -3160,10 +3141,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/menu', function (Request $request) {
             try {
                 $user = $request->user();
-                if (!$user) {
+                if (! $user) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Пользователь не аутентифицирован'
+                        'message' => 'Пользователь не аутентифицирован',
                     ], 401);
                 }
 
@@ -3196,9 +3177,9 @@ Route::middleware('auth:sanctum')->group(function () {
                     // Для не-админов фильтруем пункты меню по правам доступа
                     $userRoleIds = $user->roles->pluck('id')->toArray();
 
-                    $menuItems = $allMenuItems->filter(function ($item) use ($user, $userRoleIds) {
+                    $menuItems = $allMenuItems->filter(function ($item) use ($userRoleIds) {
                         // Если у пункта меню нет страницы, пропускаем
-                        if (!$item->page) {
+                        if (! $item->page) {
                             return false;
                         }
 
@@ -3231,12 +3212,12 @@ Route::middleware('auth:sanctum')->group(function () {
 
                 return response()->json([
                     'success' => true,
-                    'data' => $menuItems
+                    'data' => $menuItems,
                 ]);
             } catch (\Exception $e) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Ошибка получения списка меню: ' . $e->getMessage()
+                    'message' => 'Ошибка получения списка меню: '.$e->getMessage(),
                 ], 500);
             }
         });
@@ -3255,14 +3236,14 @@ Route::middleware('auth:sanctum')->group(function () {
                         'href' => 'nullable|string|max:255',
                         'order' => 'nullable|integer|min:0',
                         'is_active' => 'boolean',
-                        'in_menu' => 'boolean'
+                        'in_menu' => 'boolean',
                     ]);
 
                     if ($validator->fails()) {
                         return response()->json([
                             'success' => false,
                             'message' => 'Ошибка валидации',
-                            'errors' => $validator->errors()
+                            'errors' => $validator->errors(),
                         ], 422);
                     }
 
@@ -3281,12 +3262,12 @@ Route::middleware('auth:sanctum')->group(function () {
                     return response()->json([
                         'success' => true,
                         'message' => 'Пункт меню успешно создан',
-                        'data' => $menuItem
+                        'data' => $menuItem,
                     ]);
                 } catch (\Exception $e) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Ошибка создания пункта меню: ' . $e->getMessage()
+                        'message' => 'Ошибка создания пункта меню: '.$e->getMessage(),
                     ], 500);
                 }
             });
@@ -3296,10 +3277,10 @@ Route::middleware('auth:sanctum')->group(function () {
                 try {
                     $menuItem = \App\Models\AdminMenuItem::find($id);
 
-                    if (!$menuItem) {
+                    if (! $menuItem) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Пункт меню не найден'
+                            'message' => 'Пункт меню не найден',
                         ], 404);
                     }
 
@@ -3312,14 +3293,14 @@ Route::middleware('auth:sanctum')->group(function () {
                         'href' => 'nullable|string|max:255',
                         'order' => 'nullable|integer|min:0',
                         'is_active' => 'boolean',
-                        'in_menu' => 'boolean'
+                        'in_menu' => 'boolean',
                     ]);
 
                     if ($validator->fails()) {
                         return response()->json([
                             'success' => false,
                             'message' => 'Ошибка валидации',
-                            'errors' => $validator->errors()
+                            'errors' => $validator->errors(),
                         ], 422);
                     }
 
@@ -3338,12 +3319,12 @@ Route::middleware('auth:sanctum')->group(function () {
                     return response()->json([
                         'success' => true,
                         'message' => 'Пункт меню успешно обновлен',
-                        'data' => $menuItem
+                        'data' => $menuItem,
                     ]);
                 } catch (\Exception $e) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Ошибка обновления пункта меню: ' . $e->getMessage()
+                        'message' => 'Ошибка обновления пункта меню: '.$e->getMessage(),
                     ], 500);
                 }
             });
@@ -3353,10 +3334,10 @@ Route::middleware('auth:sanctum')->group(function () {
                 try {
                     $menuItem = \App\Models\AdminMenuItem::find($id);
 
-                    if (!$menuItem) {
+                    if (! $menuItem) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Пункт меню не найден'
+                            'message' => 'Пункт меню не найден',
                         ], 404);
                     }
 
@@ -3364,12 +3345,12 @@ Route::middleware('auth:sanctum')->group(function () {
 
                     return response()->json([
                         'success' => true,
-                        'message' => 'Пункт меню успешно удален'
+                        'message' => 'Пункт меню успешно удален',
                     ]);
                 } catch (\Exception $e) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Ошибка удаления пункта меню: ' . $e->getMessage()
+                        'message' => 'Ошибка удаления пункта меню: '.$e->getMessage(),
                     ], 500);
                 }
             });
@@ -3380,14 +3361,14 @@ Route::middleware('auth:sanctum')->group(function () {
                     $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
                         'items' => 'required|array',
                         'items.*.id' => 'required|exists:admin_menu_items,id',
-                        'items.*.order' => 'required|integer|min:0'
+                        'items.*.order' => 'required|integer|min:0',
                     ]);
 
                     if ($validator->fails()) {
                         return response()->json([
                             'success' => false,
                             'message' => 'Ошибка валидации',
-                            'errors' => $validator->errors()
+                            'errors' => $validator->errors(),
                         ], 422);
                     }
 
@@ -3398,12 +3379,12 @@ Route::middleware('auth:sanctum')->group(function () {
 
                     return response()->json([
                         'success' => true,
-                        'message' => 'Порядок пунктов меню успешно обновлен'
+                        'message' => 'Порядок пунктов меню успешно обновлен',
                     ]);
                 } catch (\Exception $e) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Ошибка обновления порядка: ' . $e->getMessage()
+                        'message' => 'Ошибка обновления порядка: '.$e->getMessage(),
                     ], 500);
                 }
             });
@@ -3414,10 +3395,10 @@ Route::middleware('auth:sanctum')->group(function () {
                     $user = request()->user();
                     $page = \App\Models\AdminPage::find($pageId);
 
-                    if (!$page) {
+                    if (! $page) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Страница не найдена'
+                            'message' => 'Страница не найдена',
                         ], 404);
                     }
 
@@ -3437,12 +3418,10 @@ Route::middleware('auth:sanctum')->group(function () {
                         }
                     }
 
-
-
-                    if (!$hasAccess) {
+                    if (! $hasAccess) {
                         return response()->json([
                             'success' => false,
-                            'message' => 'Доступ запрещен'
+                            'message' => 'Доступ запрещен',
                         ], 403);
                     }
 
@@ -3455,12 +3434,12 @@ Route::middleware('auth:sanctum')->group(function () {
 
                     return response()->json([
                         'success' => true,
-                        'data' => $menuItems
+                        'data' => $menuItems,
                     ]);
                 } catch (\Exception $e) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Ошибка получения меню: ' . $e->getMessage()
+                        'message' => 'Ошибка получения меню: '.$e->getMessage(),
                     ], 500);
                 }
             });
@@ -3496,7 +3475,6 @@ Route::middleware('auth:sanctum')->group(function () {
             });
         });
 
-
         // Site management (для админов и пользователей с ролью site)
         Route::middleware(['auth:sanctum', 'role:admin,site'])->prefix('site')->group(function () {
             // Управление настройками бонусов
@@ -3515,15 +3493,15 @@ Route::middleware('auth:sanctum')->group(function () {
             });
         });
 
-            // Шаблоны сайта
-            Route::prefix('templates')->group(function () {
-                Route::get('/', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'index']);
-                Route::post('/', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'store']);
-                Route::get('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'show']);
-                Route::put('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'update']);
-                Route::delete('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'destroy']);
-                Route::put('/{siteTemplate}/activate', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'activate']);
-            });
+        // Шаблоны сайта
+        Route::prefix('templates')->group(function () {
+            Route::get('/', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'index']);
+            Route::post('/', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'store']);
+            Route::get('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'show']);
+            Route::put('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'update']);
+            Route::delete('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'destroy']);
+            Route::put('/{siteTemplate}/activate', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'activate']);
+        });
 
         // Слайдеры (доступны админам и пользователям с ролью site)
         Route::middleware(['auth:sanctum', 'role:admin,site'])->prefix('site')->group(function () {
@@ -3549,528 +3527,524 @@ Route::middleware('auth:sanctum')->group(function () {
         });
     });
 
-        // Site templates management (только для админов)
-        Route::middleware('auth:sanctum')->prefix('site')->group(function () {
-            // Тестовый endpoint для проверки меню
-            Route::get('/test-menus', function () {
-                try {
-                    $count = \App\Models\SiteMenu::count();
-                    return response()->json([
-                        'success' => true,
-                        'message' => 'Модель SiteMenu работает',
-                        'count' => $count
-                    ]);
-                } catch (\Exception $e) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Ошибка: ' . $e->getMessage()
-                    ], 500);
-                }
-            });
-
-            // Тестовый endpoint для проверки пунктов меню
-            Route::get('/test-menu-items', function () {
-                try {
-                    $count = \App\Models\SiteMenuItem::count();
-                    return response()->json([
-                        'success' => true,
-                        'message' => 'Модель SiteMenuItem работает',
-                        'count' => $count
-                    ]);
-                } catch (\Exception $e) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Ошибка: ' . $e->getMessage()
-                    ], 500);
-                }
-            });
-            // Шаблоны сайта
-            Route::prefix('templates')->group(function () {
-                Route::get('/', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'index']);
-                Route::post('/', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'store']);
-                Route::get('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'show']);
-                Route::put('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'update']);
-                Route::delete('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'destroy']);
-                Route::put('/{siteTemplate}/activate', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'activate']);
-
-            });
-
-            // Шаблоны магазина
-            Route::prefix('shop-templates')->group(function () {
-                Route::get('/', [\App\Http\Controllers\Admin\ShopTemplateController::class, 'index']);
-                Route::post('/', [\App\Http\Controllers\Admin\ShopTemplateController::class, 'store']);
-                Route::get('/{shopTemplate}', [\App\Http\Controllers\Admin\ShopTemplateController::class, 'show']);
-                Route::put('/{shopTemplate}', [\App\Http\Controllers\Admin\ShopTemplateController::class, 'update']);
-                Route::delete('/{shopTemplate}', [\App\Http\Controllers\Admin\ShopTemplateController::class, 'destroy']);
-                Route::put('/{shopTemplate}/activate', [\App\Http\Controllers\Admin\ShopTemplateController::class, 'activate']);
-            });
-
-            // Меню сайта
-            Route::prefix('menus')->group(function () {
-                Route::get('/', [\App\Http\Controllers\Admin\SiteMenuController::class, 'index']);
-                Route::post('/', [\App\Http\Controllers\Admin\SiteMenuController::class, 'store']);
-                Route::get('/{siteMenu}', [\App\Http\Controllers\Admin\SiteMenuController::class, 'show']);
-                Route::put('/{siteMenu}', [\App\Http\Controllers\Admin\SiteMenuController::class, 'update']);
-                Route::delete('/{siteMenu}', [\App\Http\Controllers\Admin\SiteMenuController::class, 'destroy']);
-            });
-
-
-
-            // Пункты меню сайта
-            Route::prefix('menu-items')->group(function () {
-                Route::get('/', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'index']);
-                Route::post('/', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'store']);
-                Route::get('/{siteMenuItem}', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'show']);
-                Route::put('/{siteMenuItem}', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'update']);
-                Route::delete('/{siteMenuItem}', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'destroy']);
-                Route::post('/order', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'updateOrder']);
-            });
-
-
-            // Управление уведомлениями Telegram
-            Route::prefix('telegram-notifications')->group(function () {
-                Route::get('/', [\App\Http\Controllers\Api\Admin\TelegramNotificationController::class, 'index']);
-                Route::get('/{id}', [\App\Http\Controllers\Api\Admin\TelegramNotificationController::class, 'show']);
-                Route::post('/send-test', [\App\Http\Controllers\Api\Admin\TelegramNotificationController::class, 'sendTest']);
-                Route::post('/{id}/retry', [\App\Http\Controllers\Api\Admin\TelegramNotificationController::class, 'retry']);
-                Route::post('/process-pending', [\App\Http\Controllers\Api\Admin\TelegramNotificationController::class, 'processPending']);
-                Route::get('/stats/overview', [\App\Http\Controllers\Api\Admin\TelegramNotificationController::class, 'stats']);
-                Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\TelegramNotificationController::class, 'destroy']);
-            });
-
-        });
-
-        // Profile management
-        Route::prefix('profile')->group(function () {
-            Route::get('/', function (Request $request) {
-                try {
-                    $user = $request->user();
-                    
-                    // Загружаем роли пользователя с безопасной обработкой
-                    $user->load('roles');
-                    $roles = $user->roles ?? collect();
-                    
-                    $userData = [
-                        'id' => $user->id,
-                        'name' => $user->name,
-                        'email' => $user->email,
-                        'phone' => $user->phone,
-                        'phone_verified_at' => $user->phone_verified_at, // Для определения телефонных пользователей
-                        'avatar_url' => $user->avatar_url, // URL аватара от OAuth провайдеров
-                        'google_id' => $user->google_id, // Для определения соц-аккаунта
-                        'yandex_id' => $user->yandex_id, // Для определения соц-аккаунта
-                        'vk_id' => $user->vk_id, // Для определения соц-аккаунта
-                        'role' => $roles->first()?->name ?? 'user', // Основная роль для совместимости
-                        'roles' => $roles->map(function($role) {
-                            return [
-                                'id' => $role->id,
-                                'name' => $role->name,
-                                'display_name' => $role->display_name
-                            ];
-                        }),
-                        'created_at' => $user->created_at,
-                        'updated_at' => $user->updated_at
-                    ];
-
-                    return response()->json([
-                        'success' => true,
-                        'data' => $userData,
-                        'message' => 'Profile retrieved successfully'
-                    ]);
-                } catch (\Exception $e) {
-                    \Log::error('Ошибка получения профиля: ' . $e->getMessage(), [
-                        'trace' => $e->getTraceAsString(),
-                        'user_id' => $request->user()?->id
-                    ]);
-                    
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Ошибка получения профиля: ' . $e->getMessage()
-                    ], 500);
-                }
-            });
-
-            Route::put('/', function (Request $request) {
-                try {
-                    $user = $request->user();
-
-                    $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
-                        'name' => 'required|string|max:255',
-                        'email' => 'required|email|unique:users,email,' . $user->id,
-                    ]);
-
-                    if ($validator->fails()) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Ошибка валидации',
-                            'errors' => $validator->errors()
-                        ], 422);
-                    }
-
-                    // Обновляем данные пользователя
-                    $user->update([
-                        'name' => $request->name,
-                        'email' => $request->email,
-                    ]);
-
-                    // Загружаем роли пользователя с безопасной обработкой
-                    $user->load('roles');
-                    $roles = $user->roles ?? collect();
-
-                    // Получаем обновленные данные
-                    $userData = [
-                        'id' => $user->id,
-                        'name' => $user->name,
-                        'email' => $user->email,
-                        'role' => $roles->first()?->name ?? 'user', // Основная роль для совместимости
-                        'roles' => $roles->map(function($role) {
-                            return [
-                                'id' => $role->id,
-                                'name' => $role->name,
-                                'display_name' => $role->display_name
-                            ];
-                        }),
-                        'created_at' => $user->created_at,
-                        'updated_at' => $user->updated_at
-                    ];
-
-                    return response()->json([
-                        'success' => true,
-                        'message' => 'Профиль успешно обновлен',
-                        'data' => $userData
-                    ]);
-                } catch (\Exception $e) {
-                    \Log::error('Ошибка обновления профиля: ' . $e->getMessage(), [
-                        'trace' => $e->getTraceAsString(),
-                        'user_id' => $request->user()?->id
-                    ]);
-                    
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Ошибка обновления профиля: ' . $e->getMessage()
-                    ], 500);
-                }
-            });
-
-            Route::post('/check-name', function (Request $request) {
-                try {
-                    $user = $request->user();
-
-                    $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
-                        'name' => 'required|string|max:255'
-                    ]);
-
-                    if ($validator->fails()) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Ошибка валидации',
-                            'errors' => $validator->errors()
-                        ], 422);
-                    }
-
-                    $name = $request->name;
-
-                    // Проверяем, есть ли пользователь с таким именем (исключая текущего)
-                    $existingUser = \App\Models\User::where('name', $name)
-                        ->where('id', '!=', $user->id)
-                        ->first();
-
-                    return response()->json([
-                        'success' => true,
-                        'data' => [
-                            'is_available' => !$existingUser,
-                            'name' => $name
-                        ]
-                    ]);
-                } catch (\Exception $e) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Ошибка проверки имени',
-                        'error_details' => [$e->getMessage()],
-                        'error_code' => 'CHECK_NAME_ERROR'
-                    ], 500);
-                }
-            });
-
-            Route::post('/avatar', function (Request $request) {
-                try {
-                    $user = $request->user();
-
-                    $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
-                        'avatar' => 'required|image|mimes:jpeg,png,jpg,gif|max:5120' // 5MB максимум
-                    ]);
-
-                    if ($validator->fails()) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Ошибка валидации',
-                            'errors' => $validator->errors()
-                        ], 422);
-                    }
-
-                    $file = $request->file('avatar');
-
-                    // Путь для сохранения на фронтенде
-                    $frontendPublicPath = frontend_public_path();
-                    $dir = $frontendPublicPath . '/images/users';
-
-                    // Создаем директорию, если её нет
-                    if (!is_dir($dir)) {
-                        mkdir($dir, 0755, true);
-                    }
-
-                    // Удаляем старый аватар пользователя, если он есть
-                    // Используем стандартное имя файла user_{id}.jpg
-                    $oldAvatarPath = $dir . '/user_' . $user->id . '.jpg';
-                    if (file_exists($oldAvatarPath)) {
-                        unlink($oldAvatarPath);
-                    }
-
-                    // Сохраняем файл с именем user_{id}.jpg
-                    $filename = 'user_' . $user->id . '.jpg';
-                    $fullPath = $dir . '/' . $filename;
-                    
-                    // Получаем информацию об изображении
-                    $imageInfo = getimagesize($file->getRealPath());
-                    if (!$imageInfo) {
-                        throw new \Exception('Не удалось получить информацию об изображении');
-                    }
-                    
-                    $imageType = $imageInfo[2];
-                    
-                    // Загружаем изображение в зависимости от типа
-                    $sourceImage = null;
-                    switch ($imageType) {
-                        case IMAGETYPE_JPEG:
-                            $sourceImage = imagecreatefromjpeg($file->getRealPath());
-                            break;
-                        case IMAGETYPE_PNG:
-                            $sourceImage = imagecreatefrompng($file->getRealPath());
-                            break;
-                        case IMAGETYPE_GIF:
-                            $sourceImage = imagecreatefromgif($file->getRealPath());
-                            break;
-                        case IMAGETYPE_WEBP:
-                            $sourceImage = imagecreatefromwebp($file->getRealPath());
-                            break;
-                        default:
-                            throw new \Exception('Неподдерживаемый тип изображения');
-                    }
-                    
-                    if (!$sourceImage) {
-                        throw new \Exception('Не удалось загрузить изображение');
-                    }
-                    
-                    // Сохраняем как JPEG с качеством 90
-                    $result = imagejpeg($sourceImage, $fullPath, 90);
-                    
-                    // Освобождаем память
-                    imagedestroy($sourceImage);
-                    
-                    if (!$result) {
-                        throw new \Exception('Не удалось сохранить изображение');
-                    }
-
-                    // Аватар сохраняется только в папке images/users/user_{id}.jpg
-                    // Поля avatar и avatar_url больше не используются в базе данных
-
-                    return response()->json([
-                        'success' => true,
-                        'message' => 'Аватар успешно загружен',
-                        'data' => [
-                            'avatar' => '/images/users/' . $filename
-                        ]
-                    ]);
-                } catch (\Exception $e) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Ошибка загрузки аватара: ' . $e->getMessage()
-                    ], 500);
-                }
-            });
-
-            Route::delete('/avatar', function (Request $request) {
-                try {
-                    $user = $request->user();
-
-                    // Удаляем файл аватара с фронтенда
-                    // Используем стандартное имя файла user_{id}.jpg
-                    $frontendPublicPath = frontend_public_path();
-                    $filePath = $frontendPublicPath . '/images/users/user_' . $user->id . '.jpg';
-                    
-                    $fileDeleted = false;
-                    if (file_exists($filePath)) {
-                        $fileDeleted = unlink($filePath);
-                    }
-
-                    // Поля avatar и avatar_url больше не используются в базе данных
-
-                    return response()->json([
-                        'success' => true,
-                        'message' => 'Аватар успешно удален',
-                        'data' => [
-                            'avatar' => null
-                        ]
-                    ]);
-                } catch (\Exception $e) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Ошибка удаления аватара: ' . $e->getMessage()
-                    ], 500);
-                }
-            });
-
-            Route::post('/change-password', function (Request $request) {
-                try {
-                    $user = $request->user();
-
-                    $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
-                        'current_password' => 'required|string',
-                        'new_password' => 'required|string|min:8',
-                        'new_password_confirmation' => 'required|string|same:new_password'
-                    ]);
-
-                    if ($validator->fails()) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Ошибка валидации',
-                            'errors' => $validator->errors()
-                        ], 422);
-                    }
-
-                    // Проверяем текущий пароль
-                    if (!\Illuminate\Support\Facades\Hash::check($request->current_password, $user->password)) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Текущий пароль неверен'
-                        ], 422);
-                    }
-
-                    // Обновляем пароль
-                    $user->update([
-                        'password' => \Illuminate\Support\Facades\Hash::make($request->new_password)
-                    ]);
-
-                    return response()->json([
-                        'success' => true,
-                        'message' => 'Пароль успешно изменен'
-                    ]);
-                } catch (\Exception $e) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Ошибка изменения пароля: ' . $e->getMessage()
-                    ], 500);
-                }
-            });
-        });
-
-        // Шаблоны импорта товаров
-        Route::prefix('import-templates')->group(function () {
-            // Специфичные маршруты с конкретными путями (должны быть первыми)
-            Route::get('/list', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'list']); // Легкий список для выпадающих меню
-            Route::post('/cleanup', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'cleanup']); // Очистка старых шаблонов
-            
-            // RESTful маршруты без параметров (должны быть перед параметризованными)
-            Route::get('/', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'index']); // Полный список с настройками
-            Route::post('/', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'store']); // Создание шаблона
-            
-            // Специфичные маршруты с параметрами (после общих, но перед общими параметризованными)
-            Route::post('/{id}/duplicate', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'duplicate']);
-            Route::put('/{id}/set-default', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'setDefault']);
-            
-            // Общие параметризованные маршруты (должны быть последними)
-            Route::get('/{id}', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'show']);
-            Route::put('/{id}', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'update']);
-            Route::delete('/{id}', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'destroy']);
-        });
-
-        // Автопарсинг Google Sheets
-        Route::prefix('google-sheets-auto-parsing')->group(function () {
-            Route::get('/', [\App\Http\Controllers\Admin\ShopGoogleSheetsAutoParsingController::class, 'index']);
-            Route::get('/{id}', [\App\Http\Controllers\Admin\ShopGoogleSheetsAutoParsingController::class, 'show']);
-            Route::post('/', [\App\Http\Controllers\Admin\ShopGoogleSheetsAutoParsingController::class, 'store']);
-            Route::put('/{id}', [\App\Http\Controllers\Admin\ShopGoogleSheetsAutoParsingController::class, 'update']);
-            Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopGoogleSheetsAutoParsingController::class, 'destroy']);
-        });
-
-        // Автопарсинг YML фидов
-        Route::prefix('yml-feed-auto-parsing')->group(function () {
-            Route::get('/', [\App\Http\Controllers\Admin\ShopYMLFeedAutoParsingController::class, 'index']);
-            Route::get('/{id}', [\App\Http\Controllers\Admin\ShopYMLFeedAutoParsingController::class, 'show']);
-            Route::post('/', [\App\Http\Controllers\Admin\ShopYMLFeedAutoParsingController::class, 'store']);
-            Route::put('/{id}', [\App\Http\Controllers\Admin\ShopYMLFeedAutoParsingController::class, 'update']);
-            Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopYMLFeedAutoParsingController::class, 'destroy']);
-        });
-
-        // Логи импорта товаров
-        Route::prefix('import-logs')->group(function () {
-            // Специфичные маршруты должны быть перед параметризованными
-            Route::get('/stats', [\App\Http\Controllers\Admin\ImportLogController::class, 'getLogStats']);
-            // Маршрут для скачивания лога
-            Route::get('/{type}/download', [\App\Http\Controllers\Admin\ImportLogController::class, 'downloadLog']);
-            // Параметризованные маршруты после специфичных
-            Route::get('/{type}', [\App\Http\Controllers\Admin\ImportLogController::class, 'getLog']);
-            Route::delete('/{type}', [\App\Http\Controllers\Admin\ImportLogController::class, 'clearLog']);
-            Route::post('/load', [\App\Http\Controllers\Admin\ImportLogController::class, 'logLoad']);
-            Route::post('/update', [\App\Http\Controllers\Admin\ImportLogController::class, 'logUpdate']);
-            Route::post('/skip', [\App\Http\Controllers\Admin\ImportLogController::class, 'logSkip']);
-            Route::post('/error', [\App\Http\Controllers\Admin\ImportLogController::class, 'logError']);
-
-            // Пакетные запросы (поддержка обоих форматов: /batch и -batch)
-            Route::post('/load/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logLoadBatch']);
-            Route::post('/load-batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logLoadBatch']);
-            Route::post('/update/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logUpdateBatch']);
-            Route::post('/update-batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logUpdateBatch']);
-            Route::post('/skip/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logSkipBatch']);
-            Route::post('/skip-batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logSkipBatch']);
-            Route::post('/error/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logErrorBatch']);
-            Route::post('/error-batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logErrorBatch']);
-            
-            // Пакетное логирование изображений
-            Route::post('/image-success/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logImageSuccessBatch']);
-            Route::post('/image-success-batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logImageSuccessBatch']);
-            Route::post('/image-error/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logImageErrorBatch']);
-            Route::post('/image-error-batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logImageErrorBatch']);
-            
-            // Пакетное логирование вариаций
-            Route::post('/variation/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logVariationBatch']);
-            Route::post('/variation-batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logVariationBatch']);
-        });
-
-        // Тестовый endpoint для проверки шаблонов импорта
-        Route::get('/test-import-templates', function (Request $request) {
+    // Site templates management (только для админов)
+    Route::middleware('auth:sanctum')->prefix('site')->group(function () {
+        // Тестовый endpoint для проверки меню
+        Route::get('/test-menus', function () {
             try {
-                $user = $request->user();
+                $count = \App\Models\SiteMenu::count();
+
                 return response()->json([
                     'success' => true,
-                    'message' => 'Тест шаблонов импорта',
-                    'user_id' => $user ? $user->id : null,
-                    'user_roles' => $user ? $user->roles->pluck('name')->toArray() : [],
-                    'templates_count' => \App\Models\ImportTemplate::count(),
-                    'templates' => \App\Models\ImportTemplate::all()
+                    'message' => 'Модель SiteMenu работает',
+                    'count' => $count,
                 ]);
             } catch (\Exception $e) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Ошибка: ' . $e->getMessage(),
-                    'trace' => $e->getTraceAsString()
+                    'message' => 'Ошибка: '.$e->getMessage(),
+                ], 500);
+            }
+        });
+
+        // Тестовый endpoint для проверки пунктов меню
+        Route::get('/test-menu-items', function () {
+            try {
+                $count = \App\Models\SiteMenuItem::count();
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Модель SiteMenuItem работает',
+                    'count' => $count,
+                ]);
+            } catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка: '.$e->getMessage(),
+                ], 500);
+            }
+        });
+        // Шаблоны сайта
+        Route::prefix('templates')->group(function () {
+            Route::get('/', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'index']);
+            Route::post('/', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'store']);
+            Route::get('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'show']);
+            Route::put('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'update']);
+            Route::delete('/{siteTemplate}', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'destroy']);
+            Route::put('/{siteTemplate}/activate', [\App\Http\Controllers\Admin\SiteTemplateController::class, 'activate']);
+
+        });
+
+        // Шаблоны магазина
+        Route::prefix('shop-templates')->group(function () {
+            Route::get('/', [\App\Http\Controllers\Admin\ShopTemplateController::class, 'index']);
+            Route::post('/', [\App\Http\Controllers\Admin\ShopTemplateController::class, 'store']);
+            Route::get('/{shopTemplate}', [\App\Http\Controllers\Admin\ShopTemplateController::class, 'show']);
+            Route::put('/{shopTemplate}', [\App\Http\Controllers\Admin\ShopTemplateController::class, 'update']);
+            Route::delete('/{shopTemplate}', [\App\Http\Controllers\Admin\ShopTemplateController::class, 'destroy']);
+            Route::put('/{shopTemplate}/activate', [\App\Http\Controllers\Admin\ShopTemplateController::class, 'activate']);
+        });
+
+        // Меню сайта
+        Route::prefix('menus')->group(function () {
+            Route::get('/', [\App\Http\Controllers\Admin\SiteMenuController::class, 'index']);
+            Route::post('/', [\App\Http\Controllers\Admin\SiteMenuController::class, 'store']);
+            Route::get('/{siteMenu}', [\App\Http\Controllers\Admin\SiteMenuController::class, 'show']);
+            Route::put('/{siteMenu}', [\App\Http\Controllers\Admin\SiteMenuController::class, 'update']);
+            Route::delete('/{siteMenu}', [\App\Http\Controllers\Admin\SiteMenuController::class, 'destroy']);
+        });
+
+        // Пункты меню сайта
+        Route::prefix('menu-items')->group(function () {
+            Route::get('/', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'index']);
+            Route::post('/', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'store']);
+            Route::get('/{siteMenuItem}', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'show']);
+            Route::put('/{siteMenuItem}', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'update']);
+            Route::delete('/{siteMenuItem}', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'destroy']);
+            Route::post('/order', [\App\Http\Controllers\Admin\SiteMenuItemController::class, 'updateOrder']);
+        });
+
+        // Управление уведомлениями Telegram
+        Route::prefix('telegram-notifications')->group(function () {
+            Route::get('/', [\App\Http\Controllers\Api\Admin\TelegramNotificationController::class, 'index']);
+            Route::get('/{id}', [\App\Http\Controllers\Api\Admin\TelegramNotificationController::class, 'show']);
+            Route::post('/send-test', [\App\Http\Controllers\Api\Admin\TelegramNotificationController::class, 'sendTest']);
+            Route::post('/{id}/retry', [\App\Http\Controllers\Api\Admin\TelegramNotificationController::class, 'retry']);
+            Route::post('/process-pending', [\App\Http\Controllers\Api\Admin\TelegramNotificationController::class, 'processPending']);
+            Route::get('/stats/overview', [\App\Http\Controllers\Api\Admin\TelegramNotificationController::class, 'stats']);
+            Route::delete('/{id}', [\App\Http\Controllers\Api\Admin\TelegramNotificationController::class, 'destroy']);
+        });
+
+    });
+
+    // Profile management
+    Route::prefix('profile')->group(function () {
+        Route::get('/', function (Request $request) {
+            try {
+                $user = $request->user();
+
+                // Загружаем роли пользователя с безопасной обработкой
+                $user->load('roles');
+                $roles = $user->roles ?? collect();
+
+                $userData = [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'phone' => $user->phone,
+                    'phone_verified_at' => $user->phone_verified_at, // Для определения телефонных пользователей
+                    'avatar_url' => $user->avatar_url, // URL аватара от OAuth провайдеров
+                    'google_id' => $user->google_id, // Для определения соц-аккаунта
+                    'yandex_id' => $user->yandex_id, // Для определения соц-аккаунта
+                    'vk_id' => $user->vk_id, // Для определения соц-аккаунта
+                    'role' => $roles->first()?->name ?? 'user', // Основная роль для совместимости
+                    'roles' => $roles->map(function ($role) {
+                        return [
+                            'id' => $role->id,
+                            'name' => $role->name,
+                            'display_name' => $role->display_name,
+                        ];
+                    }),
+                    'created_at' => $user->created_at,
+                    'updated_at' => $user->updated_at,
+                ];
+
+                return response()->json([
+                    'success' => true,
+                    'data' => $userData,
+                    'message' => 'Profile retrieved successfully',
+                ]);
+            } catch (\Exception $e) {
+                \Log::error('Ошибка получения профиля: '.$e->getMessage(), [
+                    'trace' => $e->getTraceAsString(),
+                    'user_id' => $request->user()?->id,
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка получения профиля: '.$e->getMessage(),
+                ], 500);
+            }
+        });
+
+        Route::put('/', function (Request $request) {
+            try {
+                $user = $request->user();
+
+                $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
+                    'name' => 'required|string|max:255',
+                    'email' => 'required|email|unique:users,email,'.$user->id,
+                ]);
+
+                if ($validator->fails()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка валидации',
+                        'errors' => $validator->errors(),
+                    ], 422);
+                }
+
+                // Обновляем данные пользователя
+                $user->update([
+                    'name' => $request->name,
+                    'email' => $request->email,
+                ]);
+
+                // Загружаем роли пользователя с безопасной обработкой
+                $user->load('roles');
+                $roles = $user->roles ?? collect();
+
+                // Получаем обновленные данные
+                $userData = [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'role' => $roles->first()?->name ?? 'user', // Основная роль для совместимости
+                    'roles' => $roles->map(function ($role) {
+                        return [
+                            'id' => $role->id,
+                            'name' => $role->name,
+                            'display_name' => $role->display_name,
+                        ];
+                    }),
+                    'created_at' => $user->created_at,
+                    'updated_at' => $user->updated_at,
+                ];
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Профиль успешно обновлен',
+                    'data' => $userData,
+                ]);
+            } catch (\Exception $e) {
+                \Log::error('Ошибка обновления профиля: '.$e->getMessage(), [
+                    'trace' => $e->getTraceAsString(),
+                    'user_id' => $request->user()?->id,
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка обновления профиля: '.$e->getMessage(),
+                ], 500);
+            }
+        });
+
+        Route::post('/check-name', function (Request $request) {
+            try {
+                $user = $request->user();
+
+                $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
+                    'name' => 'required|string|max:255',
+                ]);
+
+                if ($validator->fails()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка валидации',
+                        'errors' => $validator->errors(),
+                    ], 422);
+                }
+
+                $name = $request->name;
+
+                // Проверяем, есть ли пользователь с таким именем (исключая текущего)
+                $existingUser = \App\Models\User::where('name', $name)
+                    ->where('id', '!=', $user->id)
+                    ->first();
+
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'is_available' => ! $existingUser,
+                        'name' => $name,
+                    ],
+                ]);
+            } catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка проверки имени',
+                    'error_details' => [$e->getMessage()],
+                    'error_code' => 'CHECK_NAME_ERROR',
+                ], 500);
+            }
+        });
+
+        Route::post('/avatar', function (Request $request) {
+            try {
+                $user = $request->user();
+
+                $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
+                    'avatar' => 'required|image|mimes:jpeg,png,jpg,gif|max:5120', // 5MB максимум
+                ]);
+
+                if ($validator->fails()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка валидации',
+                        'errors' => $validator->errors(),
+                    ], 422);
+                }
+
+                $file = $request->file('avatar');
+
+                // Путь для сохранения на фронтенде
+                $frontendPublicPath = frontend_public_path();
+                $dir = $frontendPublicPath.'/images/users';
+
+                // Создаем директорию, если её нет
+                if (! is_dir($dir)) {
+                    mkdir($dir, 0755, true);
+                }
+
+                // Удаляем старый аватар пользователя, если он есть
+                // Используем стандартное имя файла user_{id}.jpg
+                $oldAvatarPath = $dir.'/user_'.$user->id.'.jpg';
+                if (file_exists($oldAvatarPath)) {
+                    unlink($oldAvatarPath);
+                }
+
+                // Сохраняем файл с именем user_{id}.jpg
+                $filename = 'user_'.$user->id.'.jpg';
+                $fullPath = $dir.'/'.$filename;
+
+                // Получаем информацию об изображении
+                $imageInfo = getimagesize($file->getRealPath());
+                if (! $imageInfo) {
+                    throw new \Exception('Не удалось получить информацию об изображении');
+                }
+
+                $imageType = $imageInfo[2];
+
+                // Загружаем изображение в зависимости от типа
+                $sourceImage = null;
+                switch ($imageType) {
+                    case IMAGETYPE_JPEG:
+                        $sourceImage = imagecreatefromjpeg($file->getRealPath());
+                        break;
+                    case IMAGETYPE_PNG:
+                        $sourceImage = imagecreatefrompng($file->getRealPath());
+                        break;
+                    case IMAGETYPE_GIF:
+                        $sourceImage = imagecreatefromgif($file->getRealPath());
+                        break;
+                    case IMAGETYPE_WEBP:
+                        $sourceImage = imagecreatefromwebp($file->getRealPath());
+                        break;
+                    default:
+                        throw new \Exception('Неподдерживаемый тип изображения');
+                }
+
+                if (! $sourceImage) {
+                    throw new \Exception('Не удалось загрузить изображение');
+                }
+
+                // Сохраняем как JPEG с качеством 90
+                $result = imagejpeg($sourceImage, $fullPath, 90);
+
+                // Освобождаем память
+                imagedestroy($sourceImage);
+
+                if (! $result) {
+                    throw new \Exception('Не удалось сохранить изображение');
+                }
+
+                // Аватар сохраняется только в папке images/users/user_{id}.jpg
+                // Поля avatar и avatar_url больше не используются в базе данных
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Аватар успешно загружен',
+                    'data' => [
+                        'avatar' => '/images/users/'.$filename,
+                    ],
+                ]);
+            } catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка загрузки аватара: '.$e->getMessage(),
+                ], 500);
+            }
+        });
+
+        Route::delete('/avatar', function (Request $request) {
+            try {
+                $user = $request->user();
+
+                // Удаляем файл аватара с фронтенда
+                // Используем стандартное имя файла user_{id}.jpg
+                $frontendPublicPath = frontend_public_path();
+                $filePath = $frontendPublicPath.'/images/users/user_'.$user->id.'.jpg';
+
+                $fileDeleted = false;
+                if (file_exists($filePath)) {
+                    $fileDeleted = unlink($filePath);
+                }
+
+                // Поля avatar и avatar_url больше не используются в базе данных
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Аватар успешно удален',
+                    'data' => [
+                        'avatar' => null,
+                    ],
+                ]);
+            } catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка удаления аватара: '.$e->getMessage(),
+                ], 500);
+            }
+        });
+
+        Route::post('/change-password', function (Request $request) {
+            try {
+                $user = $request->user();
+
+                $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
+                    'current_password' => 'required|string',
+                    'new_password' => 'required|string|min:8',
+                    'new_password_confirmation' => 'required|string|same:new_password',
+                ]);
+
+                if ($validator->fails()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Ошибка валидации',
+                        'errors' => $validator->errors(),
+                    ], 422);
+                }
+
+                // Проверяем текущий пароль
+                if (! \Illuminate\Support\Facades\Hash::check($request->current_password, $user->password)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Текущий пароль неверен',
+                    ], 422);
+                }
+
+                // Обновляем пароль
+                $user->update([
+                    'password' => \Illuminate\Support\Facades\Hash::make($request->new_password),
+                ]);
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Пароль успешно изменен',
+                ]);
+            } catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка изменения пароля: '.$e->getMessage(),
                 ], 500);
             }
         });
     });
+
+    // Шаблоны импорта товаров
+    Route::prefix('import-templates')->group(function () {
+        // Специфичные маршруты с конкретными путями (должны быть первыми)
+        Route::get('/list', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'list']); // Легкий список для выпадающих меню
+        Route::post('/cleanup', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'cleanup']); // Очистка старых шаблонов
+
+        // RESTful маршруты без параметров (должны быть перед параметризованными)
+        Route::get('/', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'index']); // Полный список с настройками
+        Route::post('/', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'store']); // Создание шаблона
+
+        // Специфичные маршруты с параметрами (после общих, но перед общими параметризованными)
+        Route::post('/{id}/duplicate', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'duplicate']);
+        Route::put('/{id}/set-default', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'setDefault']);
+
+        // Общие параметризованные маршруты (должны быть последними)
+        Route::get('/{id}', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'show']);
+        Route::put('/{id}', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'update']);
+        Route::delete('/{id}', [\App\Http\Controllers\Admin\ImportTemplateController::class, 'destroy']);
+    });
+
+    // Автопарсинг Google Sheets
+    Route::prefix('google-sheets-auto-parsing')->group(function () {
+        Route::get('/', [\App\Http\Controllers\Admin\ShopGoogleSheetsAutoParsingController::class, 'index']);
+        Route::get('/{id}', [\App\Http\Controllers\Admin\ShopGoogleSheetsAutoParsingController::class, 'show']);
+        Route::post('/', [\App\Http\Controllers\Admin\ShopGoogleSheetsAutoParsingController::class, 'store']);
+        Route::put('/{id}', [\App\Http\Controllers\Admin\ShopGoogleSheetsAutoParsingController::class, 'update']);
+        Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopGoogleSheetsAutoParsingController::class, 'destroy']);
+    });
+
+    // Автопарсинг YML фидов
+    Route::prefix('yml-feed-auto-parsing')->group(function () {
+        Route::get('/', [\App\Http\Controllers\Admin\ShopYMLFeedAutoParsingController::class, 'index']);
+        Route::get('/{id}', [\App\Http\Controllers\Admin\ShopYMLFeedAutoParsingController::class, 'show']);
+        Route::post('/', [\App\Http\Controllers\Admin\ShopYMLFeedAutoParsingController::class, 'store']);
+        Route::put('/{id}', [\App\Http\Controllers\Admin\ShopYMLFeedAutoParsingController::class, 'update']);
+        Route::delete('/{id}', [\App\Http\Controllers\Admin\ShopYMLFeedAutoParsingController::class, 'destroy']);
+    });
+
+    // Логи импорта товаров
+    Route::prefix('import-logs')->group(function () {
+        // Специфичные маршруты должны быть перед параметризованными
+        Route::get('/stats', [\App\Http\Controllers\Admin\ImportLogController::class, 'getLogStats']);
+        // Маршрут для скачивания лога
+        Route::get('/{type}/download', [\App\Http\Controllers\Admin\ImportLogController::class, 'downloadLog']);
+        // Параметризованные маршруты после специфичных
+        Route::get('/{type}', [\App\Http\Controllers\Admin\ImportLogController::class, 'getLog']);
+        Route::delete('/{type}', [\App\Http\Controllers\Admin\ImportLogController::class, 'clearLog']);
+        Route::post('/load', [\App\Http\Controllers\Admin\ImportLogController::class, 'logLoad']);
+        Route::post('/update', [\App\Http\Controllers\Admin\ImportLogController::class, 'logUpdate']);
+        Route::post('/skip', [\App\Http\Controllers\Admin\ImportLogController::class, 'logSkip']);
+        Route::post('/error', [\App\Http\Controllers\Admin\ImportLogController::class, 'logError']);
+
+        // Пакетные запросы (поддержка обоих форматов: /batch и -batch)
+        Route::post('/load/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logLoadBatch']);
+        Route::post('/load-batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logLoadBatch']);
+        Route::post('/update/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logUpdateBatch']);
+        Route::post('/update-batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logUpdateBatch']);
+        Route::post('/skip/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logSkipBatch']);
+        Route::post('/skip-batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logSkipBatch']);
+        Route::post('/error/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logErrorBatch']);
+        Route::post('/error-batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logErrorBatch']);
+
+        // Пакетное логирование изображений
+        Route::post('/image-success/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logImageSuccessBatch']);
+        Route::post('/image-success-batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logImageSuccessBatch']);
+        Route::post('/image-error/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logImageErrorBatch']);
+        Route::post('/image-error-batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logImageErrorBatch']);
+
+        // Пакетное логирование вариаций
+        Route::post('/variation/batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logVariationBatch']);
+        Route::post('/variation-batch', [\App\Http\Controllers\Admin\ImportLogController::class, 'logVariationBatch']);
+    });
+
+    // Тестовый endpoint для проверки шаблонов импорта
+    Route::get('/test-import-templates', function (Request $request) {
+        try {
+            $user = $request->user();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Тест шаблонов импорта',
+                'user_id' => $user ? $user->id : null,
+                'user_roles' => $user ? $user->roles->pluck('name')->toArray() : [],
+                'templates_count' => \App\Models\ImportTemplate::count(),
+                'templates' => \App\Models\ImportTemplate::all(),
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка: '.$e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ], 500);
+        }
+    });
+});
 
 // Тестовый маршрут
 Route::get('/test', function () {
     return response()->json([
         'message' => 'API работает!',
         'version' => '1.0.0',
-        'timestamp' => now()->toISOString()
+        'timestamp' => now()->toISOString(),
     ]);
 });
-
-
-
-
 
 // Тестовый маршрут для проверки CORS
 Route::options('/test-cors', function () {
@@ -4080,7 +4054,7 @@ Route::get('/test-cors', function () {
     return response()->json([
         'message' => 'CORS тест работает!',
         'origin' => request()->header('Origin'),
-        'timestamp' => now()->toISOString()
+        'timestamp' => now()->toISOString(),
     ]);
 });
 
@@ -4093,7 +4067,7 @@ Route::post('/test-post', function () {
         'message' => 'POST запрос работает!',
         'origin' => request()->header('Origin'),
         'method' => request()->method(),
-        'data' => request()->all()
+        'data' => request()->all(),
     ]);
 });
 
@@ -4113,8 +4087,8 @@ Route::get('/debug/api', function () {
         'routes' => [
             'api_prefix' => 'api',
             'public_site_info' => 'api/public/site-info',
-            'test_route' => 'api/test'
-        ]
+            'test_route' => 'api/test',
+        ],
     ]);
 });
 
@@ -4122,15 +4096,16 @@ Route::get('/debug/api', function () {
 Route::get('/test-menus-no-auth', function () {
     try {
         $count = \App\Models\SiteMenu::count();
+
         return response()->json([
             'success' => true,
             'message' => 'Модель SiteMenu работает без авторизации',
-            'count' => $count
+            'count' => $count,
         ]);
     } catch (\Exception $e) {
         return response()->json([
             'success' => false,
-            'message' => 'Ошибка: ' . $e->getMessage()
+            'message' => 'Ошибка: '.$e->getMessage(),
         ], 500);
     }
 });
@@ -4139,29 +4114,29 @@ Route::get('/test-menus-no-auth', function () {
 Route::middleware('auth:sanctum')->get('/test-auth', function (Request $request) {
     try {
         $user = $request->user();
+
         return response()->json([
             'success' => true,
             'message' => 'Авторизация работает',
             'user_id' => $user->id,
             'user_name' => $user->name,
-            'user_roles' => $user->roles->pluck('name')->toArray()
+            'user_roles' => $user->roles->pluck('name')->toArray(),
         ]);
     } catch (\Exception $e) {
         return response()->json([
             'success' => false,
-            'message' => 'Ошибка авторизации: ' . $e->getMessage()
+            'message' => 'Ошибка авторизации: '.$e->getMessage(),
         ], 500);
     }
 });
-
 
 // Получение конфигурации для фронтенда
 Route::middleware(['auth:sanctum', 'role:admin'])->get('/admin/config', function (Request $request) {
     return response()->json([
         'success' => true,
         'data' => [
-            'frontend_path' => config('frontend.path')
-        ]
+            'frontend_path' => config('frontend.path'),
+        ],
     ]);
 });
 
@@ -4169,17 +4144,18 @@ Route::middleware(['auth:sanctum', 'role:admin'])->get('/admin/config', function
 Route::middleware(['auth:sanctum', 'role:admin'])->get('/test-admin-role', function (Request $request) {
     try {
         $user = $request->user();
+
         return response()->json([
             'success' => true,
             'message' => 'Роль админа работает',
             'user_id' => $user->id,
             'user_name' => $user->name,
-            'user_roles' => $user->roles->pluck('name')->toArray()
+            'user_roles' => $user->roles->pluck('name')->toArray(),
         ]);
     } catch (\Exception $e) {
         return response()->json([
             'success' => false,
-            'message' => 'Ошибка проверки роли: ' . $e->getMessage()
+            'message' => 'Ошибка проверки роли: '.$e->getMessage(),
         ], 500);
     }
 });

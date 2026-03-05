@@ -6,9 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Models\Slider;
 use App\Models\SliderImage;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 
 class SliderController extends Controller
 {
@@ -18,7 +17,7 @@ class SliderController extends Controller
     public function index()
     {
         try {
-            $sliders = Slider::with(['images' => function($query) {
+            $sliders = Slider::with(['images' => function ($query) {
                 $query->ordered();
             }])->ordered()->get();
 
@@ -26,19 +25,21 @@ class SliderController extends Controller
             $sliders->transform(function ($slider) {
                 $slider->images->transform(function ($image) {
                     $image->image_url = $image->image_url;
+
                     return $image;
                 });
+
                 return $slider;
             });
 
             return response()->json([
                 'success' => true,
-                'data' => $sliders
+                'data' => $sliders,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения слайдеров: ' . $e->getMessage()
+                'message' => 'Ошибка получения слайдеров: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -57,39 +58,39 @@ class SliderController extends Controller
             'title_position' => 'required|in:top-left,top-center,top-right,center-left,center,center-right,bottom-left,bottom-center,bottom-right',
             'text_position' => 'required|in:top-left,top-center,top-right,center-left,center,center-right,bottom-left,bottom-center,bottom-right',
             'is_active' => 'boolean',
-            'sort_order' => 'integer'
+            'sort_order' => 'integer',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
         try {
             Log::info('Создание слайдера', ['data' => $request->all()]);
-            
+
             $slider = Slider::create($request->all());
-            
+
             Log::info('Слайдер успешно создан', ['id' => $slider->id]);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Слайдер успешно создан',
-                'data' => $slider
+                'data' => $slider,
             ]);
         } catch (\Exception $e) {
             Log::error('Ошибка создания слайдера', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
-                'data' => $request->all()
+                'data' => $request->all(),
             ]);
-            
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания слайдера: ' . $e->getMessage()
+                'message' => 'Ошибка создания слайдера: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -100,24 +101,25 @@ class SliderController extends Controller
     public function show(string $id)
     {
         try {
-            $slider = Slider::with(['images' => function($query) {
+            $slider = Slider::with(['images' => function ($query) {
                 $query->ordered();
             }])->findOrFail($id);
 
             // Добавляем image_url для каждого изображения
             $slider->images->transform(function ($image) {
                 $image->image_url = $image->image_url;
+
                 return $image;
             });
 
             return response()->json([
                 'success' => true,
-                'data' => $slider
+                'data' => $slider,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения слайдера: ' . $e->getMessage()
+                'message' => 'Ошибка получения слайдера: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -136,40 +138,40 @@ class SliderController extends Controller
             'title_position' => 'sometimes|in:top-left,top-center,top-right,center-left,center,center-right,bottom-left,bottom-center,bottom-right',
             'text_position' => 'sometimes|in:top-left,top-center,top-right,center-left,center,center-right,bottom-left,bottom-center,bottom-right',
             'is_active' => 'sometimes|boolean',
-            'sort_order' => 'sometimes|integer'
+            'sort_order' => 'sometimes|integer',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
         try {
             $slider = Slider::findOrFail($id);
-            
+
             // Подготавливаем данные для обновления
             $updateData = $request->all();
-            
+
             // Обрабатываем пустую строку для name
             // Если имя пустое, устанавливаем его как пустую строку (разрешено для слайдера)
             if (isset($updateData['name']) && $updateData['name'] === '') {
                 $updateData['name'] = ''; // Явно устанавливаем пустую строку
             }
-            
+
             $slider->update($updateData);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Слайдер успешно обновлен',
-                'data' => $slider
+                'data' => $slider,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления слайдера: ' . $e->getMessage()
+                'message' => 'Ошибка обновления слайдера: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -181,27 +183,27 @@ class SliderController extends Controller
     {
         try {
             $slider = Slider::findOrFail($id);
-            
+
             // Удаляем все изображения слайдера с фронтенда (из FRONTEND_PATH в .env)
             $frontendPublicPath = frontend_public_path();
-            
+
             foreach ($slider->images as $image) {
-                $imagePath = $frontendPublicPath . '/images/sliders/' . $image->image_path;
+                $imagePath = $frontendPublicPath.'/images/sliders/'.$image->image_path;
                 if (file_exists($imagePath)) {
                     unlink($imagePath);
                 }
             }
-            
+
             $slider->delete();
 
             return response()->json([
                 'success' => true,
-                'message' => 'Слайдер успешно удален'
+                'message' => 'Слайдер успешно удален',
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления слайдера: ' . $e->getMessage()
+                'message' => 'Ошибка удаления слайдера: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -222,28 +224,28 @@ class SliderController extends Controller
             'text' => 'nullable|string',
             'link' => 'nullable|string|max:500',
             'link_type' => 'nullable|in:internal,external',
-            'sort_order' => 'nullable|integer'
+            'sort_order' => 'nullable|integer',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
         try {
             $slider = Slider::findOrFail($sliderId);
-            
+
             $image = $request->file('image');
             $uploadType = $request->input('upload_type', 'original');
-            $filename = time() . '_' . uniqid() . '.' . $image->getClientOriginalExtension();
-            
+            $filename = time().'_'.uniqid().'.'.$image->getClientOriginalExtension();
+
             // Определяем размеры для обработки
             $width = null;
             $height = null;
-            
+
             if ($uploadType === 'system_crop' || $uploadType === 'system_fit') {
                 $width = $request->input('width');
                 $height = $request->input('height');
@@ -251,24 +253,25 @@ class SliderController extends Controller
                 $width = $request->input('custom_width');
                 $height = $request->input('custom_height');
             }
-            
+
             // Путь к папке public фронтенда (из FRONTEND_PATH в .env)
             $frontendPublicPath = frontend_public_path();
-            $slidersDir = $frontendPublicPath . '/images/sliders';
-            
+            $slidersDir = $frontendPublicPath.'/images/sliders';
+
             // Создаем директорию, если её нет
-            if (!is_dir($slidersDir)) {
-                if (!mkdir($slidersDir, 0755, true)) {
+            if (! is_dir($slidersDir)) {
+                if (! mkdir($slidersDir, 0755, true)) {
                     Log::error('Не удалось создать директорию для фронтенда', ['path' => $slidersDir]);
+
                     return response()->json([
                         'success' => false,
-                        'message' => 'Ошибка создания директории для изображения'
+                        'message' => 'Ошибка создания директории для изображения',
                     ], 500);
                 }
             }
-            
-            $targetPath = $slidersDir . '/' . $filename;
-            
+
+            $targetPath = $slidersDir.'/'.$filename;
+
             // Обрабатываем изображение в зависимости от типа
             if ($uploadType !== 'original' && $width && $height) {
                 $this->processImage($image, $width, $height, $uploadType, $targetPath);
@@ -276,7 +279,7 @@ class SliderController extends Controller
                 // Сохраняем оригинальное изображение напрямую на фронтенд
                 $image->move($slidersDir, $filename);
             }
-            
+
             // Создаем запись в базе данных
             $sliderImage = SliderImage::create([
                 'slider_id' => $slider->id,
@@ -285,7 +288,7 @@ class SliderController extends Controller
                 'text' => $request->text,
                 'link' => $request->link,
                 'link_type' => $request->link_type ?? 'internal',
-                'sort_order' => $request->sort_order ?? 0
+                'sort_order' => $request->sort_order ?? 0,
             ]);
 
             return response()->json([
@@ -303,13 +306,13 @@ class SliderController extends Controller
                     'is_active' => $sliderImage->is_active,
                     'sort_order' => $sliderImage->sort_order,
                     'created_at' => $sliderImage->created_at,
-                    'updated_at' => $sliderImage->updated_at
-                ]
+                    'updated_at' => $sliderImage->updated_at,
+                ],
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка загрузки изображения: ' . $e->getMessage()
+                'message' => 'Ошибка загрузки изображения: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -322,7 +325,7 @@ class SliderController extends Controller
         // Создаем изображение из загруженного файла
         $sourceImage = null;
         $extension = strtolower($image->getClientOriginalExtension());
-        
+
         switch ($extension) {
             case 'jpg':
             case 'jpeg':
@@ -335,7 +338,7 @@ class SliderController extends Controller
                 $sourceImage = imagecreatefromgif($image->getPathname());
                 break;
             case 'webp':
-                if (!function_exists('imagecreatefromwebp')) {
+                if (! function_exists('imagecreatefromwebp')) {
                     throw new \Exception('WebP не поддерживается на этом сервере');
                 }
                 $sourceImage = imagecreatefromwebp($image->getPathname());
@@ -343,35 +346,35 @@ class SliderController extends Controller
             default:
                 throw new \Exception('Неподдерживаемый формат изображения');
         }
-        
-        if (!$sourceImage) {
+
+        if (! $sourceImage) {
             throw new \Exception('Не удалось создать изображение из файла');
         }
-        
+
         // Получаем размеры исходного изображения
         $sourceWidth = imagesx($sourceImage);
         $sourceHeight = imagesy($sourceImage);
-        
+
         // Создаем новое изображение с нужными размерами
         $newImage = imagecreatetruecolor($width, $height);
-        
+
         if ($uploadType === 'system_fit' || $uploadType === 'custom_fit') {
             // Вписываем изображение с белым фоном
             $white = imagecolorallocate($newImage, 255, 255, 255);
             imagefill($newImage, 0, 0, $white);
-            
+
             // Вычисляем коэффициенты масштабирования
             $scaleX = $width / $sourceWidth;
             $scaleY = $height / $sourceHeight;
             $scale = min($scaleX, $scaleY);
-            
-            $newWidth = (int)($sourceWidth * $scale);
-            $newHeight = (int)($sourceHeight * $scale);
-            
+
+            $newWidth = (int) ($sourceWidth * $scale);
+            $newHeight = (int) ($sourceHeight * $scale);
+
             // Центрируем изображение
-            $x = (int)(($width - $newWidth) / 2);
-            $y = (int)(($height - $newHeight) / 2);
-            
+            $x = (int) (($width - $newWidth) / 2);
+            $y = (int) (($height - $newHeight) / 2);
+
             imagecopyresampled($newImage, $sourceImage, $x, $y, 0, 0, $newWidth, $newHeight, $sourceWidth, $sourceHeight);
         } else {
             // Обрезаем изображение (system_crop)
@@ -379,22 +382,22 @@ class SliderController extends Controller
             $scaleX = $width / $sourceWidth;
             $scaleY = $height / $sourceHeight;
             $scale = max($scaleX, $scaleY);
-            
-            $newWidth = (int)($sourceWidth * $scale);
-            $newHeight = (int)($sourceHeight * $scale);
-            
+
+            $newWidth = (int) ($sourceWidth * $scale);
+            $newHeight = (int) ($sourceHeight * $scale);
+
             // Создаем временное изображение
             $tempImage = imagecreatetruecolor($newWidth, $newHeight);
             imagecopyresampled($tempImage, $sourceImage, 0, 0, 0, 0, $newWidth, $newHeight, $sourceWidth, $sourceHeight);
-            
+
             // Обрезаем до нужных размеров
-            $x = (int)(($newWidth - $width) / 2);
-            $y = (int)(($newHeight - $height) / 2);
-            
+            $x = (int) (($newWidth - $width) / 2);
+            $y = (int) (($newHeight - $height) / 2);
+
             imagecopy($newImage, $tempImage, 0, 0, $x, $y, $width, $height);
             imagedestroy($tempImage);
         }
-        
+
         // Сохраняем обработанное изображение
         $extension = strtolower(pathinfo($outputPath, PATHINFO_EXTENSION));
         switch ($extension) {
@@ -409,7 +412,7 @@ class SliderController extends Controller
                 imagegif($newImage, $outputPath);
                 break;
             case 'webp':
-                if (!function_exists('imagewebp')) {
+                if (! function_exists('imagewebp')) {
                     // Если WebP не поддерживается, сохраняем как JPEG
                     $outputPath = str_replace('.webp', '.jpg', $outputPath);
                     imagejpeg($newImage, $outputPath, 90);
@@ -418,7 +421,7 @@ class SliderController extends Controller
                 }
                 break;
         }
-        
+
         // Освобождаем память
         imagedestroy($sourceImage);
         imagedestroy($newImage);
@@ -435,14 +438,14 @@ class SliderController extends Controller
             'link' => 'nullable|string|max:500',
             'link_type' => 'nullable|in:internal,external',
             'sort_order' => 'nullable|integer',
-            'is_active' => 'nullable|boolean'
+            'is_active' => 'nullable|boolean',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -453,12 +456,12 @@ class SliderController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Изображение успешно обновлено',
-                'data' => $image
+                'data' => $image,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления изображения: ' . $e->getMessage()
+                'message' => 'Ошибка обновления изображения: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -470,25 +473,25 @@ class SliderController extends Controller
     {
         try {
             $image = SliderImage::where('slider_id', $sliderId)->findOrFail($imageId);
-            
+
             // Удаляем файл изображения с фронтенда (из FRONTEND_PATH в .env)
             $frontendPublicPath = frontend_public_path();
-            $imagePath = $frontendPublicPath . '/images/sliders/' . $image->image_path;
-            
+            $imagePath = $frontendPublicPath.'/images/sliders/'.$image->image_path;
+
             if (file_exists($imagePath)) {
                 unlink($imagePath);
             }
-            
+
             $image->delete();
 
             return response()->json([
                 'success' => true,
-                'message' => 'Изображение успешно удалено'
+                'message' => 'Изображение успешно удалено',
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления изображения: ' . $e->getMessage()
+                'message' => 'Ошибка удаления изображения: '.$e->getMessage(),
             ], 500);
         }
     }

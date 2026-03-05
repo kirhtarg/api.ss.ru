@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Models\ShopCdekSettings;
-use Illuminate\Http\Request;
 
 class DeliveryController extends Controller
 {
@@ -16,7 +15,7 @@ class DeliveryController extends Controller
             // Получаем активные настройки СДЭК; если нет активных — используем первую запись как фолбэк
             $settings = ShopCdekSettings::getActive() ?? ShopCdekSettings::first();
 
-            if (!$settings) {
+            if (! $settings) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Активные настройки СДЭК не найдены',

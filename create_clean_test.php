@@ -6,7 +6,7 @@ use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 // Создаем очень простой файл без формул
-$spreadsheet = new Spreadsheet();
+$spreadsheet = new Spreadsheet;
 $sheet = $spreadsheet->getActiveSheet();
 
 // Заголовки

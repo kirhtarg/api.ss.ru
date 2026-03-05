@@ -4,8 +4,8 @@ namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
 use App\Services\CdekService;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
 class CdekController extends Controller
@@ -25,16 +25,16 @@ class CdekController extends Controller
             if (mb_strlen($query) < 2) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Минимум 2 символа для поиска'
+                    'message' => 'Минимум 2 символа для поиска',
                 ], 400);
             }
 
             $cities = $this->cdekService->getCities($query);
 
-            if (!$cities || !is_array($cities)) {
+            if (! $cities || ! is_array($cities)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Не удалось получить список городов'
+                    'message' => 'Не удалось получить список городов',
                 ], 500);
             }
 
@@ -52,10 +52,11 @@ class CdekController extends Controller
                 'data' => $formatted,
             ]);
         } catch (\Exception $e) {
-            Log::error('CDEK searchCities error: ' . $e->getMessage());
+            Log::error('CDEK searchCities error: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения городов: ' . $e->getMessage(),
+                'message' => 'Ошибка получения городов: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -66,19 +67,19 @@ class CdekController extends Controller
     public function getCities(Request $request): JsonResponse
     {
         $query = $request->get('query', '');
-        
+
         $cities = $this->cdekService->getCities($query);
-        
+
         if ($cities) {
             return response()->json([
                 'success' => true,
-                'data' => $cities
+                'data' => $cities,
             ]);
         }
 
         return response()->json([
             'success' => false,
-            'message' => 'Не удалось получить список городов'
+            'message' => 'Не удалось получить список городов',
         ], 500);
     }
 
@@ -88,26 +89,26 @@ class CdekController extends Controller
     public function getPickupPoints(Request $request): JsonResponse
     {
         $cityCode = $request->get('city_code');
-        
-        if (!$cityCode) {
+
+        if (! $cityCode) {
             return response()->json([
                 'success' => false,
-                'message' => 'Не указан код города'
+                'message' => 'Не указан код города',
             ], 400);
         }
 
         $points = $this->cdekService->getPickupPoints($cityCode);
-        
+
         if ($points) {
             return response()->json([
                 'success' => true,
-                'data' => $points
+                'data' => $points,
             ]);
         }
 
         return response()->json([
             'success' => false,
-            'message' => 'Не удалось получить пункты выдачи'
+            'message' => 'Не удалось получить пункты выдачи',
         ], 500);
     }
 
@@ -123,23 +124,23 @@ class CdekController extends Controller
                 $from = $request->input('from');
                 $to = $request->input('to');
                 $packages = $request->input('packages', []);
-                
+
                 if (empty($packages)) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Не указаны параметры посылки'
+                        'message' => 'Не указаны параметры посылки',
                     ], 400);
                 }
-                
+
                 $package = $packages[0]; // Берем первую посылку
-                
+
                 $fromCityCode = (int) $from['code'];
                 $toCityCode = (int) $to['code'];
                 $weight = $package['weight'] / 1000; // Конвертируем граммы в кг
                 $length = $package['length'];
                 $width = $package['width'];
                 $height = $package['height'];
-                
+
                 Log::info('CDEK Calculate Request (new format):', [
                     'from' => $from,
                     'to' => $to,
@@ -150,10 +151,10 @@ class CdekController extends Controller
                         'weight' => $weight,
                         'length' => $length,
                         'width' => $width,
-                        'height' => $height
-                    ]
+                        'height' => $height,
+                    ],
                 ]);
-                
+
             } else {
                 // Старая структура: { from_city_code, to_city_code, weight, length, width, height }
                 $request->validate([
@@ -162,7 +163,7 @@ class CdekController extends Controller
                     'weight' => 'nullable|numeric|min:0.1',
                     'length' => 'nullable|numeric|min:1',
                     'width' => 'nullable|numeric|min:1',
-                    'height' => 'nullable|numeric|min:1'
+                    'height' => 'nullable|numeric|min:1',
                 ]);
 
                 $fromCityCode = $request->from_city_code;
@@ -171,14 +172,14 @@ class CdekController extends Controller
                 $length = $request->length;
                 $width = $request->width;
                 $height = $request->height;
-                
+
                 Log::info('CDEK Calculate Request (old format):', [
                     'from_city_code' => $fromCityCode,
                     'to_city_code' => $toCityCode,
                     'weight' => $weight,
                     'length' => $length,
                     'width' => $width,
-                    'height' => $height
+                    'height' => $height,
                 ]);
             }
 
@@ -194,26 +195,28 @@ class CdekController extends Controller
             if ($deliveryOptions) {
                 return response()->json([
                     'success' => true,
-                    'data' => $deliveryOptions
+                    'data' => $deliveryOptions,
                 ]);
             }
 
             return response()->json([
                 'success' => false,
-                'message' => 'Не удалось рассчитать стоимость доставки'
+                'message' => 'Не удалось рассчитать стоимость доставки',
             ], 500);
         } catch (\Illuminate\Validation\ValidationException $e) {
             Log::error('CDEK Calculate Validation Error:', $e->errors());
+
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации данных',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
-            Log::error('CDEK Calculate Error: ' . $e->getMessage());
+            Log::error('CDEK Calculate Error: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка расчета доставки: ' . $e->getMessage()
+                'message' => 'Ошибка расчета доставки: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -229,23 +232,23 @@ class CdekController extends Controller
             $from = $request->input('from');
             $to = $request->input('to');
             $packages = $request->input('packages', []);
-            
+
             if (empty($packages)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Не указаны параметры посылки'
+                    'message' => 'Не указаны параметры посылки',
                 ], 400);
             }
-            
+
             $package = $packages[0]; // Берем первую посылку
-            
+
             $fromCityCode = (int) $from['code'];
             $toCityCode = (int) $to['code'];
             $weight = $package['weight'] / 1000; // Конвертируем граммы в кг
             $length = $package['length'];
             $width = $package['width'];
             $height = $package['height'];
-            
+
         } else {
             // Старая структура: { from_city_code, to_city_code, weight, length, width, height }
             $request->validate([
@@ -254,7 +257,7 @@ class CdekController extends Controller
                 'weight' => 'nullable|numeric|min:0.1',
                 'length' => 'nullable|numeric|min:1',
                 'width' => 'nullable|numeric|min:1',
-                'height' => 'nullable|numeric|min:1'
+                'height' => 'nullable|numeric|min:1',
             ]);
 
             $fromCityCode = $request->from_city_code;
@@ -278,14 +281,14 @@ class CdekController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'min_cost' => $minCost
-                ]
+                    'min_cost' => $minCost,
+                ],
             ]);
         }
 
         return response()->json([
             'success' => false,
-            'message' => 'Не удалось рассчитать минимальную стоимость доставки'
+            'message' => 'Не удалось рассчитать минимальную стоимость доставки',
         ], 500);
     }
 }

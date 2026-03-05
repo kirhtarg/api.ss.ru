@@ -22,12 +22,12 @@ foreach ($files as $file) {
 
     if ($inputPath) {
         echo "  Input path: {$inputPath}\n";
-        echo "  Input exists: " . (Storage::exists($inputPath) ? 'YES' : 'NO') . "\n";
-        echo "  Full path: " . storage_path('app/' . $inputPath) . "\n";
-        echo "  File exists on disk: " . (file_exists(storage_path('app/' . $inputPath)) ? 'YES' : 'NO') . "\n";
+        echo '  Input exists: '.(Storage::exists($inputPath) ? 'YES' : 'NO')."\n";
+        echo '  Full path: '.storage_path('app/'.$inputPath)."\n";
+        echo '  File exists on disk: '.(file_exists(storage_path('app/'.$inputPath)) ? 'YES' : 'NO')."\n";
 
-        if (file_exists(storage_path('app/' . $inputPath))) {
-            echo "  File size: " . filesize(storage_path('app/' . $inputPath)) . " bytes\n";
+        if (file_exists(storage_path('app/'.$inputPath))) {
+            echo '  File size: '.filesize(storage_path('app/'.$inputPath))." bytes\n";
         }
     }
     echo "\n";

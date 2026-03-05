@@ -54,4 +54,3 @@ return new class extends Migration
         Schema::dropIfExists('shop_russian_post_settings');
     }
 };
-

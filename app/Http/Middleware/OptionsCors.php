@@ -32,7 +32,7 @@ class OptionsCors
 
             $allowOrigin = in_array($request->header('Origin'), $allowedOrigins) ? $request->header('Origin') : false;
 
-            if (!$allowOrigin) {
+            if (! $allowOrigin) {
                 return response('Origin not allowed', 403);
             }
 

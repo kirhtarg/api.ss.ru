@@ -2,8 +2,8 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -21,7 +21,7 @@ return new class extends Migration
             $table->json('settings')->nullable()->comment('Настройки шаблона в JSON');
             $table->integer('sort_order')->default(0)->comment('Порядок сортировки');
             $table->timestamps();
-            
+
             $table->index(['is_active', 'sort_order']);
         });
     }
@@ -45,7 +45,7 @@ return new class extends Migration
                 }
             }
         }
-        
+
         // Теперь безопасно удаляем таблицу
         Schema::dropIfExists('site_auth_blocks');
     }

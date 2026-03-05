@@ -15,15 +15,15 @@ class CheckRole
      */
     public function handle(Request $request, Closure $next, ...$roles): Response
     {
-        if (!$request->user()) {
+        if (! $request->user()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Unauthorized'
+                'message' => 'Unauthorized',
             ], 401);
         }
 
         $user = $request->user();
-        
+
         // Безопасная загрузка ролей пользователя - используем прямой запрос
         $userRoles = [];
         try {
@@ -31,13 +31,13 @@ class CheckRole
             $userRoles = \Illuminate\Support\Facades\DB::table('user_roles')
                 ->join('roles', 'user_roles.role_id', '=', 'roles.id')
                 ->where('user_roles.user_id', $user->id)
-                ->where(function($query) {
+                ->where(function ($query) {
                     $query->where('user_roles.is_active', '=', 1)
-                          ->orWhere('user_roles.is_active', '=', true);
+                        ->orWhere('user_roles.is_active', '=', true);
                 })
                 ->pluck('roles.name')
                 ->toArray();
-                
+
             // Если прямой запрос не вернул роли, пробуем через связь
             if (empty($userRoles)) {
                 try {
@@ -51,13 +51,13 @@ class CheckRole
             }
         } catch (\Exception $e) {
             // Если не удалось загрузить роли, считаем, что у пользователя нет ролей
-            \Illuminate\Support\Facades\Log::warning('Ошибка загрузки ролей в middleware CheckRole: ' . $e->getMessage(), [
+            \Illuminate\Support\Facades\Log::warning('Ошибка загрузки ролей в middleware CheckRole: '.$e->getMessage(), [
                 'user_id' => $user->id,
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
             $userRoles = [];
         }
-        
+
         // Проверяем, есть ли у пользователя хотя бы одна из требуемых ролей
         $hasRequiredRole = false;
         foreach ($roles as $role) {
@@ -67,10 +67,10 @@ class CheckRole
             }
         }
 
-        if (!$hasRequiredRole) {
+        if (! $hasRequiredRole) {
             return response()->json([
                 'success' => false,
-                'message' => 'Access denied. Insufficient permissions.'
+                'message' => 'Access denied. Insufficient permissions.',
             ], 403);
         }
 

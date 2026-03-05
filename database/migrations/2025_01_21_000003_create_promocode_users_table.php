@@ -16,7 +16,7 @@ return new class extends Migration
             $table->foreignId('promocode_id')->constrained('promocodes')->onDelete('cascade');
             $table->foreignId('user_id')->constrained('users')->onDelete('cascade');
             $table->timestamps();
-            
+
             $table->unique(['promocode_id', 'user_id']);
             $table->index('promocode_id');
             $table->index('user_id');
@@ -31,4 +31,3 @@ return new class extends Migration
         Schema::dropIfExists('promocode_users');
     }
 };
-

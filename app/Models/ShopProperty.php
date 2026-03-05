@@ -15,11 +15,11 @@ class ShopProperty extends Model
         'name',
         'slug',
         'property_type',
-        'sort_order'
+        'sort_order',
     ];
 
     protected $casts = [
-        'sort_order' => 'integer'
+        'sort_order' => 'integer',
     ];
 
     protected static function boot()

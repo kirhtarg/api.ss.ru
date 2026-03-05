@@ -21,7 +21,7 @@ return new class extends Migration
             $table->json('applied_to')->nullable(); // JSON с информацией о том, к чему применен промокод
             $table->timestamp('used_at');
             $table->timestamps();
-            
+
             $table->index(['promocode_id', 'user_id']);
             $table->index(['promocode_id', 'session_id']);
             $table->index('used_at');

@@ -22,16 +22,16 @@ class SiteMenuItemController extends Controller
                 ->whereNull('parent_id')
                 ->orderBy('sort_order', 'asc')
                 ->get();
-            
+
             return response()->json([
                 'success' => true,
-                'data' => $menuItems
+                'data' => $menuItems,
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения пунктов меню: ' . $e->getMessage()
+                'message' => 'Ошибка получения пунктов меню: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -57,23 +57,23 @@ class SiteMenuItemController extends Controller
             $validated['site_menu_id'] = $menuId;
 
             // Если sort_order не указан, устанавливаем максимальный + 1
-            if (!isset($validated['sort_order'])) {
+            if (! isset($validated['sort_order'])) {
                 $maxOrder = SiteMenuItem::where('site_menu_id', $menuId)->max('sort_order') ?? 0;
                 $validated['sort_order'] = $maxOrder + 1;
             }
 
             $menuItem = SiteMenuItem::create($validated);
-            
+
             return response()->json([
                 'success' => true,
                 'data' => $menuItem,
-                'message' => 'Пункт меню успешно создан'
+                'message' => 'Пункт меню успешно создан',
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания пункта меню: ' . $e->getMessage()
+                'message' => 'Ошибка создания пункта меню: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -85,16 +85,16 @@ class SiteMenuItemController extends Controller
     {
         try {
             $menuItem = SiteMenuItem::with('children')->findOrFail($id);
-            
+
             return response()->json([
                 'success' => true,
-                'data' => $menuItem
+                'data' => $menuItem,
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения пункта меню: ' . $e->getMessage()
+                'message' => 'Ошибка получения пункта меню: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -106,7 +106,7 @@ class SiteMenuItemController extends Controller
     {
         try {
             $menuItem = SiteMenuItem::findOrFail($id);
-            
+
             $validated = $request->validate([
                 'title' => 'required|string|max:255',
                 'url' => 'required|string|max:255',
@@ -122,22 +122,22 @@ class SiteMenuItemController extends Controller
             if ($validated['parent_id'] == $menuItem->id) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пункт меню не может быть родителем самому себе'
+                    'message' => 'Пункт меню не может быть родителем самому себе',
                 ], 400);
             }
 
             $menuItem->update($validated);
-            
+
             return response()->json([
                 'success' => true,
                 'data' => $menuItem->load('children'),
-                'message' => 'Пункт меню успешно обновлен'
+                'message' => 'Пункт меню успешно обновлен',
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления пункта меню: ' . $e->getMessage()
+                'message' => 'Ошибка обновления пункта меню: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -150,16 +150,16 @@ class SiteMenuItemController extends Controller
         try {
             $menuItem = SiteMenuItem::findOrFail($id);
             $menuItem->delete();
-            
+
             return response()->json([
                 'success' => true,
-                'message' => 'Пункт меню успешно удален'
+                'message' => 'Пункт меню успешно удален',
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления пункта меню: ' . $e->getMessage()
+                'message' => 'Ошибка удаления пункта меню: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -183,16 +183,16 @@ class SiteMenuItemController extends Controller
                     'parent_id' => $item['parent_id'] ?? null,
                 ]);
             }
-            
+
             return response()->json([
                 'success' => true,
-                'message' => 'Порядок пунктов меню успешно обновлен'
+                'message' => 'Порядок пунктов меню успешно обновлен',
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления порядка пунктов меню: ' . $e->getMessage()
+                'message' => 'Ошибка обновления порядка пунктов меню: '.$e->getMessage(),
             ], 500);
         }
     }

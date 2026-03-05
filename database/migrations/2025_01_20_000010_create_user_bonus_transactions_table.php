@@ -21,13 +21,13 @@ return new class extends Migration
             $table->date('expires_at')->nullable(); // Дата истечения баллов
             $table->json('metadata')->nullable(); // Дополнительные данные
             $table->timestamps();
-            
+
             // Индексы
             $table->index(['user_id', 'created_at']);
             $table->index(['type']);
             $table->index(['order_id']);
             $table->index(['expires_at']);
-            
+
             // Внешние ключи
             $table->foreign('user_id')->references('id')->on('users')->onDelete('cascade');
             $table->foreign('order_id')->references('id')->on('shop_orders')->onDelete('set null');

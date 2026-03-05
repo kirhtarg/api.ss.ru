@@ -15,7 +15,7 @@ return new class extends Migration
             $table->decimal('demping_price', 10, 2)->nullable()->after('sale_price');
             $table->boolean('show_demping')->default(false)->after('demping_price');
             $table->foreignId('label_id')->nullable()->after('show_demping')->constrained('shop_labels')->onDelete('set null');
-            
+
             // Индексы для производительности
             $table->index('demping_price');
             $table->index('show_demping');
@@ -37,4 +37,3 @@ return new class extends Migration
         });
     }
 };
-

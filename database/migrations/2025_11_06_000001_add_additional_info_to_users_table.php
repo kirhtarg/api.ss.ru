@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::table('users', function (Blueprint $table) {
             // JSON поле для хранения дополнительных данных профиля (необязательное)
-            if (!Schema::hasColumn('users', 'additional_info')) {
+            if (! Schema::hasColumn('users', 'additional_info')) {
                 $table->json('additional_info')->nullable()->after('phone');
             }
         });
@@ -31,5 +31,3 @@ return new class extends Migration
         });
     }
 };
-
-

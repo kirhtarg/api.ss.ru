@@ -1,8 +1,6 @@
 <?php
 
 use Illuminate\Database\Migrations\Migration;
-use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
@@ -16,7 +14,7 @@ return new class extends Migration
         $defaultStatusId = DB::table('shop_order_statuses')
             ->where('name', 'Обрабатывается')
             ->value('id');
-        
+
         if ($defaultStatusId) {
             DB::table('shop_orders')
                 ->whereNull('status_id')

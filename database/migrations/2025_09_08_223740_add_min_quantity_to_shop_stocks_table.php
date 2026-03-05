@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::table('shop_stocks', function (Blueprint $table) {
             // Добавляем поле min_quantity если его нет
-            if (!Schema::hasColumn('shop_stocks', 'min_quantity')) {
+            if (! Schema::hasColumn('shop_stocks', 'min_quantity')) {
                 $table->integer('min_quantity')->default(0)->after('reserved_quantity');
             }
         });

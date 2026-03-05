@@ -31,17 +31,3 @@ class ContactSeeder extends Seeder
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-

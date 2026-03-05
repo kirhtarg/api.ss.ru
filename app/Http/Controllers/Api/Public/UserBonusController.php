@@ -7,7 +7,6 @@ use App\Services\BonusService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Log;
 
 class UserBonusController extends Controller
 {
@@ -25,27 +24,25 @@ class UserBonusController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user) {
+            if (! $user) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
             }
 
-            
             $balance = $this->bonusService->getBonusBalance($user);
-
 
             return response()->json([
                 'success' => true,
                 'data' => [
                     'balance' => $balance,
-                    'user_id' => $user->id
-                ]
+                    'user_id' => $user->id,
+                ],
             ]);
 
         } catch (\Exception $e) {
-            
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения бонусов: ' . $e->getMessage()
+                'message' => 'Ошибка получения бонусов: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -57,7 +54,7 @@ class UserBonusController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user) {
+            if (! $user) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
             }
 
@@ -65,13 +62,13 @@ class UserBonusController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $transactions
+                'data' => $transactions,
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения истории бонусов: ' . $e->getMessage()
+                'message' => 'Ошибка получения истории бонусов: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -83,7 +80,7 @@ class UserBonusController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user) {
+            if (! $user) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
             }
 
@@ -93,7 +90,7 @@ class UserBonusController extends Controller
                 [
                     'points' => 0,
                     'total_earned' => 0,
-                    'total_spent' => 0
+                    'total_spent' => 0,
                 ]
             );
 
@@ -108,7 +105,7 @@ class UserBonusController extends Controller
                 'type' => 'earn',
                 'points' => $testPoints,
                 'description' => 'Тестовые бонусы для отладки',
-                'metadata' => json_encode(['test' => true])
+                'metadata' => json_encode(['test' => true]),
             ]);
 
             return response()->json([
@@ -116,15 +113,15 @@ class UserBonusController extends Controller
                 'message' => 'Тестовые бонусы созданы',
                 'data' => [
                     'balance' => $userBonus->points,
-                    'added_points' => $testPoints
-                ]
+                    'added_points' => $testPoints,
+                ],
             ]);
 
         } catch (\Exception $e) {
-            
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания тестовых данных: ' . $e->getMessage()
+                'message' => 'Ошибка создания тестовых данных: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -150,55 +147,55 @@ class UserBonusController extends Controller
             // Отладочная информация
             $authHeader = $request->header('Authorization');
             $token = $request->bearerToken();
-            
+
             $user = Auth::user();
-            if (!$user) {
+            if (! $user) {
                 // Попробуем авторизовать пользователя вручную
                 if ($token) {
                     $user = \Laravel\Sanctum\PersonalAccessToken::findToken($token)?->tokenable;
                 }
-                
-                if (!$user) {
+
+                if (! $user) {
                     return $this->addCorsHeaders(response()->json([
                         'success' => false,
                         'message' => 'Пользователь не авторизован',
                         'debug' => [
                             'auth_header' => $authHeader,
                             'bearer_token' => $token ? 'present' : 'missing',
-                            'user_id' => $user ? $user->id : 'null'
-                        ]
+                            'user_id' => $user ? $user->id : 'null',
+                        ],
                     ], 401));
                 }
             }
 
             $points = $request->input('points');
-            if (!$points || $points <= 0) {
+            if (! $points || $points <= 0) {
                 return $this->addCorsHeaders(response()->json([
                     'success' => false,
-                    'message' => 'Некорректное количество бонусов'
+                    'message' => 'Некорректное количество бонусов',
                 ], 400));
             }
 
             // Используем BonusService для списания бонусов
             $result = $this->bonusService->deductBonuses($user->id, $points);
-            
+
             if ($result['success']) {
                 return $this->addCorsHeaders(response()->json([
                     'success' => true,
                     'message' => 'Бонусы успешно списаны',
-                    'remaining_points' => $result['remaining_points']
+                    'remaining_points' => $result['remaining_points'],
                 ]));
             } else {
                 return $this->addCorsHeaders(response()->json([
                     'success' => false,
-                    'message' => $result['message']
+                    'message' => $result['message'],
                 ], 400));
             }
 
         } catch (\Exception $e) {
             return $this->addCorsHeaders(response()->json([
                 'success' => false,
-                'message' => 'Ошибка при списании бонусов: ' . $e->getMessage()
+                'message' => 'Ошибка при списании бонусов: '.$e->getMessage(),
             ], 500));
         }
     }

@@ -25,7 +25,7 @@ return new class extends Migration
             $table->integer('used_count')->default(0); // Количество использований
             $table->boolean('is_active')->default(true);
             $table->timestamps();
-            
+
             // Индексы для производительности
             $table->index(['is_active', 'starts_at', 'ends_at'], 'shop_discounts_active_dates_idx');
             $table->index('type', 'shop_discounts_type_idx');

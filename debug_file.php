@@ -25,7 +25,7 @@ foreach ($files as $file) {
 
     if (isset($config['input_file_path'])) {
         echo "  Input path: {$config['input_file_path']}\n";
-        echo "  Input exists: " . (Storage::exists($config['input_file_path']) ? 'YES' : 'NO') . "\n";
+        echo '  Input exists: '.(Storage::exists($config['input_file_path']) ? 'YES' : 'NO')."\n";
     }
 
     if ($file->error_message) {

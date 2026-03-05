@@ -18,7 +18,7 @@ class ShopUserAddress extends Model
         'entrance',
         'intercom',
         'comment',
-        'is_default'
+        'is_default',
     ];
 
     protected $casts = [
@@ -38,16 +38,16 @@ class ShopUserAddress extends Model
      */
     public function getFullAddressAttribute(): string
     {
-        $address = $this->city . ', ' . $this->street . ', д. ' . $this->house;
-        
+        $address = $this->city.', '.$this->street.', д. '.$this->house;
+
         if ($this->apartment) {
-            $address .= ', кв. ' . $this->apartment;
+            $address .= ', кв. '.$this->apartment;
         }
-        
+
         if ($this->entrance) {
-            $address .= ', подъезд ' . $this->entrance;
+            $address .= ', подъезд '.$this->entrance;
         }
-        
+
         return $address;
     }
 
@@ -56,6 +56,6 @@ class ShopUserAddress extends Model
      */
     public function getShortAddressAttribute(): string
     {
-        return $this->street . ', д. ' . $this->house . ($this->apartment ? ', кв. ' . $this->apartment : '');
+        return $this->street.', д. '.$this->house.($this->apartment ? ', кв. '.$this->apartment : '');
     }
 }

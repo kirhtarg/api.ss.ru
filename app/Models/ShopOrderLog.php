@@ -19,20 +19,24 @@ class ShopOrderLog extends Model
         'user_id',
         'user_name',
         'section',
-        'info'
+        'info',
     ];
 
     protected $casts = [
         'entity_id' => 'integer',
         'action_icon_id' => 'integer',
-        'user_id' => 'integer'
+        'user_id' => 'integer',
     ];
 
     // Константы для разделов логгирования
     const SECTION_ORDERS = 'orders';
+
     const SECTION_PREORDERS = 'preorders';
+
     const SECTION_CHECKOUT = 'checkout';
+
     const SECTION_PAYMENT = 'payment';
+
     const SECTION_USER = 'user';
 
     // Отключаем updated_at, так как логи не редактируются
@@ -73,7 +77,7 @@ class ShopOrderLog extends Model
             'user_id' => $options['user_id'] ?? null,
             'user_name' => $options['user_name'] ?? null,
             'section' => $options['section'] ?? self::SECTION_ORDERS,
-            'info' => $options['info'] ?? null
+            'info' => $options['info'] ?? null,
         ]);
     }
 
@@ -86,7 +90,7 @@ class ShopOrderLog extends Model
             'action_color' => '#16A34A', // green-600
             'user_name' => $userName,
             'section' => $section ?? self::SECTION_CHECKOUT,
-            'info' => $orderNumber ? "Заказ № {$orderNumber}" : null
+            'info' => $orderNumber ? "Заказ № {$orderNumber}" : null,
         ]);
     }
 
@@ -100,7 +104,7 @@ class ShopOrderLog extends Model
             'user_name' => $userName,
             'comment' => $comment,
             'section' => $section ?? self::SECTION_PAYMENT,
-            'info' => $orderNumber ? "Заказ № {$orderNumber}" : null
+            'info' => $orderNumber ? "Заказ № {$orderNumber}" : null,
         ]);
     }
 
@@ -110,13 +114,13 @@ class ShopOrderLog extends Model
     public static function logStatusChange($orderId, $oldStatus, $newStatus, $userId = null, $userName = null, $comment = null, $section = null, $orderNumber = null)
     {
         $action = "Смена статуса: {$oldStatus['name']} → {$newStatus['name']}";
-        
+
         return self::createLog($orderId, $action, [
             'user_id' => $userId,
             'user_name' => $userName,
             'comment' => $comment,
             'section' => $section ?? self::SECTION_ORDERS,
-            'info' => $orderNumber ? "Заказ № {$orderNumber}" : null
+            'info' => $orderNumber ? "Заказ № {$orderNumber}" : null,
         ]);
     }
 
@@ -126,7 +130,7 @@ class ShopOrderLog extends Model
     public static function logPaymentStatusChange($orderId, $isPaid, $userId = null, $userName = null, $comment = null, $section = null, $orderNumber = null)
     {
         $action = $isPaid ? 'Оплачено' : 'Не оплачено';
-        
+
         return self::createLog($orderId, $action, [
             'action_color' => '#FFFFFF',
             'action_bg_color' => $isPaid ? '#16A34A' : '#DC2626', // green-600 or red-600
@@ -134,7 +138,7 @@ class ShopOrderLog extends Model
             'user_name' => $userName,
             'comment' => $comment,
             'section' => $section ?? self::SECTION_ORDERS,
-            'info' => $orderNumber ? "Заказ № {$orderNumber}" : null
+            'info' => $orderNumber ? "Заказ № {$orderNumber}" : null,
         ]);
     }
 
@@ -144,6 +148,7 @@ class ShopOrderLog extends Model
     public static function logPreorderAction($preorderId, $action, $options = [])
     {
         $options['section'] = self::SECTION_PREORDERS;
+
         return self::createLog($preorderId, $action, $options);
     }
 
@@ -156,20 +161,20 @@ class ShopOrderLog extends Model
             'pending' => 'Ожидает',
             'confirmed' => 'Подтверждён',
             'cancelled' => 'Отменён',
-            'fulfilled' => 'Выполнен'
+            'fulfilled' => 'Выполнен',
         ];
-        
+
         $oldStatusLabel = $statusLabels[$oldStatus] ?? $oldStatus;
         $newStatusLabel = $statusLabels[$newStatus] ?? $newStatus;
-        
+
         $action = "Смена статуса: {$oldStatusLabel} → {$newStatusLabel}";
-        
+
         return self::logPreorderAction($preorderId, $action, [
             'user_id' => $userId,
             'user_name' => $userName,
             'comment' => $comment,
             'action_icon_id' => $actionIconId,
-            'info' => $goodName ? "Предзаказ: {$goodName}" : null
+            'info' => $goodName ? "Предзаказ: {$goodName}" : null,
         ]);
     }
 
@@ -179,12 +184,12 @@ class ShopOrderLog extends Model
     public static function logPreorderAddedToCart($preorderId, $quantity, $userId = null, $userName = null, $goodName = null)
     {
         $action = "Добавлено в корзину: {$quantity} шт.";
-        
+
         return self::logPreorderAction($preorderId, $action, [
             'action_color' => '#2563EB', // blue-600
             'user_id' => $userId,
             'user_name' => $userName,
-            'info' => $goodName ? "Товар: {$goodName}" : null
+            'info' => $goodName ? "Товар: {$goodName}" : null,
         ]);
     }
 
@@ -194,13 +199,13 @@ class ShopOrderLog extends Model
     public static function logOrderAddedToCart($orderId, $quantity, $userId = null, $userName = null, $goodName = null, $orderNumber = null)
     {
         $action = "Добавлено в корзину: {$quantity} шт.";
-        
+
         return self::createLog($orderId, $action, [
             'action_color' => '#2563EB', // blue-600
             'user_id' => $userId,
             'user_name' => $userName,
             'section' => self::SECTION_ORDERS,
-            'info' => $goodName ? "Товар: {$goodName}" . ($orderNumber ? " (Заказ № {$orderNumber})" : "") : null
+            'info' => $goodName ? "Товар: {$goodName}".($orderNumber ? " (Заказ № {$orderNumber})" : '') : null,
         ]);
     }
 
@@ -213,7 +218,7 @@ class ShopOrderLog extends Model
             'action_color' => '#DC2626', // red-600
             'user_id' => $userId,
             'user_name' => $userName,
-            'info' => $goodName ? "Товар: {$goodName}" : null
+            'info' => $goodName ? "Товар: {$goodName}" : null,
         ]);
     }
 
@@ -227,8 +232,7 @@ class ShopOrderLog extends Model
             'user_id' => $userId,
             'user_name' => $userName,
             'section' => self::SECTION_ORDERS,
-            'info' => $orderNumber ? "Заказ № {$orderNumber}" : null
+            'info' => $orderNumber ? "Заказ № {$orderNumber}" : null,
         ]);
     }
 }
-

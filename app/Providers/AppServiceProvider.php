@@ -2,12 +2,12 @@
 
 namespace App\Providers;
 
-use Illuminate\Support\ServiceProvider;
-use Illuminate\Support\Facades\Event;
-use Illuminate\Support\Facades\Cache;
-use App\Listeners\SocialiteWasCalledListener;
-use SocialiteProviders\Manager\SocialiteWasCalled;
 use App\Jobs\AutoFinalizeExportsJob;
+use App\Listeners\SocialiteWasCalledListener;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\ServiceProvider;
+use SocialiteProviders\Manager\SocialiteWasCalled;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -32,9 +32,9 @@ class AppServiceProvider extends ServiceProvider
 
         // Запускаем авто-финализацию экспорта (однократный старт, далее джоба сама перепланирует себя)
         try {
-            if (!app()->runningUnitTests() && !app()->environment('testing')) {
+            if (! app()->runningUnitTests() && ! app()->environment('testing')) {
                 $key = 'auto_finalize_exports_job_started';
-                if (!Cache::get($key)) {
+                if (! Cache::get($key)) {
                     Cache::put($key, 1, now()->addDay());
                     AutoFinalizeExportsJob::dispatch()->delay(now()->addSeconds(10));
                 }

@@ -16,12 +16,12 @@ class ShopGoodImage extends Model
         'file_path',
         'alt_text',
         'is_main',
-        'sort_order'
+        'sort_order',
     ];
 
     protected $casts = [
         'is_main' => 'boolean',
-        'sort_order' => 'integer'
+        'sort_order' => 'integer',
     ];
 
     /**
@@ -61,7 +61,7 @@ class ShopGoodImage extends Model
      */
     public function getUrlAttribute()
     {
-        if (!$this->file_path) {
+        if (! $this->file_path) {
             return null;
         }
 
@@ -73,10 +73,10 @@ class ShopGoodImage extends Model
         // Убираем лишний префикс images/ если он уже есть
         $cleanPath = ltrim($this->file_path, '/');
         if (str_starts_with($cleanPath, 'images/')) {
-            return '/' . $cleanPath;
+            return '/'.$cleanPath;
         }
 
         // Возвращаем путь к файлу в папке public/images/
-        return '/images/' . $cleanPath;
+        return '/images/'.$cleanPath;
     }
 }

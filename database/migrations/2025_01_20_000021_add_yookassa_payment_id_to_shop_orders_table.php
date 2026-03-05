@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::table('shop_orders', function (Blueprint $table) {
             // Добавляем поле yookassa_payment_id для хранения ID платежа в ЮKassa
-            if (!Schema::hasColumn('shop_orders', 'yookassa_payment_id')) {
+            if (! Schema::hasColumn('shop_orders', 'yookassa_payment_id')) {
                 $table->string('yookassa_payment_id')->nullable()->after('yandex_pay_order_id');
                 $table->index('yookassa_payment_id');
             }
@@ -33,4 +33,3 @@ return new class extends Migration
         });
     }
 };
-

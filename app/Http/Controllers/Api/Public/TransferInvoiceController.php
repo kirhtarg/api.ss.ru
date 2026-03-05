@@ -3,13 +3,12 @@
 namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
-use App\Models\ShopPaymentMethod;
 use App\Models\Contact;
 use App\Models\ShopOrder;
+use App\Models\ShopPaymentMethod;
 use App\Services\InvoiceExcelService;
 use App\Services\InvoicePdfService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 
 class TransferInvoiceController extends Controller
 {
@@ -21,38 +20,38 @@ class TransferInvoiceController extends Controller
         try {
             $orderId = $request->get('order_id', 'TEST123');
             $amount = $request->get('amount', 0);
-            
+
             // Получаем способ оплаты типа "transfer"
             $paymentMethod = ShopPaymentMethod::where('type', 'transfer')
                 ->where('is_active', true)
                 ->first();
-            
-            if (!$paymentMethod) {
+
+            if (! $paymentMethod) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Способ оплаты "Банковский перевод" не найден'
+                    'message' => 'Способ оплаты "Банковский перевод" не найден',
                 ], 404);
             }
-            
+
             $settings = $paymentMethod->settings ?? [];
-            
+
             // Параметры из URL для тестирования (переопределяют настройки из БД)
             $orgTypeFromUrl = $request->get('org_type');
             $vatRateFromUrl = $request->get('vat_rate');
             $withVatFromUrl = $request->get('with_vat'); // Для обратной совместимости
-            
+
             // Определяем тип организации и НДС (приоритет у параметров URL для тестирования)
             if ($orgTypeFromUrl !== null && $orgTypeFromUrl !== '') {
                 $organizationType = $orgTypeFromUrl;
             } else {
                 $organizationType = $settings['organization_type'] ?? 'OOO';
             }
-            
+
             // Определяем ставку НДС (приоритет у параметра vat_rate, затем with_vat для обратной совместимости)
             $vatRate = 0;
             if ($vatRateFromUrl !== null && $vatRateFromUrl !== '') {
                 // Новая логика: vat_rate может быть '0', '5', '20'
-                $vatRate = (int)$vatRateFromUrl;
+                $vatRate = (int) $vatRateFromUrl;
             } elseif ($withVatFromUrl !== null && $withVatFromUrl !== '') {
                 // Обратная совместимость: with_vat как boolean
                 if ($withVatFromUrl === '0' || $withVatFromUrl === 'false' || $withVatFromUrl === false || $withVatFromUrl === 0) {
@@ -68,17 +67,17 @@ class TransferInvoiceController extends Controller
                 } elseif ($withVatSetting === true || $withVatSetting === '1' || $withVatSetting === 1) {
                     $vatRate = 20; // Для обратной совместимости: true = 20%
                 } else {
-                    $vatRate = (int)$withVatSetting; // Может быть '5', '20' и т.д.
+                    $vatRate = (int) $withVatSetting; // Может быть '5', '20' и т.д.
                 }
             }
-            
+
             $withVat = $vatRate > 0;
-            
+
             // Получаем данные контакта для дополнительной информации
             $contact = Contact::where('is_main', 1)->first();
             $mainAddress = $contact ? $contact->mainAddress() : null;
             $mainPhone = $contact ? $contact->mainPhone() : null;
-            
+
             // Пытаемся получить заказ из базы данных
             $order = null;
             $orderItems = [];
@@ -86,12 +85,12 @@ class TransferInvoiceController extends Controller
             $customerInn = '';
             $customerAddress = '';
             $customerPhone = '';
-            
+
             if ($orderId !== 'TEST123' && (is_numeric($orderId) || is_string($orderId))) {
                 $order = ShopOrder::where('id', $orderId)
                     ->orWhere('order_number', $orderId)
                     ->first();
-                
+
                 if ($order) {
                     $orderItems = $order->getItemsWithDetails();
                     $amount = $order->total_amount ?? $amount;
@@ -106,9 +105,9 @@ class TransferInvoiceController extends Controller
                     }
                 }
             }
-            
+
             // Если это тест или заказ не найден, используем тестовые данные
-            if ($orderId === 'TEST123' || (!$order && $orderId !== 'TEST123')) {
+            if ($orderId === 'TEST123' || (! $order && $orderId !== 'TEST123')) {
                 // Для теста создаем несколько товаров с разными суммами
                 if ($orderId === 'TEST123') {
                     $orderItems = [
@@ -117,36 +116,36 @@ class TransferInvoiceController extends Controller
                             'quantity' => 1,
                             'price' => 45000,
                             'total' => 45000,
-                            'unit' => 'шт'
+                            'unit' => 'шт',
                         ],
                         [
                             'good_name' => 'Крепления для сноуборда Union Force',
                             'quantity' => 1,
                             'price' => 18000,
                             'total' => 18000,
-                            'unit' => 'шт'
+                            'unit' => 'шт',
                         ],
                         [
                             'good_name' => 'Ботинки для сноуборда Vans Aura',
                             'quantity' => 1,
                             'price' => 22000,
                             'total' => 22000,
-                            'unit' => 'шт'
+                            'unit' => 'шт',
                         ],
                         [
                             'good_name' => 'Шлем Giro Ledge',
                             'quantity' => 1,
                             'price' => 8500,
                             'total' => 8500,
-                            'unit' => 'шт'
+                            'unit' => 'шт',
                         ],
                         [
                             'good_name' => 'Очки Oakley Flight Deck',
                             'quantity' => 2,
                             'price' => 12000,
                             'total' => 24000,
-                            'unit' => 'шт'
-                        ]
+                            'unit' => 'шт',
+                        ],
                     ];
                     // Пересчитываем общую сумму
                     $amount = array_sum(array_column($orderItems, 'total'));
@@ -156,60 +155,60 @@ class TransferInvoiceController extends Controller
                             'good_name' => 'Тестовый товар',
                             'quantity' => 1,
                             'price' => $amount,
-                            'total' => $amount
-                        ]
+                            'total' => $amount,
+                        ],
                     ];
                 }
             }
-            
+
             // Получаем данные о скидках и доставке из заказа, если он передан
             $promoCodeDiscount = 0;
             $bonusDiscount = 0;
             $birthdayDiscount = 0;
             $deliveryCost = 0;
             // Параметры наценки
-            $overTax = (float)$request->get('over_tax', 0);
+            $overTax = (float) $request->get('over_tax', 0);
             $overText = $request->get('over_text', '');
-            $overtaxAmount = (float)$request->get('overtax_amount', 0);
+            $overtaxAmount = (float) $request->get('overtax_amount', 0);
 
             if ($order) {
-                $promoCodeDiscount = (float)($order->promo_code_discount_amount ?? 0);
-                $bonusDiscount = (float)($order->bonus_points_to_use ?? 0); // Скидка от списанных бонусов (1 бонус = 1 рубль)
-                $birthdayDiscount = (float)($order->birthday_discount_amount ?? 0);
+                $promoCodeDiscount = (float) ($order->promo_code_discount_amount ?? 0);
+                $bonusDiscount = (float) ($order->bonus_points_to_use ?? 0); // Скидка от списанных бонусов (1 бонус = 1 рубль)
+                $birthdayDiscount = (float) ($order->birthday_discount_amount ?? 0);
                 // Получаем стоимость доставки из заказа
-                $deliveryCost = isset($order->delivery_cost) ? (float)$order->delivery_cost : 0;
+                $deliveryCost = isset($order->delivery_cost) ? (float) $order->delivery_cost : 0;
                 if ($deliveryCost < 0) {
                     $deliveryCost = 0;
                 }
             }
-            
+
             // Формируем HTML для счета в зависимости от типа
-                // Используем шаблон ИП без НДС для всех случаев без НДС (и ИП, и ООО)
-                // Используем шаблон ООО с НДС только для случаев с НДС
-                if (!$withVat) {
-                    // Без НДС (ИП или ООО на УСН)
-                    $html = $this->generateInvoiceHtmlIP($orderId, $amount, $settings, $contact, $mainAddress, $mainPhone, $orderItems, $customerName, $customerInn, $customerAddress, $customerPhone, $promoCodeDiscount, $bonusDiscount, $deliveryCost, $birthdayDiscount, $overTax, $overText, $overtaxAmount);
-                } else {
-                    // С НДС (ООО с НДС) - передаем ставку НДС
-                    $html = $this->generateInvoiceHtmlOOO($orderId, $amount, $settings, $contact, $mainAddress, $mainPhone, $orderItems, $customerName, $customerInn, $customerAddress, $customerPhone, $promoCodeDiscount, $bonusDiscount, $deliveryCost, $birthdayDiscount, $overTax, $overText, $overtaxAmount, $vatRate);
-                }
-            
+            // Используем шаблон ИП без НДС для всех случаев без НДС (и ИП, и ООО)
+            // Используем шаблон ООО с НДС только для случаев с НДС
+            if (! $withVat) {
+                // Без НДС (ИП или ООО на УСН)
+                $html = $this->generateInvoiceHtmlIP($orderId, $amount, $settings, $contact, $mainAddress, $mainPhone, $orderItems, $customerName, $customerInn, $customerAddress, $customerPhone, $promoCodeDiscount, $bonusDiscount, $deliveryCost, $birthdayDiscount, $overTax, $overText, $overtaxAmount);
+            } else {
+                // С НДС (ООО с НДС) - передаем ставку НДС
+                $html = $this->generateInvoiceHtmlOOO($orderId, $amount, $settings, $contact, $mainAddress, $mainPhone, $orderItems, $customerName, $customerInn, $customerAddress, $customerPhone, $promoCodeDiscount, $bonusDiscount, $deliveryCost, $birthdayDiscount, $overTax, $overText, $overtaxAmount, $vatRate);
+            }
+
             // Возвращаем HTML, который можно распечатать как PDF
             return response($html)
                 ->header('Content-Type', 'text/html; charset=utf-8')
-                ->header('Content-Disposition', 'inline; filename="invoice-' . $orderId . '.html"');
-                
+                ->header('Content-Disposition', 'inline; filename="invoice-'.$orderId.'.html"');
+
         } catch (\Exception $e) {
             // \Log::error('Ошибка генерации счета: ' . $e->getMessage());
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка генерации счета',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
-    
+
     /**
      * Генерация HTML для счета ООО с НДС
      */
@@ -243,22 +242,22 @@ class TransferInvoiceController extends Controller
         $bik = $settings['bik'] ?? 'Не указано';
         $accountNumber = $settings['account_number'] ?? 'Не указано';
         $correspondentAccount = $settings['correspondent_account'] ?? 'Не указано';
-        
+
         // Рассчитываем суммы товаров (без доставки)
         $itemsSum = 0;
-        if (!empty($orderItems)) {
+        if (! empty($orderItems)) {
             foreach ($orderItems as $item) {
-                $itemsSum += (float)($item['total'] ?? 0);
+                $itemsSum += (float) ($item['total'] ?? 0);
             }
         } else {
-            $itemsSum = (float)$amount;
+            $itemsSum = (float) $amount;
         }
-        
+
         // Итоговая сумма = товары + доставка (ВАЖНО: доставка должна быть включена в Итого)
-        $deliveryCost = (float)$deliveryCost;
+        $deliveryCost = (float) $deliveryCost;
         // Явно добавляем доставку к сумме товаров
-        $totalSum = (float)$itemsSum + (float)$deliveryCost;
-        
+        $totalSum = (float) $itemsSum + (float) $deliveryCost;
+
         // НДС (ставка определяется из настроек или параметров запроса)
         // $vatRate уже определена выше (0, 5 или 20)
         $vatAmount = 0;
@@ -266,17 +265,17 @@ class TransferInvoiceController extends Controller
             $vatAmount = $totalSum * $vatRate / (100 + $vatRate);
         }
         $totalWithVat = $totalSum;
-        
+
         // Форматируем скидки для отображения
         $formattedPromoCodeDiscount = \App\Helpers\PriceHelper::formatPrice($promoCodeDiscount);
         $formattedBonusDiscount = \App\Helpers\PriceHelper::formatPrice($bonusPointsToUse);
-        
+
         // Форматируем итоговую сумму (товары + доставка) для отображения в строке "Итого"
         $formattedTotalSum = \App\Helpers\PriceHelper::formatPrice($totalSum);
         $formattedVatAmount = \App\Helpers\PriceHelper::formatPrice($vatAmount);
         $currentDate = date('d.m.Y');
         $currentDateFull = date('d.m.Y H:i');
-        
+
         // Сумма прописью (используем итоговую сумму с учетом скидок)
         $finalAmount = $totalSum - $promoCodeDiscount - $bonusPointsToUse - $birthdayDiscount + $overtaxAmount;
         $amountInWords = $this->numberToWords($finalAmount);
@@ -286,7 +285,7 @@ class TransferInvoiceController extends Controller
         if ($itemsCount == 0) {
             $itemsCount = 1;
         }
-        
+
         $html = <<<HTML
 <!DOCTYPE html>
 <html lang="ru">
@@ -465,13 +464,13 @@ class TransferInvoiceController extends Controller
                 <td>
                     <div>БИК: {$bik}</div>
 HTML;
-        
+
         if ($correspondentAccount && $correspondentAccount !== 'Не указано') {
             $html .= <<<HTML
                     <div>Сч. №: {$correspondentAccount}</div>
 HTML;
         }
-        
+
         $html .= <<<HTML
                     <div>Сч. №: {$accountNumber}</div>
                 </td>
@@ -495,13 +494,13 @@ HTML;
                 <td>
                     {$legalName}, ИНН: {$inn}, КПП: {$kpp}, адрес: {$legalAddress}
 HTML;
-        
+
         if ($phone) {
             $html .= <<<HTML
                     , тел.: {$phone}
 HTML;
         }
-        
+
         $html .= <<<HTML
                 </td>
             </tr>
@@ -510,25 +509,25 @@ HTML;
                 <td>
                     {$customerName}
 HTML;
-        
+
         if ($customerInn) {
             $html .= <<<HTML
                     , ИНН: {$customerInn}
 HTML;
         }
-        
+
         if ($customerAddress) {
             $html .= <<<HTML
                     , адрес: {$customerAddress}
 HTML;
         }
-        
+
         if ($customerPhone) {
             $html .= <<<HTML
                     , тел.: {$customerPhone}
 HTML;
         }
-        
+
         $html .= <<<HTML
                 </td>
             </tr>
@@ -552,24 +551,24 @@ HTML;
             </thead>
             <tbody>
 HTML;
-        
+
         // Добавляем товары в таблицу
-        if (!empty($orderItems)) {
+        if (! empty($orderItems)) {
             $itemNumber = 1;
             foreach ($orderItems as $item) {
                 $itemName = $item['good_name'] ?? 'Товар';
-                if (!empty($item['variation_name'])) {
-                    $itemName .= ' (' . $item['variation_name'] . ')';
+                if (! empty($item['variation_name'])) {
+                    $itemName .= ' ('.$item['variation_name'].')';
                 }
                 $quantity = $item['quantity'] ?? 1;
                 $total = $item['total'] ?? 0;
-                
+
                 // Финальная цена за единицу товара (уже с учетом всех скидок)
                 $finalPricePerUnit = $quantity > 0 ? ($total / $quantity) : 0;
-                
-                $formattedPrice = \App\Helpers\PriceHelper::formatPrice((float)$finalPricePerUnit);
-                $formattedTotal = \App\Helpers\PriceHelper::formatPrice((float)$total);
-                
+
+                $formattedPrice = \App\Helpers\PriceHelper::formatPrice((float) $finalPricePerUnit);
+                $formattedTotal = \App\Helpers\PriceHelper::formatPrice((float) $total);
+
                 $html .= <<<HTML
                 <tr>
                     <td>{$itemNumber}</td>
@@ -596,7 +595,7 @@ HTML;
                 </tr>
 HTML;
         }
-        
+
         // Добавляем доставку в таблицу товаров, если она не нулевая
         if ($deliveryCost > 0) {
             $formattedDeliveryCost = \App\Helpers\PriceHelper::formatPrice($deliveryCost);
@@ -611,7 +610,7 @@ HTML;
                 </tr>
 HTML;
         }
-        
+
         $html .= <<<HTML
             </tbody>
         </table>
@@ -623,7 +622,7 @@ HTML;
                 <span class="total-value">{$formattedTotalSum}</span>
             </div>
 HTML;
-        
+
         // Добавляем строки со скидками после "Итого"
         if ($promoCodeDiscount > 0) {
             $html .= <<<HTML
@@ -654,7 +653,7 @@ HTML;
         }
 
         // Добавляем наценку, если она есть
-        if ($overtaxAmount > 0 && !empty($overText)) {
+        if ($overtaxAmount > 0 && ! empty($overText)) {
             $formattedOvertaxAmount = \App\Helpers\PriceHelper::formatPrice($overtaxAmount);
             $html .= <<<HTML
             <div class="total-line" style="color: #ea580c;">
@@ -707,10 +706,10 @@ HTML;
 </body>
 </html>
 HTML;
-        
+
         return $html;
     }
-    
+
     /**
      * Генерация HTML для счета ИП без НДС
      */
@@ -742,30 +741,30 @@ HTML;
         $bik = $settings['bik'] ?? 'Не указано';
         $accountNumber = $settings['account_number'] ?? 'Не указано';
         $correspondentAccount = $settings['correspondent_account'] ?? 'Не указано';
-        
+
         // Рассчитываем суммы товаров (без доставки)
         $itemsSum = 0;
-        if (!empty($orderItems)) {
+        if (! empty($orderItems)) {
             foreach ($orderItems as $item) {
-                $itemsSum += (float)($item['total'] ?? 0);
+                $itemsSum += (float) ($item['total'] ?? 0);
             }
         } else {
-            $itemsSum = (float)$amount;
+            $itemsSum = (float) $amount;
         }
-        
+
         // Итоговая сумма = товары + доставка (ВАЖНО: доставка должна быть включена в Итого)
-        $deliveryCost = (float)$deliveryCost;
+        $deliveryCost = (float) $deliveryCost;
         // Явно добавляем доставку к сумме товаров
-        $totalSum = (float)$itemsSum + (float)$deliveryCost;
-        
+        $totalSum = (float) $itemsSum + (float) $deliveryCost;
+
         // Форматируем скидки для отображения
         $formattedPromoCodeDiscount = \App\Helpers\PriceHelper::formatPrice($promoCodeDiscount);
         $formattedBonusDiscount = \App\Helpers\PriceHelper::formatPrice($bonusPointsToUse);
-        
+
         // Форматируем итоговую сумму (товары + доставка) для отображения в строке "Итого"
         $formattedTotalSum = \App\Helpers\PriceHelper::formatPrice($totalSum);
         $currentDate = date('d.m.Y');
-        
+
         // Сумма прописью (используем итоговую сумму с учетом скидок)
         $finalAmount = $totalSum - $promoCodeDiscount - $bonusPointsToUse - $birthdayDiscount + $overtaxAmount;
         $amountInWords = $this->numberToWords($finalAmount);
@@ -775,7 +774,7 @@ HTML;
         if ($itemsCount == 0) {
             $itemsCount = 1;
         }
-        
+
         $html = <<<HTML
 <!DOCTYPE html>
 <html lang="ru">
@@ -947,13 +946,13 @@ HTML;
                 <td>
                     <div>БИК: {$bik}</div>
 HTML;
-        
+
         if ($correspondentAccount && $correspondentAccount !== 'Не указано') {
             $html .= <<<HTML
                     <div>Сч. №: {$correspondentAccount}</div>
 HTML;
         }
-        
+
         $html .= <<<HTML
                     <div>Сч. №: {$accountNumber}</div>
                 </td>
@@ -977,13 +976,13 @@ HTML;
                 <td>
                     {$legalName}, ИНН: {$inn}, адрес: {$legalAddress}
 HTML;
-        
+
         if ($phone) {
             $html .= <<<HTML
                     , тел.: {$phone}
 HTML;
         }
-        
+
         $html .= <<<HTML
                 </td>
             </tr>
@@ -992,25 +991,25 @@ HTML;
                 <td>
                     {$customerName}
 HTML;
-        
+
         if ($customerInn) {
             $html .= <<<HTML
                     , ИНН: {$customerInn}
 HTML;
         }
-        
+
         if ($customerAddress) {
             $html .= <<<HTML
                     , адрес: {$customerAddress}
 HTML;
         }
-        
+
         if ($customerPhone) {
             $html .= <<<HTML
                     , тел.: {$customerPhone}
 HTML;
         }
-        
+
         $html .= <<<HTML
                 </td>
             </tr>
@@ -1034,24 +1033,24 @@ HTML;
             </thead>
             <tbody>
 HTML;
-        
+
         // Добавляем товары в таблицу
-        if (!empty($orderItems)) {
+        if (! empty($orderItems)) {
             $itemNumber = 1;
             foreach ($orderItems as $item) {
                 $itemName = $item['good_name'] ?? 'Товар';
-                if (!empty($item['variation_name'])) {
-                    $itemName .= ' (' . $item['variation_name'] . ')';
+                if (! empty($item['variation_name'])) {
+                    $itemName .= ' ('.$item['variation_name'].')';
                 }
                 $quantity = $item['quantity'] ?? 1;
                 $total = $item['total'] ?? 0;
-                
+
                 // Финальная цена за единицу товара (уже с учетом всех скидок)
                 $finalPricePerUnit = $quantity > 0 ? ($total / $quantity) : 0;
-                
-                $formattedPrice = \App\Helpers\PriceHelper::formatPrice((float)$finalPricePerUnit);
-                $formattedTotal = \App\Helpers\PriceHelper::formatPrice((float)$total);
-                
+
+                $formattedPrice = \App\Helpers\PriceHelper::formatPrice((float) $finalPricePerUnit);
+                $formattedTotal = \App\Helpers\PriceHelper::formatPrice((float) $total);
+
                 $html .= <<<HTML
                 <tr>
                     <td>{$itemNumber}</td>
@@ -1078,7 +1077,7 @@ HTML;
                 </tr>
 HTML;
         }
-        
+
         // Добавляем доставку в таблицу товаров, если она не нулевая
         if ($deliveryCost > 0) {
             $formattedDeliveryCost = \App\Helpers\PriceHelper::formatPrice($deliveryCost);
@@ -1093,7 +1092,7 @@ HTML;
                 </tr>
 HTML;
         }
-        
+
         $html .= <<<HTML
             </tbody>
             <tfoot>
@@ -1104,7 +1103,7 @@ HTML;
 HTML;
 
         // Добавляем наценку после "Итого", если она есть
-        if ($overtaxAmount > 0 && !empty($overText)) {
+        if ($overtaxAmount > 0 && ! empty($overText)) {
             $formattedOvertaxAmount = \App\Helpers\PriceHelper::formatPrice($overtaxAmount);
             $html .= <<<HTML
                 <tr>
@@ -1144,7 +1143,7 @@ HTML;
         }
 
         // Добавляем наценку, если она есть
-        if ($overtaxAmount > 0 && !empty($overText)) {
+        if ($overtaxAmount > 0 && ! empty($overText)) {
             $formattedOvertaxAmount = \App\Helpers\PriceHelper::formatPrice($overtaxAmount);
             $html .= <<<HTML
                 <tr>
@@ -1153,7 +1152,7 @@ HTML;
                 </tr>
 HTML;
         }
-        
+
         // Итоговая сумма к оплате (с учетом всех скидок)
         $formattedFinalAmount = \App\Helpers\PriceHelper::formatPrice($finalAmount);
         $html .= <<<HTML
@@ -1197,39 +1196,39 @@ HTML;
 </body>
 </html>
 HTML;
-        
+
         return $html;
     }
-    
+
     /**
      * Преобразование числа в пропись (русский язык)
      */
     private function numberToWords($number)
     {
-        $number = (float)$number;
+        $number = (float) $number;
         $rubles = floor($number);
         $kopecks = round(($number - $rubles) * 100);
-        
+
         $rublesWords = $this->num2str($rubles);
-        $result = mb_ucfirst($rublesWords) . ' ' . $this->morph($rubles, 'рубль', 'рубля', 'рублей');
-        
+        $result = mb_ucfirst($rublesWords).' '.$this->morph($rubles, 'рубль', 'рубля', 'рублей');
+
         if ($kopecks > 0) {
             $kopecksWords = $this->num2str($kopecks);
-            $result .= ' ' . $kopecksWords . ' ' . $this->morph($kopecks, 'копейка', 'копейки', 'копеек');
+            $result .= ' '.$kopecksWords.' '.$this->morph($kopecks, 'копейка', 'копейки', 'копеек');
         } else {
             $result .= ' 00 копеек';
         }
-        
+
         return $result;
     }
-    
+
     private function num2str($number)
     {
-        $number = (int)$number;
+        $number = (int) $number;
         if ($number == 0) {
             return 'ноль';
         }
-        
+
         $ten = [
             ['', 'один', 'два', 'три', 'четыре', 'пять', 'шесть', 'семь', 'восемь', 'девять'],
             ['', 'одна', 'две', 'три', 'четыре', 'пять', 'шесть', 'семь', 'восемь', 'девять'],
@@ -1243,55 +1242,55 @@ HTML;
             ['миллион', 'миллиона', 'миллионов', 0], // миллионы (индекс 2)
             ['миллиард', 'миллиарда', 'миллиардов', 0], // миллиарды (индекс 3)
         ];
-        
+
         $out = [];
-        
+
         // Разбиваем число на группы по 3 цифры справа налево
         $milliards = floor($number / 1000000000) % 1000;
         $millions = floor($number / 1000000) % 1000;
         $thousands = floor($number / 1000) % 1000;
         $units = $number % 1000;
-        
+
         // Обрабатываем миллиарды
         if ($milliards > 0) {
             $this->processGroup($milliards, 3, 0, $ten, $a20, $tens, $hundreds, $unit, $out);
         }
-        
+
         // Обрабатываем миллионы
         if ($millions > 0) {
             $this->processGroup($millions, 2, 0, $ten, $a20, $tens, $hundreds, $unit, $out);
         }
-        
+
         // Обрабатываем тысячи
         if ($thousands > 0) {
             $this->processGroup($thousands, 1, 1, $ten, $a20, $tens, $hundreds, $unit, $out);
         }
-        
+
         // Обрабатываем единицы
         if ($units > 0 || count($out) == 0) {
             $this->processGroup($units, 0, 0, $ten, $a20, $tens, $hundreds, $unit, $out);
         }
-        
-        return trim(preg_replace('/ {2,}/', ' ', join(' ', $out)));
+
+        return trim(preg_replace('/ {2,}/', ' ', implode(' ', $out)));
     }
-    
+
     private function processGroup($value, $unitIndex, $gender, $ten, $a20, $tens, $hundreds, $unit, &$out)
     {
         if ($value == 0) {
             return;
         }
-        
-        list($i1, $i2, $i3) = [
+
+        [$i1, $i2, $i3] = [
             floor($value / 100),
             floor(($value % 100) / 10),
-            $value % 10
+            $value % 10,
         ];
-        
+
         // Сотни
         if ($i1 > 0) {
             $out[] = $hundreds[$i1];
         }
-        
+
         // Десятки и единицы
         if ($i2 > 1) {
             $out[] = $tens[$i2];
@@ -1303,23 +1302,30 @@ HTML;
         } elseif ($i3 > 0) {
             $out[] = $ten[$gender][$i3];
         }
-        
+
         // Единица измерения (тысяча, миллион и т.д.)
         if ($unitIndex > 0 && isset($unit[$unitIndex])) {
             $out[] = $this->morph($value, $unit[$unitIndex][0], $unit[$unitIndex][1], $unit[$unitIndex][2]);
         }
     }
-    
+
     private function morph($n, $f1, $f2, $f5)
     {
         $n = abs($n) % 100;
         $n1 = $n % 10;
-        if ($n > 10 && $n < 20) return $f5;
-        if ($n1 > 1 && $n1 < 5) return $f2;
-        if ($n1 == 1) return $f1;
+        if ($n > 10 && $n < 20) {
+            return $f5;
+        }
+        if ($n1 > 1 && $n1 < 5) {
+            return $f2;
+        }
+        if ($n1 == 1) {
+            return $f1;
+        }
+
         return $f5;
     }
-    
+
     /**
      * Генерация Excel файла счета
      */
@@ -1328,36 +1334,36 @@ HTML;
         try {
             $orderId = $request->get('order_id', 'TEST123');
             $amount = $request->get('amount', 0);
-            
+
             // Получаем способ оплаты типа "transfer"
             $paymentMethod = ShopPaymentMethod::where('type', 'transfer')
                 ->where('is_active', true)
                 ->first();
-            
-            if (!$paymentMethod) {
+
+            if (! $paymentMethod) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Способ оплаты "Банковский перевод" не найден'
+                    'message' => 'Способ оплаты "Банковский перевод" не найден',
                 ], 404);
             }
-            
+
             $settings = $paymentMethod->settings ?? [];
-            
+
             // Параметры из URL
             $orgTypeFromUrl = $request->get('org_type');
             $vatRateFromUrl = $request->get('vat_rate');
             $withVatFromUrl = $request->get('with_vat'); // Для обратной совместимости
-            
+
             if ($orgTypeFromUrl !== null && $orgTypeFromUrl !== '') {
                 $organizationType = $orgTypeFromUrl;
             } else {
                 $organizationType = $settings['organization_type'] ?? 'OOO';
             }
-            
+
             // Определяем ставку НДС (приоритет у параметра vat_rate, затем with_vat для обратной совместимости)
             $vatRate = 0;
             if ($vatRateFromUrl !== null && $vatRateFromUrl !== '') {
-                $vatRate = (int)$vatRateFromUrl;
+                $vatRate = (int) $vatRateFromUrl;
             } elseif ($withVatFromUrl !== null && $withVatFromUrl !== '') {
                 // Обратная совместимость: with_vat как boolean
                 if ($withVatFromUrl === '0' || $withVatFromUrl === 'false' || $withVatFromUrl === false || $withVatFromUrl === 0) {
@@ -1373,29 +1379,29 @@ HTML;
                 } elseif ($withVatSetting === true || $withVatSetting === '1' || $withVatSetting === 1) {
                     $vatRate = 20; // Для обратной совместимости: true = 20%
                 } else {
-                    $vatRate = (int)$withVatSetting; // Может быть '5', '20' и т.д.
+                    $vatRate = (int) $withVatSetting; // Может быть '5', '20' и т.д.
                 }
             }
-            
+
             $withVat = $vatRate > 0;
-            
+
             // Получаем данные
             $contact = Contact::where('is_main', 1)->first();
             $mainAddress = $contact ? $contact->mainAddress() : null;
             $mainPhone = $contact ? $contact->mainPhone() : null;
-            
+
             $order = null;
             $orderItems = [];
             $customerName = 'Покупатель';
             $customerInn = '';
             $customerAddress = '';
             $customerPhone = '';
-            
+
             if ($orderId !== 'TEST123' && (is_numeric($orderId) || is_string($orderId))) {
                 $order = ShopOrder::where('id', $orderId)
                     ->orWhere('order_number', $orderId)
                     ->first();
-                
+
                 if ($order) {
                     $orderItems = $order->getItemsWithDetails();
                     $amount = $order->total_amount ?? $amount;
@@ -1410,27 +1416,27 @@ HTML;
                     }
                 }
             }
-            
-            if (!$order && $orderId !== 'TEST123') {
+
+            if (! $order && $orderId !== 'TEST123') {
                 $orderItems = [
                     [
                         'good_name' => 'Тестовый товар',
                         'quantity' => 1,
                         'price' => $amount,
-                        'total' => $amount
-                    ]
+                        'total' => $amount,
+                    ],
                 ];
             }
-            
+
             // Определяем путь к шаблону
             $templatePath = base_path('schet-na-oplatu-blank-dlya-ip.xls');
-            if (!file_exists($templatePath)) {
+            if (! file_exists($templatePath)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Шаблон Excel не найден'
+                    'message' => 'Шаблон Excel не найден',
                 ], 404);
             }
-            
+
             // Подготавливаем данные
             $data = [
                 'order_id' => $orderId,
@@ -1448,35 +1454,35 @@ HTML;
                 'customer_address' => $customerAddress,
                 'customer_phone' => $customerPhone,
             ];
-            
+
             // Заполняем шаблон
-            $excelService = new InvoiceExcelService();
+            $excelService = new InvoiceExcelService;
             $spreadsheet = $excelService->fillTemplate($templatePath, $data);
-            
+
             // Сохраняем во временный файл
-            $filename = 'invoice-' . $orderId . '-' . time() . '.xlsx';
-            $filepath = storage_path('app/temp/' . $filename);
-            
-            if (!is_dir(dirname($filepath))) {
+            $filename = 'invoice-'.$orderId.'-'.time().'.xlsx';
+            $filepath = storage_path('app/temp/'.$filename);
+
+            if (! is_dir(dirname($filepath))) {
                 mkdir(dirname($filepath), 0755, true);
             }
-            
+
             $excelService->saveExcel($spreadsheet, $filepath);
-            
+
             // Возвращаем файл
             return response()->download($filepath, $filename)->deleteFileAfterSend(true);
-            
+
         } catch (\Exception $e) {
             // \Log::error('Ошибка генерации Excel счета: ' . $e->getMessage());
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Внутренняя ошибка сервера',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
-    
+
     /**
      * Генерация PDF файла счета из Excel
      */
@@ -1486,35 +1492,35 @@ HTML;
             // Используем тот же код, что и для Excel, но конвертируем в PDF
             $orderId = $request->get('order_id', 'TEST123');
             $amount = $request->get('amount', 0);
-            
+
             $paymentMethod = ShopPaymentMethod::where('type', 'transfer')
                 ->where('is_active', true)
                 ->first();
-            
-            if (!$paymentMethod) {
+
+            if (! $paymentMethod) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Способ оплаты "Банковский перевод" не найден'
+                    'message' => 'Способ оплаты "Банковский перевод" не найден',
                 ], 404);
             }
-            
+
             $settings = $paymentMethod->settings ?? [];
-            
+
             // Параметры из URL
             $orgTypeFromUrl = $request->get('org_type');
             $vatRateFromUrl = $request->get('vat_rate');
             $withVatFromUrl = $request->get('with_vat'); // Для обратной совместимости
-            
+
             if ($orgTypeFromUrl !== null && $orgTypeFromUrl !== '') {
                 $organizationType = $orgTypeFromUrl;
             } else {
                 $organizationType = $settings['organization_type'] ?? 'OOO';
             }
-            
+
             // Определяем ставку НДС (приоритет у параметра vat_rate, затем with_vat для обратной совместимости)
             $vatRate = 0;
             if ($vatRateFromUrl !== null && $vatRateFromUrl !== '') {
-                $vatRate = (int)$vatRateFromUrl;
+                $vatRate = (int) $vatRateFromUrl;
             } elseif ($withVatFromUrl !== null && $withVatFromUrl !== '') {
                 // Обратная совместимость: with_vat как boolean
                 if ($withVatFromUrl === '0' || $withVatFromUrl === 'false' || $withVatFromUrl === false || $withVatFromUrl === 0) {
@@ -1530,10 +1536,10 @@ HTML;
                 } elseif ($withVatSetting === true || $withVatSetting === '1' || $withVatSetting === 1) {
                     $vatRate = 20; // Для обратной совместимости: true = 20%
                 } else {
-                    $vatRate = (int)$withVatSetting; // Может быть '5', '20' и т.д.
+                    $vatRate = (int) $withVatSetting; // Может быть '5', '20' и т.д.
                 }
             }
-            
+
             $withVat = $vatRate > 0;
 
             $contact = Contact::where('is_main', 1)->first();
@@ -1566,9 +1572,9 @@ HTML;
                     }
                 }
             }
-            
+
             // Если это тест или заказ не найден, используем тестовые данные
-            if ($orderId === 'TEST123' || (!$order && $orderId !== 'TEST123')) {
+            if ($orderId === 'TEST123' || (! $order && $orderId !== 'TEST123')) {
                 // Для теста создаем несколько товаров с разными суммами
                 if ($orderId === 'TEST123') {
                     $orderItems = [
@@ -1577,36 +1583,36 @@ HTML;
                             'quantity' => 1,
                             'price' => 45000,
                             'total' => 45000,
-                            'unit' => 'шт'
+                            'unit' => 'шт',
                         ],
                         [
                             'good_name' => 'Крепления для сноуборда Union Force',
                             'quantity' => 1,
                             'price' => 18000,
                             'total' => 18000,
-                            'unit' => 'шт'
+                            'unit' => 'шт',
                         ],
                         [
                             'good_name' => 'Ботинки для сноуборда Vans Aura',
                             'quantity' => 1,
                             'price' => 22000,
                             'total' => 22000,
-                            'unit' => 'шт'
+                            'unit' => 'шт',
                         ],
                         [
                             'good_name' => 'Шлем Giro Ledge',
                             'quantity' => 1,
                             'price' => 8500,
                             'total' => 8500,
-                            'unit' => 'шт'
+                            'unit' => 'шт',
                         ],
                         [
                             'good_name' => 'Очки Oakley Flight Deck',
                             'quantity' => 2,
                             'price' => 12000,
                             'total' => 24000,
-                            'unit' => 'шт'
-                        ]
+                            'unit' => 'шт',
+                        ],
                     ];
                     // Пересчитываем общую сумму
                     $amount = array_sum(array_column($orderItems, 'total'));
@@ -1616,12 +1622,12 @@ HTML;
                             'good_name' => 'Тестовый товар',
                             'quantity' => 1,
                             'price' => $amount,
-                            'total' => $amount
-                        ]
+                            'total' => $amount,
+                        ],
                     ];
                 }
             }
-            
+
             // Получаем данные о скидках из заказа, если он передан
             $promoCodeDiscount = 0;
             $bonusDiscount = 0;
@@ -1633,14 +1639,14 @@ HTML;
 
             if ($order) {
                 // Всегда берем из заказа, если он найден
-                $overTax = (float)($order->overtax_amount ?? 0);
+                $overTax = (float) ($order->overtax_amount ?? 0);
                 $overText = $order->overtax_text ?? '';
-                $overtaxAmount = (float)($order->overtax_amount ?? 0);
+                $overtaxAmount = (float) ($order->overtax_amount ?? 0);
             } else {
                 // Если заказ не найден, берем из запроса
-                $overTax = (float)$request->get('over_tax', 0);
+                $overTax = (float) $request->get('over_tax', 0);
                 $overText = $request->get('over_text', '');
-                $overtaxAmount = (float)$request->get('overtax_amount', 0);
+                $overtaxAmount = (float) $request->get('overtax_amount', 0);
             }
 
             if ($order) {
@@ -1648,7 +1654,7 @@ HTML;
                 $bonusDiscount = $order->bonus_points_to_use ?? 0; // Скидка от списанных бонусов (1 бонус = 1 рубль)
                 $birthdayDiscount = $order->birthday_discount_amount ?? 0;
             }
-            
+
             $data = [
                 'order_id' => $orderId,
                 'date' => date('d.m.Y'),
@@ -1672,24 +1678,24 @@ HTML;
                 'over_text' => $overText,
                 'overtax_amount' => $overtaxAmount,
             ];
-            
+
             // Генерируем PDF напрямую
-            $pdfService = new InvoicePdfService();
+            $pdfService = new InvoicePdfService;
             $pdfContent = $pdfService->generatePdf($data);
-            
-            $filename = 'invoice-' . $orderId . '-' . time() . '.pdf';
-            
+
+            $filename = 'invoice-'.$orderId.'-'.time().'.pdf';
+
             return response($pdfContent, 200)
                 ->header('Content-Type', 'application/pdf')
-                ->header('Content-Disposition', 'inline; filename="' . $filename . '"');
-            
+                ->header('Content-Disposition', 'inline; filename="'.$filename.'"');
+
         } catch (\Exception $e) {
             // \Log::error('Ошибка генерации PDF счета: ' . $e->getMessage());
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Внутренняя ошибка сервера',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }

@@ -25,7 +25,7 @@ class ShopCategory extends Model
         'in_figure_img',
         'in_figure_text',
         'sort_order',
-        'parent_id'
+        'parent_id',
     ];
 
     protected $casts = [
@@ -34,12 +34,12 @@ class ShopCategory extends Model
         'in_catalog' => 'boolean',
         'in_figure' => 'boolean',
         'sort_order' => 'integer',
-        'parent_id' => 'integer'
+        'parent_id' => 'integer',
     ];
 
     protected $attributes = [
         'is_active' => true,
-        'sort_order' => 0
+        'sort_order' => 0,
     ];
 
     // Отношение к родительской категории
@@ -93,7 +93,8 @@ class ShopCategory extends Model
 
     /**
      * Получить все дочерние категории рекурсивно (включая вложенные)
-     * @param array $categoryIds Массив ID категорий
+     *
+     * @param  array  $categoryIds  Массив ID категорий
      * @return array Массив ID всех категорий (включая переданные и все их дочерние)
      */
     public static function getAllDescendantIds(array $categoryIds): array
@@ -104,32 +105,32 @@ class ShopCategory extends Model
 
         $allCategoryIds = array_unique($categoryIds);
         $processedIds = [];
-        
+
         // Рекурсивно находим все дочерние категории
         while (count($allCategoryIds) > count($processedIds)) {
             $idsToProcess = array_diff($allCategoryIds, $processedIds);
-            
+
             if (empty($idsToProcess)) {
                 break;
             }
-            
+
             // Получаем прямых потомков для текущих категорий
             $children = self::whereIn('parent_id', $idsToProcess)
                 ->where('is_active', true)
                 ->pluck('id')
                 ->toArray();
-            
+
             // Добавляем найденных потомков в общий список
             foreach ($children as $childId) {
-                if (!in_array($childId, $allCategoryIds)) {
+                if (! in_array($childId, $allCategoryIds)) {
                     $allCategoryIds[] = $childId;
                 }
             }
-            
+
             // Помечаем обработанные категории
             $processedIds = array_merge($processedIds, $idsToProcess);
         }
-        
+
         return array_values($allCategoryIds);
     }
 

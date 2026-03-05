@@ -7,16 +7,19 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Redis;
 
 class ImageDownloadTaskJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     protected string $taskId;
+
     protected array $urls;
+
     protected string $storagePath;
+
     protected array $options;
 
     public function __construct(string $taskId, array $urls, string $storagePath, array $options = [])
@@ -37,13 +40,13 @@ class ImageDownloadTaskJob implements ShouldQueue
 
         $frontendPublicPath = frontend_public_path();
         $naming = $this->options['naming'] ?? 'hash';
-        $timeout = (int)($this->options['timeout'] ?? 60);
-        $connectTimeout = (int)($this->options['connect_timeout'] ?? 10);
-        $concurrency = max(1, min(20, (int)($this->options['concurrency'] ?? 12)));
+        $timeout = (int) ($this->options['timeout'] ?? 60);
+        $connectTimeout = (int) ($this->options['connect_timeout'] ?? 10);
+        $concurrency = max(1, min(20, (int) ($this->options['concurrency'] ?? 12)));
         $resize = $this->options['resize'] ?? 'no_change';
         $width = $this->options['width'] ?? null;
         $height = $this->options['height'] ?? null;
-        $optimize = (bool)($this->options['optimize'] ?? true);
+        $optimize = (bool) ($this->options['optimize'] ?? true);
 
         Redis::hMSet($metaKey, [
             'status' => 'running',
@@ -63,27 +66,28 @@ class ImageDownloadTaskJob implements ShouldQueue
 
         $queue = [];
         foreach ($this->urls as $index => $imageUrlRaw) {
-            $imageUrl = $this->normalizeUrl((string)$imageUrlRaw);
-            if (!$imageUrl) {
+            $imageUrl = $this->normalizeUrl((string) $imageUrlRaw);
+            if (! $imageUrl) {
                 Redis::rpush($errorsKey, json_encode(['url' => $imageUrlRaw, 'error' => 'invalid_url'], JSON_UNESCAPED_UNICODE));
                 Redis::hincrby($metaKey, 'failed', 1);
                 Redis::hincrby($metaKey, 'queued', -1);
+
                 continue;
             }
             $urlPath = parse_url($imageUrl, PHP_URL_PATH);
             $extension = strtolower(pathinfo($urlPath ?? '', PATHINFO_EXTENSION)) ?: 'jpg';
             if ($naming === 'original') {
-                $fileBase = pathinfo($urlPath ?? '', PATHINFO_FILENAME) ?: 'image_' . $index;
+                $fileBase = pathinfo($urlPath ?? '', PATHINFO_FILENAME) ?: 'image_'.$index;
                 $fileBase = preg_replace('/[^\p{L}\p{N}._-]/u', '_', $fileBase);
-                $fileName = preg_replace('/[^a-zA-Z0-9._-]/', '_', $fileBase) . '.' . $extension;
+                $fileName = preg_replace('/[^a-zA-Z0-9._-]/', '_', $fileBase).'.'.$extension;
             } else {
-                $fileName = hash('sha256', $imageUrl . $index) . '.' . $extension;
+                $fileName = hash('sha256', $imageUrl.$index).'.'.$extension;
             }
-            $relativePath = rtrim($this->storagePath, '/') . '/' . $fileName;
-            $absolutePath = $frontendPublicPath . '/' . ltrim($relativePath, '/');
+            $relativePath = rtrim($this->storagePath, '/').'/'.$fileName;
+            $absolutePath = $frontendPublicPath.'/'.ltrim($relativePath, '/');
             $normalizedAbsolutePath = realpath($absolutePath) ?: $absolutePath;
             $dir = dirname($normalizedAbsolutePath);
-            if (!is_dir($dir)) {
+            if (! is_dir($dir)) {
                 @mkdir($dir, 0755, true);
             }
             if (file_exists($normalizedAbsolutePath)) {
@@ -93,6 +97,7 @@ class ImageDownloadTaskJob implements ShouldQueue
                 Redis::hincrby($metaKey, 'skipped', 1);
                 Redis::rpush($recentKey, json_encode(['url' => $imageUrl, 'status' => 'skip', 'path' => $relativePath], JSON_UNESCAPED_UNICODE));
                 Redis::ltrim($recentKey, -200, -1);
+
                 continue;
             }
             $queue[] = [
@@ -130,6 +135,7 @@ class ImageDownloadTaskJob implements ShouldQueue
             }
             curl_setopt($ch, CURLOPT_TCP_KEEPALIVE, 1);
             curl_setopt($ch, CURLOPT_PRIVATE, json_encode($item));
+
             return $ch;
         };
 
@@ -137,7 +143,7 @@ class ImageDownloadTaskJob implements ShouldQueue
         for (; $nextIndex < count($queue) && count($handles) < $concurrency; $nextIndex++) {
             $item = $queue[$nextIndex];
             $ch = $createHandle($item);
-            $handles[(int)$ch] = $ch;
+            $handles[(int) $ch] = $ch;
             curl_multi_add_handle($mh, $ch);
             Redis::hincrby($metaKey, 'running', 1);
             Redis::hincrby($metaKey, 'queued', -1);
@@ -160,7 +166,7 @@ class ImageDownloadTaskJob implements ShouldQueue
                 $item = json_decode(curl_getinfo($ch, CURLINFO_PRIVATE), true) ?: [];
                 curl_multi_remove_handle($mh, $ch);
                 curl_close($ch);
-                unset($handles[(int)$ch]);
+                unset($handles[(int) $ch]);
                 Redis::hincrby($metaKey, 'running', -1);
 
                 $url = $item['url'] ?? '';
@@ -194,7 +200,7 @@ class ImageDownloadTaskJob implements ShouldQueue
                 if ($nextIndex < count($queue)) {
                     $nextItem = $queue[$nextIndex++];
                     $chNext = $createHandle($nextItem);
-                    $handles[(int)$chNext] = $chNext;
+                    $handles[(int) $chNext] = $chNext;
                     curl_multi_add_handle($mh, $chNext);
                     Redis::hincrby($metaKey, 'running', 1);
                     Redis::hincrby($metaKey, 'queued', -1);
@@ -204,7 +210,7 @@ class ImageDownloadTaskJob implements ShouldQueue
             if ($active) {
                 curl_multi_select($mh, 0.5);
             }
-        } while ($active || !empty($handles));
+        } while ($active || ! empty($handles));
         curl_multi_close($mh);
 
         Redis::hMSet($metaKey, [
@@ -216,9 +222,14 @@ class ImageDownloadTaskJob implements ShouldQueue
 
     protected function normalizeUrl(?string $url): ?string
     {
-        if (!$url) return null;
+        if (! $url) {
+            return null;
+        }
         $url = trim($url);
-        if (!preg_match('~^https?://~i', $url)) return null;
+        if (! preg_match('~^https?://~i', $url)) {
+            return null;
+        }
+
         return filter_var($url, FILTER_VALIDATE_URL) ? $url : null;
     }
 
@@ -226,14 +237,17 @@ class ImageDownloadTaskJob implements ShouldQueue
     {
         return "imgdl:{$this->taskId}:meta";
     }
+
     protected function errorsKey(): string
     {
         return "imgdl:{$this->taskId}:errors";
     }
+
     protected function recentKey(): string
     {
         return "imgdl:{$this->taskId}:recent";
     }
+
     protected function pathsKey(): string
     {
         return "imgdl:{$this->taskId}:paths";

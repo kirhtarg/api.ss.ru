@@ -2,22 +2,21 @@
 
 namespace App\Http\Controllers\Auth;
 
-use App\Http\Controllers\Controller;
 use App\Http\Controllers\Auth\Traits\AwardsWelcomeBonuses;
-use App\Models\User;
+use App\Http\Controllers\Controller;
 use App\Models\Role;
+use App\Models\User;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Str;
-use Laravel\Socialite\Facades\Socialite;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 
 class YandexAuthController extends Controller
 {
     use AwardsWelcomeBonuses;
+
     /**
      * Перенаправление на Yandex OAuth
      */
@@ -25,10 +24,10 @@ class YandexAuthController extends Controller
     {
         try {
             // Проверяем, что сессии настроены
-            if (!session()->isStarted()) {
+            if (! session()->isStarted()) {
                 session()->start();
             }
-            
+
             // Используем прямой URL для Yandex OAuth
             $clientId = config('services.yandex.client_id');
             $redirectUri = config('services.yandex.redirect');
@@ -41,23 +40,23 @@ class YandexAuthController extends Controller
                 'login:birthday',
             ];
             $scope = implode(' ', $scopes);
-            
-            $url = "https://oauth.yandex.ru/authorize?" . http_build_query([
+
+            $url = 'https://oauth.yandex.ru/authorize?'.http_build_query([
                 'response_type' => 'code',
                 'client_id' => $clientId,
                 'redirect_uri' => $redirectUri,
                 'scope' => $scope,
             ]);
-            
+
             return redirect($url);
-            
+
         } catch (\Exception $e) {
-            Log::error('Yandex OAuth redirect error: ' . $e->getMessage());
-            
+            Log::error('Yandex OAuth redirect error: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка перенаправления на Yandex',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -74,13 +73,14 @@ class YandexAuthController extends Controller
                 'file' => __FILE__,
             ]);
             $code = $request->get('code');
-            
-            if (!$code) {
+
+            if (! $code) {
                 $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
-                $errorUrl = $frontendUrl . '/auth/yandex/callback?error=' . urlencode('Код авторизации не получен');
+                $errorUrl = $frontendUrl.'/auth/yandex/callback?error='.urlencode('Код авторизации не получен');
+
                 return redirect($errorUrl);
             }
-            
+
             // Получаем токен
             $tokenResponse = Http::asForm()->post('https://oauth.yandex.ru/token', [
                 'grant_type' => 'authorization_code',
@@ -99,52 +99,53 @@ class YandexAuthController extends Controller
             }
 
             $tokenData = $tokenResponse->json();
-            
-            if (!isset($tokenData['access_token'])) {
+
+            if (! isset($tokenData['access_token'])) {
                 $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
                 $errorMessage = isset($tokenData['error_description']) ? $tokenData['error_description'] : 'Не удалось получить токен доступа';
-                $errorUrl = $frontendUrl . '/auth/yandex/callback?error=' . urlencode($errorMessage);
+                $errorUrl = $frontendUrl.'/auth/yandex/callback?error='.urlencode($errorMessage);
+
                 return redirect($errorUrl);
             }
-            
+
             // Получаем данные пользователя
             $userResponse = Http::withHeaders([
-                'Authorization' => 'OAuth ' . $tokenData['access_token']
+                'Authorization' => 'OAuth '.$tokenData['access_token'],
             ])->get('https://login.yandex.ru/info');
-            
+
             // Получаем расширенные данные пользователя (включая дату рождения и телефон)
             $extendedUserResponse = null;
             $yandexIdResponse = null;
-            
+
             try {
                 $extendedUserResponse = Http::withHeaders([
-                    'Authorization' => 'OAuth ' . $tokenData['access_token']
+                    'Authorization' => 'OAuth '.$tokenData['access_token'],
                 ])->get('https://api-yaru.yandex.ru/me');
             } catch (\Exception $e) {
                 Log::warning('Yandex extended API error:', ['error' => $e->getMessage()]);
             }
-            
+
             try {
                 // Пробуем также Yandex ID API для получения дополнительных данных
                 $yandexIdResponse = Http::withHeaders([
-                    'Authorization' => 'OAuth ' . $tokenData['access_token']
+                    'Authorization' => 'OAuth '.$tokenData['access_token'],
                 ])->get('https://id.yandex.ru/info');
             } catch (\Exception $e) {
                 Log::warning('Yandex ID API error:', ['error' => $e->getMessage()]);
             }
-            
+
             $yandexUser = $userResponse->json();
             $extendedUserData = $extendedUserResponse ? $extendedUserResponse->json() : null;
             $yandexIdData = $yandexIdResponse ? $yandexIdResponse->json() : null;
-            
+
             // Объединяем данные от всех API
-            if ($extendedUserData && !isset($extendedUserData['error'])) {
+            if ($extendedUserData && ! isset($extendedUserData['error'])) {
                 $yandexUser = array_merge($yandexUser, $extendedUserData);
             }
-            if ($yandexIdData && !isset($yandexIdData['error'])) {
+            if ($yandexIdData && ! isset($yandexIdData['error'])) {
                 $yandexUser = array_merge($yandexUser, $yandexIdData);
             }
-            
+
             // Логируем данные от Yandex для отладки
             Log::info('=== YANDEX API RESPONSE DEBUG ===');
             Log::info('Yandex user data (login.yandex.ru/info):', $yandexUser ?? []);
@@ -153,17 +154,17 @@ class YandexAuthController extends Controller
             Log::info('=== MERGED DATA ===');
             Log::info('Final merged user data:', $yandexUser ?? []);
             Log::info('=== END DEBUG ===');
-            
+
             // Проверяем все возможные поля для аватара
             $avatarFields = [
                 'default_avatar_id',
-                'avatar_id', 
+                'avatar_id',
                 'avatar',
                 'picture',
                 'photo',
-                'image'
+                'image',
             ];
-            
+
             $avatarInfo = [];
             foreach ($avatarFields as $field) {
                 if (isset($yandexUser[$field])) {
@@ -171,16 +172,17 @@ class YandexAuthController extends Controller
                 }
             }
             Log::info('Yandex avatar fields found:', $avatarInfo ?? []);
-            
-            if (!isset($yandexUser['id'])) {
+
+            if (! isset($yandexUser['id'])) {
                 $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
-                $errorUrl = $frontendUrl . '/auth/yandex/callback?error=' . urlencode('Не удалось получить данные пользователя');
+                $errorUrl = $frontendUrl.'/auth/yandex/callback?error='.urlencode('Не удалось получить данные пользователя');
+
                 return redirect($errorUrl);
             }
-            
+
             // Получаем URL аватара
             $avatarUrl = $this->getYandexAvatarUrl($yandexUser);
-            
+
             // Получаем дополнительные данные
             $additionalData = $this->getYandexAdditionalData($yandexUser);
             // Нормализуем телефон до строки
@@ -192,28 +194,29 @@ class YandexAuthController extends Controller
                     $normalizedPhone = $additionalData['phone'];
                 }
             }
-            
+
             // Проверяем, есть ли пользователь с таким Yandex ID
             $user = User::where('yandex_id', $yandexUser['id'])->first();
             $bonusAmount = 0; // По умолчанию бонусы не начислены
-            
+
             if ($user) {
                 // Проверяем, что пользователь не заблокирован
                 if ($user->is_active === 0 || $user->is_active === false) {
                     $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
-                    $errorUrl = $frontendUrl . '/auth/yandex/callback?error=' . urlencode('Ваш аккаунт заблокирован. Обратитесь к администратору.');
+                    $errorUrl = $frontendUrl.'/auth/yandex/callback?error='.urlencode('Ваш аккаунт заблокирован. Обратитесь к администратору.');
+
                     return redirect($errorUrl);
                 }
-                
+
                 // Пользователь уже существует, обновляем данные
                 Log::info('Yandex avatar URL:', ['avatar_url' => $avatarUrl]);
-                
+
                 $displayName = $yandexUser['display_name'] ?? $yandexUser['real_name'] ?? 'Yandex User';
                 // Добавляем источник регистрации в скобках
-                if (!str_ends_with($displayName, ' (яндекс)')) {
+                if (! str_ends_with($displayName, ' (яндекс)')) {
                     $displayName .= ' (яндекс)';
                 }
-                
+
                 $updateData = [
                     'name' => $displayName,
                     'first_name' => $additionalData['first_name'],
@@ -221,7 +224,7 @@ class YandexAuthController extends Controller
                     'avatar_url' => $avatarUrl,
                     'last_login_at' => now(),
                 ];
-                
+
                 // Обновляем email только если он пустой у пользователя
                 // Если email уже есть, не обновляем его (пользователь мог изменить его)
                 if (empty($user->email) || $user->email === 'NO' || $user->email === '') {
@@ -242,18 +245,19 @@ class YandexAuthController extends Controller
                 if (isset($yandexUser['default_email'])) {
                     $existingUser = User::where('email', $yandexUser['default_email'])->first();
                 }
-                
+
                 if ($existingUser) {
                     // Проверяем, что пользователь не заблокирован
                     if ($existingUser->is_active === 0 || $existingUser->is_active === false) {
                         $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
-                        $errorUrl = $frontendUrl . '/auth/yandex/callback?error=' . urlencode('Ваш аккаунт заблокирован. Обратитесь к администратору.');
+                        $errorUrl = $frontendUrl.'/auth/yandex/callback?error='.urlencode('Ваш аккаунт заблокирован. Обратитесь к администратору.');
+
                         return redirect($errorUrl);
                     }
-                    
+
                     // Связываем существующего пользователя с Yandex
                     Log::info('Yandex existing user avatar URL:', ['avatar_url' => $avatarUrl]);
-                    
+
                     $updateExisting = [
                         'yandex_id' => $yandexUser['id'],
                         'first_name' => $additionalData['first_name'],
@@ -261,7 +265,7 @@ class YandexAuthController extends Controller
                         'avatar_url' => $avatarUrl,
                         'last_login_at' => now(),
                     ];
-                    
+
                     // Обновляем email только если он пустой у пользователя
                     // Если email уже есть, не обновляем его (пользователь мог изменить его)
                     if (empty($existingUser->email) || $existingUser->email === 'NO' || $existingUser->email === '') {
@@ -280,13 +284,13 @@ class YandexAuthController extends Controller
                 } else {
                     // Создаем нового пользователя
                     Log::info('Yandex new user avatar URL:', ['avatar_url' => $avatarUrl]);
-                    
+
                     $displayName = $yandexUser['display_name'] ?? $yandexUser['real_name'] ?? 'Yandex User';
                     // Добавляем источник регистрации в скобках
-                    if (!str_ends_with($displayName, ' (яндекс)')) {
+                    if (! str_ends_with($displayName, ' (яндекс)')) {
                         $displayName .= ' (яндекс)';
                     }
-                    
+
                     $createData = [
                         'name' => $displayName,
                         'first_name' => $additionalData['first_name'],
@@ -308,30 +312,30 @@ class YandexAuthController extends Controller
                     // Логируем ключи данных перед созданием пользователя
                     Log::info('Yandex create user data keys', ['keys' => array_keys($createData)]);
                     $user = User::create($createData);
-                    
+
                     // Привязываем роль 'user' по умолчанию
                     $userRole = Role::where('name', 'user')->first();
                     if ($userRole) {
                         $user->roles()->attach($userRole->id, [
                             'is_active' => true,
-                            'assigned_at' => now()
+                            'assigned_at' => now(),
                         ]);
                     }
-                    
+
                     // Начисляем приветственные бонусы новому пользователю
                     $bonusAmount = $this->awardWelcomeBonuses($user);
                 }
             }
-            
+
             // Создаем токен для пользователя
             $token = $user->createToken('yandex-auth-token')->plainTextToken;
-            
+
             // Получаем разрешения пользователя
             $permissions = $this->getUserPermissions($user);
-            
+
             // Перенаправляем на фронтенд с токеном
             $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
-            $redirectUrl = $frontendUrl . '/auth/yandex/callback?token=' . $token . '&user=' . base64_encode(json_encode([
+            $redirectUrl = $frontendUrl.'/auth/yandex/callback?token='.$token.'&user='.base64_encode(json_encode([
                 'id' => $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
@@ -339,16 +343,16 @@ class YandexAuthController extends Controller
                 'role' => $user->roles->first() ? $user->roles->first()->name : 'user',
                 'email_verified_at' => now(),
                 'permissions' => $permissions,
-            ])) . '&bonus_amount=' . $bonusAmount;
-            
+            ])).'&bonus_amount='.$bonusAmount;
+
             return redirect($redirectUrl);
-            
+
         } catch (\Exception $e) {
-            Log::error('Yandex OAuth callback error: ' . $e->getMessage());
-            
+            Log::error('Yandex OAuth callback error: '.$e->getMessage());
+
             $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
-            $errorUrl = $frontendUrl . '/auth/yandex/callback?error=' . urlencode('Ошибка авторизации через Yandex');
-            
+            $errorUrl = $frontendUrl.'/auth/yandex/callback?error='.urlencode('Ошибка авторизации через Yandex');
+
             return redirect($errorUrl);
         }
     }
@@ -359,7 +363,7 @@ class YandexAuthController extends Controller
     private function getUserPermissions($user)
     {
         $permissions = [];
-        
+
         if ($user->roles) {
             foreach ($user->roles as $role) {
                 if ($role->permissions) {
@@ -369,7 +373,7 @@ class YandexAuthController extends Controller
                 }
             }
         }
-        
+
         return array_unique($permissions);
     }
 
@@ -381,31 +385,31 @@ class YandexAuthController extends Controller
         // Проверяем разные возможные поля для аватара
         $avatarFields = [
             'default_avatar_id',
-            'avatar_id', 
+            'avatar_id',
             'avatar',
             'picture',
             'photo',
             'image',
             'portrait',
-            'is_avatar_empty'  // Поле для проверки наличия аватара
+            'is_avatar_empty',  // Поле для проверки наличия аватара
         ];
-        
+
         foreach ($avatarFields as $field) {
-            if (isset($yandexUser[$field]) && !empty($yandexUser[$field])) {
+            if (isset($yandexUser[$field]) && ! empty($yandexUser[$field])) {
                 $avatarId = $yandexUser[$field];
-                
+
                 // Если это ID аватара, формируем URL
-                if (is_string($avatarId) && !filter_var($avatarId, FILTER_VALIDATE_URL)) {
-                    return 'https://avatars.yandex.net/get-yapic/' . $avatarId . '/islands-200';
+                if (is_string($avatarId) && ! filter_var($avatarId, FILTER_VALIDATE_URL)) {
+                    return 'https://avatars.yandex.net/get-yapic/'.$avatarId.'/islands-200';
                 }
-                
+
                 // Если это уже URL, возвращаем как есть
                 if (filter_var($avatarId, FILTER_VALIDATE_URL)) {
                     return $avatarId;
                 }
             }
         }
-        
+
         return null;
     }
 
@@ -419,7 +423,7 @@ class YandexAuthController extends Controller
             'last_name' => null,
             'birthday' => null,
             'phone' => null,
-            'info' => []
+            'info' => [],
         ];
 
         // Имя и фамилия (доступны с базовым scope)
@@ -429,7 +433,7 @@ class YandexAuthController extends Controller
         // Дата рождения (ищем в разных полях)
         $birthdayFields = ['birthday', 'birth_date', 'date_of_birth', 'birthday_date'];
         foreach ($birthdayFields as $field) {
-            if (isset($yandexUser[$field]) && !empty($yandexUser[$field])) {
+            if (isset($yandexUser[$field]) && ! empty($yandexUser[$field])) {
                 try {
                     // Пробуем разные форматы даты
                     $dateFormats = ['Y-m-d', 'd.m.Y', 'd/m/Y', 'Y-m-d H:i:s', 'Y-m-d\TH:i:s\Z'];
@@ -441,7 +445,9 @@ class YandexAuthController extends Controller
                             continue;
                         }
                     }
-                    if ($data['birthday']) break;
+                    if ($data['birthday']) {
+                        break;
+                    }
                 } catch (\Exception $e) {
                     Log::warning('Yandex birthday format error:', ['birthday' => $yandexUser[$field] ?? 'not_set', 'field' => $field, 'error' => $e->getMessage()]);
                 }
@@ -451,7 +457,7 @@ class YandexAuthController extends Controller
         // Телефон (ищем в разных полях)
         $phoneFields = ['phone', 'default_phone', 'mobile_phone', 'phone_number', 'mobile', 'tel'];
         foreach ($phoneFields as $field) {
-            if (isset($yandexUser[$field]) && !empty($yandexUser[$field])) {
+            if (isset($yandexUser[$field]) && ! empty($yandexUser[$field])) {
                 $data['phone'] = $yandexUser[$field];
                 break;
             }
@@ -465,7 +471,7 @@ class YandexAuthController extends Controller
             'login',
             'psuid',
             'client_id',
-            'emails'  // Список email адресов
+            'emails',  // Список email адресов
         ];
 
         foreach ($infoFields as $field) {
@@ -489,33 +495,33 @@ class YandexAuthController extends Controller
     {
         try {
             // Проверяем, что сессии настроены
-            if (!session()->isStarted()) {
+            if (! session()->isStarted()) {
                 session()->start();
             }
-            
+
             // Используем прямой URL для Yandex OAuth
             $clientId = config('services.yandex.client_id');
             $redirectUri = config('services.yandex.redirect');
             $scope = 'login:email login:info login:avatar';
-            
-            $url = "https://oauth.yandex.ru/authorize?" . http_build_query([
+
+            $url = 'https://oauth.yandex.ru/authorize?'.http_build_query([
                 'response_type' => 'code',
                 'client_id' => $clientId,
                 'redirect_uri' => $redirectUri,
                 'scope' => $scope,
             ]);
-                
+
             return response()->json([
                 'success' => true,
-                'auth_url' => $url
+                'auth_url' => $url,
             ]);
         } catch (\Exception $e) {
-            Log::error('Yandex OAuth URL generation error: ' . $e->getMessage());
-            
+            Log::error('Yandex OAuth URL generation error: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка получения URL авторизации Yandex',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }

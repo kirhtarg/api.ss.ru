@@ -4,8 +4,8 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopDeliveryMethod;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
 class ShopDeliveryController extends Controller
@@ -31,9 +31,9 @@ class ShopDeliveryController extends Controller
             // Поиск
             if ($request->has('search') && $request->get('search')) {
                 $search = $request->get('search');
-                $query->where(function($q) use ($search) {
+                $query->where(function ($q) use ($search) {
                     $q->where('name', 'like', "%{$search}%")
-                      ->orWhere('description', 'like', "%{$search}%");
+                        ->orWhere('description', 'like', "%{$search}%");
                 });
             }
 
@@ -65,7 +65,8 @@ class ShopDeliveryController extends Controller
                         'updated_at' => $item->updated_at,
                     ];
                 } catch (\Exception $e) {
-                    \Log::error('Error serializing delivery method item: ' . $e->getMessage());
+                    \Log::error('Error serializing delivery method item: '.$e->getMessage());
+
                     continue;
                 }
             }
@@ -77,20 +78,20 @@ class ShopDeliveryController extends Controller
                     'current_page' => $deliveryMethods->currentPage(),
                     'last_page' => $deliveryMethods->lastPage(),
                     'per_page' => $deliveryMethods->perPage(),
-                    'total' => $deliveryMethods->total()
-                ]
+                    'total' => $deliveryMethods->total(),
+                ],
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('ShopDeliveryController::index error: ' . $e->getMessage());
-            \Log::error('Stack trace: ' . $e->getTraceAsString());
-            
+            \Log::error('ShopDeliveryController::index error: '.$e->getMessage());
+            \Log::error('Stack trace: '.$e->getTraceAsString());
+
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка получения способов доставки',
                 'error' => $e->getMessage(),
                 'file' => $e->getFile(),
-                'line' => $e->getLine()
+                'line' => $e->getLine(),
             ], 500);
         }
     }
@@ -105,14 +106,14 @@ class ShopDeliveryController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $deliveryMethod
+                'data' => $deliveryMethod,
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Способ доставки не найден',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 404);
         }
     }
@@ -132,14 +133,14 @@ class ShopDeliveryController extends Controller
                 'description' => 'nullable|string',
                 'settings' => 'nullable|array',
                 'sort_order' => 'integer|min:0',
-                'is_default' => 'boolean'
+                'is_default' => 'boolean',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -153,14 +154,14 @@ class ShopDeliveryController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Способ доставки создан успешно',
-                'data' => $deliveryMethod
+                'data' => $deliveryMethod,
             ], 201);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка создания способа доставки',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -182,19 +183,19 @@ class ShopDeliveryController extends Controller
                 'description' => 'nullable|string',
                 'settings' => 'nullable|array',
                 'sort_order' => 'integer|min:0',
-                'is_default' => 'boolean'
+                'is_default' => 'boolean',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
             // Если устанавливается как способ по умолчанию, снимаем флаг с других
-            if ($request->boolean('is_default') && !$deliveryMethod->is_default) {
+            if ($request->boolean('is_default') && ! $deliveryMethod->is_default) {
                 ShopDeliveryMethod::where('is_default', true)->update(['is_default' => false]);
             }
 
@@ -203,14 +204,14 @@ class ShopDeliveryController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Способ доставки обновлен успешно',
-                'data' => $deliveryMethod
+                'data' => $deliveryMethod,
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка обновления способа доставки',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -232,7 +233,7 @@ class ShopDeliveryController extends Controller
                 if ($hasOtherActive) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Нельзя удалить способ доставки по умолчанию, если есть другие активные способы'
+                        'message' => 'Нельзя удалить способ доставки по умолчанию, если есть другие активные способы',
                     ], 400);
                 }
             }
@@ -241,14 +242,14 @@ class ShopDeliveryController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Способ доставки удален успешно'
+                'message' => 'Способ доставки удален успешно',
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка удаления способа доставки',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -262,14 +263,14 @@ class ShopDeliveryController extends Controller
             $validator = Validator::make($request->all(), [
                 'items' => 'required|array',
                 'items.*.id' => 'required|integer|exists:shop_delivery_methods,id',
-                'items.*.sort_order' => 'required|integer|min:0'
+                'items.*.sort_order' => 'required|integer|min:0',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -280,14 +281,14 @@ class ShopDeliveryController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Порядок сортировки обновлен успешно'
+                'message' => 'Порядок сортировки обновлен успешно',
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка обновления порядка сортировки',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }

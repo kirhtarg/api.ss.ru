@@ -25,14 +25,14 @@ class ConstructorPageVersion extends Model
         'structure',
         'is_published',
         'published_at',
-        'created_by'
+        'created_by',
     ];
 
     protected $casts = [
         'structure' => 'array',
         'is_published' => 'boolean',
         'published_at' => 'datetime',
-        'created_at' => 'datetime'
+        'created_at' => 'datetime',
     ];
 
     /**
@@ -64,7 +64,7 @@ class ConstructorPageVersion extends Model
             'css_class' => $this->css_class,
             'structure' => $this->structure,
             'is_published' => $this->is_published,
-            'published_at' => $this->published_at
+            'published_at' => $this->published_at,
         ]);
     }
 }

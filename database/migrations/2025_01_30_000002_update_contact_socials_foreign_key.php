@@ -2,8 +2,8 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -23,7 +23,7 @@ return new class extends Migration
                 AND COLUMN_NAME = 'social_type' 
                 AND REFERENCED_TABLE_NAME IS NOT NULL
             ");
-            
+
             // Удаляем все найденные внешние ключи
             foreach ($foreignKeys as $key) {
                 try {
@@ -32,7 +32,7 @@ return new class extends Migration
                     // Игнорируем ошибку, если внешний ключ не существует
                 }
             }
-            
+
             // Добавляем новый внешний ключ на contact_social_types
             try {
                 Schema::table('contact_socials', function (Blueprint $table) {
@@ -58,7 +58,7 @@ return new class extends Migration
             } catch (\Exception $e) {
                 // Игнорируем ошибку
             }
-            
+
             // Восстанавливаем старый внешний ключ
             if (Schema::hasTable('social_types')) {
                 Schema::table('contact_socials', function (Blueprint $table) {
@@ -71,4 +71,3 @@ return new class extends Migration
         }
     }
 };
-

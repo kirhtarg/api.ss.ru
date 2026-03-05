@@ -2,8 +2,8 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -39,7 +39,7 @@ return new class extends Migration
                 }
             }
         }
-        
+
         if (Schema::hasTable('contact_phones')) {
             // Удаляем внешний ключ contact_id из contact_phones
             try {
@@ -52,7 +52,7 @@ return new class extends Migration
                 }
             }
         }
-        
+
         if (Schema::hasTable('contact_addresses')) {
             // Удаляем внешний ключ contact_id из contact_addresses
             try {
@@ -65,7 +65,7 @@ return new class extends Migration
                 }
             }
         }
-        
+
         // Теперь безопасно удаляем таблицу
         Schema::dropIfExists('contacts');
     }

@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::table('shop_order_statuses', function (Blueprint $table) {
             // Добавляем поле is_finished после is_active
-            if (!Schema::hasColumn('shop_order_statuses', 'is_finished')) {
+            if (! Schema::hasColumn('shop_order_statuses', 'is_finished')) {
                 $table->boolean('is_finished')->default(false)->after('is_active');
                 $table->index('is_finished');
             }
@@ -33,4 +33,3 @@ return new class extends Migration
         });
     }
 };
-

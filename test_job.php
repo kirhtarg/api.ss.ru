@@ -5,14 +5,14 @@ require_once 'vendor/autoload.php';
 $app = require_once 'bootstrap/app.php';
 $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
-use App\Models\ExportFile;
 use App\Jobs\ProcessModexJob;
+use App\Models\ExportFile;
 
 echo "Testing ProcessModexJob for file 206...\n";
 
 try {
     $file = ExportFile::find(206);
-    if (!$file) {
+    if (! $file) {
         echo "File not found!\n";
         exit(1);
     }
@@ -30,6 +30,6 @@ try {
     echo "New status: {$file->status}\n";
 
 } catch (Exception $e) {
-    echo "Error: " . $e->getMessage() . "\n";
-    echo "Stack trace:\n" . $e->getTraceAsString() . "\n";
+    echo 'Error: '.$e->getMessage()."\n";
+    echo "Stack trace:\n".$e->getTraceAsString()."\n";
 }

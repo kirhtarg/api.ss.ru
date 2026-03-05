@@ -20,17 +20,17 @@ return new class extends Migration
                 WHERE TABLE_NAME = 'admin_section_role' 
                 AND CONSTRAINT_NAME LIKE '%_foreign'
             ");
-            
+
             $existingForeignKeys = collect($foreignKeys)->pluck('CONSTRAINT_NAME')->toArray();
-            
+
             // Проверяем каждый внешний ключ отдельно
-            if (!in_array('admin_section_role_admin_section_id_foreign', $existingForeignKeys)) {
+            if (! in_array('admin_section_role_admin_section_id_foreign', $existingForeignKeys)) {
                 Schema::table('admin_section_role', function (Blueprint $table) {
                     $table->foreign('admin_section_id')->references('id')->on('admin_sections')->onDelete('cascade');
                 });
             }
-            
-            if (!in_array('admin_section_role_role_id_foreign', $existingForeignKeys)) {
+
+            if (! in_array('admin_section_role_role_id_foreign', $existingForeignKeys)) {
                 Schema::table('admin_section_role', function (Blueprint $table) {
                     $table->foreign('role_id')->references('id')->on('roles')->onDelete('cascade');
                 });

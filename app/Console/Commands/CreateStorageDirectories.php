@@ -39,8 +39,8 @@ class CreateStorageDirectories extends Command
 
         foreach ($directories as $directory) {
             $fullPath = base_path($directory);
-            
-            if (!File::exists($fullPath)) {
+
+            if (! File::exists($fullPath)) {
                 if (File::makeDirectory($fullPath, 0755, true)) {
                     $this->info("✓ Created directory: {$directory}");
                 } else {
@@ -53,7 +53,7 @@ class CreateStorageDirectories extends Command
 
         // Set proper permissions
         $this->info('Setting permissions...');
-        
+
         foreach ($directories as $directory) {
             $fullPath = base_path($directory);
             if (File::exists($fullPath)) {
@@ -63,8 +63,7 @@ class CreateStorageDirectories extends Command
         }
 
         $this->info('Storage directories setup completed!');
-        
+
         return Command::SUCCESS;
     }
 }
-

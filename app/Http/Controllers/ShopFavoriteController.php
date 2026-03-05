@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Models\ShopFavorite;
-use App\Models\ShopGood;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -17,8 +16,8 @@ class ShopFavoriteController extends Controller
     private function getUserFromToken(Request $request)
     {
         $token = $request->bearerToken();
-        
-        if (!$token) {
+
+        if (! $token) {
             return null;
         }
 
@@ -33,8 +32,10 @@ class ShopFavoriteController extends Controller
         if ($user) {
             return $user;
         }
+
         return null;
     }
+
     /**
      * Добавить товар в избранное
      */
@@ -42,14 +43,14 @@ class ShopFavoriteController extends Controller
     {
         try {
             $request->validate([
-                'good_id' => 'required|integer|exists:shop_goods,id'
+                'good_id' => 'required|integer|exists:shop_goods,id',
             ]);
 
             $user = $this->getUserFromToken($request);
-            if (!$user) {
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Необходима авторизация'
+                    'message' => 'Необходима авторизация',
                 ], 401);
             }
 
@@ -63,32 +64,32 @@ class ShopFavoriteController extends Controller
             if ($existingFavorite) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Товар уже в избранном'
+                    'message' => 'Товар уже в избранном',
                 ], 400);
             }
 
             // Добавляем в избранное
             ShopFavorite::create([
                 'user_id' => $user->id,
-                'good_id' => $goodId
+                'good_id' => $goodId,
             ]);
 
             return response()->json([
                 'success' => true,
-                'message' => 'Товар добавлен в избранное'
+                'message' => 'Товар добавлен в избранное',
             ]);
 
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка при добавлении в избранное',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -100,14 +101,14 @@ class ShopFavoriteController extends Controller
     {
         try {
             $request->validate([
-                'good_id' => 'required|integer|exists:shop_goods,id'
+                'good_id' => 'required|integer|exists:shop_goods,id',
             ]);
 
             $user = $this->getUserFromToken($request);
-            if (!$user) {
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Необходима авторизация'
+                    'message' => 'Необходима авторизация',
                 ], 401);
             }
 
@@ -118,29 +119,29 @@ class ShopFavoriteController extends Controller
                 ->where('good_id', $goodId)
                 ->delete();
 
-            if (!$deleted) {
+            if (! $deleted) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Товар не найден в избранном'
+                    'message' => 'Товар не найден в избранном',
                 ], 404);
             }
 
             return response()->json([
                 'success' => true,
-                'message' => 'Товар удален из избранного'
+                'message' => 'Товар удален из избранного',
             ]);
 
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка при удалении из избранного',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -152,14 +153,14 @@ class ShopFavoriteController extends Controller
     {
         try {
             $request->validate([
-                'good_id' => 'required|integer|exists:shop_goods,id'
+                'good_id' => 'required|integer|exists:shop_goods,id',
             ]);
 
             $user = $this->getUserFromToken($request);
-            if (!$user) {
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Необходима авторизация'
+                    'message' => 'Необходима авторизация',
                 ], 401);
             }
 
@@ -179,7 +180,7 @@ class ShopFavoriteController extends Controller
                 // Добавляем в избранное
                 ShopFavorite::create([
                     'user_id' => $user->id,
-                    'good_id' => $goodId
+                    'good_id' => $goodId,
                 ]);
                 $isFavorite = true;
                 $message = 'Товар добавлен в избранное';
@@ -188,20 +189,20 @@ class ShopFavoriteController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => $message,
-                'is_favorite' => $isFavorite
+                'is_favorite' => $isFavorite,
             ]);
 
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка при переключении избранного',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -213,15 +214,15 @@ class ShopFavoriteController extends Controller
     {
         try {
             $request->validate([
-                'good_id' => 'required|integer|exists:shop_goods,id'
+                'good_id' => 'required|integer|exists:shop_goods,id',
             ]);
 
             $user = $this->getUserFromToken($request);
-            if (!$user) {
+            if (! $user) {
                 return response()->json([
                     'success' => true,
                     'is_favorite' => false,
-                    'message' => 'Пользователь не авторизован'
+                    'message' => 'Пользователь не авторизован',
                 ]);
             }
 
@@ -233,20 +234,20 @@ class ShopFavoriteController extends Controller
 
             return response()->json([
                 'success' => true,
-                'is_favorite' => $isFavorite
+                'is_favorite' => $isFavorite,
             ]);
 
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка при проверке избранного',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -258,11 +259,11 @@ class ShopFavoriteController extends Controller
     {
         try {
             $user = Auth::user();
-            
-            if (!$user) {
+
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Необходима авторизация'
+                    'message' => 'Необходима авторизация',
                 ], 401);
             }
 
@@ -272,27 +273,26 @@ class ShopFavoriteController extends Controller
 
             // Получаем избранные товары с пагинацией
             $favorites = ShopFavorite::where('user_id', $user->id)
-                ->with(['good' => function($query) {
+                ->with(['good' => function ($query) {
                     $query->with([
                         'categories:id,name,slug',
                         'brands:id,name,slug',
                         'tags:id,name,color',
                         'variations:id,good_id,name,price,sale_price,stock_quantity,is_active',
                         'properties:id,name,slug',
-                        'images:id,good_id,file_path,alt_text,is_main,sort_order'
+                        'images:id,good_id,file_path,alt_text,is_main,sort_order',
                     ])->where('is_active', true);
                 }])
                 ->paginate($perPage, ['*'], 'page', $page);
-                
-            
 
             // Форматируем данные для фронтенда
             $formattedGoods = $favorites->map(function ($favorite) {
-                if (!$favorite->good) {
+                if (! $favorite->good) {
                     return null;
                 }
-                
+
                 $good = $favorite->good;
+
                 return [
                     'id' => $good->id,
                     'name' => $good->name,
@@ -315,28 +315,28 @@ class ShopFavoriteController extends Controller
                             'url' => $this->getImageUrl($img->file_path),
                             'alt_text' => $img->alt_text,
                             'is_main' => $img->is_main,
-                            'sort_order' => $img->sort_order
+                            'sort_order' => $img->sort_order,
                         ];
-                    })->filter(fn($img) => $img['url'])->values() : [],
+                    })->filter(fn ($img) => $img['url'])->values() : [],
                     'categories' => $good->categories ? $good->categories->map(function ($cat) {
                         return [
                             'id' => $cat->id,
                             'name' => $cat->name,
-                            'slug' => $cat->slug
+                            'slug' => $cat->slug,
                         ];
                     }) : [],
                     'brands' => $good->brands ? $good->brands->map(function ($brand) {
                         return [
                             'id' => $brand->id,
                             'name' => $brand->name,
-                            'slug' => $brand->slug
+                            'slug' => $brand->slug,
                         ];
                     }) : [],
                     'tags' => $good->tags ? $good->tags->map(function ($tag) {
                         return [
                             'id' => $tag->id,
                             'name' => $tag->name,
-                            'color' => $tag->color
+                            'color' => $tag->color,
                         ];
                     }) : [],
                     'variations' => $good->variations ? $good->variations->map(function ($variation) {
@@ -346,18 +346,18 @@ class ShopFavoriteController extends Controller
                             'price' => $variation->price,
                             'sale_price' => $variation->sale_price,
                             'stock_quantity' => $variation->stock_quantity,
-                            'is_active' => $variation->is_active
+                            'is_active' => $variation->is_active,
                         ];
                     }) : [],
                     'properties' => $good->properties ? $good->properties->map(function ($prop) {
                         return [
                             'id' => $prop->id,
                             'name' => $prop->name,
-                            'slug' => $prop->slug
+                            'slug' => $prop->slug,
                         ];
                     }) : [],
                     'created_at' => $good->created_at,
-                    'updated_at' => $good->updated_at
+                    'updated_at' => $good->updated_at,
                 ];
             })->filter();
 
@@ -370,18 +370,17 @@ class ShopFavoriteController extends Controller
                     'per_page' => $favorites->perPage(),
                     'total' => $favorites->total(),
                     'from' => $favorites->firstItem(),
-                    'to' => $favorites->lastItem()
-                ]
+                    'to' => $favorites->lastItem(),
+                ],
             ];
-            
-            
+
             return response()->json($response);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка при получении избранного',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -391,7 +390,7 @@ class ShopFavoriteController extends Controller
      */
     private function getImageUrl($filePath)
     {
-        if (!$filePath) {
+        if (! $filePath) {
             return null;
         }
 
@@ -403,10 +402,10 @@ class ShopFavoriteController extends Controller
         // Убираем лишний префикс images/ если он уже есть
         $cleanPath = ltrim($filePath, '/');
         if (str_starts_with($cleanPath, 'images/')) {
-            return '/' . $cleanPath;
+            return '/'.$cleanPath;
         }
 
         // Возвращаем путь к файлу в папке public/images/
-        return '/images/' . $cleanPath;
+        return '/images/'.$cleanPath;
     }
 }

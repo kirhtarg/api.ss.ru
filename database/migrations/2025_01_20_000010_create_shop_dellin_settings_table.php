@@ -52,4 +52,3 @@ return new class extends Migration
         Schema::dropIfExists('shop_dellin_settings');
     }
 };
-

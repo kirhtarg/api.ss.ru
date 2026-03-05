@@ -3,19 +3,19 @@
 namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
-use App\Models\ShopOrder;
-use App\Models\ShopOrderStatus;
-use App\Models\ShopOrderLog;
 use App\Models\ShopGood;
 use App\Models\ShopGoodVariation;
+use App\Models\ShopOrder;
+use App\Models\ShopOrderLog;
+use App\Models\ShopOrderStatus;
+use App\Models\ShopPaymentMethod;
 use App\Models\UserBonus;
 use App\Models\UserBonusTransaction;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Http;
-use App\Models\ShopPaymentMethod;
+use Illuminate\Support\Facades\Log;
 
 class UserOrdersController extends Controller
 {
@@ -23,7 +23,7 @@ class UserOrdersController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user) {
+            if (! $user) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
             }
 
@@ -50,35 +50,36 @@ class UserOrdersController extends Controller
             // Обогащаем данные заказов
             $orders->getCollection()->transform(function ($order) {
                 $order->items = $order->getItemsWithDetails();
-                
+
                 // Если payment_url отсутствует, но есть yookassa_payment_id, пытаемся получить его из API
-                if (!$order->payment_url && $order->yookassa_payment_id) {
+                if (! $order->payment_url && $order->yookassa_payment_id) {
                     $paymentUrl = $this->getYooKassaPaymentUrl($order->yookassa_payment_id);
-                    
+
                     if ($paymentUrl) {
                         $order->payment_url = $paymentUrl;
                         // Сохраняем в БД для будущих запросов
                         $order->update(['payment_url' => $paymentUrl]);
                     }
                 }
-                
+
                 return $order;
             });
 
             return response()->json([
                 'success' => true,
-                'data' => $orders
+                'data' => $orders,
             ]);
 
         } catch (\Exception $e) {
             Log::error('Ошибка загрузки заказов пользователя', [
                 'user_id' => $user->id ?? null,
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка загрузки заказов: ' . $e->getMessage()
+                'message' => 'Ошибка загрузки заказов: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -87,7 +88,7 @@ class UserOrdersController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user) {
+            if (! $user) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
             }
 
@@ -99,20 +100,20 @@ class UserOrdersController extends Controller
                 ->with(['status', 'deliveryMethod'])
                 ->first();
 
-            if (!$order) {
+            if (! $order) {
                 return response()->json(['success' => false, 'message' => 'Заказ не найден'], 404);
             }
 
             // Обогащаем данные заказа
             $items = $order->getItemsWithDetails();
-            
+
             // Добавляем информацию о количестве товаров на складе для каждого товара
             // Используем stock_quantity из таблиц shop_goods или shop_good_variations
             if (is_array($items)) {
                 foreach ($items as &$item) {
                     $goodId = $item['good_id'] ?? null;
                     $variationId = $item['variation_id'] ?? null;
-                    
+
                     if ($goodId) {
                         // Если есть вариация, берем stock_quantity из shop_good_variations
                         if ($variationId) {
@@ -128,7 +129,7 @@ class UserOrdersController extends Controller
                     }
                 }
             }
-            
+
             $order->items = $items;
 
             return response()->json([
@@ -153,10 +154,10 @@ class UserOrdersController extends Controller
                     'customer' => [
                         'name' => $order->customer_name ?? '',
                         'email' => $order->customer_email ?? '',
-                        'phone' => $order->customer_phone ?? ''
+                        'phone' => $order->customer_phone ?? '',
                     ],
-                    'items' => $items
-                ]
+                    'items' => $items,
+                ],
             ]);
 
         } catch (\Exception $e) {
@@ -164,11 +165,12 @@ class UserOrdersController extends Controller
                 'order_id' => $id,
                 'user_id' => $user->id ?? null,
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка загрузки заказа: ' . $e->getMessage()
+                'message' => 'Ошибка загрузки заказа: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -177,7 +179,7 @@ class UserOrdersController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user) {
+            if (! $user) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
             }
 
@@ -189,7 +191,7 @@ class UserOrdersController extends Controller
                 ->with(['status'])
                 ->first();
 
-            if (!$order) {
+            if (! $order) {
                 return response()->json(['success' => false, 'message' => 'Заказ не найден'], 404);
             }
 
@@ -197,7 +199,7 @@ class UserOrdersController extends Controller
             if ($order->payed) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Нельзя отменить оплаченный заказ'
+                    'message' => 'Нельзя отменить оплаченный заказ',
                 ], 400);
             }
 
@@ -205,22 +207,22 @@ class UserOrdersController extends Controller
             if ($order->status && ($order->status->is_cancelled || $order->status->is_finished)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Заказ нельзя отменить в текущем статусе'
+                    'message' => 'Заказ нельзя отменить в текущем статусе',
                 ], 400);
             }
 
             // Находим статус отмены
             $cancelStatus = ShopOrderStatus::where('is_cancelled', true)->first();
-            if (!$cancelStatus) {
+            if (! $cancelStatus) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Статус отмены не найден в системе'
+                    'message' => 'Статус отмены не найден в системе',
                 ], 500);
             }
 
             // Возвращаем товары на склад
             $this->restoreOrderItemsToStock($order);
-            
+
             // Возвращаем бонусы пользователю
             $this->restoreUserBonuses($order);
 
@@ -237,7 +239,7 @@ class UserOrdersController extends Controller
                 'user_id' => $user->id,
                 'user_name' => $user->name ?? 'Покупатель',
                 'section' => ShopOrderLog::SECTION_USER,
-                'info' => "Заказ № {$order->order_number}"
+                'info' => "Заказ № {$order->order_number}",
             ]);
 
             // Отправляем уведомления об отмене заказа
@@ -245,7 +247,7 @@ class UserOrdersController extends Controller
                 $notificationService = app(\App\Services\NotificationService::class);
                 $notificationService->notifyOrderCancelled($order);
             } catch (\Exception $e) {
-                Log::error('Order cancellation notification error: ' . $e->getMessage());
+                Log::error('Order cancellation notification error: '.$e->getMessage());
             }
 
             return response()->json([
@@ -256,19 +258,19 @@ class UserOrdersController extends Controller
                     'status_id' => $order->status_id,
                     'status' => $order->status->name,
                     'status_display' => $order->status->display_name,
-                ]
+                ],
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Ошибка отмены заказа: ' . $e->getMessage(), [
+            Log::error('Ошибка отмены заказа: '.$e->getMessage(), [
                 'order_id' => $id,
                 'user_id' => Auth::id(),
-                'error' => $e->getTraceAsString()
+                'error' => $e->getTraceAsString(),
             ]);
-            
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка отмены заказа: ' . $e->getMessage()
+                'message' => 'Ошибка отмены заказа: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -281,47 +283,50 @@ class UserOrdersController extends Controller
         try {
             // Безопасная обработка items - учитываем, что в модели есть cast 'array'
             $items = $order->items;
-            
+
             // Если items null или пусто, выходим
             if (empty($items)) {
                 Log::info('Заказ не содержит товаров для возврата на склад', [
-                    'order_id' => $order->id
+                    'order_id' => $order->id,
                 ]);
+
                 return;
             }
-            
+
             // Если items строка (на случай, если cast не сработал), декодируем
             if (is_string($items)) {
                 $items = json_decode($items, true);
                 if (json_last_error() !== JSON_ERROR_NONE) {
                     Log::error('Ошибка декодирования JSON items при возврате товаров на склад', [
                         'order_id' => $order->id,
-                        'json_error' => json_last_error_msg()
+                        'json_error' => json_last_error_msg(),
                     ]);
+
                     return;
                 }
             }
-            
+
             // Проверяем, что items является массивом
-            if (!is_array($items)) {
+            if (! is_array($items)) {
                 Log::error('Items не является массивом при возврате товаров на склад', [
                     'order_id' => $order->id,
-                    'items_type' => gettype($items)
+                    'items_type' => gettype($items),
                 ]);
+
                 return;
             }
 
             foreach ($items as $item) {
                 // Проверяем, что item является массивом
-                if (!is_array($item)) {
+                if (! is_array($item)) {
                     continue;
                 }
-                
+
                 $goodId = $item['good_id'] ?? null;
                 $variationId = $item['variation_id'] ?? null;
                 $quantity = (int) ($item['quantity'] ?? 0);
 
-                if (!$goodId || $quantity <= 0) {
+                if (! $goodId || $quantity <= 0) {
                     continue;
                 }
 
@@ -340,14 +345,14 @@ class UserOrdersController extends Controller
                                 'variation_id' => $variationId,
                                 'quantity_returned' => $quantity,
                                 'old_quantity' => $oldQuantity,
-                                'new_quantity' => $variation->stock_quantity
+                                'new_quantity' => $variation->stock_quantity,
                             ]);
                         }
                     } catch (\Exception $e) {
-                        Log::error('Ошибка при возврате вариации на склад: ' . $e->getMessage(), [
+                        Log::error('Ошибка при возврате вариации на склад: '.$e->getMessage(), [
                             'order_id' => $order->id,
                             'variation_id' => $variationId,
-                            'good_id' => $goodId
+                            'good_id' => $goodId,
                         ]);
                     }
                 } else {
@@ -363,22 +368,22 @@ class UserOrdersController extends Controller
                                 'good_id' => $goodId,
                                 'quantity_returned' => $quantity,
                                 'old_quantity' => $oldQuantity,
-                                'new_quantity' => $good->stock_quantity
+                                'new_quantity' => $good->stock_quantity,
                             ]);
                         }
                     } catch (\Exception $e) {
-                        Log::error('Ошибка при возврате товара на склад: ' . $e->getMessage(), [
+                        Log::error('Ошибка при возврате товара на склад: '.$e->getMessage(), [
                             'order_id' => $order->id,
-                            'good_id' => $goodId
+                            'good_id' => $goodId,
                         ]);
                     }
                 }
             }
 
         } catch (\Exception $e) {
-            Log::error('Ошибка при возврате товаров на склад: ' . $e->getMessage(), [
+            Log::error('Ошибка при возврате товаров на склад: '.$e->getMessage(), [
                 'order_id' => $order->id,
-                'error' => $e->getTraceAsString()
+                'error' => $e->getTraceAsString(),
             ]);
             // Не пробрасываем исключение, чтобы не прерывать процесс отмены заказа
         }
@@ -391,7 +396,7 @@ class UserOrdersController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user) {
+            if (! $user) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
             }
 
@@ -403,7 +408,7 @@ class UserOrdersController extends Controller
                 ->with(['status', 'deliveryMethod'])
                 ->first();
 
-            if (!$order) {
+            if (! $order) {
                 return response()->json(['success' => false, 'message' => 'Заказ не найден'], 404);
             }
 
@@ -411,7 +416,7 @@ class UserOrdersController extends Controller
             if ($order->cancellation_request) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Заявка на отмену заказа уже создана'
+                    'message' => 'Заявка на отмену заказа уже создана',
                 ], 400);
             }
 
@@ -425,7 +430,7 @@ class UserOrdersController extends Controller
                 'user_id' => $user->id,
                 'user_name' => $user->name ?? 'Покупатель',
                 'section' => ShopOrderLog::SECTION_USER,
-                'info' => "Заказ № {$order->order_number}"
+                'info' => "Заказ № {$order->order_number}",
             ]);
 
             // Отправляем уведомления о заявке на отмену (только для оплаченных заказов)
@@ -434,14 +439,14 @@ class UserOrdersController extends Controller
                     $notificationService = app(\App\Services\NotificationService::class);
                     $notificationService->notifyCancellationRequest($order);
                 } catch (\Exception $e) {
-                    Log::error('Cancellation request notification error: ' . $e->getMessage());
+                    Log::error('Cancellation request notification error: '.$e->getMessage());
                 }
             }
 
             Log::info('Заявка на отмену заказа создана', [
                 'order_id' => $order->id,
                 'user_id' => $user->id,
-                'order_number' => $order->order_number
+                'order_number' => $order->order_number,
             ]);
 
             return response()->json([
@@ -449,20 +454,20 @@ class UserOrdersController extends Controller
                 'message' => 'Заявка на отмену заказа успешно создана',
                 'data' => [
                     'id' => $order->id,
-                    'cancellation_request' => true
-                ]
+                    'cancellation_request' => true,
+                ],
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Ошибка создания заявки на отмену заказа: ' . $e->getMessage(), [
+            Log::error('Ошибка создания заявки на отмену заказа: '.$e->getMessage(), [
                 'order_id' => $id,
                 'user_id' => Auth::id(),
-                'error' => $e->getTraceAsString()
+                'error' => $e->getTraceAsString(),
             ]);
-            
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания заявки на отмену заказа: ' . $e->getMessage()
+                'message' => 'Ошибка создания заявки на отмену заказа: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -474,29 +479,31 @@ class UserOrdersController extends Controller
     {
         try {
             // Безопасная проверка условий для возврата бонусов
-            if (!$order->user_id) {
+            if (! $order->user_id) {
                 Log::info('Нет user_id для возврата бонусов', [
-                    'order_id' => $order->id
+                    'order_id' => $order->id,
                 ]);
+
                 return;
             }
-            
+
             // Проверяем, использовались ли бонусы в заказе
             $useBonusPoints = $order->use_bonus_points ?? false;
             $bonusPointsToUse = $order->bonus_points_to_use ?? 0;
-            
+
             // Преобразуем в числовые значения для проверки
             if (is_bool($useBonusPoints)) {
                 $useBonusPoints = $useBonusPoints ? 1 : 0;
             }
             $bonusPointsToUse = (int) $bonusPointsToUse;
-            
-            if (!$useBonusPoints || $bonusPointsToUse <= 0) {
+
+            if (! $useBonusPoints || $bonusPointsToUse <= 0) {
                 Log::info('Бонусы не использовались в заказе или количество равно 0', [
                     'order_id' => $order->id,
                     'use_bonus_points' => $useBonusPoints,
-                    'bonus_points_to_use' => $bonusPointsToUse
+                    'bonus_points_to_use' => $bonusPointsToUse,
                 ]);
+
                 return;
             }
 
@@ -517,14 +524,14 @@ class UserOrdersController extends Controller
                     'order_id' => $order->id,
                     'metadata' => [
                         'order_number' => $order->order_number ?? null,
-                        'action' => 'cancel_order_refund'
-                    ]
+                        'action' => 'cancel_order_refund',
+                    ],
                 ]);
             } catch (\Exception $e) {
-                Log::error('Ошибка создания транзакции возврата бонусов: ' . $e->getMessage(), [
+                Log::error('Ошибка создания транзакции возврата бонусов: '.$e->getMessage(), [
                     'order_id' => $order->id,
                     'user_id' => $order->user_id,
-                    'bonus_points' => $bonusPoints
+                    'bonus_points' => $bonusPoints,
                 ]);
                 // Продолжаем выполнение, так как бонусы уже возвращены
             }
@@ -533,14 +540,14 @@ class UserOrdersController extends Controller
                 'order_id' => $order->id,
                 'user_id' => $order->user_id,
                 'bonus_points_returned' => $bonusPoints,
-                'new_balance' => $userBonus->points
+                'new_balance' => $userBonus->points,
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Ошибка при возврате бонусов пользователю: ' . $e->getMessage(), [
+            Log::error('Ошибка при возврате бонусов пользователю: '.$e->getMessage(), [
                 'order_id' => $order->id,
                 'user_id' => $order->user_id ?? null,
-                'error' => $e->getTraceAsString()
+                'error' => $e->getTraceAsString(),
             ]);
             // Не пробрасываем исключение, чтобы не прерывать процесс отмены заказа
         }
@@ -571,13 +578,14 @@ class UserOrdersController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $statuses
+                'data' => $statuses,
             ]);
         } catch (\Exception $e) {
-            Log::error('Ошибка загрузки статусов заказов: ' . $e->getMessage());
+            Log::error('Ошибка загрузки статусов заказов: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка загрузки статусов: ' . $e->getMessage()
+                'message' => 'Ошибка загрузки статусов: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -589,29 +597,31 @@ class UserOrdersController extends Controller
     {
         try {
             $paymentMethod = ShopPaymentMethod::where('type', 'yookassa')->first();
-            if (!$paymentMethod) {
+            if (! $paymentMethod) {
                 Log::warning('Метод оплаты YooKassa не найден');
+
                 return null;
             }
-            
+
             $settings = $paymentMethod->getApiSettings();
             if (empty($settings['shop_id']) || empty($settings['secret_key'])) {
                 Log::warning('Настройки YooKassa не заполнены', [
-                    'has_shop_id' => !empty($settings['shop_id']),
-                    'has_secret_key' => !empty($settings['secret_key'])
+                    'has_shop_id' => ! empty($settings['shop_id']),
+                    'has_secret_key' => ! empty($settings['secret_key']),
                 ]);
+
                 return null;
             }
-            
-            $apiUrl = 'https://api.yookassa.ru/v3/payments/' . $paymentId;
-            
+
+            $apiUrl = 'https://api.yookassa.ru/v3/payments/'.$paymentId;
+
             $response = Http::withBasicAuth($settings['shop_id'], $settings['secret_key'])
                 ->withOptions(['verify' => false])
                 ->get($apiUrl);
-            
+
             if ($response->successful()) {
                 $data = $response->json();
-                
+
                 // Проверяем разные возможные места, где может быть payment_url
                 if (isset($data['confirmation']['confirmation_url'])) {
                     return $data['confirmation']['confirmation_url'];
@@ -622,28 +632,29 @@ class UserOrdersController extends Controller
                 } elseif (isset($data['data']['confirmation_url'])) {
                     return $data['data']['confirmation_url'];
                 }
-                
+
                 // Если есть confirmation_token, формируем URL для redirect
                 if (isset($data['confirmation']['confirmation_token'])) {
                     $confirmationType = $data['confirmation']['type'] ?? 'redirect';
-                    
+
                     // Для всех типов формируем URL
                     if (in_array($confirmationType, ['redirect', 'embedded', 'qr'])) {
-                        return 'https://yoomoney.ru/checkout/payments/v2/contract?orderId=' . $paymentId;
+                        return 'https://yoomoney.ru/checkout/payments/v2/contract?orderId='.$paymentId;
                     }
                 }
             } else {
                 Log::warning('Ошибка запроса к YooKassa API', [
                     'status' => $response->status(),
-                    'body' => $response->body()
+                    'body' => $response->body(),
                 ]);
             }
-            
+
             return null;
         } catch (\Exception $e) {
-            Log::error('Ошибка получения payment_url из YooKassa: ' . $e->getMessage(), [
-                'trace' => $e->getTraceAsString()
+            Log::error('Ошибка получения payment_url из YooKassa: '.$e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
             ]);
+
             return null;
         }
     }

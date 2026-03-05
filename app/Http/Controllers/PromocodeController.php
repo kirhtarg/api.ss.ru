@@ -2,16 +2,15 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Promocode;
-use App\Models\PromocodeUsage;
 use App\Models\AbsentPromocodeUsage;
+use App\Models\Promocode;
 use App\Models\Setting;
 use App\Models\ShopGood;
-use Illuminate\Http\Request;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
-use Carbon\Carbon;
 
 class PromocodeController extends Controller
 {
@@ -21,12 +20,12 @@ class PromocodeController extends Controller
     private function getUserFromToken(Request $request): ?\App\Models\User
     {
         $token = $request->bearerToken();
-        if (!$token) {
+        if (! $token) {
             return null;
         }
 
         $personalAccessToken = \Laravel\Sanctum\PersonalAccessToken::findToken($token);
-        if (!$personalAccessToken) {
+        if (! $personalAccessToken) {
             return null;
         }
 
@@ -56,11 +55,11 @@ class PromocodeController extends Controller
         // Находим промокод с загруженными связями
         $promocode = Promocode::with('user')->where('code', $code)->first();
 
-        if (!$promocode) {
+        if (! $promocode) {
             return response()->json([
                 'success' => false,
                 'message' => 'Промокод не найден',
-                'errors' => ['Промокод с таким кодом не существует']
+                'errors' => ['Промокод с таким кодом не существует'],
             ], 404);
         }
 
@@ -85,35 +84,35 @@ class PromocodeController extends Controller
 
         // Проверяем, можно ли использовать промокод (общий лимит)
         $canBeUsedCheck = $promocode->canBeUsed();
-        if (!$canBeUsedCheck['can_use']) {
+        if (! $canBeUsedCheck['can_use']) {
             $allErrors = array_merge($allErrors, $canBeUsedCheck['errors']);
         }
 
         // Проверяем лимит на пользователя
         $canBeUsedByUserCheck = $promocode->canBeUsedByUser($userId, $sessionId);
-        if (!$canBeUsedByUserCheck['can_use']) {
+        if (! $canBeUsedByUserCheck['can_use']) {
             $allErrors = array_merge($allErrors, $canBeUsedByUserCheck['errors']);
         }
 
         // Проверяем применимость к заказу
         $applicabilityCheck = $promocode->isApplicableToOrder($cartItems, $orderAmount, $userId);
-        if (!$applicabilityCheck['is_applicable']) {
+        if (! $applicabilityCheck['is_applicable']) {
             $allErrors = array_merge($allErrors, $applicabilityCheck['errors']);
         }
 
         // Если есть ошибки, возвращаем их все вместе с информацией о категориях
-        if (!empty($allErrors)) {
+        if (! empty($allErrors)) {
             $responseData = [
                 'success' => false,
                 'message' => 'Промокод не может быть применен',
-                'errors' => $allErrors
+                'errors' => $allErrors,
             ];
-            
+
             // Добавляем информацию о категориях, если промокод применим только к категориям
-            if (isset($applicabilityCheck['applicable_categories']) && !empty($applicabilityCheck['applicable_categories'])) {
+            if (isset($applicabilityCheck['applicable_categories']) && ! empty($applicabilityCheck['applicable_categories'])) {
                 $responseData['applicable_categories'] = $applicabilityCheck['applicable_categories'];
             }
-            
+
             return response()->json($responseData, 422);
         }
 
@@ -121,12 +120,13 @@ class PromocodeController extends Controller
         $discountResult = $promocode->calculateDiscount($orderAmount, $cartItems, $userId);
 
         // Для бесплатной доставки discount всегда 0, но промокод все равно применим
-        if ($promocode->type !== 'free_delivery' && ($discountResult['discount'] <= 0 || !empty($discountResult['errors']))) {
+        if ($promocode->type !== 'free_delivery' && ($discountResult['discount'] <= 0 || ! empty($discountResult['errors']))) {
             $errors = $discountResult['errors'] ?: ['Промокод не дает скидку для данного заказа'];
+
             return response()->json([
                 'success' => false,
                 'message' => 'Промокод не может быть применен',
-                'errors' => $errors
+                'errors' => $errors,
             ], 422);
         }
 
@@ -146,7 +146,7 @@ class PromocodeController extends Controller
                 ],
                 'discount_amount' => $discountResult['discount'],
                 'is_free_delivery' => $promocode->type === 'free_delivery',
-            ]
+            ],
         ]);
     }
 
@@ -165,8 +165,8 @@ class PromocodeController extends Controller
             'success' => true,
             'message' => 'Промокод удален из заказа',
             'data' => [
-                'removed_code' => $code
-            ]
+                'removed_code' => $code,
+            ],
         ]);
     }
 
@@ -182,15 +182,15 @@ class PromocodeController extends Controller
         $code = strtoupper(trim($validated['code']));
         $promocode = Promocode::where('code', $code)->first();
 
-        if (!$promocode) {
+        if (! $promocode) {
             return response()->json([
                 'success' => false,
-                'message' => 'Промокод не найден'
+                'message' => 'Промокод не найден',
             ], 404);
         }
 
         $canBeUsedCheck = $promocode->canBeUsed();
-        
+
         return response()->json([
             'success' => true,
             'data' => [
@@ -203,7 +203,7 @@ class PromocodeController extends Controller
                 'is_active' => $promocode->isActive(),
                 'can_be_used' => $canBeUsedCheck['can_use'],
                 'errors' => $canBeUsedCheck['errors'] ?? [],
-            ]
+            ],
         ]);
     }
 
@@ -221,7 +221,7 @@ class PromocodeController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         }
 
@@ -231,16 +231,16 @@ class PromocodeController extends Controller
 
         // Получаем пользователя из токена (опционально)
         $user = $this->getUserFromToken($request);
-        
+
         // Проверяем параметр prom_absence_notreg
         $promAbsenceNotreg = Setting::where('key', 'prom_absence_notreg')->first();
         $promAbsenceNotregValue = $promAbsenceNotreg ? (int) $promAbsenceNotreg->value : 0;
 
         // Если пользователь не авторизован и prom_absence_notreg = 0, требуем авторизацию
-        if (!$user && $promAbsenceNotregValue === 0) {
+        if (! $user && $promAbsenceNotregValue === 0) {
             return response()->json([
                 'success' => false,
-                'message' => 'Необходима авторизация'
+                'message' => 'Необходима авторизация',
             ], 401);
         }
 
@@ -254,7 +254,7 @@ class PromocodeController extends Controller
             if ($existingUsage) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Промокод для этого товара уже был получен'
+                    'message' => 'Промокод для этого товара уже был получен',
                 ], 422);
             }
         } else {
@@ -265,21 +265,21 @@ class PromocodeController extends Controller
                 // X-Forwarded-For может содержать несколько IP через запятую
                 $ipAddress = trim(explode(',', $ipAddress)[0]);
             }
-            
+
             // Если не получили из X-Forwarded-For, пробуем X-Real-IP
-            if (!$ipAddress) {
+            if (! $ipAddress) {
                 $ipAddress = $request->header('X-Real-IP');
             }
-            
+
             // Если не получили из заголовков, используем $request->ip() (включая localhost)
-            if (!$ipAddress) {
+            if (! $ipAddress) {
                 $ipAddress = $request->ip();
             }
-            
+
             // Проверяем по IP адресу как есть (включая localhost)
             // Если IP не получен, проверяем по 'unknown'
             $ipToCheck = $ipAddress ? $ipAddress : 'unknown';
-            
+
             $existingUsage = AbsentPromocodeUsage::where('ip_address', $ipToCheck)
                 ->where('good_id', $goodId)
                 ->whereNull('user_id') // Только для незарегистрированных
@@ -288,20 +288,20 @@ class PromocodeController extends Controller
             if ($existingUsage) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Промокод для этого товара уже был получен'
+                    'message' => 'Промокод для этого товара уже был получен',
                 ], 422);
             }
         }
 
         // Получаем параметры сайта в зависимости от типа пользователя
-        if ($isUnregistered || !$user) {
+        if ($isUnregistered || ! $user) {
             // Для незарегистрированных используем специальные параметры
             $absentPromocodePercent = Setting::where('key', 'absent_prom_percent_notreg')->first();
             $absentPromocodePercentDays = Setting::where('key', 'absent_prom_percent_days_notreg')->first();
         } else {
             // Для зарегистрированных используем стандартные параметры
-        $absentPromocodePercent = Setting::where('key', 'absent_promocode_percent')->first();
-        $absentPromocodePercentDays = Setting::where('key', 'absent_promocode_percent_days')->first();
+            $absentPromocodePercent = Setting::where('key', 'absent_promocode_percent')->first();
+            $absentPromocodePercentDays = Setting::where('key', 'absent_promocode_percent_days')->first();
         }
 
         // Проверяем, что процент скидки не равен 0
@@ -309,7 +309,7 @@ class PromocodeController extends Controller
         if ($percentValue <= 0) {
             return response()->json([
                 'success' => false,
-                'message' => 'Промокоды за отсутствующие товары отключены'
+                'message' => 'Промокоды за отсутствующие товары отключены',
             ], 422);
         }
 
@@ -317,10 +317,10 @@ class PromocodeController extends Controller
 
         // Получаем информацию о товаре
         $good = ShopGood::with('categories')->find($goodId);
-        if (!$good) {
+        if (! $good) {
             return response()->json([
                 'success' => false,
-                'message' => 'Товар не найден'
+                'message' => 'Товар не найден',
             ], 404);
         }
 
@@ -365,7 +365,7 @@ class PromocodeController extends Controller
                 'good_id' => $goodId,
                 'promocode_id' => $promocode->id,
             ];
-            
+
             if ($user) {
                 // Для зарегистрированных пользователей сохраняем user_id
                 $usageData['user_id'] = $user->id;
@@ -377,17 +377,17 @@ class PromocodeController extends Controller
                     // X-Forwarded-For может содержать несколько IP через запятую
                     $ipAddress = trim(explode(',', $ipAddress)[0]);
                 }
-                
+
                 // Если не получили из X-Forwarded-For, пробуем X-Real-IP
-                if (!$ipAddress) {
+                if (! $ipAddress) {
                     $ipAddress = $request->header('X-Real-IP');
                 }
-                
+
                 // Если не получили из заголовков, используем $request->ip() (включая localhost)
-                if (!$ipAddress) {
+                if (! $ipAddress) {
                     $ipAddress = $request->ip();
                 }
-                
+
                 // Сохраняем IP адрес как есть (включая localhost 127.0.0.1 и ::1)
                 // Если IP не получен вообще, используем 'unknown'
                 if ($ipAddress) {
@@ -396,14 +396,14 @@ class PromocodeController extends Controller
                     $usageData['ip_address'] = 'unknown';
                 }
             }
-            
+
             // Всегда создаем запись, чтобы предотвратить повторные запросы
             // Проверяем, что все необходимые поля заполнены
-            if (!$user && empty($usageData['ip_address'])) {
+            if (! $user && empty($usageData['ip_address'])) {
                 // Все равно пытаемся создать запись с 'unknown' IP
                 $usageData['ip_address'] = 'unknown';
             }
-            
+
             $createdUsage = AbsentPromocodeUsage::create($usageData);
 
             DB::commit();
@@ -412,7 +412,7 @@ class PromocodeController extends Controller
             $promocode->load('categories');
             $applicableCategories = null;
             if ($promocode->categories && $promocode->categories->count() > 0) {
-                $applicableCategories = $promocode->categories->map(function($category) {
+                $applicableCategories = $promocode->categories->map(function ($category) {
                     return [
                         'id' => $category->id,
                         'name' => $category->name,
@@ -420,7 +420,7 @@ class PromocodeController extends Controller
                     ];
                 })->toArray();
             }
-            
+
             $responseData = [
                 'success' => true,
                 'message' => 'Промокод успешно создан',
@@ -432,15 +432,15 @@ class PromocodeController extends Controller
                         'type' => $promocode->type,
                         'value' => $promocode->value,
                         'expires_at' => $promocode->expires_at->format('Y-m-d H:i:s'),
-                    ]
-                ]
+                    ],
+                ],
             ];
-            
+
             // Добавляем информацию о категориях, если промокод применим только к категориям
             if ($applicableCategories) {
                 $responseData['data']['applicable_categories'] = $applicableCategories;
             }
-            
+
             return response()->json($responseData);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -448,15 +448,15 @@ class PromocodeController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
                 'good_id' => $goodId,
-                'has_user' => !is_null($user),
+                'has_user' => ! is_null($user),
                 'user_id' => $user ? $user->id : null,
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
             ]);
-            
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при создании промокода: ' . $e->getMessage()
+                'message' => 'Ошибка при создании промокода: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -479,7 +479,7 @@ class PromocodeController extends Controller
             $exists = Promocode::where('code', $code)->exists();
             $attempt++;
 
-            if (!$exists) {
+            if (! $exists) {
                 return $code;
             }
         } while ($attempt < $maxAttempts);
@@ -500,17 +500,17 @@ class PromocodeController extends Controller
 
         // Получаем пользователя из токена
         $user = $this->getUserFromToken($request);
-        
+
         // Проверяем параметр prom_absence_notreg
         $promAbsenceNotreg = Setting::where('key', 'prom_absence_notreg')->first();
         $promAbsenceNotregValue = $promAbsenceNotreg ? (int) $promAbsenceNotreg->value : 0;
 
         // Если пользователь не авторизован и prom_absence_notreg = 0, требуем авторизацию
-        if (!$user && $promAbsenceNotregValue === 0) {
+        if (! $user && $promAbsenceNotregValue === 0) {
             return response()->json([
                 'success' => false,
                 'can_get' => false,
-                'message' => 'Необходима авторизация'
+                'message' => 'Необходима авторизация',
             ]);
         }
 
@@ -525,7 +525,7 @@ class PromocodeController extends Controller
                 return response()->json([
                     'success' => true,
                     'can_get' => false,
-                    'message' => 'Промокод для этого товара уже был получен'
+                    'message' => 'Промокод для этого товара уже был получен',
                 ]);
             }
         } else {
@@ -536,21 +536,21 @@ class PromocodeController extends Controller
                 // X-Forwarded-For может содержать несколько IP через запятую
                 $ipAddress = trim(explode(',', $ipAddress)[0]);
             }
-            
+
             // Если не получили из X-Forwarded-For, пробуем X-Real-IP
-            if (!$ipAddress) {
+            if (! $ipAddress) {
                 $ipAddress = $request->header('X-Real-IP');
             }
-            
+
             // Если не получили из заголовков, используем $request->ip() (включая localhost)
-            if (!$ipAddress) {
+            if (! $ipAddress) {
                 $ipAddress = $request->ip();
             }
-            
+
             // Проверяем по IP адресу как есть (включая localhost)
             // Если IP не получен, проверяем по 'unknown'
             $ipToCheck = $ipAddress ? $ipAddress : 'unknown';
-            
+
             $existingUsage = AbsentPromocodeUsage::where('ip_address', $ipToCheck)
                 ->where('good_id', $goodId)
                 ->whereNull('user_id') // Только для незарегистрированных
@@ -560,34 +560,34 @@ class PromocodeController extends Controller
                 return response()->json([
                     'success' => true,
                     'can_get' => false,
-                    'message' => 'Промокод для этого товара уже был получен'
+                    'message' => 'Промокод для этого товара уже был получен',
                 ]);
             }
         }
 
         // Проверяем параметр сайта в зависимости от типа пользователя
-        if (!$user) {
+        if (! $user) {
             // Для незарегистрированных используем специальные параметры
             $absentPromocodePercent = Setting::where('key', 'absent_prom_percent_notreg')->first();
         } else {
             // Для зарегистрированных используем стандартные параметры
             $absentPromocodePercent = Setting::where('key', 'absent_promocode_percent')->first();
         }
-        
+
         $percentValue = $absentPromocodePercent ? (float) $absentPromocodePercent->value : 0;
 
         if ($percentValue <= 0) {
             return response()->json([
                 'success' => true,
                 'can_get' => false,
-                'message' => 'Промокоды за отсутствующие товары отключены'
+                'message' => 'Промокоды за отсутствующие товары отключены',
             ]);
         }
 
         return response()->json([
             'success' => true,
             'can_get' => true,
-            'message' => 'Промокод доступен'
+            'message' => 'Промокод доступен',
         ]);
     }
 }

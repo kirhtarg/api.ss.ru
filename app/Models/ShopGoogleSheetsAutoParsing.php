@@ -18,13 +18,13 @@ class ShopGoogleSheetsAutoParsing extends Model
         'field_mapping',
         'skip_rows',
         'sheet_number',
-        'settings'
+        'settings',
     ];
 
     protected $casts = [
         'field_mapping' => 'array',
         'settings' => 'array',
         'skip_rows' => 'integer',
-        'sheet_number' => 'integer'
+        'sheet_number' => 'integer',
     ];
 }

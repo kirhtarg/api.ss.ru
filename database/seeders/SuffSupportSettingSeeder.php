@@ -2,8 +2,8 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Seeder;
 use App\Models\Setting;
+use Illuminate\Database\Seeder;
 
 class SuffSupportSettingSeeder extends Seeder
 {
@@ -19,7 +19,7 @@ class SuffSupportSettingSeeder extends Seeder
             [
                 'value' => '-detail',
                 'group' => 'shop',
-                'type' => 'text'
+                'type' => 'text',
             ]
         );
     }

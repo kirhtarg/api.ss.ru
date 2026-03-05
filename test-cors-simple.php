@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Простой тест CORS - разместите в public/ директории
  * Проверка: https://api.skateandsnow-test.ru/api/test-cors-simple.php
@@ -40,6 +41,5 @@ echo json_encode([
         'origin' => $_SERVER['HTTP_ORIGIN'] ?? 'Not set',
         'content_type' => $_SERVER['CONTENT_TYPE'] ?? 'Not set',
         'content_length' => $_SERVER['CONTENT_LENGTH'] ?? 'Not set',
-    ]
+    ],
 ], JSON_PRETTY_PRINT);
-

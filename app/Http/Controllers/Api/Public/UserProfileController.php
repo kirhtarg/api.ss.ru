@@ -3,16 +3,15 @@
 namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
+use App\Models\User;
+use App\Services\CallService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Validation\Rule;
-use App\Services\CallService;
-use App\Models\User;
+use Illuminate\Support\Facades\Storage;
 
 class UserProfileController extends Controller
 {
@@ -22,6 +21,7 @@ class UserProfileController extends Controller
     {
         $this->callService = $callService;
     }
+
     /**
      * Получить профиль текущего пользователя
      */
@@ -29,17 +29,17 @@ class UserProfileController extends Controller
     {
         try {
             $user = Auth::user();
-            
-            if (!$user) {
+
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не авторизован'
+                    'message' => 'Пользователь не авторизован',
                 ], 401);
             }
 
             // Получаем роли пользователя
             $roles = $user->roles->pluck('name')->toArray();
-            
+
             // Формируем данные профиля
             $profileData = [
                 'id' => $user->id,
@@ -52,6 +52,7 @@ class UserProfileController extends Controller
                 'phone_verified_at' => $user->phone_verified_at, // Для определения телефонных пользователей
                 'birthday' => $user->birthday?->format('Y-m-d'),
                 'avatar_url' => $user->avatar_url, // URL аватара от OAuth провайдеров
+                'has_local_avatar' => $user->has_local_avatar,
                 'google_id' => $user->google_id, // Для определения соц-аккаунта
                 'yandex_id' => $user->yandex_id, // Для определения соц-аккаунта
                 'vk_id' => $user->vk_id, // Для определения соц-аккаунта
@@ -59,21 +60,21 @@ class UserProfileController extends Controller
                 'tech_acc' => $user->tech_acc,
                 'role' => $roles[0] ?? 'user',
                 'created_at' => $user->created_at,
-                'updated_at' => $user->updated_at
+                'updated_at' => $user->updated_at,
             ];
-            
+
             return response()->json([
                 'success' => true,
-                'data' => $profileData
+                'data' => $profileData,
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Ошибка получения профиля пользователя: ' . $e->getMessage());
-            
+            Log::error('Ошибка получения профиля пользователя: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка получения профиля',
-                'error' => config('app.debug') ? $e->getMessage() : 'Внутренняя ошибка сервера'
+                'error' => config('app.debug') ? $e->getMessage() : 'Внутренняя ошибка сервера',
             ], 500);
         }
     }
@@ -85,11 +86,11 @@ class UserProfileController extends Controller
     {
         try {
             $user = Auth::user();
-            
-            if (!$user) {
+
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не авторизован'
+                    'message' => 'Пользователь не авторизован',
                 ], 401);
             }
 
@@ -126,27 +127,28 @@ class UserProfileController extends Controller
                     'phone' => $user->phone,
                     'birthday' => $user->birthday?->format('Y-m-d'),
                     'avatar_url' => $user->avatar_url, // URL аватара от OAuth провайдеров
+                    'has_local_avatar' => $user->has_local_avatar,
                     'google_id' => $user->google_id, // Для определения соц-аккаунта
                     'yandex_id' => $user->yandex_id, // Для определения соц-аккаунта
                     'vk_id' => $user->vk_id, // Для определения соц-аккаунта
                     'updated_at' => $user->updated_at,
-                ]
+                ],
             ], 200);
 
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации данных',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
 
         } catch (\Exception $e) {
-            Log::error('Ошибка обновления профиля пользователя: ' . $e->getMessage());
-            
+            Log::error('Ошибка обновления профиля пользователя: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка обновления профиля',
-                'error' => config('app.debug') ? $e->getMessage() : 'Внутренняя ошибка сервера'
+                'error' => config('app.debug') ? $e->getMessage() : 'Внутренняя ошибка сервера',
             ], 500);
         }
     }
@@ -158,11 +160,11 @@ class UserProfileController extends Controller
     {
         try {
             $user = Auth::user();
-            
-            if (!$user) {
+
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не авторизован'
+                    'message' => 'Пользователь не авторизован',
                 ], 401);
             }
 
@@ -178,38 +180,38 @@ class UserProfileController extends Controller
             ]);
 
             // Проверяем текущий пароль
-            if (!Hash::check($validated['current_password'], $user->password)) {
+            if (! Hash::check($validated['current_password'], $user->password)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Текущий пароль неверен'
+                    'message' => 'Текущий пароль неверен',
                 ], 400);
             }
 
             // Обновляем пароль
             /** @var \App\Models\User $user */
             $user->update([
-                'password' => Hash::make($validated['new_password'])
+                'password' => Hash::make($validated['new_password']),
             ]);
 
             return response()->json([
                 'success' => true,
-                'message' => 'Пароль успешно изменен'
+                'message' => 'Пароль успешно изменен',
             ], 200);
 
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации данных',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
 
         } catch (\Exception $e) {
-            Log::error('Ошибка смены пароля пользователя: ' . $e->getMessage());
-            
+            Log::error('Ошибка смены пароля пользователя: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка смены пароля',
-                'error' => config('app.debug') ? $e->getMessage() : 'Внутренняя ошибка сервера'
+                'error' => config('app.debug') ? $e->getMessage() : 'Внутренняя ошибка сервера',
             ], 500);
         }
     }
@@ -222,41 +224,42 @@ class UserProfileController extends Controller
         try {
             Log::info('=== DELETE AVATAR METHOD CALLED ===');
             $user = Auth::user();
-            
-            if (!$user) {
+
+            if (! $user) {
                 Log::error('User not authenticated');
+
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не авторизован'
+                    'message' => 'Пользователь не авторизован',
                 ], 401);
             }
-            
-            Log::info('User ID: ' . $user->id);
+
+            Log::info('User ID: '.$user->id);
 
             // Удаляем файл с диска
             // Поля avatar и avatar_url больше не используются в БД
             $fileDeleted = $this->deleteAvatarFile($user);
 
-            $message = $fileDeleted 
+            $message = $fileDeleted
                 ? 'Аватар успешно удален'
                 : 'Файл аватара не найден';
 
-            Log::info('Avatar deletion completed. File deleted: ' . ($fileDeleted ? 'YES' : 'NO'));
+            Log::info('Avatar deletion completed. File deleted: '.($fileDeleted ? 'YES' : 'NO'));
             Log::info('=== DELETE AVATAR METHOD END ===');
 
             return response()->json([
                 'success' => true,
                 'message' => $message,
-                'file_deleted' => $fileDeleted
+                'file_deleted' => $fileDeleted,
             ], 200);
 
         } catch (\Exception $e) {
-            Log::error('Ошибка удаления аватара пользователя: ' . $e->getMessage());
-            
+            Log::error('Ошибка удаления аватара пользователя: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка удаления аватара',
-                'error' => config('app.debug') ? $e->getMessage() : 'Внутренняя ошибка сервера'
+                'error' => config('app.debug') ? $e->getMessage() : 'Внутренняя ошибка сервера',
             ], 500);
         }
     }
@@ -268,11 +271,11 @@ class UserProfileController extends Controller
     {
         try {
             $user = Auth::user();
-            
-            if (!$user) {
+
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не авторизован'
+                    'message' => 'Пользователь не авторизован',
                 ], 401);
             }
 
@@ -285,16 +288,16 @@ class UserProfileController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $statistics
+                'data' => $statistics,
             ], 200);
 
         } catch (\Exception $e) {
-            Log::error('Ошибка получения статистики пользователя: ' . $e->getMessage());
-            
+            Log::error('Ошибка получения статистики пользователя: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка получения статистики',
-                'error' => config('app.debug') ? $e->getMessage() : 'Внутренняя ошибка сервера'
+                'error' => config('app.debug') ? $e->getMessage() : 'Внутренняя ошибка сервера',
             ], 500);
         }
     }
@@ -306,11 +309,11 @@ class UserProfileController extends Controller
     {
         $firstName = $user->first_name ?? '';
         $lastName = $user->last_name ?? '';
-        
+
         if ($firstName && $lastName) {
-            return trim($firstName . ' ' . $lastName);
+            return trim($firstName.' '.$lastName);
         }
-        
+
         return $firstName ?: $user->name ?: 'Пользователь';
     }
 
@@ -322,7 +325,8 @@ class UserProfileController extends Controller
         try {
             return \DB::table('shop_orders')->where('user_id', $user->id)->count();
         } catch (\Exception $e) {
-            Log::error('Ошибка подсчета заказов: ' . $e->getMessage());
+            Log::error('Ошибка подсчета заказов: '.$e->getMessage());
+
             return 0;
         }
     }
@@ -335,7 +339,8 @@ class UserProfileController extends Controller
         try {
             return \DB::table('shop_favorites')->where('user_id', $user->id)->count();
         } catch (\Exception $e) {
-            Log::error('Ошибка подсчета избранного: ' . $e->getMessage());
+            Log::error('Ошибка подсчета избранного: '.$e->getMessage());
+
             return 0;
         }
     }
@@ -348,23 +353,24 @@ class UserProfileController extends Controller
         try {
             // Получаем ID статуса "отменен" если он есть
             $cancelledStatusId = \DB::table('shop_order_statuses')
-                ->where(function($q) {
+                ->where(function ($q) {
                     $q->where('name', 'cancelled')
-                      ->orWhere('name', 'отменен');
+                        ->orWhere('name', 'отменен');
                 })
                 ->value('id');
-            
+
             $query = \DB::table('shop_orders')
                 ->where('user_id', $user->id);
-            
+
             // Исключаем отмененные заказы
             if ($cancelledStatusId) {
                 $query->where('status_id', '!=', $cancelledStatusId);
             }
-            
+
             return $query->sum('total_amount') ?? 0;
         } catch (\Exception $e) {
-            Log::error('Ошибка подсчета потраченной суммы: ' . $e->getMessage());
+            Log::error('Ошибка подсчета потраченной суммы: '.$e->getMessage());
+
             return 0;
         }
     }
@@ -375,20 +381,20 @@ class UserProfileController extends Controller
     private function deleteAvatarFile($user): bool
     {
         try {
-            if (!$user) {
+            if (! $user) {
                 Log::error('User not provided');
+
                 return false;
             }
 
             // Путь к папке на фронтенде (из FRONTEND_PATH в .env)
-            $frontendPath = frontend_public_path('images/users') . '/';
-            
+            $frontendPath = frontend_public_path('images/users').'/';
+
             // Всегда используем стандартное имя файла user_{id}.jpg
             // Не проверяем БД - просто удаляем файл, если он есть
-            $filename = 'user_' . $user->id . '.jpg';
-            $fullPath = $frontendPath . $filename;
-            
-            
+            $filename = 'user_'.$user->id.'.jpg';
+            $fullPath = $frontendPath.$filename;
+
             // Проверяем существование файла
             if (file_exists($fullPath)) {
                 // Удаляем файл
@@ -402,8 +408,9 @@ class UserProfileController extends Controller
             }
 
         } catch (\Exception $e) {
-            Log::error('Ошибка удаления файла аватара: ' . $e->getMessage());
-            Log::error('Stack trace: ' . $e->getTraceAsString());
+            Log::error('Ошибка удаления файла аватара: '.$e->getMessage());
+            Log::error('Stack trace: '.$e->getTraceAsString());
+
             return false;
         }
     }
@@ -416,15 +423,15 @@ class UserProfileController extends Controller
         try {
             // Убираем /storage/ префикс для работы с Storage
             $filePath = str_replace('/storage/', '', $avatarUrl);
-            
+
             // Если это локальный файл, удаляем его
-            if (!str_starts_with($filePath, 'http')) {
+            if (! str_starts_with($filePath, 'http')) {
                 if (Storage::disk('public')->exists($filePath)) {
                     Storage::disk('public')->delete($filePath);
                 }
             }
         } catch (\Exception $e) {
-            Log::warning('Не удалось удалить старый аватар: ' . $e->getMessage());
+            Log::warning('Не удалось удалить старый аватар: '.$e->getMessage());
         }
     }
 
@@ -435,11 +442,11 @@ class UserProfileController extends Controller
     {
         try {
             $user = Auth::user();
-            
-            if (!$user) {
+
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не авторизован'
+                    'message' => 'Пользователь не авторизован',
                 ], 401);
             }
 
@@ -452,38 +459,38 @@ class UserProfileController extends Controller
             ]);
 
             $phone = $this->normalizePhone($validated['phone']);
-            
+
             // Проверяем, что новый телефон отличается от текущего
             if ($phone === $user->phone) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Новый телефон должен отличаться от текущего',
-                    'errors' => ['phone' => ['Новый телефон должен отличаться от текущего']]
+                    'errors' => ['phone' => ['Новый телефон должен отличаться от текущего']],
                 ], 422);
             }
-            
+
             // Проверяем уникальность телефона
             $existingUser = User::where('phone', $phone)
                 ->where('id', '!=', $user->id)
                 ->first();
-            
+
             if ($existingUser) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Этот номер телефона уже используется другим пользователем',
-                    'errors' => ['phone' => ['Этот номер телефона уже используется другим пользователем']]
+                    'errors' => ['phone' => ['Этот номер телефона уже используется другим пользователем']],
                 ], 422);
             }
-            
+
             // Проверяем, не слишком ли часто запрашивается код
             $cacheKey = "phone_change_code_attempts_{$phone}";
             $attempts = Cache::get($cacheKey, 0);
-            
+
             if ($attempts >= 5) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Слишком много попыток. Попробуйте позже',
-                    'retry_after' => 300 // 5 минут
+                    'retry_after' => 300, // 5 минут
                 ], 429);
             }
 
@@ -492,7 +499,7 @@ class UserProfileController extends Controller
 
             // Отправляем звонок с кодом через CallService
             $result = $this->callService->sendCallCode($phone, '0000');
-            
+
             if ($result['success'] && isset($result['data']['code'])) {
                 $code = $result['data']['code'];
                 Cache::put("phone_change_code_{$phone}_{$user->id}", $code, 300);
@@ -501,17 +508,17 @@ class UserProfileController extends Controller
                 $code = str_pad(random_int(1000, 9999), 4, '0', STR_PAD_LEFT);
                 Cache::put("phone_change_code_{$phone}_{$user->id}", $code, 300);
             }
-            
+
             if ($result['success']) {
                 return response()->json([
                     'success' => true,
                     'message' => 'Код отправлен на ваш телефон',
-                    'phone' => $this->maskPhone($phone)
+                    'phone' => $this->maskPhone($phone),
                 ]);
             } else {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Ошибка отправки кода: ' . ($result['message'] ?? 'Неизвестная ошибка')
+                    'message' => 'Ошибка отправки кода: '.($result['message'] ?? 'Неизвестная ошибка'),
                 ], 500);
             }
 
@@ -519,15 +526,15 @@ class UserProfileController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
-            Log::error('Ошибка отправки кода для смены телефона: ' . $e->getMessage());
-            
+            Log::error('Ошибка отправки кода для смены телефона: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка отправки кода',
-                'error' => config('app.debug') ? $e->getMessage() : 'Внутренняя ошибка сервера'
+                'error' => config('app.debug') ? $e->getMessage() : 'Внутренняя ошибка сервера',
             ], 500);
         }
     }
@@ -539,11 +546,11 @@ class UserProfileController extends Controller
     {
         try {
             $user = Auth::user();
-            
-            if (!$user) {
+
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не авторизован'
+                    'message' => 'Пользователь не авторизован',
                 ], 401);
             }
 
@@ -562,12 +569,12 @@ class UserProfileController extends Controller
             // Проверяем код
             $cacheKey = "phone_change_code_{$phone}_{$user->id}";
             $cachedCode = Cache::get($cacheKey);
-            
-            if (!$cachedCode || $cachedCode !== $code) {
+
+            if (! $cachedCode || $cachedCode !== $code) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Неверный код подтверждения',
-                    'errors' => ['code' => ['Неверный код подтверждения']]
+                    'errors' => ['code' => ['Неверный код подтверждения']],
                 ], 400);
             }
 
@@ -575,19 +582,19 @@ class UserProfileController extends Controller
             $existingUser = User::where('phone', $phone)
                 ->where('id', '!=', $user->id)
                 ->first();
-            
+
             if ($existingUser) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Этот номер телефона уже используется другим пользователем',
-                    'errors' => ['phone' => ['Этот номер телефона уже используется другим пользователем']]
+                    'errors' => ['phone' => ['Этот номер телефона уже используется другим пользователем']],
                 ], 422);
             }
 
             // Обновляем телефон пользователя
             $user->update([
                 'phone' => $phone,
-                'phone_verified_at' => now()
+                'phone_verified_at' => now(),
             ]);
 
             // Удаляем использованный код
@@ -600,22 +607,22 @@ class UserProfileController extends Controller
                     'id' => $user->id,
                     'phone' => $user->phone,
                     'phone_verified_at' => $user->phone_verified_at?->toIso8601String(),
-                ]
+                ],
             ], 200);
 
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
-            Log::error('Ошибка подтверждения кода для смены телефона: ' . $e->getMessage());
-            
+            Log::error('Ошибка подтверждения кода для смены телефона: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка подтверждения кода',
-                'error' => config('app.debug') ? $e->getMessage() : 'Внутренняя ошибка сервера'
+                'error' => config('app.debug') ? $e->getMessage() : 'Внутренняя ошибка сервера',
             ], 500);
         }
     }
@@ -627,22 +634,22 @@ class UserProfileController extends Controller
     {
         // Убираем все символы кроме цифр и +
         $phone = preg_replace('/[^\d+]/', '', $phone);
-        
+
         // Если номер начинается с 8, заменяем на +7
         if (str_starts_with($phone, '8')) {
-            $phone = '+7' . substr($phone, 1);
+            $phone = '+7'.substr($phone, 1);
         }
-        
+
         // Если номер начинается с 7, добавляем +
-        if (str_starts_with($phone, '7') && !str_starts_with($phone, '+7')) {
-            $phone = '+' . $phone;
+        if (str_starts_with($phone, '7') && ! str_starts_with($phone, '+7')) {
+            $phone = '+'.$phone;
         }
-        
+
         // Проверяем, что номер соответствует российскому формату
-        if (!preg_match('/^\+7[0-9]{10}$/', $phone)) {
+        if (! preg_match('/^\+7[0-9]{10}$/', $phone)) {
             throw new \InvalidArgumentException('Неверный формат номера телефона');
         }
-        
+
         return $phone;
     }
 
@@ -652,8 +659,9 @@ class UserProfileController extends Controller
     private function maskPhone(string $phone): string
     {
         if (strlen($phone) === 12 && str_starts_with($phone, '+7')) {
-            return '+7 *** *** ' . substr($phone, -2);
+            return '+7 *** *** '.substr($phone, -2);
         }
+
         return $phone;
     }
 }

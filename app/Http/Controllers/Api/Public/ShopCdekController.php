@@ -5,8 +5,8 @@ namespace App\Http\Controllers\Api\Public;
 use App\Http\Controllers\Controller;
 use App\Models\ShopCdekSettings;
 use App\Services\CdekService;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -16,7 +16,7 @@ class ShopCdekController extends Controller
 
     public function __construct()
     {
-        $this->cdekService = new CdekService();
+        $this->cdekService = new CdekService;
     }
 
     /**
@@ -28,22 +28,23 @@ class ShopCdekController extends Controller
             // Пытаемся найти активные настройки, если их нет - создаем новые или берем первые попавшиеся
             $settings = \App\Models\ShopCdekSettings::first();
 
-            if (!$settings) {
+            if (! $settings) {
                 // Если настроек нет вообще, создаем пустые
-                $settings = new \App\Models\ShopCdekSettings();
+                $settings = new \App\Models\ShopCdekSettings;
                 $settings->is_active = true; // Делаем первые настройки активными
                 $settings->save();
             }
 
             return response()->json([
                 'success' => true,
-                'data' => $settings
+                'data' => $settings,
             ]);
         } catch (\Exception $e) {
-            Log::error('CDEK Admin Get Settings Error: ' . $e->getMessage());
+            Log::error('CDEK Admin Get Settings Error: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения настроек СДЭК: ' . $e->getMessage()
+                'message' => 'Ошибка получения настроек СДЭК: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -55,8 +56,8 @@ class ShopCdekController extends Controller
     {
         try {
             $settings = \App\Models\ShopCdekSettings::first();
-            if (!$settings) {
-                $settings = new \App\Models\ShopCdekSettings();
+            if (! $settings) {
+                $settings = new \App\Models\ShopCdekSettings;
                 $settings->is_active = true;
             }
 
@@ -73,13 +74,14 @@ class ShopCdekController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Настройки СДЭК успешно сохранены',
-                'data' => $settings
+                'data' => $settings,
             ]);
         } catch (\Exception $e) {
-            Log::error('CDEK Admin Save Settings Error: ' . $e->getMessage());
+            Log::error('CDEK Admin Save Settings Error: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка сохранения настроек СДЭК: ' . $e->getMessage()
+                'message' => 'Ошибка сохранения настроек СДЭК: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -101,7 +103,7 @@ class ShopCdekController extends Controller
             if (strlen($query) < 2) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Минимум 2 символа для поиска'
+                    'message' => 'Минимум 2 символа для поиска',
                 ], 400);
             }
 
@@ -119,23 +121,23 @@ class ShopCdekController extends Controller
                         'count' => 20,
                         'locations' => [
                             [
-                                'country' => 'Россия'
-                            ]
+                                'country' => 'Россия',
+                            ],
                         ],
                         'from_bound' => ['value' => 'city'],
-                        'to_bound' => ['value' => 'city']
+                        'to_bound' => ['value' => 'city'],
                     ];
 
                     $headers = [
                         'Content-Type' => 'application/json',
                         'Accept' => 'application/json',
-                        'Authorization' => 'Token ' . $dadataApiKey
+                        'Authorization' => 'Token '.$dadataApiKey,
                     ];
 
                     $res = Http::withOptions([
                         'verify' => false,
                         'timeout' => 15, // Увеличиваем таймаут до 15 секунд
-                        'connect_timeout' => 10 // Таймаут подключения 10 секунд
+                        'connect_timeout' => 10, // Таймаут подключения 10 секунд
                     ])
                         ->withHeaders($headers)
                         ->post($dadataUrl, $body);
@@ -166,7 +168,7 @@ class ShopCdekController extends Controller
                                         'region' => $cityData['region_with_type'] ?? '',
                                         'country' => 'Россия',
                                         'full_name' => $cityData['city_with_type'] ?? $cityName,
-                                        'fias_id' => $cityData['fias_id'] ?? null
+                                        'fias_id' => $cityData['fias_id'] ?? null,
                                     ];
                                 } catch (\Exception $e) {
                                     // Игнорируем ошибки для отдельных городов
@@ -183,19 +185,20 @@ class ShopCdekController extends Controller
             if (empty($formattedCities)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Города не найдены. Проверьте настройки DaData API.'
+                    'message' => 'Города не найдены. Проверьте настройки DaData API.',
                 ], 404);
             }
 
             return response()->json([
                 'success' => true,
-                'data' => $formattedCities
+                'data' => $formattedCities,
             ]);
         } catch (\Exception $e) {
-            Log::error('CDEK Get Cities Error: ' . $e->getMessage());
+            Log::error('CDEK Get Cities Error: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения городов: ' . $e->getMessage()
+                'message' => 'Ошибка получения городов: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -208,10 +211,10 @@ class ShopCdekController extends Controller
         try {
             $cityCode = $request->query('city_code');
 
-            if (!$cityCode) {
+            if (! $cityCode) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Код города обязателен'
+                    'message' => 'Код города обязателен',
                 ], 400);
             }
 
@@ -222,20 +225,21 @@ class ShopCdekController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => 'Не удалось получить пункты выдачи',
-                    'data' => []
+                    'data' => [],
                 ], 500);
             }
 
             return response()->json([
                 'success' => true,
-                'data' => is_array($points) ? $points : []
+                'data' => is_array($points) ? $points : [],
             ]);
         } catch (\Exception $e) {
-            Log::error('CDEK PVZ List Error: ' . $e->getMessage());
+            Log::error('CDEK PVZ List Error: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения ПВЗ: ' . $e->getMessage(),
-                'data' => []
+                'message' => 'Ошибка получения ПВЗ: '.$e->getMessage(),
+                'data' => [],
             ], 500);
         }
     }
@@ -248,22 +252,23 @@ class ShopCdekController extends Controller
         try {
             $settings = \App\Models\ShopCdekSettings::getActive();
 
-            if (!$settings) {
+            if (! $settings) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Настройки СДЭК не найдены'
+                    'message' => 'Настройки СДЭК не найдены',
                 ], 404);
             }
 
             return response()->json([
                 'success' => true,
-                'data' => $settings
+                'data' => $settings,
             ]);
         } catch (\Exception $e) {
-            Log::error('CDEK Active Settings Error: ' . $e->getMessage());
+            Log::error('CDEK Active Settings Error: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения настроек СДЭК: ' . $e->getMessage()
+                'message' => 'Ошибка получения настроек СДЭК: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -280,7 +285,7 @@ class ShopCdekController extends Controller
                 'length' => 'required|numeric|min:1',
                 'width' => 'required|numeric|min:1',
                 'height' => 'required|numeric|min:1',
-                'tariff_codes' => 'array'
+                'tariff_codes' => 'array',
             ]);
 
             $cityCode = $request->input('city_code');
@@ -301,13 +306,14 @@ class ShopCdekController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $result
+                'data' => $result,
             ]);
         } catch (\Exception $e) {
-            Log::error('CDEK Calculate Delivery Error: ' . $e->getMessage());
+            Log::error('CDEK Calculate Delivery Error: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка расчета доставки: ' . $e->getMessage()
+                'message' => 'Ошибка расчета доставки: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -321,11 +327,10 @@ class ShopCdekController extends Controller
             $cityCode = $request->query('city_code');
             $cartItems = $request->query('cart_items', []);
 
-
-            if (!$cityCode) {
+            if (! $cityCode) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Не указан код города'
+                    'message' => 'Не указан код города',
                 ], 400);
             }
 
@@ -337,10 +342,10 @@ class ShopCdekController extends Controller
             // Получаем активные настройки СДЭК
             $settings = ShopCdekSettings::where('is_active', true)->first();
 
-            if (!$settings) {
+            if (! $settings) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Настройки СДЭК не найдены'
+                    'message' => 'Настройки СДЭК не найдены',
                 ], 404);
             }
 
@@ -351,7 +356,7 @@ class ShopCdekController extends Controller
             if (empty($tariffs)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Тарифы не настроены'
+                    'message' => 'Тарифы не настроены',
                 ], 404);
             }
 
@@ -367,11 +372,11 @@ class ShopCdekController extends Controller
                     $packageDimensions = $this->calculatePackageDimensions($cartItems, $settings);
 
                     // Создаем ключ кэша для расчета доставки с учетом размеров и города
-                    $deliveryCacheKey = 'cdek_delivery_' . md5($senderCityCode . '_' . $cityCode . '_' . $packageDimensions['weight'] . '_' . $packageDimensions['length'] . '_' . $packageDimensions['width'] . '_' . $packageDimensions['height']);
+                    $deliveryCacheKey = 'cdek_delivery_'.md5($senderCityCode.'_'.$cityCode.'_'.$packageDimensions['weight'].'_'.$packageDimensions['length'].'_'.$packageDimensions['width'].'_'.$packageDimensions['height']);
 
                     // Проверяем кэш
                     $deliveryResult = cache()->get($deliveryCacheKey);
-                    if (!$deliveryResult) {
+                    if (! $deliveryResult) {
                         // Рассчитываем стоимость через CdekService с реальными размерами
                         $deliveryResult = $this->cdekService->calculateDelivery(
                             $senderCityCode,
@@ -391,7 +396,7 @@ class ShopCdekController extends Controller
                     // Сначала пытаемся найти настроенные тарифы
                     $foundConfiguredTariffs = [];
                     foreach ($tariffs as $tariff) {
-                        if (!($tariff['enabled'] ?? true)) {
+                        if (! ($tariff['enabled'] ?? true)) {
                             continue; // Пропускаем отключенные тарифы
                         }
 
@@ -403,8 +408,8 @@ class ShopCdekController extends Controller
                             // Ищем нужный тариф в результате CDEK API
                             foreach ($deliveryResult as $resultTariff) {
                                 if ($resultTariff['tariff_code'] == $tariff['tariff_code']) {
-                                    $costValue = (float)$resultTariff['delivery_sum'];
-                                    $costFormatted = $costValue . ' ₽';
+                                    $costValue = (float) $resultTariff['delivery_sum'];
+                                    $costFormatted = $costValue.' ₽';
                                     $deliveryMode = $resultTariff['delivery_mode'] ?? null;
                                     break;
                                 }
@@ -419,20 +424,20 @@ class ShopCdekController extends Controller
                                 'cost' => $costFormatted,
                                 'cost_value' => $costValue,
                                 'enabled' => $tariff['enabled'] ?? true,
-                                'delivery_mode' => $deliveryMode
+                                'delivery_mode' => $deliveryMode,
                             ];
                         }
                     }
 
                     // Если нашли настроенные тарифы, используем их
-                    if (!empty($foundConfiguredTariffs)) {
+                    if (! empty($foundConfiguredTariffs)) {
                         $formattedTariffs = $foundConfiguredTariffs;
                     } else {
                         // Если настроенные тарифы не найдены, проверяем есть ли вообще доступные тарифы
                         if (empty($deliveryResult)) {
                             // Если API СДЭК не работает, используем fallback данные из настроек
                             foreach ($tariffs as $tariff) {
-                                if (!($tariff['enabled'] ?? true)) {
+                                if (! ($tariff['enabled'] ?? true)) {
                                     continue; // Пропускаем отключенные тарифы
                                 }
 
@@ -440,8 +445,8 @@ class ShopCdekController extends Controller
                                     'code' => $tariff['tariff_code'],
                                     'name' => $tariff['site_name'],
                                     'description' => $tariff['tariff_description'] ?? '',
-                                    'cost' => ($tariff['delivery_sum'] ?? 300) . ' ₽',
-                                    'cost_value' => (float)($tariff['delivery_sum'] ?? 300),
+                                    'cost' => ($tariff['delivery_sum'] ?? 300).' ₽',
+                                    'cost_value' => (float) ($tariff['delivery_sum'] ?? 300),
                                     'enabled' => $tariff['enabled'] ?? true,
                                     'delivery_mode' => null,
                                 ];
@@ -450,7 +455,7 @@ class ShopCdekController extends Controller
                             if (empty($formattedTariffs)) {
                                 return response()->json([
                                     'success' => false,
-                                    'message' => 'Доставка в данный населенный пункт недоступна'
+                                    'message' => 'Доставка в данный населенный пункт недоступна',
                                 ], 404);
                             }
                         } else {
@@ -460,8 +465,8 @@ class ShopCdekController extends Controller
                                     'code' => $resultTariff['tariff_code'],
                                     'name' => $resultTariff['tariff_name'],
                                     'description' => $resultTariff['tariff_description'] ?? '',
-                                    'cost' => $resultTariff['delivery_sum'] . ' ₽',
-                                    'cost_value' => (float)$resultTariff['delivery_sum'],
+                                    'cost' => $resultTariff['delivery_sum'].' ₽',
+                                    'cost_value' => (float) $resultTariff['delivery_sum'],
                                     'enabled' => true,
                                     'delivery_mode' => $resultTariff['delivery_mode'] ?? null,
                                 ];
@@ -475,13 +480,14 @@ class ShopCdekController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $formattedTariffs
+                'data' => $formattedTariffs,
             ]);
         } catch (\Exception $e) {
-            Log::error('CDEK Get Tariffs Error: ' . $e->getMessage());
+            Log::error('CDEK Get Tariffs Error: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения тарифов: ' . $e->getMessage()
+                'message' => 'Ошибка получения тарифов: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -499,10 +505,10 @@ class ShopCdekController extends Controller
         foreach ($cartItems as $item) {
             $quantity = $item['quantity'] ?? 1;
 
-            $itemWeight = isset($item['weight']) ? (float)$item['weight'] : null;
-            $itemLength = isset($item['length']) ? (float)$item['length'] : null;
-            $itemWidth = isset($item['width']) ? (float)$item['width'] : null;
-            $itemHeight = isset($item['height']) ? (float)$item['height'] : null;
+            $itemWeight = isset($item['weight']) ? (float) $item['weight'] : null;
+            $itemLength = isset($item['length']) ? (float) $item['length'] : null;
+            $itemWidth = isset($item['width']) ? (float) $item['width'] : null;
+            $itemHeight = isset($item['height']) ? (float) $item['height'] : null;
 
             if ($itemWeight !== null && $itemWeight > 0) {
                 $weight = $itemWeight;
@@ -528,7 +534,7 @@ class ShopCdekController extends Controller
                 $height = null;
             }
 
-            if (!($weight !== null && $length !== null && $width !== null && $height !== null)) {
+            if (! ($weight !== null && $length !== null && $width !== null && $height !== null)) {
                 $good = null;
                 if (isset($item['good_id'])) {
                     $good = \App\Models\ShopGood::find($item['good_id']);
@@ -536,31 +542,31 @@ class ShopCdekController extends Controller
 
                 if ($good) {
                     if ($weight === null) {
-                        $weight = $good->weight > 0 ? (float)$good->weight : null;
+                        $weight = $good->weight > 0 ? (float) $good->weight : null;
                     }
                     if ($length === null) {
-                        $length = $good->depth > 0 ? (float)$good->depth : null;
+                        $length = $good->depth > 0 ? (float) $good->depth : null;
                     }
                     if ($width === null) {
-                        $width = $good->width > 0 ? (float)$good->width : null;
+                        $width = $good->width > 0 ? (float) $good->width : null;
                     }
                     if ($height === null) {
-                        $height = $good->height > 0 ? (float)$good->height : null;
+                        $height = $good->height > 0 ? (float) $good->height : null;
                     }
                 }
             }
 
             if ($weight === null || $weight <= 0) {
-                $weight = (float)($settings->default_weight ?? 0.5);
+                $weight = (float) ($settings->default_weight ?? 0.5);
             }
             if ($length === null || $length <= 0) {
-                $length = (float)($settings->default_length ?? 10);
+                $length = (float) ($settings->default_length ?? 10);
             }
             if ($width === null || $width <= 0) {
-                $width = (float)($settings->default_width ?? 10);
+                $width = (float) ($settings->default_width ?? 10);
             }
             if ($height === null || $height <= 0) {
-                $height = (float)($settings->default_height ?? 10);
+                $height = (float) ($settings->default_height ?? 10);
             }
 
             $totalWeight += $weight * $quantity;
@@ -573,12 +579,11 @@ class ShopCdekController extends Controller
             'weight' => $totalWeight,
             'length' => $maxLength,
             'width' => $maxWidth,
-            'height' => $maxHeight
+            'height' => $maxHeight,
         ];
 
         return $result;
     }
-
 
     /**
      * Получить код города CDEK по названию через CDEK API
@@ -591,6 +596,7 @@ class ShopCdekController extends Controller
 
             if ($cdekCities && is_array($cdekCities) && count($cdekCities) > 0) {
                 $cityCode = $cdekCities[0]['code'] ?? null;
+
                 return $cityCode;
             }
         } catch (\Exception $e) {
@@ -636,6 +642,7 @@ class ShopCdekController extends Controller
         ];
 
         $cdekCode = $cityMapping[$fiasId] ?? 44; // По умолчанию Москва
+
         return $cdekCode;
     }
 
@@ -680,13 +687,14 @@ class ShopCdekController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $cdekOrderData
+                'data' => $cdekOrderData,
             ]);
         } catch (\Exception $e) {
-            Log::error('CDEK Create Order Error: ' . $e->getMessage());
+            Log::error('CDEK Create Order Error: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания заказа СДЭК: ' . $e->getMessage()
+                'message' => 'Ошибка создания заказа СДЭК: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -696,35 +704,36 @@ class ShopCdekController extends Controller
      */
     private function getSenderCityCode($settings)
     {
-            try {
-                // НЕ используем код из настроек напрямую - он может быть неправильным
-                // Вместо этого всегда получаем код через API CDEK
+        try {
+            // НЕ используем код из настроек напрямую - он может быть неправильным
+            // Вместо этого всегда получаем код через API CDEK
 
-                // Проверяем кэш города отправителя
-                $cacheKey = 'cdek_sender_city_' . md5($settings->sender_city ?? 'default');
-                $cachedCode = cache()->get($cacheKey);
-                if ($cachedCode) {
-                    return (int)$cachedCode;
-                }
+            // Проверяем кэш города отправителя
+            $cacheKey = 'cdek_sender_city_'.md5($settings->sender_city ?? 'default');
+            $cachedCode = cache()->get($cacheKey);
+            if ($cachedCode) {
+                return (int) $cachedCode;
+            }
 
-                // Если есть название города, пытаемся найти его код через CDEK API
-                if (isset($settings->sender_city) && $settings->sender_city) {
-                    try {
-                        $cdekCities = $this->cdekService->getCities($settings->sender_city);
+            // Если есть название города, пытаемся найти его код через CDEK API
+            if (isset($settings->sender_city) && $settings->sender_city) {
+                try {
+                    $cdekCities = $this->cdekService->getCities($settings->sender_city);
 
-                        if ($cdekCities && is_array($cdekCities) && isset($cdekCities[0]['code'])) {
-                            $cityCode = (int)$cdekCities[0]['code'];
-                            // Кэшируем на 24 часа
-                            cache()->put($cacheKey, $cityCode, 86400);
-                            return $cityCode;
-                        }
-                    } catch (\Exception $e) {
-                        Log::warning('Ошибка поиска кода города отправителя: ' . $e->getMessage());
+                    if ($cdekCities && is_array($cdekCities) && isset($cdekCities[0]['code'])) {
+                        $cityCode = (int) $cdekCities[0]['code'];
+                        // Кэшируем на 24 часа
+                        cache()->put($cacheKey, $cityCode, 86400);
+
+                        return $cityCode;
                     }
+                } catch (\Exception $e) {
+                    Log::warning('Ошибка поиска кода города отправителя: '.$e->getMessage());
                 }
+            }
 
-                // Fallback - используем Санкт-Петербург (код 270)
-                return 270;
+            // Fallback - используем Санкт-Петербург (код 270)
+            return 270;
         } catch (\Exception $e) {
             return 270; // Fallback
         }
@@ -745,26 +754,26 @@ class ShopCdekController extends Controller
             $street = urldecode($street);
             $query = urldecode($query);
 
-            if (!$city || !$street || !$query) {
+            if (! $city || ! $street || ! $query) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Не указан город, улица или запрос'
+                    'message' => 'Не указан город, улица или запрос',
                 ], 400);
             }
 
             if (strlen($query) < 1) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Минимум 1 символ для поиска дома'
+                    'message' => 'Минимум 1 символ для поиска дома',
                 ], 400);
             }
 
             // Используем API ключ DaData из переменных окружения
             $dadataApiKey = config('services.dadata.api_key') ?: env('DADATA_API_KEY');
-            if (!$dadataApiKey) {
+            if (! $dadataApiKey) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'API ключ DaData не настроен'
+                    'message' => 'API ключ DaData не настроен',
                 ], 500);
             }
 
@@ -775,18 +784,18 @@ class ShopCdekController extends Controller
                 $suggestRes = Http::withOptions([
                     'verify' => false,
                     'timeout' => 15,
-                    'connect_timeout' => 10
+                    'connect_timeout' => 10,
                 ])
                     ->withHeaders([
                         'Content-Type' => 'application/json',
                         'Accept' => 'application/json',
-                        'Authorization' => 'Token ' . $dadataApiKey
+                        'Authorization' => 'Token '.$dadataApiKey,
                     ])
                     ->post('https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/address', [
                         'query' => $city,
                         'from_bound' => ['value' => 'city'],
                         'to_bound' => ['value' => 'city'],
-                        'count' => 1
+                        'count' => 1,
                     ]);
 
                 if ($suggestRes->successful()) {
@@ -795,13 +804,13 @@ class ShopCdekController extends Controller
                     $cityName = $suggestData['suggestions'][0]['data']['city'] ?? $city;
                 }
             } catch (\Exception $e) {
-                Log::warning('DaData city lookup error: ' . $e->getMessage());
+                Log::warning('DaData city lookup error: '.$e->getMessage());
             }
 
-            if (!$kladrId) {
+            if (! $kladrId) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Не удалось получить КЛАДР-код города'
+                    'message' => 'Не удалось получить КЛАДР-код города',
                 ], 400);
             }
 
@@ -809,78 +818,80 @@ class ShopCdekController extends Controller
             try {
                 $dadataUrl = 'https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/address';
                 $body = [
-                    'query' => $cityName . ', ' . $street . ', ' . $query,
+                    'query' => $cityName.', '.$street.', '.$query,
                     'count' => 10,
                     'locations' => [
                         [
                             'city_kladr_id' => $kladrId,
-                            'city' => $cityName
-                        ]
+                            'city' => $cityName,
+                        ],
                     ],
                     'from_bound' => ['value' => 'house'],
-                    'to_bound' => ['value' => 'house']
+                    'to_bound' => ['value' => 'house'],
                 ];
 
                 $res = Http::withOptions([
                     'verify' => false,
                     'timeout' => 15,
-                    'connect_timeout' => 10
+                    'connect_timeout' => 10,
                 ])
                     ->withHeaders([
                         'Content-Type' => 'application/json',
                         'Accept' => 'application/json',
-                        'Authorization' => 'Token ' . $dadataApiKey
+                        'Authorization' => 'Token '.$dadataApiKey,
                     ])
                     ->post($dadataUrl, $body);
 
-                if (!$res->successful()) {
+                if (! $res->successful()) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Ошибка запроса к DaData'
+                        'message' => 'Ошибка запроса к DaData',
                     ], 500);
                 }
 
                 $data = $res->json();
-                if (!isset($data['suggestions'])) {
+                if (! isset($data['suggestions'])) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Нет данных от DaData'
+                        'message' => 'Нет данных от DaData',
                     ], 500);
                 }
 
-                $houses = array_map(function($suggestion) {
+                $houses = array_map(function ($suggestion) {
                     $houseData = $suggestion['data'];
                     $houseNumber = $houseData['house'] ?? '';
 
                     return [
                         'number' => $houseNumber,
-                        'label' => $houseNumber
+                        'label' => $houseNumber,
                     ];
                 }, $data['suggestions']);
 
                 // Фильтруем пустые номера домов
-                $houses = array_filter($houses, function($house) {
-                    return !empty($house['number']);
+                $houses = array_filter($houses, function ($house) {
+                    return ! empty($house['number']);
                 });
 
                 return response()->json([
                     'success' => true,
-                    'data' => array_values($houses)
+                    'data' => array_values($houses),
                 ]);
 
             } catch (\Exception $e) {
-                Log::error('DaData houses request error: ' . $e->getMessage());
+                Log::error('DaData houses request error: '.$e->getMessage());
+
                 return response()->json([
                     'success' => false,
-                    'message' => 'Ошибка запроса к DaData: ' . $e->getMessage()
+                    'message' => 'Ошибка запроса к DaData: '.$e->getMessage(),
                 ], 500);
             }
 
         } catch (\Exception $e) {
-            Log::error('CDEK Get Houses Error: ' . $e->getMessage());
+            Log::error('CDEK Get Houses Error: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения домов: ' . $e->getMessage()
+                'message' => 'Ошибка получения домов: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -893,68 +904,68 @@ class ShopCdekController extends Controller
             $house = $request->input('house');
             $flat = $request->input('flat', '');
 
-            if (!$city || !$street || !$house) {
+            if (! $city || ! $street || ! $house) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Не указан город, улица или дом'
+                    'message' => 'Не указан город, улица или дом',
                 ], 400);
             }
 
             // Используем API ключ DaData из переменных окружения
             $dadataApiKey = config('services.dadata.api_key') ?: env('DADATA_API_KEY');
-            if (!$dadataApiKey) {
+            if (! $dadataApiKey) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'API ключ DaData не настроен'
+                    'message' => 'API ключ DaData не настроен',
                 ], 500);
             }
 
             // Формируем полный адрес для поиска
-            $fullAddress = $city . ', ' . $street . ', ' . $house;
+            $fullAddress = $city.', '.$street.', '.$house;
             if ($flat) {
-                $fullAddress .= ', ' . $flat;
+                $fullAddress .= ', '.$flat;
             }
 
             try {
                 $response = Http::withOptions([
                     'verify' => false,
                     'timeout' => 15,
-                    'connect_timeout' => 10
+                    'connect_timeout' => 10,
                 ])
                     ->withHeaders([
                         'Content-Type' => 'application/json',
                         'Accept' => 'application/json',
-                        'Authorization' => 'Token ' . $dadataApiKey
+                        'Authorization' => 'Token '.$dadataApiKey,
                     ])
                     ->post('https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/address', [
                         'query' => $fullAddress,
                         'count' => 1,
                         'from_bound' => ['value' => 'house'],
-                        'to_bound' => ['value' => 'house']
+                        'to_bound' => ['value' => 'house'],
                     ]);
 
-                if (!$response->successful()) {
+                if (! $response->successful()) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Ошибка запроса к DaData'
+                        'message' => 'Ошибка запроса к DaData',
                     ], 500);
                 }
 
                 $data = $response->json();
-                if (!isset($data['suggestions']) || empty($data['suggestions'])) {
+                if (! isset($data['suggestions']) || empty($data['suggestions'])) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Адрес не найден'
+                        'message' => 'Адрес не найден',
                     ], 404);
                 }
 
                 $addressData = $data['suggestions'][0]['data'];
                 $postalCode = $addressData['postal_code'] ?? '';
 
-                if (!$postalCode) {
+                if (! $postalCode) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Почтовый индекс не найден для данного адреса'
+                        'message' => 'Почтовый индекс не найден для данного адреса',
                     ], 404);
                 }
 
@@ -966,23 +977,25 @@ class ShopCdekController extends Controller
                         'city' => $addressData['city'] ?? $city,
                         'street' => $addressData['street_with_type'] ?? $street,
                         'house' => $addressData['house'] ?? $house,
-                        'flat' => $addressData['flat'] ?? $flat
-                    ]
+                        'flat' => $addressData['flat'] ?? $flat,
+                    ],
                 ]);
 
             } catch (\Exception $e) {
-                Log::error('DaData postal code request error: ' . $e->getMessage());
+                Log::error('DaData postal code request error: '.$e->getMessage());
+
                 return response()->json([
                     'success' => false,
-                    'message' => 'Ошибка запроса к DaData: ' . $e->getMessage()
+                    'message' => 'Ошибка запроса к DaData: '.$e->getMessage(),
                 ], 500);
             }
 
         } catch (\Exception $e) {
-            Log::error('CDEK Get Postal Code Error: ' . $e->getMessage());
+            Log::error('CDEK Get Postal Code Error: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения почтового индекса: ' . $e->getMessage()
+                'message' => 'Ошибка получения почтового индекса: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -1000,26 +1013,26 @@ class ShopCdekController extends Controller
             $city = urldecode($city);
             $query = urldecode($query);
 
-            if (!$city || !$query) {
+            if (! $city || ! $query) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Не указан город или запрос'
+                    'message' => 'Не указан город или запрос',
                 ], 400);
             }
 
             if (strlen($query) < 2) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Минимум 2 символа для поиска улицы'
+                    'message' => 'Минимум 2 символа для поиска улицы',
                 ], 400);
             }
 
             // Используем API ключ DaData из переменных окружения
             $dadataApiKey = config('services.dadata.api_key') ?: env('DADATA_API_KEY');
-            if (!$dadataApiKey) {
+            if (! $dadataApiKey) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'API ключ DaData не настроен'
+                    'message' => 'API ключ DaData не настроен',
                 ], 500);
             }
 
@@ -1030,18 +1043,18 @@ class ShopCdekController extends Controller
                 $suggestRes = Http::withOptions([
                     'verify' => false,
                     'timeout' => 15,
-                    'connect_timeout' => 10
+                    'connect_timeout' => 10,
                 ])
                     ->withHeaders([
                         'Content-Type' => 'application/json',
                         'Accept' => 'application/json',
-                        'Authorization' => 'Token ' . $dadataApiKey
+                        'Authorization' => 'Token '.$dadataApiKey,
                     ])
                     ->post('https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/address', [
                         'query' => $city,
                         'from_bound' => ['value' => 'city'],
                         'to_bound' => ['value' => 'city'],
-                        'count' => 1
+                        'count' => 1,
                     ]);
 
                 if ($suggestRes->successful()) {
@@ -1050,13 +1063,13 @@ class ShopCdekController extends Controller
                     $cityName = $suggestData['suggestions'][0]['data']['city'] ?? $city;
                 }
             } catch (\Exception $e) {
-                Log::warning('DaData city lookup error: ' . $e->getMessage());
+                Log::warning('DaData city lookup error: '.$e->getMessage());
             }
 
-            if (!$kladrId) {
+            if (! $kladrId) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Не удалось получить КЛАДР-код города'
+                    'message' => 'Не удалось получить КЛАДР-код города',
                 ], 400);
             }
 
@@ -1064,46 +1077,46 @@ class ShopCdekController extends Controller
             try {
                 $dadataUrl = 'https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/address';
                 $body = [
-                    'query' => $cityName . ' ' . $query,
+                    'query' => $cityName.' '.$query,
                     'count' => 10,
                     'locations' => [
                         [
                             'city_kladr_id' => $kladrId,
-                            'city' => $cityName
-                        ]
+                            'city' => $cityName,
+                        ],
                     ],
                     'from_bound' => ['value' => 'street'],
-                    'to_bound' => ['value' => 'street']
+                    'to_bound' => ['value' => 'street'],
                 ];
 
                 $res = Http::withOptions([
                     'verify' => false,
                     'timeout' => 15,
-                    'connect_timeout' => 10
+                    'connect_timeout' => 10,
                 ])
                     ->withHeaders([
                         'Content-Type' => 'application/json',
                         'Accept' => 'application/json',
-                        'Authorization' => 'Token ' . $dadataApiKey
+                        'Authorization' => 'Token '.$dadataApiKey,
                     ])
                     ->post($dadataUrl, $body);
 
-                if (!$res->successful()) {
+                if (! $res->successful()) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Ошибка запроса к DaData'
+                        'message' => 'Ошибка запроса к DaData',
                     ], 500);
                 }
 
                 $data = $res->json();
-                if (!isset($data['suggestions'])) {
+                if (! isset($data['suggestions'])) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Нет данных от DaData'
+                        'message' => 'Нет данных от DaData',
                     ], 500);
                 }
 
-                $streets = array_map(function($suggestion) {
+                $streets = array_map(function ($suggestion) {
                     $streetData = $suggestion['data'];
                     $streetName = $streetData['street_with_type'] ?? $streetData['street'] ?? $suggestion['value'];
 
@@ -1112,30 +1125,31 @@ class ShopCdekController extends Controller
 
                     return [
                         'name' => $streetName,
-                        'label' => $streetName
+                        'label' => $streetName,
                     ];
                 }, $data['suggestions']);
 
                 return response()->json([
                     'success' => true,
-                    'data' => $streets
+                    'data' => $streets,
                 ]);
 
             } catch (\Exception $e) {
-                Log::error('DaData streets request error: ' . $e->getMessage());
+                Log::error('DaData streets request error: '.$e->getMessage());
+
                 return response()->json([
                     'success' => false,
-                    'message' => 'Ошибка запроса к DaData: ' . $e->getMessage()
+                    'message' => 'Ошибка запроса к DaData: '.$e->getMessage(),
                 ], 500);
             }
 
         } catch (\Exception $e) {
-            Log::error('CDEK Get Streets Error: ' . $e->getMessage());
+            Log::error('CDEK Get Streets Error: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения улиц: ' . $e->getMessage()
+                'message' => 'Ошибка получения улиц: '.$e->getMessage(),
             ], 500);
         }
     }
-
 }

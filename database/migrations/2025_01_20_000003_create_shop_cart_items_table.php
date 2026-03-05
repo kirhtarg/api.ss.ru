@@ -25,18 +25,18 @@ return new class extends Migration
             $table->string('good_sku', 100)->nullable(); // SKU товара
             $table->string('good_image', 500)->nullable(); // URL изображения
             $table->timestamps();
-            
+
             // Индексы
             $table->index(['user_id', 'created_at']);
             $table->index(['session_id']);
             $table->index(['good_id']);
             $table->index(['variation_id']);
-            
+
             // Внешние ключи
             $table->foreign('user_id')->references('id')->on('users')->onDelete('cascade');
             $table->foreign('good_id')->references('id')->on('shop_goods')->onDelete('cascade');
             $table->foreign('variation_id')->references('id')->on('shop_good_variations')->onDelete('cascade');
-            
+
             // Уникальный индекс для предотвращения дублирования
             $table->unique(['user_id', 'good_id', 'variation_id'], 'unique_user_good_variation');
             $table->unique(['session_id', 'good_id', 'variation_id'], 'unique_session_good_variation');

@@ -4,7 +4,6 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Carbon\Carbon;
 
 class CookieConsent extends Model
 {
@@ -78,7 +77,7 @@ class CookieConsent extends Model
     {
         // Устанавливаем время истечения на 1 год
         $expiresAt = now()->addYear();
-        
+
         return self::create([
             'session_id' => $data['session_id'],
             'ip_address' => $data['ip_address'] ?? request()->ip(),
@@ -123,7 +122,7 @@ class CookieConsent extends Model
     public function getAllowedCookieTypes(): array
     {
         $types = [];
-        
+
         if ($this->necessary_cookies) {
             $types[] = 'necessary';
         }

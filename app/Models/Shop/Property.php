@@ -4,8 +4,8 @@ namespace App\Models\Shop;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 
 class Property extends Model
@@ -65,7 +65,7 @@ class Property extends Model
      */
     public function getTypeLabelAttribute(): string
     {
-        return match($this->property_type) {
+        return match ($this->property_type) {
             'string' => 'Строка',
             'color' => 'Цвет',
             'select' => 'Выбор',

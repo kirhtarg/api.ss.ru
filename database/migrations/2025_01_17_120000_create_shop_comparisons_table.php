@@ -16,7 +16,7 @@ return new class extends Migration
             $table->foreignId('user_id')->constrained('users')->onDelete('cascade');
             $table->foreignId('good_id')->constrained('shop_goods')->onDelete('cascade');
             $table->timestamps();
-            
+
             // Уникальная комбинация пользователь + товар
             $table->unique(['user_id', 'good_id']);
         });

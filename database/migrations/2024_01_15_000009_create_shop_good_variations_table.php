@@ -28,7 +28,7 @@ return new class extends Migration
             $table->boolean('is_active')->default(true);
             $table->integer('sort_order')->default(0);
             $table->timestamps();
-            
+
             // Индексы для производительности
             $table->index(['good_id', 'is_active', 'sort_order'], 'shop_good_vars_good_active_sort_idx');
             $table->index('sku', 'shop_good_vars_sku_idx');

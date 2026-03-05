@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
 use App\Models\Slider;
-use Illuminate\Http\Request;
 
 class SliderController extends Controller
 {
@@ -16,14 +15,14 @@ class SliderController extends Controller
         try {
             $sliders = Slider::active()
                 ->ordered()
-                ->with(['activeImages' => function($query) {
+                ->with(['activeImages' => function ($query) {
                     $query->ordered();
                 }])
                 ->get();
 
             return response()->json([
                 'success' => true,
-                'data' => $sliders->map(function($slider) {
+                'data' => $sliders->map(function ($slider) {
                     return [
                         'id' => $slider->id,
                         'name' => $slider->name,
@@ -33,7 +32,7 @@ class SliderController extends Controller
                         'transition_duration' => $slider->transition_duration,
                         'title_position' => $slider->title_position,
                         'text_position' => $slider->text_position,
-                        'images' => $slider->activeImages->map(function($image) {
+                        'images' => $slider->activeImages->map(function ($image) {
                             return [
                                 'id' => $image->id,
                                 'image_url' => $this->getImageUrl($image->image_url),
@@ -42,14 +41,14 @@ class SliderController extends Controller
                                 'link' => $image->link,
                                 'link_type' => $image->link_type,
                             ];
-                        })
+                        }),
                     ];
-                })
+                }),
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения слайдеров: ' . $e->getMessage()
+                'message' => 'Ошибка получения слайдеров: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -61,7 +60,7 @@ class SliderController extends Controller
     {
         try {
             $slider = Slider::active()
-                ->with(['activeImages' => function($query) {
+                ->with(['activeImages' => function ($query) {
                     $query->ordered();
                 }])
                 ->findOrFail($id);
@@ -77,7 +76,7 @@ class SliderController extends Controller
                     'transition_duration' => $slider->transition_duration,
                     'title_position' => $slider->title_position,
                     'text_position' => $slider->text_position,
-                    'images' => $slider->activeImages->map(function($image) {
+                    'images' => $slider->activeImages->map(function ($image) {
                         return [
                             'id' => $image->id,
                             'image_url' => $this->getImageUrl($image->image_url),
@@ -86,13 +85,13 @@ class SliderController extends Controller
                             'link' => $image->link,
                             'link_type' => $image->link_type,
                         ];
-                    })
-                ]
+                    }),
+                ],
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения слайдера: ' . $e->getMessage()
+                'message' => 'Ошибка получения слайдера: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -102,7 +101,7 @@ class SliderController extends Controller
      */
     private function getImageUrl($filePath): ?string
     {
-        if (!$filePath) {
+        if (! $filePath) {
             return null;
         }
 
@@ -116,10 +115,10 @@ class SliderController extends Controller
 
         // Если путь начинается с images/, возвращаем с ведущим слэшем
         if (str_starts_with($filePath, 'images/')) {
-            return '/' . $filePath;
+            return '/'.$filePath;
         }
 
         // Возвращаем относительный путь к файлу в папке public/images/
-        return '/images/' . $filePath;
+        return '/images/'.$filePath;
     }
 }

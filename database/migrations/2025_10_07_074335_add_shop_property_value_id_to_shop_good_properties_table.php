@@ -2,8 +2,8 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -15,13 +15,13 @@ return new class extends Migration
         Schema::table('shop_good_properties', function (Blueprint $table) {
             // Добавляем поле для связи с shop_property_values
             $table->unsignedBigInteger('shop_property_value_id')->nullable()->after('property_id');
-            
+
             // Добавляем внешний ключ
             $table->foreign('shop_property_value_id')
-                  ->references('id')
-                  ->on('shop_property_values')
-                  ->onDelete('set null');
-            
+                ->references('id')
+                ->on('shop_property_values')
+                ->onDelete('set null');
+
             // Добавляем индекс для производительности
             $table->index('shop_property_value_id');
         });
@@ -44,7 +44,7 @@ return new class extends Migration
                     // Игнорируем ошибку, если внешний ключ не существует
                 }
             }
-            
+
             // Затем удаляем колонку
             Schema::table('shop_good_properties', function (Blueprint $table) {
                 $table->dropColumn('shop_property_value_id');

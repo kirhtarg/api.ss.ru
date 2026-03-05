@@ -11,7 +11,7 @@ class TestController extends Controller
     {
         return response()->json([
             'success' => true,
-            'message' => 'Test controller works!'
+            'message' => 'Test controller works!',
         ]);
     }
 }

@@ -16,7 +16,7 @@ return new class extends Migration
             $table->foreignId('promocode_id')->constrained('promocodes')->onDelete('cascade');
             $table->foreignId('category_id')->constrained('shop_categories')->onDelete('cascade');
             $table->timestamps();
-            
+
             $table->unique(['promocode_id', 'category_id']);
             $table->index('promocode_id');
             $table->index('category_id');
@@ -31,4 +31,3 @@ return new class extends Migration
         Schema::dropIfExists('promocode_categories');
     }
 };
-

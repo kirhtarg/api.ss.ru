@@ -4,10 +4,10 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopRussianPostSettings;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Validator;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Validator;
 
 class ShopRussianPostSettingsController extends Controller
 {
@@ -17,23 +17,23 @@ class ShopRussianPostSettingsController extends Controller
     private function checkAccess($request)
     {
         $user = $request->user();
-        
+
         // Проверяем авторизацию
-        if (!$user) {
+        if (! $user) {
             return response()->json([
                 'success' => false,
-                'message' => 'Необходима авторизация.'
+                'message' => 'Необходима авторизация.',
             ], 401);
         }
-        
+
         // Проверяем, что пользователь имеет роль admin или shop
-        if (!$user->hasRole('admin') && !$user->hasRole('shop')) {
+        if (! $user->hasRole('admin') && ! $user->hasRole('shop')) {
             return response()->json([
                 'success' => false,
-                'message' => 'Доступ запрещен. Требуется роль администратора или менеджера магазина.'
+                'message' => 'Доступ запрещен. Требуется роль администратора или менеджера магазина.',
             ], 403);
         }
-        
+
         return null;
     }
 
@@ -48,10 +48,10 @@ class ShopRussianPostSettingsController extends Controller
         }
 
         $settings = ShopRussianPostSettings::first();
-        
+
         return response()->json([
             'success' => true,
-            'data' => $settings
+            'data' => $settings,
         ]);
     }
 
@@ -66,10 +66,10 @@ class ShopRussianPostSettingsController extends Controller
         }
 
         $settings = ShopRussianPostSettings::getActive();
-        
+
         return response()->json([
             'success' => true,
-            'data' => $settings
+            'data' => $settings,
         ]);
     }
 
@@ -109,7 +109,7 @@ class ShopRussianPostSettingsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -124,7 +124,7 @@ class ShopRussianPostSettingsController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Настройки Почты России сохранены успешно',
-            'data' => $settings
+            'data' => $settings,
         ]);
     }
 
@@ -166,7 +166,7 @@ class ShopRussianPostSettingsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -175,7 +175,7 @@ class ShopRussianPostSettingsController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Настройки Почты России обновлены успешно',
-            'data' => $settings
+            'data' => $settings,
         ]);
     }
 
@@ -194,7 +194,7 @@ class ShopRussianPostSettingsController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Настройки Почты России удалены успешно'
+            'message' => 'Настройки Почты России удалены успешно',
         ]);
     }
 
@@ -209,7 +209,7 @@ class ShopRussianPostSettingsController extends Controller
         }
 
         $settings = ShopRussianPostSettings::findOrFail($id);
-        
+
         // Деактивируем все остальные
         ShopRussianPostSettings::where('id', '!=', $id)
             ->where('is_active', true)
@@ -220,7 +220,7 @@ class ShopRussianPostSettingsController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Настройки Почты России активированы успешно',
-            'data' => $settings
+            'data' => $settings,
         ]);
     }
 
@@ -244,7 +244,7 @@ class ShopRussianPostSettingsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -256,7 +256,7 @@ class ShopRussianPostSettingsController extends Controller
             'data' => [
                 'valid' => $validation['valid'],
                 'error' => $validation['error'] ?? null,
-            ]
+            ],
         ]);
     }
 
@@ -269,8 +269,8 @@ class ShopRussianPostSettingsController extends Controller
             // API Почты России: проверяем учетные данные через запрос к API
             // Используем простой запрос для проверки валидности
             $headers = [
-                'Authorization' => 'AccessToken ' . $apiToken,
-                'X-User-Authorization' => 'Basic ' . base64_encode($login . ':' . ($password ?? '')),
+                'Authorization' => 'AccessToken '.$apiToken,
+                'X-User-Authorization' => 'Basic '.base64_encode($login.':'.($password ?? '')),
                 'Content-Type' => 'application/json',
                 'Accept' => 'application/json;charset=UTF-8',
             ];
@@ -283,7 +283,7 @@ class ShopRussianPostSettingsController extends Controller
             // Если запрос успешен, учетные данные валидны
             if ($response->successful()) {
                 return [
-                    'valid' => true
+                    'valid' => true,
                 ];
             }
 
@@ -291,41 +291,40 @@ class ShopRussianPostSettingsController extends Controller
             if ($response->status() === 401 || $response->status() === 403) {
                 return [
                     'valid' => false,
-                    'error' => 'Неверные учетные данные'
+                    'error' => 'Неверные учетные данные',
                 ];
             }
 
             // Другие ошибки
             $errorData = $response->json();
             $errorMessage = $errorData['error'] ?? $errorData['message'] ?? 'Ошибка проверки учетных данных';
-            
+
             return [
                 'valid' => false,
-                'error' => $errorMessage
+                'error' => $errorMessage,
             ];
         } catch (\Exception $e) {
             // Если API недоступен или произошла ошибка, проверяем формат данных
             if (empty($apiToken) || strlen($apiToken) < 10) {
                 return [
                     'valid' => false,
-                    'error' => 'API ключ слишком короткий'
+                    'error' => 'API ключ слишком короткий',
                 ];
             }
-            
+
             if (empty($login)) {
                 return [
                     'valid' => false,
-                    'error' => 'Логин обязателен'
+                    'error' => 'Логин обязателен',
                 ];
             }
-            
+
             // Если формат данных выглядит корректным, но API недоступен,
             // разрешаем учетные данные (в реальной реализации нужно использовать правильный endpoint)
             return [
                 'valid' => true,
-                'error' => null
+                'error' => null,
             ];
         }
     }
 }
-

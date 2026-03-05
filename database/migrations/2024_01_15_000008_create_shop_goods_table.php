@@ -35,7 +35,7 @@ return new class extends Migration
             $table->boolean('is_sale')->default(false); // Товар со скидкой
             $table->integer('sort_order')->default(0);
             $table->timestamps();
-            
+
             // Индексы для производительности
             $table->index(['is_active', 'sort_order']);
             $table->index(['is_featured', 'is_active']);
@@ -47,7 +47,7 @@ return new class extends Migration
             $table->index('rating');
             $table->index('stock_quantity');
             $table->index('created_at');
-            
+
             // Составные индексы для поиска
             $table->index(['name', 'is_active'], 'shop_goods_name_active_idx');
             $table->index(['sku', 'is_active'], 'shop_goods_sku_active_idx');

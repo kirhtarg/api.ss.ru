@@ -3,8 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\ContactSocialType;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
 class ContactSocialTypeController extends Controller
@@ -18,7 +18,7 @@ class ContactSocialTypeController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $types
+            'data' => $types,
         ]);
     }
 
@@ -36,7 +36,7 @@ class ContactSocialTypeController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -49,12 +49,12 @@ class ContactSocialTypeController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Тип социальной сети успешно создан',
-                'data' => $type
+                'data' => $type,
             ], 201);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при создании типа социальной сети: ' . $e->getMessage()
+                'message' => 'Ошибка при создании типа социальной сети: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -66,10 +66,10 @@ class ContactSocialTypeController extends Controller
     {
         $type = ContactSocialType::find($id);
 
-        if (!$type) {
+        if (! $type) {
             return response()->json([
                 'success' => false,
-                'message' => 'Тип социальной сети не найден'
+                'message' => 'Тип социальной сети не найден',
             ], 404);
         }
 
@@ -82,7 +82,7 @@ class ContactSocialTypeController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -95,12 +95,12 @@ class ContactSocialTypeController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Тип социальной сети успешно обновлен',
-                'data' => $type
+                'data' => $type,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при обновлении типа социальной сети: ' . $e->getMessage()
+                'message' => 'Ошибка при обновлении типа социальной сети: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -112,10 +112,10 @@ class ContactSocialTypeController extends Controller
     {
         $type = ContactSocialType::find($id);
 
-        if (!$type) {
+        if (! $type) {
             return response()->json([
                 'success' => false,
-                'message' => 'Тип социальной сети не найден'
+                'message' => 'Тип социальной сети не найден',
             ], 404);
         }
 
@@ -124,14 +124,13 @@ class ContactSocialTypeController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Тип социальной сети успешно удален'
+                'message' => 'Тип социальной сети успешно удален',
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при удалении типа социальной сети: ' . $e->getMessage()
+                'message' => 'Ошибка при удалении типа социальной сети: '.$e->getMessage(),
             ], 500);
         }
     }
 }
-

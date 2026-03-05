@@ -22,14 +22,14 @@ class ShopCartItem extends Model
         'good_name',
         'variation_name',
         'good_sku',
-        'good_image'
+        'good_image',
     ];
 
     protected $casts = [
         'price' => 'decimal:2',
         'sale_price' => 'decimal:2',
         'total' => 'decimal:2',
-        'quantity' => 'integer'
+        'quantity' => 'integer',
     ];
 
     /**
@@ -104,6 +104,6 @@ class ShopCartItem extends Model
      */
     public function getUniqueKeyAttribute()
     {
-        return $this->good_id . '_' . ($this->variation_id ?? 'main');
+        return $this->good_id.'_'.($this->variation_id ?? 'main');
     }
 }

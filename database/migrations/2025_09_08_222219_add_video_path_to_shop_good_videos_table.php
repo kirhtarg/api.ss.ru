@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::table('shop_good_videos', function (Blueprint $table) {
             // Добавляем поле video_path если его нет
-            if (!Schema::hasColumn('shop_good_videos', 'video_path')) {
+            if (! Schema::hasColumn('shop_good_videos', 'video_path')) {
                 $table->string('video_path')->nullable()->after('variation_id');
             }
         });

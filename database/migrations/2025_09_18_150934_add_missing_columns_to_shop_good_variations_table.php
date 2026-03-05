@@ -13,21 +13,21 @@ return new class extends Migration
     {
         Schema::table('shop_good_variations', function (Blueprint $table) {
             // Добавляем stock_quantity, если её нет
-            if (!Schema::hasColumn('shop_good_variations', 'stock_quantity')) {
+            if (! Schema::hasColumn('shop_good_variations', 'stock_quantity')) {
                 $table->integer('stock_quantity')->default(0)->after('sale_price')
-                      ->comment('Количество на складе');
+                    ->comment('Количество на складе');
             }
-            
+
             // Добавляем description, если её нет
-            if (!Schema::hasColumn('shop_good_variations', 'description')) {
+            if (! Schema::hasColumn('shop_good_variations', 'description')) {
                 $table->text('description')->nullable()->after('name')
-                      ->comment('Описание вариации');
+                    ->comment('Описание вариации');
             }
-            
+
             // Добавляем short_description, если её нет
-            if (!Schema::hasColumn('shop_good_variations', 'short_description')) {
+            if (! Schema::hasColumn('shop_good_variations', 'short_description')) {
                 $table->text('short_description')->nullable()->after('description')
-                      ->comment('Краткое описание вариации');
+                    ->comment('Краткое описание вариации');
             }
         });
     }

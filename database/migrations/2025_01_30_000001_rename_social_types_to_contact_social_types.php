@@ -2,8 +2,8 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -13,10 +13,10 @@ return new class extends Migration
     public function up(): void
     {
         // Переименовываем таблицу только если она еще не переименована
-        if (Schema::hasTable('social_types') && !Schema::hasTable('contact_social_types')) {
+        if (Schema::hasTable('social_types') && ! Schema::hasTable('contact_social_types')) {
             Schema::rename('social_types', 'contact_social_types');
         }
-        
+
         // Если таблица contact_social_types уже существует, просто обновляем внешний ключ
         if (Schema::hasTable('contact_social_types') && Schema::hasTable('contact_socials')) {
             // Получаем список всех внешних ключей для колонки social_type
@@ -28,7 +28,7 @@ return new class extends Migration
                 AND COLUMN_NAME = 'social_type' 
                 AND REFERENCED_TABLE_NAME IS NOT NULL
             ");
-            
+
             // Удаляем все найденные внешние ключи
             foreach ($foreignKeys as $key) {
                 try {
@@ -37,7 +37,7 @@ return new class extends Migration
                     // Игнорируем ошибку, если внешний ключ не существует
                 }
             }
-            
+
             // Добавляем новый внешний ключ на contact_social_types
             try {
                 Schema::table('contact_socials', function (Blueprint $table) {
@@ -65,12 +65,12 @@ return new class extends Migration
                 // Игнорируем ошибку
             }
         }
-        
+
         // Переименовываем обратно
-        if (Schema::hasTable('contact_social_types') && !Schema::hasTable('social_types')) {
+        if (Schema::hasTable('contact_social_types') && ! Schema::hasTable('social_types')) {
             Schema::rename('contact_social_types', 'social_types');
         }
-        
+
         // Восстанавливаем внешний ключ
         if (Schema::hasTable('contact_socials')) {
             Schema::table('contact_socials', function (Blueprint $table) {
@@ -82,4 +82,3 @@ return new class extends Migration
         }
     }
 };
-

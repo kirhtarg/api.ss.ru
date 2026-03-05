@@ -5,10 +5,10 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Shop\Property as ShopProperty;
 use App\Models\Shop\PropertyValue as ShopPropertyValue;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Validator;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 
 class ShopPropertyValuesController extends Controller
 {
@@ -18,7 +18,7 @@ class ShopPropertyValuesController extends Controller
     public function index(Request $request, $propertyId): JsonResponse
     {
         $property = ShopProperty::findOrFail($propertyId);
-        
+
         $values = $property->values()
             ->ordered()
             ->get();
@@ -31,15 +31,16 @@ class ShopPropertyValuesController extends Controller
                 ->whereNotNull('good_id')
                 ->distinct('good_id')
                 ->count('good_id');
-            
+
             $value->goods_count = $goodsCount;
+
             return $value;
         });
 
         return response()->json([
             'success' => true,
             'data' => $values->pluck('value')->toArray(),
-            'values' => $values->toArray()
+            'values' => $values->toArray(),
         ]);
     }
 
@@ -49,14 +50,14 @@ class ShopPropertyValuesController extends Controller
     public function check(Request $request, $propertyId): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'value' => 'required|string|max:255'
+            'value' => 'required|string|max:255',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -66,7 +67,7 @@ class ShopPropertyValuesController extends Controller
 
         return response()->json([
             'success' => true,
-            'exists' => $exists
+            'exists' => $exists,
         ]);
     }
 
@@ -81,14 +82,14 @@ class ShopPropertyValuesController extends Controller
             'value' => 'required|string|max:255',
             'color' => 'nullable|string|max:7|regex:/^#[0-9A-Fa-f]{6}$/',
             'sort_order' => 'nullable|integer|min:0',
-            'is_active' => 'boolean'
+            'is_active' => 'boolean',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -97,14 +98,14 @@ class ShopPropertyValuesController extends Controller
             'value' => $request->get('value'),
             'color' => $request->get('color'),
             'sort_order' => $request->get('sort_order', 0),
-            'is_active' => $request->get('is_active', true)
+            'is_active' => $request->get('is_active', true),
         ]);
 
         return response()->json([
             'success' => true,
             'message' => 'Значение свойства успешно создано',
             'data' => $value,
-            'value' => $value->value // Добавляем значение для совместимости с фронтендом
+            'value' => $value->value, // Добавляем значение для совместимости с фронтендом
         ], 201);
     }
 
@@ -120,14 +121,14 @@ class ShopPropertyValuesController extends Controller
             'value' => 'required|string|max:255',
             'color' => 'nullable|string|max:7|regex:/^#[0-9A-Fa-f]{6}$/',
             'sort_order' => 'nullable|integer|min:0',
-            'is_active' => 'boolean'
+            'is_active' => 'boolean',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -136,7 +137,7 @@ class ShopPropertyValuesController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Значение свойства успешно обновлено',
-            'data' => $value
+            'data' => $value,
         ]);
     }
 
@@ -155,12 +156,12 @@ class ShopPropertyValuesController extends Controller
 
             return response()->json([
                 'success' => true,
-                'count' => $goodsCount
+                'count' => $goodsCount,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения количества товаров: ' . $e->getMessage()
+                'message' => 'Ошибка получения количества товаров: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -187,7 +188,7 @@ class ShopPropertyValuesController extends Controller
                 'message' => 'Невозможно удалить значение характеристики',
                 'has_goods' => true,
                 'goods_count' => $goodsCount,
-                'error' => "У значения характеристики есть привязанные товары ({$goodsCount}). При удалении значение будет удалено у всех этих товаров."
+                'error' => "У значения характеристики есть привязанные товары ({$goodsCount}). При удалении значение будет удалено у всех этих товаров.",
             ], 422);
         }
 
@@ -207,13 +208,14 @@ class ShopPropertyValuesController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Значение свойства успешно удалено'
+                'message' => 'Значение свойства успешно удалено',
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления значения: ' . $e->getMessage()
+                'message' => 'Ошибка удаления значения: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -242,13 +244,14 @@ class ShopPropertyValuesController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Значение свойства успешно удалено'
+                'message' => 'Значение свойства успешно удалено',
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления значения: ' . $e->getMessage()
+                'message' => 'Ошибка удаления значения: '.$e->getMessage(),
             ], 500);
         }
     }

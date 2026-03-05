@@ -34,17 +34,3 @@ class SiteMenuSeeder extends Seeder
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-

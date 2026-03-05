@@ -2,8 +2,8 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -15,12 +15,12 @@ return new class extends Migration
         // Сначала добавляем новые колонки
         Schema::table('shop_orders', function (Blueprint $table) {
             // Добавляем новую колонку payed (boolean, default 0)
-            if (!Schema::hasColumn('shop_orders', 'payed')) {
+            if (! Schema::hasColumn('shop_orders', 'payed')) {
                 $table->boolean('payed')->default(0)->after('status_id');
             }
-            
+
             // Добавляем колонку is_active (boolean, default false)
-            if (!Schema::hasColumn('shop_orders', 'is_active')) {
+            if (! Schema::hasColumn('shop_orders', 'is_active')) {
                 $table->boolean('is_active')->default(false)->after('payed');
             }
         });
@@ -45,7 +45,7 @@ return new class extends Migration
             // Если таблицы или колонки нет, просто устанавливаем все в 0
             DB::table('shop_orders')->update(['payed' => 0]);
         }
-        
+
         // Устанавливаем is_active = false для всех существующих записей
         DB::table('shop_orders')->update(['is_active' => false]);
 
@@ -73,7 +73,7 @@ return new class extends Migration
             if (Schema::hasColumn('shop_orders', 'payed')) {
                 $table->dropColumn('payed');
             }
-            
+
             if (Schema::hasColumn('shop_orders', 'is_active')) {
                 $table->dropColumn('is_active');
             }
@@ -82,11 +82,10 @@ return new class extends Migration
         // Восстанавливаем payment_status_id, если нужно
         if (Schema::hasTable('shop_payment_statuses')) {
             Schema::table('shop_orders', function (Blueprint $table) {
-                if (!Schema::hasColumn('shop_orders', 'payment_status_id')) {
+                if (! Schema::hasColumn('shop_orders', 'payment_status_id')) {
                     $table->unsignedBigInteger('payment_status_id')->default(1)->after('status_id');
                 }
             });
         }
     }
 };
-

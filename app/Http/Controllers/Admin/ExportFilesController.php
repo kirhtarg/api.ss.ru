@@ -3,14 +3,14 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\ExportFile;
 use App\Jobs\ProcessModexJob;
-use Illuminate\Http\Request;
+use App\Models\ExportFile;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Storage;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Rule;
 
 class ExportFilesController extends Controller
 {
@@ -38,9 +38,9 @@ class ExportFilesController extends Controller
             if ($type === 'modex') {
                 $query->where('export_config->type', 'modex');
             } elseif ($type === 'export') {
-                $query->where(function($q) {
+                $query->where(function ($q) {
                     $q->whereNull('export_config->type')
-                      ->orWhere('export_config->type', '!=', 'modex');
+                        ->orWhere('export_config->type', '!=', 'modex');
                 });
             }
         }
@@ -52,19 +52,22 @@ class ExportFilesController extends Controller
         foreach ($files->items() as $model) {
             $arr = $model->toArray();
             $conf = $arr['export_config'] ?? [];
-            if (!is_array($conf)) $conf = [];
-            $progress = (int)($conf['progress_rows'] ?? 0);
-            $total = (int)($conf['total_rows'] ?? ($arr['total_rows'] ?? 0));
+            if (! is_array($conf)) {
+                $conf = [];
+            }
+            $progress = (int) ($conf['progress_rows'] ?? 0);
+            $total = (int) ($conf['total_rows'] ?? ($arr['total_rows'] ?? 0));
             if (($arr['status'] ?? '') === 'processing' && $total > 0 && $progress >= $total) {
-                $expectedPath = 'modex/' . $arr['filename'];
-                if (!Storage::exists($expectedPath)) {
+                $expectedPath = 'modex/'.$arr['filename'];
+                if (! Storage::exists($expectedPath)) {
                     $temp = $conf['temp_output_path'] ?? null;
                     if ($temp && Storage::exists($temp)) {
                         try {
                             $contents = Storage::get($temp);
                             Storage::put($expectedPath, $contents);
                             Storage::delete($temp);
-                        } catch (\Throwable $e) {}
+                        } catch (\Throwable $e) {
+                        }
                     }
                 }
                 if (Storage::exists($expectedPath)) {
@@ -75,24 +78,28 @@ class ExportFilesController extends Controller
                             'file_path' => $expectedPath,
                             'file_size' => $size,
                             'total_rows' => $total,
-                            'error_message' => null
+                            'error_message' => null,
                         ]);
-                    } catch (\Throwable $e) {}
+                    } catch (\Throwable $e) {
+                    }
                 }
             }
         }
-        $normalized = array_map(function($file) {
+        $normalized = array_map(function ($file) {
             $arr = $file->toArray();
             $conf = $arr['export_config'] ?? [];
-            if (!is_array($conf)) $conf = [];
-            $conf['progress_rows'] = (int)($conf['progress_rows'] ?? 0);
-            $conf['total_rows'] = (int)($conf['total_rows'] ?? ($arr['total_rows'] ?? 0));
+            if (! is_array($conf)) {
+                $conf = [];
+            }
+            $conf['progress_rows'] = (int) ($conf['progress_rows'] ?? 0);
+            $conf['total_rows'] = (int) ($conf['total_rows'] ?? ($arr['total_rows'] ?? 0));
             if (($arr['status'] ?? '') === 'processing' && $conf['total_rows'] > 0 && $conf['progress_rows'] === 0) {
                 $conf['progress_rows'] = 1;
             }
             $arr['export_config'] = $conf;
             $arr['progress_rows'] = $conf['progress_rows'];
             $arr['rows'] = $conf['total_rows'];
+
             return $arr;
         }, $files->items());
 
@@ -103,8 +110,8 @@ class ExportFilesController extends Controller
                 'current_page' => $files->currentPage(),
                 'last_page' => $files->lastPage(),
                 'per_page' => $files->perPage(),
-                'total' => $files->total()
-            ]
+                'total' => $files->total(),
+            ],
         ]);
     }
 
@@ -116,9 +123,11 @@ class ExportFilesController extends Controller
         $file = ExportFile::with('creator')->findOrFail($id);
         $arr = $file->toArray();
         $conf = $arr['export_config'] ?? [];
-        if (!is_array($conf)) $conf = [];
-        $conf['progress_rows'] = (int)($conf['progress_rows'] ?? 0);
-        $conf['total_rows'] = (int)($conf['total_rows'] ?? ($arr['total_rows'] ?? 0));
+        if (! is_array($conf)) {
+            $conf = [];
+        }
+        $conf['progress_rows'] = (int) ($conf['progress_rows'] ?? 0);
+        $conf['total_rows'] = (int) ($conf['total_rows'] ?? ($arr['total_rows'] ?? 0));
         if (($arr['status'] ?? '') === 'processing' && $conf['total_rows'] > 0 && $conf['progress_rows'] === 0) {
             $conf['progress_rows'] = 1;
         }
@@ -127,11 +136,11 @@ class ExportFilesController extends Controller
         $arr['rows'] = $conf['total_rows'];
         if (($arr['status'] ?? '') === 'processing') {
             $path = $arr['file_path'] ?? null;
-            $expectedPath = $path ?: ('modex/' . ($arr['filename'] ?? ''));
+            $expectedPath = $path ?: ('modex/'.($arr['filename'] ?? ''));
             $exists = $expectedPath ? Storage::exists($expectedPath) : false;
             $progress = $conf['progress_rows'] ?? 0;
             $total = $conf['total_rows'] ?? ($arr['total_rows'] ?? 0);
-            if (!$exists && $total > 0 && $progress >= $total) {
+            if (! $exists && $total > 0 && $progress >= $total) {
                 $temp = $conf['temp_output_path'] ?? null;
                 if ($temp && Storage::exists($temp)) {
                     try {
@@ -139,7 +148,8 @@ class ExportFilesController extends Controller
                         Storage::put($expectedPath, $contents);
                         Storage::delete($temp);
                         $exists = true;
-                    } catch (\Throwable $e) {}
+                    } catch (\Throwable $e) {
+                    }
                 }
             }
             if ($exists && $total > 0 && $progress >= $total) {
@@ -149,20 +159,22 @@ class ExportFilesController extends Controller
                     'file_path' => $expectedPath,
                     'file_size' => $size,
                     'total_rows' => $total,
-                    'error_message' => null
+                    'error_message' => null,
                 ]);
                 $arr = $file->fresh()->toArray();
                 $c2 = $arr['export_config'] ?? [];
-                if (!is_array($c2)) $c2 = [];
-                $c2['progress_rows'] = (int)($c2['progress_rows'] ?? $total);
-                $c2['total_rows'] = (int)($c2['total_rows'] ?? $total);
+                if (! is_array($c2)) {
+                    $c2 = [];
+                }
+                $c2['progress_rows'] = (int) ($c2['progress_rows'] ?? $total);
+                $c2['total_rows'] = (int) ($c2['total_rows'] ?? $total);
                 $arr['export_config'] = $c2;
             }
         }
-        
+
         return response()->json([
             'success' => true,
-            'data' => $arr
+            'data' => $arr,
         ]);
     }
 
@@ -174,13 +186,12 @@ class ExportFilesController extends Controller
         $request->validate([
             'format' => ['required', Rule::in(['excel', 'csv', 'txt'])],
             'filename' => 'nullable|string|max:100',
-            'export_config' => 'nullable|array'
+            'export_config' => 'nullable|array',
         ]);
-
 
         // Определяем расширение файла
         $format = $request->format;
-        $extension = match($format) {
+        $extension = match ($format) {
             'excel' => 'xlsx',  // Настоящий Excel файл
             'csv' => 'csv',
             'txt' => 'txt',
@@ -193,18 +204,18 @@ class ExportFilesController extends Controller
             // Если указано пользовательское название, используем его
             $originalFilename = $customFilename;
             // Добавляем расширение, если его нет
-            if (!preg_match('/\.(xlsx?|csv|txt)$/i', $originalFilename)) {
-                $originalFilename .= '.' . $extension;
+            if (! preg_match('/\.(xlsx?|csv|txt)$/i', $originalFilename)) {
+                $originalFilename .= '.'.$extension;
             } else {
                 // Если расширение уже есть, заменяем его на правильное
-                $originalFilename = preg_replace('/\.(xlsx?|csv|txt)$/i', '.' . $extension, $originalFilename);
+                $originalFilename = preg_replace('/\.(xlsx?|csv|txt)$/i', '.'.$extension, $originalFilename);
             }
             // Генерируем системное имя файла
-            $filename = 'export_' . time() . '_' . uniqid() . '.' . $extension;
+            $filename = 'export_'.time().'_'.uniqid().'.'.$extension;
         } else {
             // Автоматическое название
-            $originalFilename = 'Экспорт товаров ' . now()->format('d.m.Y H:i') . '.' . $extension;
-            $filename = 'export_' . time() . '_' . uniqid() . '.' . $extension;
+            $originalFilename = 'Экспорт товаров '.now()->format('d.m.Y H:i').'.'.$extension;
+            $filename = 'export_'.time().'_'.uniqid().'.'.$extension;
         }
 
         $exportConfig = $request->export_config ?? [];
@@ -215,16 +226,16 @@ class ExportFilesController extends Controller
                 $templateData = base64_decode($exportConfig['excel_template_data']);
                 if ($templateData) {
                     $templateHash = md5($templateData);
-                    $templatePath = 'export_templates/' . $templateHash . '.xlsx';
-    
-                    if (!Storage::exists($templatePath)) {
+                    $templatePath = 'export_templates/'.$templateHash.'.xlsx';
+
+                    if (! Storage::exists($templatePath)) {
                         Storage::put($templatePath, $templateData);
                     }
-    
+
                     $exportConfig['template_path'] = $templatePath;
                 }
             } catch (\Exception $e) {
-                \Illuminate\Support\Facades\Log::error('Error saving export template: ' . $e->getMessage());
+                \Illuminate\Support\Facades\Log::error('Error saving export template: '.$e->getMessage());
             }
             // Удаляем данные шаблона из конфига, чтобы не сохранять в БД огромную строку
             unset($exportConfig['excel_template_data']);
@@ -236,7 +247,7 @@ class ExportFilesController extends Controller
             'original_filename' => $originalFilename,
             'format' => $format, // Сохраняем оригинальный format (excel, csv, txt)
             'status' => 'pending',
-            'export_config' => $exportConfig
+            'export_config' => $exportConfig,
         ]);
 
         // Запускаем задачу экспорта (асинхронно через очередь)
@@ -245,7 +256,7 @@ class ExportFilesController extends Controller
         return response()->json([
             'success' => true,
             'data' => $file->load('creator'),
-            'message' => 'Процесс экспорта запущен'
+            'message' => 'Процесс экспорта запущен',
         ]);
     }
 
@@ -256,7 +267,7 @@ class ExportFilesController extends Controller
     {
         // Создаем тестовый файл
         $testContent = "id,name,sku,price\n1,Тестовый товар 1,TEST001,100\n2,Тестовый товар 2,TEST002,200\n";
-        $filePath = 'exports/' . $exportFile->filename;
+        $filePath = 'exports/'.$exportFile->filename;
 
         Storage::put($filePath, $testContent);
 
@@ -264,12 +275,12 @@ class ExportFilesController extends Controller
             'status' => 'completed',
             'file_path' => $filePath,
             'file_size' => strlen($testContent),
-            'total_rows' => 2
+            'total_rows' => 2,
         ]);
 
         return response()->json([
             'success' => true,
-            'message' => 'Экспорт завершен (тест)'
+            'message' => 'Экспорт завершен (тест)',
         ]);
     }
 
@@ -289,44 +300,44 @@ class ExportFilesController extends Controller
             // Ищем токен в базе
             $accessToken = \Laravel\Sanctum\PersonalAccessToken::findToken($tokenValue);
 
-            if (!$accessToken) {
+            if (! $accessToken) {
                 // Если не нашли, пробуем с полным токеном
                 $accessToken = \Laravel\Sanctum\PersonalAccessToken::findToken($token);
             }
 
-            if (!$accessToken || !$accessToken->tokenable) {
+            if (! $accessToken || ! $accessToken->tokenable) {
                 abort(401, 'Неверный токен');
             }
 
             $user = $accessToken->tokenable;
 
             // Проверяем, что пользователь имеет доступ к файлу
-            if ($user->id !== $exportFile->created_by && !$user->hasRole(['admin', 'manager'])) {
+            if ($user->id !== $exportFile->created_by && ! $user->hasRole(['admin', 'manager'])) {
                 abort(403, 'Доступ запрещен');
             }
         } else {
             // Стандартная аутентификация
-            if (!Auth::check()) {
+            if (! Auth::check()) {
                 abort(401, 'Не авторизован');
             }
 
             $user = Auth::user();
 
             // Проверяем доступ
-            if ($user->id !== $exportFile->created_by && !$user->hasRole(['admin', 'manager'])) {
+            if ($user->id !== $exportFile->created_by && ! $user->hasRole(['admin', 'manager'])) {
                 abort(403, 'Доступ запрещен');
             }
         }
         // TODO: Восстановить после исправления проблемы с токенами
 
         // Проверяем, что файл готов к скачиванию
-        if (!$exportFile->isDownloadable()) {
+        if (! $exportFile->isDownloadable()) {
             \Log::error('File not downloadable', [
                 'file_id' => $exportFile->id,
                 'status' => $exportFile->status,
                 'file_path' => $exportFile->file_path,
                 'full_path' => $exportFile->getFullPath(),
-                'file_exists' => file_exists($exportFile->getFullPath())
+                'file_exists' => file_exists($exportFile->getFullPath()),
             ]);
             abort(404, 'Файл не найден или еще не готов');
         }
@@ -337,10 +348,10 @@ class ExportFilesController extends Controller
             'file_id' => $exportFile->id,
             'file_path' => $exportFile->file_path,
             'filename' => $filename,
-            'exists' => Storage::exists($exportFile->file_path)
+            'exists' => Storage::exists($exportFile->file_path),
         ]);
 
-        if (!Storage::exists($exportFile->file_path)) {
+        if (! Storage::exists($exportFile->file_path)) {
             \Log::error('File does not exist for download', ['path' => $exportFile->file_path]);
             abort(404, 'Файл не найден');
         }
@@ -366,7 +377,7 @@ class ExportFilesController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Файл удален'
+            'message' => 'Файл удален',
         ]);
     }
 
@@ -381,9 +392,9 @@ class ExportFilesController extends Controller
         if ($type === 'modex') {
             $query->where('export_config->type', 'modex');
         } elseif ($type === 'export') {
-            $query->where(function($q) {
+            $query->where(function ($q) {
                 $q->whereNull('export_config->type')
-                  ->orWhere('export_config->type', '!=', 'modex');
+                    ->orWhere('export_config->type', '!=', 'modex');
             });
         }
         $files = $query->get();
@@ -403,7 +414,7 @@ class ExportFilesController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => "Удалено {$deletedCount} файл(ов)"
+            'message' => "Удалено {$deletedCount} файл(ов)",
         ]);
     }
 
@@ -424,7 +435,7 @@ class ExportFilesController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $stats
+            'data' => $stats,
         ]);
     }
 
@@ -437,12 +448,12 @@ class ExportFilesController extends Controller
             // Удаляем задания для ProcessModexJob
             DB::table('jobs')
                 ->where('payload', 'like', '%App\\\\Jobs\\\\ProcessModexJob%')
-                ->where(function($q) use ($exportFile) {
+                ->where(function ($q) use ($exportFile) {
                     $patterns = [
-                        '%"id";i:' . $exportFile->id . '%',
-                        '%"id";s:%"' . $exportFile->id . '"%',
-                        '%"id":' . $exportFile->id . '%',
-                        '%;i:' . $exportFile->id . '%'
+                        '%"id";i:'.$exportFile->id.'%',
+                        '%"id";s:%"'.$exportFile->id.'"%',
+                        '%"id":'.$exportFile->id.'%',
+                        '%;i:'.$exportFile->id.'%',
                     ];
                     foreach ($patterns as $p) {
                         $q->orWhere('payload', 'like', $p);
@@ -453,12 +464,12 @@ class ExportFilesController extends Controller
             // Удаляем задания для ProcessExportJob (на случай общего экспорта)
             DB::table('jobs')
                 ->where('payload', 'like', '%App\\\\Jobs\\\\ProcessExportJob%')
-                ->where(function($q) use ($exportFile) {
+                ->where(function ($q) use ($exportFile) {
                     $patterns = [
-                        '%"id";i:' . $exportFile->id . '%',
-                        '%"id";s:%"' . $exportFile->id . '"%',
-                        '%"id":' . $exportFile->id . '%',
-                        '%;i:' . $exportFile->id . '%'
+                        '%"id";i:'.$exportFile->id.'%',
+                        '%"id";s:%"'.$exportFile->id.'"%',
+                        '%"id":'.$exportFile->id.'%',
+                        '%;i:'.$exportFile->id.'%',
                     ];
                     foreach ($patterns as $p) {
                         $q->orWhere('payload', 'like', $p);
@@ -468,16 +479,16 @@ class ExportFilesController extends Controller
 
             // Также очищаем failed_jobs
             DB::table('failed_jobs')
-                ->where(function($q) {
+                ->where(function ($q) {
                     $q->where('payload', 'like', '%App\\\\Jobs\\\\ProcessModexJob%')
-                      ->orWhere('payload', 'like', '%App\\\\Jobs\\\\ProcessExportJob%');
+                        ->orWhere('payload', 'like', '%App\\\\Jobs\\\\ProcessExportJob%');
                 })
-                ->where(function($q) use ($exportFile) {
+                ->where(function ($q) use ($exportFile) {
                     $patterns = [
-                        '%"id";i:' . $exportFile->id . '%',
-                        '%"id";s:%"' . $exportFile->id . '"%',
-                        '%"id":' . $exportFile->id . '%',
-                        '%;i:' . $exportFile->id . '%'
+                        '%"id";i:'.$exportFile->id.'%',
+                        '%"id";s:%"'.$exportFile->id.'"%',
+                        '%"id":'.$exportFile->id.'%',
+                        '%;i:'.$exportFile->id.'%',
                     ];
                     foreach ($patterns as $p) {
                         $q->orWhere('payload', 'like', $p);

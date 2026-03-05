@@ -27,7 +27,7 @@ class ShopDpdSettings extends Model
         'default_length',
         'default_width',
         'default_height',
-        'is_active'
+        'is_active',
     ];
 
     protected $casts = [
@@ -35,7 +35,7 @@ class ShopDpdSettings extends Model
         'default_length' => 'decimal:2',
         'default_width' => 'decimal:2',
         'default_height' => 'decimal:2',
-        'is_active' => 'boolean'
+        'is_active' => 'boolean',
     ];
 
     /**
@@ -46,32 +46,3 @@ class ShopDpdSettings extends Model
         return self::where('is_active', true)->first();
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

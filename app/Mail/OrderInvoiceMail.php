@@ -2,24 +2,25 @@
 
 namespace App\Mail;
 
-use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldQueue;
-use Illuminate\Mail\Mailable;
-use Illuminate\Mail\Mailables\Content;
-use Illuminate\Mail\Mailables\Envelope;
-use Illuminate\Mail\Mailables\Attachment;
-use Illuminate\Queue\SerializesModels;
-use App\Services\InvoicePdfService;
-use App\Models\ShopPaymentMethod;
 use App\Models\Contact;
 use App\Models\Setting;
+use App\Models\ShopPaymentMethod;
+use App\Services\InvoicePdfService;
+use Illuminate\Bus\Queueable;
+use Illuminate\Mail\Mailable;
+use Illuminate\Mail\Mailables\Attachment;
+use Illuminate\Mail\Mailables\Content;
+use Illuminate\Mail\Mailables\Envelope;
+use Illuminate\Queue\SerializesModels;
 
 class OrderInvoiceMail extends Mailable
 {
     use Queueable, SerializesModels;
 
     public $order;
+
     public $contacts;
+
     public $siteInfo;
 
     /**
@@ -37,13 +38,13 @@ class OrderInvoiceMail extends Mailable
      */
     public function envelope(): Envelope
     {
-        $subject = 'Накладная по заказу №' . $this->order->order_number;
-        
+        $subject = 'Накладная по заказу №'.$this->order->order_number;
+
         // Если способ оплаты - банковский перевод, меняем тему письма
         if ($this->isTransferPaymentMethod()) {
-            $subject = 'Счет на оплату по заказу №' . $this->order->order_number;
+            $subject = 'Счет на оплату по заказу №'.$this->order->order_number;
         }
-        
+
         return new Envelope(
             subject: $subject,
         );
@@ -67,31 +68,31 @@ class OrderInvoiceMail extends Mailable
     public function attachments(): array
     {
         $attachments = [];
-        
+
         // Проверяем настройку two_stage_pay
         $twoStagePay = Setting::where('key', 'two_stage_pay')->first();
         $isTwoStagePay = $twoStagePay && ($twoStagePay->value === '1' || $twoStagePay->value === true);
-        
+
         // Если включена двухэтапная оплата и оплата еще не одобрена, не прикрепляем счет
-        if ($isTwoStagePay && (!$this->order->pay_agree || $this->order->pay_agree == 0)) {
+        if ($isTwoStagePay && (! $this->order->pay_agree || $this->order->pay_agree == 0)) {
             return $attachments;
         }
-        
+
         // Если способ оплаты - банковский перевод, добавляем PDF счет
         if ($this->isTransferPaymentMethod()) {
-            
+
             try {
-                $pdfService = new InvoicePdfService();
-                
+                $pdfService = new InvoicePdfService;
+
                 // Получаем способ оплаты для настроек
                 $paymentMethod = ShopPaymentMethod::find($this->order->payment_method_id);
                 $settings = $paymentMethod ? ($paymentMethod->settings ?? []) : [];
-                
+
                 // Получаем данные контакта
                 $contact = Contact::where('is_main', 1)->first();
                 $mainAddress = $contact ? $contact->mainAddress() : null;
                 $mainPhone = $contact ? $contact->mainPhone() : null;
-                
+
                 // Получаем товары заказа
                 $orderItems = [];
                 if (method_exists($this->order, 'getItemsWithDetails')) {
@@ -99,13 +100,13 @@ class OrderInvoiceMail extends Mailable
                 } elseif (isset($this->order->items) && is_array($this->order->items)) {
                     $orderItems = $this->order->items;
                 }
-                
+
                 // Подготавливаем данные для PDF
                 $data = [
                     'order_id' => $this->order->order_number ?? $this->order->id,
                     'date' => $this->order->created_at ? $this->order->created_at->format('d.m.Y') : date('d.m.Y'),
                     'total_amount' => $this->order->total_amount ?? 0,
-                    'with_vat' => isset($settings['with_vat']) ? (bool)$settings['with_vat'] : true,
+                    'with_vat' => isset($settings['with_vat']) ? (bool) $settings['with_vat'] : true,
                     'settings' => $settings,
                     'contact' => $contact,
                     'main_address' => $mainAddress,
@@ -119,25 +120,25 @@ class OrderInvoiceMail extends Mailable
                     'bonus_points_to_use' => $this->order->bonus_points_to_use ?? 0,
                     'delivery_cost' => $this->order->delivery_cost ?? 0,
                 ];
-                
+
                 // Генерируем PDF
                 $pdfContent = $pdfService->generatePdf($data);
-                
+
                 // Добавляем PDF как вложение
                 $attachments[] = Attachment::fromData(
                     fn () => $pdfContent,
-                    'schet-' . ($this->order->order_number ?? $this->order->id) . '.pdf'
+                    'schet-'.($this->order->order_number ?? $this->order->id).'.pdf'
                 )->withMime('application/pdf');
-                
+
             } catch (\Exception $e) {
-                \Log::error('Ошибка генерации PDF счета для письма: ' . $e->getMessage());
+                \Log::error('Ошибка генерации PDF счета для письма: '.$e->getMessage());
                 // Не прерываем отправку письма, если PDF не удалось сгенерировать
             }
         }
-        
+
         return $attachments;
     }
-    
+
     /**
      * Проверка, является ли способ оплаты банковским переводом
      */
@@ -147,13 +148,14 @@ class OrderInvoiceMail extends Mailable
         if ($this->order->payment_method === 'Банковский перевод') {
             return true;
         }
-        
+
         // Проверяем по ID способа оплаты
         if (isset($this->order->payment_method_id)) {
             $paymentMethod = ShopPaymentMethod::find($this->order->payment_method_id);
+
             return $paymentMethod && $paymentMethod->type === 'transfer';
         }
-        
+
         return false;
     }
 }

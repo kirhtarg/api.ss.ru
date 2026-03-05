@@ -4,13 +4,12 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopGood;
-use App\Models\ShopGoodVideo;
 use App\Models\ShopGoodVariation;
-use Illuminate\Http\Request;
+use App\Models\ShopGoodVideo;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Validator;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 
 class ShopGoodVideosController extends Controller
 {
@@ -20,20 +19,19 @@ class ShopGoodVideosController extends Controller
     public function index(Request $request, $goodId): JsonResponse
     {
         $good = ShopGood::findOrFail($goodId);
-        
+
         $query = $good->videos();
-        
+
         // Фильтр по вариации
         if ($request->filled('variation_id')) {
             $query->where('variation_id', $request->get('variation_id'));
         }
 
         $videos = $query->ordered()->get();
-        
 
         return response()->json([
             'success' => true,
-            'data' => $videos
+            'data' => $videos,
         ]);
     }
 
@@ -43,13 +41,13 @@ class ShopGoodVideosController extends Controller
     public function getAllWithVariations(Request $request, $goodId): JsonResponse
     {
         $good = ShopGood::findOrFail($goodId);
-        
+
         // Получаем все видео товара (где good_id = $goodId И variation_id = null)
         $goodVideos = ShopGoodVideo::where('good_id', $goodId)
             ->whereNull('variation_id')
             ->ordered()
             ->get();
-        
+
         // Получаем все видео вариаций этого товара (где good_id = null И variation_id принадлежит вариациям товара)
         $variationIds = ShopGoodVariation::where('good_id', $goodId)->pluck('id');
         $variationVideos = ShopGoodVideo::whereIn('variation_id', $variationIds)
@@ -57,13 +55,13 @@ class ShopGoodVideosController extends Controller
             ->ordered()
             ->get()
             ->groupBy('variation_id');
-        
+
         return response()->json([
             'success' => true,
             'data' => [
                 'good' => $goodVideos,
-                'variations' => $variationVideos
-            ]
+                'variations' => $variationVideos,
+            ],
         ]);
     }
 
@@ -79,33 +77,33 @@ class ShopGoodVideosController extends Controller
             'external_url' => 'nullable|url',
             'variation_id' => 'nullable|integer|exists:shop_good_variations,id',
             'title' => 'nullable|string|max:255',
-            'thumbnail' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:5120' // 5MB
+            'thumbnail' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:5120', // 5MB
         ]);
 
         if ($validator->fails()) {
             Log::error('Video validation failed', [
                 'errors' => $validator->errors()->toArray(),
-                'request_data' => $request->all()
+                'request_data' => $request->all(),
             ]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
         // Проверяем, что указан либо файл, либо URL
-        if (!$request->hasFile('video') && !$request->filled('external_url')) {
+        if (! $request->hasFile('video') && ! $request->filled('external_url')) {
             Log::error('No video file or external URL provided', [
                 'has_file' => $request->hasFile('video'),
                 'external_url' => $request->get('external_url'),
-                'filled_external_url' => $request->filled('external_url')
+                'filled_external_url' => $request->filled('external_url'),
             ]);
-            
+
             return response()->json([
                 'success' => false,
-                'message' => 'Необходимо указать либо файл видео, либо URL'
+                'message' => 'Необходимо указать либо файл видео, либо URL',
             ], 422);
         }
 
@@ -114,24 +112,24 @@ class ShopGoodVideosController extends Controller
             $file = $request->file('video');
             $fileSize = $file->getSize();
             $maxSize = 100 * 1024 * 1024; // 100MB в байтах
-            
+
             if ($fileSize > $maxSize) {
                 Log::error('Video file too large', [
                     'file_size' => $fileSize,
                     'max_size' => $maxSize,
-                    'file_name' => $file->getClientOriginalName()
+                    'file_name' => $file->getClientOriginalName(),
                 ]);
-                
+
                 return response()->json([
                     'success' => false,
-                    'message' => 'Размер файла превышает 100MB. Пожалуйста, выберите файл меньшего размера или используйте внешнюю ссылку.'
+                    'message' => 'Размер файла превышает 100MB. Пожалуйста, выберите файл меньшего размера или используйте внешнюю ссылку.',
                 ], 413);
             }
         }
 
         try {
             $videoData = [
-                'title' => $request->get('title') ?: null
+                'title' => $request->get('title') ?: null,
             ];
 
             // Определяем, для товара или вариации создаем видео
@@ -150,12 +148,12 @@ class ShopGoodVideosController extends Controller
             // Загрузка файла видео
             if ($request->hasFile('video')) {
                 $video = $request->file('video');
-                $filename = uniqid() . '.' . $video->getClientOriginalExtension();
-                $path = 'videos/goods/' . $goodId . '/' . $filename;
-                
+                $filename = uniqid().'.'.$video->getClientOriginalExtension();
+                $path = 'videos/goods/'.$goodId.'/'.$filename;
+
                 // Путь к папке public фронтенда
                 $frontendPublicPath = frontend_public_path();
-                $fullPath = $frontendPublicPath . '/' . $path;
+                $fullPath = $frontendPublicPath.'/'.$path;
                 $dir = dirname($fullPath);
 
                 Log::info('Video upload debug:', [
@@ -163,27 +161,27 @@ class ShopGoodVideosController extends Controller
                     'path' => $path,
                     'frontendPublicPath' => $frontendPublicPath,
                     'fullPath' => $fullPath,
-                    'dir' => $dir
+                    'dir' => $dir,
                 ]);
 
                 // Создаем директорию, если её нет
-                if (!is_dir($dir)) {
-                    Log::info('Creating directory: ' . $dir);
+                if (! is_dir($dir)) {
+                    Log::info('Creating directory: '.$dir);
                     $mkdirResult = mkdir($dir, 0755, true);
-                    Log::info('mkdir result: ' . ($mkdirResult ? 'success' : 'failed'));
+                    Log::info('mkdir result: '.($mkdirResult ? 'success' : 'failed'));
                 }
 
-                Log::info('Moving file to: ' . $fullPath);
+                Log::info('Moving file to: '.$fullPath);
                 $moveResult = $video->move($dir, $filename);
-                Log::info('File move result: ' . ($moveResult ? 'success' : 'failed'));
-                
+                Log::info('File move result: '.($moveResult ? 'success' : 'failed'));
+
                 if (file_exists($fullPath)) {
-                    Log::info('File successfully saved: ' . $fullPath);
-                    Log::info('File size: ' . filesize($fullPath) . ' bytes');
+                    Log::info('File successfully saved: '.$fullPath);
+                    Log::info('File size: '.filesize($fullPath).' bytes');
                 } else {
-                    Log::error('File was not saved: ' . $fullPath);
+                    Log::error('File was not saved: '.$fullPath);
                 }
-                
+
                 $videoData['video_path'] = $path;
             }
 
@@ -196,39 +194,39 @@ class ShopGoodVideosController extends Controller
             // Загрузка превью
             if ($request->hasFile('thumbnail')) {
                 $thumbnail = $request->file('thumbnail');
-                $filename = uniqid() . '.' . $thumbnail->getClientOriginalExtension();
-                $path = 'images/shop/videos/thumbnails/' . $goodId . '/' . $filename;
-                
+                $filename = uniqid().'.'.$thumbnail->getClientOriginalExtension();
+                $path = 'images/shop/videos/thumbnails/'.$goodId.'/'.$filename;
+
                 // Путь к папке public фронтенда
                 $frontendPublicPath = frontend_public_path();
-                $fullPath = $frontendPublicPath . '/' . $path;
+                $fullPath = $frontendPublicPath.'/'.$path;
                 $dir = dirname($fullPath);
 
                 Log::info('Thumbnail upload debug:', [
                     'filename' => $filename,
                     'path' => $path,
                     'fullPath' => $fullPath,
-                    'dir' => $dir
+                    'dir' => $dir,
                 ]);
 
                 // Создаем директорию, если её нет
-                if (!is_dir($dir)) {
-                    Log::info('Creating thumbnail directory: ' . $dir);
+                if (! is_dir($dir)) {
+                    Log::info('Creating thumbnail directory: '.$dir);
                     $mkdirResult = mkdir($dir, 0755, true);
-                    Log::info('Thumbnail mkdir result: ' . ($mkdirResult ? 'success' : 'failed'));
+                    Log::info('Thumbnail mkdir result: '.($mkdirResult ? 'success' : 'failed'));
                 }
 
-                Log::info('Moving thumbnail to: ' . $fullPath);
+                Log::info('Moving thumbnail to: '.$fullPath);
                 $moveResult = $thumbnail->move($dir, $filename);
-                Log::info('Thumbnail move result: ' . ($moveResult ? 'success' : 'failed'));
-                
+                Log::info('Thumbnail move result: '.($moveResult ? 'success' : 'failed'));
+
                 if (file_exists($fullPath)) {
-                    Log::info('Thumbnail successfully saved: ' . $fullPath);
-                    Log::info('Thumbnail size: ' . filesize($fullPath) . ' bytes');
+                    Log::info('Thumbnail successfully saved: '.$fullPath);
+                    Log::info('Thumbnail size: '.filesize($fullPath).' bytes');
                 } else {
-                    Log::error('Thumbnail was not saved: ' . $fullPath);
+                    Log::error('Thumbnail was not saved: '.$fullPath);
                 }
-                
+
                 $videoData['thumbnail'] = $path;
             }
 
@@ -244,27 +242,28 @@ class ShopGoodVideosController extends Controller
                     ->orderBy('sort_order', 'desc')->first();
             }
             $videoData['sort_order'] = $lastVideo ? $lastVideo->sort_order + 1 : 1;
-            
+
             Log::info('Creating video record', $videoData);
-            
+
             // Проверяем, что все необходимые поля заполнены
             if (empty($videoData['external_url']) && empty($videoData['video_path'])) {
                 Log::error('Neither external_url nor video_path provided', $videoData);
+
                 return response()->json([
                     'success' => false,
-                    'message' => 'Необходимо указать либо файл видео, либо URL'
+                    'message' => 'Необходимо указать либо файл видео, либо URL',
                 ], 422);
             }
-            
+
             $goodVideo = ShopGoodVideo::create($videoData);
-            
+
             // Перезагружаем модель, чтобы получить accessors
             $goodVideo->refresh();
 
             return response()->json([
                 'success' => true,
                 'message' => 'Видео успешно загружено',
-                'data' => $goodVideo
+                'data' => $goodVideo,
             ], 201);
 
         } catch (\Exception $e) {
@@ -272,12 +271,12 @@ class ShopGoodVideosController extends Controller
                 'good_id' => $goodId,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
-                'request_data' => $request->all()
+                'request_data' => $request->all(),
             ]);
-            
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка загрузки видео: ' . $e->getMessage()
+                'message' => 'Ошибка загрузки видео: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -302,14 +301,14 @@ class ShopGoodVideosController extends Controller
 
         $validator = Validator::make($request->all(), [
             'title' => 'nullable|string|max:255',
-            'external_url' => 'nullable|url'
+            'external_url' => 'nullable|url',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -318,7 +317,7 @@ class ShopGoodVideosController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Видео успешно обновлено',
-            'data' => $video
+            'data' => $video,
         ]);
     }
 
@@ -343,16 +342,16 @@ class ShopGoodVideosController extends Controller
         try {
             // Удаляем файлы с фронтенда
             $frontendPublicPath = frontend_public_path();
-            
+
             if ($video->video_path) {
-                $videoPath = $frontendPublicPath . '/' . $video->video_path;
+                $videoPath = $frontendPublicPath.'/'.$video->video_path;
                 if (file_exists($videoPath)) {
                     unlink($videoPath);
                 }
             }
 
             if ($video->thumbnail) {
-                $thumbnailPath = $frontendPublicPath . '/' . $video->thumbnail;
+                $thumbnailPath = $frontendPublicPath.'/'.$video->thumbnail;
                 if (file_exists($thumbnailPath)) {
                     unlink($thumbnailPath);
                 }
@@ -362,13 +361,13 @@ class ShopGoodVideosController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Видео успешно удалено'
+                'message' => 'Видео успешно удалено',
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления видео: ' . $e->getMessage()
+                'message' => 'Ошибка удаления видео: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -410,7 +409,7 @@ class ShopGoodVideosController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Главное видео установлено'
+            'message' => 'Главное видео установлено',
         ]);
     }
 
@@ -422,14 +421,14 @@ class ShopGoodVideosController extends Controller
         $validator = Validator::make($request->all(), [
             'videos' => 'required|array',
             'videos.*.id' => 'required|exists:shop_good_videos,id',
-            'videos.*.sort_order' => 'required|integer'
+            'videos.*.sort_order' => 'required|integer',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -441,7 +440,7 @@ class ShopGoodVideosController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Порядок видео обновлен'
+            'message' => 'Порядок видео обновлен',
         ]);
     }
 }

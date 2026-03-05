@@ -19,12 +19,12 @@ class TelegramNotification extends Model
         'status',
         'error_message',
         'attempts',
-        'sent_at'
+        'sent_at',
     ];
 
     protected $casts = [
         'data' => 'array',
-        'sent_at' => 'datetime'
+        'sent_at' => 'datetime',
     ];
 
     /**
@@ -66,7 +66,7 @@ class TelegramNotification extends Model
     {
         $this->update([
             'status' => 'sent',
-            'sent_at' => now()
+            'sent_at' => now(),
         ]);
     }
 
@@ -78,7 +78,7 @@ class TelegramNotification extends Model
         $this->update([
             'status' => 'failed',
             'error_message' => $errorMessage,
-            'attempts' => $this->attempts + 1
+            'attempts' => $this->attempts + 1,
         ]);
     }
 

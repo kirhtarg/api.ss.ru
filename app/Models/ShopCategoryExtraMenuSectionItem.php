@@ -15,15 +15,15 @@ class ShopCategoryExtraMenuSectionItem extends Model
     protected $fillable = [
         'section_id',
         'category_id',
-        'sort_order'
+        'sort_order',
     ];
 
     protected $casts = [
-        'sort_order' => 'integer'
+        'sort_order' => 'integer',
     ];
 
     protected $attributes = [
-        'sort_order' => 0
+        'sort_order' => 0,
     ];
 
     /**
@@ -42,16 +42,3 @@ class ShopCategoryExtraMenuSectionItem extends Model
         return $this->belongsTo(ShopCategory::class, 'category_id');
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -3,10 +3,10 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\ShopPreorder;
 use App\Models\ShopOrderLog;
-use Illuminate\Http\Request;
+use App\Models\ShopPreorder;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class ShopPreordersController extends Controller
 {
@@ -53,7 +53,7 @@ class ShopPreordersController extends Controller
 
         // Получаем ID всех предзаказов для подсчета логов
         $preorderIds = $preorders->pluck('id')->toArray();
-        
+
         // Подсчитываем количество логов для каждого предзаказа
         $logsCount = ShopOrderLog::where('section', ShopOrderLog::SECTION_PREORDERS)
             ->whereIn('entity_id', $preorderIds)
@@ -71,7 +71,7 @@ class ShopPreordersController extends Controller
             if ($preorder->variation_id && $preorder->variation) {
                 $stockQuantity = $preorder->variation->stock_quantity ?? 0;
                 $remoteStockQuantity = $preorder->variation->remote_stock_quantity ?? null;
-            } 
+            }
             // Иначе берем остатки из основного товара
             elseif ($preorder->good) {
                 $stockQuantity = $preorder->good->stock_quantity ?? 0;
@@ -80,7 +80,7 @@ class ShopPreordersController extends Controller
 
             $preorder->stock_quantity = $stockQuantity;
             $preorder->remote_stock_quantity = $remoteStockQuantity;
-            
+
             // Добавляем количество логов
             $preorder->logs_count = $logsCount[$preorder->id] ?? 0;
 
@@ -106,7 +106,7 @@ class ShopPreordersController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $preorders
+            'data' => $preorders,
         ]);
     }
 
@@ -117,16 +117,16 @@ class ShopPreordersController extends Controller
     {
         $preorder = ShopPreorder::with(['good', 'variation', 'user'])->find($id);
 
-        if (!$preorder) {
+        if (! $preorder) {
             return response()->json([
                 'success' => false,
-                'message' => 'Предзаказ не найден'
+                'message' => 'Предзаказ не найден',
             ], 404);
         }
 
         return response()->json([
             'success' => true,
-            'data' => $preorder
+            'data' => $preorder,
         ]);
     }
 
@@ -137,10 +137,10 @@ class ShopPreordersController extends Controller
     {
         $preorder = ShopPreorder::find($id);
 
-        if (!$preorder) {
+        if (! $preorder) {
             return response()->json([
                 'success' => false,
-                'message' => 'Предзаказ не найден'
+                'message' => 'Предзаказ не найден',
             ], 404);
         }
 
@@ -149,14 +149,14 @@ class ShopPreordersController extends Controller
             'notes' => 'nullable|string|max:1000',
             'customer_name' => 'sometimes|string|max:255',
             'customer_email' => 'sometimes|email|max:255',
-            'customer_phone' => 'sometimes|string|max:20'
+            'customer_phone' => 'sometimes|string|max:20',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -165,7 +165,7 @@ class ShopPreordersController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Предзаказ обновлен',
-            'data' => $preorder
+            'data' => $preorder,
         ]);
     }
 
@@ -176,10 +176,10 @@ class ShopPreordersController extends Controller
     {
         $preorder = ShopPreorder::with('good')->find($id);
 
-        if (!$preorder) {
+        if (! $preorder) {
             return response()->json([
                 'success' => false,
-                'message' => 'Предзаказ не найден'
+                'message' => 'Предзаказ не найден',
             ], 404);
         }
 
@@ -187,7 +187,7 @@ class ShopPreordersController extends Controller
         $user = $request->user();
         $userName = $user ? $user->name : 'Администратор';
         $goodName = $preorder->good ? $preorder->good->name : $preorder->good_name;
-        
+
         ShopOrderLog::logPreorderDeleted(
             $preorder->id,
             $user ? $user->id : null,
@@ -199,7 +199,7 @@ class ShopPreordersController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Предзаказ удален'
+            'message' => 'Предзаказ удален',
         ]);
     }
 
@@ -210,24 +210,24 @@ class ShopPreordersController extends Controller
     {
         $preorder = ShopPreorder::with('good')->find($id);
 
-        if (!$preorder) {
+        if (! $preorder) {
             return response()->json([
                 'success' => false,
-                'message' => 'Предзаказ не найден'
+                'message' => 'Предзаказ не найден',
             ], 404);
         }
 
         $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
             'status' => 'required|in:pending,confirmed,cancelled,fulfilled',
             'comment' => 'nullable|string|max:1000',
-            'action_icon_id' => 'nullable|integer|exists:shop_order_log_icons,id'
+            'action_icon_id' => 'nullable|integer|exists:shop_order_log_icons,id',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -235,14 +235,14 @@ class ShopPreordersController extends Controller
         $newStatus = $request->status;
 
         $preorder->update([
-            'status' => $newStatus
+            'status' => $newStatus,
         ]);
 
         // Логируем изменение статуса
         $user = $request->user();
         $userName = $user ? $user->name : 'Администратор';
         $goodName = $preorder->good ? $preorder->good->name : $preorder->good_name;
-        
+
         ShopOrderLog::logPreorderStatusChange(
             $preorder->id,
             $oldStatus,
@@ -257,7 +257,7 @@ class ShopPreordersController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Статус предзаказа обновлен',
-            'data' => $preorder
+            'data' => $preorder,
         ]);
     }
 
@@ -268,10 +268,10 @@ class ShopPreordersController extends Controller
     {
         $preorder = ShopPreorder::find($id);
 
-        if (!$preorder) {
+        if (! $preorder) {
             return response()->json([
                 'success' => false,
-                'message' => 'Предзаказ не найден'
+                'message' => 'Предзаказ не найден',
             ], 404);
         }
 
@@ -288,19 +288,19 @@ class ShopPreordersController extends Controller
                     'action_bg_color' => $log->action_bg_color,
                     'action_icon' => $log->actionIcon ? [
                         'icon' => $log->actionIcon->icon,
-                        'color' => $log->actionIcon->color
+                        'color' => $log->actionIcon->color,
                     ] : null,
                     'comment' => $log->comment,
                     'user_name' => $log->user_name,
-                    'created_at' => $log->created_at
+                    'created_at' => $log->created_at,
                 ];
             });
 
         return response()->json([
             'success' => true,
             'data' => [
-                'logs' => $logs
-            ]
+                'logs' => $logs,
+            ],
         ]);
     }
 
@@ -311,23 +311,23 @@ class ShopPreordersController extends Controller
     {
         $preorder = ShopPreorder::with('good')->find($id);
 
-        if (!$preorder) {
+        if (! $preorder) {
             return response()->json([
                 'success' => false,
-                'message' => 'Предзаказ не найден'
+                'message' => 'Предзаказ не найден',
             ], 404);
         }
 
         $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
             'comment' => 'required|string|max:1000',
-            'action_icon_id' => 'nullable|integer|exists:shop_order_log_icons,id'
+            'action_icon_id' => 'nullable|integer|exists:shop_order_log_icons,id',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -340,7 +340,7 @@ class ShopPreordersController extends Controller
             'action_icon_id' => $request->get('action_icon_id'),
             'user_id' => $user ? $user->id : null,
             'user_name' => $userName,
-            'info' => "Предзаказ: {$goodName}"
+            'info' => "Предзаказ: {$goodName}",
         ]);
 
         // Загружаем иконку действия
@@ -356,12 +356,12 @@ class ShopPreordersController extends Controller
                 'action_bg_color' => $log->action_bg_color,
                 'action_icon' => $log->actionIcon ? [
                     'icon' => $log->actionIcon->icon,
-                    'color' => $log->actionIcon->color
+                    'color' => $log->actionIcon->color,
                 ] : null,
                 'comment' => $log->comment,
                 'user_name' => $log->user_name,
-                'created_at' => $log->created_at
-            ]
+                'created_at' => $log->created_at,
+            ],
         ]);
     }
 
@@ -372,22 +372,22 @@ class ShopPreordersController extends Controller
     {
         $preorder = ShopPreorder::with('good')->find($id);
 
-        if (!$preorder) {
+        if (! $preorder) {
             return response()->json([
                 'success' => false,
-                'message' => 'Предзаказ не найден'
+                'message' => 'Предзаказ не найден',
             ], 404);
         }
 
         $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
-            'quantity' => 'required|integer|min:1'
+            'quantity' => 'required|integer|min:1',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -411,8 +411,8 @@ class ShopPreordersController extends Controller
                 'action' => $log->action,
                 'action_color' => $log->action_color,
                 'user_name' => $log->user_name,
-                'created_at' => $log->created_at
-            ]
+                'created_at' => $log->created_at,
+            ],
         ]);
     }
 
@@ -436,7 +436,7 @@ class ShopPreordersController extends Controller
             if ($preorder->variation_id && $preorder->variation) {
                 $stockQuantity = $preorder->variation->stock_quantity ?? 0;
                 $remoteStockQuantity = $preorder->variation->remote_stock_quantity ?? null;
-            } 
+            }
             // Иначе берем остатки из основного товара
             elseif ($preorder->good) {
                 $stockQuantity = $preorder->good->stock_quantity ?? 0;
@@ -445,8 +445,8 @@ class ShopPreordersController extends Controller
 
             // Проверяем, есть ли товар в наличии
             $hasStock = $stockQuantity > 0;
-            $hasRemoteStock = $remoteStockQuantity !== null && 
-                             $remoteStockQuantity !== '' && 
+            $hasRemoteStock = $remoteStockQuantity !== null &&
+                             $remoteStockQuantity !== '' &&
                              $remoteStockQuantity !== '0';
 
             if ($hasStock || $hasRemoteStock) {
@@ -463,13 +463,12 @@ class ShopPreordersController extends Controller
             'fulfilled' => ShopPreorder::where('status', 'fulfilled')->count(),
             'today' => ShopPreorder::whereDate('created_at', today())->count(),
             'this_week' => ShopPreorder::whereBetween('created_at', [now()->startOfWeek(), now()->endOfWeek()])->count(),
-            'this_month' => ShopPreorder::whereMonth('created_at', now()->month)->count()
+            'this_month' => ShopPreorder::whereMonth('created_at', now()->month)->count(),
         ];
 
         return response()->json([
             'success' => true,
-            'data' => $stats
+            'data' => $stats,
         ]);
     }
 }
-

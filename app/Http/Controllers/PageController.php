@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Models\ConstructorPage;
-use Illuminate\Http\Request;
 
 class PageController extends Controller
 {
@@ -24,7 +23,7 @@ class PageController extends Controller
 
         return view('page-builder.render', [
             'page' => $page,
-            'structure' => $structure
+            'structure' => $structure,
         ]);
     }
 
@@ -33,7 +32,7 @@ class PageController extends Controller
      */
     private function prepareDynamicBlocks($structure)
     {
-        if (!is_array($structure)) {
+        if (! is_array($structure)) {
             return $structure;
         }
 
@@ -57,7 +56,7 @@ class PageController extends Controller
      */
     private function prepareBlockData($block)
     {
-        if (!isset($block['type'])) {
+        if (! isset($block['type'])) {
             return $block;
         }
 
@@ -102,12 +101,12 @@ class PageController extends Controller
         $query = \App\Models\ShopGood::with(['images', 'category', 'brand'])->active();
 
         // Фильтры
-        if (!empty($settings['category_ids'])) {
+        if (! empty($settings['category_ids'])) {
             $query->whereIn('category_id', $settings['category_ids']);
         }
 
-        if (!empty($settings['tags'])) {
-            $query->whereHas('tags', function($q) use ($settings) {
+        if (! empty($settings['tags'])) {
+            $query->whereHas('tags', function ($q) use ($settings) {
                 $q->whereIn('name', $settings['tags']);
             });
         }
@@ -150,7 +149,7 @@ class PageController extends Controller
             $block['bonus_data'] = [
                 'settings' => $bonusSettings,
                 'user_balance' => $user->bonus_balance ?? 0,
-                'user_level' => $this->calculateUserLevel($user->bonus_balance ?? 0)
+                'user_level' => $this->calculateUserLevel($user->bonus_balance ?? 0),
             ];
         }
 
@@ -164,9 +163,16 @@ class PageController extends Controller
     {
         // Логика расчета уровня пользователя
         // Это можно доработать в зависимости от требований
-        if ($balance >= 10000) return 'VIP';
-        if ($balance >= 5000) return 'Gold';
-        if ($balance >= 1000) return 'Silver';
+        if ($balance >= 10000) {
+            return 'VIP';
+        }
+        if ($balance >= 5000) {
+            return 'Gold';
+        }
+        if ($balance >= 1000) {
+            return 'Silver';
+        }
+
         return 'Bronze';
     }
 
@@ -196,7 +202,7 @@ class PageController extends Controller
 
         if (isset($settings['max_width'])) {
             $styles[] = "max-width: {$settings['max_width']}";
-            $styles[] = "margin: 0 auto";
+            $styles[] = 'margin: 0 auto';
         }
 
         return implode('; ', $styles);
@@ -213,13 +219,13 @@ class PageController extends Controller
         if (isset($settings['alignment'])) {
             switch ($settings['alignment']) {
                 case 'center':
-                    $styles[] = "justify-content: center";
+                    $styles[] = 'justify-content: center';
                     break;
                 case 'right':
-                    $styles[] = "justify-content: flex-end";
+                    $styles[] = 'justify-content: flex-end';
                     break;
                 default:
-                    $styles[] = "justify-content: flex-start";
+                    $styles[] = 'justify-content: flex-start';
             }
         }
 
@@ -239,28 +245,33 @@ class PageController extends Controller
             case 'header':
                 $level = $settings['level'] ?? 'h2';
                 $style = $this->buildInlineStyles($settings, ['color', 'font_size', 'font_weight', 'text_align']);
+
                 return "<{$level} style=\"{$style}\">{$content}</{$level}>";
 
             case 'text':
                 $style = $this->buildInlineStyles($settings, ['color', 'font_size', 'line_height', 'text_align', 'max_width']);
+
                 return "<div style=\"{$style}\">{$content}</div>";
 
             case 'image':
                 $style = $this->buildInlineStyles($settings, ['width', 'height', 'object_fit']);
                 $alt = $content['alt'] ?? '';
                 $src = $content['src'] ?? '';
+
                 return "<img src=\"{$src}\" alt=\"{$alt}\" style=\"{$style}\" />";
 
             case 'button':
                 $style = $this->buildInlineStyles($settings, [
                     'background_color', 'color', 'font_size', 'padding',
-                    'border_radius', 'border', 'cursor'
+                    'border_radius', 'border', 'cursor',
                 ]);
                 $link = $settings['link'] ?? '#';
-                return "<a href=\"{$link}\" style=\"{$style}\">" . (isset($content['text']) ? $content['text'] : 'Кнопка') . "</a>";
+
+                return "<a href=\"{$link}\" style=\"{$style}\">".(isset($content['text']) ? $content['text'] : 'Кнопка').'</a>';
 
             case 'spacer':
                 $height = $settings['height'] ?? '40px';
+
                 return "<div style=\"height: {$height}; width: 100%;\"></div>";
 
             case 'dynamic_slider':
@@ -284,25 +295,26 @@ class PageController extends Controller
     {
         $sliderData = $block['slider_data'] ?? null;
 
-        if (!$sliderData) {
+        if (! $sliderData) {
             return '<div>Слайдер не найден</div>';
         }
 
-        $html = '<div class="page-slider" data-settings="' . htmlspecialchars(json_encode($sliderData->settings)) . '">';
+        $html = '<div class="page-slider" data-settings="'.htmlspecialchars(json_encode($sliderData->settings)).'">';
 
         foreach ($sliderData->activeImages as $image) {
             $html .= '<div class="slide">';
-            $html .= '<img src="' . $image->image_path . '" alt="' . htmlspecialchars($image->title ?? '') . '" />';
+            $html .= '<img src="'.$image->image_path.'" alt="'.htmlspecialchars($image->title ?? '').'" />';
             if ($image->title) {
-                $html .= '<div class="slide-title">' . htmlspecialchars($image->title) . '</div>';
+                $html .= '<div class="slide-title">'.htmlspecialchars($image->title).'</div>';
             }
             if ($image->description) {
-                $html .= '<div class="slide-description">' . htmlspecialchars($image->description) . '</div>';
+                $html .= '<div class="slide-description">'.htmlspecialchars($image->description).'</div>';
             }
             $html .= '</div>';
         }
 
         $html .= '</div>';
+
         return $html;
     }
 
@@ -322,18 +334,18 @@ class PageController extends Controller
             // Image
             $image = $good->images->first();
             if ($image) {
-                $html .= '<img src="' . $image->path . '" alt="' . htmlspecialchars($good->name) . '" style="width: 100%; height: 200px; object-fit: cover;" />';
+                $html .= '<img src="'.$image->path.'" alt="'.htmlspecialchars($good->name).'" style="width: 100%; height: 200px; object-fit: cover;" />';
             }
 
             // Content
             $html .= '<div style="padding: 16px;">';
-            $html .= '<h3 style="font-size: 18px; font-weight: bold; margin-bottom: 8px;">' . htmlspecialchars($good->name) . '</h3>';
+            $html .= '<h3 style="font-size: 18px; font-weight: bold; margin-bottom: 8px;">'.htmlspecialchars($good->name).'</h3>';
 
             if ($good->price) {
-                $html .= '<div style="font-size: 16px; color: #059669; font-weight: bold;">' . number_format($good->price, 0, ',', ' ') . ' ₽</div>';
+                $html .= '<div style="font-size: 16px; color: #059669; font-weight: bold;">'.number_format($good->price, 0, ',', ' ').' ₽</div>';
             }
 
-            $html .= '<a href="/goods/' . $good->id . '" style="display: inline-block; margin-top: 12px; padding: 8px 16px; background-color: #3b82f6; color: white; text-decoration: none; border-radius: 4px;">Подробнее</a>';
+            $html .= '<a href="/goods/'.$good->id.'" style="display: inline-block; margin-top: 12px; padding: 8px 16px; background-color: #3b82f6; color: white; text-decoration: none; border-radius: 4px;">Подробнее</a>';
             $html .= '</div>';
 
             $html .= '</div>';
@@ -352,7 +364,7 @@ class PageController extends Controller
     {
         $bonusData = $block['bonus_data'] ?? null;
 
-        if (!$bonusData) {
+        if (! $bonusData) {
             return '<div>Необходимо авторизоваться для просмотра бонусов</div>';
         }
 
@@ -361,12 +373,12 @@ class PageController extends Controller
 
         $html .= '<div style="display: flex; align-items: center; margin-bottom: 16px;">';
         $html .= '<div style="font-size: 18px; margin-right: 8px;">Уровень:</div>';
-        $html .= '<div style="font-size: 18px; font-weight: bold; color: #059669;">' . $bonusData['user_level'] . '</div>';
+        $html .= '<div style="font-size: 18px; font-weight: bold; color: #059669;">'.$bonusData['user_level'].'</div>';
         $html .= '</div>';
 
         $html .= '<div style="display: flex; align-items: center;">';
         $html .= '<div style="font-size: 18px; margin-right: 8px;">Баланс:</div>';
-        $html .= '<div style="font-size: 18px; font-weight: bold; color: #dc2626;">' . number_format($bonusData['user_balance'], 0, ',', ' ') . ' баллов</div>';
+        $html .= '<div style="font-size: 18px; font-weight: bold; color: #dc2626;">'.number_format($bonusData['user_balance'], 0, ',', ' ').' баллов</div>';
         $html .= '</div>';
 
         $html .= '</div>';
@@ -382,13 +394,13 @@ class PageController extends Controller
         $styles = [];
 
         foreach ($allowedKeys as $key) {
-            if (isset($settings[$key]) && !empty($settings[$key])) {
+            if (isset($settings[$key]) && ! empty($settings[$key])) {
                 $cssKey = str_replace('_', '-', $key);
 
                 // Add units for specific properties
                 if (in_array($key, ['font_size', 'padding', 'margin_bottom', 'max_width', 'width', 'height', 'border_radius'])) {
                     $value = $settings[$key];
-                    if (is_numeric($value) && !str_contains($value, 'px')) {
+                    if (is_numeric($value) && ! str_contains($value, 'px')) {
                         $value .= 'px';
                     }
                     $styles[] = "{$cssKey}: {$value}";
@@ -406,7 +418,7 @@ class PageController extends Controller
      */
     private function hasSliderBlocks($structure)
     {
-        if (!is_array($structure)) {
+        if (! is_array($structure)) {
             return false;
         }
 

@@ -5,8 +5,6 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\ShopDeliveryMethod;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 
 class DeliveryMethodImageController extends Controller
 {
@@ -14,35 +12,34 @@ class DeliveryMethodImageController extends Controller
     {
         $request->validate([
             'image' => 'required|image|mimes:jpeg,png,jpg,gif|max:2048',
-            'delivery_method_id' => 'required|exists:shop_delivery_methods,id'
+            'delivery_method_id' => 'required|exists:shop_delivery_methods,id',
         ]);
 
         try {
             $deliveryMethod = ShopDeliveryMethod::findOrFail($request->delivery_method_id);
-            
+
             // Delete old image if exists (путь формируется автоматически по ID)
-            $oldImagePath = '/images/deliveries/delivery_' . $deliveryMethod->id . '.jpg';
+            $oldImagePath = '/images/deliveries/delivery_'.$deliveryMethod->id.'.jpg';
             $this->deleteImage($oldImagePath);
 
             // Get the uploaded file
             $file = $request->file('image');
-            
+
             // Generate filename based on delivery method ID
-            $filename = 'delivery_' . $deliveryMethod->id . '.jpg';
-            
+            $filename = 'delivery_'.$deliveryMethod->id.'.jpg';
+
             // Путь к public фронтенда (из FRONTEND_PATH в .env)
             $imagePath = frontend_public_path('images/deliveries/');
-            
+
             // Ensure directory exists
-            if (!file_exists($imagePath)) {
+            if (! file_exists($imagePath)) {
                 mkdir($imagePath, 0755, true);
             }
-            
-            
+
             // Process and save image using GD (built-in PHP)
             $imageInfo = getimagesize($file->getPathname());
             $imageType = $imageInfo[2];
-            
+
             // Create image resource based on type
             switch ($imageType) {
                 case IMAGETYPE_JPEG:
@@ -57,22 +54,22 @@ class DeliveryMethodImageController extends Controller
                 default:
                     throw new \Exception('Неподдерживаемый тип изображения');
             }
-            
+
             // Get original dimensions
             $originalWidth = imagesx($sourceImage);
             $originalHeight = imagesy($sourceImage);
-            
+
             // Calculate new dimensions maintaining aspect ratio
             $maxWidth = 200;
             $maxHeight = 150;
-            
+
             $ratio = min($maxWidth / $originalWidth, $maxHeight / $originalHeight);
-            $newWidth = (int)($originalWidth * $ratio);
-            $newHeight = (int)($originalHeight * $ratio);
-            
+            $newWidth = (int) ($originalWidth * $ratio);
+            $newHeight = (int) ($originalHeight * $ratio);
+
             // Create new image
             $newImage = imagecreatetruecolor($newWidth, $newHeight);
-            
+
             // Preserve transparency for PNG
             if ($imageType == IMAGETYPE_PNG) {
                 imagealphablending($newImage, false);
@@ -80,13 +77,13 @@ class DeliveryMethodImageController extends Controller
                 $transparent = imagecolorallocatealpha($newImage, 255, 255, 255, 127);
                 imagefilledrectangle($newImage, 0, 0, $newWidth, $newHeight, $transparent);
             }
-            
+
             // Resize image
             imagecopyresampled($newImage, $sourceImage, 0, 0, 0, 0, $newWidth, $newHeight, $originalWidth, $originalHeight);
-            
+
             // Save the image
-            $fullPath = $imagePath . $filename;
-            
+            $fullPath = $imagePath.$filename;
+
             switch ($imageType) {
                 case IMAGETYPE_JPEG:
                     imagejpeg($newImage, $fullPath, 80);
@@ -98,28 +95,28 @@ class DeliveryMethodImageController extends Controller
                     imagegif($newImage, $fullPath);
                     break;
             }
-            
+
             // Clean up memory
             imagedestroy($sourceImage);
             imagedestroy($newImage);
 
             // Изображение сохраняется в файл, URL формируется автоматически по ID
-            $imageUrl = '/images/deliveries/' . $filename;
+            $imageUrl = '/images/deliveries/'.$filename;
 
             return response()->json([
                 'success' => true,
                 'message' => 'Изображение успешно загружено',
                 'data' => [
-                    'image_url' => $imageUrl
-                ]
+                    'image_url' => $imageUrl,
+                ],
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('Delivery method image upload error: ' . $e->getMessage());
-            
+            \Log::error('Delivery method image upload error: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка загрузки изображения: ' . $e->getMessage()
+                'message' => 'Ошибка загрузки изображения: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -127,28 +124,28 @@ class DeliveryMethodImageController extends Controller
     public function remove(Request $request)
     {
         $request->validate([
-            'delivery_method_id' => 'required|exists:shop_delivery_methods,id'
+            'delivery_method_id' => 'required|exists:shop_delivery_methods,id',
         ]);
 
         try {
             $deliveryMethod = ShopDeliveryMethod::findOrFail($request->delivery_method_id);
-            
+
             // Delete image file
-            $imagePath = '/images/deliveries/delivery_' . $deliveryMethod->id . '.jpg';
-            
+            $imagePath = '/images/deliveries/delivery_'.$deliveryMethod->id.'.jpg';
+
             $this->deleteImage($imagePath);
 
             return response()->json([
                 'success' => true,
-                'message' => 'Изображение успешно удалено'
+                'message' => 'Изображение успешно удалено',
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('Delivery method image remove error: ' . $e->getMessage());
-            
+            \Log::error('Delivery method image remove error: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления изображения: ' . $e->getMessage()
+                'message' => 'Ошибка удаления изображения: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -157,13 +154,12 @@ class DeliveryMethodImageController extends Controller
     {
         try {
             $fullPath = frontend_public_path(ltrim($imageUrl, '/'));
-            
+
             if (file_exists($fullPath)) {
                 unlink($fullPath);
             }
         } catch (\Exception $e) {
-            \Log::error('Error deleting image: ' . $e->getMessage());
+            \Log::error('Error deleting image: '.$e->getMessage());
         }
     }
 }
-

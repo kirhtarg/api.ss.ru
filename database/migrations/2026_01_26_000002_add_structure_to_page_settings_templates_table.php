@@ -12,7 +12,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('page_settings_templates', function (Blueprint $table) {
-            if (!Schema::hasColumn('page_settings_templates', 'structure')) {
+            if (! Schema::hasColumn('page_settings_templates', 'structure')) {
                 $table->json('structure')->nullable()->after('settings');
             }
         });

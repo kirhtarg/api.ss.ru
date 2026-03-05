@@ -19,12 +19,12 @@ class ShopStockReservation extends Model
         'reservation_type',
         'reference_id',
         'user_id',
-        'notes'
+        'notes',
     ];
 
     protected $casts = [
         'quantity' => 'integer',
-        'reserved_until' => 'datetime'
+        'reserved_until' => 'datetime',
     ];
 
     /**

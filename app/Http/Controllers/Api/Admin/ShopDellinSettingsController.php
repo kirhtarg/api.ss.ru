@@ -4,10 +4,10 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopDellinSettings;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Validator;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Validator;
 
 class ShopDellinSettingsController extends Controller
 {
@@ -17,23 +17,23 @@ class ShopDellinSettingsController extends Controller
     private function checkAccess($request)
     {
         $user = $request->user();
-        
+
         // Проверяем авторизацию
-        if (!$user) {
+        if (! $user) {
             return response()->json([
                 'success' => false,
-                'message' => 'Необходима авторизация.'
+                'message' => 'Необходима авторизация.',
             ], 401);
         }
-        
+
         // Проверяем, что пользователь имеет роль admin или shop
-        if (!$user->hasRole('admin') && !$user->hasRole('shop')) {
+        if (! $user->hasRole('admin') && ! $user->hasRole('shop')) {
             return response()->json([
                 'success' => false,
-                'message' => 'Доступ запрещен. Требуется роль администратора или менеджера магазина.'
+                'message' => 'Доступ запрещен. Требуется роль администратора или менеджера магазина.',
             ], 403);
         }
-        
+
         return null;
     }
 
@@ -48,10 +48,10 @@ class ShopDellinSettingsController extends Controller
         }
 
         $settings = ShopDellinSettings::first();
-        
+
         return response()->json([
             'success' => true,
-            'data' => $settings
+            'data' => $settings,
         ]);
     }
 
@@ -66,10 +66,10 @@ class ShopDellinSettingsController extends Controller
         }
 
         $settings = ShopDellinSettings::getActive();
-        
+
         return response()->json([
             'success' => true,
-            'data' => $settings
+            'data' => $settings,
         ]);
     }
 
@@ -107,7 +107,7 @@ class ShopDellinSettingsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -122,7 +122,7 @@ class ShopDellinSettingsController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Настройки Деловых линий сохранены успешно',
-            'data' => $settings
+            'data' => $settings,
         ]);
     }
 
@@ -162,7 +162,7 @@ class ShopDellinSettingsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -171,7 +171,7 @@ class ShopDellinSettingsController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Настройки Деловых линий обновлены успешно',
-            'data' => $settings
+            'data' => $settings,
         ]);
     }
 
@@ -190,7 +190,7 @@ class ShopDellinSettingsController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Настройки Деловых линий удалены успешно'
+            'message' => 'Настройки Деловых линий удалены успешно',
         ]);
     }
 
@@ -205,7 +205,7 @@ class ShopDellinSettingsController extends Controller
         }
 
         $settings = ShopDellinSettings::findOrFail($id);
-        
+
         // Деактивируем все остальные
         ShopDellinSettings::where('id', '!=', $id)
             ->where('is_active', true)
@@ -216,7 +216,7 @@ class ShopDellinSettingsController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Настройки Деловых линий активированы успешно',
-            'data' => $settings
+            'data' => $settings,
         ]);
     }
 
@@ -238,7 +238,7 @@ class ShopDellinSettingsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -250,7 +250,7 @@ class ShopDellinSettingsController extends Controller
             'data' => [
                 'valid' => $validation['valid'],
                 'error' => $validation['error'] ?? null,
-            ]
+            ],
         ]);
     }
 
@@ -269,8 +269,8 @@ class ShopDellinSettingsController extends Controller
                 'appkey' => $appkey,
                 'method' => 'getCities',
                 'params' => [
-                    'q' => 'Москва'
-                ]
+                    'q' => 'Москва',
+                ],
             ]);
 
             // Если запрос успешен, ключ валиден
@@ -279,7 +279,7 @@ class ShopDellinSettingsController extends Controller
                 // Проверяем, что ответ содержит данные (не ошибку)
                 if (isset($data['data']) || (isset($data['success']) && $data['success'])) {
                     return [
-                        'valid' => true
+                        'valid' => true,
                     ];
                 }
             }
@@ -288,17 +288,17 @@ class ShopDellinSettingsController extends Controller
             if ($response->status() === 401 || $response->status() === 403) {
                 return [
                     'valid' => false,
-                    'error' => 'Неверный API ключ'
+                    'error' => 'Неверный API ключ',
                 ];
             }
 
             // Другие ошибки
             $errorData = $response->json();
             $errorMessage = $errorData['errors'][0]['message'] ?? $errorData['message'] ?? 'Ошибка проверки ключа';
-            
+
             return [
                 'valid' => false,
-                'error' => $errorMessage
+                'error' => $errorMessage,
             ];
         } catch (\Exception $e) {
             // Если API недоступен или произошла ошибка, проверяем формат ключа
@@ -306,17 +306,16 @@ class ShopDellinSettingsController extends Controller
             if (empty($appkey) || strlen($appkey) < 10) {
                 return [
                     'valid' => false,
-                    'error' => 'API ключ слишком короткий'
+                    'error' => 'API ключ слишком короткий',
                 ];
             }
-            
+
             // Если формат ключа выглядит корректным, но API недоступен,
             // разрешаем ключ (в реальной реализации нужно использовать правильный endpoint)
             return [
                 'valid' => true,
-                'error' => null
+                'error' => null,
             ];
         }
     }
 }
-

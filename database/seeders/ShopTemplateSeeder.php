@@ -49,17 +49,3 @@ class ShopTemplateSeeder extends Seeder
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-

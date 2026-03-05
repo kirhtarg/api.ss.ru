@@ -23,7 +23,7 @@ return new class extends Migration
             $table->string('icon')->nullable();
             $table->json('attributes')->nullable()->comment('Дополнительные атрибуты в JSON');
             $table->timestamps();
-            
+
             $table->index(['parent_id', 'sort_order', 'is_active'], 'site_menu_items_parent_id_sort_order_is_active_index');
             $table->foreign('parent_id')->references('id')->on('site_menu_items')->onDelete('cascade');
         });

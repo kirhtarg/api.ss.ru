@@ -18,16 +18,16 @@ class SiteMenuController extends Controller
             $menus = SiteMenu::orderBy('sort_order', 'asc')
                 ->orderBy('name', 'asc')
                 ->get();
-            
+
             return response()->json([
                 'success' => true,
-                'data' => $menus
+                'data' => $menus,
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения меню: ' . $e->getMessage()
+                'message' => 'Ошибка получения меню: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -39,16 +39,16 @@ class SiteMenuController extends Controller
     {
         try {
             $menu = SiteMenu::findOrFail($id);
-            
+
             return response()->json([
                 'success' => true,
-                'data' => $menu
+                'data' => $menu,
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения меню: ' . $e->getMessage()
+                'message' => 'Ошибка получения меню: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -69,17 +69,17 @@ class SiteMenuController extends Controller
             ]);
 
             $menu = SiteMenu::create($validated);
-            
+
             return response()->json([
                 'success' => true,
                 'data' => $menu,
-                'message' => 'Меню успешно создано'
+                'message' => 'Меню успешно создано',
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания меню: ' . $e->getMessage()
+                'message' => 'Ошибка создания меню: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -91,9 +91,9 @@ class SiteMenuController extends Controller
     {
         try {
             $menu = SiteMenu::findOrFail($id);
-            
+
             $validated = $request->validate([
-                'name' => 'required|string|max:255|unique:site_menus,name,' . $id,
+                'name' => 'required|string|max:255|unique:site_menus,name,'.$id,
                 'description' => 'nullable|string',
                 'template_name' => 'nullable|string|max:255',
                 'is_active' => 'boolean',
@@ -102,17 +102,17 @@ class SiteMenuController extends Controller
             ]);
 
             $menu->update($validated);
-            
+
             return response()->json([
                 'success' => true,
                 'data' => $menu,
-                'message' => 'Меню успешно обновлено'
+                'message' => 'Меню успешно обновлено',
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления меню: ' . $e->getMessage()
+                'message' => 'Ошибка обновления меню: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -124,26 +124,26 @@ class SiteMenuController extends Controller
     {
         try {
             $menu = SiteMenu::findOrFail($id);
-            
+
             // Проверяем, используется ли меню в активных шаблонах сайта
             if ($menu->siteTemplates()->where('is_active', true)->exists()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Нельзя удалить меню, которое используется в активном шаблоне сайта'
+                    'message' => 'Нельзя удалить меню, которое используется в активном шаблоне сайта',
                 ], 400);
             }
-            
+
             $menu->delete();
-            
+
             return response()->json([
                 'success' => true,
-                'message' => 'Меню успешно удалено'
+                'message' => 'Меню успешно удалено',
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления меню: ' . $e->getMessage()
+                'message' => 'Ошибка удаления меню: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -155,23 +155,23 @@ class SiteMenuController extends Controller
     {
         try {
             $menu = SiteMenu::findOrFail($id);
-            
+
             $validated = $request->validate([
-                'is_active' => 'required|boolean'
+                'is_active' => 'required|boolean',
             ]);
 
             $menu->update($validated);
-            
+
             return response()->json([
                 'success' => true,
                 'data' => $menu,
-                'message' => 'Статус меню обновлен'
+                'message' => 'Статус меню обновлен',
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления статуса меню: ' . $e->getMessage()
+                'message' => 'Ошибка обновления статуса меню: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -186,21 +186,21 @@ class SiteMenuController extends Controller
             $activeMenus = SiteMenu::where('is_active', true)->count();
             $systemMenus = SiteMenu::whereIn('name', ['main', 'footer', 'header'])->count();
             $menusWithTemplates = SiteMenu::whereHas('siteTemplates')->count();
-            
+
             return response()->json([
                 'success' => true,
                 'data' => [
                     'total_menus' => $totalMenus,
                     'active_menus' => $activeMenus,
                     'system_menus' => $systemMenus,
-                    'menus_with_templates' => $menusWithTemplates
-                ]
+                    'menus_with_templates' => $menusWithTemplates,
+                ],
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения статистики: ' . $e->getMessage()
+                'message' => 'Ошибка получения статистики: '.$e->getMessage(),
             ], 500);
         }
     }

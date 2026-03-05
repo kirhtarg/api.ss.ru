@@ -4,7 +4,6 @@ namespace App\Mail;
 
 use App\Models\User;
 use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
@@ -15,8 +14,11 @@ class EmailVerificationMail extends Mailable
     use Queueable, SerializesModels;
 
     public $user;
+
     public $verificationUrl;
+
     public $siteInfo;
+
     public $bonusAmount;
 
     /**
@@ -27,11 +29,11 @@ class EmailVerificationMail extends Mailable
         $this->user = $user;
         $this->verificationUrl = $verificationUrl;
         $this->siteInfo = $siteInfo;
-        
+
         // Получаем информацию о приветственных бонусах
         $bonusesAtReg = \App\Models\Setting::where('key', 'bonuses_at_reg')->first();
-        $this->bonusAmount = ($bonusesAtReg && $bonusesAtReg->value && $bonusesAtReg->value > 0) 
-            ? (int) $bonusesAtReg->value 
+        $this->bonusAmount = ($bonusesAtReg && $bonusesAtReg->value && $bonusesAtReg->value > 0)
+            ? (int) $bonusesAtReg->value
             : 0;
     }
 
@@ -41,7 +43,7 @@ class EmailVerificationMail extends Mailable
     public function envelope(): Envelope
     {
         $siteName = $this->siteInfo['site_name'] ?? config('app.name');
-        
+
         return new Envelope(
             to: $this->user->email,
             subject: "Подтверждение регистрации на {$siteName}",

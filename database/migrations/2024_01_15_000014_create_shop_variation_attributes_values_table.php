@@ -16,10 +16,10 @@ return new class extends Migration
             $table->foreignId('variation_id')->constrained('shop_good_variations')->onDelete('cascade');
             $table->foreignId('attribute_value_id')->constrained('shop_variation_attribute_values')->onDelete('cascade');
             $table->timestamps();
-            
+
             // Уникальный индекс для предотвращения дублирования
             $table->unique(['variation_id', 'attribute_value_id'], 'shop_var_attr_vals_unique');
-            
+
             // Индексы для производительности
             $table->index('variation_id');
             $table->index('attribute_value_id');

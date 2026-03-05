@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\SiteTemplate;
-use App\Models\SiteMenu;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -20,16 +19,16 @@ class SiteTemplateController extends Controller
             $templates = SiteTemplate::with(['menu'])
                 ->ordered()
                 ->get();
-            
+
             return response()->json([
                 'success' => true,
-                'data' => $templates
+                'data' => $templates,
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения шаблонов: ' . $e->getMessage()
+                'message' => 'Ошибка получения шаблонов: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -51,22 +50,22 @@ class SiteTemplateController extends Controller
             ]);
 
             $template = SiteTemplate::create($validated);
-            
+
             // Если это активный шаблон, деактивируем все остальные
             if ($template->is_active) {
                 $template->activate();
             }
-            
+
             return response()->json([
                 'success' => true,
                 'data' => $template->load(['menuTemplate', 'authTemplate']),
-                'message' => 'Шаблон успешно создан'
+                'message' => 'Шаблон успешно создан',
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания шаблона: ' . $e->getMessage()
+                'message' => 'Ошибка создания шаблона: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -79,13 +78,13 @@ class SiteTemplateController extends Controller
         try {
             return response()->json([
                 'success' => true,
-                'data' => $siteTemplate->load(['menu'])
+                'data' => $siteTemplate->load(['menu']),
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения шаблона: ' . $e->getMessage()
+                'message' => 'Ошибка получения шаблона: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -103,7 +102,7 @@ class SiteTemplateController extends Controller
                     'required',
                     'string',
                     'max:255',
-                    Rule::unique('site_templates')->ignore($siteTemplate->id)
+                    Rule::unique('site_templates')->ignore($siteTemplate->id),
                 ],
                 'menu_id' => 'nullable|exists:site_menus,id',
                 'is_active' => 'boolean',
@@ -112,22 +111,22 @@ class SiteTemplateController extends Controller
             ]);
 
             $siteTemplate->update($validated);
-            
+
             // Если это активный шаблон, деактивируем все остальные
             if ($siteTemplate->is_active) {
                 $siteTemplate->activate();
             }
-            
+
             return response()->json([
                 'success' => true,
                 'data' => $siteTemplate->load(['menu']),
-                'message' => 'Шаблон успешно обновлен'
+                'message' => 'Шаблон успешно обновлен',
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления шаблона: ' . $e->getMessage()
+                'message' => 'Ошибка обновления шаблона: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -142,21 +141,21 @@ class SiteTemplateController extends Controller
             if ($siteTemplate->is_active) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Нельзя удалить активный шаблон'
+                    'message' => 'Нельзя удалить активный шаблон',
                 ], 400);
             }
-            
+
             $siteTemplate->delete();
-            
+
             return response()->json([
                 'success' => true,
-                'message' => 'Шаблон успешно удален'
+                'message' => 'Шаблон успешно удален',
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления шаблона: ' . $e->getMessage()
+                'message' => 'Ошибка удаления шаблона: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -168,19 +167,17 @@ class SiteTemplateController extends Controller
     {
         try {
             $siteTemplate->activate();
-            
+
             return response()->json([
                 'success' => true,
-                'message' => 'Шаблон успешно активирован'
+                'message' => 'Шаблон успешно активирован',
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка активации шаблона: ' . $e->getMessage()
+                'message' => 'Ошибка активации шаблона: '.$e->getMessage(),
             ], 500);
         }
     }
-
-
 }

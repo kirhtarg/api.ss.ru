@@ -4,12 +4,11 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ExportFile;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Storage;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
@@ -27,7 +26,7 @@ class ModexController extends Controller
 
             $file = $request->file('file');
             $path = $file->getRealPath();
-            
+
             // Увеличиваем лимит памяти для анализа
             ini_set('memory_limit', '512M');
 
@@ -35,30 +34,30 @@ class ModexController extends Controller
                 // Используем IOFactory для автоматического определения типа
                 $spreadsheet = IOFactory::load($path);
                 $worksheet = $spreadsheet->getActiveSheet();
-                
+
                 $rows = $worksheet->getHighestRow();
                 $highestColumn = $worksheet->getHighestColumn();
                 $columns = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($highestColumn);
-                
+
                 return response()->json([
                     'success' => true,
                     'data' => [
                         'rows' => $rows,
                         'columns' => $columns,
                         'size' => $file->getSize(),
-                        'filename' => $file->getClientOriginalName()
-                    ]
+                        'filename' => $file->getClientOriginalName(),
+                    ],
                 ]);
             } catch (\Exception $e) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Ошибка чтения Excel файла: ' . $e->getMessage()
+                    'message' => 'Ошибка чтения Excel файла: '.$e->getMessage(),
                 ], 422);
             }
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка анализа файла: ' . $e->getMessage()
+                'message' => 'Ошибка анализа файла: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -86,7 +85,7 @@ class ModexController extends Controller
                 $rulesData = json_decode($rulesData, true);
                 if (json_last_error() !== JSON_ERROR_NONE) {
                     throw ValidationException::withMessages([
-                        'rules' => 'Неверный формат правил: ' . json_last_error_msg()
+                        'rules' => 'Неверный формат правил: '.json_last_error_msg(),
                     ]);
                 }
             }
@@ -95,13 +94,13 @@ class ModexController extends Controller
             $validationData = [
                 'file' => $request->file('file'),
                 'rules' => $rulesData,
-                'output_filename' => $request->output_filename
+                'output_filename' => $request->output_filename,
             ];
 
             $validator = \Illuminate\Support\Facades\Validator::make($validationData, [
                 'file' => 'required|file|mimes:xlsx,xls|max:51200', // 50MB max
                 'rules' => 'required|array|min:1',
-                'output_filename' => 'nullable|string|max:100'
+                'output_filename' => 'nullable|string|max:100',
             ]);
 
             if ($validator->fails()) {
@@ -110,14 +109,14 @@ class ModexController extends Controller
 
             // Дополнительная валидация правил
             foreach ($rulesData as $index => $rule) {
-                if (!isset($rule['ruleKey']) || !is_string($rule['ruleKey'])) {
+                if (! isset($rule['ruleKey']) || ! is_string($rule['ruleKey'])) {
                     throw ValidationException::withMessages([
-                        "rules.{$index}.ruleKey" => 'ruleKey обязателен и должен быть строкой'
+                        "rules.{$index}.ruleKey" => 'ruleKey обязателен и должен быть строкой',
                     ]);
                 }
-                if (!isset($rule['sourceColumn']) || !is_string($rule['sourceColumn']) || trim($rule['sourceColumn']) === '') {
+                if (! isset($rule['sourceColumn']) || ! is_string($rule['sourceColumn']) || trim($rule['sourceColumn']) === '') {
                     throw ValidationException::withMessages([
-                        "rules.{$index}.sourceColumn" => 'sourceColumn обязателен и не может быть пустым'
+                        "rules.{$index}.sourceColumn" => 'sourceColumn обязателен и не может быть пустым',
                     ]);
                 }
             }
@@ -133,33 +132,33 @@ class ModexController extends Controller
                     'all_keys' => array_keys($request->all()),
                     'rules' => $rulesData ?? $request->rules,
                     'rules_type' => gettype($rulesData ?? $request->rules),
-                    'rules_raw' => $request->get('rules')
-                ]
+                    'rules_raw' => $request->get('rules'),
+                ],
             ], 422);
         }
 
         try {
             // Сохраняем входной файл временно
             $inputFile = $request->file('file');
-            $tempFilename = 'temp_modex_' . time() . '_' . uniqid() . '.' . $inputFile->getClientOriginalExtension();
+            $tempFilename = 'temp_modex_'.time().'_'.uniqid().'.'.$inputFile->getClientOriginalExtension();
             $tempPath = $inputFile->storeAs('temp', $tempFilename);
 
             // Определяем имя выходного файла
             $customFilename = trim($request->output_filename ?? '');
             if ($customFilename) {
                 $originalFilename = $customFilename;
-                if (!preg_match('/\.(xlsx?|csv|txt)$/i', $originalFilename)) {
+                if (! preg_match('/\.(xlsx?|csv|txt)$/i', $originalFilename)) {
                     $originalFilename .= '.xlsx';
                 }
-                $filename = 'modex_' . time() . '_' . uniqid() . '.xlsx';
+                $filename = 'modex_'.time().'_'.uniqid().'.xlsx';
             } else {
                 $baseName = pathinfo($inputFile->getClientOriginalName(), PATHINFO_FILENAME);
-                $originalFilename = $baseName . '_modified.xlsx';
-                $filename = 'modex_' . time() . '_' . uniqid() . '.xlsx';
+                $originalFilename = $baseName.'_modified.xlsx';
+                $filename = 'modex_'.time().'_'.uniqid().'.xlsx';
             }
 
             // Создаем запись в БД
-            $removeTagsGlobal = (bool)($request->get('removeTags') ?? $request->get('remove_tags') ?? false);
+            $removeTagsGlobal = (bool) ($request->get('removeTags') ?? $request->get('remove_tags') ?? false);
             $modexFile = ExportFile::create([
                 'created_by' => Auth::id(),
                 'filename' => $filename,
@@ -170,8 +169,8 @@ class ModexController extends Controller
                     'type' => 'modex',
                     'input_file_path' => $tempPath,
                     'rules' => $rulesData,
-                    'removeTags' => $removeTagsGlobal
-                ]
+                    'removeTags' => $removeTagsGlobal,
+                ],
             ]);
 
             // Логируем создание файла
@@ -179,14 +178,14 @@ class ModexController extends Controller
                 'file_id' => $modexFile->id,
                 'filename' => $filename,
                 'input_path' => $tempPath,
-                'file_exists' => Storage::exists($tempPath)
+                'file_exists' => Storage::exists($tempPath),
             ]);
 
             // Быстро и безопасно определяем количество строк для отображения прогресса на фронте
             try {
-                $reader = IOFactory::createReaderForFile(storage_path('app/' . $tempPath));
+                $reader = IOFactory::createReaderForFile(storage_path('app/'.$tempPath));
                 $reader->setReadDataOnly(true);
-                $spreadsheet = $reader->load(storage_path('app/' . $tempPath));
+                $spreadsheet = $reader->load(storage_path('app/'.$tempPath));
                 $worksheet = $spreadsheet->getActiveSheet();
                 $rows = max($worksheet->getHighestRow() - 1, 0);
                 $spreadsheet->disconnectWorksheets();
@@ -208,12 +207,12 @@ class ModexController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $modexFile->load('creator'),
-                'message' => 'Процесс обработки файла запущен! Результаты будут доступны во вкладке "Файлы модекса"'
+                'message' => 'Процесс обработки файла запущен! Результаты будут доступны во вкладке "Файлы модекса"',
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обработки файла: ' . $e->getMessage()
+                'message' => 'Ошибка обработки файла: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -229,7 +228,7 @@ class ModexController extends Controller
         \Illuminate\Support\Facades\Log::info('ModexController::download HIT', [
             'file_id' => $exportFile->id,
             'user' => Auth::user() ? Auth::id() : 'guest',
-            'token_query' => $request->query('token')
+            'token_query' => $request->query('token'),
         ]);
 
         // Проверяем, что это файл модекса и он готов
@@ -239,28 +238,28 @@ class ModexController extends Controller
 
         $user = Auth::user();
 
-        if (!$user) {
+        if (! $user) {
             abort(401, 'Пользователь не авторизован');
         }
 
         // Проверяем, что пользователь имеет доступ к файлу
-        if ($user->id !== $exportFile->created_by && !$user->hasRole(['admin', 'manager'])) {
+        if ($user->id !== $exportFile->created_by && ! $user->hasRole(['admin', 'manager'])) {
             abort(403, 'Доступ запрещен');
         }
 
         // Проверяем, что файл готов к скачиванию
-        if (!$exportFile->isDownloadable()) {
+        if (! $exportFile->isDownloadable()) {
             Log::error('File not downloadable', [
                 'file_id' => $exportFile->id,
                 'status' => $exportFile->status,
                 'file_path' => $exportFile->file_path,
                 'full_path' => $exportFile->getFullPath(),
-                'exists' => file_exists($exportFile->getFullPath())
+                'exists' => file_exists($exportFile->getFullPath()),
             ]);
             abort(404, 'Файл не готов к скачиванию');
         }
 
-        if (!Storage::exists($exportFile->file_path)) {
+        if (! Storage::exists($exportFile->file_path)) {
             abort(404, 'Файл не найден');
         }
 

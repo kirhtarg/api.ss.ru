@@ -15,12 +15,12 @@ class Setting extends Model
         'group',
         'description',
         'image_width',
-        'image_height'
+        'image_height',
     ];
 
     protected $casts = [
         'image_width' => 'integer',
-        'image_height' => 'integer'
+        'image_height' => 'integer',
     ];
 
     // Мутатор для правильной обработки типов данных
@@ -48,8 +48,10 @@ class Setting extends Model
         } elseif ($this->type === 'json') {
             // Для JSON типа пытаемся декодировать, если не получается - возвращаем как есть
             $decoded = json_decode($value, true);
+
             return $decoded !== null ? $decoded : $value;
         }
+
         return $value;
     }
 

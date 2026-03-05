@@ -5,9 +5,8 @@ namespace App\Http\Controllers\Api\Public;
 use App\Http\Controllers\Controller;
 use App\Models\ShopComparison;
 use App\Models\ShopGood;
-use App\Models\User;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -22,37 +21,36 @@ class ComparisonController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user) {
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не авторизован'
+                    'message' => 'Пользователь не авторизован',
                 ], 401);
             }
 
             // Проверяем, существует ли таблица shop_comparisons
-            if (!Schema::hasTable('shop_comparisons')) {
+            if (! Schema::hasTable('shop_comparisons')) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Таблица сравнений не настроена'
+                    'message' => 'Таблица сравнений не настроена',
                 ], 500);
             }
 
             // Проверяем, существует ли таблица shop_goods
-            if (!Schema::hasTable('shop_goods')) {
+            if (! Schema::hasTable('shop_goods')) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Таблица товаров не настроена'
+                    'message' => 'Таблица товаров не настроена',
                 ], 500);
             }
 
             // Проверяем, существует ли таблица shop_good_images
-            if (!Schema::hasTable('shop_good_images')) {
+            if (! Schema::hasTable('shop_good_images')) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Таблица изображений товаров не настроена'
+                    'message' => 'Таблица изображений товаров не настроена',
                 ], 500);
             }
-
 
             $comparisons = ShopComparison::where('user_id', $user->id)
                 ->with([
@@ -60,25 +58,26 @@ class ComparisonController extends Controller
                         $query->with([
                             'images' => function ($query) {
                                 $query->where('is_main', true)
-                                      ->whereNull('variation_id')
-                                      ->orderBy('sort_order')
-                                      ->limit(1);
+                                    ->whereNull('variation_id')
+                                    ->orderBy('sort_order')
+                                    ->limit(1);
                             },
                             'properties' => function ($query) {
                                 $query->with('values');
                             },
                             'variations' => function ($query) {
                                 $query->where('is_active', true);
-                            }
+                            },
                         ]);
-                    }
+                    },
                 ])
                 ->get();
 
-
             $goods = $comparisons->map(function ($comparison) use ($user) {
                 $good = $comparison->good;
-                if (!$good) return null;
+                if (! $good) {
+                    return null;
+                }
 
                 // Проверяем, есть ли товар в избранном у пользователя
                 $isFavorite = DB::table('shop_favorites')
@@ -103,12 +102,12 @@ class ComparisonController extends Controller
                         // Получаем значение из pivot таблицы
                         $propertyValueId = $property->pivot->shop_property_value_id ?? null;
                         $value = '';
-                        
+
                         if ($propertyValueId && $property->values) {
                             $propertyValue = $property->values->find($propertyValueId);
                             $value = $propertyValue ? $propertyValue->value : '';
                         }
-                        
+
                         return [
                             'id' => $property->id,
                             'name' => $property->name ?? 'Свойство',
@@ -132,13 +131,13 @@ class ComparisonController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $goods,
-                'count' => $goods->count()
+                'count' => $goods->count(),
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения товаров для сравнения: ' . $e->getMessage()
+                'message' => 'Ошибка получения товаров для сравнения: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -150,15 +149,15 @@ class ComparisonController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user) {
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не авторизован'
+                    'message' => 'Пользователь не авторизован',
                 ], 401);
             }
 
             $request->validate([
-                'good_id' => 'required|integer|exists:shop_goods,id'
+                'good_id' => 'required|integer|exists:shop_goods,id',
             ]);
 
             $goodId = $request->good_id;
@@ -171,7 +170,7 @@ class ComparisonController extends Controller
             if ($existingComparison) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Товар уже добавлен в сравнение'
+                    'message' => 'Товар уже добавлен в сравнение',
                 ], 400);
             }
 
@@ -180,24 +179,24 @@ class ComparisonController extends Controller
             // Добавляем товар в сравнение
             ShopComparison::create([
                 'user_id' => $user->id,
-                'good_id' => $goodId
+                'good_id' => $goodId,
             ]);
 
             return response()->json([
                 'success' => true,
-                'message' => 'Товар добавлен в сравнение'
+                'message' => 'Товар добавлен в сравнение',
             ]);
 
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка добавления товара в сравнение'
+                'message' => 'Ошибка добавления товара в сравнение',
             ], 500);
         }
     }
@@ -209,10 +208,10 @@ class ComparisonController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user) {
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не авторизован'
+                    'message' => 'Пользователь не авторизован',
                 ], 401);
             }
 
@@ -220,18 +219,18 @@ class ComparisonController extends Controller
             $goodId = $id ?? $request->get('good_id');
 
             // Валидируем ID товара
-            if (!$goodId || !is_numeric($goodId)) {
+            if (! $goodId || ! is_numeric($goodId)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Некорректный ID товара'
+                    'message' => 'Некорректный ID товара',
                 ], 400);
             }
 
             // Проверяем существование товара
-            if (!ShopGood::where('id', $goodId)->exists()) {
+            if (! ShopGood::where('id', $goodId)->exists()) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Товар не найден'
+                    'message' => 'Товар не найден',
                 ], 404);
             }
 
@@ -239,10 +238,10 @@ class ComparisonController extends Controller
                 ->where('good_id', $goodId)
                 ->first();
 
-            if (!$comparison) {
+            if (! $comparison) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Товар не найден в сравнении'
+                    'message' => 'Товар не найден в сравнении',
                 ], 404);
             }
 
@@ -250,25 +249,26 @@ class ComparisonController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Товар удален из сравнения'
+                'message' => 'Товар удален из сравнения',
             ]);
 
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             Log::error('Ошибка удаления товара из сравнения:', [
                 'message' => $e->getMessage(),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления товара из сравнения: ' . $e->getMessage()
+                'message' => 'Ошибка удаления товара из сравнения: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -280,10 +280,10 @@ class ComparisonController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user) {
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не авторизован'
+                    'message' => 'Пользователь не авторизован',
                 ], 401);
             }
 
@@ -291,13 +291,13 @@ class ComparisonController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Сравнение очищено'
+                'message' => 'Сравнение очищено',
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка очистки сравнения'
+                'message' => 'Ошибка очистки сравнения',
             ], 500);
         }
     }
@@ -309,15 +309,15 @@ class ComparisonController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user) {
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не авторизован'
+                    'message' => 'Пользователь не авторизован',
                 ], 401);
             }
 
             $request->validate([
-                'good_id' => 'required|integer|exists:shop_goods,id'
+                'good_id' => 'required|integer|exists:shop_goods,id',
             ]);
 
             $goodId = $request->good_id;
@@ -328,19 +328,19 @@ class ComparisonController extends Controller
 
             return response()->json([
                 'success' => true,
-                'is_in_comparison' => $isInComparison
+                'is_in_comparison' => $isInComparison,
             ]);
 
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка проверки товара в сравнении'
+                'message' => 'Ошибка проверки товара в сравнении',
             ], 500);
         }
     }
@@ -352,16 +352,16 @@ class ComparisonController extends Controller
     {
         try {
             $user = Auth::user();
-            if (!$user) {
+            if (! $user) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Пользователь не авторизован'
+                    'message' => 'Пользователь не авторизован',
                 ], 401);
             }
 
             $request->validate([
                 'good_ids' => 'required|array',
-                'good_ids.*' => 'integer|exists:shop_goods,id'
+                'good_ids.*' => 'integer|exists:shop_goods,id',
             ]);
 
             $goodIds = $request->good_ids;
@@ -380,19 +380,19 @@ class ComparisonController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $results
+                'data' => $results,
             ]);
 
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка массовой проверки товаров в сравнении'
+                'message' => 'Ошибка массовой проверки товаров в сравнении',
             ], 500);
         }
     }

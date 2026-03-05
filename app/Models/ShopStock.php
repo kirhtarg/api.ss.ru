@@ -16,13 +16,13 @@ class ShopStock extends Model
         'warehouse_id',
         'quantity',
         'reserved_quantity',
-        'min_quantity'
+        'min_quantity',
     ];
 
     protected $casts = [
         'quantity' => 'integer',
         'reserved_quantity' => 'integer',
-        'min_quantity' => 'integer'
+        'min_quantity' => 'integer',
     ];
 
     /**
@@ -64,7 +64,6 @@ class ShopStock extends Model
     {
         return $this->available_quantity > 0;
     }
-
 
     /**
      * Проверить, низкий ли остаток

@@ -30,7 +30,7 @@ return new class extends Migration
             $table->json('applicable_goods')->nullable(); // Конкретные товары (JSON массив ID)
             $table->json('applicable_variations')->nullable(); // Конкретные вариации (JSON массив ID)
             $table->timestamps();
-            
+
             $table->index(['code', 'is_active']);
             $table->index(['starts_at', 'expires_at']);
         });

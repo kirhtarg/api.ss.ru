@@ -19,12 +19,12 @@ class ShopNotificationChannel extends Model
         'telegram_bot_username',
         'is_active',
         'settings',
-        'description'
+        'description',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
-        'settings' => 'array'
+        'settings' => 'array',
     ];
 
     /**
@@ -75,4 +75,3 @@ class ShopNotificationChannel extends Model
             ->get();
     }
 }
-

@@ -5,9 +5,8 @@ namespace App\Http\Controllers\Admin\Shop;
 use App\Http\Controllers\Controller;
 use App\Models\Shop\Property;
 use App\Models\Shop\PropertyValue;
-use App\Models\ShopCategory;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 
@@ -30,16 +29,16 @@ class PropertyController extends Controller
                     ->whereNotNull('good_id')
                     ->distinct('good_id')
                     ->count('good_id');
-                
+
                 $property->goods_count = $goodsCount;
-                
+
                 // Добавляем счетчик привязанных категорий
                 $categoriesCount = DB::table('shop_category_property')
                     ->where('property_id', $property->id)
                     ->count();
-                
+
                 $property->categories_count = $categoriesCount;
-                
+
                 // Добавляем счетчики для значений
                 if ($property->values) {
                     $property->values = $property->values->map(function ($value) {
@@ -49,23 +48,24 @@ class PropertyController extends Controller
                             ->whereNotNull('good_id')
                             ->distinct('good_id')
                             ->count('good_id');
-                        
+
                         $value->goods_count = $valueGoodsCount;
+
                         return $value;
                     });
                 }
-                
+
                 return $property;
             });
 
             return response()->json([
                 'success' => true,
-                'data' => $properties
+                'data' => $properties,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка загрузки свойств: ' . $e->getMessage()
+                'message' => 'Ошибка загрузки свойств: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -88,7 +88,7 @@ class PropertyController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -100,15 +100,15 @@ class PropertyController extends Controller
 
             // Нормализуем название: только первое слово с большой буквы
             $normalizedName = mb_strtolower($request->name);
-            $normalizedName = mb_strtoupper(mb_substr($normalizedName, 0, 1)) . mb_substr($normalizedName, 1);
-            
+            $normalizedName = mb_strtoupper(mb_substr($normalizedName, 0, 1)).mb_substr($normalizedName, 1);
+
             // Проверяем, существует ли свойство с таким же именем (без учета регистра) или slug
-            $property = Property::where(function($query) use ($request, $slug) {
+            $property = Property::where(function ($query) use ($request, $slug) {
                 $query->whereRaw('LOWER(name) = ?', [strtolower($request->name)])
-                      ->orWhere('slug', $slug);
+                    ->orWhere('slug', $slug);
             })->first();
 
-            if (!$property) {
+            if (! $property) {
                 // Если свойства нет, создаем новое
                 $property = Property::create([
                     'name' => $normalizedName,
@@ -151,13 +151,14 @@ class PropertyController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Свойство успешно создано',
-                'data' => $property->load('values')
+                'data' => $property->load('values'),
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания свойства: ' . $e->getMessage()
+                'message' => 'Ошибка создания свойства: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -171,7 +172,7 @@ class PropertyController extends Controller
             if ($property->property_type !== 'select') {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Свойство не является типом "выбор"'
+                    'message' => 'Свойство не является типом "выбор"',
                 ], 400);
             }
 
@@ -182,12 +183,12 @@ class PropertyController extends Controller
 
             return response()->json([
                 'success' => true,
-                'values' => $values
+                'values' => $values,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка загрузки значений: ' . $e->getMessage()
+                'message' => 'Ошибка загрузки значений: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -210,7 +211,7 @@ class PropertyController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
@@ -219,11 +220,11 @@ class PropertyController extends Controller
 
             // Нормализуем название: только первое слово с большой буквы
             $normalizedName = mb_strtolower($request->name);
-            $normalizedName = mb_strtoupper(mb_substr($normalizedName, 0, 1)) . mb_substr($normalizedName, 1);
-            
+            $normalizedName = mb_strtoupper(mb_substr($normalizedName, 0, 1)).mb_substr($normalizedName, 1);
+
             // Сохраняем старый тип для проверки изменения
             $oldPropertyType = $property->property_type;
-            
+
             $property->update([
                 'name' => $normalizedName,
                 'description' => $request->description,
@@ -234,7 +235,7 @@ class PropertyController extends Controller
             if ($request->property_type === 'select' && $request->has('values')) {
                 // Удаляем старые значения
                 $property->values()->delete();
-                
+
                 // Создаем новые
                 foreach ($request->values as $index => $valueData) {
                     PropertyValue::create([
@@ -256,13 +257,14 @@ class PropertyController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Свойство успешно обновлено',
-                'data' => $property->load('values')
+                'data' => $property->load('values'),
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления свойства: ' . $e->getMessage()
+                'message' => 'Ошибка обновления свойства: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -281,12 +283,12 @@ class PropertyController extends Controller
 
             return response()->json([
                 'success' => true,
-                'count' => $goodsCount
+                'count' => $goodsCount,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения количества товаров: ' . $e->getMessage()
+                'message' => 'Ошибка получения количества товаров: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -310,7 +312,7 @@ class PropertyController extends Controller
                     'message' => 'Невозможно удалить характеристику',
                     'has_goods' => true,
                     'goods_count' => $goodsCount,
-                    'error' => "У характеристики есть привязанные товары ({$goodsCount}). При удалении характеристика будет удалена у всех этих товаров."
+                    'error' => "У характеристики есть привязанные товары ({$goodsCount}). При удалении характеристика будет удалена у всех этих товаров.",
                 ], 422);
             }
 
@@ -318,12 +320,12 @@ class PropertyController extends Controller
 
             // Удаляем все значения свойства
             $property->values()->delete();
-            
+
             // Удаляем связи с товарами (если есть)
             DB::table('shop_good_properties')
                 ->where('property_id', $property->id)
                 ->delete();
-            
+
             // Удаляем само свойство
             $property->delete();
 
@@ -331,13 +333,14 @@ class PropertyController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Свойство успешно удалено'
+                'message' => 'Свойство успешно удалено',
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления свойства: ' . $e->getMessage()
+                'message' => 'Ошибка удаления свойства: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -357,7 +360,7 @@ class PropertyController extends Controller
 
             // Удаляем все значения свойства
             $property->values()->delete();
-            
+
             // Удаляем само свойство
             $property->delete();
 
@@ -365,13 +368,14 @@ class PropertyController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Свойство успешно удалено'
+                'message' => 'Свойство успешно удалено',
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления свойства: ' . $e->getMessage()
+                'message' => 'Ошибка удаления свойства: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -383,15 +387,15 @@ class PropertyController extends Controller
     {
         try {
             $categories = $property->categories()->get();
-            
+
             return response()->json([
                 'success' => true,
-                'categories' => $categories
+                'categories' => $categories,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения категорий: ' . $e->getMessage()
+                'message' => 'Ошибка получения категорий: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -403,31 +407,31 @@ class PropertyController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'category_ids' => 'required|array',
-            'category_ids.*' => 'required|integer|exists:shop_categories,id'
+            'category_ids.*' => 'required|integer|exists:shop_categories,id',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка валидации',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
         try {
             $property->categories()->sync($request->category_ids);
-            
+
             $categories = $property->categories()->get();
-            
+
             return response()->json([
                 'success' => true,
                 'message' => 'Категории успешно привязаны',
-                'categories' => $categories
+                'categories' => $categories,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка привязки категорий: ' . $e->getMessage()
+                'message' => 'Ошибка привязки категорий: '.$e->getMessage(),
             ], 500);
         }
     }

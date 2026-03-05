@@ -20,7 +20,7 @@ return new class extends Migration
             $table->boolean('is_main')->default(false); // Главное изображение
             $table->integer('sort_order')->default(0);
             $table->timestamps();
-            
+
             // Индексы для производительности
             $table->index(['good_id', 'sort_order']);
             $table->index(['variation_id', 'sort_order']);

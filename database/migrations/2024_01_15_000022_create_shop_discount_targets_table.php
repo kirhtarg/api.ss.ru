@@ -17,7 +17,7 @@ return new class extends Migration
             $table->string('target_type'); // good, category, brand, tag
             $table->unsignedBigInteger('target_id'); // ID целевого объекта
             $table->timestamps();
-            
+
             // Индексы для производительности
             $table->index(['discount_id', 'target_type']);
             $table->index(['target_type', 'target_id']);

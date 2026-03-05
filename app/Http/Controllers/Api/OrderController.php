@@ -16,20 +16,20 @@ class OrderController extends Controller
     {
         try {
             $orderNumber = $request->query('order_number');
-            
-            if (!$orderNumber) {
+
+            if (! $orderNumber) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Номер заказа не указан'
+                    'message' => 'Номер заказа не указан',
                 ], 400);
             }
 
             $order = ShopOrder::with('status')->where('order_number', $orderNumber)->first();
-            
-            if (!$order) {
+
+            if (! $order) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Заказ не найден'
+                    'message' => 'Заказ не найден',
                 ], 404);
             }
 
@@ -60,21 +60,21 @@ class OrderController extends Controller
                     'customer' => [
                         'name' => $order->customer_name ?? '',
                         'email' => $order->customer_email ?? '',
-                        'phone' => $order->customer_phone ?? ''
+                        'phone' => $order->customer_phone ?? '',
                     ],
-                    'items' => $items
-                ]
+                    'items' => $items,
+                ],
             ]);
 
         } catch (\Exception $e) {
             Log::error('OrderController: Error getting order details', [
                 'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Внутренняя ошибка сервера'
+                'message' => 'Внутренняя ошибка сервера',
             ], 500);
         }
     }

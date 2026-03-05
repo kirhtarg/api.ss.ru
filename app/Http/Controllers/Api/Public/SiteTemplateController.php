@@ -3,8 +3,8 @@
 namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
-use App\Models\SiteTemplate;
 use App\Models\SiteMenuItem;
+use App\Models\SiteTemplate;
 use Illuminate\Http\JsonResponse;
 
 class SiteTemplateController extends Controller
@@ -16,28 +16,28 @@ class SiteTemplateController extends Controller
     {
         try {
             $template = SiteTemplate::getActive();
-            
-            if (!$template) {
+
+            if (! $template) {
                 // Если нет активного шаблона, возвращаем дефолтный
                 $template = SiteTemplate::getDefault();
             }
-            
-            if (!$template) {
+
+            if (! $template) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Шаблон не найден'
+                    'message' => 'Шаблон не найден',
                 ], 404);
             }
-            
+
             return response()->json([
                 'success' => true,
-                'data' => $template->getTemplateData()
+                'data' => $template->getTemplateData(),
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения шаблона: ' . $e->getMessage()
+                'message' => 'Ошибка получения шаблона: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -49,28 +49,28 @@ class SiteTemplateController extends Controller
     {
         try {
             $template = SiteTemplate::getActiveMain();
-            
-            if (!$template) {
+
+            if (! $template) {
                 // Если нет активного шаблона главной страницы, возвращаем дефолтный
                 $template = SiteTemplate::getDefault();
             }
-            
-            if (!$template) {
+
+            if (! $template) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Шаблон главной страницы не найден'
+                    'message' => 'Шаблон главной страницы не найден',
                 ], 404);
             }
-            
+
             return response()->json([
                 'success' => true,
-                'data' => $template->getTemplateData()
+                'data' => $template->getTemplateData(),
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения шаблона главной страницы: ' . $e->getMessage()
+                'message' => 'Ошибка получения шаблона главной страницы: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -82,18 +82,18 @@ class SiteTemplateController extends Controller
     {
         try {
             $menuItems = SiteMenuItem::getMenuTree();
-            
+
             return response()->json([
                 'success' => true,
                 'data' => $menuItems->map(function ($item) {
                     return $item->getMenuData();
-                })
+                }),
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения меню: ' . $e->getMessage()
+                'message' => 'Ошибка получения меню: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -107,7 +107,7 @@ class SiteTemplateController extends Controller
             $templates = SiteTemplate::with(['menu'])
                 ->ordered()
                 ->get();
-            
+
             return response()->json([
                 'success' => true,
                 'data' => $templates->map(function ($template) {
@@ -122,13 +122,13 @@ class SiteTemplateController extends Controller
                         'created_at' => $template->created_at,
                         'updated_at' => $template->updated_at,
                     ];
-                })
+                }),
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения шаблонов: ' . $e->getMessage()
+                'message' => 'Ошибка получения шаблонов: '.$e->getMessage(),
             ], 500);
         }
     }

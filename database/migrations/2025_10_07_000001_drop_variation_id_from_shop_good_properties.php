@@ -2,8 +2,8 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -34,7 +34,7 @@ return new class extends Migration
     {
         if (Schema::hasTable('shop_good_properties') && Schema::hasTable('shop_good_variations')) {
             Schema::table('shop_good_properties', function (Blueprint $table) {
-                if (!Schema::hasColumn('shop_good_properties', 'variation_id')) {
+                if (! Schema::hasColumn('shop_good_properties', 'variation_id')) {
                     $table->unsignedBigInteger('variation_id')->nullable()->index();
                     // Создаем внешний ключ только если таблица существует
                     if (Schema::hasTable('shop_good_variations')) {
@@ -45,5 +45,3 @@ return new class extends Migration
         }
     }
 };
-
-

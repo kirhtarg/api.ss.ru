@@ -34,7 +34,7 @@ class CustomCors
 
             $allowOrigin = in_array($request->header('Origin'), $allowedOrigins) ? $request->header('Origin') : false;
 
-            if (!$allowOrigin) {
+            if (! $allowOrigin) {
                 return response('Origin not allowed', 403);
             }
 
@@ -88,21 +88,20 @@ class CustomCors
         $response->headers->set('Access-Control-Allow-Credentials', 'true');
         $response->headers->set('Access-Control-Max-Age', '86400');
 
-
         // Принудительно добавляем CORS заголовки к ошибкам
-            if ($response->getStatusCode() >= 400) {
-                $errorOrigin = $request->header('Origin');
-                if ($errorOrigin && in_array($errorOrigin, $hardCodedAllowedOrigins)) {
-                    $response->headers->set('Access-Control-Allow-Origin', $errorOrigin);
-                } else {
-                    $response->headers->set('Access-Control-Allow-Origin', '*');
-                }
-                $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-                $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN, X-Session-ID');
-                $response->headers->set('Access-Control-Allow-Credentials', 'true');
-                $response->headers->set('Access-Control-Max-Age', '86400');
+        if ($response->getStatusCode() >= 400) {
+            $errorOrigin = $request->header('Origin');
+            if ($errorOrigin && in_array($errorOrigin, $hardCodedAllowedOrigins)) {
+                $response->headers->set('Access-Control-Allow-Origin', $errorOrigin);
+            } else {
+                $response->headers->set('Access-Control-Allow-Origin', '*');
             }
+            $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+            $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-TOKEN, X-XSRF-TOKEN, X-Session-ID');
+            $response->headers->set('Access-Control-Allow-Credentials', 'true');
+            $response->headers->set('Access-Control-Max-Age', '86400');
+        }
 
-            return $response;
+        return $response;
     }
 }

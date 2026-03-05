@@ -12,7 +12,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('shop_orders', function (Blueprint $table) {
-            if (!Schema::hasColumn('shop_orders', 'cancellation_request')) {
+            if (! Schema::hasColumn('shop_orders', 'cancellation_request')) {
                 $table->boolean('cancellation_request')->default(false)->after('comment');
             }
         });

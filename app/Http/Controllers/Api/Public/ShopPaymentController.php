@@ -3,20 +3,18 @@
 namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
+use App\Models\Setting;
+use App\Models\ShopGood;
 use App\Models\ShopOrder;
+use App\Models\ShopOrderStatus;
 use App\Models\ShopPaymentMethod;
+use App\Models\ShopPaymentStatus; // Добавляем использование нового сервиса
 use App\Models\ShopPaymentTransaction;
-use App\Models\ShopPaymentStatus;
-use App\Services\TbankPaymentService; // Добавляем использование нового сервиса
+use App\Services\TbankPaymentService;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Facades\Config;
-use Illuminate\Support\Facades\Cache;
-use App\Models\Setting;
-use App\Models\ShopOrderStatus;
-use App\Models\ShopGood;
-use App\Models\ShopGoodVariation;
 
 class ShopPaymentController extends Controller
 {
@@ -40,7 +38,6 @@ class ShopPaymentController extends Controller
     /**
      * Handle payment return from payment gateway.
      *
-     * @param  \Illuminate\Http\Request  $request
      * @return \Illuminate\Http\Response
      */
     public function handlePaymentReturn(Request $request)
@@ -49,7 +46,7 @@ class ShopPaymentController extends Controller
 
         // ЮKassa: старый сценарий с order_id в параметрах
         if ($request->has('yookassa_payment_id')) {
-            return redirect(config('app.frontend_url') . '/payment-status?id=' . $request->get('order_id') . '&status=yookassa_processing');
+            return redirect(config('app.frontend_url').'/payment-status?id='.$request->get('order_id').'&status=yookassa_processing');
         }
 
         $paymentType = $request->get('payment_type');
@@ -94,14 +91,15 @@ class ShopPaymentController extends Controller
                             'error' => $e->getMessage(),
                         ]);
                     }
-                    $q = 'id=' . $order->id . '&status=tbank_success';
-                    if (!empty($rawStatus)) {
-                        $q .= '&raw_status=' . urlencode((string) $rawStatus);
+                    $q = 'id='.$order->id.'&status=tbank_success';
+                    if (! empty($rawStatus)) {
+                        $q .= '&raw_status='.urlencode((string) $rawStatus);
                     }
-                    if (!empty($paymentType)) {
-                        $q .= '&payment_type=' . urlencode((string) $paymentType);
+                    if (! empty($paymentType)) {
+                        $q .= '&payment_type='.urlencode((string) $paymentType);
                     }
-                    return redirect(config('app.frontend_url') . '/payment-status?' . $q);
+
+                    return redirect(config('app.frontend_url').'/payment-status?'.$q);
                 }
 
                 if ($status === 'fail') {
@@ -112,29 +110,31 @@ class ShopPaymentController extends Controller
                             'payed' => false,
                         ]);
                     }
-                    $q = 'id=' . $order->id . '&status=tbank_failed';
-                    if (!empty($rawStatus)) {
-                        $q .= '&raw_status=' . urlencode((string) $rawStatus);
+                    $q = 'id='.$order->id.'&status=tbank_failed';
+                    if (! empty($rawStatus)) {
+                        $q .= '&raw_status='.urlencode((string) $rawStatus);
                     }
-                    if (!empty($paymentType)) {
-                        $q .= '&payment_type=' . urlencode((string) $paymentType);
+                    if (! empty($paymentType)) {
+                        $q .= '&payment_type='.urlencode((string) $paymentType);
                     }
-                    return redirect(config('app.frontend_url') . '/payment-status?' . $q);
+
+                    return redirect(config('app.frontend_url').'/payment-status?'.$q);
                 }
 
-                $q = 'id=' . $order->id . '&status=tbank_processing';
-                if (!empty($rawStatus)) {
-                    $q .= '&raw_status=' . urlencode((string) $rawStatus);
+                $q = 'id='.$order->id.'&status=tbank_processing';
+                if (! empty($rawStatus)) {
+                    $q .= '&raw_status='.urlencode((string) $rawStatus);
                 }
-                if (!empty($paymentType)) {
-                    $q .= '&payment_type=' . urlencode((string) $paymentType);
+                if (! empty($paymentType)) {
+                    $q .= '&payment_type='.urlencode((string) $paymentType);
                 }
-                return redirect(config('app.frontend_url') . '/payment-status?' . $q);
+
+                return redirect(config('app.frontend_url').'/payment-status?'.$q);
             }
 
             // Если заказ не найден, пытаемся создать из черновика в кэше (eacq — одноэтапная оплата)
             if ($status === 'success' && $orderNumber) {
-                $draft = Cache::get('payment:init:tbank_eacq:order:' . $orderNumber);
+                $draft = Cache::get('payment:init:tbank_eacq:order:'.$orderNumber);
                 if ($draft && is_array($draft)) {
                     $order = $this->createOrderFromPayload(
                         $draft['order_data'] ?? [],
@@ -169,18 +169,19 @@ class ShopPaymentController extends Controller
                                 'error' => $e->getMessage(),
                             ]);
                         }
-                        Cache::forget('payment:init:tbank_eacq:order:' . $orderNumber);
+                        Cache::forget('payment:init:tbank_eacq:order:'.$orderNumber);
                         if ($txId) {
-                            Cache::forget('payment:init:tbank_eacq:' . $txId);
+                            Cache::forget('payment:init:tbank_eacq:'.$txId);
                         }
-                        $q2 = 'id=' . $order->id . '&status=tbank_success';
-                        if (!empty($rawStatus)) {
-                            $q2 .= '&raw_status=' . urlencode((string) $rawStatus);
+                        $q2 = 'id='.$order->id.'&status=tbank_success';
+                        if (! empty($rawStatus)) {
+                            $q2 .= '&raw_status='.urlencode((string) $rawStatus);
                         }
-                        if (!empty($paymentType)) {
-                            $q2 .= '&payment_type=' . urlencode((string) $paymentType);
+                        if (! empty($paymentType)) {
+                            $q2 .= '&payment_type='.urlencode((string) $paymentType);
                         }
-                        return redirect(config('app.frontend_url') . '/payment-status?' . $q2);
+
+                        return redirect(config('app.frontend_url').'/payment-status?'.$q2);
                     }
                 }
             }
@@ -191,8 +192,8 @@ class ShopPaymentController extends Controller
                     ?? $request->get('paymentId')
                     ?? $request->get('payment_id')
                     ?? $request->get('PaymentID');
-                if (!empty($paymentIdParam)) {
-                    $draft = Cache::get('payment:init:tbank_eacq:' . $paymentIdParam);
+                if (! empty($paymentIdParam)) {
+                    $draft = Cache::get('payment:init:tbank_eacq:'.$paymentIdParam);
                     if ($draft && is_array($draft)) {
                         $order = $this->createOrderFromPayload(
                             $draft['order_data'] ?? [],
@@ -226,18 +227,19 @@ class ShopPaymentController extends Controller
                                     'error' => $e->getMessage(),
                                 ]);
                             }
-                            Cache::forget('payment:init:tbank_eacq:' . $paymentIdParam);
-                            if (!empty($draft['order_number'])) {
-                                Cache::forget('payment:init:tbank_eacq:order:' . $draft['order_number']);
+                            Cache::forget('payment:init:tbank_eacq:'.$paymentIdParam);
+                            if (! empty($draft['order_number'])) {
+                                Cache::forget('payment:init:tbank_eacq:order:'.$draft['order_number']);
                             }
-                            $q3 = 'id=' . $order->id . '&status=tbank_success';
-                            if (!empty($rawStatus)) {
-                                $q3 .= '&raw_status=' . urlencode((string) $rawStatus);
+                            $q3 = 'id='.$order->id.'&status=tbank_success';
+                            if (! empty($rawStatus)) {
+                                $q3 .= '&raw_status='.urlencode((string) $rawStatus);
                             }
-                            if (!empty($paymentType)) {
-                                $q3 .= '&payment_type=' . urlencode((string) $paymentType);
+                            if (! empty($paymentType)) {
+                                $q3 .= '&payment_type='.urlencode((string) $paymentType);
                             }
-                            return redirect(config('app.frontend_url') . '/payment-status?' . $q3);
+
+                            return redirect(config('app.frontend_url').'/payment-status?'.$q3);
                         }
                     }
                 }
@@ -257,28 +259,27 @@ class ShopPaymentController extends Controller
                 $statusParam = 'tbank_failed';
             }
 
-            $query = 'status=' . $statusParam;
+            $query = 'status='.$statusParam;
             if ($orderNumber) {
-                $query .= '&order_number=' . urlencode((string) $orderNumber);
+                $query .= '&order_number='.urlencode((string) $orderNumber);
             }
-            if (!empty($rawStatus)) {
-                $query .= '&raw_status=' . urlencode((string) $rawStatus);
+            if (! empty($rawStatus)) {
+                $query .= '&raw_status='.urlencode((string) $rawStatus);
             }
-            if (!empty($paymentType)) {
-                $query .= '&payment_type=' . urlencode((string) $paymentType);
+            if (! empty($paymentType)) {
+                $query .= '&payment_type='.urlencode((string) $paymentType);
             }
 
-            return redirect(config('app.frontend_url') . '/payment-status?' . $query);
+            return redirect(config('app.frontend_url').'/payment-status?'.$query);
         }
 
         // Default redirect or error
-        return redirect(config('app.frontend_url') . '/payment-status?status=error');
+        return redirect(config('app.frontend_url').'/payment-status?status=error');
     }
 
     /**
      * Check payment status.
      *
-     * @param  \Illuminate\Http\Request  $request
      * @return \Illuminate\Http\Response
      */
     public function checkPaymentStatus(Request $request)
@@ -306,7 +307,6 @@ class ShopPaymentController extends Controller
      * Update order status based on payment.
      * (Deprecated: use webhooks for real-time updates)
      *
-     * @param  \Illuminate\Http\Request  $request
      * @return \Illuminate\Http\Response
      */
     public function updateOrderStatus(Request $request)
@@ -325,19 +325,16 @@ class ShopPaymentController extends Controller
 
         if ($status) {
             $order->update(['payment_status_id' => $status->id]);
+
             return response()->json(['success' => true, 'message' => 'Order payment status updated.']);
         }
 
         return response()->json(['success' => false, 'message' => 'Payment status not found.'], 404);
     }
 
-
-
-
     /**
      * Handle webhook for Yookassa.
      *
-     * @param  \Illuminate\Http\Request  $request
      * @return \Illuminate\Http\Response
      */
     public function yookassaWebhook(Request $request)
@@ -362,7 +359,7 @@ class ShopPaymentController extends Controller
                     if ($transaction->order_id) {
                         $order = ShopOrder::find($transaction->order_id);
                     }
-                    if (!$order) {
+                    if (! $order) {
                         $order = $this->createOrderFromTransaction($transaction, 'yookassa');
                         if ($order) {
                             $transaction->update(['order_id' => $order->id]);
@@ -376,11 +373,11 @@ class ShopPaymentController extends Controller
                                 'yookassa_payment_id' => $paymentId,
                                 'payed' => true,
                             ]);
-                            Log::info('Yookassa: Order ' . $order->id . ' created/updated as paid via tx ' . $transaction->id);
+                            Log::info('Yookassa: Order '.$order->id.' created/updated as paid via tx '.$transaction->id);
                         }
                     }
                 } else {
-                    Log::warning('Yookassa Webhook: transaction not found for id ' . $txIdFromMeta);
+                    Log::warning('Yookassa Webhook: transaction not found for id '.$txIdFromMeta);
                 }
             } elseif ($orderIdFromMeta) {
                 $order = ShopOrder::find($orderIdFromMeta);
@@ -392,11 +389,11 @@ class ShopPaymentController extends Controller
                             'yookassa_payment_id' => $paymentId,
                             'payed' => true,
                         ]);
-                        Log::info('Yookassa: Order ' . $orderIdFromMeta . ' payment succeeded.');
+                        Log::info('Yookassa: Order '.$orderIdFromMeta.' payment succeeded.');
                     }
                 }
             } else {
-                $cacheKey = 'payment:init:yookassa:' . $paymentId;
+                $cacheKey = 'payment:init:yookassa:'.$paymentId;
                 $draft = Cache::get($cacheKey);
                 if ($draft && is_array($draft)) {
                     $order = $this->createOrderFromPayload(
@@ -430,18 +427,18 @@ class ShopPaymentController extends Controller
                         Log::error('Yookassa Webhook: failed to create order from cache');
                     }
                 } else {
-                    Log::error('Yookassa Webhook: neither transaction nor cached draft found for payment ' . $paymentId);
+                    Log::error('Yookassa Webhook: neither transaction nor cached draft found for payment '.$paymentId);
                 }
             }
         } elseif ($event === 'payment.canceled' || ($event === 'payment.succeeded' && $object['status'] === 'canceled')) {
-             $txIdFromMeta = $object['metadata']['transaction_id'] ?? null;
-             $orderId = $object['metadata']['order_id'] ?? null;
-             if ($txIdFromMeta) {
+            $txIdFromMeta = $object['metadata']['transaction_id'] ?? null;
+            $orderId = $object['metadata']['order_id'] ?? null;
+            if ($txIdFromMeta) {
                 $transaction = ShopPaymentTransaction::where('id', $txIdFromMeta)->first();
                 if ($transaction) {
                     $transaction->update(['status' => 'cancelled', 'response_data' => $request->all()]);
                 }
-             } elseif ($orderId) {
+            } elseif ($orderId) {
                 $order = ShopOrder::find($orderId);
                 if ($order) {
                     $cancelledStatusId = ShopPaymentStatus::where('name', 'cancelled')->value('id');
@@ -450,23 +447,22 @@ class ShopPaymentController extends Controller
                             'payment_status_id' => $cancelledStatusId,
                             'payed' => false,
                         ]);
-                        Log::info('Yookassa: Order ' . $orderId . ' payment cancelled.');
+                        Log::info('Yookassa: Order '.$orderId.' payment cancelled.');
                     }
                 }
-             }
+            }
         }
 
         return response()->json([], 200);
     }
 
-
-
     protected function createOrderFromTransaction(ShopPaymentTransaction $transaction, string $gateway = ''): ?ShopOrder
     {
         try {
             $orderData = $transaction->request_data['order_data'] ?? null;
-            if (!$orderData || !is_array($orderData)) {
-                Log::warning('createOrderFromTransaction: missing order_data in transaction ' . $transaction->id);
+            if (! $orderData || ! is_array($orderData)) {
+                Log::warning('createOrderFromTransaction: missing order_data in transaction '.$transaction->id);
+
                 return null;
             }
             $order = ShopOrder::create([
@@ -503,13 +499,15 @@ class ShopPaymentController extends Controller
                 'payed' => true,
                 'status_id' => ShopOrderStatus::where('name', 'confirmed')->value('id') ?? ShopOrderStatus::where('name', 'pending')->value('id'),
             ]);
+
             return $order;
         } catch (\Exception $e) {
-            Log::error('Failed to create order from transaction ' . $transaction->id . ': ' . $e->getMessage());
+            Log::error('Failed to create order from transaction '.$transaction->id.': '.$e->getMessage());
+
             return null;
         }
     }
-    
+
     protected function createOrderFromPayload(array $orderData, ?int $paymentMethodId, string $orderNumber, ?string $ip, ?string $userAgent): ?ShopOrder
     {
         try {
@@ -547,17 +545,18 @@ class ShopPaymentController extends Controller
                 'payed' => false,
                 'status_id' => ShopOrderStatus::where('name', 'pending')->value('id') ?? ShopOrderStatus::where('name', 'confirmed')->value('id'),
             ]);
+
             return $order;
         } catch (\Exception $e) {
-            Log::error('Failed to create order from payload: ' . $e->getMessage());
+            Log::error('Failed to create order from payload: '.$e->getMessage());
+
             return null;
         }
     }
-    
+
     /**
      * Handle payment creation for various methods.
      *
-     * @param  \Illuminate\Http\Request  $request
      * @return \Illuminate\Http\Response
      */
     public function createPayment(Request $request)
@@ -578,21 +577,23 @@ class ShopPaymentController extends Controller
         if ($validator->fails()) {
             return response()->json(['success' => false, 'message' => 'Invalid input', 'errors' => $validator->errors()], 422);
         }
-        
+
         // Извлекаем order_data из запроса
-            $orderData = $request->input('order_data');
-            $paymentMethod = ShopPaymentMethod::findOrFail($request->payment_method_id);
+        $orderData = $request->input('order_data');
+        $paymentMethod = ShopPaymentMethod::findOrFail($request->payment_method_id);
 
-            // SERVER-SIDE RECALCULATION (AUTHORITATIVE)
-            if (isset($orderData['items']) && is_array($orderData['items'])) {
-                $recalculatedSubtotal = 0;
-                
-                foreach ($orderData['items'] as &$item) {
-                    $price = 0;
-                    $good = ShopGood::find($item['good_id'] ?? null);
-                    if (!$good) continue;
+        // SERVER-SIDE RECALCULATION (AUTHORITATIVE)
+        if (isset($orderData['items']) && is_array($orderData['items'])) {
+            $recalculatedSubtotal = 0;
 
-                    if (isset($item['variation_id']) && $item['variation_id']) {
+            foreach ($orderData['items'] as &$item) {
+                $price = 0;
+                $good = ShopGood::find($item['good_id'] ?? null);
+                if (! $good) {
+                    continue;
+                }
+
+                if (isset($item['variation_id']) && $item['variation_id']) {
                     $variation = \App\Models\ShopGoodVariation::find($item['variation_id']);
                     if ($variation) {
                         // Price priority: demping > sale > base
@@ -614,85 +615,85 @@ class ShopPaymentController extends Controller
                         $price = $good->price;
                     }
                 }
-                    
-                    $item['price'] = $price; // Update item price to the correct one
-                    $item['total'] = $price * ($item['quantity'] ?? 1);
-                    $recalculatedSubtotal += $item['total'];
-                }
-                unset($item);
 
-                // Overwrite subtotal with server-calculated value
-                $orderData['subtotal'] = $recalculatedSubtotal;
-
-                // --- Full discount and total recalculation ---
-                $user = isset($orderData['customer_id']) ? \App\Models\User::find($orderData['customer_id']) : null;
-
-                // Initialize discount components
-                $registeredUserDiscountAmount = 0;
-                $promoCodeDiscountAmount = 0;
-                $bonusPointsDiscountAmount = 0;
-                $isFreeDelivery = false;
-
-                // 1. Registered User Discount
-                if ($user && $user->discount > 0) {
-                    $registeredUserDiscountAmount = $recalculatedSubtotal * ($user->discount / 100);
-                }
-
-                $subtotalAfterUserDiscount = $recalculatedSubtotal - $registeredUserDiscountAmount;
-
-                // 2. Promo Code Discount
-                $promoCode = null;
-                $promoCodeString = $orderData['promo_code'] ?? null;
-                if ($promoCodeString) {
-                    $promoCode = \App\Models\Promocode::where('code', $promoCodeString)->first();
-                }
-
-                if ($promoCode) {
-                    $cartItemsForPromo = $orderData['items']; 
-                    $userId = $user ? $user->id : null;
-                    $discountResult = $promoCode->calculateDiscount($subtotalAfterUserDiscount, $cartItemsForPromo, $userId);
-
-                    if ($promoCode->type === 'free_delivery') {
-                        $applicability = $promoCode->isApplicableToOrder($cartItemsForPromo, $subtotalAfterUserDiscount, $userId);
-                        if ($applicability['is_applicable']) {
-                            $isFreeDelivery = true;
-                        }
-                    } elseif (isset($discountResult['discount']) && $discountResult['discount'] > 0) {
-                        $promoCodeDiscountAmount = $discountResult['discount'];
-                    }
-                    
-                    $orderData['promo_code_id'] = $promoCode->id;
-                }
-
-                // 3. Bonus Points Discount
-                if (($orderData['use_bonus_points'] ?? false) && ($orderData['bonus_points_to_use'] ?? 0) > 0 && $user) {
-                    $pointsToUse = (int)$orderData['bonus_points_to_use'];
-                    $baseAmountForBonuses = $subtotalAfterUserDiscount - $promoCodeDiscountAmount;
-                    $userBonus = \App\Models\UserBonus::getOrCreateForUser($user->id);
-
-                    if ($userBonus->points >= $pointsToUse) {
-                        // This rule should be in a setting. For now, assume bonuses can cover up to 50% of the amount.
-                        $maxBonusUsage = $baseAmountForBonuses * 0.5; 
-                        $bonusPointsDiscountAmount = min($pointsToUse, $baseAmountForBonuses, $maxBonusUsage);
-                    }
-                }
-
-                // 4. Final Calculation
-                $deliveryCost = $isFreeDelivery ? 0 : ($orderData['delivery_cost'] ?? 0);
-                $totalDiscount = $registeredUserDiscountAmount + $promoCodeDiscountAmount + $bonusPointsDiscountAmount;
-                $finalTotalAmount = $recalculatedSubtotal - $totalDiscount + $deliveryCost;
-
-                // Overwrite client-sent amounts with authoritative server calculation
-                $orderData['total_amount'] = round($finalTotalAmount, 2);
-                $orderData['total_discount_amount'] = round($totalDiscount, 2);
-                $orderData['registered_user_discount_amount'] = round($registeredUserDiscountAmount, 2);
-                $orderData['promo_code_discount_amount'] = round($promoCodeDiscountAmount, 2);
-                // In the database, bonus_points_to_use is an integer representing the number of points.
-                // The monetary value is what we calculated as bonusPointsDiscountAmount.
-                // Let's assume 1 point = 1 RUB for simplicity.
-                $orderData['bonus_points_to_use'] = (int)round($bonusPointsDiscountAmount);
-                $orderData['delivery_cost'] = round($deliveryCost, 2);
+                $item['price'] = $price; // Update item price to the correct one
+                $item['total'] = $price * ($item['quantity'] ?? 1);
+                $recalculatedSubtotal += $item['total'];
             }
+            unset($item);
+
+            // Overwrite subtotal with server-calculated value
+            $orderData['subtotal'] = $recalculatedSubtotal;
+
+            // --- Full discount and total recalculation ---
+            $user = isset($orderData['customer_id']) ? \App\Models\User::find($orderData['customer_id']) : null;
+
+            // Initialize discount components
+            $registeredUserDiscountAmount = 0;
+            $promoCodeDiscountAmount = 0;
+            $bonusPointsDiscountAmount = 0;
+            $isFreeDelivery = false;
+
+            // 1. Registered User Discount
+            if ($user && $user->discount > 0) {
+                $registeredUserDiscountAmount = $recalculatedSubtotal * ($user->discount / 100);
+            }
+
+            $subtotalAfterUserDiscount = $recalculatedSubtotal - $registeredUserDiscountAmount;
+
+            // 2. Promo Code Discount
+            $promoCode = null;
+            $promoCodeString = $orderData['promo_code'] ?? null;
+            if ($promoCodeString) {
+                $promoCode = \App\Models\Promocode::where('code', $promoCodeString)->first();
+            }
+
+            if ($promoCode) {
+                $cartItemsForPromo = $orderData['items'];
+                $userId = $user ? $user->id : null;
+                $discountResult = $promoCode->calculateDiscount($subtotalAfterUserDiscount, $cartItemsForPromo, $userId);
+
+                if ($promoCode->type === 'free_delivery') {
+                    $applicability = $promoCode->isApplicableToOrder($cartItemsForPromo, $subtotalAfterUserDiscount, $userId);
+                    if ($applicability['is_applicable']) {
+                        $isFreeDelivery = true;
+                    }
+                } elseif (isset($discountResult['discount']) && $discountResult['discount'] > 0) {
+                    $promoCodeDiscountAmount = $discountResult['discount'];
+                }
+
+                $orderData['promo_code_id'] = $promoCode->id;
+            }
+
+            // 3. Bonus Points Discount
+            if (($orderData['use_bonus_points'] ?? false) && ($orderData['bonus_points_to_use'] ?? 0) > 0 && $user) {
+                $pointsToUse = (int) $orderData['bonus_points_to_use'];
+                $baseAmountForBonuses = $subtotalAfterUserDiscount - $promoCodeDiscountAmount;
+                $userBonus = \App\Models\UserBonus::getOrCreateForUser($user->id);
+
+                if ($userBonus->points >= $pointsToUse) {
+                    // This rule should be in a setting. For now, assume bonuses can cover up to 50% of the amount.
+                    $maxBonusUsage = $baseAmountForBonuses * 0.5;
+                    $bonusPointsDiscountAmount = min($pointsToUse, $baseAmountForBonuses, $maxBonusUsage);
+                }
+            }
+
+            // 4. Final Calculation
+            $deliveryCost = $isFreeDelivery ? 0 : ($orderData['delivery_cost'] ?? 0);
+            $totalDiscount = $registeredUserDiscountAmount + $promoCodeDiscountAmount + $bonusPointsDiscountAmount;
+            $finalTotalAmount = $recalculatedSubtotal - $totalDiscount + $deliveryCost;
+
+            // Overwrite client-sent amounts with authoritative server calculation
+            $orderData['total_amount'] = round($finalTotalAmount, 2);
+            $orderData['total_discount_amount'] = round($totalDiscount, 2);
+            $orderData['registered_user_discount_amount'] = round($registeredUserDiscountAmount, 2);
+            $orderData['promo_code_discount_amount'] = round($promoCodeDiscountAmount, 2);
+            // In the database, bonus_points_to_use is an integer representing the number of points.
+            // The monetary value is what we calculated as bonusPointsDiscountAmount.
+            // Let's assume 1 point = 1 RUB for simplicity.
+            $orderData['bonus_points_to_use'] = (int) round($bonusPointsDiscountAmount);
+            $orderData['delivery_cost'] = round($deliveryCost, 2);
+        }
 
         if ($paymentMethod->type === 'transfer') {
             $order = ShopOrder::create([
@@ -726,15 +727,17 @@ class ShopPaymentController extends Controller
                 'overtax_amount' => $orderData['overtax_amount'] ?? 0,
                 'overtax_text' => $orderData['overtax_text'] ?? null,
                 'cancellation_request' => $orderData['cancellation_request'] ?? false,
-                'comment' => $orderData['comment'] ?? null, 
+                'comment' => $orderData['comment'] ?? null,
                 'ip_address' => $request->ip(),
                 'user_agent' => $request->userAgent(),
                 'payment_status_id' => ShopPaymentStatus::where('name', 'pending')->value('id'),
                 'status_id' => ShopOrderStatus::where('name', 'pending')->value('id'),
             ]);
-            if (!$order || !$order->id) {
+
+            if (! $order || ! $order->id) {
                 return response()->json(['success' => false, 'message' => 'Failed to create order'], 500);
             }
+
             return $this->handleBankTransfer($order, $paymentMethod);
         }
 
@@ -750,7 +753,7 @@ class ShopPaymentController extends Controller
             $request->ip(),
             $request->userAgent()
         );
-        if (!$order || !$order->id) {
+        if (! $order || ! $order->id) {
             return response()->json(['success' => false, 'message' => 'Failed to create order'], 500);
         }
 
@@ -768,15 +771,15 @@ class ShopPaymentController extends Controller
                 return response()->json(['success' => false, 'message' => 'Unsupported payment method'], 400);
         }
     }
-    
+
     protected function handleYookassaPayment(ShopOrder $order, ShopPaymentMethod $paymentMethod): \Illuminate\Http\JsonResponse
     {
-        if (!$paymentMethod->is_active) {
+        if (! $paymentMethod->is_active) {
             return response()->json(['success' => false, 'message' => 'Payment method is inactive'], 400);
         }
         $settings = $this->normalizePaymentSettings($paymentMethod->settings ?? []);
         $shouldBeTwoStagePay = $settings['two_stage_pay'] ?? false;
-        if (!$shouldBeTwoStagePay) {
+        if (! $shouldBeTwoStagePay) {
             $globalTwoStagePaySetting = \App\Models\Setting::where('key', 'two_stage_pay')->value('value');
             $shouldBeTwoStagePay = $globalTwoStagePaySetting === '1' || $globalTwoStagePaySetting === true || $globalTwoStagePaySetting === 1;
         }
@@ -786,12 +789,12 @@ class ShopPaymentController extends Controller
         if (empty($shopId) || empty($secretKey)) {
             return response()->json(['success' => false, 'message' => 'ЮКасса: отсутствует shop_id/secret_key'], 400);
         }
-        $returnUrl = request()->input('return_url') ?: (config('app.frontend_url') . '/checkout?payment=return&payment_type=yookassa');
+        $returnUrl = request()->input('return_url') ?: (config('app.frontend_url').'/checkout?payment=return&payment_type=yookassa');
         $amountValue = number_format($order->total_amount, 2, '.', '');
         $payload = [
             'amount' => ['value' => $amountValue, 'currency' => $settings['currency'] ?? 'RUB'],
             'capture' => true,
-            'description' => 'Оплата заказа №' . $order->order_number,
+            'description' => 'Оплата заказа №'.$order->order_number,
             'confirmation' => ['type' => 'redirect', 'return_url' => $returnUrl],
             'metadata' => ['order_id' => $order->id],
         ];
@@ -844,6 +847,7 @@ class ShopPaymentController extends Controller
                         'order_number' => $order->order_number,
                     ]);
                 }
+
                 return response()->json([
                     'success' => true,
                     'payment_url' => $paymentUrl,
@@ -851,49 +855,53 @@ class ShopPaymentController extends Controller
                     'order_number' => $order->order_number,
                 ]);
             }
+
             return response()->json([
                 'success' => false,
                 'message' => $data['description'] ?? 'ЮКасса: не удалось создать платеж',
                 'details' => $data,
             ], 400);
         } catch (\Illuminate\Http\Client\ConnectionException $e) {
-            \Log::error('YooKassa connection failed: ' . $e->getMessage());
+            \Log::error('YooKassa connection failed: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'ЮКасса: ошибка подключения',
                 'details' => $e->getMessage(),
             ], 502);
         } catch (\Exception $e) {
-            \Log::error('YooKassa create payment failed: ' . $e->getMessage());
+            \Log::error('YooKassa create payment failed: '.$e->getMessage());
+
             return response()->json(['success' => false, 'message' => 'ЮКасса: ошибка создания платежа'], 500);
         }
     }
 
     protected function handleTbankEacqPayment(ShopOrder $order, ShopPaymentMethod $paymentMethod): \Illuminate\Http\JsonResponse
     {
-        if (!$paymentMethod->is_active) {
+        if (! $paymentMethod->is_active) {
             return response()->json(['success' => false, 'message' => 'Payment method is inactive'], 400);
         }
         $settings = $this->normalizePaymentSettings($paymentMethod->settings);
-        
+
         // Debug: Log the actual settings from database
         Log::debug('ShopPaymentController: handleTbankEacqPayment settings', [
             'payment_method_id' => $paymentMethod->id,
             'raw_settings' => $paymentMethod->settings,
             'normalized_settings' => $settings,
-            'dolyame_keys' => array_filter(array_keys($settings), function($key) {
+            'dolyame_keys' => array_filter(array_keys($settings), function ($key) {
                 return strpos($key, 'dolyame') !== false;
             }),
         ]);
-        
+
         $shouldBeTwoStagePay = $settings['two_stage_pay'] ?? false;
-        if (!$shouldBeTwoStagePay && class_exists(\App\Models\Setting::class)) {
+        if (! $shouldBeTwoStagePay && class_exists(\App\Models\Setting::class)) {
             $globalTwoStagePaySetting = \App\Models\Setting::where('key', 'two_stage_pay')->value('value');
             $shouldBeTwoStagePay = $globalTwoStagePaySetting === '1' || $globalTwoStagePaySetting === true || $globalTwoStagePaySetting === 1;
         }
         $twoStagePaymentTypesAllowed = ['transfer', 'yandex_pay', 'yandex_split', 'yookassa', 'tbank_dolyame', 'tbank_eacq'];
         if (empty($settings['terminal_key']) || empty($settings['terminal_password'])) {
             Log::error('handleTbankEacqPayment: missing terminal_key or terminal_password', ['method_id' => $paymentMethod->id]);
+
             return response()->json(['success' => false, 'message' => 'Payment gateway misconfigured'], 500);
         }
         $tbankService = new TbankPaymentService($settings);
@@ -923,6 +931,7 @@ class ShopPaymentController extends Controller
                         'order_number' => $order->order_number,
                     ]);
                 }
+
                 return response()->json([
                     'success' => true,
                     'payment_url' => $paymentResult['payment_url'] ?? null,
@@ -944,6 +953,7 @@ class ShopPaymentController extends Controller
                     'payment_status_id' => ShopPaymentStatus::where('name', 'pending')->value('id'),
                     'payment_url' => null,
                 ]);
+
                 return response()->json([
                     'success' => true,
                     'two_stage_pay' => true,
@@ -952,17 +962,19 @@ class ShopPaymentController extends Controller
                     'message' => 'Gateway unreachable',
                 ]);
             }
-            Log::error('handleTbankEacqPayment: T-Bank eacq payment initiation failed for order ' . $order->id . ': ' . ($paymentResult['message'] ?? 'Unknown error'), ['payment_result' => $paymentResult]);
+            Log::error('handleTbankEacqPayment: T-Bank eacq payment initiation failed for order '.$order->id.': '.($paymentResult['message'] ?? 'Unknown error'), ['payment_result' => $paymentResult]);
+
             return response()->json(['success' => false, 'message' => $paymentResult['message'] ?? 'Failed to initiate payment'], 500);
         } catch (\Exception $e) {
-            Log::error('handleTbankEacqPayment: Exception during T-Bank eacq payment initiation for order ' . $order->id . ': ' . $e->getMessage(), ['exception' => $e]);
+            Log::error('handleTbankEacqPayment: Exception during T-Bank eacq payment initiation for order '.$order->id.': '.$e->getMessage(), ['exception' => $e]);
+
             return response()->json(['success' => false, 'message' => 'An error occurred during payment processing'], 500);
         }
     }
 
     protected function initYookassaPayment(string $orderNumber, array $orderData, ShopPaymentMethod $paymentMethod, ?string $returnUrl, Request $request): \Illuminate\Http\JsonResponse
     {
-        if (!$paymentMethod->is_active) {
+        if (! $paymentMethod->is_active) {
             return response()->json(['success' => false, 'message' => 'Payment method is inactive'], 400);
         }
         $settings = $this->normalizePaymentSettings($paymentMethod->settings ?? []);
@@ -971,11 +983,11 @@ class ShopPaymentController extends Controller
         if (empty($shopId) || empty($secretKey)) {
             return response()->json(['success' => false, 'message' => 'ЮКасса: отсутствует shop_id/secret_key'], 400);
         }
-        $returnUrl = $returnUrl ?: (config('app.frontend_url') . '/checkout?payment=return&payment_type=yookassa');
+        $returnUrl = $returnUrl ?: (config('app.frontend_url').'/checkout?payment=return&payment_type=yookassa');
         $amountValue = number_format($orderData['total_amount'] ?? 0, 2, '.', '');
         // Определяем двухэтапность
         $shouldBeTwoStagePay = $settings['two_stage_pay'] ?? false;
-        if (!$shouldBeTwoStagePay && class_exists(\App\Models\Setting::class)) {
+        if (! $shouldBeTwoStagePay && class_exists(\App\Models\Setting::class)) {
             $globalTwoStagePaySetting = \App\Models\Setting::where('key', 'two_stage_pay')->value('value');
             $shouldBeTwoStagePay = $globalTwoStagePaySetting === '1' || $globalTwoStagePaySetting === true || $globalTwoStagePaySetting === 1;
         }
@@ -983,7 +995,7 @@ class ShopPaymentController extends Controller
         $payload = [
             'amount' => ['value' => $amountValue, 'currency' => $settings['currency'] ?? 'RUB'],
             'capture' => true,
-            'description' => 'Оплата заказа №' . $orderNumber,
+            'description' => 'Оплата заказа №'.$orderNumber,
             'confirmation' => ['type' => 'redirect', 'return_url' => $returnUrl],
             'metadata' => ['order_number' => $orderNumber],
         ];
@@ -1043,6 +1055,7 @@ class ShopPaymentController extends Controller
                                 'error' => $e->getMessage(),
                             ]);
                         }
+
                         return response()->json([
                             'success' => true,
                             'two_stage_pay' => true,
@@ -1055,7 +1068,7 @@ class ShopPaymentController extends Controller
                 }
 
                 // Обычный (одноэтапный) режим — кэшируем данные и редиректим на оплату
-                $cacheKey = 'payment:init:yookassa:' . ($data['id'] ?? '');
+                $cacheKey = 'payment:init:yookassa:'.($data['id'] ?? '');
                 Cache::put($cacheKey, [
                     'order_number' => $orderNumber,
                     'order_data' => $orderData,
@@ -1065,37 +1078,41 @@ class ShopPaymentController extends Controller
                     'ip' => $request->ip(),
                     'user_agent' => $request->userAgent(),
                 ], now()->addDays(2));
+
                 return response()->json([
                     'success' => true,
                     'payment_url' => $paymentUrl,
                 ]);
             }
+
             return response()->json([
                 'success' => false,
                 'message' => $data['description'] ?? 'ЮКасса: не удалось создать платеж',
                 'details' => $data,
             ], 400);
         } catch (\Illuminate\Http\Client\ConnectionException $e) {
-            \Log::error('YooKassa connection failed: ' . $e->getMessage());
+            \Log::error('YooKassa connection failed: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'ЮКасса: ошибка подключения',
                 'details' => $e->getMessage(),
             ], 502);
         } catch (\Exception $e) {
-            \Log::error('YooKassa create payment failed: ' . $e->getMessage());
+            \Log::error('YooKassa create payment failed: '.$e->getMessage());
+
             return response()->json(['success' => false, 'message' => 'ЮКасса: ошибка создания платежа'], 500);
         }
     }
 
     protected function handleYandexPayPayment(ShopOrder $order, ShopPaymentMethod $paymentMethod): \Illuminate\Http\JsonResponse
     {
-        if (!$paymentMethod->is_active) {
+        if (! $paymentMethod->is_active) {
             return response()->json(['success' => false, 'message' => 'Payment method is inactive'], 400);
         }
         $settings = $this->normalizePaymentSettings($paymentMethod->settings ?? []);
         $shouldBeTwoStagePay = $settings['two_stage_pay'] ?? false;
-        if (!$shouldBeTwoStagePay) {
+        if (! $shouldBeTwoStagePay) {
             $globalTwoStagePaySetting = \App\Models\Setting::where('key', 'two_stage_pay')->value('value');
             $shouldBeTwoStagePay = $globalTwoStagePaySetting === '1' || $globalTwoStagePaySetting === true || $globalTwoStagePaySetting === 1;
         }
@@ -1106,7 +1123,7 @@ class ShopPaymentController extends Controller
         }
         $isTest = ($settings['mode'] ?? 'test') !== 'live';
         $apiUrl = $isTest ? 'https://sandbox.pay.yandex.ru/api/merchant/v1' : 'https://pay.yandex.ru/api/merchant/v1';
-        $returnUrl = request()->input('return_url') ?: (config('app.frontend_url') . '/checkout?payment=return&payment_type=yandex_pay');
+        $returnUrl = request()->input('return_url') ?: (config('app.frontend_url').'/checkout?payment=return&payment_type=yandex_pay');
         $amountValue = number_format($order->total_amount, 2, '.', '');
         $payload = [
             'orderId' => $order->order_number,
@@ -1114,13 +1131,13 @@ class ShopPaymentController extends Controller
             'amount' => ['value' => $amountValue, 'currency' => $settings['currency'] ?? 'RUB'],
             'cart' => [
                 'items' => [[
-                    'productId' => 'ORDER-' . $order->id,
-                    'description' => 'Оплата заказа №' . $order->order_number,
+                    'productId' => 'ORDER-'.$order->id,
+                    'description' => 'Оплата заказа №'.$order->order_number,
                     'quantity' => ['count' => '1.0', 'available' => '1.0'],
                     'amount' => ['value' => $amountValue, 'currency' => $settings['currency'] ?? 'RUB'],
-                    'total' => $amountValue
+                    'total' => $amountValue,
                 ]],
-                'total' => ['amount' => $amountValue]
+                'total' => ['amount' => $amountValue],
             ],
             'confirmation' => ['type' => 'redirect', 'return_url' => $returnUrl],
             'metadata' => json_encode(['order_id' => $order->id, 'payment_method_id' => $paymentMethod->id]),
@@ -1136,13 +1153,13 @@ class ShopPaymentController extends Controller
             ];
             $options['verify'] = $caBundle ?: $verify;
             $http = \Illuminate\Support\Facades\Http::timeout(30)->retry(2, 1000)->withOptions($options)->withHeaders([
-                'Authorization' => 'Api-Key ' . $secretKey,
+                'Authorization' => 'Api-Key '.$secretKey,
                 'Content-Type' => 'application/json',
                 'X-Request-Id' => uniqid('yp_', true),
                 'X-Request-Timeout' => '30000',
-                'X-Request-Attempt' => '0'
+                'X-Request-Attempt' => '0',
             ]);
-            $response = $http->post($apiUrl . '/orders', $payload);
+            $response = $http->post($apiUrl.'/orders', $payload);
             $data = $response->json();
             if ($response->successful()) {
                 $paymentUrl = null;
@@ -1151,7 +1168,7 @@ class ShopPaymentController extends Controller
                 if (isset($data['confirmation']['confirmation_url'])) {
                     $paymentUrl = $data['confirmation']['confirmation_url'];
                     $yandexOrderId = $data['id'] ?? ($data['orderId'] ?? null);
-                } elseif (isset($data['data']) && is_array($data['data']) && !empty($data['data']['paymentUrl'])) {
+                } elseif (isset($data['data']) && is_array($data['data']) && ! empty($data['data']['paymentUrl'])) {
                     $paymentUrl = $data['data']['paymentUrl'];
                     $yandexOrderId = $data['data']['orderId'] ?? $data['data']['id'] ?? ($data['id'] ?? null);
                 } elseif (isset($data['paymentUrl'])) {
@@ -1191,6 +1208,7 @@ class ShopPaymentController extends Controller
                             'order_number' => $order->order_number,
                         ]);
                     }
+
                     return response()->json([
                         'success' => true,
                         'payment_url' => $paymentUrl,
@@ -1199,27 +1217,30 @@ class ShopPaymentController extends Controller
                     ]);
                 }
             }
+
             return response()->json([
                 'success' => false,
                 'message' => $data['message'] ?? 'Яндекс Пэй: не удалось создать заказ',
                 'details' => $data,
             ], 400);
         } catch (\Illuminate\Http\Client\ConnectionException $e) {
-            \Log::error('Yandex Pay connection failed: ' . $e->getMessage());
+            \Log::error('Yandex Pay connection failed: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'Яндекс Пэй: ошибка подключения',
                 'details' => $e->getMessage(),
             ], 502);
         } catch (\Exception $e) {
-            \Log::error('Yandex Pay create order failed: ' . $e->getMessage());
+            \Log::error('Yandex Pay create order failed: '.$e->getMessage());
+
             return response()->json(['success' => false, 'message' => 'Яндекс Пэй: ошибка создания заказа'], 500);
         }
     }
 
     protected function initYandexPayPayment(string $orderNumber, array $orderData, ShopPaymentMethod $paymentMethod, ?string $returnUrl, Request $request): \Illuminate\Http\JsonResponse
     {
-        if (!$paymentMethod->is_active) {
+        if (! $paymentMethod->is_active) {
             return response()->json(['success' => false, 'message' => 'Payment method is inactive'], 400);
         }
         $settings = method_exists($paymentMethod, 'getApiSettings')
@@ -1234,11 +1255,11 @@ class ShopPaymentController extends Controller
         }
         $isTest = ($settings['mode'] ?? 'test') !== 'live';
         $apiUrl = $isTest ? 'https://sandbox.pay.yandex.ru/api/merchant/v1' : 'https://pay.yandex.ru/api/merchant/v1';
-        $returnUrl = $returnUrl ?: (config('app.frontend_url') . '/checkout?payment=return&payment_type=yandex_pay');
+        $returnUrl = $returnUrl ?: (config('app.frontend_url').'/checkout?payment=return&payment_type=yandex_pay');
         $amountValue = number_format($orderData['total_amount'] ?? 0, 2, '.', '');
         // Определяем двухэтапность
         $shouldBeTwoStagePay = $settings['two_stage_pay'] ?? false;
-        if (!$shouldBeTwoStagePay && class_exists(\App\Models\Setting::class)) {
+        if (! $shouldBeTwoStagePay && class_exists(\App\Models\Setting::class)) {
             $globalTwoStagePaySetting = \App\Models\Setting::where('key', 'two_stage_pay')->value('value');
             $shouldBeTwoStagePay = $globalTwoStagePaySetting === '1' || $globalTwoStagePaySetting === true || $globalTwoStagePaySetting === 1;
         }
@@ -1250,13 +1271,13 @@ class ShopPaymentController extends Controller
             'cart' => [
                 'items' => [[
                     'productId' => 'ORDER-DRAFT',
-                    'title' => 'Заказ ' . $orderNumber,
-                    'description' => 'Оплата заказа №' . $orderNumber,
+                    'title' => 'Заказ '.$orderNumber,
+                    'description' => 'Оплата заказа №'.$orderNumber,
                     'quantity' => ['count' => '1.0', 'available' => '1.0'],
                     'amount' => ['value' => $amountValue, 'currency' => $settings['currency'] ?? 'RUB'],
-                    'total' => $amountValue
+                    'total' => $amountValue,
                 ]],
-                'total' => ['amount' => $amountValue]
+                'total' => ['amount' => $amountValue],
             ],
             'confirmation' => ['type' => 'redirect', 'return_url' => $returnUrl],
             'metadata' => json_encode(['order_number' => $orderNumber, 'payment_method_id' => $paymentMethod->id]),
@@ -1272,13 +1293,13 @@ class ShopPaymentController extends Controller
             }
             $options['verify'] = $disableVerify ? false : ($caBundle ?: $verify);
             $http = \Illuminate\Support\Facades\Http::timeout(30)->retry(2, 1000)->withOptions($options)->withHeaders([
-                'Authorization' => 'Api-Key ' . $secretKey,
+                'Authorization' => 'Api-Key '.$secretKey,
                 'Content-Type' => 'application/json',
                 'X-Request-Id' => uniqid('yp_', true),
                 'X-Request-Timeout' => '30000',
-                'X-Request-Attempt' => '0'
+                'X-Request-Attempt' => '0',
             ]);
-            $response = $http->post($apiUrl . '/orders', $payload);
+            $response = $http->post($apiUrl.'/orders', $payload);
             $data = $response->json();
 
             if ($response->successful()) {
@@ -1288,7 +1309,7 @@ class ShopPaymentController extends Controller
                 if (isset($data['confirmation']['confirmation_url'])) {
                     $paymentUrl = $data['confirmation']['confirmation_url'];
                     $yandexOrderId = $data['id'] ?? ($data['orderId'] ?? null);
-                } elseif (isset($data['data']) && is_array($data['data']) && !empty($data['data']['paymentUrl'])) {
+                } elseif (isset($data['data']) && is_array($data['data']) && ! empty($data['data']['paymentUrl'])) {
                     $paymentUrl = $data['data']['paymentUrl'];
                     $yandexOrderId = $data['data']['orderId'] ?? $data['data']['id'] ?? ($data['id'] ?? null);
                 } elseif (isset($data['paymentUrl'])) {
@@ -1311,7 +1332,7 @@ class ShopPaymentController extends Controller
                             $order->update([
                                 'payment_url' => $paymentUrl,
                                 'payment_status_id' => $pendingId ?: $order->payment_status_id,
-                                'yandex_pay_order_id' => $yandexOrderId
+                                'yandex_pay_order_id' => $yandexOrderId,
                             ]);
                             ShopPaymentTransaction::create([
                                 'order_id' => $order->id,
@@ -1335,6 +1356,7 @@ class ShopPaymentController extends Controller
                                     'error' => $e->getMessage(),
                                 ]);
                             }
+
                             return response()->json([
                                 'success' => true,
                                 'two_stage_pay' => true,
@@ -1346,7 +1368,7 @@ class ShopPaymentController extends Controller
                         // если заказ создать не удалось — падаем в режим черновика
                     }
                     // Обычный (одноэтапный) режим — возвращаем ссылку для редиректа и кэшируем черновик
-                    $cacheKey = 'payment:init:yandex_pay:' . ($yandexOrderId ?: ($data['id'] ?? $orderNumber));
+                    $cacheKey = 'payment:init:yandex_pay:'.($yandexOrderId ?: ($data['id'] ?? $orderNumber));
                     Cache::put($cacheKey, [
                         'order_number' => $orderNumber,
                         'order_data' => $orderData,
@@ -1356,6 +1378,7 @@ class ShopPaymentController extends Controller
                         'ip' => $request->ip(),
                         'user_agent' => $request->userAgent(),
                     ], now()->addDays(2));
+
                     return response()->json([
                         'success' => true,
                         'payment_url' => $paymentUrl,
@@ -1367,44 +1390,48 @@ class ShopPaymentController extends Controller
                 'response' => $data,
                 'payload' => $payload,
             ]);
+
             return response()->json([
                 'success' => false,
                 'message' => $data['message'] ?? 'Яндекс Пэй: не удалось создать заказ',
                 'details' => $data,
             ], 400);
         } catch (\Illuminate\Http\Client\ConnectionException $e) {
-            \Log::error('Yandex Pay connection failed: ' . $e->getMessage());
+            \Log::error('Yandex Pay connection failed: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'Яндекс Пэй: ошибка подключения',
                 'details' => $e->getMessage(),
             ], 502);
         } catch (\Exception $e) {
-            \Log::error('Yandex Pay create order failed: ' . $e->getMessage());
+            \Log::error('Yandex Pay create order failed: '.$e->getMessage());
+
             return response()->json(['success' => false, 'message' => 'Яндекс Пэй: ошибка создания заказа'], 500);
         }
     }
 
     protected function initTbankEacqPayment(string $orderNumber, array $orderData, ShopPaymentMethod $paymentMethod, ?string $returnUrl, Request $request): \Illuminate\Http\JsonResponse
     {
-        if (!$paymentMethod->is_active) {
+        if (! $paymentMethod->is_active) {
             return response()->json(['success' => false, 'message' => 'Payment method is inactive'], 400);
         }
         $settings = $this->normalizePaymentSettings($paymentMethod->settings);
         if (empty($settings['terminal_key']) || empty($settings['terminal_password'])) {
             \Log::error('T-Bank eacq init: missing terminal_key or terminal_password', ['method_id' => $paymentMethod->id]);
+
             return response()->json(['success' => false, 'message' => 'Payment gateway misconfigured'], 500);
         }
         // Определяем двухэтапность
         $shouldBeTwoStagePay = $settings['two_stage_pay'] ?? false;
-        if (!$shouldBeTwoStagePay && class_exists(\App\Models\Setting::class)) {
+        if (! $shouldBeTwoStagePay && class_exists(\App\Models\Setting::class)) {
             $globalTwoStagePaySetting = \App\Models\Setting::where('key', 'two_stage_pay')->value('value');
             $shouldBeTwoStagePay = $globalTwoStagePaySetting === '1' || $globalTwoStagePaySetting === true || $globalTwoStagePaySetting === 1;
         }
         $twoStagePaymentTypesAllowed = ['transfer', 'yandex_pay', 'yandex_split', 'yookassa', 'tbank_dolyame', 'tbank_eacq'];
         $tbankService = new TbankPaymentService($settings); // без DOLYAMI
         try {
-            $orderStub = new \stdClass();
+            $orderStub = new \stdClass;
             $orderStub->id = 0;
             $orderStub->order_number = $orderNumber;
             $orderStub->total_amount = (float) ($orderData['total_amount'] ?? 0);
@@ -1415,7 +1442,7 @@ class ShopPaymentController extends Controller
             $orderStub->items = $orderData['items'] ?? [];
 
             $init = $tbankService->initiatePayment($orderStub);
-            if (!empty($init['success']) && !empty($init['payment_url'])) {
+            if (! empty($init['success']) && ! empty($init['payment_url'])) {
                 if ($shouldBeTwoStagePay && in_array($paymentMethod->type, $twoStagePaymentTypesAllowed)) {
                     // Создаем заказ и сохраняем ссылку для последующей оплаты
                     $order = $this->createOrderFromPayload(
@@ -1453,6 +1480,7 @@ class ShopPaymentController extends Controller
                                 'error' => $e->getMessage(),
                             ]);
                         }
+
                         return response()->json([
                             'success' => true,
                             'two_stage_pay' => true,
@@ -1472,37 +1500,41 @@ class ShopPaymentController extends Controller
                     'user_agent' => $request->userAgent(),
                 ];
                 // Кладём в кэш по двум ключам: по PaymentId (если есть) и по номеру заказа
-                $cacheKeyTx = 'payment:init:tbank_eacq:' . ($init['transaction_id'] ?? $orderNumber);
+                $cacheKeyTx = 'payment:init:tbank_eacq:'.($init['transaction_id'] ?? $orderNumber);
                 Cache::put($cacheKeyTx, $cacheBasePayload, now()->addDays(2));
-                $cacheKeyByOrder = 'payment:init:tbank_eacq:order:' . $orderNumber;
+                $cacheKeyByOrder = 'payment:init:tbank_eacq:order:'.$orderNumber;
                 Cache::put($cacheKeyByOrder, $cacheBasePayload, now()->addDays(2));
+
                 return response()->json([
                     'success' => true,
                     'payment_url' => $init['payment_url'],
                 ]);
             }
             \Log::error('T-Bank eacq create payment failed', ['response' => $init, 'order_number' => $orderNumber]);
+
             return response()->json([
                 'success' => false,
                 'message' => $init['message'] ?? 'Т‑Банк: не удалось создать платеж',
                 'details' => $init['response_data'] ?? $init,
             ], 400);
         } catch (\Illuminate\Http\Client\ConnectionException $e) {
-            \Log::error('T-Bank eacq connection failed: ' . $e->getMessage());
+            \Log::error('T-Bank eacq connection failed: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'Т‑Банк: ошибка подключения',
                 'details' => $e->getMessage(),
             ], 502);
         } catch (\Exception $e) {
-            \Log::error('T-Bank eacq init exception: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
+            \Log::error('T-Bank eacq init exception: '.$e->getMessage(), ['trace' => $e->getTraceAsString()]);
+
             return response()->json(['success' => false, 'message' => 'Т‑Банк: внутренняя ошибка'], 500);
         }
     }
 
     protected function initTbankDolyamePayment(string $orderNumber, array $orderData, ShopPaymentMethod $paymentMethod, ?string $returnUrl, Request $request): \Illuminate\Http\JsonResponse
     {
-        if (!$paymentMethod->is_active) {
+        if (! $paymentMethod->is_active) {
             return response()->json(['success' => false, 'message' => 'Payment method is inactive'], 400);
         }
         $settings = $this->normalizePaymentSettings($paymentMethod->settings);
@@ -1514,6 +1546,7 @@ class ShopPaymentController extends Controller
         if ($provider === 'partner') {
             if (empty($settings['dolyame_login']) || empty($settings['dolyame_password'])) {
                 \Log::error('Dolyame partner init: missing login or password', ['method_id' => $paymentMethod->id]);
+
                 return response()->json(['success' => false, 'message' => 'Payment gateway misconfigured'], 500);
             }
             $partnerSettings = [
@@ -1533,12 +1566,12 @@ class ShopPaymentController extends Controller
                         'price' => (float) ($it['final_price'] ?? $it['price'] ?? 0),
                     ];
                 }, $orderData['items'] ?? []);
-                $successUrl = ($returnUrl ?: (config('app.frontend_url') . '/checkout?payment=return&payment_type=tbank_dolyame'));
-                $failUrl = ($returnUrl ?: (config('app.frontend_url') . '/checkout?payment=return&payment_type=tbank_dolyame'));
+                $successUrl = ($returnUrl ?: (config('app.frontend_url').'/checkout?payment=return&payment_type=tbank_dolyame'));
+                $failUrl = ($returnUrl ?: (config('app.frontend_url').'/checkout?payment=return&payment_type=tbank_dolyame'));
                 $notificationUrl = url('/api/webhooks/dolyame');
                 $res = $service->createOrder($orderNumber, $amount, $items, $notificationUrl, $successUrl, $failUrl);
-                if (!empty($res['success'])) {
-                    $cacheKey = 'payment:init:dolyame:' . $orderNumber;
+                if (! empty($res['success'])) {
+                    $cacheKey = 'payment:init:dolyame:'.$orderNumber;
                     Cache::put($cacheKey, [
                         'order_number' => $orderNumber,
                         'order_data' => $orderData,
@@ -1548,36 +1581,41 @@ class ShopPaymentController extends Controller
                         'ip' => $request->ip(),
                         'user_agent' => $request->userAgent(),
                     ], now()->addDays(2));
+
                     return response()->json([
                         'success' => true,
                         'payment_url' => $res['link'] ?? null,
                     ]);
                 }
                 \Log::error('Dolyame partner create order failed', ['response' => $res, 'order_number' => $orderNumber]);
+
                 return response()->json([
                     'success' => false,
                     'message' => $res['message'] ?? 'Dolyame: не удалось создать заказ',
                     'details' => $res['response'] ?? $res,
                 ], 400);
             } catch (\Illuminate\Http\Client\ConnectionException $e) {
-                \Log::error('Dolyame partner connection failed: ' . $e->getMessage());
+                \Log::error('Dolyame partner connection failed: '.$e->getMessage());
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Dolyame: ошибка подключения',
                     'details' => $e->getMessage(),
                 ], 502);
             } catch (\Exception $e) {
-                \Log::error('Dolyame partner init exception: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
+                \Log::error('Dolyame partner init exception: '.$e->getMessage(), ['trace' => $e->getTraceAsString()]);
+
                 return response()->json(['success' => false, 'message' => 'Dolyame: внутренняя ошибка'], 500);
             }
         }
         if (empty($settings['terminal_key']) || empty($settings['terminal_password'])) {
             \Log::error('T-Bank init: missing terminal_key or terminal_password', ['method_id' => $paymentMethod->id]);
+
             return response()->json(['success' => false, 'message' => 'Payment gateway misconfigured'], 500);
         }
         $tbankService = new TbankPaymentService(array_merge($settings, ['pay_type' => 'DOLYAMI']));
         try {
-            $orderStub = new \stdClass();
+            $orderStub = new \stdClass;
             $orderStub->id = 0;
             $orderStub->order_number = $orderNumber;
             $orderStub->total_amount = $orderData['total_amount'] ?? 0;
@@ -1587,15 +1625,15 @@ class ShopPaymentController extends Controller
             $orderStub->delivery_cost = $orderData['delivery_cost'] ?? 0;
             $orderStub->user_id = $orderData['customer_id'] ?? null;
             $result = $tbankService->initiatePayment($orderStub);
-            if (!empty($result['success'])) {
+            if (! empty($result['success'])) {
                 // Поддержка двухэтапной оплаты: создаем заказ и сохраняем ссылку
                 $shouldBeTwoStagePay = $settings['two_stage_pay'] ?? false;
-                if (!$shouldBeTwoStagePay && class_exists(\App\Models\Setting::class)) {
+                if (! $shouldBeTwoStagePay && class_exists(\App\Models\Setting::class)) {
                     $globalTwoStagePaySetting = \App\Models\Setting::where('key', 'two_stage_pay')->value('value');
                     $shouldBeTwoStagePay = $globalTwoStagePaySetting === '1' || $globalTwoStagePaySetting === true || $globalTwoStagePaySetting === 1;
                 }
                 $twoStagePaymentTypesAllowed = ['transfer', 'yandex_pay', 'yandex_split', 'yookassa', 'tbank_dolyame', 'tbank_eacq'];
-                if ($shouldBeTwoStagePay && in_array($paymentMethod->type, $twoStagePaymentTypesAllowed) && !empty($result['payment_url'])) {
+                if ($shouldBeTwoStagePay && in_array($paymentMethod->type, $twoStagePaymentTypesAllowed) && ! empty($result['payment_url'])) {
                     $order = $this->createOrderFromPayload(
                         $orderData,
                         $paymentMethod->id,
@@ -1632,6 +1670,7 @@ class ShopPaymentController extends Controller
                                 'error' => $e->getMessage(),
                             ]);
                         }
+
                         return response()->json([
                             'success' => true,
                             'two_stage_pay' => true,
@@ -1643,7 +1682,7 @@ class ShopPaymentController extends Controller
                 }
                 $txId = $result['transaction_id'] ?? null;
                 if ($txId) {
-                    $cacheKey = 'payment:init:tbank_dolyame:' . $txId;
+                    $cacheKey = 'payment:init:tbank_dolyame:'.$txId;
                     Cache::put($cacheKey, [
                         'order_number' => $orderNumber,
                         'order_data' => $orderData,
@@ -1654,12 +1693,13 @@ class ShopPaymentController extends Controller
                         'user_agent' => $request->userAgent(),
                     ], now()->addDays(2));
                 }
+
                 return response()->json([
                     'success' => true,
                     'payment_url' => $result['payment_url'] ?? null,
                 ]);
             }
-            if (!empty($result['error']) && $result['error'] === 'connection_timeout') {
+            if (! empty($result['error']) && $result['error'] === 'connection_timeout') {
                 return response()->json([
                     'success' => false,
                     'message' => 'T-Bank: ошибка подключения',
@@ -1667,33 +1707,37 @@ class ShopPaymentController extends Controller
                 ], 502);
             }
             \Log::error('T-Bank create order failed', ['response' => $result, 'order_number' => $orderNumber]);
+
             return response()->json([
                 'success' => false,
                 'message' => $result['message'] ?? 'T-Bank: не удалось создать заказ',
                 'details' => $result,
             ], 400);
         } catch (\Illuminate\Http\Client\ConnectionException $e) {
-            \Log::error('T-Bank connection failed: ' . $e->getMessage());
+            \Log::error('T-Bank connection failed: '.$e->getMessage());
+
             return response()->json([
                 'success' => false,
                 'message' => 'T-Bank: ошибка подключения',
                 'details' => $e->getMessage(),
             ], 502);
         } catch (\Exception $e) {
-            \Log::error('T-Bank init payment exception: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
+            \Log::error('T-Bank init payment exception: '.$e->getMessage(), ['trace' => $e->getTraceAsString()]);
+
             return response()->json(['success' => false, 'message' => 'T-Bank: внутренняя ошибка'], 500);
         }
     }
+
     protected function handleTbankDolyamePayment(ShopOrder $order, ShopPaymentMethod $paymentMethod): \Illuminate\Http\JsonResponse
     {
         // Проверяем, что способ оплаты активен
-        if (!$paymentMethod->is_active) {
+        if (! $paymentMethod->is_active) {
             return response()->json(['success' => false, 'message' => 'Payment method is inactive'], 400);
         }
 
         $settings = $this->normalizePaymentSettings($paymentMethod->settings);
         Log::debug('handleTbankDolyamePayment: settings for payment method', [
-            'method_id' => $paymentMethod->id, 
+            'method_id' => $paymentMethod->id,
             'settings' => $settings,
             'raw_settings' => $paymentMethod->settings,
             'settings_keys' => array_keys($settings),
@@ -1701,13 +1745,12 @@ class ShopPaymentController extends Controller
             'has_dolyame_shop_id' => isset($settings['dolyame_shop_id']),
         ]);
 
-
         // Определяем, должен ли этот платеж быть двухэтапным.
         // Приоритет: настройка в самом способе оплаты, затем глобальная настройка.
         $shouldBeTwoStagePay = $settings['two_stage_pay'] ?? false; // Локальная настройка в paymentMethod->settings
-        
+
         // Если локальная настройка не true, проверяем глобальную
-        if (!$shouldBeTwoStagePay) {
+        if (! $shouldBeTwoStagePay) {
             // Если App\Models\Setting доступна, используем ее.
             // Проверяем class_exists, чтобы избежать ошибок, если модель Setting отсутствует
             if (class_exists(\App\Models\Setting::class)) {
@@ -1722,17 +1765,18 @@ class ShopPaymentController extends Controller
         $twoStagePaymentTypesAllowed = ['transfer', 'yandex_pay', 'yandex_split', 'yookassa', 'tbank_dolyame'];
         $isPaymentTypeAllowedForTwoStage = in_array($paymentMethod->type, $twoStagePaymentTypesAllowed);
 
-
         $provider = $settings['dolyame_provider'] ?? 'tbank';
 
         if ($provider === 'partner') {
             if (empty($settings['dolyame_login1']) || empty($settings['dolyame_password1'])) {
-                Log::error('handleTbankDolyamePayment: Dolyame Partner payment method ' . $paymentMethod->id . ' is missing dolyame_login1 or dolyame_password1 in settings.');
+                Log::error('handleTbankDolyamePayment: Dolyame Partner payment method '.$paymentMethod->id.' is missing dolyame_login1 or dolyame_password1 in settings.');
+
                 return response()->json(['success' => false, 'message' => 'Payment gateway misconfigured (Dolyame Partner)'], 500);
             }
         } else {
             if (empty($settings['terminal_key']) || empty($settings['terminal_password'])) {
-                Log::error('handleTbankDolyamePayment: T-Bank payment method ' . $paymentMethod->id . ' is missing terminal_key or terminal_password in settings.');
+                Log::error('handleTbankDolyamePayment: T-Bank payment method '.$paymentMethod->id.' is missing terminal_key or terminal_password in settings.');
+
                 return response()->json(['success' => false, 'message' => 'Payment gateway misconfigured (T-Bank)'], 500);
             }
         }
@@ -1778,6 +1822,7 @@ class ShopPaymentController extends Controller
                         'order_number' => $order->order_number,
                     ]);
                 }
+
                 return response()->json([
                     'success' => true,
                     'payment_url' => $paymentResult['payment_url'],
@@ -1796,6 +1841,7 @@ class ShopPaymentController extends Controller
                     'payment_status_id' => ShopPaymentStatus::where('name', 'pending')->value('id'),
                     'payment_url' => null,
                 ]);
+
                 return response()->json([
                     'success' => true,
                     'two_stage_pay' => true,
@@ -1804,32 +1850,35 @@ class ShopPaymentController extends Controller
                     'message' => 'Gateway unreachable',
                 ]);
             }
-            Log::error('handleTbankDolyamePayment: T-Bank payment initiation failed for order ' . $order->id . ': ' . ($paymentResult['message'] ?? 'Unknown error'), ['payment_result' => $paymentResult]);
+            Log::error('handleTbankDolyamePayment: T-Bank payment initiation failed for order '.$order->id.': '.($paymentResult['message'] ?? 'Unknown error'), ['payment_result' => $paymentResult]);
+
             return response()->json(['success' => false, 'message' => $paymentResult['message'] ?? 'Failed to initiate payment'], 500);
         } catch (\Exception $e) {
-            Log::error('handleTbankDolyamePayment: Exception during T-Bank payment initiation for order ' . $order->id . ': ' . $e->getMessage(), ['exception' => $e]);
+            Log::error('handleTbankDolyamePayment: Exception during T-Bank payment initiation for order '.$order->id.': '.$e->getMessage(), ['exception' => $e]);
+
             return response()->json(['success' => false, 'message' => 'An error occurred during payment processing'], 500);
         }
     }
 
     protected function handleTbankDolyamePaymentDraft(ShopPaymentTransaction $transaction, ShopPaymentMethod $paymentMethod): \Illuminate\Http\JsonResponse
     {
-        if (!$paymentMethod->is_active) {
+        if (! $paymentMethod->is_active) {
             return response()->json(['success' => false, 'message' => 'Payment method is inactive'], 400);
         }
         $settings = $this->normalizePaymentSettings($paymentMethod->settings);
         Log::debug('handleTbankDolyamePaymentDraft: settings for payment method', ['method_id' => $paymentMethod->id, 'settings' => $settings]);
         if (empty($settings['terminal_key']) || empty($settings['terminal_password'])) {
             Log::error('handleTbankDolyamePaymentDraft: missing terminal_key or terminal_password');
+
             return response()->json(['success' => false, 'message' => 'Payment gateway misconfigured'], 500);
         }
         $tbankService = new TbankPaymentService($settings);
         try {
             Log::debug('handleTbankDolyamePaymentDraft: Initiating payment via TbankService for tx', ['tx_id' => $transaction->id, 'payment_method_id' => $paymentMethod->id]);
             // Создаем «виртуальный» объект заказа для сервисного слоя (минимально необходимый набор)
-            $orderStub = new \stdClass();
+            $orderStub = new \stdClass;
             $orderStub->id = 0;
-            $orderStub->order_number = $transaction->request_data['order_number'] ?? ('TX-' . $transaction->id);
+            $orderStub->order_number = $transaction->request_data['order_number'] ?? ('TX-'.$transaction->id);
             $orderStub->total_amount = $transaction->amount;
             $paymentResult = $tbankService->initiatePayment($orderStub);
             Log::debug('handleTbankDolyamePaymentDraft: Payment initiation result', ['tx_id' => $transaction->id, 'payment_result' => $paymentResult]);
@@ -1840,6 +1889,7 @@ class ShopPaymentController extends Controller
                     'response_data' => $paymentResult['response_data'] ?? null,
                     'status' => 'pending',
                 ]);
+
                 return response()->json([
                     'success' => true,
                     'payment_url' => $paymentResult['payment_url'] ?? null,
@@ -1850,6 +1900,7 @@ class ShopPaymentController extends Controller
                     'status' => 'pending',
                     'response_data' => ['message' => 'Gateway unreachable, awaiting manager approval'],
                 ]);
+
                 return response()->json([
                     'success' => true,
                     'two_stage_pay' => true,
@@ -1857,10 +1908,12 @@ class ShopPaymentController extends Controller
                     'transaction_id' => $transaction->id,
                 ]);
             }
-            Log::error('handleTbankDolyamePaymentDraft: initiation failed for tx ' . $transaction->id, ['payment_result' => $paymentResult]);
+            Log::error('handleTbankDolyamePaymentDraft: initiation failed for tx '.$transaction->id, ['payment_result' => $paymentResult]);
+
             return response()->json(['success' => false, 'message' => $paymentResult['message'] ?? 'Failed to initiate payment'], 500);
         } catch (\Exception $e) {
-            Log::error('handleTbankDolyamePaymentDraft: Exception for tx ' . $transaction->id . ': ' . $e->getMessage(), ['exception' => $e]);
+            Log::error('handleTbankDolyamePaymentDraft: Exception for tx '.$transaction->id.': '.$e->getMessage(), ['exception' => $e]);
+
             return response()->json(['success' => false, 'message' => 'An error occurred during payment processing'], 500);
         }
     }
@@ -1869,7 +1922,6 @@ class ShopPaymentController extends Controller
      * Handle webhook for T-Bank (Dolyami).
      * This method should be available at: YOUR_APP_URL/api/webhooks/tbank
      *
-     * @param  \Illuminate\Http\Request  $request
      * @return \Illuminate\Http\Response
      */
     public function tbankWebhook(Request $request)
@@ -1879,8 +1931,9 @@ class ShopPaymentController extends Controller
 
         $settings = $this->normalizePaymentSettings($this->getPaymentMethodSettings($webhookData));
         $tbankService = new TbankPaymentService($settings);
-        if (!$tbankService->verifyWebhook($webhookData, $request)) {
+        if (! $tbankService->verifyWebhook($webhookData, $request)) {
             Log::warning('T-Bank webhook verification failed.');
+
             return response('Invalid signature or token', 400);
         }
 
@@ -1889,17 +1942,17 @@ class ShopPaymentController extends Controller
 
         // 2. Поиск соответствующей транзакции
         $transaction = $tbankService->findTransactionByWebhookData($webhookData);
-        if (!$transaction) {
+        if (! $transaction) {
             Log::warning('T-Bank webhook: Transaction not found for webhook data, trying draft.', ['data' => $webhookData]);
             // Попробуем создать заказ из черновика для eacq по PaymentId или OrderId
             $draft = null;
             $paymentId = $webhookData['PaymentId'] ?? null;
             $orderIdParam = $webhookData['OrderId'] ?? null;
             if ($paymentId) {
-                $draft = Cache::get('payment:init:tbank_eacq:' . $paymentId);
+                $draft = Cache::get('payment:init:tbank_eacq:'.$paymentId);
             }
-            if (!$draft && $orderIdParam) {
-                $draft = Cache::get('payment:init:tbank_eacq:order:' . $orderIdParam);
+            if (! $draft && $orderIdParam) {
+                $draft = Cache::get('payment:init:tbank_eacq:order:'.$orderIdParam);
             }
             if ($draft && is_array($draft) && $newStatus === 'success') {
                 $order = $this->createOrderFromPayload(
@@ -1934,21 +1987,21 @@ class ShopPaymentController extends Controller
                             'error' => $e->getMessage(),
                         ]);
                     }
-                    if (!empty($draft['order_number'])) {
-                        Cache::forget('payment:init:tbank_eacq:order:' . $draft['order_number']);
+                    if (! empty($draft['order_number'])) {
+                        Cache::forget('payment:init:tbank_eacq:order:'.$draft['order_number']);
                     }
                     if ($paymentId) {
-                        Cache::forget('payment:init:tbank_eacq:' . $paymentId);
+                        Cache::forget('payment:init:tbank_eacq:'.$paymentId);
                     }
                 }
             }
-            if (!$transaction) {
+            if (! $transaction) {
                 return response('Transaction not found', 404);
             }
         }
 
         $order = $transaction->order;
-        if (!$order && ($this->normalizePaymentSettings($this->getPaymentMethodSettings($webhookData)) ?? true)) {
+        if (! $order && ($this->normalizePaymentSettings($this->getPaymentMethodSettings($webhookData)) ?? true)) {
             if ($newStatus === 'success') {
                 $order = $this->createOrderFromTransaction($transaction, 'tbank_dolyame');
                 if ($order) {
@@ -1956,11 +2009,11 @@ class ShopPaymentController extends Controller
                 }
             }
         }
-        if (!$order) {
+        if (! $order) {
             // Пытаемся найти данные черновика в кеше по предполагаемому идентификатору платежа
             $paymentId = $webhookData['PaymentId'] ?? $webhookData['payment_id'] ?? null;
             if ($paymentId) {
-                $cacheKey = 'payment:init:tbank_dolyame:' . $paymentId;
+                $cacheKey = 'payment:init:tbank_dolyame:'.$paymentId;
                 $draft = Cache::get($cacheKey);
                 if ($draft && is_array($draft) && $newStatus === 'success') {
                     $order = $this->createOrderFromPayload(
@@ -1984,8 +2037,9 @@ class ShopPaymentController extends Controller
                     }
                 }
             }
-            if (!$order) {
-                Log::error('T-Bank webhook: Order not found for transaction ' . $transaction->id, ['data' => $webhookData]);
+            if (! $order) {
+                Log::error('T-Bank webhook: Order not found for transaction '.$transaction->id, ['data' => $webhookData]);
+
                 return response('Order not found', 404);
             }
         }
@@ -2009,7 +2063,7 @@ class ShopPaymentController extends Controller
                     'payed' => $newStatus === 'success' ? true : false,
                 ]);
             } else {
-                Log::warning('ShopPaymentStatus with name ' . $statusName . ' not found.');
+                Log::warning('ShopPaymentStatus with name '.$statusName.' not found.');
             }
         }
 
@@ -2033,19 +2087,16 @@ class ShopPaymentController extends Controller
 
         return response('Webhook received', 200);
     }
-    
+
     /**
      * Handles bank transfer payment method.
-     *
-     * @param  \App\Models\ShopOrder  $order
-     * @param  \App\Models\ShopPaymentMethod  $paymentMethod
-     * @return \Illuminate\Http\JsonResponse
      */
     protected function handleBankTransfer(ShopOrder $order, ShopPaymentMethod $paymentMethod): \Illuminate\Http\JsonResponse
     {
         $pendingStatusId = ShopPaymentStatus::where('name', 'pending')->value('id');
-        if (!$pendingStatusId) {
+        if (! $pendingStatusId) {
             Log::error('ShopPaymentStatus \'pending\' not found.');
+
             return response()->json(['success' => false, 'message' => 'System configuration error: pending payment status not found'], 500);
         }
 
@@ -2053,7 +2104,7 @@ class ShopPaymentController extends Controller
             'payment_method_id' => $paymentMethod->id,
             'payment_status_id' => $pendingStatusId,
         ]);
-        
+
         ShopPaymentTransaction::create([
             'order_id' => $order->id,
             'payment_method_id' => $paymentMethod->id,
@@ -2074,23 +2125,20 @@ class ShopPaymentController extends Controller
      * Получает настройки платежного метода для инициализации TbankPaymentService.
      * Это необходимо, так как webhook может прийти без paymentMethod_id в явном виде.
      * Мы должны получить настройки по PaymentId или OrderId из webhookData.
-     *
-     * @param array $webhookData
-     * @return array
      */
     protected function getPaymentMethodSettings(array $webhookData): array
     {
         // Попытка найти order_id или payment_id из webhookData
         $orderId = $webhookData['OrderId'] ?? null;
         $paymentId = $webhookData['PaymentId'] ?? null;
-        
+
         if ($paymentId) {
             $transaction = ShopPaymentTransaction::where('transaction_id', $paymentId)->first();
             if ($transaction && $transaction->paymentMethod) {
                 return json_decode($transaction->paymentMethod->settings, true);
             }
         }
-        
+
         if ($orderId) {
             $order = ShopOrder::find($orderId);
             if ($order && $order->paymentMethod) {
@@ -2117,34 +2165,35 @@ class ShopPaymentController extends Controller
         }
         if (is_string($settings) && $settings !== '') {
             $decoded = json_decode($settings, true);
+
             return is_array($decoded) ? $decoded : [];
         }
+
         return [];
     }
-    /**
 
+    /**
     /**
      * Генерирует уникальный номер заказа.
      *
      * Формат: SS-YYYYMMDD-XXXXXX
      * Где XXXXXX — случайное число с ведущими нулями. При коллизии генерируется повторно.
-     *
-     * @return string
      */
     protected function generateOrderNumber(): string
     {
         $datePart = date('Ymd');
-        $prefix = 'SS-' . $datePart . '-';
+        $prefix = 'SS-'.$datePart.'-';
         $attempts = 0;
         do {
-            $randomPart = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
-            $orderNumber = $prefix . $randomPart;
+            $randomPart = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+            $orderNumber = $prefix.$randomPart;
             $exists = \App\Models\ShopOrder::where('order_number', $orderNumber)->exists();
             $attempts++;
         } while ($exists && $attempts < 5);
         if ($exists) {
-            $orderNumber = $prefix . uniqid();
+            $orderNumber = $prefix.uniqid();
         }
+
         return $orderNumber;
     }
 
@@ -2155,6 +2204,7 @@ class ShopPaymentController extends Controller
     public function dolyameWebhook(Request $request)
     {
         Log::info('Dolyame Webhook received', ['payload' => $request->all()]);
+
         return response('OK', 200);
     }
 
@@ -2167,8 +2217,9 @@ class ShopPaymentController extends Controller
 
         if ($event === 'payment.succeeded' && isset($object['status']) && $object['status'] === 'succeeded') {
             $yandexPaymentId = $object['id'] ?? null;
-            if (!$yandexPaymentId) {
+            if (! $yandexPaymentId) {
                 Log::warning('Yandex Pay Webhook: payment.succeeded event without payment ID.');
+
                 return response()->json(['status' => 'error', 'message' => 'No payment ID'], 400);
             }
 
@@ -2176,7 +2227,8 @@ class ShopPaymentController extends Controller
 
             if ($order) {
                 if ($order->payed) {
-                    Log::info('Yandex Pay Webhook: Order ' . $order->id . ' is already marked as paid. Ignoring.');
+                    Log::info('Yandex Pay Webhook: Order '.$order->id.' is already marked as paid. Ignoring.');
+
                     return response()->json(['status' => 'ok']);
                 }
 
@@ -2196,12 +2248,12 @@ class ShopPaymentController extends Controller
                         'response_data' => $request->all(),
                     ]);
 
-                    Log::info('Yandex Pay Webhook: Order ' . $order->id . ' payment succeeded and status updated.');
+                    Log::info('Yandex Pay Webhook: Order '.$order->id.' payment succeeded and status updated.');
                 } else {
                     Log::error('Yandex Pay Webhook: "paid" payment status not found in database.');
                 }
             } else {
-                Log::warning('Yandex Pay Webhook: Order not found for yandex_pay_order_id: ' . $yandexPaymentId);
+                Log::warning('Yandex Pay Webhook: Order not found for yandex_pay_order_id: '.$yandexPaymentId);
             }
         }
 

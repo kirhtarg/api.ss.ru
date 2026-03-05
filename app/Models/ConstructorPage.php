@@ -21,14 +21,14 @@ class ConstructorPage extends Model
         'structure',
         'settings',
         'is_published',
-        'published_at'
+        'published_at',
     ];
 
     protected $casts = [
         'structure' => 'array',
         'settings' => 'array',
         'is_published' => 'boolean',
-        'published_at' => 'datetime'
+        'published_at' => 'datetime',
     ];
 
     /**
@@ -39,6 +39,7 @@ class ConstructorPage extends Model
         if (is_string($value)) {
             return json_decode($value, true) ?: [];
         }
+
         return $value ?: [];
     }
 
@@ -50,6 +51,7 @@ class ConstructorPage extends Model
         if (is_string($value)) {
             return json_decode($value, true) ?: [];
         }
+
         return $value ?: [];
     }
 
@@ -89,7 +91,7 @@ class ConstructorPage extends Model
                 array_flip(['title', 'slug', 'meta_title', 'meta_description', 'css_class', 'structure'])
             );
 
-            if (!empty($changedAttributes)) {
+            if (! empty($changedAttributes)) {
                 ConstructorPageVersion::create([
                     'page_id' => $page->id,
                     'version_number' => ConstructorPageVersion::where('page_id', $page->id)->max('version_number') + 1 ?? 1,
@@ -101,7 +103,7 @@ class ConstructorPage extends Model
                     'structure' => $page->structure,
                     'is_published' => $page->is_published,
                     'published_at' => $page->published_at,
-                    'created_by' => auth()->id()
+                    'created_by' => auth()->id(),
                 ]);
             }
         });
@@ -114,7 +116,7 @@ class ConstructorPage extends Model
     {
         $this->update([
             'is_published' => true,
-            'published_at' => now()
+            'published_at' => now(),
         ]);
     }
 
@@ -125,7 +127,7 @@ class ConstructorPage extends Model
     {
         $this->update([
             'is_published' => false,
-            'published_at' => null
+            'published_at' => null,
         ]);
     }
 

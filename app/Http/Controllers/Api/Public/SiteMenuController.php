@@ -3,8 +3,8 @@
 namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
-use App\Models\SiteTemplate;
 use App\Models\SiteMenuItem;
+use App\Models\SiteTemplate;
 use Illuminate\Http\JsonResponse;
 
 class SiteMenuController extends Controller
@@ -17,33 +17,33 @@ class SiteMenuController extends Controller
         try {
             // Получаем активный шаблон
             $template = SiteTemplate::getActive();
-            
-            if (!$template || !$template->menu_id) {
+
+            if (! $template || ! $template->menu_id) {
                 // Возвращаем дефолтное меню
                 return response()->json([
                     'success' => true,
-                    'data' => $this->getDefaultMenuItems()
+                    'data' => $this->getDefaultMenuItems(),
                 ]);
             }
-            
+
             // Получаем пункты меню для активного шаблона
             $menuItems = SiteMenuItem::getMenuTree($template->menu_id);
-            
+
             return response()->json([
                 'success' => true,
                 'data' => $menuItems->map(function ($item) {
                     return $item->getMenuData();
-                })
+                }),
             ]);
-            
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения меню: ' . $e->getMessage()
+                'message' => 'Ошибка получения меню: '.$e->getMessage(),
             ], 500);
         }
     }
-    
+
     /**
      * Получить дефолтные пункты меню
      */
@@ -56,7 +56,7 @@ class SiteMenuController extends Controller
                 'url' => '/',
                 'target' => '_self',
                 'attributes' => [],
-                'children' => []
+                'children' => [],
             ],
             [
                 'id' => 2,
@@ -64,7 +64,7 @@ class SiteMenuController extends Controller
                 'url' => '/catalog',
                 'target' => '_self',
                 'attributes' => [],
-                'children' => []
+                'children' => [],
             ],
             [
                 'id' => 3,
@@ -72,7 +72,7 @@ class SiteMenuController extends Controller
                 'url' => '/about',
                 'target' => '_self',
                 'attributes' => [],
-                'children' => []
+                'children' => [],
             ],
             [
                 'id' => 4,
@@ -80,8 +80,8 @@ class SiteMenuController extends Controller
                 'url' => '/contacts',
                 'target' => '_self',
                 'attributes' => [],
-                'children' => []
-            ]
+                'children' => [],
+            ],
         ];
     }
 }

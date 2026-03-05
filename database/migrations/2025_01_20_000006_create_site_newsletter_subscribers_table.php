@@ -20,7 +20,7 @@ return new class extends Migration
             $table->string('ip_address')->nullable();
             $table->text('user_agent')->nullable();
             $table->timestamps();
-            
+
             $table->index(['email', 'is_active']);
             $table->index('subscribed_at');
         });

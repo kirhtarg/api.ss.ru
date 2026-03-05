@@ -4,8 +4,8 @@ namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopSupplier;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class ShopSuppliersController extends Controller
 {
@@ -33,8 +33,7 @@ class ShopSuppliersController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $suppliers
+            'data' => $suppliers,
         ]);
     }
 }
-

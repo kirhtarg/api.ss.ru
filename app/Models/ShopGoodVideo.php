@@ -17,17 +17,17 @@ class ShopGoodVideo extends Model
         'external_url',
         'title',
         'thumbnail',
-        'sort_order'
+        'sort_order',
     ];
 
     protected $casts = [
-        'sort_order' => 'integer'
+        'sort_order' => 'integer',
     ];
 
     protected $appends = [
         'url',
         'embed_url',
-        'is_external'
+        'is_external',
     ];
 
     /**
@@ -54,7 +54,6 @@ class ShopGoodVideo extends Model
         return $query->orderBy('sort_order')->orderBy('id');
     }
 
-
     /**
      * Получить полный URL видео
      */
@@ -63,23 +62,23 @@ class ShopGoodVideo extends Model
         if ($this->external_url) {
             return $this->external_url;
         }
-        
+
         if ($this->video_path) {
             // Если это уже полный URL, возвращаем как есть
             if (str_starts_with($this->video_path, 'http')) {
                 return $this->video_path;
             }
-            
+
             // Убираем лишний префикс videos/ если он уже есть
             $cleanPath = ltrim($this->video_path, '/');
             if (str_starts_with($cleanPath, 'videos/')) {
-                return '/' . $cleanPath;
+                return '/'.$cleanPath;
             }
-            
+
             // Возвращаем путь к файлу в папке public/videos/
-            return '/videos/' . $cleanPath;
+            return '/videos/'.$cleanPath;
         }
-        
+
         return null;
     }
 
@@ -93,17 +92,17 @@ class ShopGoodVideo extends Model
             if (str_starts_with($this->thumbnail, 'http')) {
                 return $this->thumbnail;
             }
-            
+
             // Убираем лишний префикс images/ если он уже есть
             $cleanPath = ltrim($this->thumbnail, '/');
             if (str_starts_with($cleanPath, 'images/')) {
-                return '/' . $cleanPath;
+                return '/'.$cleanPath;
             }
-            
+
             // Возвращаем путь к файлу в папке public/images/
-            return '/images/' . $cleanPath;
+            return '/images/'.$cleanPath;
         }
-        
+
         return null;
     }
 
@@ -112,7 +111,7 @@ class ShopGoodVideo extends Model
      */
     public function getIsExternalAttribute()
     {
-        return !empty($this->external_url);
+        return ! empty($this->external_url);
     }
 
     /**
@@ -120,35 +119,36 @@ class ShopGoodVideo extends Model
      */
     public function getEmbedUrlAttribute()
     {
-        if (!$this->external_url) {
+        if (! $this->external_url) {
             return null;
         }
 
         // YouTube
         if (preg_match('/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]+)/', $this->external_url, $matches)) {
-            return 'https://www.youtube.com/embed/' . $matches[1] . '?autoplay=0';
+            return 'https://www.youtube.com/embed/'.$matches[1].'?autoplay=0';
         }
 
         // Vimeo
         if (preg_match('/vimeo\.com\/(\d+)/', $this->external_url, $matches)) {
-            return 'https://player.vimeo.com/video/' . $matches[1] . '?autoplay=0';
+            return 'https://player.vimeo.com/video/'.$matches[1].'?autoplay=0';
         }
 
         // VK
         if (preg_match('/vk\.com\/video(-?\d+_\d+)/', $this->external_url, $matches)) {
-            return 'https://vk.com/video_ext.php?oid=' . $matches[1] . '&autoplay=0';
+            return 'https://vk.com/video_ext.php?oid='.$matches[1].'&autoplay=0';
         }
 
         // VK Video (vkvideo.ru)
         if (preg_match('/vkvideo\.ru\/(video|clip)(-?\d+)_(\d+)/', $this->external_url, $matches)) {
             $oid = $matches[2]; // -178294909
             $id = $matches[3];  // 456240059
+
             return "https://vkvideo.ru/video_ext.php?oid={$oid}&id={$id}&hd=2&autoplay=0";
         }
 
         // Rutube
         if (preg_match('/rutube\.ru\/video\/([a-zA-Z0-9]+)/', $this->external_url, $matches)) {
-            return 'https://rutube.ru/play/embed/' . $matches[1] . '?autoplay=0';
+            return 'https://rutube.ru/play/embed/'.$matches[1].'?autoplay=0';
         }
 
         return $this->external_url;

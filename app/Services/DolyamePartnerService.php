@@ -9,9 +9,13 @@ use Illuminate\Support\Str;
 class DolyamePartnerService
 {
     protected string $baseUrl;
+
     protected string $login;
+
     protected string $password;
+
     protected bool $verify;
+
     protected ?string $caBundle;
 
     public function __construct(array $settings)
@@ -25,9 +29,9 @@ class DolyamePartnerService
 
     protected function http()
     {
-        $auth = base64_encode($this->login . ':' . $this->password);
+        $auth = base64_encode($this->login.':'.$this->password);
         $headers = [
-            'Authorization' => 'Basic ' . $auth,
+            'Authorization' => 'Basic '.$auth,
             'Content-Type' => 'application/json',
             'X-Correlation-ID' => (string) Str::uuid(),
         ];
@@ -36,6 +40,7 @@ class DolyamePartnerService
             'curl' => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
             'connect_timeout' => 10,
         ];
+
         return Http::timeout(30)->retry(2, 1000)->withOptions($options)->withHeaders($headers);
     }
 
@@ -57,7 +62,7 @@ class DolyamePartnerService
             'fail_url' => $failUrl,
             'success_url' => $successUrl,
         ];
-        $url = $this->baseUrl . '/orders/create';
+        $url = $this->baseUrl.'/orders/create';
         Log::info('Dolyame create order request', ['url' => $url, 'payload' => $payload]);
         $res = $this->http()->post($url, $payload);
         $data = $res->json();
@@ -65,6 +70,7 @@ class DolyamePartnerService
         if ($res->successful() && isset($data['link'])) {
             return ['success' => true, 'link' => $data['link'], 'response' => $data];
         }
+
         return ['success' => false, 'message' => $data['message'] ?? 'Dolyame: create failed', 'response' => $data];
     }
 
@@ -80,9 +86,10 @@ class DolyamePartnerService
                 ];
             }, $items),
         ];
-        $url = $this->baseUrl . '/orders/' . urlencode($orderId) . '/commit';
+        $url = $this->baseUrl.'/orders/'.urlencode($orderId).'/commit';
         $res = $this->http()->post($url, $payload);
         $data = $res->json();
+
         return $res->successful() ? ['success' => true, 'response' => $data] : ['success' => false, 'response' => $data];
     }
 
@@ -98,26 +105,28 @@ class DolyamePartnerService
                 ];
             }, $returnedItems),
         ];
-        $url = $this->baseUrl . '/orders/' . urlencode($orderId) . '/refund';
+        $url = $this->baseUrl.'/orders/'.urlencode($orderId).'/refund';
         $res = $this->http()->post($url, $payload);
         $data = $res->json();
+
         return $res->successful() ? ['success' => true, 'response' => $data] : ['success' => false, 'response' => $data];
     }
 
     public function cancelOrder(string $orderId): array
     {
-        $url = $this->baseUrl . '/orders/' . urlencode($orderId) . '/cancel';
+        $url = $this->baseUrl.'/orders/'.urlencode($orderId).'/cancel';
         $res = $this->http()->post($url, []);
         $data = $res->json();
+
         return $res->successful() ? ['success' => true, 'response' => $data] : ['success' => false, 'response' => $data];
     }
 
     public function getOrderInfo(string $orderId): array
     {
-        $url = $this->baseUrl . '/orders/' . urlencode($orderId) . '/info';
+        $url = $this->baseUrl.'/orders/'.urlencode($orderId).'/info';
         $res = $this->http()->get($url);
         $data = $res->json();
+
         return $res->successful() ? ['success' => true, 'response' => $data] : ['success' => false, 'response' => $data];
     }
 }
-

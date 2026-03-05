@@ -19,12 +19,12 @@ class ShopGoodAudit extends Model
         'old_values',
         'new_values',
         'ip_address',
-        'user_agent'
+        'user_agent',
     ];
 
     protected $casts = [
         'old_values' => 'array',
-        'new_values' => 'array'
+        'new_values' => 'array',
     ];
 
     /**

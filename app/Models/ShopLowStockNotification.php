@@ -17,14 +17,14 @@ class ShopLowStockNotification extends Model
         'current_quantity',
         'min_quantity',
         'is_sent',
-        'sent_at'
+        'sent_at',
     ];
 
     protected $casts = [
         'current_quantity' => 'integer',
         'min_quantity' => 'integer',
         'is_sent' => 'boolean',
-        'sent_at' => 'datetime'
+        'sent_at' => 'datetime',
     ];
 
     /**

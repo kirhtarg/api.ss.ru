@@ -107,17 +107,3 @@ class SocialTypeSeeder extends Seeder
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-

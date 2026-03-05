@@ -1,9 +1,8 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
-use Illuminate\Http\Request;
-use App\Http\Controllers\Admin\ShopGoodsController;
 use App\Http\Controllers\PageController;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
     return view('welcome');
@@ -13,7 +12,7 @@ Route::get('/', function () {
 Route::get('/pages/{slug}', [PageController::class, 'show'])->name('page-builder.show');
 
 // Debug routes for testing
-Route::match(['GET', 'OPTIONS'], '/debug-check-slug', function(Request $request) {
+Route::match(['GET', 'OPTIONS'], '/debug-check-slug', function (Request $request) {
     if ($request->isMethod('options')) {
         return response()->json([], 200)
             ->header('Access-Control-Allow-Origin', '*')
@@ -23,18 +22,19 @@ Route::match(['GET', 'OPTIONS'], '/debug-check-slug', function(Request $request)
 
     $slug = $request->query('slug');
     \Log::info('Debug check slug called', ['slug' => $slug]);
+
     return response()->json([
         'success' => true,
         'exists' => false,
         'slug' => $slug,
-        'debug' => 'no auth required'
+        'debug' => 'no auth required',
     ])->header('Access-Control-Allow-Origin', '*')
-     ->header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-     ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        ->header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+        ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 });
 
 // Debug route for creating pages without auth
-Route::match(['POST', 'OPTIONS'], '/debug-create-page', function(Request $request) {
+Route::match(['POST', 'OPTIONS'], '/debug-create-page', function (Request $request) {
     if ($request->isMethod('options')) {
         return response()->json([], 200)
             ->header('Access-Control-Allow-Origin', '*')
@@ -50,7 +50,7 @@ Route::match(['POST', 'OPTIONS'], '/debug-create-page', function(Request $reques
         return response()->json([
             'success' => false,
             'message' => 'Title and slug are required',
-            'data' => $data
+            'data' => $data,
         ], 422)->header('Access-Control-Allow-Origin', '*');
     }
 
@@ -58,17 +58,17 @@ Route::match(['POST', 'OPTIONS'], '/debug-create-page', function(Request $reques
         'success' => true,
         'data' => array_merge($data, ['id' => rand(1000, 9999)]),
         'message' => 'Page created (debug mode)',
-        'debug' => true
+        'debug' => true,
     ])->header('Access-Control-Allow-Origin', '*')
-     ->header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-     ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        ->header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+        ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 });
 
 // Временные файлы для импорта
 Route::get('/temp-file/{filename}', function ($filename) {
-    $path = storage_path('app/temp/' . $filename);
+    $path = storage_path('app/temp/'.$filename);
 
-    if (!file_exists($path)) {
+    if (! file_exists($path)) {
         abort(404);
     }
 
@@ -76,6 +76,6 @@ Route::get('/temp-file/{filename}', function ($filename) {
         'Content-Type' => 'application/xml',
         'Cache-Control' => 'no-cache, no-store, must-revalidate',
         'Pragma' => 'no-cache',
-        'Expires' => '0'
+        'Expires' => '0',
     ]);
 })->name('temp-file');

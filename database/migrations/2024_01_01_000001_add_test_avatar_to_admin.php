@@ -1,9 +1,8 @@
 <?php
 
 use Illuminate\Database\Migrations\Migration;
-use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -19,7 +18,7 @@ return new class extends Migration
                 ->where('email', 'admin@skateandsnow.ru')
                 ->update([
                     'avatar' => 'avatars/default-admin-avatar.png',
-                    'updated_at' => now()
+                    'updated_at' => now(),
                 ]);
         }
     }
@@ -36,7 +35,7 @@ return new class extends Migration
                 ->where('email', 'admin@skateandsnow.ru')
                 ->update([
                     'avatar' => null,
-                    'updated_at' => now()
+                    'updated_at' => now(),
                 ]);
         }
     }

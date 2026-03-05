@@ -3,21 +3,23 @@
 namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 
 class DaDataController extends Controller
 {
     private $apiKey;
+
     private $secretKey;
+
     private $baseUrl = 'https://suggestions.dadata.ru/suggestions/api/4_1/rs';
 
     public function __construct()
     {
         $this->apiKey = env('DADATA_API_KEY');
         $this->secretKey = env('DADATA_SECRET_KEY');
-        
+
         // Если ключи не настроены, используем заглушку
         if (empty($this->apiKey)) {
             $this->apiKey = 'test_key';
@@ -31,11 +33,11 @@ class DaDataController extends Controller
     {
         try {
             $query = $request->get('query', '');
-            
+
             if (empty($query) || strlen($query) < 2) {
                 return response()->json([
                     'success' => true,
-                    'data' => []
+                    'data' => [],
                 ]);
             }
 
@@ -45,39 +47,39 @@ class DaDataController extends Controller
                     'success' => true,
                     'data' => [
                         [
-                            'value' => $query . ' (тестовый город)',
-                            'unrestricted_value' => $query . ' (тестовый город)',
+                            'value' => $query.' (тестовый город)',
+                            'unrestricted_value' => $query.' (тестовый город)',
                             'data' => [
                                 'city' => $query,
                                 'region' => 'Тестовая область',
                                 'country' => 'Россия',
                                 'postal_code' => '123456',
-                            ]
-                        ]
-                    ]
+                            ],
+                        ],
+                    ],
                 ]);
             }
 
             $response = Http::withHeaders([
-                'Authorization' => 'Token ' . $this->apiKey,
+                'Authorization' => 'Token '.$this->apiKey,
                 'Content-Type' => 'application/json',
-                'Accept' => 'application/json'
-            ])->post($this->baseUrl . '/suggest/address', [
+                'Accept' => 'application/json',
+            ])->post($this->baseUrl.'/suggest/address', [
                 'query' => $query,
                 'count' => 10,
                 'locations' => [
                     [
-                        'country' => '*'
-                    ]
+                        'country' => '*',
+                    ],
                 ],
                 'from_bound' => ['value' => 'city'],
-                'to_bound' => ['value' => 'city']
+                'to_bound' => ['value' => 'city'],
             ]);
 
             if ($response->successful()) {
                 $data = $response->json();
                 $suggestions = $data['suggestions'] ?? [];
-                
+
                 $cities = array_map(function ($suggestion) {
                     return [
                         'value' => $suggestion['value'] ?? '',
@@ -87,37 +89,37 @@ class DaDataController extends Controller
                             'region' => $suggestion['data']['region'] ?? '',
                             'country' => $suggestion['data']['country'] ?? '',
                             'postal_code' => $suggestion['data']['postal_code'] ?? '',
-                        ]
+                        ],
                     ];
                 }, $suggestions);
 
                 return response()->json([
                     'success' => true,
-                    'data' => $cities
+                    'data' => $cities,
                 ]);
             }
 
             \Log::error('DaData API error', [
                 'status' => $response->status(),
                 'body' => $response->body(),
-                'query' => $query
+                'query' => $query,
             ]);
-            
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка API DaData: ' . $response->status()
+                'message' => 'Ошибка API DaData: '.$response->status(),
             ], 500);
 
         } catch (\Exception $e) {
             \Log::error('DaData Controller error', [
                 'message' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
-                'query' => $query
+                'query' => $query,
             ]);
-            
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка сервера: ' . $e->getMessage()
+                'message' => 'Ошибка сервера: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -130,11 +132,11 @@ class DaDataController extends Controller
         try {
             $query = $request->get('query', '');
             $city = $request->get('city', '');
-            
+
             if (empty($query) || strlen($query) < 2 || empty($city)) {
                 return response()->json([
                     'success' => true,
-                    'data' => []
+                    'data' => [],
                 ]);
             }
 
@@ -144,38 +146,38 @@ class DaDataController extends Controller
                     'success' => true,
                     'data' => [
                         [
-                            'value' => $query . ' (тестовая улица)',
-                            'unrestricted_value' => $query . ' (тестовая улица)',
+                            'value' => $query.' (тестовая улица)',
+                            'unrestricted_value' => $query.' (тестовая улица)',
                             'data' => [
                                 'street' => $query,
                                 'street_type' => 'улица',
                                 'city' => $city,
-                            ]
-                        ]
-                    ]
+                            ],
+                        ],
+                    ],
                 ]);
             }
 
             $response = Http::withHeaders([
-                'Authorization' => 'Token ' . $this->apiKey,
+                'Authorization' => 'Token '.$this->apiKey,
                 'Content-Type' => 'application/json',
-                'Accept' => 'application/json'
-            ])->post($this->baseUrl . '/suggest/address', [
+                'Accept' => 'application/json',
+            ])->post($this->baseUrl.'/suggest/address', [
                 'query' => $query,
                 'count' => 10,
                 'locations' => [
                     [
-                        'city' => $city
-                    ]
+                        'city' => $city,
+                    ],
                 ],
                 'from_bound' => ['value' => 'street'],
-                'to_bound' => ['value' => 'street']
+                'to_bound' => ['value' => 'street'],
             ]);
 
             if ($response->successful()) {
                 $data = $response->json();
                 $suggestions = $data['suggestions'] ?? [];
-                
+
                 $streets = array_map(function ($suggestion) {
                     return [
                         'value' => $suggestion['value'] ?? '',
@@ -184,25 +186,25 @@ class DaDataController extends Controller
                             'street' => $suggestion['data']['street'] ?? '',
                             'street_type' => $suggestion['data']['street_type'] ?? '',
                             'city' => $suggestion['data']['city'] ?? '',
-                        ]
+                        ],
                     ];
                 }, $suggestions);
 
                 return response()->json([
                     'success' => true,
-                    'data' => $streets
+                    'data' => $streets,
                 ]);
             }
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении подсказок улиц'
+                'message' => 'Ошибка при получении подсказок улиц',
             ], 500);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении подсказок улиц: ' . $e->getMessage()
+                'message' => 'Ошибка при получении подсказок улиц: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -216,35 +218,35 @@ class DaDataController extends Controller
             $query = $request->get('query', '');
             $city = $request->get('city', '');
             $street = $request->get('street', '');
-            
+
             if (empty($query) || strlen($query) < 1 || empty($city) || empty($street)) {
                 return response()->json([
                     'success' => true,
-                    'data' => []
+                    'data' => [],
                 ]);
             }
 
             $response = Http::withHeaders([
-                'Authorization' => 'Token ' . $this->apiKey,
+                'Authorization' => 'Token '.$this->apiKey,
                 'Content-Type' => 'application/json',
-                'Accept' => 'application/json'
-            ])->post($this->baseUrl . '/suggest/address', [
+                'Accept' => 'application/json',
+            ])->post($this->baseUrl.'/suggest/address', [
                 'query' => $query,
                 'count' => 10,
                 'locations' => [
                     [
                         'city' => $city,
-                        'street' => $street
-                    ]
+                        'street' => $street,
+                    ],
                 ],
                 'from_bound' => ['value' => 'house'],
-                'to_bound' => ['value' => 'house']
+                'to_bound' => ['value' => 'house'],
             ]);
 
             if ($response->successful()) {
                 $data = $response->json();
                 $suggestions = $data['suggestions'] ?? [];
-                
+
                 $houses = array_map(function ($suggestion) {
                     return [
                         'value' => $suggestion['value'] ?? '',
@@ -254,25 +256,25 @@ class DaDataController extends Controller
                             'block' => $suggestion['data']['block'] ?? '',
                             'street' => $suggestion['data']['street'] ?? '',
                             'city' => $suggestion['data']['city'] ?? '',
-                        ]
+                        ],
                     ];
                 }, $suggestions);
 
                 return response()->json([
                     'success' => true,
-                    'data' => $houses
+                    'data' => $houses,
                 ]);
             }
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении подсказок домов'
+                'message' => 'Ошибка при получении подсказок домов',
             ], 500);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении подсказок домов: ' . $e->getMessage()
+                'message' => 'Ошибка при получении подсказок домов: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -284,32 +286,32 @@ class DaDataController extends Controller
     {
         try {
             $query = $request->get('query', '');
-            
+
             if (empty($query) || strlen($query) < 2) {
                 return response()->json([
                     'success' => true,
-                    'data' => []
+                    'data' => [],
                 ]);
             }
 
             $response = Http::withHeaders([
-                'Authorization' => 'Token ' . $this->apiKey,
+                'Authorization' => 'Token '.$this->apiKey,
                 'Content-Type' => 'application/json',
-                'Accept' => 'application/json'
-            ])->post($this->baseUrl . '/suggest/address', [
+                'Accept' => 'application/json',
+            ])->post($this->baseUrl.'/suggest/address', [
                 'query' => $query,
                 'count' => 10,
                 'locations' => [
                     [
-                        'country' => '*'
-                    ]
-                ]
+                        'country' => '*',
+                    ],
+                ],
             ]);
 
             if ($response->successful()) {
                 $data = $response->json();
                 $suggestions = $data['suggestions'] ?? [];
-                
+
                 $addresses = array_map(function ($suggestion) {
                     return [
                         'value' => $suggestion['value'] ?? '',
@@ -322,25 +324,25 @@ class DaDataController extends Controller
                             'postal_code' => $suggestion['data']['postal_code'] ?? '',
                             'region' => $suggestion['data']['region'] ?? '',
                             'country' => $suggestion['data']['country'] ?? '',
-                        ]
+                        ],
                     ];
                 }, $suggestions);
 
                 return response()->json([
                     'success' => true,
-                    'data' => $addresses
+                    'data' => $addresses,
                 ]);
             }
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении подсказок адресов'
+                'message' => 'Ошибка при получении подсказок адресов',
             ], 500);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении подсказок адресов: ' . $e->getMessage()
+                'message' => 'Ошибка при получении подсказок адресов: '.$e->getMessage(),
             ], 500);
         }
     }

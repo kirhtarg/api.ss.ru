@@ -19,14 +19,14 @@ class ShopCategoriesController extends Controller
     {
         try {
             // Загружаем категории
-            $query = ShopCategory::with(['parent', 'children' => function($query) {
+            $query = ShopCategory::with(['parent', 'children' => function ($query) {
                 $query->where('is_active', true)
-                      ->orderBy('sort_order', 'asc')
-                      ->orderBy('name', 'asc')
-                      ->select('id', 'name', 'slug', 'icon', 'description', 'parent_id');
+                    ->orderBy('sort_order', 'asc')
+                    ->orderBy('name', 'asc')
+                    ->select('id', 'name', 'slug', 'icon', 'description', 'parent_id');
             }])
-            ->where('is_active', true)
-            ->ordered();
+                ->where('is_active', true)
+                ->ordered();
 
             // Фильтр по in_catalog
             if ($request->filled('in_catalog')) {
@@ -47,7 +47,6 @@ class ShopCategoriesController extends Controller
                     ->where('shop_goods.is_active', true)
                     ->count();
 
-
                 // Проверим, в каких категориях есть товары этого бренда
                 $brandCategoriesCount = \DB::table('shop_categories')
                     ->join('shop_good_categories', 'shop_categories.id', '=', 'shop_good_categories.category_id')
@@ -58,7 +57,6 @@ class ShopCategoriesController extends Controller
                     ->where('shop_categories.is_active', true)
                     ->distinct('shop_categories.id')
                     ->count();
-
 
                 $query->whereHas('goods', function ($q) use ($brandId) {
                     $q->whereHas('brands', function ($brandQuery) use ($brandId) {
@@ -75,16 +73,13 @@ class ShopCategoriesController extends Controller
 
             $categories = $query->get();
 
-
             // Проверяем все категории в базе
             $allCategoriesCount = ShopCategory::where('is_active', true)->count();
             $mainCategoriesCount = ShopCategory::where('is_active', true)
-                ->where(function($query) {
+                ->where(function ($query) {
                     $query->whereNull('parent_id')
-                          ->orWhere('parent_id', 0);
+                        ->orWhere('parent_id', 0);
                 })->count();
-
-
 
             // Вычисляем количество товаров для каждой категории и подкатегории
             // И обрабатываем изображения
@@ -93,12 +88,12 @@ class ShopCategoriesController extends Controller
                 if ($category->image) {
                     $category->image = $this->getImageUrl($category->image);
                 }
-                
+
                 // Обрабатываем изображение для фигуры
                 if ($category->in_figure_img) {
                     $category->in_figure_img = $this->getImageUrl($category->in_figure_img);
                 }
-                
+
                 // Количество товаров в главной категории
                 $category->products_count = \DB::table('shop_good_categories')
                     ->join('shop_goods', 'shop_good_categories.good_id', '=', 'shop_goods.id')
@@ -116,15 +111,14 @@ class ShopCategoriesController extends Controller
                 }
             }
 
-
             return response()->json([
                 'success' => true,
-                'data' => $categories
+                'data' => $categories,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении категорий: ' . $e->getMessage()
+                'message' => 'Ошибка при получении категорий: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -140,21 +134,21 @@ class ShopCategoriesController extends Controller
                 ->where('is_active', true)
                 ->first();
 
-            if (!$category) {
+            if (! $category) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Категория не найдена'
+                    'message' => 'Категория не найдена',
                 ], 404);
             }
 
             return response()->json([
                 'success' => true,
-                'data' => $category
+                'data' => $category,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении категории: ' . $e->getMessage()
+                'message' => 'Ошибка при получении категории: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -170,10 +164,10 @@ class ShopCategoriesController extends Controller
                 ->where('is_active', true)
                 ->first();
 
-            if (!$category) {
+            if (! $category) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Категория не найдена'
+                    'message' => 'Категория не найдена',
                 ], 404);
             }
 
@@ -228,10 +222,10 @@ class ShopCategoriesController extends Controller
                 'image' => $category->image ? $this->getImageUrl($category->image) : null,
                 'icon' => $category->icon,
                 'parent_id' => $category->parent_id,
-                'products_count' => $category->products_count
+                'products_count' => $category->products_count,
             ];
 
-            $subcategoriesData = $subcategories->map(function($sub) {
+            $subcategoriesData = $subcategories->map(function ($sub) {
                 return [
                     'id' => $sub->id,
                     'name' => $sub->name,
@@ -239,7 +233,7 @@ class ShopCategoriesController extends Controller
                     'icon' => $sub->icon,
                     'description' => $sub->description,
                     'parent_id' => $sub->parent_id,
-                    'products_count' => $sub->products_count
+                    'products_count' => $sub->products_count,
                 ];
             });
 
@@ -250,7 +244,7 @@ class ShopCategoriesController extends Controller
                     'name' => $parentCategory->name,
                     'slug' => $parentCategory->slug,
                     'parent_id' => $parentCategory->parent_id,
-                    'products_count' => $parentCategory->products_count
+                    'products_count' => $parentCategory->products_count,
                 ];
             }
 
@@ -259,13 +253,13 @@ class ShopCategoriesController extends Controller
                 'data' => [
                     'category' => $categoryData,
                     'subcategories' => $subcategoriesData,
-                    'parent_category' => $parentCategoryData
-                ]
+                    'parent_category' => $parentCategoryData,
+                ],
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении категории: ' . $e->getMessage()
+                'message' => 'Ошибка при получении категории: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -280,10 +274,10 @@ class ShopCategoriesController extends Controller
                 ->where('is_active', true)
                 ->first();
 
-            if (!$parentCategory) {
+            if (! $parentCategory) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Родительская категория не найдена'
+                    'message' => 'Родительская категория не найдена',
                 ], 404);
             }
 
@@ -304,12 +298,12 @@ class ShopCategoriesController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $children
+                'data' => $children,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении подкатегорий: ' . $e->getMessage()
+                'message' => 'Ошибка при получении подкатегорий: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -321,25 +315,25 @@ class ShopCategoriesController extends Controller
     {
         try {
             $categoryIds = $request->input('category_ids', []);
-            
-            if (empty($categoryIds) || !is_array($categoryIds)) {
+
+            if (empty($categoryIds) || ! is_array($categoryIds)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Необходимо передать массив category_ids'
+                    'message' => 'Необходимо передать массив category_ids',
                 ], 400);
             }
-            
+
             // Преобразуем в массив целых чисел
             $categoryIds = array_map('intval', $categoryIds);
             $categoryIds = array_filter($categoryIds);
-            
+
             if (empty($categoryIds)) {
                 return response()->json([
                     'success' => true,
-                    'data' => []
+                    'data' => [],
                 ]);
             }
-            
+
             // Получаем все подкатегории для переданных категорий одним запросом
             $children = ShopCategory::whereIn('parent_id', $categoryIds)
                 ->where('is_active', true)
@@ -347,7 +341,7 @@ class ShopCategoriesController extends Controller
                 ->orderBy('sort_order', 'asc')
                 ->orderBy('name', 'asc')
                 ->get(['id', 'name', 'slug', 'icon', 'description', 'parent_id']);
-            
+
             // Вычисляем количество товаров для подкатегорий
             foreach ($children as $child) {
                 $child->products_count = DB::table('shop_good_categories')
@@ -356,25 +350,25 @@ class ShopCategoriesController extends Controller
                     ->where('shop_goods.is_active', true)
                     ->count();
             }
-            
+
             // Группируем по parent_id для удобства на фронтенде
             $grouped = [];
             foreach ($children as $child) {
                 $parentId = $child->parent_id;
-                if (!isset($grouped[$parentId])) {
+                if (! isset($grouped[$parentId])) {
                     $grouped[$parentId] = [];
                 }
                 $grouped[$parentId][] = $child;
             }
-            
+
             return response()->json([
                 'success' => true,
-                'data' => $grouped
+                'data' => $grouped,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении подкатегорий: ' . $e->getMessage()
+                'message' => 'Ошибка при получении подкатегорий: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -384,7 +378,7 @@ class ShopCategoriesController extends Controller
      */
     private function getImageUrl($filePath)
     {
-        if (!$filePath) {
+        if (! $filePath) {
             return null;
         }
 
@@ -398,11 +392,11 @@ class ShopCategoriesController extends Controller
 
         // Если путь начинается с images/, возвращаем с ведущим слэшем
         if (str_starts_with($filePath, 'images/')) {
-            return '/' . $filePath;
+            return '/'.$filePath;
         }
 
         // Возвращаем относительный путь к файлу в папке public/images/
-        return '/images/' . $filePath;
+        return '/images/'.$filePath;
     }
 
     /**
@@ -426,19 +420,19 @@ class ShopCategoriesController extends Controller
                     'image' => $category->image ? $this->getImageUrl($category->image) : null,
                     'sort_order' => $category->sort_order,
                     'is_active' => $category->is_active,
-                    'children_count' => $category->children()->where('is_active', true)->count()
+                    'children_count' => $category->children()->where('is_active', true)->count(),
                 ];
             });
 
             return response()->json([
                 'success' => true,
-                'data' => $categories
+                'data' => $categories,
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении главных категорий: ' . $e->getMessage()
+                'message' => 'Ошибка при получении главных категорий: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -450,88 +444,91 @@ class ShopCategoriesController extends Controller
     {
         try {
             Log::info('getExtraMenu: запрос для категории', ['categoryId' => $categoryId]);
-            
+
             $category = ShopCategory::find($categoryId);
-            
-            if (!$category) {
+
+            if (! $category) {
                 Log::warning('getExtraMenu: категория не найдена', ['categoryId' => $categoryId]);
+
                 return response()->json([
                     'success' => false,
-                    'message' => 'Категория не найдена'
+                    'message' => 'Категория не найдена',
                 ], 404);
             }
 
             $extraMenu = ShopCategoryExtraMenu::with([
-                'filters' => function($query) {
+                'filters' => function ($query) {
                     $query->where('is_active', true)->orderBy('sort_order');
                 },
-                'sections' => function($query) {
+                'sections' => function ($query) {
                     $query->orderBy('sort_order');
                 },
-                'sections.items' => function($query) {
+                'sections.items' => function ($query) {
                     $query->orderBy('sort_order');
                 },
-                'sections.items.category' => function($query) {
+                'sections.items.category' => function ($query) {
                     $query->where('is_active', true);
-                }
+                },
             ])
-            ->where('category_id', $categoryId)
-            ->where('is_active', true)
-            ->first();
+                ->where('category_id', $categoryId)
+                ->where('is_active', true)
+                ->first();
 
             Log::info('getExtraMenu: результат запроса', [
                 'categoryId' => $categoryId,
                 'extraMenuFound' => $extraMenu !== null,
                 'extraMenuId' => $extraMenu ? $extraMenu->id : null,
-                'sectionsCount' => $extraMenu && $extraMenu->sections ? $extraMenu->sections->count() : 0
+                'sectionsCount' => $extraMenu && $extraMenu->sections ? $extraMenu->sections->count() : 0,
             ]);
 
-            if (!$extraMenu) {
+            if (! $extraMenu) {
                 Log::info('getExtraMenu: экстра-меню не найдено для категории', ['categoryId' => $categoryId]);
+
                 return response()->json([
                     'success' => true,
-                    'data' => null
+                    'data' => null,
                 ]);
             }
 
             // Логируем структуру данных перед отправкой
-            $sectionsData = $extraMenu->sections->map(function($section) {
+            $sectionsData = $extraMenu->sections->map(function ($section) {
                 return [
                     'id' => $section->id,
                     'title' => $section->title,
                     'items_count' => $section->items ? $section->items->count() : 0,
-                    'items' => $section->items ? $section->items->map(function($item) {
+                    'items' => $section->items ? $section->items->map(function ($item) {
                         return [
                             'id' => $item->id,
                             'category_id' => $item->category_id,
                             'category' => $item->category ? [
                                 'id' => $item->category->id,
                                 'name' => $item->category->name,
-                                'slug' => $item->category->slug
-                            ] : null
+                                'slug' => $item->category->slug,
+                            ] : null,
                         ];
-                    })->toArray() : []
+                    })->toArray() : [],
                 ];
             })->toArray();
 
             Log::info('getExtraMenu: структура секций', [
                 'categoryId' => $categoryId,
-                'sections' => $sectionsData
+                'sections' => $sectionsData,
             ]);
 
             return response()->json([
                 'success' => true,
-                'data' => $extraMenu
+                'data' => $extraMenu,
             ]);
         } catch (\Exception $e) {
             Log::error('getExtraMenu: ошибка', [
                 'categoryId' => $categoryId,
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении экстра-меню: ' . $e->getMessage()
+                'message' => 'Ошибка при получении экстра-меню: '.$e->getMessage(),
             ], 500);
         }
     }

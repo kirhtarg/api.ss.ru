@@ -20,12 +20,12 @@ class SiteMessage extends Model
         'ip_address',
         'good_link',
         'good_price',
-        'good_id'
+        'good_id',
     ];
 
     protected $casts = [
         'is_processed' => 'boolean',
-        'processed_at' => 'datetime'
+        'processed_at' => 'datetime',
     ];
 
     /**

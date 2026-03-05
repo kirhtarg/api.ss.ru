@@ -2,7 +2,6 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 
@@ -33,7 +32,7 @@ class SliderSeeder extends Seeder
                         'link' => '/catalog',
                         'link_type' => 'internal',
                         'is_active' => true,
-                        'sort_order' => 1
+                        'sort_order' => 1,
                     ],
                     [
                         'image_path' => 'slider1_2.jpg',
@@ -42,9 +41,9 @@ class SliderSeeder extends Seeder
                         'link' => '/catalog?new=true',
                         'link_type' => 'internal',
                         'is_active' => true,
-                        'sort_order' => 2
-                    ]
-                ]
+                        'sort_order' => 2,
+                    ],
+                ],
             ],
             [
                 'name' => 'Слайдер акций',
@@ -64,7 +63,7 @@ class SliderSeeder extends Seeder
                         'link' => '/catalog?sale=true',
                         'link_type' => 'internal',
                         'is_active' => true,
-                        'sort_order' => 1
+                        'sort_order' => 1,
                     ],
                     [
                         'image_path' => 'slider2_2.jpg',
@@ -73,9 +72,9 @@ class SliderSeeder extends Seeder
                         'link' => '/delivery',
                         'link_type' => 'internal',
                         'is_active' => true,
-                        'sort_order' => 2
-                    ]
-                ]
+                        'sort_order' => 2,
+                    ],
+                ],
             ],
             [
                 'name' => 'Слайдер брендов',
@@ -95,7 +94,7 @@ class SliderSeeder extends Seeder
                         'link' => '/brands/burton',
                         'link_type' => 'internal',
                         'is_active' => true,
-                        'sort_order' => 1
+                        'sort_order' => 1,
                     ],
                     [
                         'image_path' => 'slider3_2.jpg',
@@ -104,33 +103,33 @@ class SliderSeeder extends Seeder
                         'link' => '/brands/nike-sb',
                         'link_type' => 'internal',
                         'is_active' => true,
-                        'sort_order' => 2
-                    ]
-                ]
-            ]
+                        'sort_order' => 2,
+                    ],
+                ],
+            ],
         ];
 
         foreach ($sliders as $sliderData) {
             $images = $sliderData['images'];
             unset($sliderData['images']);
-            
+
             // Добавляем ID и временные метки
             $sliderData['id'] = $sliderData['sort_order'];
             $sliderData['created_at'] = now();
             $sliderData['updated_at'] = now();
-            
+
             // Создаем слайдер
             DB::table('sliders')->updateOrInsert(
                 ['id' => $sliderData['id']],
                 $sliderData
             );
-            
+
             // Создаем изображения для слайдера
             foreach ($images as $imageData) {
                 $imageData['slider_id'] = $sliderData['id'];
                 $imageData['created_at'] = now();
                 $imageData['updated_at'] = now();
-                
+
                 DB::table('slider_images')->updateOrInsert(
                     ['slider_id' => $imageData['slider_id'], 'sort_order' => $imageData['sort_order']],
                     $imageData

@@ -15,14 +15,14 @@ class PageSettingsTemplate extends Model
         'settings',
         'structure',
         'is_active',
-        'sort_order'
+        'sort_order',
     ];
 
     protected $casts = [
         'settings' => 'array',
         'structure' => 'array',
         'is_active' => 'boolean',
-        'sort_order' => 'integer'
+        'sort_order' => 'integer',
     ];
 
     /**

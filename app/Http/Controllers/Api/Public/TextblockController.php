@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
 use App\Models\SiteTextblock;
-use Illuminate\Http\Request;
 
 class TextblockController extends Controller
 {
@@ -27,12 +26,12 @@ class TextblockController extends Controller
                     'link' => $textblock->link,
                     'link_type' => $textblock->link_type,
                     'is_active' => $textblock->is_active,
-                ]
+                ],
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения текстового блока: ' . $e->getMessage()
+                'message' => 'Ошибка получения текстового блока: '.$e->getMessage(),
             ], 404);
         }
     }

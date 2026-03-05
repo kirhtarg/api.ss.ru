@@ -7,11 +7,11 @@ use App\Models\ShopCategoryExtraMenu;
 use App\Models\ShopCategoryExtraMenuFilter;
 use App\Models\ShopCategoryExtraMenuSection;
 use App\Models\ShopCategoryExtraMenuSectionItem;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Validator;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Validator;
 
 class CategoryExtraMenuController extends Controller
 {
@@ -22,16 +22,16 @@ class CategoryExtraMenuController extends Controller
     {
         try {
             $category = ShopCategory::find($categoryId);
-            
-            if (!$category) {
+
+            if (! $category) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Категория не найдена'
+                    'message' => 'Категория не найдена',
                 ], 404);
             }
 
             // Проверяем существование таблицы
-            if (!Schema::hasTable('shop_category_extra_menus')) {
+            if (! Schema::hasTable('shop_category_extra_menus')) {
                 // Если таблицы нет, возвращаем пустое экстра-меню
                 return response()->json([
                     'success' => true,
@@ -41,29 +41,29 @@ class CategoryExtraMenuController extends Controller
                         'is_active' => false,
                         'title' => null,
                         'filters' => [],
-                        'sections' => []
-                    ]
+                        'sections' => [],
+                    ],
                 ]);
             }
 
             $extraMenu = ShopCategoryExtraMenu::with([
                 'filters',
-                'sections.items.category'
+                'sections.items.category',
             ])->where('category_id', $categoryId)->first();
 
-            if (!$extraMenu) {
+            if (! $extraMenu) {
                 // Создаем пустое экстра-меню, если его нет
                 $extraMenu = ShopCategoryExtraMenu::create([
                     'category_id' => $categoryId,
                     'is_active' => false,
-                    'title' => null
+                    'title' => null,
                 ]);
                 $extraMenu->load(['filters', 'sections.items.category']);
             }
 
             return response()->json([
                 'success' => true,
-                'data' => $extraMenu
+                'data' => $extraMenu,
             ]);
         } catch (\Exception $e) {
             // Если ошибка связана с отсутствием таблицы, возвращаем пустое экстра-меню
@@ -76,14 +76,14 @@ class CategoryExtraMenuController extends Controller
                         'is_active' => false,
                         'title' => null,
                         'filters' => [],
-                        'sections' => []
-                    ]
+                        'sections' => [],
+                    ],
                 ]);
             }
-            
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении экстра-меню: ' . $e->getMessage()
+                'message' => 'Ошибка при получении экстра-меню: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -95,19 +95,19 @@ class CategoryExtraMenuController extends Controller
     {
         try {
             // Проверяем существование таблицы
-            if (!Schema::hasTable('shop_category_extra_menus')) {
+            if (! Schema::hasTable('shop_category_extra_menus')) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Таблицы экстра-меню еще не созданы. Пожалуйста, запустите миграции: php artisan migrate'
+                    'message' => 'Таблицы экстра-меню еще не созданы. Пожалуйста, запустите миграции: php artisan migrate',
                 ], 503);
             }
 
             $category = ShopCategory::find($categoryId);
-            
-            if (!$category) {
+
+            if (! $category) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Категория не найдена'
+                    'message' => 'Категория не найдена',
                 ], 404);
             }
 
@@ -129,14 +129,14 @@ class CategoryExtraMenuController extends Controller
                 'sections.*.items' => 'nullable|array',
                 'sections.*.items.*.id' => 'nullable|integer|exists:shop_category_extra_menu_section_items,id',
                 'sections.*.items.*.category_id' => 'required|integer|exists:shop_categories,id',
-                'sections.*.items.*.sort_order' => 'integer'
+                'sections.*.items.*.sort_order' => 'integer',
             ]);
 
             if ($validator->fails()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка валидации',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -151,7 +151,7 @@ class CategoryExtraMenuController extends Controller
             // Обновляем основные данные
             $extraMenu->update([
                 'is_active' => $request->input('is_active', false),
-                'title' => $request->input('title')
+                'title' => $request->input('title'),
             ]);
 
             // Обновляем фильтры
@@ -166,7 +166,7 @@ class CategoryExtraMenuController extends Controller
                         }
                     } else {
                         $filter = ShopCategoryExtraMenuFilter::create(array_merge($filterData, [
-                            'extra_menu_id' => $extraMenu->id
+                            'extra_menu_id' => $extraMenu->id,
                         ]));
                         $filterIds[] = $filter->id;
                     }
@@ -186,7 +186,7 @@ class CategoryExtraMenuController extends Controller
                         if ($section && $section->extra_menu_id === $extraMenu->id) {
                             $section->update([
                                 'title' => $sectionData['title'],
-                                'sort_order' => $sectionData['sort_order'] ?? 0
+                                'sort_order' => $sectionData['sort_order'] ?? 0,
                             ]);
                             $sectionIds[] = $section->id;
                         }
@@ -194,7 +194,7 @@ class CategoryExtraMenuController extends Controller
                         $section = ShopCategoryExtraMenuSection::create([
                             'extra_menu_id' => $extraMenu->id,
                             'title' => $sectionData['title'],
-                            'sort_order' => $sectionData['sort_order'] ?? 0
+                            'sort_order' => $sectionData['sort_order'] ?? 0,
                         ]);
                         $sectionIds[] = $section->id;
                     }
@@ -206,7 +206,7 @@ class CategoryExtraMenuController extends Controller
                             // Проверяем, что категория не дублируется в других подразделах
                             $existingItem = ShopCategoryExtraMenuSectionItem::where('category_id', $itemData['category_id'])
                                 ->where('section_id', '!=', $section->id)
-                                ->whereIn('section_id', function($query) use ($extraMenu) {
+                                ->whereIn('section_id', function ($query) use ($extraMenu) {
                                     $query->select('id')
                                         ->from('shop_category_extra_menu_sections')
                                         ->where('extra_menu_id', $extraMenu->id);
@@ -225,7 +225,7 @@ class CategoryExtraMenuController extends Controller
                                 }
                             } else {
                                 $item = ShopCategoryExtraMenuSectionItem::create(array_merge($itemData, [
-                                    'section_id' => $section->id
+                                    'section_id' => $section->id,
                                 ]));
                                 $itemIds[] = $item->id;
                             }
@@ -249,13 +249,14 @@ class CategoryExtraMenuController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Экстра-меню успешно сохранено',
-                'data' => $extraMenu
+                'data' => $extraMenu,
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при сохранении экстра-меню: ' . $e->getMessage()
+                'message' => 'Ошибка при сохранении экстра-меню: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -266,10 +267,10 @@ class CategoryExtraMenuController extends Controller
     public function getCharacteristics(): JsonResponse
     {
         try {
-            if (!Schema::hasTable('shop_properties')) {
+            if (! Schema::hasTable('shop_properties')) {
                 return response()->json([
                     'success' => true,
-                    'data' => []
+                    'data' => [],
                 ]);
             }
 
@@ -278,21 +279,21 @@ class CategoryExtraMenuController extends Controller
                 ->where('is_active', true)
                 ->orderBy('name')
                 ->get()
-                ->map(function($property) {
+                ->map(function ($property) {
                     return [
                         'id' => $property->id,
-                        'name' => $property->name
+                        'name' => $property->name,
                     ];
                 });
 
             return response()->json([
                 'success' => true,
-                'data' => $properties
+                'data' => $properties,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => true,
-                'data' => []
+                'data' => [],
             ]);
         }
     }
@@ -304,11 +305,11 @@ class CategoryExtraMenuController extends Controller
     {
         try {
             $category = ShopCategory::find($categoryId);
-            
-            if (!$category) {
+
+            if (! $category) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Категория не найдена'
+                    'message' => 'Категория не найдена',
                 ], 404);
             }
 
@@ -321,14 +322,13 @@ class CategoryExtraMenuController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $children
+                'data' => $children,
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при получении подкатегорий: ' . $e->getMessage()
+                'message' => 'Ошибка при получении подкатегорий: '.$e->getMessage(),
             ], 500);
         }
     }
 }
-

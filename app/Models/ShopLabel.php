@@ -13,11 +13,11 @@ class ShopLabel extends Model
     protected $fillable = [
         'name',
         'color',
-        'sort_order'
+        'sort_order',
     ];
 
     protected $casts = [
-        'sort_order' => 'integer'
+        'sort_order' => 'integer',
     ];
 
     /**
@@ -36,4 +36,3 @@ class ShopLabel extends Model
         return $query->orderBy('sort_order')->orderBy('name');
     }
 }
-

@@ -14,13 +14,13 @@ class ShopPropertyValue extends Model
         'value',
         'color',
         'sort_order',
-        'is_active'
+        'is_active',
     ];
 
     protected $casts = [
         'property_id' => 'integer',
         'sort_order' => 'integer',
-        'is_active' => 'boolean'
+        'is_active' => 'boolean',
     ];
 
     /**

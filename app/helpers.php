@@ -1,12 +1,12 @@
 <?php
 
-if (!function_exists('get_setting')) {
+if (! function_exists('get_setting')) {
     /**
      * Получение значения настройки по ключу
-     * 
-     * @param string $key Ключ настройки
-     * @param mixed $default Значение по умолчанию
-     * @param string $group Группа настроек (по умолчанию 'general')
+     *
+     * @param  string  $key  Ключ настройки
+     * @param  mixed  $default  Значение по умолчанию
+     * @param  string  $group  Группа настроек (по умолчанию 'general')
      * @return mixed
      */
     function get_setting($key, $default = null, $group = 'general')
@@ -16,21 +16,22 @@ if (!function_exists('get_setting')) {
                 ->where('key', $key)
                 ->where('group', $group)
                 ->value('value');
-            
+
             return $value !== null ? $value : $default;
         } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::error("Ошибка получения настройки {$key}: " . $e->getMessage());
+            \Illuminate\Support\Facades\Log::error("Ошибка получения настройки {$key}: ".$e->getMessage());
+
             return $default;
         }
     }
 }
 
-if (!function_exists('get_shop_setting')) {
+if (! function_exists('get_shop_setting')) {
     /**
      * Получение значения настройки магазина по ключу
-     * 
-     * @param string $key Ключ настройки
-     * @param mixed $default Значение по умолчанию
+     *
+     * @param  string  $key  Ключ настройки
+     * @param  mixed  $default  Значение по умолчанию
      * @return mixed
      */
     function get_shop_setting($key, $default = null)
@@ -39,13 +40,13 @@ if (!function_exists('get_shop_setting')) {
     }
 }
 
-if (!function_exists('frontend_public_path')) {
+if (! function_exists('frontend_public_path')) {
     /**
      * Абсолютный путь к папке public фронтенд-приложения.
      * Берётся из FRONTEND_PATH в .env (без запасных значений в коде).
      *
-     * @param string $subpath Подпуть относительно public (например 'images/settings')
-     * @return string
+     * @param  string  $subpath  Подпуть относительно public (например 'images/settings')
+     *
      * @throws \RuntimeException если FRONTEND_PATH не задан в .env
      */
     function frontend_public_path(string $subpath = ''): string
@@ -56,23 +57,25 @@ if (!function_exists('frontend_public_path')) {
                 'FRONTEND_PATH должен быть задан в .env (относительный путь к папке фронтенда, напр. ../admin.skateandsnow.ru)'
             );
         }
-        $base = base_path(rtrim($path, '/') . '/public');
-        return $subpath !== '' ? rtrim($base, '/') . '/' . ltrim($subpath, '/') : $base;
+        $base = base_path(rtrim($path, '/').'/public');
+
+        return $subpath !== '' ? rtrim($base, '/').'/'.ltrim($subpath, '/') : $base;
     }
 }
 
-if (!function_exists('mb_ucfirst')) {
+if (! function_exists('mb_ucfirst')) {
     /**
      * Преобразует первый символ строки в верхний регистр (с поддержкой UTF-8)
-     * 
-     * @param string $string Строка для преобразования
-     * @param string $encoding Кодировка (по умолчанию UTF-8)
+     *
+     * @param  string  $string  Строка для преобразования
+     * @param  string  $encoding  Кодировка (по умолчанию UTF-8)
      * @return string
      */
     function mb_ucfirst($string, $encoding = 'UTF-8')
     {
         $firstChar = mb_substr($string, 0, 1, $encoding);
         $rest = mb_substr($string, 1, null, $encoding);
-        return mb_strtoupper($firstChar, $encoding) . $rest;
+
+        return mb_strtoupper($firstChar, $encoding).$rest;
     }
 }

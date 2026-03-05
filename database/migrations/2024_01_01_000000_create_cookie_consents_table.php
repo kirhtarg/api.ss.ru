@@ -23,7 +23,7 @@ return new class extends Migration
             $table->timestamp('consent_given_at'); // Время согласия
             $table->timestamp('expires_at'); // Время истечения согласия (например, через 1 год)
             $table->timestamps();
-            
+
             // Индексы для быстрого поиска
             $table->index(['session_id', 'expires_at']);
             $table->index('ip_address');

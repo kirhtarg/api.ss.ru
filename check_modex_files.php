@@ -9,7 +9,7 @@ use App\Models\ExportFile;
 
 $modexFiles = ExportFile::where('export_config->type', 'modex')->get();
 
-echo "Modex files in database: " . $modexFiles->count() . "\n";
+echo 'Modex files in database: '.$modexFiles->count()."\n";
 
 foreach ($modexFiles as $file) {
     echo "- ID: {$file->id}, Status: {$file->status}, Filename: {$file->filename}, Created: {$file->created_at}\n";
