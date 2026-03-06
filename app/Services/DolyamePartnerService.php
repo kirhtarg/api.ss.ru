@@ -24,7 +24,7 @@ class DolyamePartnerService
         $this->login = $settings['dolyame_login'] ?? '';
         $this->password = $settings['dolyame_password'] ?? '';
         $this->verify = $settings['verify_ssl'] ?? config('services.dolyame.verify_ssl', true);
-        $this->caBundle = $settings['ca_bundle_path'] ?? config('services.dolyame.ca_bundle_path');
+        $this->caBundle = $settings['ca_bundle_path'] ?? config('services.dolyame.ca_bundle_path'); 
     }
 
         if ($this->certPath && file_exists($this->certPath)) {
