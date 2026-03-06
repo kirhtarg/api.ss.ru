@@ -1551,10 +1551,13 @@ class ShopPaymentController extends Controller
             }
             $partnerSettings = [
                 'api_url' => $settings['api_url'] ?? config('services.dolyame.api_url'),
-                'dolyame_login' => $settings['dolyame_login'],
-                'dolyame_password' => $settings['dolyame_password'],
-                'verify_ssl' => config('services.dolyame.verify_ssl', true),
-                'ca_bundle_path' => config('services.dolyame.ca_bundle_path'),
+                'dolyame_login' => $settings['dolyame_login1'] ?? '',
+                'dolyame_password' => $settings['dolyame_password1'] ?? '',
+                'verify_ssl' => $settings['verify_ssl'] ?? config('services.dolyame.verify_ssl', true),
+                'ca_bundle_path' => $settings['ca_bundle_path'] ?? config('services.dolyame.ca_bundle_path'),
+                'cert_path' => $settings['dolyame_cert_path'] ?? null,
+                'key_path' => $settings['dolyame_cert_key_path'] ?? null,
+                'key_password' => $settings['dolyame_cert_key_password'] ?? null,
             ];
             $service = new \App\Services\DolyamePartnerService($partnerSettings);
             try {
