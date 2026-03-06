@@ -10,13 +10,13 @@ trait HasGoodsLogging
     {
         static::updating(function ($model) {
             $context = request()->input('log_context', request()->header('X-Log-Context', 'Система'));
-            if (! $context) {
+            if (!$context) {
                 $context = 'Система';
             }
 
             $dirty = $model->getDirty();
 
-            if (! empty($dirty)) {
+            if (!empty($dirty)) {
                 $changes = [];
                 $changedFields = [];
 
@@ -27,8 +27,8 @@ trait HasGoodsLogging
 
                     $oldValue = $model->getOriginal($key);
 
-                    $oldStr = is_array($oldValue) || is_object($oldValue) ? json_encode($oldValue, JSON_UNESCAPED_UNICODE) : (string) $oldValue;
-                    $newStr = is_array($newValue) || is_object($newValue) ? json_encode($newValue, JSON_UNESCAPED_UNICODE) : (string) $newValue;
+                    $oldStr = is_array($oldValue) || is_object($oldValue) ? json_encode($oldValue, JSON_UNESCAPED_UNICODE) : (string)$oldValue;
+                    $newStr = is_array($newValue) || is_object($newValue) ? json_encode($newValue, JSON_UNESCAPED_UNICODE) : (string)$newValue;
 
                     $oldStrShort = mb_substr($oldStr, 0, 10);
                     if (mb_strlen($oldStr) > 10) {
@@ -44,7 +44,7 @@ trait HasGoodsLogging
                     $changes[] = "{$oldStrShort}->{$newStrShort}";
                 }
 
-                if (! empty($changes)) {
+                if (!empty($changes)) {
                     $date = now()->format('d.m.Y H:i');
                     $fieldsStr = implode(',', $changedFields);
                     $valuesStr = implode(',', $changes);
@@ -52,14 +52,14 @@ trait HasGoodsLogging
                     $logLine = "$date | $context | $fieldsStr | $valuesStr";
 
                     $currentLog = $model->getOriginal('log');
-                    $model->log = $currentLog ? $currentLog.'<br>'.$logLine : $logLine;
+                    $model->log = $currentLog ? $currentLog . '<br>' . $logLine : $logLine;
                 }
             }
         });
 
         static::created(function ($model) {
             $context = request()->input('log_context', request()->header('X-Log-Context', 'Система'));
-            if (! $context) {
+            if (!$context) {
                 $context = 'Система';
             }
 
@@ -77,18 +77,20 @@ trait HasGoodsLogging
             ]);
         });
 
-        static::deleted(function ($model) {
+        static::deleting(function ($model) {
             $context = request()->input('log_context', request()->header('X-Log-Context', 'Система'));
-            if (! $context) {
+            if (!$context) {
                 $context = 'Система';
             }
+
+            $name = $model->name ?? ($model->getTable() === 'shop_good_variations' ? $model->sku : $model->id);
 
             ShopGoodsActionLog::create([
                 'good_id' => $model->getTable() === 'shop_goods' ? $model->id : ($model->good_id ?? null),
                 'variation_id' => $model->getTable() === 'shop_good_variations' ? $model->id : null,
                 'action' => 'deleted',
                 'action_type' => $context,
-                'comment' => 'Запись удалена',
+                'comment' => "Запись удалена: {$name}",
             ]);
         });
     }
