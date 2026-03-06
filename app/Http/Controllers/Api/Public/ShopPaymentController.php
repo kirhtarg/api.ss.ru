@@ -2327,14 +2327,14 @@ class ShopPaymentController extends Controller
         if ($paymentId) {
             $transaction = ShopPaymentTransaction::where('transaction_id', $paymentId)->first();
             if ($transaction && $transaction->paymentMethod) {
-                return json_decode($transaction->paymentMethod->settings, true);
+                return $this->normalizePaymentSettings($transaction->paymentMethod->settings);
             }
         }
 
         if ($orderId) {
             $order = ShopOrder::find($orderId);
             if ($order && $order->paymentMethod) {
-                return json_decode($order->paymentMethod->settings, true);
+                return $this->normalizePaymentSettings($order->paymentMethod->settings);
             }
         }
 
@@ -2344,7 +2344,7 @@ class ShopPaymentController extends Controller
         Log::warning('T-Bank Webhook: Could not find payment method settings from webhook data. Using default/first tbank_dolyame settings.');
         $tbankMethod = ShopPaymentMethod::where('type', 'tbank_dolyame')->first();
         if ($tbankMethod) {
-            return json_decode($tbankMethod->settings, true);
+            return $this->normalizePaymentSettings($tbankMethod->settings);
         }
 
         return []; // Возвращаем пустой массив, если настройки не найдены
