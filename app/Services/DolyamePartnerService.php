@@ -27,21 +27,23 @@ class DolyamePartnerService
         $this->caBundle = $settings['ca_bundle_path'] ?? config('services.dolyame.ca_bundle_path');
     }
 
-    protected function http()
-    {
-        $auth = base64_encode($this->login.':'.$this->password);
-        $headers = [
-            'Authorization' => 'Basic '.$auth,
-            'Content-Type' => 'application/json',
-            'X-Correlation-ID' => (string) Str::uuid(),
-        ];
-        $options = [
-            'verify' => app()->environment('production') ? ($this->caBundle ?: $this->verify) : false,
-            'curl' => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
-            'connect_timeout' => 10,
-        ];
+        if ($this->certPath && file_exists($this->certPath)) {
+            \Log::info('Dolyame mTLS: Using certificate', ['path' => $this->certPath]);
+            $options['cert'] = $this->certPath;
+        } elseif ($this->certPath) {
+            \Log::error('Dolyame mTLS: Certificate file not found', ['path' => $this->certPath]);
+        }
 
-        return Http::timeout(30)->retry(2, 1000)->withOptions($options)->withHeaders($headers);
+        if ($this->keyPath && file_exists($this->keyPath)) {
+            \Log::info('Dolyame mTLS: Using private key', ['path' => $this->keyPath]);
+            $options['ssl_key'] = $this->keyPassword 
+                ? [$this->keyPath, $this->keyPassword] 
+                : $this->keyPath;
+        } elseif ($this->keyPath) {
+            \Log::error('Dolyame mTLS: Private key file not found', ['path' => $this->keyPath]);
+        }
+
+        return Http::timeout(30)->withOptions($options)->withHeaders($headers);
     }
 
     public function createOrder(string $orderId, float $amount, array $items, string $notificationUrl, string $successUrl, string $failUrl): array
