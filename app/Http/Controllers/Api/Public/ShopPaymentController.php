@@ -1544,7 +1544,7 @@ class ShopPaymentController extends Controller
             'dolyame_provider_setting' => $settings['dolyame_provider'] ?? 'not_set',
         ]);
         if ($provider === 'partner') {
-            if (empty($settings['dolyame_login']) || empty($settings['dolyame_password'])) {
+            if (empty($settings['dolyame_login1']) || empty($settings['dolyame_password1'])) {
                 \Log::error('Dolyame partner init: missing login or password', ['method_id' => $paymentMethod->id]);
 
                 return response()->json(['success' => false, 'message' => 'Payment gateway misconfigured'], 500);
@@ -2149,10 +2149,13 @@ class ShopPaymentController extends Controller
         
         $partnerSettings = [
             'api_url' => $settings['api_url'] ?? config('services.dolyame.api_url'),
-            'dolyame_login' => $settings['dolyame_login'] ?? '',
-            'dolyame_password' => $settings['dolyame_password'] ?? '',
-            'verify_ssl' => config('services.dolyame.verify_ssl', true),
-            'ca_bundle_path' => config('services.dolyame.ca_bundle_path'),
+            'dolyame_login' => $settings['dolyame_login1'] ?? $settings['dolyame_login'] ?? '',
+            'dolyame_password' => $settings['dolyame_password1'] ?? $settings['dolyame_password'] ?? '',
+            'verify_ssl' => $settings['verify_ssl'] ?? config('services.dolyame.verify_ssl', true),
+            'ca_bundle_path' => $settings['ca_bundle_path'] ?? config('services.dolyame.ca_bundle_path'),
+            'cert_path' => $settings['dolyame_cert_path'] ?? null,
+            'key_path' => $settings['dolyame_cert_key_path'] ?? null,
+            'key_password' => $settings['dolyame_cert_key_password'] ?? null,
         ];
         
         $service = new \App\Services\DolyamePartnerService($partnerSettings);
@@ -2279,10 +2282,13 @@ class ShopPaymentController extends Controller
         
         $partnerSettings = [
             'api_url' => $settings['api_url'] ?? config('services.dolyame.api_url'),
-            'dolyame_login' => $settings['dolyame_login'] ?? '',
-            'dolyame_password' => $settings['dolyame_password'] ?? '',
-            'verify_ssl' => config('services.dolyame.verify_ssl', true),
-            'ca_bundle_path' => config('services.dolyame.ca_bundle_path'),
+            'dolyame_login' => $settings['dolyame_login1'] ?? $settings['dolyame_login'] ?? '',
+            'dolyame_password' => $settings['dolyame_password1'] ?? $settings['dolyame_password'] ?? '',
+            'verify_ssl' => $settings['verify_ssl'] ?? config('services.dolyame.verify_ssl', true),
+            'ca_bundle_path' => $settings['ca_bundle_path'] ?? config('services.dolyame.ca_bundle_path'),
+            'cert_path' => $settings['dolyame_cert_path'] ?? null,
+            'key_path' => $settings['dolyame_cert_key_path'] ?? null,
+            'key_password' => $settings['dolyame_cert_key_password'] ?? null,
         ];
         
         $service = new \App\Services\DolyamePartnerService($partnerSettings);
