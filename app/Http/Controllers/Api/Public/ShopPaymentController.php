@@ -1544,15 +1544,18 @@ class ShopPaymentController extends Controller
             'dolyame_provider_setting' => $settings['dolyame_provider'] ?? 'not_set',
         ]);
         if ($provider === 'partner') {
-            if (empty($settings['dolyame_login1']) || empty($settings['dolyame_password1'])) {
-                \Log::error('Dolyame partner init: missing login or password', ['method_id' => $paymentMethod->id]);
+            $login = $settings['dolyame_login1'] ?? $settings['dolyame_login'] ?? '';
+            $password = $settings['dolyame_password1'] ?? $settings['dolyame_password'] ?? '';
+            
+            if (empty($login) || empty($password)) {
+                \Log::error('Dolyame partner init: missing login or password', ['method_id' => $paymentMethod->id, 'settings' => $settings]);
 
-                return response()->json(['success' => false, 'message' => 'Payment gateway misconfigured'], 500);
+                return response()->json(['success' => false, 'message' => 'Payment gateway misconfigured (Dolyame Partner)'], 500);
             }
             $partnerSettings = [
                 'api_url' => $settings['api_url'] ?? config('services.dolyame.api_url'),
-                'dolyame_login' => $settings['dolyame_login1'] ?? '',
-                'dolyame_password' => $settings['dolyame_password1'] ?? '',
+                'dolyame_login' => $login,
+                'dolyame_password' => $password,
                 'verify_ssl' => $settings['verify_ssl'] ?? config('services.dolyame.verify_ssl', true),
                 'ca_bundle_path' => $settings['ca_bundle_path'] ?? config('services.dolyame.ca_bundle_path'),
                 'cert_path' => $settings['dolyame_cert_path'] ?? null,
