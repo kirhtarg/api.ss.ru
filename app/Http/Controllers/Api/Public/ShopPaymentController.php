@@ -585,9 +585,11 @@ class ShopPaymentController extends Controller
         // SERVER-SIDE RECALCULATION (AUTHORITATIVE)
         if (isset($orderData['items']) && is_array($orderData['items'])) {
             $recalculatedSubtotal = 0;
+            $recalculatedBaseSubtotal = 0;
 
             foreach ($orderData['items'] as &$item) {
-                $price = 0;
+                $sellingPrice = 0;
+                $basePrice = 0;
                 $good = ShopGood::find($item['good_id'] ?? null);
                 if (! $good) {
                     continue;
@@ -596,34 +598,39 @@ class ShopPaymentController extends Controller
                 if (isset($item['variation_id']) && $item['variation_id']) {
                     $variation = \App\Models\ShopGoodVariation::find($item['variation_id']);
                     if ($variation) {
+                        $basePrice = $variation->price > 0 ? $variation->price : $good->price;
                         // Price priority: demping > sale > base
                         if ($variation->show_demping && $variation->demping_price > 0) {
-                            $price = $variation->demping_price;
+                            $sellingPrice = $variation->demping_price;
                         } elseif ($variation->sale_price > 0) {
-                            $price = $variation->sale_price;
+                            $sellingPrice = $variation->sale_price;
                         } else {
-                            $price = $variation->price;
+                            $sellingPrice = $basePrice;
                         }
                     }
                 } else {
+                    $basePrice = $good->price;
                     // Price priority for base good: demping > sale > base
                     if ($good->show_demping && $good->demping_price > 0) {
-                        $price = $good->demping_price;
+                        $sellingPrice = $good->demping_price;
                     } elseif ($good->sale_price > 0) {
-                        $price = $good->sale_price;
+                        $sellingPrice = $good->sale_price;
                     } else {
-                        $price = $good->price;
+                        $sellingPrice = $basePrice;
                     }
                 }
 
-                $item['price'] = $price; // Update item price to the correct one
-                $item['total'] = $price * ($item['quantity'] ?? 1);
+                $item['price'] = $basePrice;
+                $item['sale_price'] = $sellingPrice;
+                $item['total'] = $sellingPrice * ($item['quantity'] ?? 1);
                 $recalculatedSubtotal += $item['total'];
+                $recalculatedBaseSubtotal += $basePrice * ($item['quantity'] ?? 1);
             }
             unset($item);
 
-            // Overwrite subtotal with server-calculated value
+            // Overwrite subtotal with server-calculated value (selling price subtotal)
             $orderData['subtotal'] = $recalculatedSubtotal;
+            $orderData['sale_discount_amount'] = max(0, $recalculatedBaseSubtotal - $recalculatedSubtotal);
 
             // --- Full discount and total recalculation ---
             $user = isset($orderData['customer_id']) ? \App\Models\User::find($orderData['customer_id']) : null;
@@ -679,15 +686,23 @@ class ShopPaymentController extends Controller
             }
 
             // 4. Final Calculation
+            $birthdayDiscountAmount = (float) ($orderData['birthday_discount_amount'] ?? 0);
+            $saleDiscountAmount = (float) ($orderData['sale_discount_amount'] ?? 0);
             $deliveryCost = $isFreeDelivery ? 0 : ($orderData['delivery_cost'] ?? 0);
-            $totalDiscount = $registeredUserDiscountAmount + $promoCodeDiscountAmount + $bonusPointsDiscountAmount;
-            $finalTotalAmount = $recalculatedSubtotal - $totalDiscount + $deliveryCost;
+            
+            // Total discount for database (sum of all extra discounts on top of sale prices)
+            $totalDiscount = $registeredUserDiscountAmount + $promoCodeDiscountAmount + $bonusPointsDiscountAmount + $birthdayDiscountAmount;
+            
+            // finalTotalAmount = subtotal (already includes sale discounts) - extra discounts + delivery
+            $finalTotalAmount = $recalculatedSubtotal - ($registeredUserDiscountAmount + $promoCodeDiscountAmount + $bonusPointsDiscountAmount + $birthdayDiscountAmount) + $deliveryCost;
 
             // Overwrite client-sent amounts with authoritative server calculation
             $orderData['total_amount'] = round($finalTotalAmount, 2);
-            $orderData['total_discount_amount'] = round($totalDiscount, 2);
+            $orderData['total_discount_amount'] = round($totalDiscount + $saleDiscountAmount, 2); // Including sale for admin breakdown
             $orderData['registered_user_discount_amount'] = round($registeredUserDiscountAmount, 2);
             $orderData['promo_code_discount_amount'] = round($promoCodeDiscountAmount, 2);
+            $orderData['birthday_discount_amount'] = round($birthdayDiscountAmount, 2);
+            $orderData['sale_discount_amount'] = round($saleDiscountAmount, 2);
             // In the database, bonus_points_to_use is an integer representing the number of points.
             // The monetary value is what we calculated as bonusPointsDiscountAmount.
             // Let's assume 1 point = 1 RUB for simplicity.
