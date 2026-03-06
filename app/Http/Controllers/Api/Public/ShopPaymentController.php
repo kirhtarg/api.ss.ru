@@ -2142,7 +2142,7 @@ class ShopPaymentController extends Controller
         }
 
         $paymentMethod = $order->paymentMethod;
-        $settings = $this->normalizePaymentSettings($paymentMethod ? json_decode($paymentMethod->settings, true) : []);
+        $settings = $this->normalizePaymentSettings($paymentMethod ? $paymentMethod->settings : []);
         
         $partnerSettings = [
             'api_url' => $settings['api_url'] ?? config('services.dolyame.api_url'),
@@ -2272,7 +2272,7 @@ class ShopPaymentController extends Controller
         }
 
         $paymentMethod = $order->paymentMethod;
-        $settings = $this->normalizePaymentSettings($paymentMethod ? json_decode($paymentMethod->settings, true) : []);
+        $settings = $this->normalizePaymentSettings($paymentMethod ? $paymentMethod->settings : []);
         
         $partnerSettings = [
             'api_url' => $settings['api_url'] ?? config('services.dolyame.api_url'),
