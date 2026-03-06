@@ -2089,6 +2089,198 @@ class ShopPaymentController extends Controller
     }
 
     /**
+     * Webhook для Dolyame Partner API (Долями партнерский)
+     */
+    public function dolyamePartnerWebhook(Request $request)
+    {
+        $webhookData = $request->all();
+        \Log::info('Received Dolyame Partner webhook notification', ['data' => $webhookData]);
+
+        $orderNumber = $webhookData['id'] ?? null;
+        if (!$orderNumber) {
+            return response('Missing order id', 400);
+        }
+
+        $order = \App\Models\ShopOrder::where('order_number', $orderNumber)->first();
+        if (!$order) {
+            \Log::warning('Dolyame webhook: Order not found', ['order_number' => $orderNumber]);
+            return response('Order not found', 404);
+        }
+
+        $paymentMethod = $order->paymentMethod;
+        $settings = $this->normalizePaymentSettings($paymentMethod ? json_decode($paymentMethod->settings, true) : []);
+        
+        $partnerSettings = [
+            'api_url' => $settings['api_url'] ?? config('services.dolyame.api_url'),
+            'dolyame_login' => $settings['dolyame_login'] ?? '',
+            'dolyame_password' => $settings['dolyame_password'] ?? '',
+            'verify_ssl' => config('services.dolyame.verify_ssl', true),
+            'ca_bundle_path' => config('services.dolyame.ca_bundle_path'),
+        ];
+        
+        $service = new \App\Services\DolyamePartnerService($partnerSettings);
+        
+        // Verify via API
+        $infoResponse = $service->getOrderInfo($orderNumber);
+        if (empty($infoResponse['success'])) {
+            \Log::error('Dolyame webhook: failed to get order info', ['response' => $infoResponse]);
+            return response('Failed to verify order', 400);
+        }
+        
+        $actualStatus = $infoResponse['response']['status'] ?? null;
+        \Log::info('Dolyame webhook: actual order status', ['status' => $actualStatus, 'order_number' => $orderNumber]);
+
+        if ($actualStatus === 'wait_for_commit') {
+            \Log::info('Dolyame webhook: auto-committing order', ['order_number' => $orderNumber]);
+            
+            $items = [];
+            $draft = \Illuminate\Support\Facades\Cache::get('payment:init:dolyame:'.$orderNumber);
+            if ($draft && isset($draft['order_data']['items'])) {
+                $items = array_map(function ($it) {
+                    return [
+                        'name' => $it['good_name'] ?? $it['name'] ?? 'Товар',
+                        'quantity' => (float) ($it['quantity'] ?? 1),
+                        'price' => (float) ($it['final_price'] ?? $it['price'] ?? 0),
+                    ];
+                }, $draft['order_data']['items']);
+            } else {
+                foreach ($order->shopOrderItems as $item) {
+                    $items[] = [
+                        'name' => $item->good->name ?? 'Товар',
+                        'quantity' => (float) $item->quantity,
+                        'price' => (float) $item->price,
+                    ];
+                }
+                if ($order->delivery_cost > 0) {
+                    $items[] = [
+                        'name' => 'Доставка',
+                        'quantity' => 1.0,
+                        'price' => (float) $order->delivery_cost,
+                    ];
+                }
+            }
+            
+            $commitResponse = $service->commitOrder($orderNumber, (float) $order->total_amount, $items);
+            if (!empty($commitResponse['success'])) {
+                \Log::info('Dolyame webhook: commit successful', ['response' => $commitResponse]);
+                $paidStatusId = \App\Models\ShopPaymentStatus::where('name', 'paid')->value('id');
+                if ($paidStatusId) {
+                    $order->update([
+                        'payment_status_id' => $paidStatusId,
+                        'payed' => true,
+                    ]);
+                }
+                
+                $transaction = \App\Models\ShopPaymentTransaction::where('order_id', $order->id)->where('status', 'pending')->first();
+                if ($transaction) {
+                    $transaction->update(['status' => 'paid', 'response_data' => $commitResponse['response'] ?? null]);
+                } else {
+                     \App\Models\ShopPaymentTransaction::create([
+                        'order_id' => $order->id,
+                        'payment_method_id' => $paymentMethod->id ?? null,
+                        'amount' => $order->total_amount,
+                        'transaction_id' => $orderNumber,
+                        'status' => 'paid',
+                        'response_data' => $commitResponse['response'] ?? null
+                    ]);
+                }
+
+                try {
+                    app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+                } catch (\Exception $e) {
+                    \Log::error('Dolyame webhook: failed to send order_created notification', [
+                        'order_id' => $order->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+
+            } else {
+                \Log::error('Dolyame webhook: commit failed', ['response' => $commitResponse]);
+            }
+        } elseif ($actualStatus === 'completed' || $actualStatus === 'committed') {
+             $paidStatusId = \App\Models\ShopPaymentStatus::where('name', 'paid')->value('id');
+             if ($paidStatusId && !$order->payed) {
+                 $order->update([
+                     'payment_status_id' => $paidStatusId,
+                     'payed' => true,
+                 ]);
+             }
+        }
+
+        return response('Webhook processed', 200);
+    }
+
+    /**
+     * Тестовый эндпоинт для возврата по Долями
+     */
+    public function testDolyameRefund($orderNumber)
+    {
+        $order = \App\Models\ShopOrder::where('order_number', $orderNumber)->first();
+        if (!$order) {
+            return response()->json(['success' => false, 'message' => 'Order not found'], 404);
+        }
+
+        $paymentMethod = $order->paymentMethod;
+        $settings = $this->normalizePaymentSettings($paymentMethod ? json_decode($paymentMethod->settings, true) : []);
+        
+        $partnerSettings = [
+            'api_url' => $settings['api_url'] ?? config('services.dolyame.api_url'),
+            'dolyame_login' => $settings['dolyame_login'] ?? '',
+            'dolyame_password' => $settings['dolyame_password'] ?? '',
+            'verify_ssl' => config('services.dolyame.verify_ssl', true),
+            'ca_bundle_path' => config('services.dolyame.ca_bundle_path'),
+        ];
+        
+        $service = new \App\Services\DolyamePartnerService($partnerSettings);
+
+        $items = [];
+        $draft = \Illuminate\Support\Facades\Cache::get('payment:init:dolyame:'.$orderNumber);
+        if ($draft && isset($draft['order_data']['items'])) {
+            $items = array_map(function ($it) {
+                return [
+                    'name' => $it['good_name'] ?? $it['name'] ?? 'Товар',
+                    'quantity' => (float) ($it['quantity'] ?? 1),
+                    'price' => (float) ($it['final_price'] ?? $it['price'] ?? 0),
+                ];
+            }, $draft['order_data']['items']);
+        } else {
+            foreach ($order->shopOrderItems as $item) {
+                $items[] = [
+                    'name' => $item->good->name ?? 'Товар',
+                    'quantity' => (float) $item->quantity,
+                    'price' => (float) $item->price,
+                ];
+            }
+            if ($order->delivery_cost > 0) {
+                $items[] = [
+                    'name' => 'Доставка',
+                    'quantity' => 1.0,
+                    'price' => (float) $order->delivery_cost,
+                ];
+            }
+        }
+
+        $response = $service->refundOrder($orderNumber, (float) $order->total_amount, $items);
+
+        if (!empty($response['success'])) {
+            $refundedStatusId = \App\Models\ShopPaymentStatus::where('name', 'refunded')->value('id') 
+                            ?? \App\Models\ShopPaymentStatus::where('name', 'canceled')->value('id');
+            if ($refundedStatusId) {
+                $order->update([
+                    'payment_status_id' => $refundedStatusId,
+                ]);
+            }
+            
+            $transaction = \App\Models\ShopPaymentTransaction::where('order_id', $order->id)->where('status', 'paid')->first();
+            if ($transaction) {
+               $transaction->update(['status' => 'refunded']);
+            }
+        }
+
+        return response()->json($response);
+    }
+
+    /**
      * Handles bank transfer payment method.
      */
     protected function handleBankTransfer(ShopOrder $order, ShopPaymentMethod $paymentMethod): \Illuminate\Http\JsonResponse

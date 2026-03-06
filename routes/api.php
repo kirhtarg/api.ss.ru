@@ -15,6 +15,13 @@ use Illuminate\Support\Facades\Route;
 // Вебхук Т‑Банк (e‑acq и Долями)
 Route::post('/webhooks/tbank', [\App\Http\Controllers\Api\Public\ShopPaymentController::class, 'tbankWebhook']);
 
+// Вебхук Долями (Партнерский API)
+Route::post('/webhooks/dolyame', [\App\Http\Controllers\Api\Public\ShopPaymentController::class, 'dolyamePartnerWebhook']);
+
+// Тестовый роут для возврата Долями (можно удалить после проверки)
+Route::post('/test/dolyame-refund/{orderNumber}', [\App\Http\Controllers\Api\Public\ShopPaymentController::class, 'testDolyameRefund']);
+
+
 /*
 |--------------------------------------------------------------------------
 | API Routes
