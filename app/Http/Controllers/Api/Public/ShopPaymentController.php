@@ -2148,7 +2148,17 @@ class ShopPaymentController extends Controller
         }
 
         $paymentMethod = $order->paymentMethod;
+        if (!$paymentMethod || $paymentMethod->type !== 'tbank_dolyame') {
+            $paymentMethod = \App\Models\ShopPaymentMethod::where('type', 'tbank_dolyame')
+                ->where('is_active', true)
+                ->first();
+        }
         $settings = $this->normalizePaymentSettings($paymentMethod ? $paymentMethod->settings : []);
+        
+        \Log::info('Dolyame Webhook Debug: Payment method settings', [
+            'method_id' => $paymentMethod ? $paymentMethod->id : 'null',
+            'has_cert_path' => !empty($settings['dolyame_cert_path']),
+        ]);
         
         $partnerSettings = [
             'api_url' => $settings['api_url'] ?? config('services.dolyame.api_url'),
@@ -2281,6 +2291,12 @@ class ShopPaymentController extends Controller
         }
 
         $paymentMethod = $order->paymentMethod;
+        if (!$paymentMethod || $paymentMethod->type !== 'tbank_dolyame') {
+            $paymentMethod = \App\Models\ShopPaymentMethod::where('type', 'tbank_dolyame')
+                ->where('is_active', true)
+                ->first();
+        }
+
         $settings = $this->normalizePaymentSettings($paymentMethod ? $paymentMethod->settings : []);
         
         $partnerSettings = [
