@@ -1929,6 +1929,12 @@ class ShopPaymentController extends Controller
         $webhookData = $request->all();
         Log::info('Received T-Bank webhook notification', ['data' => $webhookData]);
 
+        // Перехват вебхуков от Долями Партнерского API, отправленных на старый URL
+        if (isset($webhookData['id']) && !isset($webhookData['OrderId']) && !isset($webhookData['PaymentId'])) {
+            Log::info('T-Bank Webhook: Redirecting to Dolyame Partner webhook due to payload format.');
+            return $this->dolyamePartnerWebhook($request);
+        }
+
         $settings = $this->normalizePaymentSettings($this->getPaymentMethodSettings($webhookData));
         $tbankService = new TbankPaymentService($settings);
         if (! $tbankService->verifyWebhook($webhookData, $request)) {
@@ -1954,7 +1960,7 @@ class ShopPaymentController extends Controller
             if (! $draft && $orderIdParam) {
                 $draft = Cache::get('payment:init:tbank_eacq:order:'.$orderIdParam);
             }
-            if ($draft && is_array($draft) && $newStatus === 'success') {
+            if ($draft && is_array($draft)) {
                 $order = $this->createOrderFromPayload(
                     $draft['order_data'] ?? [],
                     $draft['payment_method_id'] ?? null,
@@ -1963,19 +1969,29 @@ class ShopPaymentController extends Controller
                     $draft['user_agent'] ?? null
                 );
                 if ($order) {
-                    $paidStatusId = ShopPaymentStatus::where('name', 'paid')->value('id');
-                    if ($paidStatusId) {
-                        $order->update([
-                            'payment_status_id' => $paidStatusId,
-                            'payed' => true,
-                        ]);
+                    if ($newStatus === 'success') {
+                        $paidStatusId = ShopPaymentStatus::where('name', 'paid')->value('id');
+                        if ($paidStatusId) {
+                            $order->update([
+                                'payment_status_id' => $paidStatusId,
+                                'payed' => true,
+                            ]);
+                        }
+                    } else {
+                        $failedStatusId = ShopPaymentStatus::where('name', 'failed')->value('id') ?? ShopPaymentStatus::where('name', 'canceled')->value('id');
+                        if ($failedStatusId) {
+                            $order->update([
+                                'payment_status_id' => $failedStatusId,
+                                'payed' => false,
+                            ]);
+                        }
                     }
                     $transaction = ShopPaymentTransaction::create([
                         'order_id' => $order->id,
                         'payment_method_id' => $draft['payment_method_id'] ?? null,
                         'amount' => $order->total_amount,
                         'transaction_id' => $paymentId,
-                        'status' => 'paid',
+                        'status' => $newStatus === 'success' ? 'paid' : 'failed',
                         'request_data' => $draft,
                         'response_data' => $webhookData,
                     ]);
@@ -2015,7 +2031,7 @@ class ShopPaymentController extends Controller
             if ($paymentId) {
                 $cacheKey = 'payment:init:tbank_dolyame:'.$paymentId;
                 $draft = Cache::get($cacheKey);
-                if ($draft && is_array($draft) && $newStatus === 'success') {
+                if ($draft && is_array($draft)) {
                     $order = $this->createOrderFromPayload(
                         $draft['order_data'] ?? [],
                         $draft['payment_method_id'] ?? null,
@@ -2024,12 +2040,30 @@ class ShopPaymentController extends Controller
                         $draft['user_agent'] ?? null
                     );
                     if ($order) {
+                        if ($newStatus === 'success') {
+                            $paidStatusId = ShopPaymentStatus::where('name', 'paid')->value('id');
+                            if ($paidStatusId) {
+                                $order->update([
+                                    'payment_status_id' => $paidStatusId,
+                                    'payed' => true,
+                                ]);
+                            }
+                        } else {
+                            $failedStatusId = ShopPaymentStatus::where('name', 'failed')->value('id') ?? ShopPaymentStatus::where('name', 'canceled')->value('id');
+                            if ($failedStatusId) {
+                                $order->update([
+                                    'payment_status_id' => $failedStatusId,
+                                    'payed' => false,
+                                ]);
+                            }
+                        }
+                        
                         ShopPaymentTransaction::create([
                             'order_id' => $order->id,
                             'payment_method_id' => $draft['payment_method_id'] ?? null,
                             'amount' => $draft['amount'] ?? 0,
                             'transaction_id' => $paymentId,
-                            'status' => 'paid',
+                            'status' => $newStatus === 'success' ? 'paid' : 'failed',
                             'request_data' => $draft,
                             'response_data' => $webhookData,
                         ]);
@@ -2205,6 +2239,23 @@ class ShopPaymentController extends Controller
                      'payed' => true,
                  ]);
              }
+        } elseif ($actualStatus === 'rejected' || $actualStatus === 'canceled') {
+            $failedStatusId = \App\Models\ShopPaymentStatus::where('name', 'canceled')->value('id') 
+                           ?? \App\Models\ShopPaymentStatus::where('name', 'failed')->value('id');
+            if ($failedStatusId) {
+                $order->update([
+                    'payment_status_id' => $failedStatusId,
+                    'payed' => false,
+                ]);
+            }
+
+            $transaction = \App\Models\ShopPaymentTransaction::where('order_id', $order->id)->where('status', 'pending')->first();
+            if ($transaction) {
+                $transaction->update([
+                    'status' => $actualStatus === 'rejected' ? 'failed' : 'cancelled', 
+                    'response_data' => $infoResponse['response'] ?? null
+                ]);
+            }
         }
 
         return response('Webhook processed', 200);

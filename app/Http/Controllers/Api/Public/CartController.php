@@ -1011,6 +1011,7 @@ class CartController extends Controller
                 $newItem['price'] = $dbPrice;
                 $newItem['sale_price'] = $dbSalePrice;
                 $newItem['demping_price'] = $dbDempingPrice;
+                $newItem['final_price'] = $finalPrice; // Добавляем финальную цену
                 $newItem['show_demping'] = $showDemping;
                 $newItem['total'] = $itemTotal;
 
@@ -1033,7 +1034,8 @@ class CartController extends Controller
             $overtaxAmount = (float) $request->get('overtax_amount', 0);
             $totalDiscount = $request->get('total_discount_amount', 0);
 
-            $finalTotalAmount = $recalculatedSubtotal + $deliveryCost + $overtaxAmount - $totalDiscount;
+            // Исключаем доставку из общей суммы заказа по просьбе пользователя
+            $finalTotalAmount = $recalculatedSubtotal + $overtaxAmount - $totalDiscount;
             if ($finalTotalAmount < 0) {
                 $finalTotalAmount = 0;
             }
