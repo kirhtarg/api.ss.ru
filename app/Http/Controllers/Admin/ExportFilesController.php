@@ -184,7 +184,7 @@ class ExportFilesController extends Controller
     public function store(Request $request): JsonResponse
     {
         $request->validate([
-            'format' => ['required', Rule::in(['excel', 'csv', 'txt'])],
+            'format' => ['required', Rule::in(['excel', 'csv', 'txt', 'avito_xml'])],
             'filename' => 'nullable|string|max:100',
             'export_config' => 'nullable|array',
         ]);
@@ -195,6 +195,7 @@ class ExportFilesController extends Controller
             'excel' => 'xlsx',  // Настоящий Excel файл
             'csv' => 'csv',
             'txt' => 'txt',
+            'avito_xml' => 'xml',
             default => 'xlsx'
         };
 
@@ -204,11 +205,11 @@ class ExportFilesController extends Controller
             // Если указано пользовательское название, используем его
             $originalFilename = $customFilename;
             // Добавляем расширение, если его нет
-            if (! preg_match('/\.(xlsx?|csv|txt)$/i', $originalFilename)) {
+            if (! preg_match('/\.(xlsx?|csv|txt|xml)$/i', $originalFilename)) {
                 $originalFilename .= '.'.$extension;
             } else {
                 // Если расширение уже есть, заменяем его на правильное
-                $originalFilename = preg_replace('/\.(xlsx?|csv|txt)$/i', '.'.$extension, $originalFilename);
+                $originalFilename = preg_replace('/\.(xlsx?|csv|txt|xml)$/i', '.'.$extension, $originalFilename);
             }
             // Генерируем системное имя файла
             $filename = 'export_'.time().'_'.uniqid().'.'.$extension;
@@ -245,7 +246,7 @@ class ExportFilesController extends Controller
             'created_by' => Auth::id(),
             'filename' => $filename,
             'original_filename' => $originalFilename,
-            'format' => $format, // Сохраняем оригинальный format (excel, csv, txt)
+            'format' => $format, // Сохраняем оригинальный format (excel, csv, txt, avito_xml)
             'status' => 'pending',
             'export_config' => $exportConfig,
         ]);

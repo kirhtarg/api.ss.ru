@@ -1,4 +1,5 @@
 <?php
+// Test comment in routes/api.php
 
 use App\Http\Controllers\Admin\ShopGoodImageController;
 use App\Http\Controllers\Api\Public\ShopTemplateController;
@@ -1480,6 +1481,19 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::delete('/{exportFile}', [\App\Http\Controllers\Admin\ExportFilesController::class, 'destroy']);
             Route::post('/{exportFile}/complete-test', [\App\Http\Controllers\Admin\ExportFilesController::class, 'completeTest']);
         });
+
+        // Avito Feed management
+        Route::prefix('avito')->group(function () {
+            Route::get('/settings', [\App\Http\Controllers\Admin\AvitoController::class, 'getSettings']);
+            Route::post('/settings', [\App\Http\Controllers\Admin\AvitoController::class, 'updateSettings']);
+            Route::post('/mapping', [\App\Http\Controllers\Admin\AvitoController::class, 'updateMapping']);
+            Route::post('/status', [\App\Http\Controllers\Admin\AvitoController::class, 'updateSettings']);
+            Route::get('/suggest', [\App\Http\Controllers\Admin\AvitoController::class, 'suggestMapping']);
+            Route::post('/generate', [\App\Http\Controllers\Admin\AvitoController::class, 'generateNow']);
+            Route::get('/tree', [\App\Http\Controllers\Admin\AvitoController::class, 'getTree']);
+            Route::post('/tree/refresh', [\App\Http\Controllers\Admin\AvitoController::class, 'refreshTree']);
+        });
+
 
         // General Export management (Sitemap, etc.)
         Route::prefix('export')->group(function () {
