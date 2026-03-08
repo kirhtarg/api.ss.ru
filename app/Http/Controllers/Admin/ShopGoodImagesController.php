@@ -44,14 +44,15 @@ class ShopGoodImagesController extends Controller
                 'good_id' => $goodId,
                 'variation_id' => $variationId,
                 'images_count' => $images->count(),
-                'images' => $images->map(fn ($img) => [
-                    'id' => $img->id,
-                    'good_id' => $img->good_id,
-                    'variation_id' => $img->variation_id,
-                    'file_path' => $img->file_path,
-                ]),
+                'images' => $images->map(fn($img) => [
+            'id' => $img->id,
+            'good_id' => $img->good_id,
+            'variation_id' => $img->variation_id,
+            'file_path' => $img->file_path,
+            ]),
             ]);
-        } else {
+        }
+        else {
             // Для товаров: good_id = ID товара, variation_id = null
             $images = ShopGoodImage::where('good_id', $goodId)
                 ->whereNull('variation_id')
@@ -97,7 +98,7 @@ class ShopGoodImagesController extends Controller
         ];
 
         foreach ($variationImages as $image) {
-            if (! isset($groupedImages['variations'][$image->variation_id])) {
+            if (!isset($groupedImages['variations'][$image->variation_id])) {
                 $groupedImages['variations'][$image->variation_id] = [];
             }
             $groupedImages['variations'][$image->variation_id][] = $image;
@@ -116,7 +117,7 @@ class ShopGoodImagesController extends Controller
     {
 
         // Дополнительный простой лог
-        file_put_contents('F:/Work/Projects/SS/api.ss.ru/storage/logs/laravel.log', '['.date('Y-m-d H:i:s')."] STORE_LOGGING: goodId=$goodId\n", FILE_APPEND);
+        file_put_contents('F:/Work/Projects/SS/api.ss.ru/storage/logs/laravel.log', '[' . date('Y-m-d H:i:s') . "] STORE_LOGGING: goodId=$goodId\n", FILE_APPEND);
 
         \Log::info('=== PNG DEBUG: ShopGoodImagesController::store START ===', [
             'goodId' => $goodId,
@@ -151,10 +152,10 @@ class ShopGoodImagesController extends Controller
         // Дополнительная валидация: должно быть либо image, либо images
         $validator->after(function ($validator) use ($request) {
             $hasImage = $request->hasFile('image');
-            $hasImages = $request->hasFile('images') || ! empty($request->allFiles()['images'] ?? []);
-            $hasImagesArray = ! empty($request->allFiles()['images'] ?? []);
+            $hasImages = $request->hasFile('images') || !empty($request->allFiles()['images'] ?? []);
+            $hasImagesArray = !empty($request->allFiles()['images'] ?? []);
 
-            if (! $hasImage && ! $hasImages && ! $hasImagesArray) {
+            if (!$hasImage && !$hasImages && !$hasImagesArray) {
                 $validator->errors()->add('image', 'Необходимо указать хотя бы одно изображение');
             }
         });
@@ -176,14 +177,15 @@ class ShopGoodImagesController extends Controller
                 // Если это массив, используем его, иначе оборачиваем в массив
                 if (is_array($imagesFiles)) {
                     $images = $imagesFiles;
-                } elseif ($imagesFiles) {
+                }
+                elseif ($imagesFiles) {
                     $images = [$imagesFiles];
                 }
             }
             $singleImage = $request->hasFile('image') ? $request->file('image') : null;
 
             // Если есть множественные изображения, обрабатываем их
-            if (! empty($images) && is_array($images)) {
+            if (!empty($images) && is_array($images)) {
                 $uploadedImages = [];
                 $uploadType = $request->input('upload_type', 'system_fit');
                 // Читаем параметры как строки и конвертируем в boolean
@@ -227,7 +229,8 @@ class ShopGoodImagesController extends Controller
                                 ->findOrFail($request->get('variation_id'));
                             $imageData['variation_id'] = $variation->id;
                             $imageData['good_id'] = null;
-                        } else {
+                        }
+                        else {
                             $imageData['good_id'] = $goodId;
                             $imageData['variation_id'] = null;
                         }
@@ -245,7 +248,7 @@ class ShopGoodImagesController extends Controller
             }
 
             // Обработка одного изображения
-            if (! $singleImage) {
+            if (!$singleImage) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Не указано изображение для загрузки',
@@ -267,7 +270,7 @@ class ShopGoodImagesController extends Controller
                 $fitWithWhiteBackground
             );
 
-            if (! $uploadedImage) {
+            if (!$uploadedImage) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка обработки изображения',
@@ -298,7 +301,8 @@ class ShopGoodImagesController extends Controller
                 $imageData['variation_id'] = $variation->id;
                 $imageData['good_id'] = null; // Для вариаций good_id = null
                 \Log::info('Creating variation image', $imageData);
-            } else {
+            }
+            else {
                 // Для товаров: good_id = ID товара, variation_id = null
                 $imageData['good_id'] = $goodId;
                 $imageData['variation_id'] = null;
@@ -314,7 +318,8 @@ class ShopGoodImagesController extends Controller
                     ShopGoodImage::where('variation_id', $goodImage->variation_id)
                         ->where('id', '!=', $goodImage->id)
                         ->update(['is_main' => false]);
-                } else {
+                }
+                else {
                     // Для товаров: снимаем флаг с других изображений этого товара
                     ShopGoodImage::where('good_id', $goodId)
                         ->where('id', '!=', $goodImage->id)
@@ -335,7 +340,8 @@ class ShopGoodImagesController extends Controller
                 'data' => $goodImage,
             ], 201);
 
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
 
             \Log::error('=== PNG DEBUG: ShopGoodImagesController::store ERROR ===', [
                 'goodId' => $goodId,
@@ -345,7 +351,7 @@ class ShopGoodImagesController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка загрузки изображения: '.$e->getMessage(),
+                'message' => 'Ошибка загрузки изображения: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -381,7 +387,8 @@ class ShopGoodImagesController extends Controller
                 ShopGoodImage::where('variation_id', $image->variation_id)
                     ->where('id', '!=', $image->id)
                     ->update(['is_main' => false]);
-            } else {
+            }
+            else {
                 // Для товаров: снимаем флаг с других изображений этого товара
                 ShopGoodImage::where('good_id', $goodId)
                     ->where('id', '!=', $image->id)
@@ -408,7 +415,7 @@ class ShopGoodImagesController extends Controller
         try {
             // Удаляем файл с фронтенда
             $frontendPublicPath = frontend_public_path();
-            $filePath = $frontendPublicPath.'/'.$image->file_path;
+            $filePath = $frontendPublicPath . '/' . $image->file_path;
             if (file_exists($filePath)) {
                 unlink($filePath);
             }
@@ -420,10 +427,11 @@ class ShopGoodImagesController extends Controller
                 'message' => 'Изображение успешно удалено',
             ]);
 
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления изображения: '.$e->getMessage(),
+                'message' => 'Ошибка удаления изображения: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -449,7 +457,7 @@ class ShopGoodImagesController extends Controller
                 $image = ShopGoodImage::findOrFail($imageId);
 
                 // Удаляем файл с фронтенда
-                $filePath = $frontendPublicPath.'/'.$image->file_path;
+                $filePath = $frontendPublicPath . '/' . $image->file_path;
                 if (file_exists($filePath)) {
                     unlink($filePath);
                 }
@@ -457,7 +465,8 @@ class ShopGoodImagesController extends Controller
                 $image->delete();
                 $deleted[] = $imageId;
 
-            } catch (\Exception $e) {
+            }
+            catch (\Exception $e) {
                 $errors[] = [
                     'image_id' => $imageId,
                     'error' => $e->getMessage(),
@@ -496,7 +505,7 @@ class ShopGoodImagesController extends Controller
         foreach ($images as $image) {
             try {
                 // Удаляем файл с фронтенда
-                $filePath = $frontendPublicPath.'/'.$image->file_path;
+                $filePath = $frontendPublicPath . '/' . $image->file_path;
                 if (file_exists($filePath)) {
                     unlink($filePath);
                 }
@@ -505,7 +514,8 @@ class ShopGoodImagesController extends Controller
                 $image->delete();
                 $deleted[] = $imageId;
 
-            } catch (\Exception $e) {
+            }
+            catch (\Exception $e) {
                 $errors[] = [
                     'image_id' => $image->id,
                     'variation_id' => $image->variation_id,
@@ -520,7 +530,7 @@ class ShopGoodImagesController extends Controller
             'errors' => $errors,
             'total_deleted' => count($deleted),
             'total_errors' => count($errors),
-            'message' => 'Удалено изображений: '.count($deleted),
+            'message' => 'Удалено изображений: ' . count($deleted),
         ]);
     }
 
@@ -565,9 +575,9 @@ class ShopGoodImagesController extends Controller
 
             foreach ($sourceImages as $sourceImage) {
                 try {
-                    $sourcePath = $frontendPublicPath.'/'.$sourceImage->file_path;
+                    $sourcePath = $frontendPublicPath . '/' . $sourceImage->file_path;
 
-                    if (! file_exists($sourcePath)) {
+                    if (!file_exists($sourcePath)) {
                         $results['errors'][] = "Файл не найден: {$sourceImage->file_path}";
 
                         continue;
@@ -576,13 +586,13 @@ class ShopGoodImagesController extends Controller
                     // Генерируем новое имя файла
                     $pathInfo = pathinfo($sourceImage->file_path);
                     $extension = $pathInfo['extension'] ?? 'jpg';
-                    $newFileName = 'variation_'.$targetVariationId.'_'.uniqid().'.'.$extension;
-                    $newRelativePath = ($pathInfo['dirname'] !== '.' ? $pathInfo['dirname'] : 'images').'/'.$newFileName;
-                    $newFullPath = $frontendPublicPath.'/'.$newRelativePath;
+                    $newFileName = 'variation_' . $targetVariationId . '_' . uniqid() . '.' . $extension;
+                    $newRelativePath = ($pathInfo['dirname'] !== '.' ? $pathInfo['dirname'] : 'images') . '/' . $newFileName;
+                    $newFullPath = $frontendPublicPath . '/' . $newRelativePath;
 
                     // Убедимся, что директория существует
                     $directory = dirname($newFullPath);
-                    if (! file_exists($directory)) {
+                    if (!file_exists($directory)) {
                         mkdir($directory, 0755, true);
                     }
 
@@ -599,12 +609,14 @@ class ShopGoodImagesController extends Controller
                         ]);
 
                         $results['total_copied']++;
-                    } else {
+                    }
+                    else {
                         $results['errors'][] = "Не удалось скопировать файл для вариации {$targetVariationId}";
                     }
 
-                } catch (\Exception $e) {
-                    $results['errors'][] = "Ошибка при копировании для вариации {$targetVariationId}: ".$e->getMessage();
+                }
+                catch (\Exception $e) {
+                    $results['errors'][] = "Ошибка при копировании для вариации {$targetVariationId}: " . $e->getMessage();
                 }
             }
         }
@@ -630,7 +642,8 @@ class ShopGoodImagesController extends Controller
             ShopGoodImage::where('variation_id', $image->variation_id)
                 ->where('id', '!=', $image->id)
                 ->update(['is_main' => false]);
-        } else {
+        }
+        else {
             // Для товаров: снимаем флаг с других изображений этого товара
             ShopGoodImage::where('good_id', $goodId)
                 ->where('id', '!=', $image->id)
@@ -689,10 +702,11 @@ class ShopGoodImagesController extends Controller
                 'data' => $image,
             ]);
 
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка привязки изображения к вариации: '.$e->getMessage(),
+                'message' => 'Ошибка привязки изображения к вариации: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -770,7 +784,7 @@ class ShopGoodImagesController extends Controller
     {
         // Валидация с поддержкой вариаций: либо good_id, либо variation_id должен быть указан
         $validator = Validator::make($request->all(), [
-            'images' => 'required|array|min:1|max:1000', // Максимум 1000 изображений за раз
+            'images' => 'required|array|min:1|max:5000', // Максимум 5000 изображений за раз
             'images.*.good_id' => 'nullable|integer',
             'images.*.variation_id' => 'nullable|integer',
             'images.*.file_path' => 'required|string',
@@ -786,10 +800,10 @@ class ShopGoodImagesController extends Controller
         $validator->after(function ($validator) use ($request, &$imagesToSkip) {
             $images = $request->input('images', []);
             foreach ($images as $index => $image) {
-                $hasGoodId = ! empty($image['good_id']);
-                $hasVariationId = ! empty($image['variation_id']);
+                $hasGoodId = !empty($image['good_id']);
+                $hasVariationId = !empty($image['variation_id']);
 
-                if (! $hasGoodId && ! $hasVariationId) {
+                if (!$hasGoodId && !$hasVariationId) {
                     $validator->errors()->add("images.{$index}.good_id", 'Необходимо указать либо good_id, либо variation_id');
                 }
 
@@ -798,17 +812,17 @@ class ShopGoodImagesController extends Controller
                 }
 
                 // Проверяем, что good_id является положительным целым числом
-                if ($hasGoodId && (! is_numeric($image['good_id']) || $image['good_id'] <= 0)) {
+                if ($hasGoodId && (!is_numeric($image['good_id']) || $image['good_id'] <= 0)) {
                     $validator->errors()->add("images.{$index}.good_id", 'good_id должен быть положительным целым числом');
                 }
 
                 // Проверяем, что variation_id является положительным целым числом
-                if ($hasVariationId && (! is_numeric($image['variation_id']) || $image['variation_id'] <= 0)) {
+                if ($hasVariationId && (!is_numeric($image['variation_id']) || $image['variation_id'] <= 0)) {
                     $validator->errors()->add("images.{$index}.variation_id", 'variation_id должен быть положительным целым числом');
                 }
 
                 // Проверяем существование файла (ищем в директории фронтенда)
-                if (! empty($image['file_path'])) {
+                if (!empty($image['file_path'])) {
                     // Сначала проверяем в public_path API
                     $apiPath = realpath(public_path($image['file_path'])) ?: public_path($image['file_path']);
                     // Затем проверяем в директории фронтенда (из FRONTEND_PATH в .env)
@@ -816,25 +830,26 @@ class ShopGoodImagesController extends Controller
 
                     $fileExists = file_exists($apiPath) || file_exists($frontendFullPath);
 
-                    if (! $fileExists) {
-                        $validator->errors()->add("images.{$index}.file_path", 'Файл не найден: '.$image['file_path']);
-                        \Log::error("Файл изображения не найден ни в API ({$apiPath}), ни во фронтенде ({$frontendFullPath})", ['image' => $image]);
+                    if (!$fileExists) {
+                        // Вместо $validator->errors()->add(...) — просто логируем и добавляем в skip
+                        \Log::warning("Файл изображения не найден — пропускаем его", ['image' => $image]);
+                        $imagesToSkip[] = $index;
+                        continue;
                     }
                 }
 
                 // Проверяем существование товара или вариации
-                // Если товар/вариация не существует, добавляем в список для пропуска
                 if ($hasGoodId) {
-                    if (! \DB::table('shop_goods')->where('id', $image['good_id'])->exists()) {
+                    if (!\DB::table('shop_goods')->where('id', $image['good_id'])->exists()) {
+                        \Log::warning('Товар не найден в БД - пропускаем изображение', ['good_id' => $image['good_id'], 'image' => $image]);
                         $imagesToSkip[] = $index;
-
                         continue;
                     }
-                } elseif ($hasVariationId) {
-                    if (! \DB::table('shop_good_variations')->where('id', $image['variation_id'])->exists()) {
+                }
+                elseif ($hasVariationId) {
+                    if (!\DB::table('shop_good_variations')->where('id', $image['variation_id'])->exists()) {
                         \Log::warning('Вариация не найдена в БД - пропускаем изображение', ['variation_id' => $image['variation_id'], 'image' => $image]);
                         $imagesToSkip[] = $index;
-
                         continue;
                     }
                 }
@@ -857,9 +872,9 @@ class ShopGoodImagesController extends Controller
 
         // Удаляем пропущенные изображения из массива
         $images = $request->input('images', []);
-        if (! empty($imagesToSkip)) {
+        if (!empty($imagesToSkip)) {
             $filteredImages = array_filter($images, function ($image, $index) use ($imagesToSkip) {
-                return ! in_array($index, $imagesToSkip);
+                return !in_array($index, $imagesToSkip);
             }, ARRAY_FILTER_USE_BOTH);
 
             $images = array_values($filteredImages);
@@ -875,17 +890,18 @@ class ShopGoodImagesController extends Controller
             $imagesByVariation = [];
 
             foreach ($images as $index => $imageData) {
-                if (! empty($imageData['variation_id'])) {
+                if (!empty($imageData['variation_id'])) {
                     // Изображение для вариации
                     $variationId = $imageData['variation_id'];
-                    if (! isset($imagesByVariation[$variationId])) {
+                    if (!isset($imagesByVariation[$variationId])) {
                         $imagesByVariation[$variationId] = [];
                     }
                     $imagesByVariation[$variationId][] = array_merge($imageData, ['_index' => $index]);
-                } else {
+                }
+                else {
                     // Изображение для товара
                     $goodId = $imageData['good_id'];
-                    if (! isset($imagesByGood[$goodId])) {
+                    if (!isset($imagesByGood[$goodId])) {
                         $imagesByGood[$goodId] = [];
                     }
                     $imagesByGood[$goodId][] = array_merge($imageData, ['_index' => $index]);
@@ -903,7 +919,8 @@ class ShopGoodImagesController extends Controller
                     $results = array_merge($results, $batchResults['updated'] ?? []);
                     $skipped = array_merge($skipped, $batchResults['skipped'] ?? []);
                     $errors = array_merge($errors, $batchResults['errors'] ?? []);
-                } catch (\Exception $e) {
+                }
+                catch (\Exception $e) {
                     Log::error('Ошибка пакетной обработки изображений для товара', [
                         'good_id' => $goodId,
                         'error' => $e->getMessage(),
@@ -933,7 +950,8 @@ class ShopGoodImagesController extends Controller
                     $results = array_merge($results, $batchResults['updated'] ?? []);
                     $skipped = array_merge($skipped, $batchResults['skipped'] ?? []);
                     $errors = array_merge($errors, $batchResults['errors'] ?? []);
-                } catch (\Exception $e) {
+                }
+                catch (\Exception $e) {
                     Log::error('Ошибка пакетной обработки изображений для вариации', [
                         'variation_id' => $variationId,
                         'error' => $e->getMessage(),
@@ -965,10 +983,11 @@ class ShopGoodImagesController extends Controller
                 ],
             ]);
 
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка пакетного создания изображений: '.$e->getMessage(),
+                'message' => 'Ошибка пакетного создания изображений: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -986,13 +1005,13 @@ class ShopGoodImagesController extends Controller
         $validImages = [];
         foreach ($imagesData as $imageData) {
             $filePath = $imageData['file_path'] ?? '';
-            $fullFilePath = $frontendPublicPath.'/'.$filePath;
+            $fullFilePath = $frontendPublicPath . '/' . $filePath;
 
-            if (! file_exists($fullFilePath)) {
+            if (!file_exists($fullFilePath)) {
                 $results['errors'][] = [
                     'good_id' => $goodId,
                     'file_path' => $filePath,
-                    'error' => 'Файл изображения не найден: '.$filePath,
+                    'error' => 'Файл изображения не найден: ' . $filePath,
                 ];
 
                 continue;
@@ -1026,14 +1045,15 @@ class ShopGoodImagesController extends Controller
                     'id' => $existingImage->id,
                     'data' => $imageData,
                 ];
-            } else {
+            }
+            else {
                 // Создаем новую связь
                 $toCreate[] = $imageData;
             }
         }
 
         // Массовое обновление существующих связей
-        if (! empty($toUpdate)) {
+        if (!empty($toUpdate)) {
             foreach ($toUpdate as $updateItem) {
                 try {
                     $existingImage = ShopGoodImage::find($updateItem['id']);
@@ -1052,7 +1072,8 @@ class ShopGoodImagesController extends Controller
                             'message' => 'Связь товар-изображение обновлена',
                         ];
                     }
-                } catch (\Exception $e) {
+                }
+                catch (\Exception $e) {
                     $results['errors'][] = [
                         'good_id' => $goodId,
                         'file_path' => $updateItem['data']['file_path'] ?? null,
@@ -1069,8 +1090,8 @@ class ShopGoodImagesController extends Controller
             if ($hasMainImages) {
                 $mainImageIds = collect($toUpdate)
                     ->filter(function ($item) {
-                        return ($item['data']['is_main'] ?? false) == true;
-                    })
+                    return ($item['data']['is_main'] ?? false) == true;
+                })
                     ->pluck('id')
                     ->toArray();
 
@@ -1081,7 +1102,7 @@ class ShopGoodImagesController extends Controller
         }
 
         // Массовое создание новых связей
-        if (! empty($toCreate)) {
+        if (!empty($toCreate)) {
             $insertData = [];
             foreach ($toCreate as $imageData) {
                 $insertData[] = [
@@ -1122,13 +1143,14 @@ class ShopGoodImagesController extends Controller
 
                 if ($hasMainImages) {
                     $mainImageIds = $createdImages->where('is_main', true)->pluck('id')->toArray();
-                    if (! empty($mainImageIds)) {
+                    if (!empty($mainImageIds)) {
                         ShopGoodImage::where('good_id', $goodId)
                             ->whereNotIn('id', $mainImageIds)
                             ->update(['is_main' => false]);
                     }
                 }
-            } catch (\Exception $e) {
+            }
+            catch (\Exception $e) {
                 // Если массовая вставка не удалась, пробуем по одной
                 foreach ($toCreate as $imageData) {
                     try {
@@ -1149,7 +1171,8 @@ class ShopGoodImagesController extends Controller
                             'status' => 'created',
                             'message' => 'Изображение успешно создано',
                         ];
-                    } catch (\Exception $createError) {
+                    }
+                    catch (\Exception $createError) {
                         $results['errors'][] = [
                             'good_id' => $goodId,
                             'file_path' => $imageData['file_path'] ?? null,
@@ -1177,9 +1200,9 @@ class ShopGoodImagesController extends Controller
 
         // Проверяем существование файла на фронтенде
         $frontendPublicPath = frontend_public_path();
-        $fullFilePath = $frontendPublicPath.'/'.$filePath;
-        if (! file_exists($fullFilePath)) {
-            throw new \Exception('Файл изображения не найден: '.$filePath);
+        $fullFilePath = $frontendPublicPath . '/' . $filePath;
+        if (!file_exists($fullFilePath)) {
+            throw new \Exception('Файл изображения не найден: ' . $filePath);
         }
 
         // Проверяем, существует ли уже связь между товаром и изображением
@@ -1241,12 +1264,14 @@ class ShopGoodImagesController extends Controller
                 }
                 $existingImage->delete();
             }
-        } elseif ($imageAction === 'skip') {
-            // При 'skip' проверяем только конкретную связь для этого файла
-            // Если связь уже существует (проверено выше), пропускаем
-            // Если связи нет, но файл существует - создаем связь
-            // Это позволяет привязать существующие файлы к товарам при обновлении
-        } elseif ($imageAction === 'unique') {
+        }
+        elseif ($imageAction === 'skip') {
+        // При 'skip' проверяем только конкретную связь для этого файла
+        // Если связь уже существует (проверено выше), пропускаем
+        // Если связи нет, но файл существует - создаем связь
+        // Это позволяет привязать существующие файлы к товарам при обновлении
+        }
+        elseif ($imageAction === 'unique') {
             // Проверяем, есть ли уже изображение с таким же путем в базе (для любого товара)
             $existingImageGlobal = ShopGoodImage::where('file_path', $filePath)->first();
             if ($existingImageGlobal) {
@@ -1259,7 +1284,7 @@ class ShopGoodImagesController extends Controller
                         'message' => 'Изображение пропущено (уже привязано к другому товару)',
                     ];
                 }
-                // Если изображение уже привязано к этому товару, это уже обработано выше
+            // Если изображение уже привязано к этому товару, это уже обработано выше
             }
         }
 
@@ -1318,13 +1343,13 @@ class ShopGoodImagesController extends Controller
         $validImages = [];
         foreach ($imagesData as $imageData) {
             $filePath = $imageData['file_path'] ?? '';
-            $fullFilePath = $frontendPublicPath.'/'.$filePath;
+            $fullFilePath = $frontendPublicPath . '/' . $filePath;
 
-            if (! file_exists($fullFilePath)) {
+            if (!file_exists($fullFilePath)) {
                 $results['errors'][] = [
                     'variation_id' => $variationId,
                     'file_path' => $filePath,
-                    'error' => 'Файл изображения не найден: '.$filePath,
+                    'error' => 'Файл изображения не найден: ' . $filePath,
                 ];
 
                 continue;
@@ -1359,14 +1384,15 @@ class ShopGoodImagesController extends Controller
                     'id' => $existingImage->id,
                     'data' => $imageData,
                 ];
-            } else {
+            }
+            else {
                 // Создаем новую связь
                 $toCreate[] = $imageData;
             }
         }
 
         // Массовое обновление существующих связей
-        if (! empty($toUpdate)) {
+        if (!empty($toUpdate)) {
             foreach ($toUpdate as $updateItem) {
                 try {
                     $existingImage = ShopGoodImage::find($updateItem['id']);
@@ -1385,7 +1411,8 @@ class ShopGoodImagesController extends Controller
                             'message' => 'Связь вариация-изображение обновлена',
                         ];
                     }
-                } catch (\Exception $e) {
+                }
+                catch (\Exception $e) {
                     $results['errors'][] = [
                         'variation_id' => $variationId,
                         'file_path' => $updateItem['data']['file_path'] ?? null,
@@ -1402,8 +1429,8 @@ class ShopGoodImagesController extends Controller
             if ($hasMainImages) {
                 $mainImageIds = collect($toUpdate)
                     ->filter(function ($item) {
-                        return ($item['data']['is_main'] ?? false) == true;
-                    })
+                    return ($item['data']['is_main'] ?? false) == true;
+                })
                     ->pluck('id')
                     ->toArray();
 
@@ -1415,7 +1442,7 @@ class ShopGoodImagesController extends Controller
         }
 
         // Массовое создание новых связей
-        if (! empty($toCreate)) {
+        if (!empty($toCreate)) {
             $insertData = [];
             foreach ($toCreate as $imageData) {
                 $insertData[] = [
@@ -1457,14 +1484,15 @@ class ShopGoodImagesController extends Controller
 
                 if ($hasMainImages) {
                     $mainImageIds = $createdImages->where('is_main', true)->pluck('id')->toArray();
-                    if (! empty($mainImageIds)) {
+                    if (!empty($mainImageIds)) {
                         ShopGoodImage::whereNull('good_id')
                             ->where('variation_id', $variationId)
                             ->whereNotIn('id', $mainImageIds)
                             ->update(['is_main' => false]);
                     }
                 }
-            } catch (\Exception $e) {
+            }
+            catch (\Exception $e) {
                 // Если массовая вставка не удалась, пробуем по одной
                 foreach ($toCreate as $imageData) {
                     try {
@@ -1486,7 +1514,8 @@ class ShopGoodImagesController extends Controller
                             'status' => 'created',
                             'message' => 'Изображение вариации успешно создано',
                         ];
-                    } catch (\Exception $createError) {
+                    }
+                    catch (\Exception $createError) {
                         $results['errors'][] = [
                             'variation_id' => $variationId,
                             'file_path' => $imageData['file_path'] ?? null,
@@ -1514,9 +1543,9 @@ class ShopGoodImagesController extends Controller
 
         // Проверяем существование файла на фронтенде
         $frontendPublicPath = frontend_public_path();
-        $fullFilePath = $frontendPublicPath.'/'.$filePath;
-        if (! file_exists($fullFilePath)) {
-            throw new \Exception('Файл изображения не найден: '.$filePath);
+        $fullFilePath = $frontendPublicPath . '/' . $filePath;
+        if (!file_exists($fullFilePath)) {
+            throw new \Exception('Файл изображения не найден: ' . $filePath);
         }
 
         // Проверяем, существует ли уже связь между вариацией и изображением
@@ -1571,12 +1600,14 @@ class ShopGoodImagesController extends Controller
                 }
                 $existingImage->delete();
             }
-        } elseif ($imageAction === 'skip') {
-            // При 'skip' проверяем только конкретную связь для этого файла
-            // Если связь уже существует (проверено выше), пропускаем
-            // Если связи нет, но файл существует - создаем связь
-            // Это позволяет привязать существующие файлы к вариациям при обновлении
-        } elseif ($imageAction === 'unique') {
+        }
+        elseif ($imageAction === 'skip') {
+        // При 'skip' проверяем только конкретную связь для этого файла
+        // Если связь уже существует (проверено выше), пропускаем
+        // Если связи нет, но файл существует - создаем связь
+        // Это позволяет привязать существующие файлы к вариациям при обновлении
+        }
+        elseif ($imageAction === 'unique') {
             // Проверяем, есть ли уже изображение с таким же путем в базе (для любой вариации)
             $existingImageGlobal = ShopGoodImage::where('file_path', $filePath)->first();
             if ($existingImageGlobal) {
@@ -1589,7 +1620,7 @@ class ShopGoodImagesController extends Controller
                         'message' => 'Изображение пропущено (уже привязано к другой вариации)',
                     ];
                 }
-                // Если изображение уже привязано к этой вариации, это уже обработано выше
+            // Если изображение уже привязано к этой вариации, это уже обработано выше
             }
         }
 
@@ -1663,10 +1694,10 @@ class ShopGoodImagesController extends Controller
             $sortOrder = $request->get('sort_order', 0);
 
             // Проверяем существование файла
-            if (! Storage::disk('public')->exists($filePath)) {
+            if (!Storage::disk('public')->exists($filePath)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Файл изображения не найден: '.$filePath,
+                    'message' => 'Файл изображения не найден: ' . $filePath,
                 ], 404);
             }
 
@@ -1680,7 +1711,8 @@ class ShopGoodImagesController extends Controller
                     }
                     $existingImage->delete();
                 }
-            } elseif ($imageAction === 'skip') {
+            }
+            elseif ($imageAction === 'skip') {
                 // Проверяем, есть ли уже изображения у товара
                 $existingCount = ShopGoodImage::where('good_id', $goodId)->count();
                 if ($existingCount > 0) {
@@ -1690,7 +1722,8 @@ class ShopGoodImagesController extends Controller
                         'data' => null,
                     ]);
                 }
-            } elseif ($imageAction === 'unique') {
+            }
+            elseif ($imageAction === 'unique') {
                 // Проверяем, есть ли уже изображение с таким же путем в базе
                 $existingImage = ShopGoodImage::where('file_path', $filePath)->first();
                 if ($existingImage) {
@@ -1726,7 +1759,8 @@ class ShopGoodImagesController extends Controller
                 'data' => $goodImage,
             ], 201);
 
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             \Log::error('Error creating related image', [
                 'goodId' => $goodId,
                 'error' => $e->getMessage(),
@@ -1735,7 +1769,7 @@ class ShopGoodImagesController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания связанного изображения: '.$e->getMessage(),
+                'message' => 'Ошибка создания связанного изображения: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -1748,11 +1782,11 @@ class ShopGoodImagesController extends Controller
 
         try {
             // Прямой файл лог для гарантии записи
-            file_put_contents('F:/Work/Projects/SS/api.ss.ru/storage/logs/laravel.log', '['.date('Y-m-d H:i:s')."] PROCESS_START: goodId=$goodId\n", FILE_APPEND);
+            file_put_contents('F:/Work/Projects/SS/api.ss.ru/storage/logs/laravel.log', '[' . date('Y-m-d H:i:s') . "] PROCESS_START: goodId=$goodId\n", FILE_APPEND);
 
             // Создаем уникальное имя файла
             $extension = $image->getClientOriginalExtension();
-            $filename = uniqid().'.'.$extension;
+            $filename = uniqid() . '.' . $extension;
             $path = "images/shop/goods/{$goodId}/{$filename}";
 
             Log::info('DEBUG: processAndSaveImage START', [
@@ -1768,11 +1802,11 @@ class ShopGoodImagesController extends Controller
 
             // Путь к папке public фронтенда
             $frontendPublicPath = frontend_public_path();
-            $fullPath = $frontendPublicPath.'/'.$path;
+            $fullPath = $frontendPublicPath . '/' . $path;
             $dir = dirname($fullPath);
 
             // Создаем директорию, если её нет
-            if (! is_dir($dir)) {
+            if (!is_dir($dir)) {
                 mkdir($dir, 0755, true);
             }
 
@@ -1780,15 +1814,15 @@ class ShopGoodImagesController extends Controller
             $extension = strtolower($extension);
             $mimeType = $image->getMimeType();
             $isTransparentFormat = in_array($extension, ['png', 'gif', 'webp']) ||
-                                   strpos($mimeType, 'png') !== false ||
-                                   strpos($mimeType, 'gif') !== false ||
-                                   strpos($mimeType, 'webp') !== false;
+                strpos($mimeType, 'png') !== false ||
+                strpos($mimeType, 'gif') !== false ||
+                strpos($mimeType, 'webp') !== false;
 
             // Дополнительная проверка на PNG по MIME типу
             $mimeType = $image->getMimeType();
             $isPngByMime = strpos($mimeType, 'png') !== false;
 
-            file_put_contents('F:/Work/Projects/SS/api.ss.ru/storage/logs/laravel.log', '['.date('Y-m-d H:i:s')."] PROCESSING_START: extension=$extension, mime=$mimeType, isTransparent=$isTransparentFormat\n", FILE_APPEND);
+            file_put_contents('F:/Work/Projects/SS/api.ss.ru/storage/logs/laravel.log', '[' . date('Y-m-d H:i:s') . "] PROCESSING_START: extension=$extension, mime=$mimeType, isTransparent=$isTransparentFormat\n", FILE_APPEND);
 
             Log::info('DEBUG: Processing image START', [
                 'extension' => $extension,
@@ -1819,7 +1853,7 @@ class ShopGoodImagesController extends Controller
 
             if ($isTransparentFormat) {
                 // ПРОСТОЙ ЛОГ ПЕРЕД ОБРАБОТКОЙ PNG
-                file_put_contents('F:/Work/Projects/SS/api.ss.ru/process_debug.log', '['.date('Y-m-d H:i:s')."] PNG_PROCESSING: Starting PNG processing for goodId=$goodId\n", FILE_APPEND);
+                file_put_contents('F:/Work/Projects/SS/api.ss.ru/process_debug.log', '[' . date('Y-m-d H:i:s') . "] PNG_PROCESSING: Starting PNG processing for goodId=$goodId\n", FILE_APPEND);
 
                 $manager = new ImageManager(new Driver);
                 $processedImage = $manager->read($image);
@@ -1831,11 +1865,13 @@ class ShopGoodImagesController extends Controller
                 if ($uploadType === 'custom_fit' && $customWidth && $customHeight) {
                     $width = $customWidth;
                     $height = $customHeight;
-                } elseif ($uploadType === 'system_fit' || $uploadType === 'system_crop') {
+                }
+                elseif ($uploadType === 'system_fit' || $uploadType === 'system_crop') {
                     // Получаем системные размеры (можно из настроек или использовать дефолтные)
                     $width = 500;
                     $height = 500;
-                } elseif ($uploadType === 'original' && $isTransparentFormat) {
+                }
+                elseif ($uploadType === 'original' && $isTransparentFormat) {
                     // Для original используем оригинальные размеры изображения
                     $width = $processedImage->width();
                     $height = $processedImage->height();
@@ -1844,12 +1880,12 @@ class ShopGoodImagesController extends Controller
                 // Для PNG/GIF/WebP с прозрачностью ВСЕГДА применяем белый фон
                 if ($isTransparentFormat) {
                     Log::info('DEBUG: Processing PNG/GIF/WEBP image', [
-                        'original_size' => $processedImage->width().'x'.$processedImage->height(),
-                        'target_size' => $width.'x'.$height,
+                        'original_size' => $processedImage->width() . 'x' . $processedImage->height(),
+                        'target_size' => $width . 'x' . $height,
                         'uploadType' => $uploadType,
                     ]);
                     // Если размеры не определены (original без изменения размера), используем оригинальные
-                    if (! $width || ! $height) {
+                    if (!$width || !$height) {
                         $width = $processedImage->width();
                         $height = $processedImage->height();
                     }
@@ -1859,7 +1895,7 @@ class ShopGoodImagesController extends Controller
                     $canvas->fill('ffffff'); // Белый фон
 
                     // ПРОСТОЙ ЛОГ ПОСЛЕ СОЗДАНИЯ БЕЛОГО ФОНА
-                    file_put_contents('F:/Work/Projects/SS/api.ss.ru/process_debug.log', '['.date('Y-m-d H:i:s')."] WHITE_BACKGROUND_CREATED: Created canvas with white background {$width}x{$height}\n", FILE_APPEND);
+                    file_put_contents('F:/Work/Projects/SS/api.ss.ru/process_debug.log', '[' . date('Y-m-d H:i:s') . "] WHITE_BACKGROUND_CREATED: Created canvas with white background {$width}x{$height}\n", FILE_APPEND);
 
                     // Если нужно изменить размер, вписываем изображение
                     if ($uploadType !== 'original' && $fitWithWhiteBackground && $width && $height) {
@@ -1872,19 +1908,20 @@ class ShopGoodImagesController extends Controller
 
                     // ВСЕГДА конвертируем в JPG для удаления прозрачности
                     $imageData = $processedImage->toJpeg(90);
-                    $fullPath = str_replace('.'.$extension, '.jpg', $fullPath);
-                    $path = str_replace('.'.$extension, '.jpg', $path);
+                    $fullPath = str_replace('.' . $extension, '.jpg', $fullPath);
+                    $path = str_replace('.' . $extension, '.jpg', $path);
 
                     // Сохраняем обработанное изображение
                     file_put_contents($fullPath, $imageData);
 
                     Log::info('DEBUG: PNG processing completed successfully', [
                         'final_path' => $path,
-                        'file_size' => strlen($imageData).' bytes',
+                        'file_size' => strlen($imageData) . ' bytes',
                     ]);
 
                     return ['path' => $path];
-                } elseif ($uploadType !== 'original' && $fitWithWhiteBackground) {
+                }
+                elseif ($uploadType !== 'original' && $fitWithWhiteBackground) {
                     // Вписываем изображение в размеры с белым фоном
                     $processedImage->contain($width, $height);
 
@@ -1895,7 +1932,8 @@ class ShopGoodImagesController extends Controller
                     // Накладываем вписанное изображение на белый фон с центрированием
                     $canvas->place($processedImage, 'center');
                     $processedImage = $canvas;
-                } elseif ($uploadType === 'system_crop') {
+                }
+                elseif ($uploadType === 'system_crop') {
                     // Обрезка с сохранением пропорций
                     $processedImage->cover($width, $height);
                 }
@@ -1904,15 +1942,18 @@ class ShopGoodImagesController extends Controller
                 // PNG/GIF/WebP уже обработаны выше и сохранены
                 if (strtolower($extension) === 'jpg' || strtolower($extension) === 'jpeg') {
                     $imageData = $processedImage->toJpeg(90);
-                } elseif (strtolower($extension) === 'webp') {
+                }
+                elseif (strtolower($extension) === 'webp') {
                     $imageData = $processedImage->toWebp(90);
-                } else {
+                }
+                else {
                     $imageData = $processedImage->toJpeg(90);
                 }
 
                 // Сохраняем обработанное изображение
                 file_put_contents($fullPath, $imageData);
-            } else {
+            }
+            else {
                 // Для PNG/GIF/WebP даже при original нужно обработать для белого фона
                 if ($isTransparentFormat) {
                     $manager = new ImageManager(new Driver);
@@ -1930,8 +1971,8 @@ class ShopGoodImagesController extends Controller
 
                     // Конвертируем в JPG для удаления прозрачности
                     $imageData = $canvas->toJpeg(90);
-                    $fullPath = str_replace('.'.$extension, '.jpg', $fullPath);
-                    $path = str_replace('.'.$extension, '.jpg', $path);
+                    $fullPath = str_replace('.' . $extension, '.jpg', $fullPath);
+                    $path = str_replace('.' . $extension, '.jpg', $path);
 
                     // Сохраняем обработанное изображение
                     file_put_contents($fullPath, $imageData);
@@ -1942,7 +1983,8 @@ class ShopGoodImagesController extends Controller
                         'width' => $width,
                         'height' => $height,
                     ]);
-                } else {
+                }
+                else {
                     // Сохраняем файл без обработки (только для не-прозрачных форматов)
                     $image->move($dir, $filename);
                 }
@@ -1950,8 +1992,9 @@ class ShopGoodImagesController extends Controller
 
             return ['path' => $path];
 
-        } catch (\Exception $e) {
-            Log::error('Error processing image: '.$e->getMessage());
+        }
+        catch (\Exception $e) {
+            Log::error('Error processing image: ' . $e->getMessage());
 
             return null;
         }

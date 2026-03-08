@@ -19,7 +19,7 @@ class ShopCdekSettingsController extends Controller
         $user = $request->user();
 
         // Проверяем авторизацию
-        if (! $user) {
+        if (!$user) {
             return response()->json([
                 'success' => false,
                 'message' => 'Необходима авторизация.',
@@ -27,7 +27,7 @@ class ShopCdekSettingsController extends Controller
         }
 
         // Проверяем, что пользователь имеет роль admin или shop
-        if (! $user->hasRole('admin') && ! $user->hasRole('shop')) {
+        if (!$user->hasRole('admin') && !$user->hasRole('shop') && !$user->hasRole('manager')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Доступ запрещен. Требуется роль администратора или менеджера магазина.',
@@ -140,12 +140,12 @@ class ShopCdekSettingsController extends Controller
             $shouldValidateKeys = ($data['client_id'] ?? null) !== $existing->client_id
                 || ($data['client_secret'] ?? null) !== $existing->client_secret;
         }
-        if ($shouldValidateKeys && ! empty($data['client_id']) && ! empty($data['client_secret'])) {
+        if ($shouldValidateKeys && !empty($data['client_id']) && !empty($data['client_secret'])) {
             $keyValidation = $this->validateCdekKeys($data['client_id'], $data['client_secret']);
-            if (! $keyValidation['valid']) {
+            if (!$keyValidation['valid']) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Ошибка валидации ключей СДЭК: '.$keyValidation['error'],
+                    'message' => 'Ошибка валидации ключей СДЭК: ' . $keyValidation['error'],
                 ], 422);
             }
         }
@@ -154,7 +154,8 @@ class ShopCdekSettingsController extends Controller
         $settings = $existing;
         if ($settings) {
             $settings->update($data);
-        } else {
+        }
+        else {
             $settings = ShopCdekSettings::create($data);
         }
 
@@ -221,10 +222,10 @@ class ShopCdekSettingsController extends Controller
             $clientSecret = $request->client_secret ?? $settings->client_secret;
 
             $keyValidation = $this->validateCdekKeys($clientId, $clientSecret);
-            if (! $keyValidation['valid']) {
+            if (!$keyValidation['valid']) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Ошибка валидации ключей СДЭК: '.$keyValidation['error'],
+                    'message' => 'Ошибка валидации ключей СДЭК: ' . $keyValidation['error'],
                 ], 422);
             }
         }
@@ -340,9 +341,9 @@ class ShopCdekSettingsController extends Controller
         $clientSecret = $request->query('client_secret');
 
         // Если ключи не переданы, пытаемся получить из настроек
-        if (! $clientId || ! $clientSecret) {
+        if (!$clientId || !$clientSecret) {
             $settings = ShopCdekSettings::first();
-            if (! $settings || ! $settings->client_id || ! $settings->client_secret) {
+            if (!$settings || !$settings->client_id || !$settings->client_secret) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Настройки СДЭК не найдены или не заполнены ключи. Передайте client_id и client_secret в параметрах запроса.',
@@ -353,7 +354,7 @@ class ShopCdekSettingsController extends Controller
         }
 
         try {
-            \Log::info('CDEK Tariffs: Starting request with client_id: '.$clientId);
+            \Log::info('CDEK Tariffs: Starting request with client_id: ' . $clientId);
 
             $token = $this->getCdekToken($clientId, $clientSecret);
             \Log::info('CDEK Tariffs: Token received successfully');
@@ -378,19 +379,19 @@ class ShopCdekSettingsController extends Controller
                 ],
             ];
 
-            \Log::info('CDEK Tariffs: Request data: '.json_encode($requestData));
+            \Log::info('CDEK Tariffs: Request data: ' . json_encode($requestData));
 
             $response = Http::withOptions([
                 'verify' => config('cdek.ssl_verify', false),
                 'timeout' => config('cdek.timeout', 30),
-            ])->withToken($token)->post(config('cdek.api_url', 'https://api.cdek.ru/v2').'/calculator/tarifflist', $requestData);
+            ])->withToken($token)->post(config('cdek.api_url', 'https://api.cdek.ru/v2') . '/calculator/tarifflist', $requestData);
 
-            \Log::info('CDEK Tariffs: Response status: '.$response->status());
+            \Log::info('CDEK Tariffs: Response status: ' . $response->status());
 
             if ($response->successful()) {
                 $data = $response->json();
                 $tariffs = $data['tariff_codes'] ?? [];
-                \Log::info('CDEK Tariffs: Received '.count($tariffs).' tariffs');
+                \Log::info('CDEK Tariffs: Received ' . count($tariffs) . ' tariffs');
 
                 return response()->json([
                     'success' => true,
@@ -400,21 +401,23 @@ class ShopCdekSettingsController extends Controller
                         'to' => 'Санкт-Петербург',
                     ],
                 ]);
-            } else {
+            }
+            else {
                 $errorBody = $response->body();
-                \Log::error('CDEK API Error: Status '.$response->status().', Body: '.$errorBody);
+                \Log::error('CDEK API Error: Status ' . $response->status() . ', Body: ' . $errorBody);
 
                 return response()->json([
                     'success' => false,
-                    'message' => 'Ошибка получения тарифов от СДЭК (статус '.$response->status().'): '.$errorBody,
+                    'message' => 'Ошибка получения тарифов от СДЭК (статус ' . $response->status() . '): ' . $errorBody,
                 ], 500);
             }
-        } catch (\Exception $e) {
-            \Log::error('CDEK Tariffs Error: '.$e->getMessage());
+        }
+        catch (\Exception $e) {
+            \Log::error('CDEK Tariffs Error: ' . $e->getMessage());
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения тарифов: '.$e->getMessage(),
+                'message' => 'Ошибка получения тарифов: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -435,7 +438,8 @@ class ShopCdekSettingsController extends Controller
                 'token' => $token,
                 'owner_info' => $ownerInfo,
             ];
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             return ['valid' => false, 'error' => $e->getMessage()];
         }
     }
@@ -451,7 +455,7 @@ class ShopCdekSettingsController extends Controller
             $response = Http::withOptions([
                 'verify' => config('cdek.ssl_verify', false),
                 'timeout' => config('cdek.timeout', 30),
-            ])->withToken($token)->get(config('cdek.api_url', 'https://api.cdek.ru/v2').'/orders', [
+            ])->withToken($token)->get(config('cdek.api_url', 'https://api.cdek.ru/v2') . '/orders', [
                 'size' => 1, // Получаем только один заказ для извлечения информации
             ]);
 
@@ -482,7 +486,7 @@ class ShopCdekSettingsController extends Controller
                 $contragentResponse = Http::withOptions([
                     'verify' => config('cdek.ssl_verify', false),
                     'timeout' => config('cdek.timeout', 30),
-                ])->withToken($token)->get(config('cdek.api_url', 'https://api.cdek.ru/v2').'/contragents');
+                ])->withToken($token)->get(config('cdek.api_url', 'https://api.cdek.ru/v2') . '/contragents');
 
                 if ($contragentResponse->successful()) {
                     $contragentData = $contragentResponse->json();
@@ -499,13 +503,15 @@ class ShopCdekSettingsController extends Controller
                         ];
                     }
                 }
-            } catch (\Exception $e) {
-                // Метод контрагентов может не существовать, игнорируем ошибку
+            }
+            catch (\Exception $e) {
+            // Метод контрагентов может не существовать, игнорируем ошибку
             }
 
             // Если не удалось получить информацию, возвращаем null
             return null;
-        } catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
             // В случае ошибки возвращаем null, чтобы не ломать валидацию
             return null;
         }
@@ -538,7 +544,7 @@ class ShopCdekSettingsController extends Controller
             $parts[] = $location['address'];
         }
 
-        return ! empty($parts) ? implode(', ', $parts) : null;
+        return !empty($parts) ? implode(', ', $parts) : null;
     }
 
     /**
@@ -549,19 +555,19 @@ class ShopCdekSettingsController extends Controller
         $response = Http::withOptions([
             'verify' => config('cdek.ssl_verify', false),
             'timeout' => config('cdek.timeout', 30),
-        ])->asForm()->post(config('cdek.api_url', 'https://api.cdek.ru/v2').'/oauth/token', [
+        ])->asForm()->post(config('cdek.api_url', 'https://api.cdek.ru/v2') . '/oauth/token', [
             'grant_type' => 'client_credentials',
             'client_id' => $clientId,
             'client_secret' => $clientSecret,
         ]);
 
-        if (! $response->successful()) {
+        if (!$response->successful()) {
             $data = $response->json();
             throw new \Exception($data['error_description'] ?? $data['error'] ?? 'Ошибка авторизации в СДЭК');
         }
 
         $data = $response->json();
-        if (! isset($data['access_token'])) {
+        if (!isset($data['access_token'])) {
             throw new \Exception('Не получен access_token от СДЭК');
         }
 
