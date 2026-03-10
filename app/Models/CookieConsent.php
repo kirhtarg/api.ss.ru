@@ -71,15 +71,13 @@ class CookieConsent extends Model
     }
 
     /**
-     * Создать новое согласие
+     * Создать или обновить согласие
      */
-    public static function createConsent(array $data): self
+    public static function updateOrCreateConsent(string $sessionId, array $data): self
     {
-        // Устанавливаем время истечения на 1 год
-        $expiresAt = now()->addYear();
-
-        return self::create([
-            'session_id' => $data['session_id'],
+        return self::updateOrCreate(
+        ['session_id' => $sessionId],
+        [
             'ip_address' => $data['ip_address'] ?? request()->ip(),
             'user_agent' => $data['user_agent'] ?? request()->userAgent(),
             'necessary_cookies' => $data['necessary_cookies'] ?? true,
@@ -87,25 +85,9 @@ class CookieConsent extends Model
             'marketing_cookies' => $data['marketing_cookies'] ?? false,
             'preferences_cookies' => $data['preferences_cookies'] ?? false,
             'consent_given_at' => now(),
-            'expires_at' => $expiresAt,
-        ]);
-    }
-
-    /**
-     * Обновить существующее согласие
-     */
-    public function updateConsent(array $data): self
-    {
-        $this->update([
-            'necessary_cookies' => $data['necessary_cookies'] ?? $this->necessary_cookies,
-            'analytics_cookies' => $data['analytics_cookies'] ?? $this->analytics_cookies,
-            'marketing_cookies' => $data['marketing_cookies'] ?? $this->marketing_cookies,
-            'preferences_cookies' => $data['preferences_cookies'] ?? $this->preferences_cookies,
-            'consent_given_at' => now(),
-            'expires_at' => now()->addYear(), // Обновляем срок действия
-        ]);
-
-        return $this;
+            'expires_at' => now()->addYear(),
+        ]
+        );
     }
 
     /**
@@ -145,11 +127,11 @@ class CookieConsent extends Model
     public function isCookieTypeAllowed(string $type): bool
     {
         return match ($type) {
-            'necessary' => $this->necessary_cookies,
-            'analytics' => $this->analytics_cookies,
-            'marketing' => $this->marketing_cookies,
-            'preferences' => $this->preferences_cookies,
-            default => false,
-        };
+                'necessary' => $this->necessary_cookies,
+                'analytics' => $this->analytics_cookies,
+                'marketing' => $this->marketing_cookies,
+                'preferences' => $this->preferences_cookies,
+                default => false,
+            };
     }
 }

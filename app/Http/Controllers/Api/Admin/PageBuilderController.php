@@ -28,7 +28,7 @@ class PageBuilderController extends Controller
                     try {
                         $versionsCount = ConstructorPageVersion::where('page_id', $page->id)->count();
                     } catch (\Exception $e) {
-                        \Log::error('Error counting versions for page '.$page->id, [
+                        \Log::error('Error counting versions for page ' . $page->id, [
                             'error' => $e->getMessage(),
                             'page_id' => $page->id,
                         ]);
@@ -54,7 +54,7 @@ class PageBuilderController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения страниц: '.$e->getMessage(),
+                'message' => 'Ошибка получения страниц: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -130,7 +130,7 @@ class PageBuilderController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания страницы: '.$e->getMessage(),
+                'message' => 'Ошибка создания страницы: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -144,7 +144,7 @@ class PageBuilderController extends Controller
 
         $validator = Validator::make($request->all(), [
             'title' => 'required|string|max:255',
-            'slug' => 'required|string|max:255|unique:constructor_pages,slug,'.$id,
+            'slug' => 'required|string|max:255|unique:constructor_pages,slug,' . $id,
             'meta_title' => 'nullable|string|max:255',
             'meta_description' => 'nullable|string|max:500',
             'css_class' => 'nullable|string|max:255',
@@ -166,9 +166,11 @@ class PageBuilderController extends Controller
 
             // Обрабатываем settings - удаляем background_color если он null
             if (isset($data['settings']) && is_array($data['settings'])) {
-                if (isset($data['settings']['background_color']) &&
+                if (
+                    isset($data['settings']['background_color']) &&
                     ($data['settings']['background_color'] === null ||
-                     $data['settings']['background_color'] === '')) {
+                        $data['settings']['background_color'] === '')
+                ) {
                     unset($data['settings']['background_color']);
                 }
             }
@@ -183,7 +185,7 @@ class PageBuilderController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления страницы: '.$e->getMessage(),
+                'message' => 'Ошибка обновления страницы: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -213,7 +215,7 @@ class PageBuilderController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления страницы: '.$e->getMessage(),
+                'message' => 'Ошибка удаления страницы: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -244,7 +246,7 @@ class PageBuilderController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка публикации страницы: '.$e->getMessage(),
+                'message' => 'Ошибка публикации страницы: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -268,7 +270,7 @@ class PageBuilderController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка снятия с публикации: '.$e->getMessage(),
+                'message' => 'Ошибка снятия с публикации: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -282,8 +284,8 @@ class PageBuilderController extends Controller
             $originalPage = ConstructorPage::findOrFail($id);
 
             $duplicatedPage = ConstructorPage::create([
-                'title' => $originalPage->title.' (Копия)',
-                'slug' => $this->generateUniqueSlug($originalPage->slug.'-copy'),
+                'title' => $originalPage->title . ' (Копия)',
+                'slug' => $this->generateUniqueSlug($originalPage->slug . '-copy'),
                 'meta_title' => $originalPage->meta_title,
                 'meta_description' => $originalPage->meta_description,
                 'css_class' => $originalPage->css_class,
@@ -299,7 +301,7 @@ class PageBuilderController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка дублирования страницы: '.$e->getMessage(),
+                'message' => 'Ошибка дублирования страницы: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -338,7 +340,7 @@ class PageBuilderController extends Controller
 
         return response()->json([
             'success' => true,
-            'exists' => ! $isUnique,
+            'exists' => !$isUnique,
         ]);
     }
 
@@ -357,7 +359,7 @@ class PageBuilderController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения блоков: '.$e->getMessage(),
+                'message' => 'Ошибка получения блоков: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -399,7 +401,7 @@ class PageBuilderController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения данных: '.$e->getMessage(),
+                'message' => 'Ошибка получения данных: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -409,7 +411,7 @@ class PageBuilderController extends Controller
      */
     private function countBlocks($structure)
     {
-        if (! $structure || ! is_array($structure)) {
+        if (!$structure || !is_array($structure)) {
             return 0;
         }
 
@@ -435,8 +437,8 @@ class PageBuilderController extends Controller
         $slug = $baseSlug;
         $counter = 1;
 
-        while (! ConstructorPage::isSlugUnique($slug)) {
-            $slug = $baseSlug.'-'.$counter;
+        while (!ConstructorPage::isSlugUnique($slug)) {
+            $slug = $baseSlug . '-' . $counter;
             $counter++;
         }
 
@@ -458,7 +460,7 @@ class PageBuilderController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения шаблонов: '.$e->getMessage(),
+                'message' => 'Ошибка получения шаблонов: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -502,7 +504,7 @@ class PageBuilderController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка сохранения шаблона: '.$e->getMessage(),
+                'message' => 'Ошибка сохранения шаблона: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -543,7 +545,191 @@ class PageBuilderController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления шаблона: '.$e->getMessage(),
+                'message' => 'Ошибка удаления шаблона: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить список изображений в папке конструктора
+     */
+    public function listImages(Request $request)
+    {
+        try {
+            $folder = $request->query('path', 'images/pages');
+            try {
+                $publicPath = frontend_public_path($folder);
+            } catch (\RuntimeException $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $e->getMessage(),
+                ], 500);
+            }
+
+            if (!is_dir($publicPath)) {
+                return response()->json([
+                    'success' => true,
+                    'images' => [],
+                    'total' => 0,
+                ]);
+            }
+
+            $files = scandir($publicPath);
+            $imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'];
+            $allImages = [];
+
+            $search = $request->query('search');
+
+            foreach ($files as $file) {
+                if ($file === '.' || $file === '..') {
+                    continue;
+                }
+
+                $extension = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+                if (in_array($extension, $imageExtensions)) {
+                    // Filter by search if provided
+                    if ($search && stripos($file, $search) === false) {
+                        continue;
+                    }
+
+                    $allImages[] = [
+                        'name' => $file,
+                        'url' => '/' . $folder . '/' . $file,
+                    ];
+                }
+            }
+
+            // Сортировка по имени (обычно содержит метку времени) в обратном порядке
+            usort($allImages, function ($a, $b) {
+                return strcmp($b['name'], $a['name']);
+            });
+
+            // Pagination
+            $total = count($allImages);
+            $page = (int) $request->query('page', 1);
+            $perPage = (int) $request->query('per_page', 24);
+            $offset = ($page - 1) * $perPage;
+
+            $images = array_slice($allImages, $offset, $perPage);
+
+            return response()->json([
+                'success' => true,
+                'images' => $images,
+                'total' => $total,
+                'page' => $page,
+                'per_page' => $perPage,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения списка изображений: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Загрузить изображение в папку конструктора
+     */
+    public function uploadImage(Request $request)
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'image' => 'required|image|mimes:jpeg,png,jpg,gif,webp,svg|max:5120', // 5MB
+                'filename' => 'nullable|string|max:255',
+                'path' => 'nullable|string|max:255',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors(),
+                ], 422);
+            }
+
+            $file = $request->file('image');
+            $folder = $request->input('path', 'images/pages');
+            $filename = $request->input('filename');
+
+            if (!$filename) {
+                $extension = $file->getClientOriginalExtension();
+                $filename = 'page_' . now()->getTimestamp() . '_' . \Illuminate\Support\Str::random(7) . '.' . $extension;
+            }
+
+            try {
+                $publicPath = frontend_public_path($folder);
+            } catch (\RuntimeException $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $e->getMessage(),
+                ], 500);
+            }
+
+            if (!is_dir($publicPath)) {
+                mkdir($publicPath, 0755, true);
+            }
+
+            $file->move($publicPath, $filename);
+
+            $relativePath = '/' . $folder . '/' . $filename;
+
+            return response()->json([
+                'success' => true,
+                'path' => $relativePath,
+                'message' => 'Изображение успешно загружено',
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка загрузки изображения: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Удалить изображение из папки конструктора
+     */
+    public function deleteImage(Request $request)
+    {
+        try {
+            $path = $request->input('path');
+
+            if (!$path) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Путь к изображению не указан',
+                ], 400);
+            }
+
+            // Убираем ведущий слеш
+            $normalizedPath = ltrim($path, '/');
+
+            try {
+                $frontendPublicPath = frontend_public_path();
+                $fullPath = $frontendPublicPath . '/' . $normalizedPath;
+            } catch (\RuntimeException $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $e->getMessage(),
+                ], 500);
+            }
+
+            if (file_exists($fullPath)) {
+                unlink($fullPath);
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Изображение успешно удалено',
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Файл не найден (возможно, уже удален)',
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка удаления изображения: ' . $e->getMessage(),
             ], 500);
         }
     }

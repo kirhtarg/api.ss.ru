@@ -25,7 +25,7 @@ class SettingController extends Controller
             $groupedSettings = [];
             foreach ($settings as $setting) {
                 $group = $setting->group ?: 'general';
-                if (! isset($groupedSettings[$group])) {
+                if (!isset($groupedSettings[$group])) {
                     $groupedSettings[$group] = [];
                 }
                 $groupedSettings[$group][] = $setting;
@@ -38,7 +38,7 @@ class SettingController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения настроек: '.$e->getMessage(),
+                'message' => 'Ошибка получения настроек: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -89,7 +89,7 @@ class SettingController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания настройки: '.$e->getMessage(),
+                'message' => 'Ошибка создания настройки: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -102,24 +102,17 @@ class SettingController extends Controller
         try {
             $setting = Setting::find($id);
 
-            if (! $setting) {
+            if (!$setting) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Настройка не найдена',
                 ], 404);
             }
 
-            // Проверяем права доступа для менеджеров
-            $user = $request->user();
-            if ($user && ! $user->hasRole('admin')) {
-                // Менеджеры могут обновлять только настройки магазина
-                $isShopSetting = $setting->group === 'shop' || str_starts_with($setting->key, 'shop_');
-                if (! $isShopSetting) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Доступ запрещен. Менеджеры могут изменять только настройки магазина',
-                    ], 403);
-                }
+            // Проверяем права доступа
+            $accessCheck = $this->checkSettingAccess($request->user(), $setting);
+            if ($accessCheck !== true) {
+                return $accessCheck;
             }
 
             // Создаем правила валидации только для переданных полей
@@ -128,7 +121,7 @@ class SettingController extends Controller
 
             // Проверяем, какие поля переданы и добавляем соответствующие правила
             if ($request->has('key')) {
-                $validationRules['key'] = 'required|string|max:255|unique:settings,key,'.$id;
+                $validationRules['key'] = 'required|string|max:255|unique:settings,key,' . $id;
                 $updateData['key'] = $request->key;
             }
 
@@ -202,7 +195,7 @@ class SettingController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления настройки: '.$e->getMessage(),
+                'message' => 'Ошибка обновления настройки: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -215,7 +208,7 @@ class SettingController extends Controller
         try {
             $setting = Setting::find($id);
 
-            if (! $setting) {
+            if (!$setting) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Настройка не найдена',
@@ -231,7 +224,7 @@ class SettingController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления настройки: '.$e->getMessage(),
+                'message' => 'Ошибка удаления настройки: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -244,7 +237,7 @@ class SettingController extends Controller
         try {
             $setting = Setting::find($id);
 
-            if (! $setting) {
+            if (!$setting) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Настройка не найдена',
@@ -275,41 +268,41 @@ class SettingController extends Controller
             $file = $request->file('image');
 
             // Создаем уникальное имя файла
-            $filename = 'setting_'.$setting->id.'_'.time().'.'.$file->getClientOriginalExtension();
+            $filename = 'setting_' . $setting->id . '_' . time() . '.' . $file->getClientOriginalExtension();
 
             // Путь для сохранения на фронтенде
-            $path = 'images/settings/'.$filename;
+            $path = 'images/settings/' . $filename;
 
             // Путь к папке public фронтенда (из FRONTEND_PATH в .env)
             $frontendPublicPath = frontend_public_path();
-            $fullPath = $frontendPublicPath.'/'.$path;
+            $fullPath = $frontendPublicPath . '/' . $path;
             $dir = dirname($fullPath);
 
-            Log::info('SettingController::uploadImage: frontendPublicPath = '.$frontendPublicPath);
-            Log::info('SettingController::uploadImage: fullPath = '.$fullPath);
-            Log::info('SettingController::uploadImage: dir = '.$dir);
+            Log::info('SettingController::uploadImage: frontendPublicPath = ' . $frontendPublicPath);
+            Log::info('SettingController::uploadImage: fullPath = ' . $fullPath);
+            Log::info('SettingController::uploadImage: dir = ' . $dir);
 
             // Создаем директорию, если её нет
-            if (! is_dir($dir)) {
-                Log::info('SettingController::uploadImage: Creating directory: '.$dir);
+            if (!is_dir($dir)) {
+                Log::info('SettingController::uploadImage: Creating directory: ' . $dir);
                 mkdir($dir, 0755, true);
             }
 
             // Сохраняем файл на фронтенд
-            Log::info('SettingController::uploadImage: Moving file to: '.$fullPath);
+            Log::info('SettingController::uploadImage: Moving file to: ' . $fullPath);
             $file->move($dir, $filename);
 
             // Проверяем, что файл действительно создался
             if (file_exists($fullPath)) {
-                Log::info('SettingController::uploadImage: File successfully saved: '.$fullPath);
-                Log::info('SettingController::uploadImage: File size: '.filesize($fullPath).' bytes');
+                Log::info('SettingController::uploadImage: File successfully saved: ' . $fullPath);
+                Log::info('SettingController::uploadImage: File size: ' . filesize($fullPath) . ' bytes');
             } else {
-                Log::error('SettingController::uploadImage: File was not saved: '.$fullPath);
+                Log::error('SettingController::uploadImage: File was not saved: ' . $fullPath);
             }
 
             // Удаляем старое изображение с фронтенда, если оно есть
             if ($setting->value && $setting->value !== 'default-image.png') {
-                $oldFilePath = $frontendPublicPath.'/'.$setting->value;
+                $oldFilePath = $frontendPublicPath . '/' . $setting->value;
                 if (file_exists($oldFilePath)) {
                     unlink($oldFilePath);
                 }
@@ -343,7 +336,7 @@ class SettingController extends Controller
                     ];
                 } catch (\Exception $e) {
                     // Если изменение размера не удалось, используем оригинальные размеры
-                    Log::warning('Не удалось изменить размер изображения: '.$e->getMessage());
+                    Log::warning('Не удалось изменить размер изображения: ' . $e->getMessage());
 
                     if (file_exists($fullPath)) {
                         $imageInfo = getimagesize($fullPath);
@@ -387,7 +380,7 @@ class SettingController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка загрузки изображения: '.$e->getMessage(),
+                'message' => 'Ошибка загрузки изображения: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -411,16 +404,16 @@ class SettingController extends Controller
             $file = $request->file('favicon');
             $faviconType = $request->input('type');
             $extension = $file->getClientOriginalExtension();
-            $newFileName = 'favicon.'.$extension;
+            $newFileName = 'favicon.' . $extension;
 
             $frontendPublicPath = frontend_public_path();
 
-            if (! $frontendPublicPath) {
+            if (!$frontendPublicPath) {
                 throw new \Exception('Путь к публичной директории фронтенда не настроен.');
             }
 
             // Удаляем все старые файлы favicon.*
-            $existingFavicons = File::glob($frontendPublicPath.'/favicon.*');
+            $existingFavicons = File::glob($frontendPublicPath . '/favicon.*');
             foreach ($existingFavicons as $existingFavicon) {
                 File::delete($existingFavicon);
             }
@@ -454,11 +447,11 @@ class SettingController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Ошибка загрузки фавиконки: '.$e->getMessage());
+            Log::error('Ошибка загрузки фавиконки: ' . $e->getMessage());
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка сервера при загрузке фавиконки: '.$e->getMessage(),
+                'message' => 'Ошибка сервера при загрузке фавиконки: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -470,13 +463,13 @@ class SettingController extends Controller
     {
         try {
             // Проверяем, что расширение GD установлено
-            if (! extension_loaded('gd')) {
+            if (!extension_loaded('gd')) {
                 throw new \Exception('Расширение GD не установлено. Установите php-gd для работы с изображениями.');
             }
 
             // Получаем информацию об изображении
             $imageInfo = getimagesize($imagePath);
-            if (! $imageInfo) {
+            if (!$imageInfo) {
                 throw new \Exception('Не удалось получить информацию об изображении');
             }
 
@@ -499,10 +492,10 @@ class SettingController extends Controller
                     $sourceImage = imagecreatefromwebp($imagePath);
                     break;
                 default:
-                    throw new \Exception('Неподдерживаемый тип изображения: '.$mimeType);
+                    throw new \Exception('Неподдерживаемый тип изображения: ' . $mimeType);
             }
 
-            if (! $sourceImage) {
+            if (!$sourceImage) {
                 throw new \Exception('Не удалось создать изображение из файла');
             }
 
@@ -541,13 +534,13 @@ class SettingController extends Controller
             imagedestroy($sourceImage);
             imagedestroy($newImage);
 
-            if (! $success) {
+            if (!$success) {
                 throw new \Exception('Не удалось сохранить измененное изображение');
             }
 
         } catch (\Exception $e) {
             // Логируем ошибку, но не прерываем процесс загрузки
-            Log::error('Ошибка изменения размера изображения: '.$e->getMessage());
+            Log::error('Ошибка изменения размера изображения: ' . $e->getMessage());
             throw $e;
         }
     }
@@ -560,7 +553,7 @@ class SettingController extends Controller
         try {
             $setting = Setting::find($id);
 
-            if (! $setting) {
+            if (!$setting) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Настройка не найдена',
@@ -577,7 +570,7 @@ class SettingController extends Controller
             // Удаляем файл изображения с фронтенда, если он существует
             if ($setting->value && $setting->value !== 'default-image.png') {
                 $frontendPublicPath = frontend_public_path();
-                $filePath = $frontendPublicPath.'/'.$setting->value;
+                $filePath = $frontendPublicPath . '/' . $setting->value;
                 if (file_exists($filePath)) {
                     unlink($filePath);
                 }
@@ -597,7 +590,7 @@ class SettingController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления изображения: '.$e->getMessage(),
+                'message' => 'Ошибка удаления изображения: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -610,7 +603,7 @@ class SettingController extends Controller
         try {
             $setting = Setting::find($id);
 
-            if (! $setting) {
+            if (!$setting) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Настройка не найдена',
@@ -624,7 +617,7 @@ class SettingController extends Controller
                 ], 422);
             }
 
-            if (! $setting->value) {
+            if (!$setting->value) {
                 return response()->json([
                     'success' => false,
                     'message' => 'У настройки нет загруженного изображения',
@@ -649,9 +642,9 @@ class SettingController extends Controller
 
             // Получаем полный путь к изображению на фронтенде (из FRONTEND_PATH в .env)
             $frontendPublicPath = frontend_public_path();
-            $imagePath = $frontendPublicPath.'/'.$setting->value;
+            $imagePath = $frontendPublicPath . '/' . $setting->value;
 
-            if (! file_exists($imagePath)) {
+            if (!file_exists($imagePath)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Файл изображения не найден',
@@ -682,7 +675,7 @@ class SettingController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка изменения размера изображения: '.$e->getMessage(),
+                'message' => 'Ошибка изменения размера изображения: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -692,7 +685,7 @@ class SettingController extends Controller
      */
     private function getImageUrl($filePath)
     {
-        if (! $filePath) {
+        if (!$filePath) {
             return null;
         }
 
@@ -704,10 +697,63 @@ class SettingController extends Controller
         // Убираем лишний префикс images/ если он уже есть
         $cleanPath = ltrim($filePath, '/');
         if (str_starts_with($cleanPath, 'images/')) {
-            return '/'.$cleanPath;
+            return '/' . $cleanPath;
         }
 
         // Возвращаем путь к файлу в папке public/images/
-        return '/images/'.$cleanPath;
+        return '/images/' . $cleanPath;
+    }
+
+    /**
+     * Проверяет права доступа пользователя к настройке
+     *
+     * @param  \App\Models\User|null  $user
+     * @param  \App\Models\Setting  $setting
+     * @return bool|\Illuminate\Http\JsonResponse
+     */
+    private function checkSettingAccess($user, $setting)
+    {
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Пользователь не аутентифицирован',
+            ], 401);
+        }
+
+        // Администратор имеет полный доступ
+        if ($user->hasRole('admin')) {
+            return true;
+        }
+
+        $isShopSetting = $setting->group === 'shop' || str_starts_with($setting->key, 'shop_');
+        $isSiteSetting = $setting->group === 'site' || str_starts_with($setting->key, 'site_');
+
+        if ($user->hasRole('site')) {
+            // Роль site может редактировать только настройки сайта
+            if (!$isSiteSetting) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Доступ запрещен. Редакторы сайта могут изменять только настройки сайта',
+                ], 403);
+            }
+            return true;
+        }
+
+        if ($user->hasRole('manager')) {
+            // Менеджеры могут обновлять только настройки магазина
+            if (!$isShopSetting) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Доступ запрещен. Менеджеры могут изменять только настройки магазина',
+                ], 403);
+            }
+            return true;
+        }
+
+        // Другие роли не имеют доступа
+        return response()->json([
+            'success' => false,
+            'message' => 'Доступ запрещен.',
+        ], 403);
     }
 }

@@ -37,7 +37,7 @@ class AdminPageSeeder extends Seeder
                 'id' => 3,
                 'name' => 'Настройки сайта',
                 'title' => 'Настройки сайта',
-                'slug' => 'site-settings',
+                'slug' => 'site',
                 'description' => 'Настройки основного сайта',
                 'is_active' => true,
                 'created_at' => '2025-08-30 18:43:13',

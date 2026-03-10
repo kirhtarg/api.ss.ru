@@ -15,9 +15,11 @@ class AdminPageAccessSeeder extends Seeder
         // Получаем ID ролей
         $adminRoleId = DB::table('roles')->where('name', 'admin')->value('id');
         $managerRoleId = DB::table('roles')->where('name', 'manager')->value('id');
+        $siteRoleId = DB::table('roles')->where('name', 'site')->value('id');
 
         // Получаем ID страниц
         $shopPageId = DB::table('admin_pages')->where('slug', 'shop')->value('id');
+        $sitePageId = DB::table('admin_pages')->where('slug', 'site')->value('id');
 
         // Администратор имеет доступ ко всем страницам
         if ($adminRoleId) {
@@ -42,6 +44,20 @@ class AdminPageAccessSeeder extends Seeder
                 [
                     'admin_page_id' => $shopPageId,
                     'role_id' => $managerRoleId,
+                ],
+                [
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]
+            );
+        }
+
+        // Роль site имеет доступ к разделу site
+        if ($siteRoleId && $sitePageId) {
+            DB::table('admin_page_role')->updateOrInsert(
+                [
+                    'admin_page_id' => $sitePageId,
+                    'role_id' => $siteRoleId,
                 ],
                 [
                     'created_at' => now(),

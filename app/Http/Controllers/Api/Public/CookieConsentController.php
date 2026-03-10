@@ -63,25 +63,15 @@ class CookieConsentController extends Controller
         $sessionId = $request->cookie('cookie_consent_session') ?? Str::uuid()->toString();
         $ipAddress = $request->ip();
 
-        // Проверяем, есть ли уже активное согласие по session_id или IP
-        $existingConsent = CookieConsent::getActiveConsent($sessionId) ??
-                          CookieConsent::getActiveConsentByIp($ipAddress);
-
-        if ($existingConsent) {
-            // Обновляем существующее согласие
-            $consent = $existingConsent->updateConsent($request->all());
-        } else {
-            // Создаем новое согласие
-            $consent = CookieConsent::createConsent([
-                'session_id' => $sessionId,
-                'ip_address' => $ipAddress,
-                'user_agent' => $request->userAgent(),
-                'necessary_cookies' => $request->boolean('necessary_cookies', true),
-                'analytics_cookies' => $request->boolean('analytics_cookies', false),
-                'marketing_cookies' => $request->boolean('marketing_cookies', false),
-                'preferences_cookies' => $request->boolean('preferences_cookies', false),
-            ]);
-        }
+        // Используем updateOrCreate для предотвращения проблем при параллельных запросах
+        $consent = CookieConsent::updateOrCreateConsent($sessionId, [
+            'ip_address' => $ipAddress,
+            'user_agent' => $request->userAgent(),
+            'necessary_cookies' => $request->boolean('necessary_cookies', true),
+            'analytics_cookies' => $request->boolean('analytics_cookies', false),
+            'marketing_cookies' => $request->boolean('marketing_cookies', false),
+            'preferences_cookies' => $request->boolean('preferences_cookies', false),
+        ]);
 
         $allowedTypes = $consent->getAllowedCookieTypes();
 
