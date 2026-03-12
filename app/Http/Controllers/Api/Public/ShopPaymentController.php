@@ -1140,8 +1140,10 @@ class ShopPaymentController extends Controller
         $apiUrl = $isTest ? 'https://sandbox.pay.yandex.ru/api/merchant/v1' : 'https://pay.yandex.ru/api/merchant/v1';
         $returnUrl = request()->input('return_url') ?: (config('app.frontend_url').'/checkout?payment=return&payment_type=yandex_pay');
         $amountValue = number_format($order->total_amount, 2, '.', '');
+        $merchantId = $settings['merchant_id'] ?? null;
         $payload = [
             'orderId' => $order->order_number,
+            'merchantId' => $merchantId,
             'currencyCode' => $settings['currency'] ?? 'RUB',
             'amount' => ['value' => $amountValue, 'currency' => $settings['currency'] ?? 'RUB'],
             'cart' => [
@@ -1155,6 +1157,10 @@ class ShopPaymentController extends Controller
                 'total' => ['amount' => $amountValue],
             ],
             'confirmation' => ['type' => 'redirect', 'return_url' => $returnUrl],
+            'redirectUrls' => [
+                'onSuccess' => $returnUrl,
+                'onError' => $returnUrl,
+            ],
             'metadata' => json_encode(['order_id' => $order->id, 'payment_method_id' => $paymentMethod->id]),
         ];
         try {
@@ -1174,6 +1180,13 @@ class ShopPaymentController extends Controller
                 'X-Request-Timeout' => '30000',
                 'X-Request-Attempt' => '0',
             ]);
+            \Log::info('Yandex Pay Request Debug', [
+                'url' => $apiUrl.'/orders',
+                'payload' => $payload,
+                'merchant_id_used' => $merchantId,
+                'secret_key_used' => substr((string)$secretKey, 0, 10) . '...', // Логируем начало ключа для проверки
+            ]);
+
             $response = $http->post($apiUrl.'/orders', $payload);
             $data = $response->json();
             if ($response->successful()) {
