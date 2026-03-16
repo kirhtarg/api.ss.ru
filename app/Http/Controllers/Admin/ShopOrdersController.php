@@ -21,8 +21,16 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 
+use App\Services\OrderCalculationService;
+
 class ShopOrdersController extends Controller
 {
+    protected $calculationService;
+
+    public function __construct(OrderCalculationService $calculationService)
+    {
+        $this->calculationService = $calculationService;
+    }
     /**
      * Получить список заказов
      */
@@ -1729,7 +1737,7 @@ class ShopOrdersController extends Controller
             'shipping_method' => $order->shipping_method,
             'shipping_address' => $order->shipping_address,
             'cdek_order_uuid' => $order->cdek_order_uuid,
-            'delivery_status' => $order->delivery_status ? json_decode($order->delivery_status, true) : null,
+            'delivery_tracking_data' => is_string($order->delivery_status) ? json_decode($order->delivery_status, true) : $order->delivery_status,
             'notes' => $order->notes,
             'comment' => $order->comment,
             'cancellation_request' => (bool) ($order->cancellation_request ?? false),
@@ -1742,7 +1750,23 @@ class ShopOrdersController extends Controller
             'items_count' => count($items),
             'created_at' => $order->created_at->toISOString(),
             'updated_at' => $order->updated_at->toISOString(),
-            'items' => $order->getItemsWithDetails(),
+            'items' => array_map(function($item) use ($order) {
+                // Пытаемся рассчитать финальную цену через сервис, если это возможно
+                try {
+                    $good = ShopGood::find($item['good_id']);
+                    $variation = isset($item['variation_id']) ? ShopGoodVariation::find($item['variation_id']) : null;
+                    $user = $order->user;
+                    
+                    if ($good) {
+                        $calc = $this->calculationService->calculateFinalUnitPrice($good, $variation, $user);
+                        $item['calculated_price'] = $calc['final_price'];
+                        $item['is_calculated'] = true;
+                    }
+                } catch (\Exception $e) {
+                    // Игнорируем ошибки расчета для старых заказов
+                }
+                return $item;
+            }, $order->getItemsWithDetails()),
             'metadata' => $order->metadata,
         ];
     }

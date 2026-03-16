@@ -224,7 +224,20 @@
                     @foreach($orderItems as $index => $item)
                         <tr>
                             <td class="text-center">{{ $index + 1 }}</td>
-                            <td>{{ $item['good_name'] ?? $item['name'] ?? 'Товар' }}</td>
+                            <td>
+                                @php
+                                    $itemName = $item['good_name'] ?? $item['name'] ?? 'Товар';
+                                    $variationName = $item['variation_name'] ?? '';
+                                    $sku = $item['variation_sku'] ?? $item['good_sku'] ?? $item['sku'] ?? '';
+                                @endphp
+                                <div style="font-weight: 500;">{{ $itemName }}</div>
+                                @if(!empty($variationName) && $variationName !== $itemName)
+                                    <div style="font-size: 12px; color: #666; margin-top: 2px;">Вариация: {{ $variationName }}</div>
+                                @endif
+                                @if(!empty($sku))
+                                    <div style="font-size: 11px; color: #888;">Арт: {{ $sku }}</div>
+                                @endif
+                            </td>
                             <td class="text-center">{{ $item['quantity'] ?? 1 }}</td>
                             <td class="text-right">{{ number_format($item['price'] ?? 0, 0, ',', ' ') }} ₽</td>
                             <td class="text-right">{{ number_format($item['total'] ?? ($item['price'] ?? 0) * ($item['quantity'] ?? 1), 0, ',', ' ') }} ₽</td>

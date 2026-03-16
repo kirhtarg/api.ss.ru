@@ -44,7 +44,7 @@ class OrderController extends Controller
                     'created_at' => $order->created_at,
                     'subtotal' => $order->subtotal,
                     'delivery_cost' => $order->delivery_cost,
-                    'total' => $order->total_amount,
+                    'total_amount' => $order->total_amount,
                     'payment_method' => $order->payment_method,
                     'shipping_method' => $order->shipping_method,
                     'shipping_address' => $order->shipping_address,

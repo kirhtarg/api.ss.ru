@@ -350,7 +350,7 @@ class NotificationService
         $message .= "Клиент: {$order->customer_name}\n";
         $message .= "Email: {$order->customer_email}\n";
         $message .= 'Телефон: '.$this->formatPhoneForEmail($order->customer_phone)."\n\n";
-        $message .= 'Сумма: '.number_format($order->total_amount, 0, ',', ' ')." ₽\n";
+        $message .= 'Сумма: '.number_format((float)$order->total_amount, 0, ',', ' ')." ₽\n";
         $message .= "Товаров: {$order->total_quantity} шт.\n\n";
 
         // Добавляем список товаров
@@ -401,7 +401,7 @@ class NotificationService
         $message .= "👤 <b>Клиент:</b> {$order->customer_name}\n";
         $message .= "📧 <b>Email:</b> {$order->customer_email}\n";
         $message .= '📞 <b>Телефон:</b> '.$this->formatPhoneForTelegram($order->customer_phone)."\n\n";
-        $message .= '💰 <b>Сумма:</b> '.number_format($order->total_amount, 0, ',', ' ')." ₽\n";
+        $message .= '💰 <b>Сумма:</b> '.number_format((float)$order->total_amount, 0, ',', ' ')." ₽\n";
         $message .= "📦 <b>Товаров:</b> {$order->total_quantity} шт.\n\n";
 
         // Добавляем список товаров
@@ -452,7 +452,7 @@ class NotificationService
         $message .= "👤 <b>Клиент:</b> {$order->customer_name}\n";
         $message .= "📧 <b>Email:</b> {$order->customer_email}\n";
         $message .= '📞 <b>Телефон:</b> '.$this->formatPhoneForTelegram($order->customer_phone)."\n\n";
-        $message .= '💰 <b>Сумма оплаты:</b> '.number_format($paymentObject['amount']['value'] ?? $order->total_amount, 0, ',', ' ')." ₽\n";
+        $message .= '💰 <b>Сумма оплаты:</b> '.number_format((float)($paymentObject['amount']['value'] ?? $order->total_amount), 0, ',', ' ')." ₽\n";
         $message .= '💳 <b>Способ оплаты:</b> '.($paymentObject['payment_method'] ?? $order->payment_method ?? 'Неизвестен')."\n";
         $message .= '🆔 <b>ID платежа:</b> '.($paymentObject['id'] ?? 'Неизвестен')."\n\n";
 
@@ -467,19 +467,10 @@ class NotificationService
      */
     protected function formatOrderItems(ShopOrder $order, bool $forTelegram = false): string
     {
-        // Получаем товары напрямую из поля items заказа
-        $items = $order->items;
+        // Используем метод модели, который автоматически подтягивает детали (вкл. вариации) из БД
+        $items = $order->getItemsWithDetails();
 
-        if (! $items) {
-            return '';
-        }
-
-        // Если items - строка JSON, декодируем её
-        if (is_string($items)) {
-            $items = json_decode($items, true);
-        }
-
-        if (! is_array($items) || empty($items)) {
+        if (empty($items)) {
             return '';
         }
 
@@ -497,19 +488,19 @@ class NotificationService
 
             if ($forTelegram) {
                 // Для Telegram используем жирный текст и эмодзи
-                $formattedItems[] = "• <b>{$itemName}</b> - {$quantity} шт. × ".number_format($price, 0, ',', ' ').' ₽ = '.number_format($total, 0, ',', ' ').' ₽';
+                $formattedItems[] = "• <b>{$itemName}</b> - {$quantity} шт. × ".number_format((float)$price, 0, ',', ' ').' ₽ = '.number_format((float)$total, 0, ',', ' ').' ₽';
             } else {
                 // Для Email обычный текст
-                $formattedItems[] = "• {$itemName} - {$quantity} шт. × ".number_format($price, 0, ',', ' ').' ₽ = '.number_format($total, 0, ',', ' ').' ₽';
+                $formattedItems[] = "• {$itemName} - {$quantity} шт. × ".number_format((float)$price, 0, ',', ' ').' ₽ = '.number_format((float)$total, 0, ',', ' ').' ₽';
             }
         }
 
         // Добавляем доставку, если есть
         if ($order->delivery_cost > 0) {
             if ($forTelegram) {
-                $formattedItems[] = '🚚 <b>Доставка</b> - '.number_format($order->delivery_cost, 0, ',', ' ').' ₽';
+                $formattedItems[] = '🚚 <b>Доставка</b> - '.number_format((float)$order->delivery_cost, 0, ',', ' ').' ₽';
             } else {
-                $formattedItems[] = '• Доставка - '.number_format($order->delivery_cost, 0, ',', ' ').' ₽';
+                $formattedItems[] = '• Доставка - '.number_format((float)$order->delivery_cost, 0, ',', ' ').' ₽';
             }
         }
 
@@ -526,7 +517,7 @@ class NotificationService
         $message .= "Клиент: {$order->customer_name}\n";
         $message .= "Email: {$order->customer_email}\n";
         $message .= 'Телефон: '.$this->formatPhoneForEmail($order->customer_phone)."\n\n";
-        $message .= 'Сумма заказа: '.number_format($order->total_amount, 0, ',', ' ')." ₽\n";
+        $message .= 'Сумма заказа: '.number_format((float)$order->total_amount, 0, ',', ' ')." ₽\n";
         $message .= "\nТребуется обработка заявки на отмену.";
 
         return $message;
@@ -556,8 +547,8 @@ class NotificationService
         $message .= "\n";
 
         // Товары в заказе
-        $items = is_string($order->items) ? json_decode($order->items, true) : $order->items;
-        if (is_array($items) && ! empty($items)) {
+        $items = $order->getItemsWithDetails();
+        if (! empty($items)) {
             $message .= "🛍️ <b>Товары в заказе:</b>\n";
             foreach ($items as $index => $item) {
                 $itemName = $item['good_name'] ?? 'Товар';
@@ -570,12 +561,12 @@ class NotificationService
                 if ($variationName) {
                     $message .= " ({$variationName})";
                 }
-                $message .= " - {$quantity} шт. × ".number_format($price, 0, ',', ' ').' ₽ = '.number_format($total, 0, ',', ' ')." ₽\n";
+                $message .= " - {$quantity} шт. × ".number_format((float)$price, 0, ',', ' ').' ₽ = '.number_format((float)$total, 0, ',', ' ')." ₽\n";
             }
             $message .= "\n";
         }
 
-        $message .= '💰 <b>Сумма заказа:</b> '.number_format($order->total_amount, 0, ',', ' ')." ₽\n";
+        $message .= '💰 <b>Сумма заказа:</b> '.number_format((float)$order->total_amount, 0, ',', ' ')." ₽\n";
         $message .= "\n⚠️ <b>Требуется обработка заявки на отмену!</b>";
 
         return $message;
@@ -621,8 +612,8 @@ class NotificationService
         $message .= "\n";
 
         // Товары в заказе
-        $items = is_string($order->items) ? json_decode($order->items, true) : $order->items;
-        if (is_array($items) && ! empty($items)) {
+        $items = $order->getItemsWithDetails();
+        if (! empty($items)) {
             $message .= "🛍️ <b>Товары в заказе:</b>\n";
             foreach ($items as $index => $item) {
                 $itemName = $item['good_name'] ?? 'Товар';
@@ -635,12 +626,12 @@ class NotificationService
                 if ($variationName) {
                     $message .= " ({$variationName})";
                 }
-                $message .= " - {$quantity} шт. × ".number_format($price, 0, ',', ' ').' ₽ = '.number_format($total, 0, ',', ' ')." ₽\n";
+                $message .= " - {$quantity} шт. × ".number_format((float)$price, 0, ',', ' ').' ₽ = '.number_format((float)$total, 0, ',', ' ')." ₽\n";
             }
             $message .= "\n";
         }
 
-        $message .= '💰 <b>Сумма заказа:</b> '.number_format($order->total_amount, 0, ',', ' ')." ₽\n";
+        $message .= '💰 <b>Сумма заказа:</b> '.number_format((float)$order->total_amount, 0, ',', ' ')." ₽\n";
         $message .= "\n❌ <b>Заказ был отменен пользователем. Товары возвращены на склад.</b>";
 
         return $message;
@@ -657,8 +648,8 @@ class NotificationService
             $message .= "Вариация: {$preorder->variation_name}\n";
         }
         $message .= "Количество: {$preorder->quantity} шт.\n";
-        $message .= 'Цена: '.number_format($preorder->price, 0, ',', ' ')." ₽\n";
-        $message .= 'Сумма: '.number_format($preorder->total, 0, ',', ' ')." ₽\n\n";
+        $message .= 'Цена: '.number_format((float)$preorder->price, 0, ',', ' ')." ₽\n";
+        $message .= 'Сумма: '.number_format((float)$preorder->total, 0, ',', ' ')." ₽\n\n";
 
         if ($preorder->customer_name) {
             $message .= "Клиент: {$preorder->customer_name}\n";
@@ -689,8 +680,8 @@ class NotificationService
             $message .= "🔧 <b>Вариация:</b> {$preorder->variation_name}\n";
         }
         $message .= "📊 <b>Количество:</b> {$preorder->quantity} шт.\n";
-        $message .= '💰 <b>Цена:</b> '.number_format($preorder->price, 0, ',', ' ')." ₽\n";
-        $message .= '💵 <b>Сумма:</b> '.number_format($preorder->total, 0, ',', ' ')." ₽\n\n";
+        $message .= '💰 <b>Цена:</b> '.number_format((float)$preorder->price, 0, ',', ' ')." ₽\n";
+        $message .= '💵 <b>Сумма:</b> '.number_format((float)$preorder->total, 0, ',', ' ')." ₽\n\n";
 
         if ($preorder->customer_name) {
             $message .= "👤 <b>Клиент:</b> {$preorder->customer_name}\n";

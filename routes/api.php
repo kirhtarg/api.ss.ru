@@ -771,6 +771,17 @@ Route::middleware(['cors', 'throttle:public'])->group(function () {
     Route::post('/yandex-pay/orders/{orderId}/cancel', [App\Http\Controllers\Api\YandexPayController::class, 'cancelOrder']);
     Route::post('/yandex-pay/orders/{orderId}/refund', [App\Http\Controllers\Api\YandexPayController::class, 'refundOrder']);
 
+    // Диагностические роуты для тестирования Яндекс Пэй
+    Route::options('/yandex-pay/test-order', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/yandex-pay/test-order', [App\Http\Controllers\Api\YandexPayController::class, 'createTestOrder']);
+
+    Route::options('/yandex-pay/test-webhook-status/{testId}', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/yandex-pay/test-webhook-status/{testId}', [App\Http\Controllers\Api\YandexPayController::class, 'getTestWebhookStatus']);
+
     // Web SDK helper endpoint: returns paymentData for createSession/mountWidget
     Route::options('/yandex-pay/payment-session-data', function () {
         return response()->json([], 200);

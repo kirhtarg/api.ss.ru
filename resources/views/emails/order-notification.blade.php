@@ -224,8 +224,69 @@
                 </div>
                 
                 <div class="info-row">
-                    <span class="info-label">Сумма заказа:</span>
-                    <span class="info-value highlight" style="font-size: 18px; font-weight: 700;">
+                    <span class="info-label">Сумма товаров:</span>
+                    <span class="info-value">
+                        @php
+                            $subtotal = (float)($order->subtotal ?? 0);
+                            $saleDiscount = (float)($order->sale_discount_amount ?? 0);
+                            // По стандарту subtotal в БД уже содержит акционные скидки, 
+                            // поэтому "чистый" сабтотал это subtotal + sale_discount_amount
+                            $originalSubtotal = $subtotal + $saleDiscount;
+                        @endphp
+                        {{ number_format($originalSubtotal, 0, ',', ' ') }} ₽
+                    </span>
+                </div>
+
+                @if($order->sale_discount_amount > 0)
+                <div class="info-row">
+                    <span class="info-label">Акционные скидки:</span>
+                    <span class="info-value" style="color: #e53e3e;">-{{ number_format($order->sale_discount_amount, 0, ',', ' ') }} ₽</span>
+                </div>
+                @endif
+
+                @if($order->registered_user_discount_amount > 0)
+                <div class="info-row">
+                    <span class="info-label">Скидка для зарегистрированных:</span>
+                    <span class="info-value" style="color: #667eea;">-{{ number_format($order->registered_user_discount_amount, 0, ',', ' ') }} ₽</span>
+                </div>
+                @endif
+
+                @if($order->promo_code_discount_amount > 0)
+                <div class="info-row">
+                    <span class="info-label">Промокод {{ $order->promo_code ? '('.$order->promo_code.')' : '' }}:</span>
+                    <span class="info-value" style="color: #9f7aea;">-{{ number_format($order->promo_code_discount_amount, 0, ',', ' ') }} ₽</span>
+                </div>
+                @endif
+
+                @if($order->bonus_points_to_use > 0)
+                <div class="info-row">
+                    <span class="info-label">Списано бонусов ({{ $order->bonus_points_to_use }} баллов):</span>
+                    <span class="info-value" style="color: #ecc94b;">-{{ number_format($order->bonus_points_to_use, 0, ',', ' ') }} ₽</span>
+                </div>
+                @endif
+
+                @if($order->birthday_discount_amount > 0)
+                <div class="info-row">
+                    <span class="info-label">Скидка ко дню рождения:</span>
+                    <span class="info-value" style="color: #ed64a6;">-{{ number_format($order->birthday_discount_amount, 0, ',', ' ') }} ₽</span>
+                </div>
+                @endif
+
+                @if($order->delivery_cost && $order->delivery_cost > 0)
+                <div class="info-row">
+                    <span class="info-label">Доставка:</span>
+                    <span class="info-value">{{ number_format($order->delivery_cost, 0, ',', ' ') }} ₽</span>
+                </div>
+                @else
+                <div class="info-row">
+                    <span class="info-label">Доставка:</span>
+                    <span class="info-value" style="color: #48bb78;">Бесплатно</span>
+                </div>
+                @endif
+                
+                <div class="info-row" style="border-top: 2px solid #667eea; margin-top: 5px; padding-top: 15px;">
+                    <span class="info-label" style="font-size: 16px;">Итого к оплате:</span>
+                    <span class="info-value highlight" style="font-size: 20px; font-weight: 700;">
                         {{ number_format($order->total_amount, 0, ',', ' ') }} ₽
                     </span>
                 </div>
@@ -238,13 +299,14 @@
                     $approxCost = isset($order->metadata['delivery_cost']) ? (float)$order->metadata['delivery_cost'] : 0;
                 @endphp
                 @if($isCdek && $customerPays)
-                <div style="margin-top: 10px; padding: 12px; background: #FFF8E1; border: 1px solid #FFE082; border-radius: 6px;">
-                    <span style="color: #8D6E63; font-weight: 700;">
-                        ВНИМАНИЕ! При получении заказа Вам необходимо будет оплатить доставку{!! $approxCost > 0 ? ', ориентировочная цена доставки — ' . number_format($approxCost, 0, ',', ' ') . ' ₽' : '' !!}.
+                <div style="margin-top: 15px; padding: 12px; background: #FFF8E1; border: 1px solid #FFE082; border-radius: 6px;">
+                    <span style="color: #8D6E63; font-weight: 700; font-size: 13px;">
+                        ВНИМАНИЕ! Доставка оплачивается при получении{!! $approxCost > 0 ? ' (ориентировочно ' . number_format($approxCost, 0, ',', ' ') . ' ₽)' : '' !!}.
                     </span>
                 </div>
                 @endif
             </div>
+
 
             <!-- Товары в заказе -->
             <div class="order-card">

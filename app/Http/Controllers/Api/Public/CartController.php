@@ -961,6 +961,7 @@ class CartController extends Controller
             $rawItems = $request->get('items', array_values($cart['items']));
             $finalItems = [];
             $recalculatedSubtotal = 0;
+            $recalculatedRegularSubtotal = 0; // Сумма базовых цен
             $recalculatedTotalQuantity = 0;
 
             foreach ($rawItems as $item) {
@@ -1026,6 +1027,7 @@ class CartController extends Controller
 
                 $finalItems[] = $newItem;
                 $recalculatedSubtotal += $itemTotal;
+                $recalculatedRegularSubtotal += $dbPrice * $quantity;
                 $recalculatedTotalQuantity += $quantity;
             }
 
@@ -1034,11 +1036,19 @@ class CartController extends Controller
             $overtaxAmount = (float) $request->get('overtax_amount', 0);
             $totalDiscount = $request->get('total_discount_amount', 0);
 
-            // Исключаем доставку из общей суммы заказа по просьбе пользователя
-            $finalTotalAmount = $recalculatedSubtotal + $overtaxAmount - $totalDiscount;
+            // РАСЧЕТ ИТОГА: 
+            // Суть бага была в том, что recalculatedSubtotal УЖЕ включал акционную скидку, 
+            // а потом из него вычитался totalDiscount, в котором ТАКЖЕ сидела акционная скидка.
+            // Теперь считаем от БАЗОВОЙ суммы (recalculatedRegularSubtotal).
+            $finalTotalAmount = $recalculatedRegularSubtotal + $overtaxAmount - $totalDiscount;
+            
             if ($finalTotalAmount < 0) {
                 $finalTotalAmount = 0;
             }
+
+            // ПРИМЕНЯЕМ ОКРУГЛЕНИЕ
+            $recalculatedSubtotal = \App\Helpers\PriceHelper::roundPrice($recalculatedSubtotal);
+            $finalTotalAmount = \App\Helpers\PriceHelper::roundPrice($finalTotalAmount);
 
             // Создаем заказ
             $orderData = [
@@ -1185,7 +1195,7 @@ class CartController extends Controller
                     $telegramService = app(TelegramService::class);
                     $customerMessage = "✅ <b>Заказ #{$order->order_number} принят</b>\n\n";
                     $customerMessage .= "Спасибо за ваш заказ! Мы получили вашу заявку и в ближайшее время свяжемся с вами для подтверждения.\n\n";
-                    $customerMessage .= '💰 <b>Сумма заказа:</b> '.number_format($order->total_amount, 0, ',', ' ')." ₽\n";
+                    $customerMessage .= '💰 <b>Сумма заказа:</b> '.number_format((float)$order->total_amount, 0, ',', ' ')." ₽\n";
                     $customerMessage .= "📦 <b>Товаров:</b> {$order->total_quantity} шт.\n\n";
                     $customerMessage .= "📞 <b>Наш телефон:</b> +7 (999) 123-45-67\n";
                     $customerMessage .= '📧 <b>Email:</b> info@skateandsnow.ru';

@@ -129,10 +129,6 @@
                     <td>{{ $order->created_at ? $order->created_at->format('d.m.Y H:i') : 'Не указана' }}</td>
                 </tr>
                 <tr>
-                    <td>Сумма к оплате:</td>
-                    <td><strong>{{ number_format($order->total_amount, 2, ',', ' ') }} ₽</strong></td>
-                </tr>
-                <tr>
                     <td>Покупатель:</td>
                     <td>{{ $order->customer_name }}</td>
                 </tr>
@@ -144,6 +140,58 @@
                     <td>Телефон:</td>
                     <td>{{ $order->customer_phone }}</td>
                 </tr>
+            </table>
+        </div>
+
+        <div class="order-info">
+            <h3>Состав заказа:</h3>
+            <table style="width: 100%; border-collapse: collapse;">
+                <thead>
+                    <tr style="background-color: #eee;">
+                        <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Товар</th>
+                        <th style="padding: 8px; text-align: center; border: 1px solid #ddd;">Кол-во</th>
+                        <th style="padding: 8px; text-align: right; border: 1px solid #ddd;">Цена</th>
+                        <th style="padding: 8px; text-align: right; border: 1px solid #ddd;">Сумма</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @php
+                        $orderItems = $order->items;
+                        if (is_string($orderItems)) {
+                            $orderItems = json_decode($orderItems, true);
+                        }
+                        if (!is_array($orderItems)) {
+                            $orderItems = [];
+                        }
+                    @endphp
+                    @foreach($orderItems as $item)
+                        <tr>
+                            <td style="padding: 8px; border: 1px solid #ddd;">
+                                @php
+                                    $itemName = $item['good_name'] ?? $item['name'] ?? 'Товар';
+                                    $variationName = $item['variation_name'] ?? '';
+                                    $sku = $item['variation_sku'] ?? $item['good_sku'] ?? $item['sku'] ?? '';
+                                @endphp
+                                <div style="font-weight: 500;">{{ $itemName }}</div>
+                                @if(!empty($variationName) && $variationName !== $itemName)
+                                    <div style="font-size: 12px; color: #666;">Вариация: {{ $variationName }}</div>
+                                @endif
+                                @if(!empty($sku))
+                                    <div style="font-size: 11px; color: #888;">Арт: {{ $sku }}</div>
+                                @endif
+                            </td>
+                            <td style="padding: 8px; text-align: center; border: 1px solid #ddd;">{{ $item['quantity'] ?? 1 }}</td>
+                            <td style="padding: 8px; text-align: right; border: 1px solid #ddd;">{{ number_format($item['price'] ?? 0, 0, ',', ' ') }} ₽</td>
+                            <td style="padding: 8px; text-align: right; border: 1px solid #ddd;">{{ number_format($item['total'] ?? ($item['price'] ?? 0) * ($item['quantity'] ?? 1), 0, ',', ' ') }} ₽</td>
+                        </tr>
+                    @endforeach
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="3" style="padding: 8px; text-align: right; font-weight: bold; border: 1px solid #ddd;">Итого к оплате:</td>
+                        <td style="padding: 8px; text-align: right; font-weight: bold; border: 1px solid #ddd; color: #28a745; font-size: 16px;">{{ number_format($order->total_amount, 0, ',', ' ') }} ₽</td>
+                    </tr>
+                </tfoot>
             </table>
         </div>
 

@@ -10,6 +10,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Str;
 
 class YandexPayController extends Controller
 {
@@ -579,5 +581,143 @@ class YandexPayController extends Controller
         $stringToSign = $orderData['currency'].$orderData['amount'].$orderData['order_id'];
 
         return base64_encode(hash_hmac('sha256', $stringToSign, $secretKey, true));
+    }
+
+    /**
+     * Создание тестового заказа для диагностики в Яндекс Пэй
+     */
+    public function createTestOrder(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'amount' => 'required|numeric|min:0.01',
+            'payment_method_id' => 'required|integer|exists:shop_payment_methods,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        try {
+            $paymentMethod = ShopPaymentMethod::findOrFail($request->payment_method_id);
+            $settings = $paymentMethod->getApiSettings();
+
+            if (! $this->validateSettings($settings)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Неверные настройки платежного метода',
+                ], 400);
+            }
+
+            $apiUrl = $settings['mode'] === 'test' ? $this->testApiUrl : $this->apiUrl;
+            $testId = (string) Str::uuid();
+            $orderNumber = 'TEST-'.date('Ymd').'-'.strtoupper(Str::random(6));
+            $currency = $settings['currency'] ?? 'RUB';
+            $amountString = number_format($request->amount, 2, '.', '');
+
+            $orderData = [
+                'orderId' => $orderNumber,
+                'currencyCode' => $currency,
+                'amount' => [
+                    'value' => $amountString,
+                    'currency' => $currency,
+                ],
+                'cart' => [
+                    'items' => [
+                        [
+                            'productId' => 'TEST-ITEM-1',
+                            'description' => 'Тестовый товар (Диагностика)',
+                            'quantity' => [
+                                'count' => '1.0',
+                                'available' => '1.0',
+                            ],
+                            'amount' => [
+                                'value' => $amountString,
+                                'currency' => $currency,
+                            ],
+                            'total' => $amountString,
+                        ],
+                    ],
+                    'total' => ['amount' => $amountString],
+                ],
+                'confirmation' => [
+                    'type' => 'redirect',
+                    'return_url' => config('app.frontend_url', 'http://localhost:3000').'/checkout?payment=test_return',
+                ],
+                'redirectUrls' => [
+                    'onSuccess' => config('app.frontend_url', 'http://localhost:3000').'/checkout?payment=test_success',
+                    'onError' => config('app.frontend_url', 'http://localhost:3000').'/checkout?payment=test_error',
+                ],
+                'metadata' => json_encode([
+                    'is_test' => true,
+                    'test_id' => $testId,
+                    'payment_method_id' => $request->payment_method_id,
+                ]),
+            ];
+
+            Log::info('Yandex Pay Test Order Request', [
+                'url' => $apiUrl.'/orders',
+                'payload' => $orderData,
+                'test_id' => $testId,
+            ]);
+
+            $response = Http::withOptions([
+                'verify' => false,
+                'timeout' => 30,
+            ])->withHeaders([
+                'Authorization' => 'Api-Key '.$settings['secret_key'],
+                'Content-Type' => 'application/json',
+                'X-Request-Id' => uniqid('test_', true),
+            ])->post($apiUrl.'/orders', $orderData);
+
+            $responseData = $response->json();
+
+            return response()->json([
+                'success' => true,
+                'test_id' => $testId,
+                'api_url' => $apiUrl.'/orders',
+                'request_payload' => $orderData,
+                'server_response' => $responseData,
+                'mode' => $settings['mode'] ?? 'test',
+                'confirmation_url' => $responseData['confirmation']['confirmation_url'] ?? null,
+                'yandex_order_id' => $responseData['id'] ?? null,
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Yandex Pay createTestOrder failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Internal server error: '.$e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Получение статуса тестового вебхука
+     */
+    public function getTestWebhookStatus($testId): JsonResponse
+    {
+        $cacheKey = "yandex_pay_test_webhook:{$testId}";
+        $webhookData = Cache::get($cacheKey);
+
+        if ($webhookData) {
+            return response()->json([
+                'success' => true,
+                'received' => true,
+                'data' => $webhookData,
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'received' => false,
+        ]);
     }
 }

@@ -145,6 +145,44 @@ class ShopOrder extends Model
             $variationId = $item['variation_id'] ?? null;
 
             $goodInfo = $this->getGoodInfo($goodId);
+            
+            // Если variation_name или variation_sku отсутствуют, пробуем достать из БД
+            $variationName = $item['variation_name'] ?? null;
+            $variationSku = $item['variation_sku'] ?? null;
+
+            if ($variationId && (empty($variationName) || empty($variationSku))) {
+                try {
+                    $variation = DB::table('shop_good_variations')->where('id', (int)$variationId)->first();
+                    if ($variation) {
+                        if (empty($variationName)) {
+                            // Используем вспомогательный метод контроллера или аналогичную логику
+                            // Для простоты здесь сформируем базовую строку, если нет сохраненной
+                            $variationName = $variation->name ?? null;
+                            
+                            // Попробуем получить атрибуты если имени нет
+                            if (empty($variationName)) {
+                                $attributes = DB::table('shop_variation_attributes_values as vav')
+                                    ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                                    ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                                    ->where('vav.variation_id', $variation->id)
+                                    ->select('a.name as attr_name', 'av.value as attr_value')
+                                    ->get();
+                                
+                                if ($attributes->count() > 0) {
+                                    $variationName = $attributes->map(function($a) {
+                                        return $a->attr_name . ': ' . $a->attr_value;
+                                    })->implode(', ');
+                                }
+                            }
+                        }
+                        if (empty($variationSku)) {
+                            $variationSku = $variation->sku ?? null;
+                        }
+                    }
+                } catch (\Exception $e) {
+                    Log::error('Ошибка подтягивания данных вариации в ShopOrder: ' . $e->getMessage());
+                }
+            }
 
             $quantity = $item['quantity'] ?? 1;
             $price = $item['price'] ?? 0;
@@ -204,11 +242,12 @@ class ShopOrder extends Model
                 'good_sku' => $item['good_sku'] ?? $goodInfo['sku'] ?? null,
                 'good_slug' => $item['good_slug'] ?? $goodInfo['slug'] ?? null,
                 'variation_id' => $variationId,
-                'variation_name' => $item['variation_name'] ?? null,
-                'variation_sku' => $item['variation_sku'] ?? null,
+                'variation_name' => $variationName,
+                'variation_sku' => $variationSku,
                 'quantity' => $quantity,
                 'price' => $price,
                 'sale_price' => $salePrice,
+                'final_price' => ($salePrice && $salePrice > 0) ? $salePrice : $price,
                 'discount_amount' => $item['discount_amount'] ?? 0,
                 'bonus_points' => $item['bonus_points'] ?? 0,
                 'total' => $total,

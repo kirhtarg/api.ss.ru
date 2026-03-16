@@ -2509,10 +2509,27 @@ class ShopPaymentController extends Controller
 
     public function yandexPayWebhook(Request $request)
     {
-        Log::info('Yandex Pay Webhook received', $request->all());
+        Log::info('Yandex Pay Webhook received', [
+            'method' => $request->method(),
+            'url' => $request->fullUrl(),
+            'headers' => $request->headers->all(),
+            'payload' => $request->all()
+        ]);
 
         $event = $request->input('event');
         $object = $request->input('object');
+        
+        // Извлекаем metadata. Она может быть во вложенном объекте или в корне.
+        $metadataRaw = $request->input('metadata') ?? $object['metadata'] ?? null;
+        $metadata = is_string($metadataRaw) ? json_decode($metadataRaw, true) : $metadataRaw;
+
+        // Обработка тестового вебхука для диагностики
+        if (isset($metadata['is_test']) && $metadata['is_test'] && isset($metadata['test_id'])) {
+            $testId = $metadata['test_id'];
+            Cache::put("yandex_pay_test_webhook:{$testId}", $request->all(), 600);
+            Log::info("Yandex Pay Test Webhook recorded for test_id: {$testId}");
+            return response()->json(['status' => 'ok']);
+        }
 
         if ($event === 'payment.succeeded' && isset($object['status']) && $object['status'] === 'succeeded') {
             $yandexPaymentId = $object['id'] ?? null;
@@ -2522,7 +2539,16 @@ class ShopPaymentController extends Controller
                 return response()->json(['status' => 'error', 'message' => 'No payment ID'], 400);
             }
 
-            $order = ShopOrder::where('yandex_pay_order_id', $yandexPaymentId)->first();
+            $orderId = $metadata['order_id'] ?? null;
+            $order = null;
+            
+            if ($orderId) {
+                $order = ShopOrder::find($orderId);
+            }
+            
+            if (!$order) {
+                $order = ShopOrder::where('yandex_pay_order_id', $yandexPaymentId)->first();
+            }
 
             if ($order) {
                 if ($order->payed) {
@@ -2552,7 +2578,7 @@ class ShopPaymentController extends Controller
                     Log::error('Yandex Pay Webhook: "paid" payment status not found in database.');
                 }
             } else {
-                Log::warning('Yandex Pay Webhook: Order not found for yandex_pay_order_id: '.$yandexPaymentId);
+                Log::warning('Yandex Pay Webhook: Order not found for yandex_pay_order_id: '.$yandexPaymentId.' or metadata order_id: '.($orderId ?? 'null'));
             }
         }
 

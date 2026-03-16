@@ -27,12 +27,9 @@ class UploadController extends Controller
             $filename = Str::uuid().'.'.$extension;
 
             // Create directory if it doesn't exist
-            $directory = storage_path('app/public/images/good_texts');
-            if (! \App\Helpers\StorageHelper::createDirectory($directory)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Не удалось создать директорию для изображения',
-                ], 500);
+            $directory = frontend_public_path('images/good_texts');
+            if (! is_dir($directory)) {
+                mkdir($directory, 0755, true);
             }
 
             // Process and optimize image
@@ -41,10 +38,7 @@ class UploadController extends Controller
 
             // Resize if width > 1024px
             if ($image->width() > 1024) {
-                $image->resize(1024, null, function ($constraint) {
-                    $constraint->aspectRatio();
-                    $constraint->upsize();
-                });
+                $image->resize(width: 1024);
             }
 
             // Optimize quality (85% for JPEG, 90% for others)
@@ -65,7 +59,7 @@ class UploadController extends Controller
             return response()->json([
                 'success' => true,
                 'filename' => $filename,
-                'url' => Storage::url('images/good_texts/'.$filename),
+                'url' => '/images/good_texts/'.$filename,
             ]);
 
         } catch (\Exception $e) {

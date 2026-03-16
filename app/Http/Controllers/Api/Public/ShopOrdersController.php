@@ -4,6 +4,10 @@ namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopOrder;
+use App\Models\ShopGood;
+use App\Models\ShopGoodVariation;
+use App\Services\OrderCalculationService;
+use App\Services\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -11,6 +15,14 @@ use Illuminate\Support\Facades\Log;
 
 class ShopOrdersController extends Controller
 {
+    protected $calculationService;
+    protected $notificationService;
+
+    public function __construct(OrderCalculationService $calculationService, NotificationService $notificationService)
+    {
+        $this->calculationService = $calculationService;
+        $this->notificationService = $notificationService;
+    }
     public function store(Request $request): JsonResponse
     {
         try {
@@ -43,6 +55,33 @@ class ShopOrdersController extends Controller
             // Генерируем номер заказа
             $orderNumber = 'ORD-'.date('Ymd').'-'.str_pad(ShopOrder::count() + 1, 3, '0', STR_PAD_LEFT);
 
+            // Пересчитываем товары и бонусы через сервис
+            $orderItems = [];
+            $totalOrderBonuses = 0;
+            $calculatedSubtotal = 0;
+
+            foreach ($request->items as $item) {
+                $good = ShopGood::find($item['good_id']);
+                $variation = isset($item['variation_id']) ? ShopGoodVariation::find($item['variation_id']) : null;
+                $user = auth()->user();
+
+                if ($good) {
+                    $calcResult = $this->calculationService->calculateFinalUnitPrice($good, $variation, $user);
+                    $bonus = $this->calculationService->calculateItemBonuses($calcResult);
+                    
+                    $orderItems[] = array_merge($item, [
+                        'price' => $calcResult['final_price'],
+                        'base_price' => $calcResult['base_price'],
+                        'sale_price' => $calcResult['sale_price'],
+                        'bonus_points' => $bonus,
+                        'total' => $calcResult['final_price'] * $item['quantity']
+                    ]);
+                    
+                    $calculatedSubtotal += $calcResult['final_price'] * $item['quantity'];
+                    $totalOrderBonuses += $bonus * $item['quantity'];
+                }
+            }
+
             // Создаем заказ
             $order = ShopOrder::create([
                 'order_number' => $orderNumber,
@@ -51,15 +90,18 @@ class ShopOrdersController extends Controller
                 'customer_name' => $request->customer_name,
                 'customer_email' => $request->customer_email,
                 'customer_phone' => $request->customer_phone,
-                'items' => $request->items,
-                'subtotal' => $request->subtotal,
+                'items' => $orderItems,
+                'subtotal' => $calculatedSubtotal,
                 'discount_amount' => $request->promo_code_discount_amount ?? 0,
                 'promo_code_discount_amount' => $request->promo_code_discount_amount ?? 0,
                 'total_discount_amount' => $request->promo_code_discount_amount ?? 0,
                 'promo_code' => $request->promo_code,
                 'promo_code_id' => $request->promo_code_id,
-                'total_amount' => $request->total,
-                'total_quantity' => array_sum(array_column($request->items, 'quantity')),
+                'total_amount' => $calculatedSubtotal + $request->delivery_cost - ($request->promo_code_discount_amount ?? 0) - ($request->bonus_points_used ?? 0),
+                'total_quantity' => array_sum(array_column($orderItems, 'quantity')),
+                'order_bonus_points' => $totalOrderBonuses,
+                'bonus_points_to_use' => $request->bonus_points_used ?? 0,
+                'use_bonus_points' => ($request->bonus_points_used ?? 0) > 0,
                 'payment_method' => $request->payment_method,
                 'payment_method_id' => $request->payment_method_id,
                 'shipping_method' => $request->delivery_method,
@@ -107,6 +149,13 @@ class ShopOrdersController extends Controller
             }
 
             DB::commit();
+
+            // Отправляем уведомления
+            try {
+                $this->notificationService->notifyOrderCreated($order);
+            } catch (\Exception $e) {
+                Log::error('Ошибка отправки уведомления о новом заказе: '.$e->getMessage());
+            }
 
             return response()->json([
                 'success' => true,
