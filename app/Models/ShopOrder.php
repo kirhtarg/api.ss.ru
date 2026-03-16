@@ -246,6 +246,7 @@ class ShopOrder extends Model
                 'variation_sku' => $variationSku,
                 'quantity' => $quantity,
                 'price' => $price,
+                'base_price' => $item['base_price'] ?? $price,
                 'sale_price' => $salePrice,
                 'final_price' => ($salePrice && $salePrice > 0) ? $salePrice : $price,
                 'discount_amount' => $item['discount_amount'] ?? 0,

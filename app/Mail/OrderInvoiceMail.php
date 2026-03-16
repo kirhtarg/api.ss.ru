@@ -118,6 +118,9 @@ class OrderInvoiceMail extends Mailable
                     'customer_phone' => $this->order->customer_phone ?? '',
                     'promo_code_discount_amount' => $this->order->promo_code_discount_amount ?? 0,
                     'bonus_points_to_use' => $this->order->bonus_points_to_use ?? 0,
+                    'birthday_discount_amount' => $this->order->birthday_discount_amount ?? 0,
+                    'sale_discount_amount' => $this->order->sale_discount_amount ?? 0,
+                    'registered_user_discount_amount' => $this->order->registered_user_discount_amount ?? 0,
                     'delivery_cost' => $this->order->delivery_cost ?? 0,
                 ];
 

@@ -1033,7 +1033,7 @@ class CartController extends Controller
 
             // Пересчитываем общую сумму
             $deliveryCost = $request->get('delivery_cost', 0);
-            $overtaxAmount = (float) $request->get('overtax_amount', 0);
+            $overtaxAmount = (float) $request->get('overtax_amount', 0) + (float) $request->get('payment_surcharge_amount', 0);
             $totalDiscount = $request->get('total_discount_amount', 0);
 
             // РАСЧЕТ ИТОГА: 
@@ -1075,7 +1075,7 @@ class CartController extends Controller
                 'bonus_points_to_use' => $request->get('bonus_points_to_use', 0),
                 'order_bonus_points' => $request->get('order_bonus_points', 0),
                 'overtax_amount' => $overtaxAmount,
-                'overtax_text' => $request->get('overtax_text'),
+                'overtax_text' => $request->get('overtax_text') ?: ($request->get('payment_surcharge_amount', 0) > 0 ? 'Наценка за способ оплаты' : null),
 
                 'delivery_cost' => $deliveryCost,
                 'total_amount' => $finalTotalAmount, // Используем пересчитанную общую сумму

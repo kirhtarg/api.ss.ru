@@ -1649,10 +1649,20 @@ HTML;
                 $overtaxAmount = (float) $request->get('overtax_amount', 0);
             }
 
+            $saleDiscount = 0;
+            $registeredUserDiscount = 0;
+            $deliveryCost = 0;
+
             if ($order) {
                 $promoCodeDiscount = $order->promo_code_discount_amount ?? 0;
                 $bonusDiscount = $order->bonus_points_to_use ?? 0; // Скидка от списанных бонусов (1 бонус = 1 рубль)
                 $birthdayDiscount = $order->birthday_discount_amount ?? 0;
+                $saleDiscount = (float) ($order->sale_discount_amount ?? 0);
+                $registeredUserDiscount = (float) ($order->registered_user_discount_amount ?? 0);
+                $deliveryCost = (float) ($order->delivery_cost ?? 0);
+                if ($deliveryCost < 0) {
+                    $deliveryCost = 0;
+                }
             }
 
             $data = [
@@ -1673,6 +1683,9 @@ HTML;
                 'promo_code_discount_amount' => $promoCodeDiscount,
                 'bonus_points_to_use' => $bonusDiscount,
                 'birthday_discount_amount' => $birthdayDiscount,
+                'sale_discount_amount' => $saleDiscount,
+                'registered_user_discount_amount' => $registeredUserDiscount,
+                'delivery_cost' => $deliveryCost,
                 // Параметры наценки
                 'over_tax' => $overTax,
                 'over_text' => $overText,

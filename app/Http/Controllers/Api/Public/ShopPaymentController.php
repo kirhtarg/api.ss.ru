@@ -539,6 +539,8 @@ class ShopPaymentController extends Controller
                 'use_bonus_points' => $orderData['use_bonus_points'] ?? false,
                 'bonus_points_to_use' => $orderData['bonus_points_to_use'] ?? 0,
                 'order_bonus_points' => $orderData['order_bonus_points'] ?? 0,
+                'overtax_amount' => $orderData['overtax_amount'] ?? 0,
+                'overtax_text' => $orderData['overtax_text'] ?? null,
                 'ip_address' => $ip,
                 'user_agent' => $userAgent,
                 'payment_status_id' => ShopPaymentStatus::where('name', 'pending')->value('id'),
@@ -642,9 +644,8 @@ class ShopPaymentController extends Controller
             $isFreeDelivery = false;
 
             // 1. Registered User Discount
-            if ($user && $user->discount > 0) {
-                $registeredUserDiscountAmount = $recalculatedSubtotal * ($user->discount / 100);
-            }
+            // Use client-sent value — User model has no `discount` field, client computes it correctly from site settings
+            $registeredUserDiscountAmount = (float) ($orderData['registered_user_discount_amount'] ?? 0);
 
             $subtotalAfterUserDiscount = $recalculatedSubtotal - $registeredUserDiscountAmount;
 
@@ -693,8 +694,10 @@ class ShopPaymentController extends Controller
             // Total discount for database (sum of all extra discounts on top of sale prices)
             $totalDiscount = $registeredUserDiscountAmount + $promoCodeDiscountAmount + $bonusPointsDiscountAmount + $birthdayDiscountAmount;
             
-            // finalTotalAmount = subtotal (already includes sale discounts) - extra discounts + delivery
-            $finalTotalAmount = $recalculatedSubtotal - ($registeredUserDiscountAmount + $promoCodeDiscountAmount + $bonusPointsDiscountAmount + $birthdayDiscountAmount) + $deliveryCost;
+            // finalTotalAmount = subtotal (already includes sale discounts) - extra discounts (no delivery — stored separately in delivery_cost)
+            // overtax_amount combines site overtax + payment method surcharge (same as CartController)
+            $overtaxAmount = (float) ($orderData['overtax_amount'] ?? 0) + (float) ($orderData['payment_surcharge_amount'] ?? 0);
+            $finalTotalAmount = $recalculatedSubtotal - ($registeredUserDiscountAmount + $promoCodeDiscountAmount + $bonusPointsDiscountAmount + $birthdayDiscountAmount) + $overtaxAmount;
 
             // Overwrite client-sent amounts with authoritative server calculation
             $orderData['total_amount'] = round($finalTotalAmount, 2);
@@ -708,6 +711,11 @@ class ShopPaymentController extends Controller
             // Let's assume 1 point = 1 RUB for simplicity.
             $orderData['bonus_points_to_use'] = (int) round($bonusPointsDiscountAmount);
             $orderData['delivery_cost'] = round($deliveryCost, 2);
+            $orderData['overtax_amount'] = round($overtaxAmount, 2);
+            // overtax_text: use client value; if absent but payment surcharge present, use default
+            if (empty($orderData['overtax_text']) && (float) ($orderData['payment_surcharge_amount'] ?? 0) > 0) {
+                $orderData['overtax_text'] = 'Наценка за способ оплаты';
+            }
         }
 
         if ($paymentMethod->type === 'transfer') {
@@ -805,7 +813,7 @@ class ShopPaymentController extends Controller
             return response()->json(['success' => false, 'message' => 'ЮКасса: отсутствует shop_id/secret_key'], 400);
         }
         $returnUrl = request()->input('return_url') ?: (config('app.frontend_url').'/checkout?payment=return&payment_type=yookassa');
-        $amountValue = number_format($order->total_amount, 2, '.', '');
+        $amountValue = number_format((float) $order->total_amount + (float) ($order->delivery_cost ?? 0), 2, '.', '');
         $payload = [
             'amount' => ['value' => $amountValue, 'currency' => $settings['currency'] ?? 'RUB'],
             'capture' => true,
@@ -1139,7 +1147,7 @@ class ShopPaymentController extends Controller
         $isTest = ($settings['mode'] ?? 'test') !== 'live';
         $apiUrl = $isTest ? 'https://sandbox.pay.yandex.ru/api/merchant/v1' : 'https://pay.yandex.ru/api/merchant/v1';
         $returnUrl = request()->input('return_url') ?: (config('app.frontend_url').'/checkout?payment=return&payment_type=yandex_pay');
-        $amountValue = number_format($order->total_amount, 2, '.', '');
+        $amountValue = number_format((float) $order->total_amount + (float) ($order->delivery_cost ?? 0), 2, '.', '');
         $merchantId = $settings['merchant_id'] ?? null;
         $payload = [
             'orderId' => $order->order_number,

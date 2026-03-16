@@ -121,6 +121,8 @@ class TbankPaymentService
                 $orderItems = [];
             }
 
+            $deliveryCost = (float) $get($order, 'delivery_cost', 0);
+
             foreach ($orderItems as $item) {
                 $itemName = trim($item['name'] ?? $item['good_name'] ?? 'Товар');
                 $itemPrice = round((float) ($item['final_price'] ?? $item['price'] ?? 0), 2);
@@ -144,12 +146,38 @@ class TbankPaymentService
                 ];
             }
 
-            // Calculate total amount from items only - no additional delivery needed
-            $totalAmount = array_reduce($items, function ($sum, $item) {
-                return $sum + ($item['price'] * $item['quantity']);
-            }, 0);
+            // Масштабируем цены позиций под total_amount (учитывает все скидки и наценки)
+            $currentItemsSum = array_reduce($items, fn ($s, $i) => $s + $i['price'] * $i['quantity'], 0.0);
+            if ($currentItemsSum > 0 && $totalAmount > 0 && abs($currentItemsSum - $totalAmount) > 0.01) {
+                $scaleFactor = $totalAmount / $currentItemsSum;
+                $scaledItems = [];
+                $runningSum = 0.0;
+                $itemCount = count($items);
+                foreach ($items as $i => $item) {
+                    if ($i === $itemCount - 1) {
+                        $itemAmount = round($totalAmount - $runningSum, 2);
+                        $itemPrice = $item['quantity'] > 0 ? round($itemAmount / $item['quantity'], 2) : $itemAmount;
+                    } else {
+                        $itemPrice = round($item['price'] * $scaleFactor, 2);
+                        $itemAmount = round($itemPrice * $item['quantity'], 2);
+                    }
+                    $runningSum += $itemAmount;
+                    $scaledItems[] = ['name' => $item['name'], 'price' => max(0.01, $itemPrice), 'quantity' => $item['quantity']];
+                }
+                $items = $scaledItems;
+            }
 
-            $totalAmount = round($totalAmount, 2);
+            // Добавляем доставку отдельной позицией
+            if ($deliveryCost > 0) {
+                $items[] = [
+                    'name' => 'Доставка',
+                    'price' => round($deliveryCost, 2),
+                    'quantity' => 1,
+                ];
+            }
+
+            // Итоговая сумма = товары + доставка
+            $totalAmount = round($totalAmount + $deliveryCost, 2);
 
             // Validate that we have at least one valid item
             if (empty($items)) {
@@ -490,6 +518,8 @@ class TbankPaymentService
 
     /**
      * Готовит массив товаров для чека.
+     * Цены позиций пропорционально масштабируются так, чтобы их сумма совпадала с total_amount заказа.
+     * Доставка добавляется отдельной позицией.
      */
     protected function prepareItemsForReceipt($order): array
     {
@@ -502,16 +532,48 @@ class TbankPaymentService
         if (! is_array($orderItems)) {
             $orderItems = [];
         }
+
+        // total_amount = итог по товарам (без доставки, с учётом всех скидок и наценок)
+        $totalAmount = (float) (is_array($order) ? ($order['total_amount'] ?? 0) : ($order->total_amount ?? 0));
+        $deliveryCost = (float) (is_array($order) ? ($order['delivery_cost'] ?? 0) : (is_object($order) ? ($order->delivery_cost ?? 0) : 0));
+
+        // Текущая сумма позиций по final_price (только акционная скидка)
+        $currentItemsSum = 0.0;
         foreach ($orderItems as $item) {
+            $currentItemsSum += (float) ($item['final_price'] ?? $item['price'] ?? 0) * (float) ($item['quantity'] ?? 1);
+        }
+
+        // Коэффициент масштабирования цен: учитываем все скидки и наценки
+        $scaleFactor = ($currentItemsSum > 0 && $totalAmount >= 0) ? $totalAmount / $currentItemsSum : 1.0;
+
+        $orderItemsArr = array_values($orderItems);
+        $itemCount = count($orderItemsArr);
+        $runningKopecks = 0;
+
+        foreach ($orderItemsArr as $idx => $item) {
             $unitPrice = (float) ($item['final_price'] ?? $item['price'] ?? 0);
             $quantity = (float) ($item['quantity'] ?? 1);
-            $priceK = (int) round($unitPrice * 100);
-            $amountK = (int) round($priceK * $quantity);
+            $isLast = ($idx === $itemCount - 1);
+
+            if ($isLast && $runningKopecks > 0) {
+                // Последняя позиция поглощает погрешность округления
+                $targetKopecks = (int) round($totalAmount * 100);
+                $amountK = $targetKopecks - $runningKopecks;
+                $priceK = ($quantity > 0) ? (int) round($amountK / $quantity) : 0;
+                $amountK = (int) round($priceK * $quantity);
+            } else {
+                $adjustedPrice = $unitPrice * $scaleFactor;
+                $priceK = (int) round($adjustedPrice * 100);
+                $amountK = (int) round($priceK * $quantity);
+            }
+
+            $runningKopecks += $amountK;
+
             $items[] = [
-                'Name' => $item['name'] ?? $item['good_name'] ?? 'Товар',
-                'Price' => $priceK,
+                'Name' => mb_substr($item['name'] ?? $item['good_name'] ?? 'Товар', 0, 128),
+                'Price' => max(0, $priceK),
                 'Quantity' => $quantity,
-                'Amount' => $amountK,
+                'Amount' => max(0, $amountK),
                 'Tax' => $this->settings['item_tax'] ?? 'none',
                 'PaymentMethod' => $this->settings['item_payment_method'] ?? 'full_prepayment',
                 'PaymentObject' => $this->settings['item_payment_object'] ?? 'commodity',
@@ -519,8 +581,7 @@ class TbankPaymentService
             ];
         }
 
-        // Добавляем доставку как отдельный товар в чеке, если она есть
-        $deliveryCost = is_array($order) ? ($order['delivery_cost'] ?? 0) : (is_object($order) ? ($order->delivery_cost ?? 0) : 0);
+        // Добавляем доставку как отдельную позицию
         if ($deliveryCost > 0) {
             $deliveryK = (int) round($deliveryCost * 100);
             $items[] = [

@@ -350,7 +350,6 @@ class NotificationService
         $message .= "Клиент: {$order->customer_name}\n";
         $message .= "Email: {$order->customer_email}\n";
         $message .= 'Телефон: '.$this->formatPhoneForEmail($order->customer_phone)."\n\n";
-        $message .= 'Сумма: '.number_format((float)$order->total_amount, 0, ',', ' ')." ₽\n";
         $message .= "Товаров: {$order->total_quantity} шт.\n\n";
 
         // Добавляем список товаров
@@ -359,6 +358,10 @@ class NotificationService
             $message .= "Состав заказа:\n";
             $message .= $itemsList."\n\n";
         }
+
+        // Структура цены
+        $message .= "Расчёт стоимости:\n";
+        $message .= $this->formatOrderPriceSummary($order, false)."\n";
 
         // Добавляем комментарий пользователя, если есть
         if ($order->notes) {
@@ -401,7 +404,6 @@ class NotificationService
         $message .= "👤 <b>Клиент:</b> {$order->customer_name}\n";
         $message .= "📧 <b>Email:</b> {$order->customer_email}\n";
         $message .= '📞 <b>Телефон:</b> '.$this->formatPhoneForTelegram($order->customer_phone)."\n\n";
-        $message .= '💰 <b>Сумма:</b> '.number_format((float)$order->total_amount, 0, ',', ' ')." ₽\n";
         $message .= "📦 <b>Товаров:</b> {$order->total_quantity} шт.\n\n";
 
         // Добавляем список товаров
@@ -410,6 +412,10 @@ class NotificationService
             $message .= "🛒 <b>Состав заказа:</b>\n";
             $message .= $itemsList."\n\n";
         }
+
+        // Структура цены
+        $message .= "📊 <b>Расчёт стоимости:</b>\n";
+        $message .= $this->formatOrderPriceSummary($order, true)."\n";
 
         // Добавляем комментарий пользователя, если есть
         if ($order->notes) {
@@ -483,28 +489,109 @@ class NotificationService
             }
 
             $quantity = $item['quantity'] ?? 1;
-            $price = $item['price'] ?? 0;
-            $total = $item['total'] ?? ($price * $quantity);
+            // Показываем базовую цену (до акционных скидок)
+            $basePrice = isset($item['base_price']) && (float) $item['base_price'] > 0
+                ? (float) $item['base_price']
+                : (float) ($item['price'] ?? 0);
+            $baseTotal = $basePrice * $quantity;
 
             if ($forTelegram) {
-                // Для Telegram используем жирный текст и эмодзи
-                $formattedItems[] = "• <b>{$itemName}</b> - {$quantity} шт. × ".number_format((float)$price, 0, ',', ' ').' ₽ = '.number_format((float)$total, 0, ',', ' ').' ₽';
+                $formattedItems[] = "• <b>{$itemName}</b> - {$quantity} шт. × ".number_format($basePrice, 0, ',', ' ').' ₽ = '.number_format($baseTotal, 0, ',', ' ').' ₽';
             } else {
-                // Для Email обычный текст
-                $formattedItems[] = "• {$itemName} - {$quantity} шт. × ".number_format((float)$price, 0, ',', ' ').' ₽ = '.number_format((float)$total, 0, ',', ' ').' ₽';
+                $formattedItems[] = "• {$itemName} - {$quantity} шт. × ".number_format($basePrice, 0, ',', ' ').' ₽ = '.number_format($baseTotal, 0, ',', ' ').' ₽';
             }
         }
 
         // Добавляем доставку, если есть
         if ($order->delivery_cost > 0) {
             if ($forTelegram) {
-                $formattedItems[] = '🚚 <b>Доставка</b> - '.number_format((float)$order->delivery_cost, 0, ',', ' ').' ₽';
+                $formattedItems[] = '🚚 <b>Доставка</b> - '.number_format((float) $order->delivery_cost, 0, ',', ' ').' ₽';
             } else {
-                $formattedItems[] = '• Доставка - '.number_format((float)$order->delivery_cost, 0, ',', ' ').' ₽';
+                $formattedItems[] = '• Доставка - '.number_format((float) $order->delivery_cost, 0, ',', ' ').' ₽';
             }
         }
 
         return implode("\n", $formattedItems);
+    }
+
+    /**
+     * Форматировать структуру цены заказа
+     */
+    protected function formatOrderPriceSummary(ShopOrder $order, bool $forTelegram = false): string
+    {
+        $items = $order->getItemsWithDetails();
+
+        // Базовая сумма товаров
+        $baseTotal = 0;
+        foreach ($items as $item) {
+            $basePrice = isset($item['base_price']) && (float) $item['base_price'] > 0
+                ? (float) $item['base_price']
+                : (float) ($item['price'] ?? 0);
+            $baseTotal += $basePrice * ($item['quantity'] ?? 1);
+        }
+        if ($baseTotal == 0) {
+            $baseTotal = (float) ($order->subtotal ?? 0) + (float) ($order->sale_discount_amount ?? 0);
+        }
+
+        $saleDiscount = (float) ($order->sale_discount_amount ?? 0);
+        $registeredDiscount = (float) ($order->registered_user_discount_amount ?? 0);
+        $promoDiscount = (float) ($order->promo_code_discount_amount ?? 0);
+        $bonusDiscount = (float) ($order->bonus_points_to_use ?? 0);
+        $birthdayDiscount = (float) ($order->birthday_discount_amount ?? 0);
+        $overtaxAmount = (float) ($order->overtax_amount ?? 0);
+        $overtaxText = $order->overtax_text ?: 'Наценка';
+
+        $fmt = fn ($v) => number_format($v, 0, ',', ' ').' ₽';
+
+        $lines = [];
+
+        if ($forTelegram) {
+            $lines[] = '💵 <b>Сумма товаров:</b> '.$fmt($baseTotal);
+            if ($saleDiscount > 0) {
+                $lines[] = '🏷 <b>Акционные скидки:</b> -'.$fmt($saleDiscount);
+            }
+            if ($registeredDiscount > 0) {
+                $lines[] = '👤 <b>Скидка для зарегистрированных:</b> -'.$fmt($registeredDiscount);
+            }
+            if ($promoDiscount > 0) {
+                $promoCode = $order->promo_code ? " ({$order->promo_code})" : '';
+                $lines[] = '🎟 <b>Промокод'.$promoCode.':</b> -'.$fmt($promoDiscount);
+            }
+            if ($bonusDiscount > 0) {
+                $lines[] = '⭐ <b>Бонусы:</b> -'.$fmt($bonusDiscount);
+            }
+            if ($birthdayDiscount > 0) {
+                $lines[] = '🎂 <b>Скидка ко дню рождения:</b> -'.$fmt($birthdayDiscount);
+            }
+            if ($overtaxAmount > 0) {
+                $lines[] = '➕ <b>'.$overtaxText.':</b> +'.$fmt($overtaxAmount);
+            }
+            $lines[] = '💰 <b>Итого к оплате:</b> '.$fmt((float) ($order->total_amount ?? 0));
+        } else {
+            $lines[] = 'Сумма товаров: '.$fmt($baseTotal);
+            if ($saleDiscount > 0) {
+                $lines[] = 'Акционные скидки: -'.$fmt($saleDiscount);
+            }
+            if ($registeredDiscount > 0) {
+                $lines[] = 'Скидка для зарегистрированных: -'.$fmt($registeredDiscount);
+            }
+            if ($promoDiscount > 0) {
+                $promoCode = $order->promo_code ? " ({$order->promo_code})" : '';
+                $lines[] = 'Промокод'.$promoCode.': -'.$fmt($promoDiscount);
+            }
+            if ($bonusDiscount > 0) {
+                $lines[] = 'Бонусы: -'.$fmt($bonusDiscount);
+            }
+            if ($birthdayDiscount > 0) {
+                $lines[] = 'Скидка ко дню рождения: -'.$fmt($birthdayDiscount);
+            }
+            if ($overtaxAmount > 0) {
+                $lines[] = $overtaxText.': +'.$fmt($overtaxAmount);
+            }
+            $lines[] = 'Итого к оплате: '.$fmt((float) ($order->total_amount ?? 0));
+        }
+
+        return implode("\n", $lines);
     }
 
     /**

@@ -2170,6 +2170,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('/{id}/cdek/waybill', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'getCdekWaybill']);
                 Route::get('/{id}/cdek/waybill/download', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'downloadCdekWaybill']);
                 Route::post('/{id}/items', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'addItem']);
+                Route::put('/{id}/items/{itemId}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateItem']);
                 Route::delete('/{id}/items/{itemId}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'removeItem']);
                 Route::post('/{id}/regenerate-payment-link', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'regeneratePaymentLink']);
                 Route::post('/{id}/send-payment-link-email', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'sendPaymentLinkEmail']);

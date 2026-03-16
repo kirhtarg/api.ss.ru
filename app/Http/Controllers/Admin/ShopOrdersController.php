@@ -269,6 +269,8 @@ class ShopOrdersController extends Controller
                     'promo_code_discount_amount' => (float) ($order->promo_code_discount_amount ?? 0),
                     'birthday_discount_amount' => (float) ($order->birthday_discount_amount ?? 0),
                     'total_discount_amount' => (float) ($order->total_discount_amount ?? 0),
+                    'overtax_amount' => (float) ($order->overtax_amount ?? 0),
+                    'overtax_text' => $order->overtax_text ?? '',
                     'delivery_cost' => (float) ($order->delivery_cost ?? 0),
                     'payment_method' => $order->payment_method,
                     'payment_url' => $order->payment_url,
@@ -434,6 +436,13 @@ class ShopOrdersController extends Controller
                 'shipping_method' => 'sometimes|string|max:100',
                 'shipping_address' => 'sometimes|string',
                 'delivery_cost' => 'sometimes|numeric',
+                'sale_discount_amount' => 'sometimes|numeric',
+                'registered_user_discount_amount' => 'sometimes|numeric',
+                'promo_code_discount_amount' => 'sometimes|numeric',
+                'birthday_discount_amount' => 'sometimes|numeric',
+                'bonus_points_to_use' => 'sometimes|integer',
+                'overtax_amount' => 'sometimes|numeric|min:0',
+                'overtax_text' => 'sometimes|string|max:255',
                 'metadata' => 'sometimes|array',
                 'notes' => 'sometimes|string',
             ]);
@@ -474,9 +483,51 @@ class ShopOrdersController extends Controller
             if ($request->filled('shipping_address')) {
                 $order->shipping_address = $request->get('shipping_address');
             }
-            if ($request->filled('delivery_cost')) {
+            if ($request->has('delivery_cost')) {
                 $order->delivery_cost = (float) $request->get('delivery_cost');
             }
+            
+            // Новые поля скидок
+            if ($request->has('sale_discount_amount')) {
+                $order->sale_discount_amount = (float) $request->get('sale_discount_amount');
+            }
+            if ($request->has('registered_user_discount_amount')) {
+                $order->registered_user_discount_amount = (float) $request->get('registered_user_discount_amount');
+            }
+            if ($request->has('promo_code_discount_amount')) {
+                $order->promo_code_discount_amount = (float) $request->get('promo_code_discount_amount');
+            }
+            if ($request->has('birthday_discount_amount')) {
+                $order->birthday_discount_amount = (float) $request->get('birthday_discount_amount');
+            }
+            if ($request->has('bonus_points_to_use')) {
+                $order->bonus_points_to_use = (int) $request->get('bonus_points_to_use');
+                $order->use_bonus_points = $order->bonus_points_to_use > 0;
+            }
+            if ($request->has('overtax_amount')) {
+                $order->overtax_amount = (float) $request->get('overtax_amount');
+            }
+            if ($request->has('overtax_text')) {
+                $order->overtax_text = $request->get('overtax_text');
+            }
+
+            // Пересчитываем общую скидку и итоговую сумму
+            $totalDiscount = ($order->sale_discount_amount ?? 0) +
+                            ($order->registered_user_discount_amount ?? 0) +
+                            ($order->promo_code_discount_amount ?? 0) +
+                            ($order->birthday_discount_amount ?? 0) +
+                            ($order->bonus_points_to_use ?? 0);
+
+            $order->total_discount_amount = $totalDiscount;
+            // subtotal уже содержит акционную цену, поэтому из него вычитаем только неакционные скидки
+            // delivery_cost не включаем в total_amount — он хранится отдельно (payment = total_amount + delivery_cost)
+            $order->total_amount = ($order->subtotal ?? 0)
+                - ($order->registered_user_discount_amount ?? 0)
+                - ($order->promo_code_discount_amount ?? 0)
+                - ($order->birthday_discount_amount ?? 0)
+                - ($order->bonus_points_to_use ?? 0)
+                + ($order->overtax_amount ?? 0);
+
             if ($request->has('metadata') && is_array($request->get('metadata'))) {
                 $metadata = $order->metadata ?? [];
                 $newMetadata = $request->get('metadata');
@@ -1296,18 +1347,27 @@ class ShopOrdersController extends Controller
                 }
             }
 
+            // Логируем все статусы для диагностики
+            if (isset($cdekData['entity']['statuses'])) {
+                Log::info('CDEK all statuses', [
+                    'order_id' => $order->id,
+                    'statuses' => $cdekData['entity']['statuses'],
+                ]);
+            }
+
             // Извлекаем статус доставки (проверяем разные возможные места в ответе)
+            // CDEK API v2 возвращает статусы в порядке убывания (сначала самый новый)
             if (isset($cdekData['entity']['statuses']) && is_array($cdekData['entity']['statuses']) && count($cdekData['entity']['statuses']) > 0) {
-                // Берем последний статус из entity.statuses (приоритет)
-                $lastStatus = end($cdekData['entity']['statuses']);
+                // Берем ПЕРВЫЙ статус из entity.statuses — он самый актуальный (CDEK возвращает desc)
+                $lastStatus = reset($cdekData['entity']['statuses']);
                 $deliveryStatus = [
                     'code' => $lastStatus['code'] ?? null,
                     'name' => $lastStatus['name'] ?? null,
                     'city' => $lastStatus['city'] ?? null,
                 ];
             } elseif (isset($cdekData['statuses']) && is_array($cdekData['statuses']) && count($cdekData['statuses']) > 0) {
-                // Берем последний статус из корня
-                $lastStatus = end($cdekData['statuses']);
+                // Берем первый статус из корня (тоже самый актуальный)
+                $lastStatus = reset($cdekData['statuses']);
                 $deliveryStatus = [
                     'code' => $lastStatus['code'] ?? null,
                     'name' => $lastStatus['name'] ?? null,
@@ -1688,6 +1748,108 @@ class ShopOrdersController extends Controller
     }
 
     /**
+     * Обновить товар в заказе
+     */
+    public function updateItem(Request $request, $orderId, $itemId): JsonResponse
+    {
+        try {
+            $order = ShopOrder::with(['status'])->findOrFail($orderId);
+
+            // Проверяем, что заказ не оплачен
+            if ($order->payed) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Нельзя изменять оплаченный заказ',
+                ], 422);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'price' => 'required|numeric|min:0',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors(),
+                ], 422);
+            }
+
+            $newPrice = (float) $request->get('price');
+
+            // Получаем текущие товары заказа
+            $items = is_array($order->items) ? $order->items : json_decode($order->items, true);
+            $items = $items ?: [];
+
+            // Находим и обновляем товар
+            $itemFound = false;
+            foreach ($items as $index => $item) {
+                // Пытаемся найти по good_id + variation_id (если variation_id есть) или просто по good_id
+                // ВOrders.vue мы передаем itemId, который часто равен good_id
+                if (($item['good_id'] ?? null) == $itemId || ($item['id'] ?? null) == $itemId) {
+                    $items[$index]['price'] = $newPrice;
+                    $items[$index]['total'] = $newPrice * ($items[$index]['quantity'] ?? 1);
+                    $itemFound = true;
+                    break;
+                }
+            }
+
+            if (!$itemFound) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Товар не найден в заказе',
+                ], 404);
+            }
+
+            // Пересчитываем суммы заказа
+            $subtotal = 0;
+            $totalQuantity = 0;
+            foreach ($items as $item) {
+                $subtotal += $item['total'] ?? 0;
+                $totalQuantity += $item['quantity'] ?? 0;
+            }
+
+            $order->items = $items;
+            $order->subtotal = $subtotal;
+            $order->total_quantity = $totalQuantity;
+            
+            // Пересчитываем общую скидку и итоговую сумму
+            $totalDiscount = ($order->sale_discount_amount ?? 0) +
+                            ($order->registered_user_discount_amount ?? 0) +
+                            ($order->promo_code_discount_amount ?? 0) +
+                            ($order->birthday_discount_amount ?? 0) +
+                            ($order->bonus_points_to_use ?? 0);
+
+            $order->total_discount_amount = $totalDiscount;
+            // subtotal уже содержит акционную цену, поэтому из него вычитаем только неакционные скидки
+            // delivery_cost не включаем в total_amount — он хранится отдельно (payment = total_amount + delivery_cost)
+            $order->total_amount = $subtotal
+                - ($order->registered_user_discount_amount ?? 0)
+                - ($order->promo_code_discount_amount ?? 0)
+                - ($order->birthday_discount_amount ?? 0)
+                - ($order->bonus_points_to_use ?? 0)
+                + ($order->overtax_amount ?? 0);
+            $order->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Цена товара обновлена',
+                'data' => $this->formatOrderForResponse($order->load(['status', 'user', 'paymentMethod', 'deliveryMethod'])),
+            ]);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Заказ не найден',
+            ], 404);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка обновления товара: '.$e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * Форматировать заказ для ответа
      */
     private function formatOrderForResponse($order)
@@ -1730,6 +1892,8 @@ class ShopOrdersController extends Controller
             'promo_code_discount_amount' => (float) ($order->promo_code_discount_amount ?? 0),
             'birthday_discount_amount' => (float) ($order->birthday_discount_amount ?? 0),
             'total_discount_amount' => (float) ($order->total_discount_amount ?? 0),
+            'overtax_amount' => (float) ($order->overtax_amount ?? 0),
+            'overtax_text' => $order->overtax_text ?? '',
             'delivery_cost' => (float) ($order->delivery_cost ?? 0),
             'total_quantity' => $order->total_quantity ?? 0,
             'payment_method' => $order->payment_method,

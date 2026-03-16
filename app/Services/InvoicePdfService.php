@@ -65,7 +65,6 @@ class InvoicePdfService
         $orderId = $data['order_id'] ?? 'TEST123';
         $date = $data['date'] ?? date('d.m.Y');
         $orderItems = $data['order_items'] ?? [];
-        $totalSum = $data['total_amount'] ?? 0;
         $withVat = $data['with_vat'] ?? false; // Для обратной совместимости
         // Получаем ставку НДС (приоритет у vat_rate, затем вычисляем из with_vat)
         $vatRate = 0;
@@ -76,23 +75,31 @@ class InvoicePdfService
         }
         $withVat = $vatRate > 0; // Обновляем withVat на основе vatRate
 
-        // Вычисляем сумму всех товаров
-        $itemsTotal = 0;
+        // Вычисляем базовую сумму товаров (по базовым ценам)
+        $baseTotal = 0;
         foreach ($orderItems as $item) {
-            $itemsTotal += $item['total'] ?? ($item['quantity'] ?? 1) * ($item['price'] ?? 0);
+            $basePrice = isset($item['base_price']) && (float) $item['base_price'] > 0
+                ? (float) $item['base_price']
+                : (float) ($item['price'] ?? 0);
+            $baseTotal += $basePrice * ($item['quantity'] ?? 1);
+        }
+        if ($baseTotal == 0 && ! empty($orderItems)) {
+            foreach ($orderItems as $item) {
+                $baseTotal += (float) ($item['total'] ?? (($item['quantity'] ?? 1) * ($item['price'] ?? 0)));
+            }
         }
 
         // Получаем стоимость доставки из данных заказа
         $deliveryAmount = (float) ($data['delivery_cost'] ?? 0);
 
-        // Вычисляем общую сумму, если не передана (товары + доставка)
-        if ($totalSum == 0 && ! empty($orderItems)) {
-            $totalSum = $itemsTotal + $deliveryAmount;
-        }
-
-        // Вычисляем скидку (если есть)
-        $discountAmount = 0;
-        // Скидка рассчитывается отдельно через промокод и бонусы, поэтому здесь не вычисляем
+        // Получаем скидки
+        $saleDiscount = (float) ($data['sale_discount_amount'] ?? 0);
+        $registeredUserDiscount = (float) ($data['registered_user_discount_amount'] ?? 0);
+        $promoCodeDiscount = (float) ($data['promo_code_discount_amount'] ?? 0);
+        $bonusDiscount = (float) ($data['bonus_points_to_use'] ?? 0);
+        $birthdayDiscount = (float) ($data['birthday_discount_amount'] ?? 0);
+        $overTaxAmount = (float) ($data['overtax_amount'] ?? 0);
+        $overText = $data['over_text'] ?? '';
 
         $y = 15;
 
@@ -114,19 +121,25 @@ class InvoicePdfService
         // Таблица товаров (с доставкой, если есть)
         $y = $this->fillItemsTable($pdf, $orderItems, $deliveryAmount, $y);
 
-        // Итоги (со скидкой, если есть)
+        // Итоги
         $itemsCount = count($orderItems) + ($deliveryAmount > 0 ? 1 : 0);
-        $promoCodeDiscount = $data['promo_code_discount_amount'] ?? 0;
-        $bonusDiscount = $data['bonus_points_to_use'] ?? 0; // Скидка от списанных бонусов (1 бонус = 1 рубль)
-        $birthdayDiscount = $data['birthday_discount_amount'] ?? 0; // Скидка на день рождения
-        $overTaxAmount = $data['overtax_amount'] ?? 0; // Сумма наценки
-        $overText = $data['over_text'] ?? ''; // Текст наценки
 
-        $y = $this->fillTotals($pdf, $itemsTotal, $totalSum, $discountAmount, $withVat, $itemsCount, $y, $promoCodeDiscount, $bonusDiscount, $deliveryAmount, $birthdayDiscount, $overTaxAmount, $overText, $vatRate);
+        $y = $this->fillTotals(
+            $pdf, $baseTotal, $withVat, $itemsCount, $y,
+            $saleDiscount, $registeredUserDiscount, $promoCodeDiscount,
+            $bonusDiscount, $birthdayDiscount, $overTaxAmount, $overText, $vatRate
+        );
 
-        // Сумма прописью (с учетом всех скидок и наценки)
-        $amountInWordsFinalAmount = $totalSum - $promoCodeDiscount - $bonusDiscount - $birthdayDiscount + $overTaxAmount;
-        $y = $this->fillAmountInWords($pdf, $amountInWordsFinalAmount, $withVat, $y, $vatRate);
+        // Итоговая сумма к оплате (база − все скидки + наценка)
+        $amountInWordsFinalAmount = $baseTotal
+            - $saleDiscount
+            - $registeredUserDiscount
+            - $promoCodeDiscount
+            - $bonusDiscount
+            - $birthdayDiscount
+            + $overTaxAmount;
+
+        $y = $this->fillAmountInWords($pdf, max(0, $amountInWordsFinalAmount), $withVat, $y, $vatRate);
 
         // Подписи
         $this->fillSignatures($pdf, $y, $withVat);
@@ -371,6 +384,7 @@ class InvoicePdfService
         // Заголовки таблицы
         $colWidths = [15, 80, 20, 15, 25, 30];
         $rowHeight = 8;
+        $lineHeight = 4.5;
         $x = 15;
 
         $headers = ['№', 'Наименование работ, услуг', 'Кол-во', 'Ед', 'Цена', 'Сумма'];
@@ -387,52 +401,71 @@ class InvoicePdfService
         $pdf->SetFont('dejavusans', '', 9);
         $pdf->SetFillColor(255, 255, 255);
 
+        $maxCharsPerLine = 44; // Приблизительно для шрифта 9pt в ячейке 78мм
+
         $itemIndex = 0;
         foreach ($orderItems as $item) {
             $x = 15;
             $row = $y;
 
-            // Получаем наименование и артикул
+            // Получаем наименование, артикул и вариацию
             $goodName = $this->cleanText($item['good_name'] ?? $item['name'] ?? 'Товар');
             $goodSku = $this->cleanText($item['good_sku'] ?? $item['sku'] ?? '');
+            $variationName = $this->cleanText($item['variation_name'] ?? '');
 
-            // Вычисляем высоту ячейки с наименованием
-            $pdf->SetFont('dejavusans', '', 9);
-            $lineHeight = 4.5; // Высота одной строки (примерно размер шрифта + небольшой отступ)
-            $nameHeight = $lineHeight;
+            // Разбиваем наименование на строки для расчёта высоты
+            $nameLines = $this->wordWrap($goodName, $maxCharsPerLine);
+            $totalLines = count($nameLines);
             if (! empty($goodSku)) {
-                $nameHeight += $lineHeight; // Добавляем высоту для артикула
+                $totalLines++;
             }
-            // Минимальная высота строки
-            $actualRowHeight = max($rowHeight, $nameHeight);
+            if (! empty($variationName)) {
+                $totalLines++;
+            }
+            $actualRowHeight = max($rowHeight, $totalLines * $lineHeight + 2);
 
             // №
+            $pdf->SetFont('dejavusans', '', 9);
             $pdf->SetXY($x, $row);
             $pdf->Cell($colWidths[0], $actualRowHeight, $itemIndex + 1, 1, 0, 'C', true);
             $x += $colWidths[0];
 
-            // Наименование с артикулом
+            // Наименование с артикулом и вариацией
             $nameX = $x;
             $nameY = $row;
 
-            // Рисуем границу ячейки с заливкой
             $pdf->SetDrawColor(0, 0, 0);
             $pdf->SetLineWidth(0.3);
             $pdf->SetFillColor(255, 255, 255);
             $pdf->Rect($nameX, $nameY, $colWidths[1], $actualRowHeight, 'DF');
 
-            // Выводим наименование
-            $pdf->SetXY($nameX + 1, $nameY + 1);
-            $pdf->SetFont('dejavusans', '', 9);
-            $pdf->Cell($colWidths[1] - 2, $lineHeight, $goodName, 0, 0, 'L', false);
+            $currentTextY = $nameY + 1;
 
-            // Если есть артикул, выводим его курсивом на следующей строке
+            // Название товара (многострочное если нужно)
+            $pdf->SetFont('dejavusans', '', 9);
+            foreach ($nameLines as $nameLine) {
+                $pdf->SetXY($nameX + 1, $currentTextY);
+                $pdf->Cell($colWidths[1] - 2, $lineHeight, $nameLine, 0, 0, 'L', false);
+                $currentTextY += $lineHeight;
+            }
+
+            // Артикул
             if (! empty($goodSku)) {
                 $pdf->SetFont('dejavusans', 'I', 8);
-                $pdf->SetTextColor(80, 80, 80); // Темно-серый цвет
-                $pdf->SetXY($nameX + 1, $nameY + $lineHeight + 1);
+                $pdf->SetTextColor(80, 80, 80);
+                $pdf->SetXY($nameX + 1, $currentTextY);
                 $pdf->Cell($colWidths[1] - 2, $lineHeight, 'Арт.: '.$goodSku, 0, 0, 'L', false);
-                $pdf->SetTextColor(0, 0, 0); // Возвращаем черный цвет
+                $pdf->SetTextColor(0, 0, 0);
+                $currentTextY += $lineHeight;
+            }
+
+            // Вариация (если есть)
+            if (! empty($variationName)) {
+                $pdf->SetFont('dejavusans', 'I', 8);
+                $pdf->SetTextColor(100, 100, 100);
+                $pdf->SetXY($nameX + 1, $currentTextY);
+                $pdf->Cell($colWidths[1] - 2, $lineHeight, $variationName, 0, 0, 'L', false);
+                $pdf->SetTextColor(0, 0, 0);
             }
 
             $x += $colWidths[1];
@@ -450,18 +483,18 @@ class InvoicePdfService
             $pdf->Cell($colWidths[3], $actualRowHeight, $unit, 1, 0, 'C', true);
             $x += $colWidths[3];
 
-            // Сумма (финальная сумма за товар)
-            $total = $item['total'] ?? ($quantity * ($item['price'] ?? 0));
-
-            // Цена (финальная цена за единицу = total / quantity)
-            $finalPricePerUnit = $quantity > 0 ? ($total / $quantity) : 0;
+            // Цена (базовая цена за единицу)
+            $basePrice = isset($item['base_price']) && (float) $item['base_price'] > 0
+                ? (float) $item['base_price']
+                : (float) ($item['price'] ?? 0);
             $pdf->SetXY($x, $row);
-            $pdf->Cell($colWidths[4], $actualRowHeight, \App\Helpers\PriceHelper::formatPrice($finalPricePerUnit), 1, 0, 'R', true);
+            $pdf->Cell($colWidths[4], $actualRowHeight, \App\Helpers\PriceHelper::formatPrice($basePrice), 1, 0, 'R', true);
             $x += $colWidths[4];
 
-            // Сумма
+            // Сумма (базовая)
+            $baseItemTotal = $basePrice * $quantity;
             $pdf->SetXY($x, $row);
-            $pdf->Cell($colWidths[5], $actualRowHeight, \App\Helpers\PriceHelper::formatPrice($total), 1, 0, 'R', true);
+            $pdf->Cell($colWidths[5], $actualRowHeight, \App\Helpers\PriceHelper::formatPrice($baseItemTotal), 1, 0, 'R', true);
 
             $y += $actualRowHeight;
             $itemIndex++;
@@ -471,6 +504,8 @@ class InvoicePdfService
         if ($deliveryAmount > 0) {
             $x = 15;
             $row = $y;
+
+            $pdf->SetFont('dejavusans', '', 9);
 
             // №
             $pdf->SetXY($x, $row);
@@ -508,37 +543,102 @@ class InvoicePdfService
     }
 
     /**
+     * Разбивка текста на строки по максимальной длине
+     */
+    private function wordWrap(string $text, int $maxChars): array
+    {
+        if (mb_strlen($text) <= $maxChars) {
+            return [$text];
+        }
+
+        $words = explode(' ', $text);
+        $lines = [];
+        $currentLine = '';
+
+        foreach ($words as $word) {
+            if (empty($currentLine)) {
+                $currentLine = $word;
+            } elseif (mb_strlen($currentLine.' '.$word) <= $maxChars) {
+                $currentLine .= ' '.$word;
+            } else {
+                $lines[] = $currentLine;
+                $currentLine = $word;
+            }
+        }
+
+        if (! empty($currentLine)) {
+            $lines[] = $currentLine;
+        }
+
+        return $lines ?: [$text];
+    }
+
+    /**
      * Итоги
      */
-    private function fillTotals(TCPDF $pdf, float $itemsTotal, float $totalSum, float $discountAmount, bool $withVat, int $itemsCount, float $y, float $promoCodeDiscount = 0, float $bonusDiscount = 0, float $deliveryAmount = 0, float $birthdayDiscount = 0, float $overTaxAmount = 0, string $overText = '', int $vatRate = 20): float
-    {
+    private function fillTotals(
+        TCPDF $pdf,
+        float $baseTotal,
+        bool $withVat,
+        int $itemsCount,
+        float $y,
+        float $saleDiscount = 0,
+        float $registeredUserDiscount = 0,
+        float $promoCodeDiscount = 0,
+        float $bonusDiscount = 0,
+        float $birthdayDiscount = 0,
+        float $overTaxAmount = 0,
+        string $overText = '',
+        int $vatRate = 0
+    ): float {
         $pdf->SetFont('dejavusans', '', 10);
         $colWidths = [15, 80, 20, 15, 25, 30];
         $rowHeight = 7;
 
-        // Вычисляем начальную позицию для итогов (после колонок №, Наименование, Кол-во, Ед)
-        $xLabel = 15 + array_sum(array_slice($colWidths, 0, 4)); // Начало колонки "Цена"
-        $xValue = $xLabel + $colWidths[4]; // Начало колонки "Сумма"
-        $labelWidth = $colWidths[4]; // Ширина для текста "Итого:" и т.д.
-        $valueWidth = $colWidths[5]; // Ширина для суммы
+        // Лейбл охватывает всю ширину до колонки "Сумма" (чтобы длинные тексты влезали)
+        $xValue = 15 + array_sum(array_slice($colWidths, 0, 5)); // начало колонки "Сумма" = 170
+        $xLabel = 15;
+        $labelWidth = $xValue - $xLabel; // 155мм, текст выравнивается по правому краю
+        $valueWidth = $colWidths[5]; // 30мм
 
-        // Итого (сумма всех товаров + доставка)
-        $totalWithDelivery = (float) $itemsTotal + (float) $deliveryAmount;
+        // Сумма товаров (базовая)
         $pdf->SetXY($xLabel, $y);
-        $pdf->Cell($labelWidth, $rowHeight, 'Итого:', 0, 0, 'R');
+        $pdf->Cell($labelWidth, $rowHeight, 'Сумма товаров (базовая):', 0, 0, 'R');
         $pdf->SetXY($xValue, $y);
-        $pdf->Cell($valueWidth, $rowHeight, \App\Helpers\PriceHelper::formatPrice($totalWithDelivery), 0, 0, 'R');
+        $pdf->Cell($valueWidth, $rowHeight, \App\Helpers\PriceHelper::formatPrice($baseTotal), 0, 0, 'R');
         $y += $rowHeight;
 
-        // Наценка (если есть) - выводим сразу после Итого
+        // Наценка (если есть)
         if ($overTaxAmount > 0) {
             $displayText = ! empty($overText) ? $overText : 'Наценка';
             $pdf->SetXY($xLabel, $y);
             $pdf->Cell($labelWidth, $rowHeight, $displayText.':', 0, 0, 'R');
             $pdf->SetXY($xValue, $y);
-            $pdf->SetTextColor(255, 165, 0); // Оранжевый цвет для наценки
+            $pdf->SetTextColor(255, 165, 0);
             $pdf->Cell($valueWidth, $rowHeight, '+'.\App\Helpers\PriceHelper::formatPrice($overTaxAmount), 0, 0, 'R');
-            $pdf->SetTextColor(0, 0, 0); // Возвращаем черный цвет
+            $pdf->SetTextColor(0, 0, 0);
+            $y += $rowHeight;
+        }
+
+        // Акционные скидки (если есть)
+        if ($saleDiscount > 0) {
+            $pdf->SetXY($xLabel, $y);
+            $pdf->Cell($labelWidth, $rowHeight, 'Акционные скидки:', 0, 0, 'R');
+            $pdf->SetXY($xValue, $y);
+            $pdf->SetTextColor(255, 0, 0);
+            $pdf->Cell($valueWidth, $rowHeight, '-'.\App\Helpers\PriceHelper::formatPrice($saleDiscount), 0, 0, 'R');
+            $pdf->SetTextColor(0, 0, 0);
+            $y += $rowHeight;
+        }
+
+        // Скидка для зарегистрированных (если есть)
+        if ($registeredUserDiscount > 0) {
+            $pdf->SetXY($xLabel, $y);
+            $pdf->Cell($labelWidth, $rowHeight, 'Скидка для зарегистрированных:', 0, 0, 'R');
+            $pdf->SetXY($xValue, $y);
+            $pdf->SetTextColor(255, 0, 0);
+            $pdf->Cell($valueWidth, $rowHeight, '-'.\App\Helpers\PriceHelper::formatPrice($registeredUserDiscount), 0, 0, 'R');
+            $pdf->SetTextColor(0, 0, 0);
             $y += $rowHeight;
         }
 
@@ -547,37 +647,46 @@ class InvoicePdfService
             $pdf->SetXY($xLabel, $y);
             $pdf->Cell($labelWidth, $rowHeight, 'Скидка по промокоду:', 0, 0, 'R');
             $pdf->SetXY($xValue, $y);
-            $pdf->SetTextColor(255, 0, 0); // Красный цвет для скидки
+            $pdf->SetTextColor(255, 0, 0);
             $pdf->Cell($valueWidth, $rowHeight, '-'.\App\Helpers\PriceHelper::formatPrice($promoCodeDiscount), 0, 0, 'R');
-            $pdf->SetTextColor(0, 0, 0); // Возвращаем черный цвет
+            $pdf->SetTextColor(0, 0, 0);
             $y += $rowHeight;
         }
 
         // Скидка по списанию бонусов (если есть)
         if ($bonusDiscount > 0) {
             $pdf->SetXY($xLabel, $y);
-            $pdf->Cell($labelWidth, $rowHeight, 'Скидка по списанию бонусов:', 0, 0, 'R');
+            $pdf->Cell($labelWidth, $rowHeight, 'Скидка по бонусам:', 0, 0, 'R');
             $pdf->SetXY($xValue, $y);
-            $pdf->SetTextColor(255, 0, 0); // Красный цвет для скидки
+            $pdf->SetTextColor(255, 0, 0);
             $pdf->Cell($valueWidth, $rowHeight, '-'.\App\Helpers\PriceHelper::formatPrice($bonusDiscount), 0, 0, 'R');
-            $pdf->SetTextColor(0, 0, 0); // Возвращаем черный цвет
+            $pdf->SetTextColor(0, 0, 0);
             $y += $rowHeight;
         }
 
-        // Скидка на день рождения (если есть)
+        // Скидка ко дню рождения (если есть)
         if ($birthdayDiscount > 0) {
             $pdf->SetXY($xLabel, $y);
             $pdf->Cell($labelWidth, $rowHeight, 'Скидка ко дню рождения:', 0, 0, 'R');
             $pdf->SetXY($xValue, $y);
-            $pdf->SetTextColor(255, 0, 0); // Красный цвет для скидки
+            $pdf->SetTextColor(255, 0, 0);
             $pdf->Cell($valueWidth, $rowHeight, '-'.\App\Helpers\PriceHelper::formatPrice($birthdayDiscount), 0, 0, 'R');
-            $pdf->SetTextColor(0, 0, 0); // Возвращаем черный цвет
+            $pdf->SetTextColor(0, 0, 0);
             $y += $rowHeight;
         }
 
+        // Итоговая сумма к оплате (без доставки, с учётом всех скидок и наценки)
+        $finalAmount = $baseTotal
+            + $overTaxAmount
+            - $saleDiscount
+            - $registeredUserDiscount
+            - $promoCodeDiscount
+            - $bonusDiscount
+            - $birthdayDiscount;
+
         // В том числе НДС (только если с НДС)
         if ($withVat && $vatRate > 0) {
-            $vatAmount = \App\Helpers\PriceHelper::roundPrice($totalSum * $vatRate / (100 + $vatRate));
+            $vatAmount = \App\Helpers\PriceHelper::roundPrice($finalAmount * $vatRate / (100 + $vatRate));
             $pdf->SetXY($xLabel, $y);
             $pdf->Cell($labelWidth, $rowHeight, "В т.ч. НДС {$vatRate}%:", 0, 0, 'R');
             $pdf->SetXY($xValue, $y);
@@ -585,8 +694,7 @@ class InvoicePdfService
             $y += $rowHeight;
         }
 
-        // Всего к оплате (учитываем все скидки и наценку)
-        $finalAmount = $totalWithDelivery + $overTaxAmount - $promoCodeDiscount - $bonusDiscount - $birthdayDiscount;
+        // Всего к оплате
         $pdf->SetFont('dejavusans', 'B', 10);
         $pdf->SetXY($xLabel, $y);
         $pdf->Cell($labelWidth, $rowHeight, 'Всего к оплате:', 0, 0, 'R');
