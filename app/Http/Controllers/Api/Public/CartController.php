@@ -1137,32 +1137,31 @@ class CartController extends Controller
                 }
             }
 
-            // Списываем бонусы с баланса пользователя, если они используются
+            // Списываем бонусы с баланса пользователя через UserBonus (единое хранилище)
             if ($customerId && $request->get('use_bonus_points') && $request->get('bonus_points_to_use', 0) > 0) {
                 try {
-                    $bonusPointsToUse = $request->get('bonus_points_to_use', 0);
+                    $bonusPointsToUse = (int) $request->get('bonus_points_to_use', 0);
+                    $userBonus = \App\Models\UserBonus::getOrCreateForUser($customerId);
 
-                    // Получаем пользователя
-                    $customer = User::find($customerId);
-                    if ($customer) {
-                        // Проверяем, что у пользователя достаточно бонусов
-                        if ($customer->bonus_points >= $bonusPointsToUse) {
-                            // Списываем бонусы
-                            $customer->bonus_points -= $bonusPointsToUse;
-                            $customer->save();
-
-                            Log::info('Бонусы списаны с баланса пользователя', [
-                                'user_id' => $customerId,
-                                'bonus_points_used' => $bonusPointsToUse,
-                                'remaining_bonus_points' => $customer->bonus_points,
-                            ]);
-                        } else {
-                            Log::warning('Недостаточно бонусов для списания', [
-                                'user_id' => $customerId,
-                                'requested_bonus_points' => $bonusPointsToUse,
-                                'available_bonus_points' => $customer->bonus_points,
-                            ]);
-                        }
+                    if ($userBonus->points >= $bonusPointsToUse) {
+                        $userBonus->spendPoints(
+                            $bonusPointsToUse,
+                            "Списание бонусов за заказ #{$order->order_number}",
+                            $order->id,
+                            ['source' => 'checkout']
+                        );
+                        Log::info('Бонусы списаны через UserBonus', [
+                            'user_id' => $customerId,
+                            'order_id' => $order->id,
+                            'bonus_points_used' => $bonusPointsToUse,
+                            'remaining' => $userBonus->fresh()->points,
+                        ]);
+                    } else {
+                        Log::warning('Недостаточно бонусов для списания', [
+                            'user_id' => $customerId,
+                            'requested' => $bonusPointsToUse,
+                            'available' => $userBonus->points,
+                        ]);
                     }
                 } catch (\Exception $e) {
                     Log::error('Ошибка списания бонусов: '.$e->getMessage());

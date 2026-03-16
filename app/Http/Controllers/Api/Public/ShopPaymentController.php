@@ -548,6 +548,33 @@ class ShopPaymentController extends Controller
                 'status_id' => ShopOrderStatus::where('name', 'pending')->value('id') ?? ShopOrderStatus::where('name', 'confirmed')->value('id'),
             ]);
 
+            // Списываем бонусы через UserBonus (единое хранилище) при использовании бонусов
+            if ($order && ($orderData['use_bonus_points'] ?? false) && ($orderData['bonus_points_to_use'] ?? 0) > 0) {
+                $customerId = $orderData['customer_id'] ?? null;
+                if ($customerId) {
+                    try {
+                        $bonusPointsToUse = (int) $orderData['bonus_points_to_use'];
+                        $userBonus = \App\Models\UserBonus::getOrCreateForUser($customerId);
+                        if ($userBonus->points >= $bonusPointsToUse) {
+                            $userBonus->spendPoints(
+                                $bonusPointsToUse,
+                                "Списание бонусов за заказ #{$order->order_number}",
+                                $order->id,
+                                ['source' => 'payment_flow']
+                            );
+                        } else {
+                            Log::warning('Недостаточно бонусов (payment flow)', [
+                                'user_id' => $customerId,
+                                'requested' => $bonusPointsToUse,
+                                'available' => $userBonus->points,
+                            ]);
+                        }
+                    } catch (\Exception $e) {
+                        Log::error('Ошибка списания бонусов (payment flow): '.$e->getMessage());
+                    }
+                }
+            }
+
             return $order;
         } catch (\Exception $e) {
             Log::error('Failed to create order from payload: '.$e->getMessage());

@@ -3674,11 +3674,15 @@ class ShopOrdersController extends Controller
                 ? 'https://sandbox.pay.yandex.ru/api/merchant/v1/orders'
                 : 'https://pay.yandex.ru/api/merchant/v1/orders';
 
+            $amountValue = number_format((float) $order->total_amount + (float) ($order->delivery_cost ?? 0), 2, '.', '');
+            $returnUrl = config('app.frontend_url', 'https://skateandsnow.ru').'/checkout?payment=return&payment_type=yandex_pay';
+
             $orderData = [
                 'orderId' => 'REGENERATE-'.$order->order_number.'-'.time(),
+                'merchantId' => $settings['merchant_id'] ?? null,
                 'currencyCode' => $settings['currency'] ?? 'RUB',
                 'amount' => [
-                    'value' => number_format($order->total_amount, 2, '.', ''),
+                    'value' => $amountValue,
                     'currency' => $settings['currency'] ?? 'RUB',
                 ],
                 'cart' => [
@@ -3688,17 +3692,21 @@ class ShopOrdersController extends Controller
                             'description' => 'Заказ №'.$order->order_number,
                             'quantity' => ['count' => '1.0', 'available' => '1.0'],
                             'amount' => [
-                                'value' => number_format($order->total_amount, 2, '.', ''),
+                                'value' => $amountValue,
                                 'currency' => $settings['currency'] ?? 'RUB',
                             ],
-                            'total' => number_format($order->total_amount, 2, '.', ''),
+                            'total' => $amountValue,
                         ],
                     ],
-                    'total' => ['amount' => number_format($order->total_amount, 2, '.', '')],
+                    'total' => ['amount' => $amountValue],
                 ],
                 'confirmation' => [
                     'type' => 'redirect',
-                    'return_url' => config('app.frontend_url', 'https://skateandsnow.ru').'/order/'.$order->order_number,
+                    'return_url' => $returnUrl,
+                ],
+                'redirectUrls' => [
+                    'onSuccess' => $returnUrl,
+                    'onError' => $returnUrl,
                 ],
                 'metadata' => json_encode([
                     'order_id' => $order->id,
@@ -3767,16 +3775,28 @@ class ShopOrdersController extends Controller
                     'yandex_order_id' => $yandexOrderId,
                 ]);
             } else {
+                \Illuminate\Support\Facades\Log::error('Yandex Pay regenerate failed', [
+                    'order_id' => $order->id,
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                ]);
+
                 return response()->json([
                     'success' => false,
-                    'message' => 'Ошибка создания платежа в Yandex Pay',
+                    'message' => 'Ошибка создания платежа в Yandex Pay: '.$response->body(),
                 ], 500);
             }
 
         } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Yandex Pay regenerate exception', [
+                'order_id' => $order->id ?? null,
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при перегенерации платежа Yandex Pay',
+                'message' => 'Ошибка при перегенерации платежа Yandex Pay: '.$e->getMessage(),
             ], 500);
         }
     }
