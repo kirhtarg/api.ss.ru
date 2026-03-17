@@ -1716,17 +1716,47 @@ class ShopGoodVariationsController extends Controller
 
                     foreach ($variations as $variation) {
                         $basePrice = (float) ($variation->price ?? 0);
+                        $currentSalePrice = (float) ($variation->sale_price ?? 0);
+                        $newSalePrice = null;
+
                         if ($type === 'clear') {
-                            $variation->sale_price = null;
+                            $newSalePrice = null;
                         } elseif ($type === 'set') {
-                            $variation->sale_price = max(0, $value);
+                            $newSalePrice = max(0, $value);
                         } elseif ($type === 'subtract') {
                             if ($isPercent) {
-                                $variation->sale_price = max(0, $basePrice - ($basePrice * $value / 100));
+                                $newSalePrice = max(0, $basePrice - ($basePrice * $value / 100));
                             } else {
-                                $variation->sale_price = max(0, $basePrice - $value);
+                                $newSalePrice = max(0, $basePrice - $value);
+                            }
+                        } elseif ($type === 'subtract_from_sale') {
+                            if ($currentSalePrice > 0) {
+                                if ($isPercent) {
+                                    $newSalePrice = max(0, $currentSalePrice - ($currentSalePrice * $value / 100));
+                                } else {
+                                    $newSalePrice = max(0, $currentSalePrice - $value);
+                                }
+                            } else {
+                                continue;
+                            }
+                        } elseif ($type === 'add_to_sale') {
+                            if ($currentSalePrice > 0) {
+                                if ($isPercent) {
+                                    $newSalePrice = max(0, $currentSalePrice + ($currentSalePrice * $value / 100));
+                                } else {
+                                    $newSalePrice = max(0, $currentSalePrice + $value);
+                                }
+                            } else {
+                                continue;
                             }
                         }
+
+                        // Проверка: акционная цена должна быть меньше базовой
+                        if ($newSalePrice !== null && $newSalePrice >= $basePrice) {
+                            $newSalePrice = null;
+                        }
+
+                        $variation->sale_price = $newSalePrice;
                         $variation->save();
                         $updatedCount++;
                     }
