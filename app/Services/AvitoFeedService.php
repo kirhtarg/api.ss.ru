@@ -70,7 +70,7 @@ class AvitoFeedService
         $ad = $xml->addChild('Ad');
 
         $id = $variation ? "v_{$variation->id}" : "g_{$good->id}";
-        $ad->addChild('Id', $id);
+        $ad->addChild('Id', htmlspecialchars($id));
 
         // Категория Авито из маппинга (с поиском по родителям)
         $avitoCategory = 'Спорт и отдых';
@@ -86,17 +86,18 @@ class AvitoFeedService
 
         // Разделяем путь категории Авито
         $parts = explode(' > ', $avitoCategory);
-        $ad->addChild('Category', $parts[0] ?? 'Спорт и отдых');
+        $ad->addChild('Category', htmlspecialchars($parts[0] ?? 'Спорт и отдых'));
         if (isset($parts[1]))
-            $ad->addChild('GoodsCategory', $parts[1]);
+            $ad->addChild('GoodsCategory', htmlspecialchars($parts[1]));
         if (isset($parts[2]))
-            $ad->addChild('GoodsType', $parts[2]);
+            $ad->addChild('GoodsType', htmlspecialchars($parts[2]));
         if (isset($parts[3]))
-            $ad->addChild('ProductType', $parts[3]);
+            $ad->addChild('ProductType', htmlspecialchars($parts[3]));
 
-        $ad->addChild('Address', Setting::where('key', 'contact_address')->value('value') ?: 'Москва');
-        $ad->addChild('Title', $variation ? "{$good->name} ({$variation->name})" : $good->name);
-        $ad->addChild('Description', strip_tags($good->description ?: $good->name));
+        $ad->addChild('Address', htmlspecialchars(Setting::where('key', 'contact_address')->value('value') ?: 'Москва'));
+        $title = $variation ? "{$good->name} ({$variation->name})" : $good->name;
+        $ad->addChild('Title', htmlspecialchars($title));
+        $ad->addChild('Description', htmlspecialchars(strip_tags($good->description ?: $good->name)));
         $ad->addChild('Price', (int)($variation ? ($variation->price ?: $good->price) : $good->price));
 
         // Изображения
@@ -104,7 +105,7 @@ class AvitoFeedService
         $allImages = $this->getImages($good, $variation);
         foreach ($allImages as $imgUrl) {
             $image = $images->addChild('Image');
-            $image->addAttribute('url', $imgUrl);
+            $image->addAttribute('url', htmlspecialchars($imgUrl));
         }
 
         $ad->addChild('Condition', 'Новое');

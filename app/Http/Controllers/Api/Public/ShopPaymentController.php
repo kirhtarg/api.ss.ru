@@ -1278,6 +1278,7 @@ class ShopPaymentController extends Controller
                 'onSuccess' => $returnUrl,
                 'onError' => $returnUrl,
             ],
+            'callbackUrl' => url('/api/webhooks/yandex-pay'),
             'metadata' => json_encode(['order_id' => $order->id, 'payment_method_id' => $paymentMethod->id]),
         ];
         try {
@@ -1429,6 +1430,7 @@ class ShopPaymentController extends Controller
                 'total' => ['amount' => $amountValue],
             ],
             'confirmation' => ['type' => 'redirect', 'return_url' => $returnUrl],
+            'callbackUrl' => url('/api/webhooks/yandex-pay'),
             'metadata' => json_encode(['order_number' => $orderNumber, 'payment_method_id' => $paymentMethod->id]),
         ];
         try {
