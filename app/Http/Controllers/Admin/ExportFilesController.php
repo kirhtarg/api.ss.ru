@@ -313,7 +313,7 @@ class ExportFilesController extends Controller
             $user = $accessToken->tokenable;
 
             // Проверяем, что пользователь имеет доступ к файлу
-            if ($user->id !== $exportFile->created_by && ! $user->hasRole(['admin', 'manager'])) {
+            if ($user->id !== $exportFile->created_by && ! $user->hasAnyRole(['admin', 'manager'])) {
                 abort(403, 'Доступ запрещен');
             }
         } else {
@@ -325,7 +325,7 @@ class ExportFilesController extends Controller
             $user = Auth::user();
 
             // Проверяем доступ
-            if ($user->id !== $exportFile->created_by && ! $user->hasRole(['admin', 'manager'])) {
+            if ($user->id !== $exportFile->created_by && ! $user->hasAnyRole(['admin', 'manager'])) {
                 abort(403, 'Доступ запрещен');
             }
         }

@@ -243,7 +243,7 @@ class ModexController extends Controller
         }
 
         // Проверяем, что пользователь имеет доступ к файлу
-        if ($user->id !== $exportFile->created_by && ! $user->hasRole(['admin', 'manager'])) {
+        if ($user->id !== $exportFile->created_by && ! $user->hasAnyRole(['admin', 'manager'])) {
             abort(403, 'Доступ запрещен');
         }
 
