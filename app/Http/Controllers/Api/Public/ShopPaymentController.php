@@ -407,6 +407,11 @@ class ShopPaymentController extends Controller
                             'payed' => true,
                         ]);
                         Log::info('Yandex Pay verify: order '.$order->id.' marked as paid (status='.$paymentStatus.')');
+                        try {
+                            app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+                        } catch (\Exception $e) {
+                            Log::error('Yandex Pay verify: failed to send notification', ['order_id' => $order->id, 'error' => $e->getMessage()]);
+                        }
                     }
 
                     return response()->json(['success' => true, 'is_paid' => true, 'status' => 'paid']);
@@ -1367,7 +1372,7 @@ class ShopPaymentController extends Controller
                 'onSuccess' => $returnUrl,
                 'onError' => $returnUrl,
             ],
-            'callbackUrl' => url('/api/webhooks/yandex-pay'),
+            'callbackUrl' => $settings['webhook_url'] ?? (rtrim(request()->getSchemeAndHttpHost(), '/') . '/api/webhooks/yandex-pay'),
             'metadata' => json_encode(['order_id' => $order->id, 'payment_method_id' => $paymentMethod->id]),
         ];
         try {
@@ -1519,7 +1524,7 @@ class ShopPaymentController extends Controller
                 'total' => ['amount' => $amountValue],
             ],
             'confirmation' => ['type' => 'redirect', 'return_url' => $returnUrl],
-            'callbackUrl' => url('/api/webhooks/yandex-pay'),
+            'callbackUrl' => $settings['webhook_url'] ?? (rtrim(request()->getSchemeAndHttpHost(), '/') . '/api/webhooks/yandex-pay'),
             'metadata' => json_encode(['order_number' => $orderNumber, 'payment_method_id' => $paymentMethod->id]),
         ];
         try {
