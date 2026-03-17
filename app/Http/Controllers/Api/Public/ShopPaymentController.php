@@ -333,6 +333,95 @@ class ShopPaymentController extends Controller
     }
 
     /**
+     * Verify Yandex Pay payment status by querying Yandex Pay API directly.
+     * Called by frontend after user returns from Yandex Pay. Updates order status in DB if paid.
+     */
+    public function verifyYandexPayPayment(Request $request): \Illuminate\Http\JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'order_id' => 'required|integer|exists:shop_orders,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['success' => false, 'message' => 'Invalid input'], 422);
+        }
+
+        $order = ShopOrder::findOrFail($request->order_id);
+
+        if ($order->payed) {
+            return response()->json(['success' => true, 'is_paid' => true, 'status' => 'paid']);
+        }
+
+        $yandexOrderId = $order->yandex_pay_order_id;
+        if (! $yandexOrderId) {
+            return response()->json(['success' => true, 'is_paid' => false, 'status' => 'pending']);
+        }
+
+        $paymentMethod = ShopPaymentMethod::where('type', 'yandex_pay')
+            ->orWhere('type', 'yandex_split')
+            ->where('is_active', true)
+            ->first();
+
+        if (! $paymentMethod) {
+            return response()->json(['success' => false, 'message' => 'Payment method not found'], 404);
+        }
+
+        $settings = method_exists($paymentMethod, 'getApiSettings')
+            ? $paymentMethod->getApiSettings()
+            : $this->normalizePaymentSettings($paymentMethod->settings ?? []);
+
+        $secretKey = $settings['secret_key'] ?? null;
+        if (! $secretKey) {
+            return response()->json(['success' => false, 'message' => 'Missing secret_key'], 400);
+        }
+
+        $isTest = ($settings['mode'] ?? 'test') !== 'live';
+        $apiUrl = $isTest ? 'https://sandbox.pay.yandex.ru/api/merchant/v1' : 'https://pay.yandex.ru/api/merchant/v1';
+
+        try {
+            $response = \Illuminate\Support\Facades\Http::timeout(15)->withHeaders([
+                'Authorization' => 'Api-Key '.$secretKey,
+                'Content-Type' => 'application/json',
+                'X-Request-Id' => uniqid('yp_verify_', true),
+            ])->get($apiUrl.'/orders/'.$yandexOrderId);
+
+            $data = $response->json();
+            Log::info('Yandex Pay verify order response', [
+                'order_id' => $order->id,
+                'yandex_order_id' => $yandexOrderId,
+                'response' => $data,
+            ]);
+
+            if ($response->successful()) {
+                // Yandex Pay API: top-level "status"="success", payment status in data.order.paymentStatus
+                $paymentStatus = $data['data']['order']['paymentStatus']
+                    ?? ($data['data']['paymentStatus']
+                    ?? ($data['paymentStatus']
+                    ?? null));
+
+                if (in_array($paymentStatus, ['CAPTURED', 'AUTHORIZED'])) {
+                    $paidStatus = ShopPaymentStatus::where('name', 'paid')->first();
+                    if ($paidStatus) {
+                        $order->update([
+                            'payment_status_id' => $paidStatus->id,
+                            'payed' => true,
+                        ]);
+                        Log::info('Yandex Pay verify: order '.$order->id.' marked as paid (status='.$paymentStatus.')');
+                    }
+
+                    return response()->json(['success' => true, 'is_paid' => true, 'status' => 'paid']);
+                }
+
+                return response()->json(['success' => true, 'is_paid' => false, 'status' => $paymentStatus ?? 'pending']);
+            }
+        } catch (\Exception $e) {
+            Log::error('Yandex Pay verify failed', ['order_id' => $order->id, 'error' => $e->getMessage()]);
+        }
+
+        return response()->json(['success' => true, 'is_paid' => false, 'status' => 'pending']);
+    }
+
+    /**
      * Handle webhook for Yookassa.
      *
      * @return \Illuminate\Http\Response
@@ -1239,10 +1328,10 @@ class ShopPaymentController extends Controller
                 $runningTotal += $itemTotal;
                 $cartItems[] = [
                     'productId' => 'ITEM-'.($item['good_id'] ?? $index).'-'.($item['variation_id'] ?? '0'),
-                    'description' => $item['name'] ?? $item['good_name'] ?? ('Товар #'.($index + 1)),
-                    'quantity' => ['count' => (string) $itemQty.'.0', 'available' => (string) $itemQty.'.0'],
-                    'amount' => ['value' => number_format($scaledPrice, 2, '.', ''), 'currency' => $currency],
-                    'total' => number_format($itemTotal, 2, '.', ''),
+                    'title' => $item['name'] ?? $item['good_name'] ?? ('Товар #'.($index + 1)),
+                    'quantity' => ['count' => (string) $itemQty.'.00', 'available' => (string) $itemQty.'.00'],
+                    'unitPrice' => number_format($scaledPrice, 2, '.', ''),
+                    'subtotal' => number_format($itemTotal, 2, '.', ''),
                 ];
             }
         }

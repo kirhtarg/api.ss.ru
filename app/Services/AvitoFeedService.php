@@ -70,7 +70,7 @@ class AvitoFeedService
         $ad = $xml->addChild('Ad');
 
         $id = $variation ? "v_{$variation->id}" : "g_{$good->id}";
-        $ad->addChild('Id', htmlspecialchars($id));
+        $this->addChildSafe($ad, 'Id', $id);
 
         // Категория Авито из маппинга (с поиском по родителям)
         $avitoCategory = 'Спорт и отдых';
@@ -86,31 +86,44 @@ class AvitoFeedService
 
         // Разделяем путь категории Авито
         $parts = explode(' > ', $avitoCategory);
-        $ad->addChild('Category', htmlspecialchars($parts[0] ?? 'Спорт и отдых'));
+        $this->addChildSafe($ad, 'Category', $parts[0] ?? 'Спорт и отдых');
         if (isset($parts[1]))
-            $ad->addChild('GoodsCategory', htmlspecialchars($parts[1]));
+            $this->addChildSafe($ad, 'GoodsCategory', $parts[1]);
         if (isset($parts[2]))
-            $ad->addChild('GoodsType', htmlspecialchars($parts[2]));
+            $this->addChildSafe($ad, 'GoodsType', $parts[2]);
         if (isset($parts[3]))
-            $ad->addChild('ProductType', htmlspecialchars($parts[3]));
+            $this->addChildSafe($ad, 'ProductType', $parts[3]);
 
-        $ad->addChild('Address', htmlspecialchars(Setting::where('key', 'contact_address')->value('value') ?: 'Москва'));
-        $title = $variation ? "{$good->name} ({$variation->name})" : $good->name;
-        $ad->addChild('Title', htmlspecialchars($title));
-        $ad->addChild('Description', htmlspecialchars(strip_tags($good->description ?: $good->name)));
-        $ad->addChild('Price', (int)($variation ? ($variation->price ?: $good->price) : $good->price));
+        $this->addChildSafe($ad, 'Address', Setting::where('key', 'contact_address')->value('value') ?: 'Москва');
+        $this->addChildSafe($ad, 'Title', $variation ? "{$good->name} ({$variation->name})" : $good->name);
+        $this->addChildSafe($ad, 'Description', strip_tags($good->description ?: $good->name));
+        $this->addChildSafe($ad, 'Price', (int)($variation ? ($variation->price ?: $good->price) : $good->price));
 
         // Изображения
         $images = $ad->addChild('Images');
         $allImages = $this->getImages($good, $variation);
         foreach ($allImages as $imgUrl) {
             $image = $images->addChild('Image');
-            $image->addAttribute('url', htmlspecialchars($imgUrl));
+            $image->addAttribute('url', $imgUrl);
         }
 
-        $ad->addChild('Condition', 'Новое');
-        $ad->addChild('ListingFee', 'Package'); // Или по настройке
-        $ad->addChild('ContactMethod', 'ByPhone'); // Или по настройке
+        $this->addChildSafe($ad, 'Condition', 'Новое');
+        $this->addChildSafe($ad, 'ListingFee', 'Package'); // Или по настройке
+        $this->addChildSafe($ad, 'ContactMethod', 'ByPhone'); // Или по настройке
+    }
+
+    /**
+     * Безопасное добавление дочернего узла с текстом (экранирование спецсимволов)
+     */
+    protected function addChildSafe(\SimpleXMLElement $node, $name, $value)
+    {
+        $child = $node->addChild($name);
+        if ($value !== null && $value !== '') {
+            $dom = dom_import_simplexml($child);
+            $owner = $dom->ownerDocument;
+            $dom->appendChild($owner->createTextNode($value));
+        }
+        return $child;
     }
 
     protected function getImages($good, $variation = null)

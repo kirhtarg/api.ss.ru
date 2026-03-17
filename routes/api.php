@@ -816,6 +816,11 @@ Route::middleware(['cors', 'throttle:public'])->group(function () {
     });
     Route::post('/public/shop/payment/update-order-status', [App\Http\Controllers\Api\Public\ShopPaymentController::class, 'updateOrderStatus']);
 
+    Route::options('/public/shop/payment/yandex-pay/verify', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/public/shop/payment/yandex-pay/verify', [App\Http\Controllers\Api\Public\ShopPaymentController::class, 'verifyYandexPayPayment']);
+
     // Обработка возврата с Ю-Касса
     Route::get('/public/shop/payment/return', [App\Http\Controllers\Api\Public\ShopPaymentController::class, 'handlePaymentReturn']);
 
