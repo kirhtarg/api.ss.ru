@@ -87,7 +87,7 @@ class AvitoFeedService
         $this->addChildSafe($ad, 'Id', "g_{$good->id}");
 
         // Категория Авито из маппинга (с поиском по родителям)
-        $avitoCategory = 'Спорт и отдых';
+        $avitoCategory = 'Хобби и отдых > Спорт и отдых';
         $category = $good->categories->first();
 
         while ($category) {
@@ -100,7 +100,13 @@ class AvitoFeedService
 
         // Разделяем путь категории Авито
         $parts = array_map('trim', explode('>', $avitoCategory));
-        $this->addChildSafe($ad, 'Category', $parts[0] ?? 'Спорт и отдых');
+        
+        // Безопасная проверка: "Спорт и отдых" не может быть верхним уровнем (Category)
+        if (isset($parts[0]) && $parts[0] === 'Спорт и отдых') {
+            array_unshift($parts, 'Хобби и отдых');
+        }
+
+        $this->addChildSafe($ad, 'Category', $parts[0] ?? 'Хобби и отдых');
         if (isset($parts[1]))
             $this->addChildSafe($ad, 'GoodsCategory', $parts[1]);
         
