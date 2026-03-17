@@ -1331,7 +1331,7 @@ class ShopPaymentController extends Controller
                     'title' => $item['name'] ?? $item['good_name'] ?? ('Товар #'.($index + 1)),
                     'quantity' => ['count' => (string) $itemQty.'.00', 'available' => (string) $itemQty.'.00'],
                     'unitPrice' => number_format($scaledPrice, 2, '.', ''),
-                    'subtotal' => number_format($itemTotal, 2, '.', ''),
+                    'total' => number_format($itemTotal, 2, '.', ''),
                 ];
             }
         }
