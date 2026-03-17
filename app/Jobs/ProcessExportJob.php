@@ -1852,20 +1852,31 @@ class ProcessExportJob implements ShouldQueue
         try {
             $this->exportFile->update(['status' => 'processing']);
 
+            // Получаем конфигурацию и фильтры
+            $config = $this->exportFile->export_config ?? [];
+            
+            // Получаем запрос с учетом всех фильтров
+            $query = $this->getExportQuery($config);
+            $goods = $query->get();
+
             $service = new \App\Services\AvitoFeedService();
-            // Генерируем XML контент для уникального файла
-            $xmlContent = $service->generate();
+            // Генерируем XML контент с учетом отфильтрованных товаров
+            $xmlContent = $service->generate(null, $goods);
 
             if ($xmlContent !== false) {
-                $filePath = 'exports/' . $this->exportFile->filename;
+                // Всегда используем постоянное имя для фида Авито
+                $permanentFilename = 'avito.xml';
+                $filePath = 'exports/' . $permanentFilename;
+                
                 Storage::put($filePath, $xmlContent);
                 $fileSize = strlen($xmlContent);
 
                 $this->exportFile->update([
                     'status' => 'completed',
+                    'filename' => $permanentFilename,
                     'file_path' => $filePath,
                     'file_size' => $fileSize,
-                    'total_rows' => \App\Models\ShopGood::where('is_active', true)->count(),
+                    'total_rows' => $goods->count(),
                 ]);
             }
             else {

@@ -1513,6 +1513,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Avito Feed management
         Route::prefix('avito')->group(function () {
+            Route::get('/get-permanent-status', [\App\Http\Controllers\Admin\AvitoController::class, 'getPermanentFeedStatus']);
             Route::get('/settings', [\App\Http\Controllers\Admin\AvitoController::class, 'getSettings']);
             Route::post('/settings', [\App\Http\Controllers\Admin\AvitoController::class, 'updateSettings']);
             Route::post('/mapping', [\App\Http\Controllers\Admin\AvitoController::class, 'updateMapping']);

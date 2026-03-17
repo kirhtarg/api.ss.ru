@@ -22,31 +22,44 @@ class AvitoFeedService
     /**
      * Генерация XML фида для Авито
      * @param string|null $path Путь для сохранения (опционально)
+     * @param \Illuminate\Support\Collection|null $goods Колекция товаров (опционально)
      * @return string XML контент
      */
-    public function generate($path = null)
+    public function generate($path = null, $goods = null)
     {
-        Log::error('AvitoFeedService: Starting feed generation (v4 - addChildSafe assignment with queue:restart)');
+        Log::error('AvitoFeedService: Starting feed generation (v5 - external goods support)');
         try {
             $xml = new \SimpleXMLElement('<?xml version="1.0" encoding="utf-8"?><Ads target="Avito" formatVersion="3"></Ads>');
 
-            // Получаем только активные товары
-            $goods = ShopGood::where('is_active', true)
-                ->where('is_show', true)
-                ->with(['categories', 'brands', 'images', 'variations', 'variations.images'])
-                ->get();
+            // Если товары не переданы, получаем только активные товары
+            if (!$goods) {
+                $goods = ShopGood::where('is_active', true)
+                    ->where('is_show', true)
+                    ->with([
+                        'categories', 
+                        'brands', 
+                        'images', 
+                        'variations', 
+                        'variations.images', 
+                        'variations.attributeValues', 
+                        'variations.attributeValues.attribute'
+                    ])
+                    ->get();
+            } else {
+                // Если товары переданы, убеждаемся что загружены нужные связи (для тех у кого они еще не загружены)
+                $goods->loadMissing([
+                    'categories', 
+                    'brands', 
+                    'images', 
+                    'variations', 
+                    'variations.images', 
+                    'variations.attributeValues', 
+                    'variations.attributeValues.attribute'
+                ]);
+            }
 
             foreach ($goods as $good) {
-                if ($good->variations->count() > 0) {
-                    foreach ($good->variations as $variation) {
-                        if ($variation->is_active) {
-                            $this->addAd($xml, $good, $variation);
-                        }
-                    }
-                }
-                else {
-                    $this->addAd($xml, $good);
-                }
+                $this->addAd($xml, $good);
             }
 
             $xmlContent = $xml->asXML();
@@ -66,12 +79,14 @@ class AvitoFeedService
     /**
      * Добавить объявление (Ad) в XML
      */
-    protected function addAd(\SimpleXMLElement $xml, ShopGood $good, $variation = null)
+    /**
+     * Добавить объявление (Ad) в XML
+     */
+    protected function addAd(\SimpleXMLElement $xml, ShopGood $good)
     {
         $ad = $xml->addChild('Ad');
 
-        $id = $variation ? "v_{$variation->id}" : "g_{$good->id}";
-        $this->addChildSafe($ad, 'Id', $id);
+        $this->addChildSafe($ad, 'Id', "g_{$good->id}");
 
         // Категория Авито из маппинга (с поиском по родителям)
         $avitoCategory = 'Спорт и отдых';
@@ -96,41 +111,109 @@ class AvitoFeedService
             $this->addChildSafe($ad, 'ProductType', $parts[3]);
 
         $this->addChildSafe($ad, 'Address', Setting::where('key', 'contact_address')->value('value') ?: 'Москва');
-        $this->addChildSafe($ad, 'Title', $variation ? "{$good->name} ({$variation->name})" : $good->name);
-        $this->addChildSafe($ad, 'Description', strip_tags($good->description ?: $good->name));
-        $this->addChildSafe($ad, 'Price', (int)($variation ? ($variation->price ?: $good->price) : $good->price));
+        
+        // Заголовок без вариаций
+        $this->addChildSafe($ad, 'Title', $good->name);
 
-        // Изображения
+        // Описание с перечислением вариаций
+        $description = "";
+        if ($good->sku) {
+            $description .= "Артикул: {$good->sku}\n\n";
+        }
+        $description .= strip_tags($good->description ?: $good->name);
+
+        // Добавляем вариации в описание
+        if ($good->variations->count() > 0) {
+            $activeVariations = $good->variations->filter(fn($v) => $v->is_active);
+            if ($activeVariations->count() > 0) {
+                $description .= "\n\nВарианты в наличии:\n";
+                foreach ($activeVariations as $v) {
+                    $attrString = $v->attributes_string;
+                    $description .= "- " . ($attrString ?: $v->name);
+                    if ($v->sku) {
+                        $description .= " (Артикул: {$v->sku})";
+                    }
+                    $description .= "\n";
+                }
+            }
+        }
+        
+        $this->addChildSafe($ad, 'Description', $description);
+
+        // Цена: минимальная среди активных вариаций или цена товара
+        $price = $this->getMinPrice($good);
+        $this->addChildSafe($ad, 'Price', (int)$price);
+
+        // Изображения (только от основного товара)
         $images = $ad->addChild('Images');
-        $allImages = $this->getImages($good, $variation);
+        $allImages = $this->getImages($good);
         foreach ($allImages as $imgUrl) {
             $image = $images->addChild('Image');
             $image->addAttribute('url', $imgUrl);
         }
 
         $this->addChildSafe($ad, 'Condition', 'Новое');
-        $this->addChildSafe($ad, 'ListingFee', 'Package'); // Или по настройке
-        $this->addChildSafe($ad, 'ContactMethod', 'ByPhone'); // Или по настройке
+        $this->addChildSafe($ad, 'ListingFee', 'Package'); 
+        $this->addChildSafe($ad, 'ContactMethod', 'ByPhone'); 
+    }
+
+    /**
+     * Получить минимальную цену среди товара и его вариаций
+     */
+    private function getMinPrice(ShopGood $good)
+    {
+        $prices = [];
+        
+        // Цена самого товара
+        $prices[] = $this->calculateFinalPrice($good);
+
+        // Цены активных вариаций
+        foreach ($good->variations as $v) {
+            if ($v->is_active) {
+                $prices[] = $this->calculateFinalPrice($v);
+            }
+        }
+
+        $prices = array_filter($prices, fn($p) => $p > 0);
+        
+        return !empty($prices) ? min($prices) : 0;
+    }
+
+    /**
+     * Расчет финальной цены для объекта (Good или Variation) по приоритету
+     */
+    private function calculateFinalPrice($item)
+    {
+        if ($item->show_demping && $item->demping_price > 0) {
+            return $item->demping_price;
+        }
+
+        if ($item->sale_price > 0) {
+            return $item->sale_price;
+        }
+
+        return $item->price;
     }
 
     protected function addChildSafe(\SimpleXMLElement $node, $name, $value)
     {
         $child = $node->addChild($name);
         if ($value !== null && $value !== '') {
-            // Использование [0] = $value - самый надежный способ в SimpleXML
-            // для вставки текста со спецсимволами без ошибок парсера
             $child[0] = (string)$value;
         }
         return $child;
     }
 
-    protected function getImages($good, $variation = null)
+    protected function getImages($good)
     {
         $urls = [];
-        $images = $variation && $variation->images->count() > 0 ? $variation->images : $good->images;
+        $images = $good->images;
+
+        $base = rtrim($this->baseUrl, '/');
 
         foreach ($images as $img) {
-            $urls[] = $this->baseUrl . $img->file_path;
+            $path = ltrim($img->file_path, '/');
+            $urls[] = $base . '/' . $path;
         }
 
         return $urls;

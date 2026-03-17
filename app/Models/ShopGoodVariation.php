@@ -183,7 +183,20 @@ class ShopGoodVariation extends Model
      */
     public function getAttributesStringAttribute()
     {
-        // Собираем строку атрибутов вариации из новой схемы
+        // Если отношение загружено, используем его для избежания N+1
+        if ($this->relationLoaded('attributeValues')) {
+            if ($this->attributeValues->isEmpty()) {
+                return '';
+            }
+
+            return $this->attributeValues->map(function ($av) {
+                // Если отношение attribute внутри значения тоже загружено
+                $attrName = $av->relationLoaded('attribute') ? ($av->attribute->name ?? 'Атрибут') : 'Атрибут';
+                return $attrName . ': ' . ($av->value ?? '');
+            })->join(', ');
+        }
+
+        // Собираем строку атрибутов вариации из базы (fallback)
         $rows = \Illuminate\Support\Facades\DB::table('shop_variation_attributes_values as vav')
             ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
             ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
@@ -197,7 +210,7 @@ class ShopGoodVariation extends Model
         }
 
         return $rows->map(function ($r) {
-            return ($r->attribute_name ?? 'Attribute').': '.($r->value_value ?? '');
+            return ($r->attribute_name ?? 'Attribute') . ': ' . ($r->value_value ?? '');
         })->join(', ');
     }
 }

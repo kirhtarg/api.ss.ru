@@ -129,18 +129,20 @@ class AvitoController extends Controller
         $id = $request->input('file_id');
         $exportFile = null;
 
-        if ($id) {
+        if ($request->input('is_permanent')) {
+            $exportFile = ExportFile::where('filename', 'avito.xml')->first();
+        } elseif ($id) {
             $exportFile = ExportFile::find($id);
         }
 
         if (!$exportFile) {
             $exportFile = ExportFile::create([
-                'filename' => 'avito_feed_' . date('Y-m-d_H-i-s') . '.xml',
+                'filename' => 'avito.xml',
                 'format' => 'avito_xml',
                 'status' => 'pending',
                 'export_config' => [
                     'is_avito' => true,
-                    'filename' => 'avito_feed.xml'
+                    'filename' => 'avito.xml'
                 ]
             ]);
         }
@@ -195,6 +197,28 @@ class AvitoController extends Controller
                 'message' => $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Получить статус постоянного фида Авито
+     */
+    public function getPermanentFeedStatus(Request $request)
+    {
+        $permanentFilename = 'avito.xml';
+        $export = ExportFile::where('filename', $permanentFilename)
+            ->where('status', 'completed')
+            ->orderBy('updated_at', 'desc')
+            ->first();
+
+        $publicUrl = config('app.url') . '/api/public/avito/feed/' . $permanentFilename;
+
+        return response()->json([
+            'found' => !!$export,
+            'updated_at' => $export ? $export->updated_at : null,
+            'file_size' => $export ? $export->file_size : 0,
+            'total_rows' => $export ? $export->total_rows : 0,
+            'public_url' => $publicUrl,
+        ]);
     }
 
     /**
