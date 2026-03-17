@@ -26,6 +26,7 @@ class AvitoFeedService
      */
     public function generate($path = null)
     {
+        Log::error('AvitoFeedService: Starting feed generation (v4 - addChildSafe assignment with queue:restart)');
         try {
             $xml = new \SimpleXMLElement('<?xml version="1.0" encoding="utf-8"?><Ads target="Avito" formatVersion="3"></Ads>');
 
@@ -112,16 +113,13 @@ class AvitoFeedService
         $this->addChildSafe($ad, 'ContactMethod', 'ByPhone'); // Или по настройке
     }
 
-    /**
-     * Безопасное добавление дочернего узла с текстом (экранирование спецсимволов)
-     */
     protected function addChildSafe(\SimpleXMLElement $node, $name, $value)
     {
         $child = $node->addChild($name);
         if ($value !== null && $value !== '') {
-            $dom = dom_import_simplexml($child);
-            $owner = $dom->ownerDocument;
-            $dom->appendChild($owner->createTextNode($value));
+            // Использование [0] = $value - самый надежный способ в SimpleXML
+            // для вставки текста со спецсимволами без ошибок парсера
+            $child[0] = (string)$value;
         }
         return $child;
     }

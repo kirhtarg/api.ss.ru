@@ -196,4 +196,29 @@ class AvitoController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Публичное скачивание фида Авито (без авторизации)
+     */
+    public function downloadPublicFeed($filename)
+    {
+        $filePath = 'exports/' . $filename;
+
+        if (!Storage::exists($filePath)) {
+            abort(404, 'Фид не найден');
+        }
+
+        // Дополнительная проверка, что это именно XML фид
+        if (!str_ends_with($filename, '.xml')) {
+            abort(403, 'Доступ запрещен для этого типа файлов');
+        }
+
+        $content = Storage::get($filePath);
+
+        return response($content, 200)
+            ->header('Content-Type', 'application/xml; charset=utf-8')
+            ->header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            ->header('Pragma', 'no-cache')
+            ->header('Expires', '0');
+    }
 }

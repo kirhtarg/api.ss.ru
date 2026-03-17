@@ -427,6 +427,37 @@ class ShopPaymentController extends Controller
     }
 
     /**
+     * Find the latest pending (unpaid) Yandex Pay order for the current user.
+     * Used as fallback when frontend loses order_id after redirect.
+     */
+    public function findPendingYandexPayOrder(Request $request): \Illuminate\Http\JsonResponse
+    {
+        $query = ShopOrder::whereNotNull('yandex_pay_order_id')
+            ->where('payed', false)
+            ->where('created_at', '>=', now()->subHours(2))
+            ->orderBy('created_at', 'desc');
+
+        $userId = auth('sanctum')->id();
+        if ($userId) {
+            $query->where('user_id', $userId);
+        } else {
+            $query->where('ip_address', $request->ip());
+        }
+
+        $order = $query->first();
+
+        if (! $order) {
+            return response()->json(['success' => true, 'order_id' => null]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'order_id' => $order->id,
+            'order_number' => $order->order_number,
+        ]);
+    }
+
+    /**
      * Handle webhook for Yookassa.
      *
      * @return \Illuminate\Http\Response
@@ -1405,6 +1436,10 @@ class ShopPaymentController extends Controller
 
             $response = $http->post($apiUrl.'/orders', $payload);
             $data = $response->json();
+            \Log::info('Yandex Pay Response', [
+                'status' => $response->status(),
+                'body' => $data,
+            ]);
             if ($response->successful()) {
                 $paymentUrl = null;
                 $yandexOrderId = null;

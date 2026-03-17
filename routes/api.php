@@ -418,6 +418,9 @@ Route::get('/public/get-sitemap', [\App\Http\Controllers\Api\Public\SitemapContr
 // Маршрут для получения goods_feed.xml
 Route::get('/public/get-goods-feed', [\App\Http\Controllers\Api\Public\GoodsFeedController::class, 'getGoodsFeed']);
 
+// Маршрут для публичного скачивания фида Авито
+Route::get('/public/avito/feed/{filename}', [\App\Http\Controllers\Admin\AvitoController::class, 'downloadPublicFeed']);
+
 // Маршрут для получения данных контактов для заголовка (публичные, с отдельным rate limiter)
 Route::middleware(['throttle:public'])->group(function () {
     Route::get('/public/contacts/header-data', [\App\Http\Controllers\Api\Public\ContactController::class, 'headerData']);
@@ -820,6 +823,11 @@ Route::middleware(['cors', 'throttle:public'])->group(function () {
         return response()->json([], 200);
     });
     Route::post('/public/shop/payment/yandex-pay/verify', [App\Http\Controllers\Api\Public\ShopPaymentController::class, 'verifyYandexPayPayment']);
+
+    Route::options('/public/shop/payment/yandex-pay/find-pending', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/payment/yandex-pay/find-pending', [App\Http\Controllers\Api\Public\ShopPaymentController::class, 'findPendingYandexPayOrder']);
 
     // Обработка возврата с Ю-Касса
     Route::get('/public/shop/payment/return', [App\Http\Controllers\Api\Public\ShopPaymentController::class, 'handlePaymentReturn']);
