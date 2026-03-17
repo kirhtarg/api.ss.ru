@@ -11,8 +11,6 @@ use Illuminate\Support\Facades\Log;
 use App\Models\Setting;
 use App\Models\ShopCategory;
 use App\Models\ExportFile;
-use Illuminate\Support\Facades\Artisan;
-use App\Jobs\ProcessExportJob;
 use Illuminate\Support\Facades\Storage;
 
 class AvitoController extends Controller
@@ -121,43 +119,6 @@ class AvitoController extends Controller
         ]);
     }
 
-    /**
-     * Запустить генерацию фида немедленно
-     */
-    public function generateNow(Request $request)
-    {
-        $id = $request->input('file_id');
-        $exportFile = null;
-
-        if ($request->input('is_permanent')) {
-            $exportFile = ExportFile::where('filename', 'avito.xml')->first();
-        } elseif ($id) {
-            $exportFile = ExportFile::find($id);
-        }
-
-        if (!$exportFile) {
-            $exportFile = ExportFile::create([
-                'filename' => 'avito.xml',
-                'format' => 'avito_xml',
-                'status' => 'pending',
-                'export_config' => [
-                    'is_avito' => true,
-                    'filename' => 'avito.xml'
-                ]
-            ]);
-        }
-        else {
-            $exportFile->update(['status' => 'pending']);
-        }
-
-        ProcessExportJob::dispatch($exportFile);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Генерация фида запущена в фоновом режиме',
-            'data' => $exportFile
-        ]);
-    }
 
     /**
      * Получить дерево категорий Авито
@@ -205,15 +166,16 @@ class AvitoController extends Controller
     public function getPermanentFeedStatus(Request $request)
     {
         $permanentFilename = 'avito.xml';
+        // Ищем вообще последнюю запись для этого фида (даже если она еще в работе)
         $export = ExportFile::where('filename', $permanentFilename)
-            ->where('status', 'completed')
-            ->orderBy('updated_at', 'desc')
+            ->latest()
             ->first();
 
-        $publicUrl = config('app.url') . '/api/public/avito/feed/' . $permanentFilename;
+        $publicUrl = url('/api/public/avito/feed/' . $permanentFilename);
 
         return response()->json([
             'found' => !!$export,
+            'status' => $export ? $export->status : 'none',
             'updated_at' => $export ? $export->updated_at : null,
             'file_size' => $export ? $export->file_size : 0,
             'total_rows' => $export ? $export->total_rows : 0,

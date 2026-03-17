@@ -24,10 +24,13 @@ class AvitoFeedService
      * Генерация XML фида для Авито
      * @param string|null $path Путь для сохранения (опционально)
      * @param \Illuminate\Support\Collection|null $goods Колекция товаров (опционально)
-     * @return string XML контент
+     * @return array ['content' => string, 'count' => int]
      */
     public function generate($path = null, $goods = null)
     {
+        ini_set('memory_limit', '2048M');
+        ini_set('max_execution_time', '7200');
+
         Log::error('AvitoFeedService: Starting feed generation (v5 - external goods support)');
         try {
             $xml = new \SimpleXMLElement('<?xml version="1.0" encoding="utf-8"?><Ads target="Avito" formatVersion="3"></Ads>');
@@ -69,11 +72,18 @@ class AvitoFeedService
                 Storage::disk('public')->put($path, $xmlContent);
             }
 
-            return $xmlContent;
+            return [
+                'count' => $goods->count(),
+                'content' => $xmlContent
+            ];
         }
         catch (\Exception $e) {
             Log::error('Avito Feed Generation Error: ' . $e->getMessage());
-            return false;
+            return [
+                'count' => 0,
+                'content' => '',
+                'error' => $e->getMessage()
+            ];
         }
     }
 
@@ -219,7 +229,7 @@ class AvitoFeedService
     protected function formatDescription($good)
     {
         $allowedTags = '<p><br><strong><em><ul><ol><li>';
-        $desc = strip_tags($good->description, $allowedTags);
+        $desc = strip_tags($good->description ?? '', $allowedTags);
         
         $extra = "";
         if ($good->sku) {

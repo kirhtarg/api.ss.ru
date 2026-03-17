@@ -42,6 +42,9 @@ class ProcessExportJob implements ShouldQueue
      */
     public function handle(): void
     {
+        ini_set('memory_limit', '2048M');
+        ini_set('max_execution_time', '7200');
+
         // Специальная обработка для Авито
         if (isset($this->exportFile->export_config['is_avito']) && $this->exportFile->export_config['is_avito']) {
             $this->handleAvitoExport();
@@ -49,9 +52,6 @@ class ProcessExportJob implements ShouldQueue
         }
 
         try {
-            ini_set('memory_limit', '2048M');
-            ini_set('max_execution_time', '7200');
-
             // Обновляем статус на "обрабатывается"
             $this->exportFile->update(['status' => 'processing']);
 
@@ -1861,9 +1861,10 @@ class ProcessExportJob implements ShouldQueue
 
             $service = new \App\Services\AvitoFeedService();
             // Генерируем XML контент с учетом отфильтрованных товаров
-            $xmlContent = $service->generate(null, $goods);
+            $result = $service->generate(null, $goods);
 
-            if ($xmlContent !== false) {
+            if (!isset($result['error'])) {
+                $xmlContent = $result['content'];
                 // Всегда используем постоянное имя для фида Авито
                 $permanentFilename = 'avito.xml';
                 $filePath = 'exports/' . $permanentFilename;
@@ -1876,11 +1877,12 @@ class ProcessExportJob implements ShouldQueue
                     'filename' => $permanentFilename,
                     'file_path' => $filePath,
                     'file_size' => $fileSize,
-                    'total_rows' => $goods->count(),
+                    'total_rows' => $result['count'] ?? $goods->count(),
+                    'updated_at' => now(),
                 ]);
             }
             else {
-                throw new \Exception('Ошибка при генерации фида Авито');
+                throw new \Exception('Ошибка при генерации фида Авито: ' . ($result['error'] ?? 'Неизвестная ошибка'));
             }
         }
         catch (\Exception $e) {
