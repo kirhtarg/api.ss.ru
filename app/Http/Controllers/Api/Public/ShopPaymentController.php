@@ -1298,6 +1298,10 @@ class ShopPaymentController extends Controller
         $isTest = ($settings['mode'] ?? 'test') !== 'live';
         $apiUrl = $isTest ? 'https://sandbox.pay.yandex.ru/api/merchant/v1' : 'https://pay.yandex.ru/api/merchant/v1';
         $returnUrl = request()->input('return_url') ?: (config('app.frontend_url').'/checkout?payment=return&payment_type=yandex_pay');
+        // Append order_id to return URL so frontend can recover it even if localStorage is unavailable
+        if (strpos($returnUrl, 'order_id=') === false) {
+            $returnUrl .= (strpos($returnUrl, '?') !== false ? '&' : '?') . 'order_id=' . $order->id;
+        }
         $amountValue = number_format((float) $order->total_amount, 2, '.', '');
         $merchantId = $settings['merchant_id'] ?? null;
         // Строим корзину из реальных товаров заказа, масштабируя к total_amount
@@ -1345,9 +1349,9 @@ class ShopPaymentController extends Controller
         if (empty($cartItems)) {
             $cartItems = [[
                 'productId' => 'ORDER-'.$order->id,
-                'description' => 'Оплата заказа №'.$order->order_number,
-                'quantity' => ['count' => '1.0', 'available' => '1.0'],
-                'amount' => ['value' => $amountValue, 'currency' => $currency],
+                'title' => 'Оплата заказа №'.$order->order_number,
+                'quantity' => ['count' => '1.00', 'available' => '1.00'],
+                'unitPrice' => $amountValue,
                 'total' => $amountValue,
             ]];
         }
