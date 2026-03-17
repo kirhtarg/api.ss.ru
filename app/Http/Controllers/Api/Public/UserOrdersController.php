@@ -151,6 +151,9 @@ class UserOrdersController extends Controller
                     'promo_code_discount_amount' => $order->promo_code_discount_amount,
                     'birthday_discount_amount' => $order->birthday_discount_amount,
                     'total_discount_amount' => $order->total_discount_amount,
+                    'bonus_points_to_use' => (int) ($order->bonus_points_to_use ?? 0),
+                    'overtax_amount' => (float) ($order->overtax_amount ?? 0),
+                    'overtax_text' => $order->overtax_text ?? null,
                     'customer' => [
                         'name' => $order->customer_name ?? '',
                         'email' => $order->customer_email ?? '',

@@ -154,30 +154,26 @@ class TbankPaymentService
                 $runningSum = 0.0;
                 $itemCount = count($items);
                 foreach ($items as $i => $item) {
-                    if ($i === $itemCount - 1) {
+                    $isLast = ($i === $itemCount - 1);
+                    $itemQty = (int) ($item['quantity'] ?? 1);
+                    if ($isLast && $runningSum > 0 && $itemQty === 1) {
+                        // qty=1: absorb remainder safely (price * 1 == remainder always)
                         $itemAmount = round($totalAmount - $runningSum, 2);
-                        $itemPrice = $item['quantity'] > 0 ? round($itemAmount / $item['quantity'], 2) : $itemAmount;
+                        $itemPrice = $itemAmount;
                     } else {
+                        // qty>1 or non-last: use scale factor so price*qty is a valid amount
                         $itemPrice = round($item['price'] * $scaleFactor, 2);
-                        $itemAmount = round($itemPrice * $item['quantity'], 2);
+                        $itemAmount = round($itemPrice * $itemQty, 2);
                     }
                     $runningSum += $itemAmount;
                     $scaledItems[] = ['name' => $item['name'], 'price' => max(0.01, $itemPrice), 'quantity' => $item['quantity']];
                 }
                 $items = $scaledItems;
+                // Align order.amount with actual items sum so sum(price*qty) == order.amount
+                $totalAmount = round($runningSum, 2);
             }
 
-            // Добавляем доставку отдельной позицией
-            if ($deliveryCost > 0) {
-                $items[] = [
-                    'name' => 'Доставка',
-                    'price' => round($deliveryCost, 2),
-                    'quantity' => 1,
-                ];
-            }
-
-            // Итоговая сумма = товары + доставка
-            $totalAmount = round($totalAmount + $deliveryCost, 2);
+            // Доставка не включается в платёж Долями: total_amount = только сумма товаров
 
             // Validate that we have at least one valid item
             if (empty($items)) {
@@ -581,20 +577,7 @@ class TbankPaymentService
             ];
         }
 
-        // Добавляем доставку как отдельную позицию
-        if ($deliveryCost > 0) {
-            $deliveryK = (int) round($deliveryCost * 100);
-            $items[] = [
-                'Name' => 'Доставка',
-                'Price' => $deliveryK,
-                'Quantity' => 1.0,
-                'Amount' => $deliveryK,
-                'Tax' => $this->settings['delivery_tax'] ?? 'none',
-                'PaymentMethod' => $this->settings['delivery_payment_method'] ?? 'full_prepayment',
-                'PaymentObject' => $this->settings['delivery_payment_object'] ?? 'service',
-                'MeasurementUnit' => 'шт',
-            ];
-        }
+        // Доставка не включается в платёж T-Bank: total_amount = только сумма товаров
 
         return $items;
     }
@@ -756,12 +739,15 @@ class TbankPaymentService
         }
 
         // 'tbank' provider logic
+        // AUTHORIZED = заморозка средств (двухэтапная оплата), деньги ещё не списаны
+        // CONFIRMED / SETTLED = фактическое списание = успешная оплата
         if ($status) {
             switch (strtoupper($status)) {
                 case 'CONFIRMED':
-                case 'AUTHORIZED':
                 case 'SETTLED':
                     return 'success';
+                case 'AUTHORIZED':
+                    return 'authorized'; // промежуточный статус, не оплачен
                 case 'REJECTED':
                 case 'DEADLINE_EXPIRED':
                     return 'failed';
@@ -770,7 +756,7 @@ class TbankPaymentService
                 default:
                     Log::warning('T-Bank Webhook: Unhandled status.', ['status' => $status]);
 
-                    return 'failed';
+                    return 'pending';
             }
         }
 

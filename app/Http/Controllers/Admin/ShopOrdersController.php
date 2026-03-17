@@ -3674,7 +3674,7 @@ class ShopOrdersController extends Controller
                 ? 'https://sandbox.pay.yandex.ru/api/merchant/v1/orders'
                 : 'https://pay.yandex.ru/api/merchant/v1/orders';
 
-            $amountValue = number_format((float) $order->total_amount + (float) ($order->delivery_cost ?? 0), 2, '.', '');
+            $amountValue = number_format((float) $order->total_amount, 2, '.', '');
             $returnUrl = config('app.frontend_url', 'https://skateandsnow.ru').'/checkout?payment=return&payment_type=yandex_pay';
 
             $orderData = [

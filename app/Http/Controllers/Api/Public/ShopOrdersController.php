@@ -164,6 +164,9 @@ class ShopOrdersController extends Controller
                 'success' => true,
                 'message' => 'Заказ успешно создан',
                 'order_id' => $order->id,
+                'order_number' => $order->order_number,
+                'total_amount' => (float) $order->total_amount,
+                'bonus_points_to_use' => (int) $order->bonus_points_to_use,
             ]);
 
         } catch (\Exception $e) {

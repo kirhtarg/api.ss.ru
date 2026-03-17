@@ -374,6 +374,11 @@ class ShopPaymentController extends Controller
                                 'payed' => true,
                             ]);
                             Log::info('Yookassa: Order '.$order->id.' created/updated as paid via tx '.$transaction->id);
+                            try {
+                                app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+                            } catch (\Exception $e) {
+                                Log::error('Yookassa Webhook: failed to send notification (tx path)', ['order_id' => $order->id, 'error' => $e->getMessage()]);
+                            }
                         }
                     }
                 } else {
@@ -390,6 +395,11 @@ class ShopPaymentController extends Controller
                             'payed' => true,
                         ]);
                         Log::info('Yookassa: Order '.$orderIdFromMeta.' payment succeeded.');
+                        try {
+                            app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+                        } catch (\Exception $e) {
+                            Log::error('Yookassa Webhook: failed to send notification (metadata path)', ['order_id' => $order->id, 'error' => $e->getMessage()]);
+                        }
                     }
                 }
             } else {
@@ -423,6 +433,11 @@ class ShopPaymentController extends Controller
                         ]);
                         Cache::forget($cacheKey);
                         Log::info('Yookassa: Order created from cache and marked paid', ['order_id' => $order->id]);
+                        try {
+                            app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+                        } catch (\Exception $e) {
+                            Log::error('Yookassa Webhook: failed to send notification (cache path)', ['order_id' => $order->id, 'error' => $e->getMessage()]);
+                        }
                     } else {
                         Log::error('Yookassa Webhook: failed to create order from cache');
                     }
@@ -649,11 +664,16 @@ class ShopPaymentController extends Controller
                     }
                 }
 
-                $item['price'] = $basePrice;
-                $item['sale_price'] = $sellingPrice;
-                $item['total'] = $sellingPrice * ($item['quantity'] ?? 1);
-                $recalculatedSubtotal += $item['total'];
-                $recalculatedBaseSubtotal += $basePrice * ($item['quantity'] ?? 1);
+                // Apply same per-item rounding as frontend roundPrice()
+                $roundedBasePrice = \App\Helpers\PriceHelper::roundPrice((float) $basePrice);
+                $roundedSellingPrice = \App\Helpers\PriceHelper::roundPrice((float) $sellingPrice);
+                $qty = (int) ($item['quantity'] ?? 1);
+
+                $item['price'] = $roundedBasePrice;
+                $item['sale_price'] = $roundedSellingPrice;
+                $item['total'] = $roundedSellingPrice * $qty;
+                $recalculatedSubtotal += $roundedSellingPrice * $qty;
+                $recalculatedBaseSubtotal += $roundedBasePrice * $qty;
             }
             unset($item);
 
@@ -840,7 +860,7 @@ class ShopPaymentController extends Controller
             return response()->json(['success' => false, 'message' => 'ЮКасса: отсутствует shop_id/secret_key'], 400);
         }
         $returnUrl = request()->input('return_url') ?: (config('app.frontend_url').'/checkout?payment=return&payment_type=yookassa');
-        $amountValue = number_format((float) $order->total_amount + (float) ($order->delivery_cost ?? 0), 2, '.', '');
+        $amountValue = number_format((float) $order->total_amount, 2, '.', '');
         $payload = [
             'amount' => ['value' => $amountValue, 'currency' => $settings['currency'] ?? 'RUB'],
             'capture' => true,
@@ -895,6 +915,8 @@ class ShopPaymentController extends Controller
                         'payment_url' => $paymentUrl,
                         'order_id' => $order->id,
                         'order_number' => $order->order_number,
+                        'total_amount' => (float) $order->total_amount,
+                        'bonus_points_to_use' => (int) $order->bonus_points_to_use,
                     ]);
                 }
 
@@ -903,6 +925,8 @@ class ShopPaymentController extends Controller
                     'payment_url' => $paymentUrl,
                     'order_id' => $order->id,
                     'order_number' => $order->order_number,
+                    'total_amount' => (float) $order->total_amount,
+                    'bonus_points_to_use' => (int) $order->bonus_points_to_use,
                 ]);
             }
 
@@ -979,6 +1003,8 @@ class ShopPaymentController extends Controller
                         'payment_url' => $paymentResult['payment_url'] ?? null,
                         'order_id' => $order->id,
                         'order_number' => $order->order_number,
+                        'total_amount' => (float) $order->total_amount,
+                        'bonus_points_to_use' => (int) $order->bonus_points_to_use,
                     ]);
                 }
 
@@ -988,6 +1014,8 @@ class ShopPaymentController extends Controller
                     'order_id' => $order->id,
                     'order_number' => $order->order_number,
                     'transaction_id' => $transaction->id,
+                    'total_amount' => (float) $order->total_amount,
+                    'bonus_points_to_use' => (int) $order->bonus_points_to_use,
                 ]);
             }
             if (isset($paymentResult['error']) && $paymentResult['error'] === 'connection_timeout') {
@@ -1010,6 +1038,8 @@ class ShopPaymentController extends Controller
                     'order_id' => $order->id,
                     'order_number' => $order->order_number,
                     'message' => 'Gateway unreachable',
+                    'total_amount' => (float) $order->total_amount,
+                    'bonus_points_to_use' => (int) $order->bonus_points_to_use,
                 ]);
             }
             Log::error('handleTbankEacqPayment: T-Bank eacq payment initiation failed for order '.$order->id.': '.($paymentResult['message'] ?? 'Unknown error'), ['payment_result' => $paymentResult]);
@@ -1174,22 +1204,74 @@ class ShopPaymentController extends Controller
         $isTest = ($settings['mode'] ?? 'test') !== 'live';
         $apiUrl = $isTest ? 'https://sandbox.pay.yandex.ru/api/merchant/v1' : 'https://pay.yandex.ru/api/merchant/v1';
         $returnUrl = request()->input('return_url') ?: (config('app.frontend_url').'/checkout?payment=return&payment_type=yandex_pay');
-        $amountValue = number_format((float) $order->total_amount + (float) ($order->delivery_cost ?? 0), 2, '.', '');
+        $amountValue = number_format((float) $order->total_amount, 2, '.', '');
         $merchantId = $settings['merchant_id'] ?? null;
+        // Строим корзину из реальных товаров заказа, масштабируя к total_amount
+        $orderItems = is_array($order->items) ? $order->items : (json_decode($order->items, true) ?: []);
+        $currency = $settings['currency'] ?? 'RUB';
+        $totalAmountFloat = (float) $order->total_amount;
+        $cartItems = [];
+
+        if (!empty($orderItems)) {
+            // Считаем сумму по final_price (с учётом скидок на уровне товара)
+            $itemsRawTotal = 0.0;
+            foreach ($orderItems as $item) {
+                $itemsRawTotal += (float) ($item['final_price'] ?? $item['price'] ?? 0) * (int) ($item['quantity'] ?? 1);
+            }
+            // scaleFactor выравнивает позиции к total_amount (учитывает промокод, бонусы и т.д.)
+            $scaleFactor = ($itemsRawTotal > 0) ? $totalAmountFloat / $itemsRawTotal : 1.0;
+
+            $runningTotal = 0.0;
+            $itemCount = count($orderItems);
+            foreach ($orderItems as $index => $item) {
+                $rawPrice = (float) ($item['final_price'] ?? $item['price'] ?? 0);
+                $itemQty = (int) ($item['quantity'] ?? 1);
+                $isLast = ($index === $itemCount - 1);
+                if ($isLast && $runningTotal > 0 && $itemQty === 1) {
+                    // For qty=1 last item, absorb the remainder safely (total/1 = total, always valid)
+                    $itemTotal = round($totalAmountFloat - $runningTotal, 2);
+                    $scaledPrice = $itemTotal;
+                } else {
+                    // For qty>1 (or non-last items), use scale factor so amount*count == total
+                    $scaledPrice = round($rawPrice * $scaleFactor, 2);
+                    $itemTotal = round($scaledPrice * $itemQty, 2);
+                }
+                $runningTotal += $itemTotal;
+                $cartItems[] = [
+                    'productId' => 'ITEM-'.($item['good_id'] ?? $index).'-'.($item['variation_id'] ?? '0'),
+                    'description' => $item['name'] ?? $item['good_name'] ?? ('Товар #'.($index + 1)),
+                    'quantity' => ['count' => (string) $itemQty.'.0', 'available' => (string) $itemQty.'.0'],
+                    'amount' => ['value' => number_format($scaledPrice, 2, '.', ''), 'currency' => $currency],
+                    'total' => number_format($itemTotal, 2, '.', ''),
+                ];
+            }
+        }
+
+        // Откат к единственному элементу если позиции не собраны
+        if (empty($cartItems)) {
+            $cartItems = [[
+                'productId' => 'ORDER-'.$order->id,
+                'description' => 'Оплата заказа №'.$order->order_number,
+                'quantity' => ['count' => '1.0', 'available' => '1.0'],
+                'amount' => ['value' => $amountValue, 'currency' => $currency],
+                'total' => $amountValue,
+            ]];
+        }
+
+        // cart.total.amount must equal sum(items.total); for qty>1 last items this may differ
+        // from order total by 1 kopeck — use actual sum to satisfy Yandex Pay validation
+        $cartTotalValue = !empty($cartItems)
+            ? number_format(array_sum(array_map(fn($i) => (float) $i['total'], $cartItems)), 2, '.', '')
+            : $amountValue;
+
         $payload = [
             'orderId' => $order->order_number,
             'merchantId' => $merchantId,
-            'currencyCode' => $settings['currency'] ?? 'RUB',
-            'amount' => ['value' => $amountValue, 'currency' => $settings['currency'] ?? 'RUB'],
+            'currencyCode' => $currency,
+            'amount' => ['value' => $amountValue, 'currency' => $currency],
             'cart' => [
-                'items' => [[
-                    'productId' => 'ORDER-'.$order->id,
-                    'description' => 'Оплата заказа №'.$order->order_number,
-                    'quantity' => ['count' => '1.0', 'available' => '1.0'],
-                    'amount' => ['value' => $amountValue, 'currency' => $settings['currency'] ?? 'RUB'],
-                    'total' => $amountValue,
-                ]],
-                'total' => ['amount' => $amountValue],
+                'items' => $cartItems,
+                'total' => ['amount' => $cartTotalValue],
             ],
             'confirmation' => ['type' => 'redirect', 'return_url' => $returnUrl],
             'redirectUrls' => [
@@ -1269,6 +1351,8 @@ class ShopPaymentController extends Controller
                             'payment_url' => $paymentUrl,
                             'order_id' => $order->id,
                             'order_number' => $order->order_number,
+                            'total_amount' => (float) $order->total_amount,
+                            'bonus_points_to_use' => (int) $order->bonus_points_to_use,
                         ]);
                     }
 
@@ -1277,6 +1361,8 @@ class ShopPaymentController extends Controller
                         'payment_url' => $paymentUrl,
                         'order_id' => $order->id,
                         'order_number' => $order->order_number,
+                        'total_amount' => (float) $order->total_amount,
+                        'bonus_points_to_use' => (int) $order->bonus_points_to_use,
                     ]);
                 }
             }
@@ -1889,6 +1975,8 @@ class ShopPaymentController extends Controller
                         'payment_url' => $paymentResult['payment_url'] ?? null,
                         'order_id' => $order->id,
                         'order_number' => $order->order_number,
+                        'total_amount' => (float) $order->total_amount,
+                        'bonus_points_to_use' => (int) $order->bonus_points_to_use,
                     ]);
                 }
 
@@ -1896,6 +1984,10 @@ class ShopPaymentController extends Controller
                     'success' => true,
                     'payment_url' => $paymentResult['payment_url'],
                     'transaction_id' => $transaction->id,
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                    'total_amount' => (float) $order->total_amount,
+                    'bonus_points_to_use' => (int) $order->bonus_points_to_use,
                 ]);
             } elseif (isset($paymentResult['error']) && $paymentResult['error'] === 'connection_timeout') {
                 ShopPaymentTransaction::create([
@@ -1917,6 +2009,8 @@ class ShopPaymentController extends Controller
                     'order_id' => $order->id,
                     'order_number' => $order->order_number,
                     'message' => 'Gateway unreachable',
+                    'total_amount' => (float) $order->total_amount,
+                    'bonus_points_to_use' => (int) $order->bonus_points_to_use,
                 ]);
             }
             Log::error('handleTbankDolyamePayment: T-Bank payment initiation failed for order '.$order->id.': '.($paymentResult['message'] ?? 'Unknown error'), ['payment_result' => $paymentResult]);
@@ -2046,6 +2140,14 @@ class ShopPaymentController extends Controller
                                 'payed' => true,
                             ]);
                         }
+                    } elseif ($newStatus === 'authorized' || $newStatus === 'pending') {
+                        $pendingStatusId = ShopPaymentStatus::where('name', 'pending')->value('id');
+                        if ($pendingStatusId) {
+                            $order->update([
+                                'payment_status_id' => $pendingStatusId,
+                                'payed' => false,
+                            ]);
+                        }
                     } else {
                         $failedStatusId = ShopPaymentStatus::where('name', 'failed')->value('id') ?? ShopPaymentStatus::where('name', 'canceled')->value('id');
                         if ($failedStatusId) {
@@ -2060,17 +2162,19 @@ class ShopPaymentController extends Controller
                         'payment_method_id' => $draft['payment_method_id'] ?? null,
                         'amount' => $order->total_amount,
                         'transaction_id' => $paymentId,
-                        'status' => $newStatus === 'success' ? 'paid' : 'failed',
+                        'status' => $newStatus === 'success' ? 'paid' : $newStatus,
                         'request_data' => $draft,
                         'response_data' => $webhookData,
                     ]);
-                    try {
-                        app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
-                    } catch (\Exception $e) {
-                        \Log::error('T-Bank eacq webhook: failed to send order_created notification', [
-                            'order_id' => $order->id ?? null,
-                            'error' => $e->getMessage(),
-                        ]);
+                    if ($newStatus === 'success') {
+                        try {
+                            app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+                        } catch (\Exception $e) {
+                            \Log::error('T-Bank eacq webhook: failed to send order_created notification', [
+                                'order_id' => $order->id ?? null,
+                                'error' => $e->getMessage(),
+                            ]);
+                        }
                     }
                     if (! empty($draft['order_number'])) {
                         Cache::forget('payment:init:tbank_eacq:order:'.$draft['order_number']);
@@ -2152,9 +2256,11 @@ class ShopPaymentController extends Controller
 
         // 4. Обновление статусов заказа и транзакции
         $paymentStatusMap = [
-            'success' => 'paid',
-            'failed' => 'failed',
-            'cancelled' => 'cancelled',
+            'success'    => 'paid',
+            'authorized' => 'pending', // заморозка средств — ещё не оплачен
+            'pending'    => 'pending',
+            'failed'     => 'failed',
+            'cancelled'  => 'cancelled',
         ];
 
         if (isset($paymentStatusMap[$newStatus])) {
@@ -2320,6 +2426,11 @@ class ShopPaymentController extends Controller
                      'payment_status_id' => $paidStatusId,
                      'payed' => true,
                  ]);
+                 try {
+                     app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+                 } catch (\Exception $e) {
+                     \Log::error('Dolyame webhook: failed to send notification (completed)', ['order_id' => $order->id, 'error' => $e->getMessage()]);
+                 }
              }
         } elseif ($actualStatus === 'rejected' || $actualStatus === 'canceled') {
             $failedStatusId = \App\Models\ShopPaymentStatus::where('name', 'canceled')->value('id') 
@@ -2552,10 +2663,15 @@ class ShopPaymentController extends Controller
         ]);
 
         $event = $request->input('event');
+        $eventType = $request->input('eventType'); // Yandex Pay Merchant API format
         $object = $request->input('object');
-        
-        // Извлекаем metadata. Она может быть во вложенном объекте или в корне.
-        $metadataRaw = $request->input('metadata') ?? $object['metadata'] ?? null;
+        $yandexOrder = $request->input('order'); // Yandex Pay Merchant API format
+
+        // Извлекаем metadata. Yandex Pay Merchant API v1 вкладывает её в order.metadata.
+        // YooKassa кладёт её в object.metadata или в корень.
+        $metadataRaw = $request->input('metadata')
+            ?? ($yandexOrder['metadata'] ?? null)
+            ?? ($object['metadata'] ?? null);
         $metadata = is_string($metadataRaw) ? json_decode($metadataRaw, true) : $metadataRaw;
 
         // Обработка тестового вебхука для диагностики
@@ -2566,22 +2682,45 @@ class ShopPaymentController extends Controller
             return response()->json(['status' => 'ok']);
         }
 
-        if ($event === 'payment.succeeded' && isset($object['status']) && $object['status'] === 'succeeded') {
-            $yandexPaymentId = $object['id'] ?? null;
+        // Определяем, является ли это успешным платежом
+        // Формат 1: Yandex Pay Merchant API v1 — eventType=PAYMENT_STATUS_UPDATED, order.paymentStatus=CAPTURED
+        $isYandexPaySuccess = $eventType === 'PAYMENT_STATUS_UPDATED'
+            && in_array($yandexOrder['paymentStatus'] ?? '', ['CAPTURED', 'AUTHORIZED']);
+        // Формат 2: YooKassa-style — event=payment.succeeded, object.status=succeeded
+        $isYookassaSuccess = $event === 'payment.succeeded'
+            && isset($object['status']) && $object['status'] === 'succeeded';
+
+        if ($isYandexPaySuccess || $isYookassaSuccess) {
+            // Извлекаем ID платежа в зависимости от формата
+            $yandexPaymentId = $yandexOrder['paymentId'] ?? $yandexOrder['orderId'] ?? $object['id'] ?? null;
+            $yandexOrderId = $yandexOrder['orderId'] ?? $object['id'] ?? null;
+
             if (! $yandexPaymentId) {
-                Log::warning('Yandex Pay Webhook: payment.succeeded event without payment ID.');
+                Log::warning('Yandex Pay Webhook: payment succeeded event without payment ID.');
 
                 return response()->json(['status' => 'error', 'message' => 'No payment ID'], 400);
             }
 
             $orderId = $metadata['order_id'] ?? null;
             $order = null;
-            
+
             if ($orderId) {
                 $order = ShopOrder::find($orderId);
             }
-            
-            if (!$order) {
+
+            // Ищем по orderId из Яндекса (это order_number заказа)
+            if (! $order && $yandexOrderId) {
+                $order = ShopOrder::where('order_number', $yandexOrderId)->first();
+                // orderId может быть с префиксом REGENERATE-
+                if (! $order && str_starts_with($yandexOrderId, 'REGENERATE-')) {
+                    preg_match('/^REGENERATE-(.+?)-\d+$/', $yandexOrderId, $m);
+                    if (isset($m[1])) {
+                        $order = ShopOrder::where('order_number', $m[1])->first();
+                    }
+                }
+            }
+
+            if (! $order) {
                 $order = ShopOrder::where('yandex_pay_order_id', $yandexPaymentId)->first();
             }
 
@@ -2609,6 +2748,15 @@ class ShopPaymentController extends Controller
                     ]);
 
                     Log::info('Yandex Pay Webhook: Order '.$order->id.' payment succeeded and status updated.');
+
+                    try {
+                        app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+                    } catch (\Exception $e) {
+                        Log::error('Yandex Pay Webhook: failed to send notification', [
+                            'order_id' => $order->id,
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
                 } else {
                     Log::error('Yandex Pay Webhook: "paid" payment status not found in database.');
                 }
