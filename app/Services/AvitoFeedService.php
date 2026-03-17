@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\ShopGood;
 use App\Models\Setting;
+use App\Models\Contact;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 
@@ -113,35 +114,45 @@ class AvitoFeedService
              // Мало ли, вдруг там еще глубже
         }
 
-        $this->addChildSafe($ad, 'Address', Setting::where('key', 'contact_address')->value('value') ?: 'Москва');
+        // ГЕО: берем из основного контакта
+        $mainContact = Contact::getMainContact();
+        $mainAddress = $mainContact ? $mainContact->mainAddress() : null;
+        
+        if ($mainAddress) {
+            $address = $mainAddress->address_short ?: $mainAddress->address;
+            
+            // Очистка адреса от HTML и лишней информации
+            $address = strip_tags($address);
+            $address = str_replace('&nbsp;', ' ', $address);
+            
+            // Если есть "Часы работы", берем всё до них
+            if (mb_stripos($address, 'Часы работы') !== false) {
+                $parts = explode('Часы работы', $address);
+                $address = trim($parts[0], " \t\n\r\0\x0B. -");
+            }
+
+            // Если есть "ст.м." (метро), тоже можно попробовать очистить для Авито, 
+            // но Авито обычно само справляется, если есть координаты.
+            // На всякий случай просто убедимся, что строка не слишком "замусорена".
+
+            $this->addChildSafe($ad, 'Address', trim($address));
+            
+            if ($mainAddress->latitude) {
+                $this->addChildSafe($ad, 'Latitude', $mainAddress->latitude);
+            }
+            if ($mainAddress->longitude) {
+                $this->addChildSafe($ad, 'Longitude', $mainAddress->longitude);
+            }
+        } else {
+            $this->addChildSafe($ad, 'Address', Setting::where('key', 'contact_address')->value('value') ?: 'Москва');
+        }
         
         // Заголовок без вариаций
         $this->addChildSafe($ad, 'Title', $good->name);
 
-        // Описание с перечислением вариаций
-        $description = "";
-        if ($good->sku) {
-            $description .= "Артикул: {$good->sku}\n\n";
-        }
-        $description .= strip_tags($good->description ?: $good->name);
-
-        // Добавляем вариации в описание
-        if ($good->variations->count() > 0) {
-            $activeVariations = $good->variations->filter(fn($v) => $v->is_active);
-            if ($activeVariations->count() > 0) {
-                $description .= "\n\nВарианты в наличии:\n";
-                foreach ($activeVariations as $v) {
-                    $attrString = $v->attributes_string;
-                    $description .= "- " . ($attrString ?: $v->name);
-                    if ($v->sku) {
-                        $description .= " (Артикул: {$v->sku})";
-                    }
-                    $description .= "\n";
-                }
-            }
-        }
-        
-        $this->addChildSafe($ad, 'Description', $description);
+        // Описание с форматированием
+        $description = $this->formatDescription($good);
+        $this->addCData($ad, 'Description', $description);
 
         // Цена: минимальная среди активных вариаций или цена товара
         $price = (int)$this->getMinPrice($good);
@@ -197,6 +208,42 @@ class AvitoFeedService
         }
 
         return $item->price;
+    }
+
+    protected function formatDescription($good)
+    {
+        $allowedTags = '<p><br><strong><em><ul><ol><li>';
+        $desc = strip_tags($good->description, $allowedTags);
+        
+        $extra = "";
+        if ($good->sku) {
+            $extra .= "<strong>Артикул:</strong> {$good->sku}<br>";
+        }
+        
+        if ($good->variations->count() > 0) {
+            $activeVariations = $good->variations->filter(fn($v) => $v->is_active);
+            if ($activeVariations->count() > 0) {
+                $extra .= "<strong>Доступные варианты:</strong><br>";
+                foreach ($activeVariations as $v) {
+                    $attrString = $v->attributes_string;
+                    $extra .= "- " . ($attrString ?: $v->name);
+                    if ($v->sku) {
+                        $extra .= " (Артикул: {$v->sku})";
+                    }
+                    $extra .= "<br>";
+                }
+            }
+        }
+        
+        return $extra ? ($extra . "<br>" . $desc) : $desc;
+    }
+
+    protected function addCData(\SimpleXMLElement $node, $name, $value)
+    {
+        $child = $node->addChild($name);
+        $dom = dom_import_simplexml($child);
+        $owner = $dom->ownerDocument;
+        $dom->appendChild($owner->createCDATASection($value));
     }
 
     protected function addChildSafe(\SimpleXMLElement $node, $name, $value)
