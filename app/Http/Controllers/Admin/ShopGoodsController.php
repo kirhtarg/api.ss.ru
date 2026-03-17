@@ -6053,9 +6053,35 @@ class ShopGoodsController extends Controller
                 ], 422);
             }
 
-            $variation->price = $request->get('price');
-            $variation->sale_price = $request->has('sale_price') && $request->get('sale_price') !== null && $request->get('sale_price') !== '' ? $request->get('sale_price') : null;
-            $variation->demping_price = $request->has('demping_price') && $request->get('demping_price') !== null && $request->get('demping_price') !== '' ? $request->get('demping_price') : null;
+            $price = round((float) $request->get('price'));
+            $salePrice = $request->get('sale_price');
+            if ($salePrice !== null && $salePrice !== '') {
+                $salePrice = round((float) $salePrice);
+                // Акционная цена не может быть больше или равна базовой
+                if ($salePrice >= $price) {
+                    $salePrice = null;
+                }
+                // Акционная цена не может быть отрицательной
+                if ($salePrice < 0) {
+                    $salePrice = 0;
+                }
+            } else {
+                $salePrice = null;
+            }
+
+            $dempingPrice = $request->get('demping_price');
+            if ($dempingPrice !== null && $dempingPrice !== '') {
+                $dempingPrice = round((float) $dempingPrice);
+                if ($dempingPrice < 0) {
+                    $dempingPrice = 0;
+                }
+            } else {
+                $dempingPrice = null;
+            }
+
+            $variation->price = $price;
+            $variation->sale_price = $salePrice;
+            $variation->demping_price = $dempingPrice;
             $variation->save();
 
             return response()->json([

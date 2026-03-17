@@ -79,10 +79,7 @@ class AvitoFeedService
     /**
      * Добавить объявление (Ad) в XML
      */
-    /**
-     * Добавить объявление (Ad) в XML
-     */
-    protected function addAd(\SimpleXMLElement $xml, ShopGood $good)
+    protected function addAd(\SimpleXMLElement $xml, $good)
     {
         $ad = $xml->addChild('Ad');
 
@@ -101,14 +98,20 @@ class AvitoFeedService
         }
 
         // Разделяем путь категории Авито
-        $parts = explode(' > ', $avitoCategory);
+        $parts = array_map('trim', explode('>', $avitoCategory));
         $this->addChildSafe($ad, 'Category', $parts[0] ?? 'Спорт и отдых');
         if (isset($parts[1]))
             $this->addChildSafe($ad, 'GoodsCategory', $parts[1]);
+        
+        // Для некоторых категорий GoodsType и ProductType могут быть сдвинуты
+        // Пытаемся заполнить максимально подробно
         if (isset($parts[2]))
             $this->addChildSafe($ad, 'GoodsType', $parts[2]);
         if (isset($parts[3]))
             $this->addChildSafe($ad, 'ProductType', $parts[3]);
+        if (isset($parts[4]) && !isset($parts[3])) {
+             // Мало ли, вдруг там еще глубже
+        }
 
         $this->addChildSafe($ad, 'Address', Setting::where('key', 'contact_address')->value('value') ?: 'Москва');
         
@@ -141,8 +144,8 @@ class AvitoFeedService
         $this->addChildSafe($ad, 'Description', $description);
 
         // Цена: минимальная среди активных вариаций или цена товара
-        $price = $this->getMinPrice($good);
-        $this->addChildSafe($ad, 'Price', (int)$price);
+        $price = (int)$this->getMinPrice($good);
+        $this->addChildSafe($ad, 'Price', $price);
 
         // Изображения (только от основного товара)
         $images = $ad->addChild('Images');
@@ -154,7 +157,8 @@ class AvitoFeedService
 
         $this->addChildSafe($ad, 'Condition', 'Новое');
         $this->addChildSafe($ad, 'ListingFee', 'Package'); 
-        $this->addChildSafe($ad, 'ContactMethod', 'ByPhone'); 
+        $this->addChildSafe($ad, 'ContactMethod', 'ByPhoneAndMessage'); 
+        $this->addChildSafe($ad, 'AdType', 'Товар приобретен на продажу');
     }
 
     /**
@@ -207,13 +211,46 @@ class AvitoFeedService
     protected function getImages($good)
     {
         $urls = [];
-        $images = $good->images;
-
         $base = rtrim($this->baseUrl, '/');
 
-        foreach ($images as $img) {
-            $path = ltrim($img->file_path, '/');
-            $urls[] = $base . '/' . $path;
+        // Если есть вариации, собираем картинки из всех вариаций
+        if ($good->variations->count() > 0) {
+            foreach ($good->variations as $variation) {
+                if ($variation->is_active && $variation->images) {
+                    foreach ($variation->images as $img) {
+                        $path = ltrim($img->file_path ?? $img->url, '/');
+                        if ($path) {
+                            $url = $base . '/' . $path;
+                            if (!in_array($url, $urls)) {
+                                $urls[] = $url;
+                            }
+                        }
+                        if (count($urls) >= 10) break 2;
+                    }
+                }
+            }
+        }
+
+        // Если картинок из вариаций нет или их меньше 10, добавляем из основного товара
+        if (count($urls) < 10) {
+            foreach ($good->images as $img) {
+                $path = ltrim($img->file_path ?? $img->url, '/');
+                if ($path) {
+                    $url = $base . '/' . $path;
+                    if (!in_array($url, $urls)) {
+                        $urls[] = $url;
+                    }
+                }
+                if (count($urls) >= 10) break;
+            }
+        }
+
+        // Если всё ещё нет изображений, берем логотип сайта как заглушку
+        if (empty($urls)) {
+            $logo = Setting::where('key', 'site_logo')->value('value');
+            if ($logo) {
+                $urls[] = $base . '/' . ltrim($logo, '/');
+            }
         }
 
         return $urls;
