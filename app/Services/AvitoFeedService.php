@@ -46,7 +46,8 @@ class AvitoFeedService
                         'variations', 
                         'variations.images', 
                         'variations.attributeValues', 
-                        'variations.attributeValues.attribute'
+                        'variations.attributeValues.attribute',
+                        'properties'
                     ])
                     ->get();
             } else {
@@ -58,7 +59,8 @@ class AvitoFeedService
                     'variations', 
                     'variations.images', 
                     'variations.attributeValues', 
-                    'variations.attributeValues.attribute'
+                    'variations.attributeValues.attribute',
+                    'properties'
                 ]);
             }
 
@@ -97,7 +99,7 @@ class AvitoFeedService
         $this->addChildSafe($ad, 'Id', "g_{$good->id}");
 
         // Категория Авито из маппинга (с поиском по родителям)
-        $avitoCategory = 'Хобби и отдых > Спорт и отдых';
+        $avitoCategory = 'Спорт и отдых';
         $category = $good->categories->first();
 
         while ($category) {
@@ -108,26 +110,34 @@ class AvitoFeedService
             $category = $category->parent;
         }
 
-        // Разделяем путь категории Авито
+        // Разделяем путь категории Авито (формат: "Хобби и отдых > Спорт и отдых > Зимний спорт > ...")
         $parts = array_map('trim', explode('>', $avitoCategory));
-        
-        // Безопасная проверка: "Спорт и отдых" не может быть верхним уровнем (Category)
-        if (isset($parts[0]) && $parts[0] === 'Спорт и отдых') {
-            array_unshift($parts, 'Хобби и отдых');
+
+        // Определяем Category — это ВТОРОЙ уровень дерева Авито (не корневой "Хобби и отдых")
+        // Допустимые верхние категории: Спорт и отдых, Охота и рыбалка, Велосипеды, Музыкальные инструменты, и т.д.
+        // Если путь начинается с корневого уровня (Хобби и отдых, Личные вещи, и т.д.) — пропускаем его
+        $topLevelRoots = [
+            'Хобби и отдых', 'Личные вещи', 'Для дома и дачи', 'Электроника',
+            'Готовый бизнес и оборудование', 'Транспорт', 'Недвижимость',
+            'Услуги', 'Работа', 'Животные', 'Подработка'
+        ];
+
+        if (count($parts) >= 2 && in_array($parts[0], $topLevelRoots)) {
+            // Пропускаем корневой уровень — Category берём из parts[1]
+            $categoryValue = $parts[1];
+            $subParts = array_slice($parts, 2);
+        } else {
+            // Путь уже начинается с допустимой категории
+            $categoryValue = $parts[0];
+            $subParts = array_slice($parts, 1);
         }
 
-        $this->addChildSafe($ad, 'Category', $parts[0] ?? 'Хобби и отдых');
-        if (isset($parts[1]))
-            $this->addChildSafe($ad, 'GoodsCategory', $parts[1]);
-        
-        // Для некоторых категорий GoodsType и ProductType могут быть сдвинуты
-        // Пытаемся заполнить максимально подробно
-        if (isset($parts[2]))
-            $this->addChildSafe($ad, 'GoodsType', $parts[2]);
-        if (isset($parts[3]))
-            $this->addChildSafe($ad, 'ProductType', $parts[3]);
-        if (isset($parts[4]) && !isset($parts[3])) {
-             // Мало ли, вдруг там еще глубже
+        $this->addChildSafe($ad, 'Category', $categoryValue);
+
+        // Подкатегория → GoodsSubType (если есть)
+        if (!empty($subParts)) {
+            // Берём самый глубокий (leaf) элемент как GoodsSubType
+            $this->addChildSafe($ad, 'GoodsSubType', end($subParts));
         }
 
         // ГЕО: берем из основного контакта
@@ -138,18 +148,14 @@ class AvitoFeedService
             $address = $mainAddress->address_short ?: $mainAddress->address;
             
             // Очистка адреса от HTML и лишней информации
-            $address = strip_tags($address);
+            $address = strip_tags($address ?? '');
             $address = str_replace('&nbsp;', ' ', $address);
             
             // Если есть "Часы работы", берем всё до них
             if (mb_stripos($address, 'Часы работы') !== false) {
-                $parts = explode('Часы работы', $address);
-                $address = trim($parts[0], " \t\n\r\0\x0B. -");
+                $addressParts = explode('Часы работы', $address);
+                $address = trim($addressParts[0], " \t\n\r\0\x0B. -");
             }
-
-            // Если есть "ст.м." (метро), тоже можно попробовать очистить для Авито, 
-            // но Авито обычно само справляется, если есть координаты.
-            // На всякий случай просто убедимся, что строка не слишком "замусорена".
 
             $this->addChildSafe($ad, 'Address', trim($address));
             
@@ -163,8 +169,9 @@ class AvitoFeedService
             $this->addChildSafe($ad, 'Address', Setting::where('key', 'contact_address')->value('value') ?: 'Москва');
         }
         
-        // Заголовок без вариаций
-        $this->addChildSafe($ad, 'Title', $good->name);
+        // Заголовок — Avito ограничивает 50 символами
+        $title = mb_substr($good->name, 0, 50);
+        $this->addChildSafe($ad, 'Title', $title);
 
         // Описание с форматированием
         $description = $this->formatDescription($good);
@@ -174,7 +181,7 @@ class AvitoFeedService
         $price = (int)$this->getMinPrice($good);
         $this->addChildSafe($ad, 'Price', $price);
 
-        // Изображения (только от основного товара)
+        // Изображения
         $images = $ad->addChild('Images');
         $allImages = $this->getImages($good);
         foreach ($allImages as $imgUrl) {
@@ -182,10 +189,47 @@ class AvitoFeedService
             $image->addAttribute('url', $imgUrl);
         }
 
+        // Бренд
+        $brand = $good->brands->first();
+        if ($brand && !empty($brand->name)) {
+            $this->addChildSafe($ad, 'Brand', $brand->name);
+        } else {
+            $this->addChildSafe($ad, 'Brand', 'Без бренда');
+        }
+
+        // Динамические параметры (например, VehicleType для Велосипедов)
+        // Берем из карточки товара те характеристики, которые названы по-английски или с префиксом Avito:
+        if ($good->relationLoaded('properties') && $good->properties) {
+            foreach ($good->properties as $property) {
+                // Пытаемся получить строковое значение свойства
+                $value = null;
+                if (isset($property->property_value) && isset($property->property_value->value)) {
+                    $value = $property->property_value->value;
+                } elseif (isset($property->pivot) && isset($property->pivot->value)) {
+                    $value = $property->pivot->value;
+                }
+
+                if ($value !== null && $value !== '') {
+                    $propName = trim($property->name);
+                    
+                    // 1. Если Имя свойства строго на английском (например: VehicleType, SportType)
+                    if (preg_match('/^[A-Z][a-zA-Z0-9]*$/', $propName)) {
+                        $this->addChildSafe($ad, $propName, $value);
+                    }
+                    // 2. Если есть префикс "Avito: " (например: "Avito: VehicleType")
+                    elseif (str_starts_with($propName, 'Avito:')) {
+                        $tagName = trim(substr($propName, 6));
+                        if (preg_match('/^[a-zA-Z0-9_]+$/', $tagName)) {
+                            $this->addChildSafe($ad, $tagName, $value);
+                        }
+                    }
+                }
+            }
+        }
+
         $this->addChildSafe($ad, 'Condition', 'Новое');
-        $this->addChildSafe($ad, 'ListingFee', 'Package'); 
-        $this->addChildSafe($ad, 'ContactMethod', 'ByPhoneAndMessage'); 
         $this->addChildSafe($ad, 'AdType', 'Товар приобретен на продажу');
+        $this->addChildSafe($ad, 'ContactMethod', 'ByPhoneAndMessage');
     }
 
     /**
