@@ -8,6 +8,7 @@ use App\Models\Shop\PropertyValue as ShopPropertyValue;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 
 class ShopPropertyValuesController extends Controller
@@ -252,6 +253,144 @@ class ShopPropertyValuesController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка удаления значения: '.$e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Объединить значения характеристик
+     */
+    public function merge(Request $request, $propertyId): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'ids' => 'required|array|min:2',
+                'ids.*' => 'integer|exists:shop_property_values,id',
+                'new_value' => 'required|string|max:255',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors(),
+                ], 422);
+            }
+
+            $sourceIds = $request->get('ids');
+            $newValueName = trim($request->get('new_value'));
+
+            DB::beginTransaction();
+
+            // 1. Найти или создать целевое значение
+            $targetValue = ShopPropertyValue::where('property_id', $propertyId)
+                ->where('value', $newValueName)
+                ->first();
+
+            if (! $targetValue) {
+                // Берем настройки первого из объединяемых значений (цвет и т.д.)
+                $firstSource = ShopPropertyValue::find($sourceIds[0]);
+                $targetValue = ShopPropertyValue::create([
+                    'property_id' => $propertyId,
+                    'value' => $newValueName,
+                    'color' => $firstSource->color,
+                    'sort_order' => $firstSource->sort_order,
+                    'is_active' => true,
+                ]);
+            }
+
+            // 2. Обновить все товары, где используются старые значения
+            foreach ($sourceIds as $sourceId) {
+                if ($sourceId == $targetValue->id) {
+                    continue;
+                }
+
+                // Находим все записи в shop_good_properties с этим sourceId
+                $relations = DB::table('shop_good_properties')
+                    ->where('property_id', $propertyId)
+                    ->where('shop_property_value_id', $sourceId)
+                    ->get();
+
+                foreach ($relations as $rel) {
+                    // Проверяем, есть ли у этого же товара (good_id или variation_id) уже targetValue
+                    $query = DB::table('shop_good_properties')
+                        ->where('property_id', $propertyId)
+                        ->where('shop_property_value_id', $targetValue->id);
+
+                    if ($rel->good_id) {
+                        $query->where('good_id', $rel->good_id);
+                    } else {
+                        $query->whereNull('good_id');
+                    }
+
+                    $exists = $query->exists();
+
+                    if (! $exists) {
+                        // Если нет - обновляем на новое
+                        DB::table('shop_good_properties')
+                            ->where('id', $rel->id)
+                            ->update(['shop_property_value_id' => $targetValue->id]);
+                    } else {
+                        // Если есть - просто удаляем старую связь
+                        DB::table('shop_good_properties')
+                            ->where('id', $rel->id)
+                            ->delete();
+                    }
+                }
+
+                // 3. Удалить старое значение (если это не целевое)
+                ShopPropertyValue::where('id', $sourceId)->delete();
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Значения успешно объединены',
+                'target_value' => [
+                    'id' => $targetValue->id,
+                    'value' => $targetValue->value,
+                ],
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Ошибка объединения значений характеристик: '.$e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка объединения: '.$e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить статистику перед объединением
+     */
+    public function mergeStats(Request $request, $propertyId): JsonResponse
+    {
+        try {
+            $ids = $request->get('ids', []);
+            if (empty($ids)) {
+                return response()->json(['success' => true, 'count' => 0]);
+            }
+
+            $count = DB::table('shop_good_properties')
+                ->where('property_id', $propertyId)
+                ->whereIn('shop_property_value_id', $ids)
+                ->distinct()
+                ->count('good_id');
+
+            return response()->json([
+                'success' => true,
+                'count' => $count,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Ошибка получения статистики объединения: '.$e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения статистики: '.$e->getMessage(),
             ], 500);
         }
     }

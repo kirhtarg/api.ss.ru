@@ -2090,6 +2090,8 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::get('/', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'index']);
                     Route::post('/', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'store']);
                     Route::post('/check', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'check']);
+                    Route::post('/merge', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'merge']);
+                    Route::post('/merge-stats', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'mergeStats']);
 
                     // Специфичные маршруты должны быть перед общими с параметрами
                     Route::get('/{valueId}/goods-count', [\App\Http\Controllers\Admin\ShopPropertyValuesController::class, 'getGoodsCount']);
