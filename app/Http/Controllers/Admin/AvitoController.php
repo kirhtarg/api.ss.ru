@@ -22,6 +22,9 @@ class AvitoController extends Controller
     {
         $settings = Setting::where('group', 'avito')->get()->pluck('value', 'key');
 
+        // Получаем характеристики для маппинга
+        $shopProperties = \App\Models\ShopProperty::orderBy('name')->get();
+
         // Получаем дерево категорий для маппинга
         $categories = ShopCategory::whereNull('parent_id')
             ->with(['children' => function ($query) {
@@ -40,6 +43,7 @@ class AvitoController extends Controller
             'data' => [
                 'settings' => $settings,
                 'categories' => $categories,
+                'shop_properties' => $shopProperties,
                 'history' => $history,
             ]
         ]);
@@ -77,12 +81,36 @@ class AvitoController extends Controller
 
         $setting = Setting::where('key', 'avito_category_mapping')->first();
         if ($setting) {
-            $setting->update(['value' => $request->mapping]);
+            $setting->update(['value' => json_encode($request->mapping, JSON_UNESCAPED_UNICODE)]);
         }
         else {
             Setting::create([
                 'key' => 'avito_category_mapping',
-                'value' => $request->mapping,
+                'value' => json_encode($request->mapping, JSON_UNESCAPED_UNICODE),
+                'group' => 'avito'
+            ]);
+        }
+
+        return response()->json(['success' => true]);
+    }
+
+    /**
+     * Обновить сопоставление характеристик с тегами Авито
+     */
+    public function updatePropertyMapping(Request $request)
+    {
+        $request->validate([
+            'mapping' => 'required|array'
+        ]);
+
+        $setting = Setting::where('key', 'avito_property_mapping')->first();
+        if ($setting) {
+            $setting->update(['value' => json_encode($request->mapping, JSON_UNESCAPED_UNICODE)]);
+        }
+        else {
+            Setting::create([
+                'key' => 'avito_property_mapping',
+                'value' => json_encode($request->mapping, JSON_UNESCAPED_UNICODE),
                 'group' => 'avito'
             ]);
         }

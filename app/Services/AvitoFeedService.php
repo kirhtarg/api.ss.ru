@@ -12,12 +12,16 @@ class AvitoFeedService
 {
     protected $baseUrl;
     protected $mapping;
+    protected $propertyMapping;
 
     public function __construct()
     {
         $this->baseUrl = config('app.frontend_url', env('FRONTEND_URL', ''));
         $mappingJson = Setting::where('key', 'avito_category_mapping')->value('value');
         $this->mapping = is_array($mappingJson) ? $mappingJson : (json_decode($mappingJson, true) ?: []);
+
+        $propMappingJson = Setting::where('key', 'avito_property_mapping')->value('value');
+        $this->propertyMapping = is_array($propMappingJson) ? $propMappingJson : (json_decode($propMappingJson, true) ?: []);
     }
 
     /**
@@ -63,6 +67,19 @@ class AvitoFeedService
                     'properties'
                 ]);
             }
+
+            $valueIds = [];
+            foreach ($goods as $g) {
+                if ($g->relationLoaded('properties')) {
+                    foreach ($g->properties as $p) {
+                        if (isset($p->pivot->shop_property_value_id)) {
+                            $valueIds[] = $p->pivot->shop_property_value_id;
+                        }
+                    }
+                }
+            }
+            $valueIds = array_unique($valueIds);
+            $this->propertyValuesMap = \App\Models\Shop\PropertyValue::whereIn('id', $valueIds)->pluck('value', 'id')->toArray();
 
             foreach ($goods as $good) {
                 $this->addAd($xml, $good);
@@ -203,20 +220,28 @@ class AvitoFeedService
             foreach ($good->properties as $property) {
                 // Пытаемся получить строковое значение свойства
                 $value = null;
-                if (isset($property->property_value) && isset($property->property_value->value)) {
-                    $value = $property->property_value->value;
-                } elseif (isset($property->pivot) && isset($property->pivot->value)) {
-                    $value = $property->pivot->value;
+                if (isset($property->pivot->shop_property_value_id)) {
+                    $valId = $property->pivot->shop_property_value_id;
+                    $value = $this->propertyValuesMap[$valId] ?? null;
                 }
 
                 if ($value !== null && $value !== '') {
                     $propName = trim($property->name);
                     
-                    // 1. Если Имя свойства строго на английском (например: VehicleType, SportType)
+                    // 1. Свойство замаплено в интерфейсе
+                    if (isset($this->propertyMapping[$property->id]) && !empty($this->propertyMapping[$property->id])) {
+                        $tagName = trim($this->propertyMapping[$property->id]);
+                        if (preg_match('/^[a-zA-Z0-9_]+$/', $tagName)) {
+                            $this->addChildSafe($ad, $tagName, $value);
+                            continue; // Переходим к следующему свойству
+                        }
+                    }
+
+                    // 2. Если Имя свойства строго на английском (например: VehicleType, SportType)
                     if (preg_match('/^[A-Z][a-zA-Z0-9]*$/', $propName)) {
                         $this->addChildSafe($ad, $propName, $value);
                     }
-                    // 2. Если есть префикс "Avito: " (например: "Avito: VehicleType")
+                    // 3. Если есть префикс "Avito: " (например: "Avito: VehicleType")
                     elseif (str_starts_with($propName, 'Avito:')) {
                         $tagName = trim(substr($propName, 6));
                         if (preg_match('/^[a-zA-Z0-9_]+$/', $tagName)) {
@@ -229,7 +254,7 @@ class AvitoFeedService
 
         $this->addChildSafe($ad, 'Condition', 'Новое');
         $this->addChildSafe($ad, 'AdType', 'Товар приобретен на продажу');
-        $this->addChildSafe($ad, 'ContactMethod', 'ByPhoneAndMessage');
+        $this->addChildSafe($ad, 'ContactMethod', 'По телефону и в сообщениях');
     }
 
     /**
@@ -274,6 +299,17 @@ class AvitoFeedService
     {
         $allowedTags = '<p><br><strong><em><ul><ol><li>';
         $desc = strip_tags($good->description ?? '', $allowedTags);
+        $brief = strip_tags($good->brief_description ?? '', $allowedTags);
+        
+        $fullDesc = '';
+        if ($brief) {
+            $fullDesc .= $brief;
+            if ($desc) {
+                $fullDesc .= "<br><br>" . $desc;
+            }
+        } else {
+            $fullDesc = $desc;
+        }
         
         $extra = "";
         if ($good->sku) {
@@ -295,7 +331,7 @@ class AvitoFeedService
             }
         }
         
-        return $extra ? ($extra . "<br>" . $desc) : $desc;
+        return $extra ? ($extra . "<br><br>" . $fullDesc) : $fullDesc;
     }
 
     protected function addCData(\SimpleXMLElement $node, $name, $value)

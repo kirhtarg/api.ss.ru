@@ -1518,6 +1518,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/settings', [\App\Http\Controllers\Admin\AvitoController::class, 'updateSettings']);
             Route::post('/mapping', [\App\Http\Controllers\Admin\AvitoController::class, 'updateMapping']);
             Route::post('/status', [\App\Http\Controllers\Admin\AvitoController::class, 'updateSettings']);
+            Route::post('/property-mapping', [\App\Http\Controllers\Admin\AvitoController::class, 'updatePropertyMapping']);
             Route::get('/suggest', [\App\Http\Controllers\Admin\AvitoController::class, 'suggestMapping']);
             Route::post('/generate', [\App\Http\Controllers\Admin\AvitoController::class, 'generateNow']);
             Route::get('/tree', [\App\Http\Controllers\Admin\AvitoController::class, 'getTree']);
