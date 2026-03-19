@@ -20,11 +20,13 @@ class Property extends Model
         'sort_order',
         'description',
         'property_type',
+        'show_on_site',
     ];
 
     protected $casts = [
         'property_type' => 'string',
         'sort_order' => 'integer',
+        'show_on_site' => 'boolean',
     ];
 
     protected static function boot()

@@ -638,7 +638,7 @@ class ShopGoodsController extends Controller
                 },
                 'properties' => function ($query) {
                     // Поддержка обеих схем pivot: shop_property_value_id и/или value
-                    $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug')
+                    $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug', 'shop_properties.show_on_site')
                         ->withPivot(['shop_property_value_id']);
                 },
                 'categories' => function ($query) {
@@ -1213,7 +1213,7 @@ class ShopGoodsController extends Controller
                     $query->whereNull('variation_id')->orderBy('sort_order');
                 },
                 'properties' => function ($query) {
-                    $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug')
+                    $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug', 'shop_properties.show_on_site')
                         ->withPivot((function () {
                             $fields = ['shop_property_value_id'];
                             if (\Illuminate\Support\Facades\Schema::hasColumn('shop_good_properties', 'value')) {
@@ -1466,7 +1466,7 @@ class ShopGoodsController extends Controller
                     $query->orderBy('sort_order');
                 },
                 'properties' => function ($query) {
-                    $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug')
+                    $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug', 'shop_properties.show_on_site')
                         ->withPivot((function () {
                             $fields = ['shop_property_value_id'];
                             if (\Illuminate\Support\Facades\Schema::hasColumn('shop_good_properties', 'value')) {
@@ -1598,7 +1598,7 @@ class ShopGoodsController extends Controller
                     $query->whereNull('variation_id')->orderBy('sort_order');
                 },
                 'properties' => function ($query) {
-                    $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug')
+                    $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug', 'shop_properties.show_on_site')
                         ->withPivot((function () {
                             $fields = ['shop_property_value_id'];
                             if (\Illuminate\Support\Facades\Schema::hasColumn('shop_good_properties', 'value')) {

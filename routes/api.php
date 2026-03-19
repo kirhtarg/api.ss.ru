@@ -2084,6 +2084,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::delete('/{property}/force', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'forceDestroy']);
 
                 Route::put('/{property}', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'update']);
+                Route::post('/{property}/toggle-show-on-site', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'toggleShowOnSite']);
                 Route::delete('/{property}', [\App\Http\Controllers\Admin\Shop\PropertyController::class, 'destroy']);
 
                 // Значения свойств

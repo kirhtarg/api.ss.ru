@@ -15,11 +15,17 @@ class PropertyController extends Controller
     /**
      * Получить список всех свойств
      */
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
         try {
-            $properties = Property::with('values')
-                ->orderBy('name')
+            $query = Property::with('values');
+
+            if ($request->has('search')) {
+                $search = $request->input('search');
+                $query->where('name', 'like', "%{$search}%");
+            }
+
+            $properties = $query->orderBy('name')
                 ->get();
 
             // Добавляем счетчики товаров для каждой характеристики
@@ -116,6 +122,7 @@ class PropertyController extends Controller
                     'property_type' => $request->property_type,
                     'sort_order' => 0,
                     'slug' => $slug, // Явно указываем slug, чтобы избежать дубликатов
+                    'show_on_site' => $request->input('show_on_site', true),
                 ]);
             } else {
                 // Если свойство существует, обновляем его название на нормализованное (если оно отличается)
@@ -229,6 +236,7 @@ class PropertyController extends Controller
                 'name' => $normalizedName,
                 'description' => $request->description,
                 'property_type' => $request->property_type,
+                'show_on_site' => $request->input('show_on_site', $property->show_on_site),
             ]);
 
             // Обновляем значения для типа "выбор"
@@ -432,6 +440,29 @@ class PropertyController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка привязки категорий: '.$e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Переключить флаг "Показывать на сайте"
+     */
+    public function toggleShowOnSite(Property $property): JsonResponse
+    {
+        try {
+            $property->update([
+                'show_on_site' => !$property->show_on_site
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Статус отображения изменен',
+                'show_on_site' => $property->show_on_site
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка переключения статуса: '.$e->getMessage(),
             ], 500);
         }
     }
