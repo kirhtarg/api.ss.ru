@@ -996,6 +996,7 @@ class ShopOrdersController extends Controller
             $validator = Validator::make($request->all(), [
                 'payed' => 'required|boolean',
                 'bonus_points' => 'nullable|integer|min:0',
+                'bonus_action' => 'nullable|string|in:accrual,revocation,return,spending',
                 'comment' => 'nullable|string|max:2000',
             ]);
 
@@ -1038,58 +1039,79 @@ class ShopOrdersController extends Controller
             // Работа с бонусами только для зарегистрированных пользователей
             if ($order->user_id && $bonusPoints > 0) {
                 $userBonus = \App\Models\UserBonus::getOrCreateForUser($order->user_id);
+                $bonusAction = $request->get('bonus_action', $newPayedStatus ? 'accrual' : 'revocation');
 
                 if ($newPayedStatus) {
-                    // Меняем статус на ОПЛАЧЕНО - начисляем бонусы
-                    $userBonus->addPoints(
-                        $bonusPoints,
-                        "Начисление бонусов за оплату заказа #{$order->order_number}",
-                        $order->id
-                    );
-                } else {
-                    // Меняем статус на НЕ ОПЛАЧЕНО - списываем бонусы
-                    // Проверяем, достаточно ли бонусов для списания
-                    if ($userBonus->points < $bonusPoints) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Недостаточно бонусных баллов для списания. У пользователя: '.$userBonus->points.', требуется: '.$bonusPoints,
-                        ], 422);
-                    }
-
-                    // Ищем транзакцию начисления бонусов за этот заказ
-                    $earnTransaction = \App\Models\UserBonusTransaction::where('user_id', $order->user_id)
-                        ->where('order_id', $order->id)
-                        ->where('type', 'earn')
-                        ->where('points', '>', 0)
-                        ->first();
-
-                    if ($earnTransaction) {
-                        // Создаем транзакцию возврата (refund)
-                        $userBonus->transactions()->create([
-                            'type' => 'refund',
-                            'points' => -$bonusPoints,
-                            'description' => "Возврат бонусов за отмену оплаты заказа #{$order->order_number}",
-                            'order_id' => $order->id,
-                            'metadata' => ['original_transaction_id' => $earnTransaction->id],
-                        ]);
-
-                        // Уменьшаем бонусы
-                        $userBonus->points -= $bonusPoints;
-                        $userBonus->total_spent += $bonusPoints;
-                        $userBonus->save();
+                    // Меняем статус на ОПЛАЧЕНО
+                    if ($bonusAction === 'spending') {
+                        // Списание бонусов (например, повторное после отмены)
+                        $userBonus->spendPoints(
+                            $bonusPoints,
+                            "Списание бонусов при подтверждении оплаты заказа #{$order->order_number}",
+                            $order->id
+                        );
                     } else {
-                        // Если транзакции нет, просто списываем через spendPoints
-                        try {
-                            $userBonus->spendPoints(
-                                $bonusPoints,
-                                "Списание бонусов за отмену оплаты заказа #{$order->order_number}",
-                                $order->id
-                            );
-                        } catch (\Exception $e) {
-                            return response()->json([
-                                'success' => false,
-                                'message' => 'Ошибка списания бонусов: '.$e->getMessage(),
-                            ], 422);
+                        // Начисление бонусов
+                        $userBonus->addPoints(
+                            $bonusPoints,
+                            "Начисление бонусов за оплату заказа #{$order->order_number}",
+                            $order->id
+                        );
+                    }
+                } else {
+                    // Меняем статус на НЕ ОПЛАЧЕНО
+                    if ($bonusAction === 'return') {
+                        // ВОЗВРАТ списанных бонусов (прибавляем к балансу)
+                        $userBonus->addPoints(
+                            $bonusPoints,
+                            "Возврат списанных бонусов при отмене оплаты заказа #{$order->order_number}",
+                            $order->id
+                        );
+                    } else {
+                        // ОТЗЫВ начисленных бонусов (списываем с баланса)
+                        $pointsToRevoke = min($userBonus->points, $bonusPoints);
+                        
+                        if ($pointsToRevoke > 0) {
+                            // Ищем транзакцию начисления бонусов за этот заказ
+                            $earnTransaction = \App\Models\UserBonusTransaction::where('user_id', $order->user_id)
+                                ->where('order_id', $order->id)
+                                ->where('type', 'earn')
+                                ->where('points', '>', 0)
+                                ->first();
+
+                            if ($earnTransaction) {
+                                // Создаем транзакцию возврата (refund)
+                                $userBonus->transactions()->create([
+                                    'type' => 'refund',
+                                    'points' => -$pointsToRevoke,
+                                    'description' => "Возврат бонусов за отмену оплаты заказа #{$order->order_number}" . ($pointsToRevoke < $bonusPoints ? " (списано частично: {$pointsToRevoke} из {$bonusPoints})" : ""),
+                                    'order_id' => $order->id,
+                                    'metadata' => [
+                                        'original_transaction_id' => $earnTransaction->id,
+                                        'requested_points' => $bonusPoints,
+                                        'actual_points' => $pointsToRevoke
+                                    ],
+                                ]);
+
+                                // Уменьшаем бонусы
+                                $userBonus->points -= $pointsToRevoke;
+                                $userBonus->total_spent += $pointsToRevoke;
+                                $userBonus->save();
+                            } else {
+                                // Если транзакции нет, просто списываем через spendPoints
+                                try {
+                                    $userBonus->spendPoints(
+                                        $pointsToRevoke,
+                                        "Списание бонусов за отмену оплаты заказа #{$order->order_number}" . ($pointsToRevoke < $bonusPoints ? " (списано частично: {$pointsToRevoke} из {$bonusPoints})" : ""),
+                                        $order->id
+                                    );
+                                } catch (\Exception $e) {
+                                    return response()->json([
+                                        'success' => false,
+                                        'message' => 'Ошибка списания бонусов: '.$e->getMessage(),
+                                    ], 422);
+                                }
+                            }
                         }
                     }
                 }

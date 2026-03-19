@@ -1567,6 +1567,95 @@ class ShopGoodsController extends Controller
     }
 
     /**
+     * Клонировать товар
+     */
+    public function clone(Request $request, $id): JsonResponse
+    {
+        $originalGood = ShopGood::with(['categories', 'brands', 'tags', 'properties', 'variations.attributeValues'])->findOrFail($id);
+
+        $validator = Validator::make($request->all(), [
+            'name' => 'required|string|max:255',
+            'sku' => 'required|string|max:255|unique:shop_goods,sku',
+            'clone_variations' => 'boolean',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            // Создаем клон основного товара
+            $newGood = $originalGood->replicate(['slug']);
+            $newGood->name = $request->input('name');
+            $newGood->sku = $request->input('sku');
+            $newGood->slug = Str::slug($newGood->name);
+            
+            // Если такой slug уже есть, добавляем суффикс
+            $slugCount = ShopGood::where('slug', 'like', $newGood->slug . '%')->count();
+            if ($slugCount > 0) {
+                $newGood->slug .= '-' . ($slugCount + 1);
+            }
+            
+            $newGood->save();
+
+            // Клонируем связи
+            $newGood->categories()->attach($originalGood->categories->pluck('id'));
+            $newGood->brands()->attach($originalGood->brands->pluck('id'));
+            $newGood->tags()->attach($originalGood->tags->pluck('id'));
+
+            // Клонируем свойства через pivot
+            foreach ($originalGood->properties as $property) {
+                $newGood->properties()->attach($property->id, [
+                    'shop_property_value_id' => $property->pivot->shop_property_value_id,
+                ]);
+            }
+
+            // Клонируем вариации, если запрошено
+            if ($request->boolean('clone_variations')) {
+                foreach ($originalGood->variations as $variation) {
+                    $newVariation = $variation->replicate(['good_id']);
+                    $newVariation->good_id = $newGood->id;
+                    $newVariation->sku = $variation->sku . '-copy-' . $newGood->id; // Генерируем временный SKU для вариации
+                    $newVariation->save();
+
+                    // Клонируем атрибуты вариации
+                    if ($variation->attributeValues) {
+                        $newVariation->attributeValues()->attach($variation->attributeValues->pluck('id'));
+                    }
+                }
+            }
+
+            // Аудит
+            $this->logAudit($newGood, 'cloned', $originalGood->id, $newGood->toArray());
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Товар успешно склонирован',
+                'data' => [
+                    'id' => $newGood->id,
+                    'name' => $newGood->name,
+                ],
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка клонирования товара: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * Получить товар по ID
      */
     public function show($id): JsonResponse
