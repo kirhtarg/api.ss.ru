@@ -58,10 +58,12 @@ class ShopPropertiesController extends Controller
 
                 // Фильтруем только привязанные свойства (без фильтрации по наличию товаров)
                 $propertiesQuery = Property::where('is_active', true)
+                    ->where('show_on_site', true)
                     ->whereIn('id', $propertyIds);
             } else {
                 // Для обычного запроса фильтруем по наличию товаров
                 $propertiesQuery = Property::where('is_active', true)
+                    ->where('show_on_site', true)
                     ->whereHas('goodProperties', function ($query) use ($goodsIds) {
                         $query->whereIn('good_id', $goodsIds);
                     });
@@ -108,6 +110,7 @@ class ShopPropertiesController extends Controller
                         'name' => $property->name,
                         'slug' => $property->slug,
                         'property_type' => $property->property_type,
+                        'show_on_site' => (bool)$property->show_on_site,
                         'values' => $values,
                         'count' => count($values), // Добавляем счетчик значений
                     ];
@@ -149,6 +152,14 @@ class ShopPropertiesController extends Controller
 
             // Если запрашиваются значения для категории, получаем все значения свойства
             if ($onlyCategoryProperties && $request->filled('categories')) {
+                // Если характеристика скрыта - возвращаем пустой результат
+                if (!$property->show_on_site) {
+                    return response()->json([
+                        'success' => true,
+                        'data' => [],
+                    ]);
+                }
+
                 $categoryIds = is_array($request->categories)
                     ? $request->categories
                     : explode(',', $request->categories);
@@ -188,7 +199,7 @@ class ShopPropertiesController extends Controller
             }
 
             // Старая логика: возвращаем только значения, которые есть в товарах
-            if ($goodsIds->isEmpty()) {
+            if ($goodsIds->isEmpty() || !$property->show_on_site) {
                 return response()->json([
                     'success' => true,
                     'data' => [],

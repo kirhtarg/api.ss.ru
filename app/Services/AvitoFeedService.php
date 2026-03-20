@@ -13,6 +13,7 @@ class AvitoFeedService
     protected $baseUrl;
     protected $mapping;
     protected $propertyMapping;
+    protected $tags;
 
     public function __construct()
     {
@@ -22,6 +23,9 @@ class AvitoFeedService
 
         $propMappingJson = Setting::where('key', 'avito_property_mapping')->value('value');
         $this->propertyMapping = is_array($propMappingJson) ? $propMappingJson : (json_decode($propMappingJson, true) ?: []);
+
+        $tagsJson = Setting::where('key', 'avito_tags')->value('value');
+        $this->tags = is_array($tagsJson) ? $tagsJson : (json_decode($tagsJson, true) ?: []);
     }
 
     /**
@@ -255,6 +259,42 @@ class AvitoFeedService
         $this->addChildSafe($ad, 'Condition', 'Новое');
         $this->addChildSafe($ad, 'AdType', 'Товар приобретен на продажу');
         $this->addChildSafe($ad, 'ContactMethod', 'По телефону и в сообщениях');
+
+        // Применяем постоянные теги
+        if (!empty($this->tags)) {
+            foreach ($this->tags as $tag) {
+                if (!($tag['apply'] ?? false)) continue;
+                
+                $tagName = $tag['name'] ?? null;
+                $tagType = $tag['type'] ?? 'value';
+                
+                // Для обычных тегов имя обязательно, для сложных XML - нет (т.к. имя внутри XML)
+                if ($tagType !== 'complex' && !$tagName) continue;
+
+                if ($tagType === 'value' && isset($tag['value'])) {
+                    $this->addChildSafe($ad, $tagName, $tag['value']);
+                } 
+                elseif ($tagType === 'group' && !empty($tag['options'])) {
+                    $node = $ad->addChild($tagName);
+                    foreach ($tag['options'] as $option) {
+                        if (!empty($option)) {
+                            $this->addChildSafe($node, 'Option', $option);
+                        }
+                    }
+                }
+                elseif ($tagType === 'complex' && !empty($tag['complex_xml'])) {
+                    try {
+                        $fragment = new \SimpleXMLElement($tag['complex_xml']);
+                        $toDom = dom_import_simplexml($ad);
+                        $fromDom = dom_import_simplexml($fragment);
+                        $toDom->appendChild($toDom->ownerDocument->importNode($fromDom, true));
+                    } catch (\Exception $e) {
+                        $identifier = $tagName ?: 'unnamed complex tag';
+                        \Illuminate\Support\Facades\Log::error("AvitoFeedService: Failed to add complex tag {$identifier}: " . $e->getMessage());
+                    }
+                }
+            }
+        }
     }
 
     /**

@@ -2714,17 +2714,11 @@ class BulkGoodsImportController extends Controller
                     ->where('file_path', 'like', '/images/shop/goods/excel_%')
                     ->get();
             } else {
-                // Привязка к товару: удаляем изображения товара и всех его вариаций из Excel
-                $variationIds = $good->variations()->pluck('id')->toArray();
+                // Привязка к товару: удаляем ТОЛЬКО изображения самого товара из Excel (НЕ трогаем вариации)
                 $existingExcelImages = ShopGoodImage::where('good_id', $good->id)
+                    ->whereNull('variation_id')
                     ->where('file_path', 'like', '/images/shop/goods/excel_%')
                     ->get();
-                if (! empty($variationIds)) {
-                    $existingVariationExcelImages = ShopGoodImage::whereIn('variation_id', $variationIds)
-                        ->where('file_path', 'like', '/images/shop/goods/excel_%')
-                        ->get();
-                    $existingExcelImages = $existingExcelImages->merge($existingVariationExcelImages);
-                }
             }
 
             foreach ($existingExcelImages as $existingImage) {

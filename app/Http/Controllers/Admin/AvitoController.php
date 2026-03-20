@@ -38,6 +38,10 @@ class AvitoController extends Controller
             ->limit(10)
             ->get();
 
+        // Получаем постоянные теги
+        $tagsJson = Setting::where('key', 'avito_tags')->value('value');
+        $tags = is_string($tagsJson) ? json_decode($tagsJson, true) : ($tagsJson ?: []);
+
         return response()->json([
             'success' => true,
             'data' => [
@@ -45,8 +49,33 @@ class AvitoController extends Controller
                 'categories' => $categories,
                 'shop_properties' => $shopProperties,
                 'history' => $history,
+                'tags' => $tags,
             ]
         ]);
+    }
+    
+    /**
+     * Обновить постоянные теги
+     */
+    public function updateTags(Request $request)
+    {
+        $request->validate([
+            'tags' => 'required|array'
+        ]);
+
+        $setting = Setting::where('key', 'avito_tags')->first();
+        if ($setting) {
+            $setting->update(['value' => json_encode($request->tags, JSON_UNESCAPED_UNICODE)]);
+        }
+        else {
+            Setting::create([
+                'key' => 'avito_tags',
+                'value' => json_encode($request->tags, JSON_UNESCAPED_UNICODE),
+                'group' => 'avito'
+            ]);
+        }
+
+        return response()->json(['success' => true]);
     }
 
     /**

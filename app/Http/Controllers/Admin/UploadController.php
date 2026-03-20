@@ -380,7 +380,7 @@ class UploadController extends Controller
             // Создаем уникальное имя файла с учетом товара/вариации
             $goodPart = $goodId ? "good_{$goodId}" : 'good_0';
             $varPart = $variationId ? "var_{$variationId}" : 'var_0';
-            $baseFilename = "excel_{$goodPart}_{$varPart}_".pathinfo($filename, PATHINFO_FILENAME);
+            $baseFilename = "excel_{$goodPart}_{$varPart}_".pathinfo($filename, PATHINFO_FILENAME)."_".substr(md5(uniqid()), 0, 8);
 
             // Всегда обрабатываем изображения с белым фоном для PNG/GIF/WebP
             if ($isTransparentFormat) {
