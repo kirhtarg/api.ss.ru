@@ -14,6 +14,8 @@ class AvitoFeedService
     protected $mapping;
     protected $propertyMapping;
     protected $tags;
+    protected $descBefore;
+    protected $descAfter;
 
     public function __construct()
     {
@@ -26,6 +28,9 @@ class AvitoFeedService
 
         $tagsJson = Setting::where('key', 'avito_tags')->value('value');
         $this->tags = is_array($tagsJson) ? $tagsJson : (json_decode($tagsJson, true) ?: []);
+
+        $this->descBefore = Setting::where('key', 'avito_description_before')->value('value') ?: '';
+        $this->descAfter = Setting::where('key', 'avito_description_after')->value('value') ?: '';
     }
 
     /**
@@ -371,7 +376,17 @@ class AvitoFeedService
             }
         }
         
-        return $extra ? ($extra . "<br><br>" . $fullDesc) : $fullDesc;
+        $result = $extra ? ($extra . "<br><br>" . $fullDesc) : $fullDesc;
+        
+        // Добавляем глобальные обертки
+        if ($this->descBefore) {
+            $result = $this->descBefore . "<br><br>" . $result;
+        }
+        if ($this->descAfter) {
+            $result = $result . "<br><br>" . $this->descAfter;
+        }
+        
+        return $result;
     }
 
     protected function addCData(\SimpleXMLElement $node, $name, $value)

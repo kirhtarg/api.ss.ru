@@ -42,6 +42,10 @@ class AvitoController extends Controller
         $tagsJson = Setting::where('key', 'avito_tags')->value('value');
         $tags = is_string($tagsJson) ? json_decode($tagsJson, true) : ($tagsJson ?: []);
 
+        // Получаем обертки описания
+        $descBefore = Setting::where('key', 'avito_description_before')->value('value') ?: '';
+        $descAfter = Setting::where('key', 'avito_description_after')->value('value') ?: '';
+        
         return response()->json([
             'success' => true,
             'data' => [
@@ -50,6 +54,8 @@ class AvitoController extends Controller
                 'shop_properties' => $shopProperties,
                 'history' => $history,
                 'tags' => $tags,
+                'description_before' => $descBefore,
+                'description_after' => $descAfter,
             ]
         ]);
     }
@@ -87,6 +93,8 @@ class AvitoController extends Controller
             'avito_client_id' => 'nullable|string',
             'avito_api_key' => 'nullable|string',
             'avito_feed_enabled' => 'nullable|boolean',
+            'avito_description_before' => 'nullable|string',
+            'avito_description_after' => 'nullable|string',
         ]);
 
         foreach ($settings as $key => $value) {
