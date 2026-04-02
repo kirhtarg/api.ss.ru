@@ -626,9 +626,12 @@ class ShopGoodsController extends Controller
 
             $query = ShopGood::with([
                 'variations' => function ($query) {
-                    $query->where('is_active', true)->with(['images' => function ($q) {
-                        $q->orderBy('sort_order');
-                    }]);
+                    $query->where('is_active', true)->with([
+                        'images' => function ($q) {
+                            $q->orderBy('sort_order');
+                        },
+                        'attributeValues.attribute'
+                    ]);
                 },
                 'images' => function ($query) {
                     $query->whereNull('variation_id')->orderBy('sort_order');
@@ -1041,7 +1044,32 @@ class ShopGoodsController extends Controller
             } else {
                 $sortBy = $request->input('sort_by', 'created_at');
                 $sortOrder = $request->input('sort_order', 'desc');
-                $query->orderBy($sortBy, $sortOrder);
+                
+                if ($sortBy === 'price') {
+                    // Сложная логика вычисления эффективной цены (учитываем демпинг, акции и вариации)
+                    $effectivePriceSql = "(CASE 
+                        WHEN EXISTS (SELECT 1 FROM shop_good_variations WHERE good_id = shop_goods.id AND is_active = 1) THEN
+                            (SELECT MIN(
+                                CASE 
+                                    WHEN show_demping = 1 AND demping_price > 0 THEN demping_price
+                                    WHEN sale_price > 0 AND sale_price < price THEN sale_price
+                                    ELSE price
+                                END
+                             ) FROM shop_good_variations WHERE good_id = shop_goods.id AND is_active = 1)
+                        ELSE
+                            (CASE 
+                                WHEN show_demping = 1 AND demping_price > 0 THEN demping_price
+                                WHEN sale_price > 0 AND sale_price < price THEN sale_price
+                                ELSE price
+                            END)
+                    END)";
+                    
+                    // Товары с ценой 0 всегда выводим в конце при любой сортировке
+                    $query->orderByRaw("(CASE WHEN ($effectivePriceSql > 0) THEN 0 ELSE 1 END) ASC");
+                    $query->orderByRaw("$effectivePriceSql $sortOrder");
+                } else {
+                    $query->orderBy($sortBy, $sortOrder);
+                }
             }
 
             // Фильтрация по остаткам (shop_show_good_mode)
@@ -1078,7 +1106,21 @@ class ShopGoodsController extends Controller
             }
 
             // Добавляем image_url, is_favorite и обрабатываем характеристики для обратной совместимости
-            $goods->getCollection()->transform(function ($good) use ($user) {
+            $collection = $goods->getCollection();
+            
+            // Собираем все ID значений свойств для оптимизации (один запрос для получения всех строк)
+            $propertyValueIds = $collection->flatMap(function ($good) {
+                return $good->properties->pluck('pivot.shop_property_value_id');
+            })->unique()->filter()->toArray();
+            
+            $propertyValuesMap = [];
+            if (! empty($propertyValueIds)) {
+                $propertyValuesMap = \App\Models\Shop\PropertyValue::whereIn('id', $propertyValueIds)
+                    ->pluck('value', 'id')
+                    ->toArray();
+            }
+
+            $collection->transform(function ($good) use ($user, $propertyValuesMap) {
                 if ($good->images && $good->images->count() > 0) {
                     // Ищем главное изображение
                     $mainImage = $good->images->where('is_main', true)->first();
@@ -1104,6 +1146,34 @@ class ShopGoodsController extends Controller
                         ->exists();
                 }
                 $good->is_favorite = $isFavorite;
+
+                // Прикрепляем текстовые значения характеристик напрямую к объекту property
+                // Это решит проблему с асинхронной загрузкой на фронтенде
+                $good->properties->each(function ($prop) use ($propertyValuesMap) {
+                    $valId = $prop->pivot->shop_property_value_id ?? null;
+                    if ($valId && isset($propertyValuesMap[$valId])) {
+                        $prop->value = $propertyValuesMap[$valId];
+                    }
+                });
+
+                // Форматируем данные вариаций для SsGoodCard.vue (приводим к ожидаемому формату свойств)
+                if ($good->relationLoaded('variations')) {
+                    $good->variations->each(function ($variation) {
+                        if ($variation->relationLoaded('attributeValues')) {
+                            $variation->properties = $variation->attributeValues->map(function ($av) {
+                                return [
+                                    'id' => $av->id,
+                                    'value' => $av->value,
+                                    'property' => $av->relationLoaded('attribute') && $av->attribute ? [
+                                        'id' => $av->attribute->id,
+                                        'name' => $av->attribute->name,
+                                        'slug' => $av->attribute->slug,
+                                    ] : null,
+                                ];
+                            })->toArray();
+                        }
+                    });
+                }
 
                 return $good;
             });

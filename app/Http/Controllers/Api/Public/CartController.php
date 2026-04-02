@@ -1007,23 +1007,31 @@ class CartController extends Controller
 
                 $itemTotal = $finalPrice * $quantity;
 
-                // Обновляем поля товара
-                $newItem = $item;
-                $newItem['price'] = $dbPrice;
-                $newItem['sale_price'] = $dbSalePrice;
-                $newItem['demping_price'] = $dbDempingPrice;
-                $newItem['final_price'] = $finalPrice; // Добавляем финальную цену
-                $newItem['show_demping'] = $showDemping;
-                $newItem['total'] = $itemTotal;
-
                 // Гарантированно получаем и сохраняем параметры вариации
-                if (! empty($item['variation_id'])) {
-                    $variation = ShopGoodVariation::find($item['variation_id']);
+                $variationName = null;
+                $variationSku = null;
+                if (! empty($variationId)) {
+                    $variation = ShopGoodVariation::find($variationId);
                     if ($variation) {
-                        $newItem['variation_name'] = $this->formatVariationProperties($variation);
-                        $newItem['variation_sku'] = $variation->sku ?? $newItem['variation_sku'] ?? null;
+                        $variationName = $this->formatVariationProperties($variation);
+                        $variationSku = $variation->sku;
                     }
                 }
+
+                // Обновляем поля товара (используем array_merge для сохранения всех данных из фронтенда)
+                $newItem = array_merge($item, [
+                    'good_name' => $item['good_name'] ?? $item['name'] ?? $good->name,
+                    'good_sku' => $item['good_sku'] ?? $good->sku,
+                    'variation_name' => $item['variation_name'] ?? $variationName,
+                    'variation_sku' => $item['variation_sku'] ?? $variationSku,
+                    'price' => $finalPrice, // Final price for display (matches other controllers)
+                    'base_price' => $dbPrice,
+                    'sale_price' => $dbSalePrice,
+                    'demping_price' => $dbDempingPrice,
+                    'final_price' => $finalPrice,
+                    'show_demping' => $showDemping,
+                    'total' => $itemTotal,
+                ]);
 
                 $finalItems[] = $newItem;
                 $recalculatedSubtotal += $itemTotal;
@@ -1403,12 +1411,12 @@ class CartController extends Controller
                 })->join(', ');
             }
 
-            // Если нет атрибутов, возвращаем название вариации или пустую строку
-            return $variation->name ?? '';
+            // Если нет атрибутов, возвращаем пустую строку (ПОЛНОСТЬЮ исключаем variation->name)
+            return '';
 
         } catch (\Exception $e) {
-            // В случае ошибки возвращаем название вариации или пустую строку
-            return $variation->name ?? '';
+            // В случае ошибки возвращаем пустую строку
+            return '';
         }
     }
 
@@ -1460,8 +1468,10 @@ class CartController extends Controller
             if ($item->variation_id && $item->relationLoaded('variation') && $item->variation) {
                 $variationName = $this->formatVariationProperties($item->variation);
             } elseif ($item->variation_name) {
-                // Fallback для старых элементов корзины
-                $variationName = $item->variation_name;
+                // Если имя не содержит технического слова "Variation", используем его
+                if (stripos($item->variation_name, 'Variation') === false) {
+                    $variationName = $item->variation_name;
+                }
             }
 
             // Определяем актуальные данные из связей (good/variation)
@@ -1473,6 +1483,8 @@ class CartController extends Controller
             $freshRemoteStock = '';
             $freshFastRemoteStock = '';
 
+            $freshAttributes = []; // Характеристики для фронтенда
+
             if ($item->variation_id && $item->relationLoaded('variation') && $item->variation) {
                 $freshRegularPrice = $item->variation->price;
                 $freshSalePrice = $item->variation->sale_price;
@@ -1482,6 +1494,23 @@ class CartController extends Controller
                 $freshStockQuantity = $item->variation->stock_quantity ?? 0;
                 $freshRemoteStock = $item->variation->remote_stock_quantity ?? '';
                 $freshFastRemoteStock = $item->variation->fast_remote_stock_quantity ?? '';
+
+                // Загружаем атрибуты для фронтенда
+                $dbAttributes = DB::table('shop_variation_attributes_values as vav')
+                    ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                    ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                    ->where('vav.variation_id', $item->variation_id)
+                    ->select('a.name as attr_name', 'av.value as attr_value')
+                    ->get();
+                
+                if ($dbAttributes->count() > 0) {
+                    $freshAttributes = $dbAttributes->map(function($a) {
+                        return [
+                            'name' => $a->attr_name,
+                            'value' => $a->attr_value
+                        ];
+                    })->toArray();
+                }
             } elseif ($item->relationLoaded('good') && $item->good) {
                 $freshRegularPrice = $item->good->price;
                 $freshSalePrice = $item->good->sale_price;
@@ -1525,6 +1554,7 @@ class CartController extends Controller
                 'total' => \App\Helpers\PriceHelper::roundPrice($item->total), // Total пересчитается на фронте или при следующем сохранении, но пока отдаем как есть
                 'good_name' => $item->good_name,
                 'variation_name' => $variationName,
+                'attributes' => $freshAttributes, // Характеристики для чекаута
                 'good_sku' => $item->good_sku,
                 'good_image' => $item->good_image,
                 'good_slug' => $item->good ? $item->good->slug : '',

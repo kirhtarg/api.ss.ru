@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\ShopOrder;
 use App\Models\ShopGood;
 use App\Models\ShopGoodVariation;
+use App\Models\ShopOrderLog;
 use App\Services\OrderCalculationService;
 use App\Services\NotificationService;
 use Illuminate\Http\JsonResponse;
@@ -68,13 +69,38 @@ class ShopOrdersController extends Controller
                 if ($good) {
                     $calcResult = $this->calculationService->calculateFinalUnitPrice($good, $variation, $user);
                     $bonus = $this->calculationService->calculateItemBonuses($calcResult);
-                    
+
+                    $variationName = null;
+                    $variationSku = null;
+                    if ($variation) {
+                        $variationName = $variation->name;
+                        if (empty($variationName)) {
+                            $attributes = DB::table('shop_variation_attributes_values as vav')
+                                ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                                ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                                ->where('vav.variation_id', $variation->id)
+                                ->select('a.name as attr_name', 'av.value as attr_value')
+                                ->get();
+
+                            if ($attributes->count() > 0) {
+                                $variationName = $attributes->map(function ($a) {
+                                    return $a->attr_name.': '.$a->attr_value;
+                                })->implode(', ');
+                            }
+                        }
+                        $variationSku = $variation->sku;
+                    }
+
                     $orderItems[] = array_merge($item, [
+                        'good_name' => $item['good_name'] ?? $item['name'] ?? $good->name,
+                        'good_sku' => $item['good_sku'] ?? $good->sku,
+                        'variation_name' => $variationName,
+                        'variation_sku' => $variationSku,
                         'price' => $calcResult['final_price'],
                         'base_price' => $calcResult['base_price'],
                         'sale_price' => $calcResult['sale_price'],
                         'bonus_points' => $bonus,
-                        'total' => $calcResult['final_price'] * $item['quantity']
+                        'total' => $calcResult['final_price'] * $item['quantity'],
                     ]);
                     
                     $calculatedSubtotal += $calcResult['final_price'] * $item['quantity'];
@@ -150,6 +176,9 @@ class ShopOrdersController extends Controller
                     // Не прерываем создание заказа, если ошибка с промокодом
                 }
             }
+
+            $userName = auth()->check() ? auth()->user()->name : null;
+            ShopOrderLog::logOrderCreated($order->id, $userName ?? $request->get('customer_name', 'Покупатель'), ShopOrderLog::SECTION_ORDERS, $order->order_number);
 
             DB::commit();
 

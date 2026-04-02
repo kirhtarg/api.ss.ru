@@ -149,31 +149,36 @@ class ShopOrder extends Model
             // Если variation_name или variation_sku отсутствуют, пробуем достать из БД
             $variationName = $item['variation_name'] ?? null;
             $variationSku = $item['variation_sku'] ?? null;
+            $attributes = $item['attributes'] ?? null;
 
-            if ($variationId && (empty($variationName) || empty($variationSku))) {
+            // Если название содержит техническое "Variation", считаем его отсутствующим, чтобы принудительно обновить из БД
+            if ($variationName && stripos($variationName, 'Variation') !== false) {
+                $variationName = null;
+            }
+
+            if ($variationId && (empty($variationName) || empty($variationSku) || empty($attributes))) {
                 try {
                     $variation = DB::table('shop_good_variations')->where('id', (int)$variationId)->first();
                     if ($variation) {
-                        if (empty($variationName)) {
-                            // Используем вспомогательный метод контроллера или аналогичную логику
-                            // Для простоты здесь сформируем базовую строку, если нет сохраненной
-                            $variationName = $variation->name ?? null;
+                        // ПОЛНОСТЬЮ исключаем variation->name, используем ТОЛЬКО атрибуты
+                        $dbAttributes = DB::table('shop_variation_attributes_values as vav')
+                            ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                            ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                            ->where('vav.variation_id', $variation->id)
+                            ->select('a.name as attr_name', 'av.value as attr_value')
+                            ->get();
+                        
+                        if ($dbAttributes->count() > 0) {
+                            $variationName = $dbAttributes->map(function ($a) {
+                                return $a->attr_name.': '.$a->attr_value;
+                            })->implode(', ');
                             
-                            // Попробуем получить атрибуты если имени нет
-                            if (empty($variationName)) {
-                                $attributes = DB::table('shop_variation_attributes_values as vav')
-                                    ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
-                                    ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
-                                    ->where('vav.variation_id', $variation->id)
-                                    ->select('a.name as attr_name', 'av.value as attr_value')
-                                    ->get();
-                                
-                                if ($attributes->count() > 0) {
-                                    $variationName = $attributes->map(function($a) {
-                                        return $a->attr_name . ': ' . $a->attr_value;
-                                    })->implode(', ');
-                                }
-                            }
+                            $attributes = $dbAttributes->map(function($a) {
+                                return [
+                                    'name' => $a->attr_name,
+                                    'value' => $a->attr_value
+                                ];
+                            })->toArray();
                         }
                         if (empty($variationSku)) {
                             $variationSku = $variation->sku ?? null;
@@ -244,6 +249,7 @@ class ShopOrder extends Model
                 'variation_id' => $variationId,
                 'variation_name' => $variationName,
                 'variation_sku' => $variationSku,
+                'attributes' => $attributes,
                 'quantity' => $quantity,
                 'price' => $price,
                 'base_price' => $item['base_price'] ?? $price,

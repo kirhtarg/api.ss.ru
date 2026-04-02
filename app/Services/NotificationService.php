@@ -6,6 +6,7 @@ use App\Models\ShopNotificationChannel;
 use App\Models\ShopOrder;
 use App\Models\ShopPreorder;
 use App\Models\SiteMessage;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class NotificationService
@@ -125,21 +126,27 @@ class NotificationService
      */
     public function notifyOrderCreated(ShopOrder $order): void
     {
-        if ($order->metadata && is_array($order->metadata) && ! empty($order->metadata['order_created_notified'])) {
+        // Атомарно помечаем заказ как уведомлённый через UPDATE с условием.
+        // Если два запроса приходят одновременно (вебхук + SuccessURL),
+        // только один получит affected=1 и отправит уведомление.
+        $affected = DB::table('shop_orders')
+            ->where('id', $order->id)
+            ->where(function ($q) {
+                $q->whereNull('metadata')
+                    ->orWhereRaw("JSON_EXTRACT(metadata, '$.order_created_notified') IS NULL")
+                    ->orWhereRaw("JSON_EXTRACT(metadata, '$.order_created_notified') = false");
+            })
+            ->update(['metadata' => DB::raw("JSON_SET(COALESCE(metadata, '{}'), '$.order_created_notified', true)")]);
+
+        if ($affected === 0) {
             return;
         }
+
+        $order->refresh();
 
         $this->sendNotification('order_created', [
             'order' => $order,
         ]);
-
-        $metadata = $order->metadata ?? [];
-        if (! is_array($metadata)) {
-            $metadata = [];
-        }
-        $metadata['order_created_notified'] = true;
-        $order->metadata = $metadata;
-        $order->save();
     }
 
     /**

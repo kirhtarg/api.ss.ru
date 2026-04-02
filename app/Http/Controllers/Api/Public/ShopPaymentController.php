@@ -8,6 +8,7 @@ use App\Models\ShopGood;
 use App\Models\ShopOrder;
 use App\Models\ShopOrderStatus;
 use App\Models\ShopPaymentMethod;
+use App\Models\ShopOrderLog;
 use App\Models\ShopPaymentStatus; // Добавляем использование нового сервиса
 use App\Models\ShopPaymentTransaction;
 use App\Services\TbankPaymentService;
@@ -83,13 +84,15 @@ class ShopPaymentController extends Controller
                             'payed' => true,
                         ]);
                     }
-                    try {
-                        app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
-                    } catch (\Exception $e) {
-                        \Log::error('T-Bank return: failed to send order_created notification', [
-                            'order_id' => $order->id ?? null,
-                            'error' => $e->getMessage(),
-                        ]);
+                    if ($order->wasChanged('payed')) {
+                        try {
+                            app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+                        } catch (\Exception $e) {
+                            \Log::error('T-Bank return: failed to send order_created notification', [
+                                'order_id' => $order->id ?? null,
+                                'error' => $e->getMessage(),
+                            ]);
+                        }
                     }
                     $q = 'id='.$order->id.'&status=tbank_success';
                     if (! empty($rawStatus)) {
@@ -596,6 +599,65 @@ class ShopPaymentController extends Controller
         return response()->json([], 200);
     }
 
+    protected function enrichItemsWithDetails(array $items): array
+    {
+        $enrichedItems = [];
+        foreach ($items as $item) {
+            try {
+                $good = \App\Models\ShopGood::find($item['good_id'] ?? null);
+                if (! $good) {
+                    $enrichedItems[] = $item;
+
+                    continue;
+                }
+
+                $variation = isset($item['variation_id']) ? \App\Models\ShopGoodVariation::find($item['variation_id']) : null;
+                
+                $variationName = null;
+                $variationSku = $item['variation_sku'] ?? null;
+                $attributes = null;
+
+                if ($variation) {
+                    $dbAttributes = \DB::table('shop_variation_attributes_values as vav')
+                        ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                        ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                        ->where('vav.variation_id', $variation->id)
+                        ->select('a.name as attr_name', 'av.value as attr_value')
+                        ->get();
+
+                    if ($dbAttributes->count() > 0) {
+                        $variationName = $dbAttributes->map(function ($a) {
+                            return $a->attr_name.': '.$a->attr_value;
+                        })->implode(', ');
+                        
+                        $attributes = $dbAttributes->map(function($a) {
+                            return [
+                                'name' => $a->attr_name,
+                                'value' => $a->attr_value
+                            ];
+                        })->toArray();
+                    }
+                    if (empty($variationSku)) {
+                        $variationSku = $variation->sku;
+                    }
+                }
+
+                $enrichedItems[] = array_merge($item, [
+                    'good_name' => $item['good_name'] ?? ($item['name'] ?? $good->name),
+                    'good_sku' => $item['good_sku'] ?? $good->sku,
+                    'variation_name' => $variationName ?? null,
+                    'variation_sku' => $variationSku ?? ($item['variation_sku'] ?? null),
+                    'attributes' => $attributes ?? ($item['attributes'] ?? null),
+                ]);
+            } catch (\Exception $e) {
+                Log::error('Error enriching item: '.$e->getMessage());
+                $enrichedItems[] = $item;
+            }
+        }
+
+        return $enrichedItems;
+    }
+
     protected function createOrderFromTransaction(ShopPaymentTransaction $transaction, string $gateway = ''): ?ShopOrder
     {
         try {
@@ -611,7 +673,7 @@ class ShopPaymentController extends Controller
                 'customer_name' => $orderData['customer_name'] ?? '',
                 'customer_email' => $orderData['customer_email'] ?? '',
                 'customer_phone' => $orderData['customer_phone'] ?? null,
-                'items' => $orderData['items'] ?? [],
+                'items' => $this->enrichItemsWithDetails($orderData['items'] ?? []),
                 'subtotal' => $orderData['subtotal'] ?? 0,
                 'discount_amount' => $orderData['total_discount_amount'] ?? 0,
                 'total_amount' => $orderData['total_amount'] ?? 0,
@@ -657,7 +719,7 @@ class ShopPaymentController extends Controller
                 'customer_name' => $orderData['customer_name'] ?? '',
                 'customer_email' => $orderData['customer_email'] ?? '',
                 'customer_phone' => $orderData['customer_phone'] ?? null,
-                'items' => $orderData['items'] ?? [],
+                'items' => $this->enrichItemsWithDetails($orderData['items'] ?? []),
                 'subtotal' => $orderData['subtotal'] ?? 0,
                 'discount_amount' => $orderData['total_discount_amount'] ?? 0,
                 'total_amount' => $orderData['total_amount'] ?? 0,
@@ -756,13 +818,18 @@ class ShopPaymentController extends Controller
             $recalculatedSubtotal = 0;
             $recalculatedBaseSubtotal = 0;
 
-            foreach ($orderData['items'] as &$item) {
+            $finalItems = [];
+            foreach ($orderData['items'] as $item) {
                 $sellingPrice = 0;
                 $basePrice = 0;
                 $good = ShopGood::find($item['good_id'] ?? null);
                 if (! $good) {
                     continue;
                 }
+
+                $variationName = null;
+                $variationSku = null;
+                $attributes = null;
 
                 if (isset($item['variation_id']) && $item['variation_id']) {
                     $variation = \App\Models\ShopGoodVariation::find($item['variation_id']);
@@ -776,6 +843,29 @@ class ShopPaymentController extends Controller
                         } else {
                             $sellingPrice = $basePrice;
                         }
+
+                        // ПОЛНОСТЬЮ исключаем variation->name, используем ТОЛЬКО атрибуты
+                        $dbAttributes = \DB::table('shop_variation_attributes_values as vav')
+                            ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                            ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                            ->where('vav.variation_id', $variation->id)
+                            ->select('a.name as attr_name', 'av.value as attr_value')
+                            ->get();
+
+                        if ($dbAttributes->count() > 0) {
+                            $variationName = $dbAttributes->map(function ($a) {
+                                return $a->attr_name.': '.$a->attr_value;
+                            })->implode(', ');
+
+                            $attributes = $dbAttributes->map(function($a) {
+                                return [
+                                    'name' => $a->attr_name,
+                                    'value' => $a->attr_value
+                                ];
+                            })->toArray();
+                        }
+
+                        $variationSku = $variation->sku;
                     }
                 } else {
                     $basePrice = $good->price;
@@ -794,13 +884,23 @@ class ShopPaymentController extends Controller
                 $roundedSellingPrice = \App\Helpers\PriceHelper::roundPrice((float) $sellingPrice);
                 $qty = (int) ($item['quantity'] ?? 1);
 
-                $item['price'] = $roundedBasePrice;
-                $item['sale_price'] = $roundedSellingPrice;
-                $item['total'] = $roundedSellingPrice * $qty;
+                $finalItems[] = array_merge($item, [
+                    'good_name' => $item['good_name'] ?? $item['name'] ?? $good->name,
+                    'good_sku' => $item['good_sku'] ?? $good->sku,
+                    'variation_name' => $variationName ?? null,
+                    'variation_sku' => $variationSku ?? $item['variation_sku'] ?? null,
+                    'attributes' => $attributes ?? $item['attributes'] ?? null,
+                    'price' => $roundedSellingPrice, // Final price for display (matches ShopOrdersController)
+                    'base_price' => $roundedBasePrice,
+                    'sale_price' => $roundedSellingPrice,
+                    'total' => $roundedSellingPrice * $qty,
+                ]);
+
                 $recalculatedSubtotal += $roundedSellingPrice * $qty;
                 $recalculatedBaseSubtotal += $roundedBasePrice * $qty;
             }
-            unset($item);
+
+            $orderData['items'] = $finalItems;
 
             // Overwrite subtotal with server-calculated value (selling price subtotal)
             $orderData['subtotal'] = $recalculatedSubtotal;
@@ -929,6 +1029,10 @@ class ShopPaymentController extends Controller
                 'status_id' => ShopOrderStatus::where('name', 'pending')->value('id'),
             ]);
 
+            if ($order && $order->id) {
+                ShopOrderLog::logOrderCreated($order->id, $orderData['customer_name'] ?? 'Покупатель', ShopOrderLog::SECTION_ORDERS, $order->order_number);
+            }
+
             if (! $order || ! $order->id) {
                 return response()->json(['success' => false, 'message' => 'Failed to create order'], 500);
             }
@@ -951,6 +1055,9 @@ class ShopPaymentController extends Controller
         if (! $order || ! $order->id) {
             return response()->json(['success' => false, 'message' => 'Failed to create order'], 500);
         }
+
+        // Логируем создание заказа перед инициализацией оплаты
+        ShopOrderLog::logOrderCreated($order->id, $orderData['customer_name'] ?? 'Покупатель', ShopOrderLog::SECTION_ORDERS, $order->order_number);
 
         switch ($paymentMethod->type) {
             case 'tbank_dolyame':
@@ -1055,13 +1162,42 @@ class ShopPaymentController extends Controller
                 ]);
             }
 
+            $errorMessage = $data['description'] ?? $data['message'] ?? 'ЮКасса: не удалось создать платеж';
+            if ($order) {
+                $order->update([
+                    'is_active' => false,
+                    'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка ЮКасса: '.$errorMessage),
+                ]);
+
+                ShopOrderLog::createLog($order->id, 'Ошибка инициализации оплаты', [
+                    'action_color' => '#DC2626',
+                    'comment' => "Метод: yookassa. Ошибка: " . $errorMessage,
+                    'section' => ShopOrderLog::SECTION_ORDERS,
+                    'info' => "Заказ № " . $order->order_number
+                ]);
+            }
+
             return response()->json([
                 'success' => false,
-                'message' => $data['description'] ?? 'ЮКасса: не удалось создать платеж',
+                'message' => $errorMessage,
                 'details' => $data,
             ], 400);
         } catch (\Illuminate\Http\Client\ConnectionException $e) {
             \Log::error('YooKassa connection failed: '.$e->getMessage());
+
+            if ($order) {
+                $order->update([
+                    'is_active' => false,
+                    'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка ЮКасса (связь): '.$e->getMessage()),
+                ]);
+
+                ShopOrderLog::createLog($order->id, 'Ошибка инициализации оплаты', [
+                    'action_color' => '#DC2626',
+                    'comment' => "Метод: yookassa (связь). Ошибка: " . $e->getMessage(),
+                    'section' => ShopOrderLog::SECTION_ORDERS,
+                    'info' => "Заказ № " . $order->order_number
+                ]);
+            }
 
             return response()->json([
                 'success' => false,
@@ -1070,6 +1206,20 @@ class ShopPaymentController extends Controller
             ], 502);
         } catch (\Exception $e) {
             \Log::error('YooKassa create payment failed: '.$e->getMessage());
+
+            if ($order) {
+                $order->update([
+                    'is_active' => false,
+                    'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка ЮКасса (системная): '.$e->getMessage()),
+                ]);
+
+                ShopOrderLog::createLog($order->id, 'Ошибка инициализации оплаты', [
+                    'action_color' => '#DC2626',
+                    'comment' => "Метод: yookassa (системная). Ошибка: " . $e->getMessage(),
+                    'section' => ShopOrderLog::SECTION_ORDERS,
+                    'info' => "Заказ № " . $order->order_number
+                ]);
+            }
 
             return response()->json(['success' => false, 'message' => 'ЮКасса: ошибка создания платежа'], 500);
         }
@@ -1151,10 +1301,20 @@ class ShopPaymentController extends Controller
                     'status' => 'pending',
                     'response_data' => ['message' => 'Gateway unreachable, awaiting manager approval'],
                 ]);
+                $errorMessage = 'Gateway unreachable, awaiting manager approval';
                 $order->update([
+                    'is_active' => false,
                     'payment_method_id' => $paymentMethod->id,
                     'payment_status_id' => ShopPaymentStatus::where('name', 'pending')->value('id'),
                     'payment_url' => null,
+                    'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка Т-Банк (тайм-аут): '.$errorMessage),
+                ]);
+
+                ShopOrderLog::createLog($order->id, 'Ошибка инициализации оплаты', [
+                    'action_color' => '#DC2626',
+                    'comment' => "Метод: tbank_eacq (тайм-аут). Ошибка: " . $errorMessage,
+                    'section' => ShopOrderLog::SECTION_ORDERS,
+                    'info' => "Заказ № " . $order->order_number
                 ]);
 
                 return response()->json([
@@ -1167,11 +1327,38 @@ class ShopPaymentController extends Controller
                     'bonus_points_to_use' => (int) $order->bonus_points_to_use,
                 ]);
             }
-            Log::error('handleTbankEacqPayment: T-Bank eacq payment initiation failed for order '.$order->id.': '.($paymentResult['message'] ?? 'Unknown error'), ['payment_result' => $paymentResult]);
+            $errorMessage = $paymentResult['message'] ?? 'Failed to initiate payment';
+            if ($order) {
+                $order->update([
+                    'is_active' => false,
+                    'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка Т-Банк: '.$errorMessage),
+                ]);
 
-            return response()->json(['success' => false, 'message' => $paymentResult['message'] ?? 'Failed to initiate payment'], 500);
+                ShopOrderLog::createLog($order->id, 'Ошибка инициализации оплаты', [
+                    'action_color' => '#DC2626',
+                    'comment' => "Метод: tbank_eacq. Ошибка: " . $errorMessage,
+                    'section' => ShopOrderLog::SECTION_ORDERS,
+                    'info' => "Заказ № " . $order->order_number
+                ]);
+            }
+
+            return response()->json(['success' => false, 'message' => $errorMessage], 500);
         } catch (\Exception $e) {
             Log::error('handleTbankEacqPayment: Exception during T-Bank eacq payment initiation for order '.$order->id.': '.$e->getMessage(), ['exception' => $e]);
+
+            if ($order) {
+                $order->update([
+                    'is_active' => false,
+                    'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка Т-Банк (системная): '.$e->getMessage()),
+                ]);
+
+                ShopOrderLog::createLog($order->id, 'Ошибка инициализации оплаты', [
+                    'action_color' => '#DC2626',
+                    'comment' => "Метод: tbank_eacq (системная). Ошибка: " . $e->getMessage(),
+                    'section' => ShopOrderLog::SECTION_ORDERS,
+                    'info' => "Заказ № " . $order->order_number
+                ]);
+            }
 
             return response()->json(['success' => false, 'message' => 'An error occurred during payment processing'], 500);
         }
@@ -1290,13 +1477,44 @@ class ShopPaymentController extends Controller
                 ]);
             }
 
+            $errorMessage = $data['description'] ?? 'ЮКасса: не удалось создать платеж';
+            $order = ShopOrder::where('order_number', $orderNumber)->first();
+            if ($order) {
+                $order->update([
+                    'is_active' => false,
+                    'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка ЮКасса: '.$errorMessage),
+                ]);
+
+                ShopOrderLog::createLog($order->id, 'Ошибка инициализации оплаты', [
+                    'action_color' => '#DC2626',
+                    'comment' => "Метод: yookassa (init). Ошибка: " . $errorMessage,
+                    'section' => ShopOrderLog::SECTION_ORDERS,
+                    'info' => "Заказ № " . $orderNumber
+                ]);
+            }
+
             return response()->json([
                 'success' => false,
-                'message' => $data['description'] ?? 'ЮКасса: не удалось создать платеж',
+                'message' => $errorMessage,
                 'details' => $data,
             ], 400);
         } catch (\Illuminate\Http\Client\ConnectionException $e) {
             \Log::error('YooKassa connection failed: '.$e->getMessage());
+
+            $order = ShopOrder::where('order_number', $orderNumber)->first();
+            if ($order) {
+                $order->update([
+                    'is_active' => false,
+                    'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка ЮКасса (связь): '.$e->getMessage()),
+                ]);
+
+                ShopOrderLog::createLog($order->id, 'Ошибка инициализации оплаты', [
+                    'action_color' => '#DC2626',
+                    'comment' => "Метод: yookassa (init-связь). Ошибка: " . $e->getMessage(),
+                    'section' => ShopOrderLog::SECTION_ORDERS,
+                    'info' => "Заказ № " . $orderNumber
+                ]);
+            }
 
             return response()->json([
                 'success' => false,
@@ -1305,6 +1523,21 @@ class ShopPaymentController extends Controller
             ], 502);
         } catch (\Exception $e) {
             \Log::error('YooKassa create payment failed: '.$e->getMessage());
+
+            $order = ShopOrder::where('order_number', $orderNumber)->first();
+            if ($order) {
+                $order->update([
+                    'is_active' => false,
+                    'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка ЮКасса (системная): '.$e->getMessage()),
+                ]);
+
+                ShopOrderLog::createLog($order->id, 'Ошибка инициализации оплаты', [
+                    'action_color' => '#DC2626',
+                    'comment' => "Метод: yookassa (init-системная). Ошибка: " . $e->getMessage(),
+                    'section' => ShopOrderLog::SECTION_ORDERS,
+                    'info' => "Заказ № " . $orderNumber
+                ]);
+            }
 
             return response()->json(['success' => false, 'message' => 'ЮКасса: ошибка создания платежа'], 500);
         }
@@ -1501,13 +1734,42 @@ class ShopPaymentController extends Controller
                 }
             }
 
+            $errorMessage = $data['message'] ?? 'Яндекс Пэй: не удалось создать заказ';
+            if ($order) {
+                $order->update([
+                    'is_active' => false,
+                    'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка Яндекс Пэй: '.$errorMessage),
+                ]);
+
+                ShopOrderLog::createLog($order->id, 'Ошибка инициализации оплаты', [
+                    'action_color' => '#DC2626',
+                    'comment' => "Метод: yandex_pay. Ошибка: " . $errorMessage,
+                    'section' => ShopOrderLog::SECTION_ORDERS,
+                    'info' => "Заказ № " . $order->order_number
+                ]);
+            }
+
             return response()->json([
                 'success' => false,
-                'message' => $data['message'] ?? 'Яндекс Пэй: не удалось создать заказ',
+                'message' => $errorMessage,
                 'details' => $data,
             ], 400);
         } catch (\Illuminate\Http\Client\ConnectionException $e) {
             \Log::error('Yandex Pay connection failed: '.$e->getMessage());
+
+            if ($order) {
+                $order->update([
+                    'is_active' => false,
+                    'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка Яндекс Пэй (связь): '.$e->getMessage()),
+                ]);
+
+                ShopOrderLog::createLog($order->id, 'Ошибка инициализации оплаты', [
+                    'action_color' => '#DC2626',
+                    'comment' => "Метод: yandex_pay (связь). Ошибка: " . $e->getMessage(),
+                    'section' => ShopOrderLog::SECTION_ORDERS,
+                    'info' => "Заказ № " . $order->order_number
+                ]);
+            }
 
             return response()->json([
                 'success' => false,
@@ -1516,6 +1778,20 @@ class ShopPaymentController extends Controller
             ], 502);
         } catch (\Exception $e) {
             \Log::error('Yandex Pay create order failed: '.$e->getMessage());
+
+            if ($order) {
+                $order->update([
+                    'is_active' => false,
+                    'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка Яндекс Пэй (системная): '.$e->getMessage()),
+                ]);
+
+                ShopOrderLog::createLog($order->id, 'Ошибка инициализации оплаты', [
+                    'action_color' => '#DC2626',
+                    'comment' => "Метод: yandex_pay (системная). Ошибка: " . $e->getMessage(),
+                    'section' => ShopOrderLog::SECTION_ORDERS,
+                    'info' => "Заказ № " . $order->order_number
+                ]);
+            }
 
             return response()->json(['success' => false, 'message' => 'Яндекс Пэй: ошибка создания заказа'], 500);
         }
@@ -1675,13 +1951,44 @@ class ShopPaymentController extends Controller
                 'payload' => $payload,
             ]);
 
+            $errorMessage = $data['message'] ?? 'Яндекс Пэй: не удалось создать заказ';
+            $order = ShopOrder::where('order_number', $orderNumber)->first();
+            if ($order) {
+                $order->update([
+                    'is_active' => false,
+                    'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка Яндекс Пэй: '.$errorMessage),
+                ]);
+
+                ShopOrderLog::createLog($order->id, 'Ошибка инициализации оплаты', [
+                    'action_color' => '#DC2626',
+                    'comment' => "Метод: yandex_pay (init). Ошибка: " . $errorMessage,
+                    'section' => ShopOrderLog::SECTION_ORDERS,
+                    'info' => "Заказ № " . $orderNumber
+                ]);
+            }
+
             return response()->json([
                 'success' => false,
-                'message' => $data['message'] ?? 'Яндекс Пэй: не удалось создать заказ',
+                'message' => $errorMessage,
                 'details' => $data,
             ], 400);
         } catch (\Illuminate\Http\Client\ConnectionException $e) {
             \Log::error('Yandex Pay connection failed: '.$e->getMessage());
+
+            $order = ShopOrder::where('order_number', $orderNumber)->first();
+            if ($order) {
+                $order->update([
+                    'is_active' => false,
+                    'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка Яндекс Пэй (связь): '.$e->getMessage()),
+                ]);
+
+                ShopOrderLog::createLog($order->id, 'Ошибка инициализации оплаты', [
+                    'action_color' => '#DC2626',
+                    'comment' => "Метод: yandex_pay (init-связь). Ошибка: " . $e->getMessage(),
+                    'section' => ShopOrderLog::SECTION_ORDERS,
+                    'info' => "Заказ № " . $orderNumber
+                ]);
+            }
 
             return response()->json([
                 'success' => false,
@@ -1689,7 +1996,20 @@ class ShopPaymentController extends Controller
                 'details' => $e->getMessage(),
             ], 502);
         } catch (\Exception $e) {
-            \Log::error('Yandex Pay create order failed: '.$e->getMessage());
+            $order = ShopOrder::where('order_number', $orderNumber)->first();
+            if ($order) {
+                $order->update([
+                    'is_active' => false,
+                    'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка Яндекс Пэй (системная): '.$e->getMessage()),
+                ]);
+
+                ShopOrderLog::createLog($order->id, 'Ошибка инициализации оплаты', [
+                    'action_color' => '#DC2626',
+                    'comment' => "Метод: yandex_pay (init-системная). Ошибка: " . $e->getMessage(),
+                    'section' => ShopOrderLog::SECTION_ORDERS,
+                    'info' => "Заказ № " . $orderNumber
+                ]);
+            }
 
             return response()->json(['success' => false, 'message' => 'Яндекс Пэй: ошибка создания заказа'], 500);
         }
@@ -1713,7 +2033,7 @@ class ShopPaymentController extends Controller
             $shouldBeTwoStagePay = $globalTwoStagePaySetting === '1' || $globalTwoStagePaySetting === true || $globalTwoStagePaySetting === 1;
         }
         $twoStagePaymentTypesAllowed = ['transfer', 'yandex_pay', 'yandex_split', 'yookassa', 'tbank_dolyame', 'tbank_eacq'];
-        $tbankService = new TbankPaymentService($settings); // без DOLYAMI
+        $tbankService = new TbankPaymentService($settings);
         try {
             $orderStub = new \stdClass;
             $orderStub->id = 0;
@@ -1726,9 +2046,9 @@ class ShopPaymentController extends Controller
             $orderStub->items = $orderData['items'] ?? [];
 
             $init = $tbankService->initiatePayment($orderStub);
-            if (! empty($init['success']) && ! empty($init['payment_url'])) {
+            if ($init['success'] && isset($init['payment_url'])) {
+                // Если включена двухэтапная оплата — создаём заказ и не редиректим
                 if ($shouldBeTwoStagePay && in_array($paymentMethod->type, $twoStagePaymentTypesAllowed)) {
-                    // Создаем заказ и сохраняем ссылку для последующей оплаты
                     $order = $this->createOrderFromPayload(
                         $orderData,
                         $paymentMethod->id,
@@ -1783,7 +2103,6 @@ class ShopPaymentController extends Controller
                     'ip' => $request->ip(),
                     'user_agent' => $request->userAgent(),
                 ];
-                // Кладём в кэш по двум ключам: по PaymentId (если есть) и по номеру заказа
                 $cacheKeyTx = 'payment:init:tbank_eacq:'.($init['transaction_id'] ?? $orderNumber);
                 Cache::put($cacheKeyTx, $cacheBasePayload, now()->addDays(2));
                 $cacheKeyByOrder = 'payment:init:tbank_eacq:order:'.$orderNumber;
@@ -1796,21 +2115,64 @@ class ShopPaymentController extends Controller
             }
             \Log::error('T-Bank eacq create payment failed', ['response' => $init, 'order_number' => $orderNumber]);
 
+            $errorMessage = $init['message'] ?? 'Т‑Банк: не удалось создать платеж';
+            $order = ShopOrder::where('order_number', $orderNumber)->first();
+            if ($order) {
+                $order->update([
+                    'is_active' => false,
+                    'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка Т-Банк: '.$errorMessage),
+                ]);
+
+                ShopOrderLog::createLog($order->id, 'Ошибка инициализации оплаты', [
+                    'action_color' => '#DC2626',
+                    'comment' => "Метод: tbank_eacq. Ошибка: " . $errorMessage,
+                    'section' => ShopOrderLog::SECTION_ORDERS,
+                    'info' => "Заказ № " . $orderNumber
+                ]);
+            }
+
             return response()->json([
                 'success' => false,
-                'message' => $init['message'] ?? 'Т‑Банк: не удалось создать платеж',
+                'message' => $errorMessage,
                 'details' => $init['response_data'] ?? $init,
             ], 400);
         } catch (\Illuminate\Http\Client\ConnectionException $e) {
             \Log::error('T-Bank eacq connection failed: '.$e->getMessage());
+
+            $order = ShopOrder::where('order_number', $orderNumber)->first();
+            if ($order) {
+                $order->update([
+                    'is_active' => false,
+                    'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка Т-Банк (связь): '.$e->getMessage()),
+                ]);
+
+                ShopOrderLog::createLog($order->id, 'Ошибка инициализации оплаты', [
+                    'action_color' => '#DC2626',
+                    'comment' => "Метод: tbank_eacq (связь). Ошибка: " . $e->getMessage(),
+                    'section' => ShopOrderLog::SECTION_ORDERS,
+                    'info' => "Заказ № " . $orderNumber
+                ]);
+            }
 
             return response()->json([
                 'success' => false,
                 'message' => 'Т‑Банк: ошибка подключения',
                 'details' => $e->getMessage(),
             ], 502);
-        } catch (\Exception $e) {
-            \Log::error('T-Bank eacq init exception: '.$e->getMessage(), ['trace' => $e->getTraceAsString()]);
+            $order = \App\Models\ShopOrder::where('order_number', $orderNumber)->first();
+            if ($order) {
+                $order->update([
+                    'is_active' => false,
+                    'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка Т-Банк (системная): '.$e->getMessage()),
+                ]);
+
+                ShopOrderLog::createLog($order->id, 'Ошибка инициализации оплаты', [
+                    'action_color' => '#DC2626',
+                    'comment' => "Метод: tbank_eacq (системная). Ошибка: " . $e->getMessage(),
+                    'section' => ShopOrderLog::SECTION_ORDERS,
+                    'info' => "Заказ № " . $orderNumber
+                ]);
+            }
 
             return response()->json(['success' => false, 'message' => 'Т‑Банк: внутренняя ошибка'], 500);
         }
@@ -1989,14 +2351,44 @@ class ShopPaymentController extends Controller
                     'payment_url' => $result['payment_url'] ?? null,
                 ]);
             }
-            if (! empty($result['error']) && $result['error'] === 'connection_timeout') {
+                $errorMessage = $result['message'] ?? 'connection timeout';
+                $order = ShopOrder::where('order_number', $orderNumber)->first();
+                if ($order) {
+                    $order->update([
+                        'is_active' => false,
+                        'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка Т-Банк Долями (тайм-аут): '.$errorMessage),
+                    ]);
+
+                    ShopOrderLog::createLog($order->id, 'Ошибка инициализации оплаты', [
+                        'action_color' => '#DC2626',
+                        'comment' => "Метод: tbank_dolyame (тайм-аут). Ошибка: " . $errorMessage,
+                        'section' => ShopOrderLog::SECTION_ORDERS,
+                        'info' => "Заказ № " . $orderNumber
+                    ]);
+                }
+
                 return response()->json([
                     'success' => false,
                     'message' => 'T-Bank: ошибка подключения',
-                    'details' => $result['message'] ?? 'connection timeout',
+                    'details' => $errorMessage,
                 ], 502);
-            }
             \Log::error('T-Bank create order failed', ['response' => $result, 'order_number' => $orderNumber]);
+
+            $errorMessage = $result['message'] ?? 'T-Bank: не удалось создать заказ';
+            $order = ShopOrder::where('order_number', $orderNumber)->first();
+            if ($order) {
+                $order->update([
+                    'is_active' => false,
+                    'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка Т-Банк Долями: '.$errorMessage),
+                ]);
+            }
+
+            ShopOrderLog::createLog($order ? $order->id : 0, 'Ошибка инициализации оплаты', [
+                'action_color' => '#DC2626',
+                'comment' => "Метод: tbank_dolyame. Ошибка: " . $errorMessage,
+                'section' => ShopOrderLog::SECTION_PAYMENT,
+                'info' => "Заказ № " . $orderNumber
+            ]);
 
             return response()->json([
                 'success' => false,
@@ -2006,6 +2398,21 @@ class ShopPaymentController extends Controller
         } catch (\Illuminate\Http\Client\ConnectionException $e) {
             \Log::error('T-Bank connection failed: '.$e->getMessage());
 
+            $order = ShopOrder::where('order_number', $orderNumber)->first();
+            if ($order) {
+                $order->update([
+                    'is_active' => false,
+                    'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка Т-Банк Долями (связь): '.$e->getMessage()),
+                ]);
+
+                ShopOrderLog::createLog($order->id, 'Ошибка инициализации оплаты', [
+                    'action_color' => '#DC2626',
+                    'comment' => "Метод: tbank_dolyame (связь). Ошибка: " . $e->getMessage(),
+                    'section' => ShopOrderLog::SECTION_ORDERS,
+                    'info' => "Заказ № " . $orderNumber
+                ]);
+            }
+
             return response()->json([
                 'success' => false,
                 'message' => 'T-Bank: ошибка подключения',
@@ -2013,6 +2420,21 @@ class ShopPaymentController extends Controller
             ], 502);
         } catch (\Exception $e) {
             \Log::error('T-Bank init payment exception: '.$e->getMessage(), ['trace' => $e->getTraceAsString()]);
+
+            $order = ShopOrder::where('order_number', $orderNumber)->first();
+            if ($order) {
+                $order->update([
+                    'is_active' => false,
+                    'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка Т-Банк Долями (системная): '.$e->getMessage()),
+                ]);
+
+                ShopOrderLog::createLog($order->id, 'Ошибка инициализации оплаты', [
+                    'action_color' => '#DC2626',
+                    'comment' => "Метод: tbank_dolyame (системная). Ошибка: " . $e->getMessage(),
+                    'section' => ShopOrderLog::SECTION_ORDERS,
+                    'info' => "Заказ № " . $orderNumber
+                ]);
+            }
 
             return response()->json(['success' => false, 'message' => 'T-Bank: внутренняя ошибка'], 500);
         }
@@ -2133,9 +2555,18 @@ class ShopPaymentController extends Controller
                     'response_data' => ['message' => 'Gateway unreachable, awaiting manager approval'],
                 ]);
                 $order->update([
+                    'is_active' => false,
                     'payment_method_id' => $paymentMethod->id,
                     'payment_status_id' => ShopPaymentStatus::where('name', 'pending')->value('id'),
                     'payment_url' => null,
+                    'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка Т-Банк Долями (тайм-аут): Gateway unreachable'),
+                ]);
+
+                ShopOrderLog::createLog($order->id, 'Ошибка инициализации оплаты', [
+                    'action_color' => '#DC2626',
+                    'comment' => "Метод: tbank_dolyame (тайм-аут). Ошибка: Gateway unreachable",
+                    'section' => ShopOrderLog::SECTION_ORDERS,
+                    'info' => "Заказ № " . $order->order_number
                 ]);
 
                 return response()->json([
@@ -2148,11 +2579,38 @@ class ShopPaymentController extends Controller
                     'bonus_points_to_use' => (int) $order->bonus_points_to_use,
                 ]);
             }
-            Log::error('handleTbankDolyamePayment: T-Bank payment initiation failed for order '.$order->id.': '.($paymentResult['message'] ?? 'Unknown error'), ['payment_result' => $paymentResult]);
+            $errorMessage = $paymentResult['message'] ?? 'Failed to initiate payment';
+            if ($order) {
+                $order->update([
+                    'is_active' => false,
+                    'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка Т-Банк Долями: '.$errorMessage),
+                ]);
 
-            return response()->json(['success' => false, 'message' => $paymentResult['message'] ?? 'Failed to initiate payment'], 500);
+                ShopOrderLog::createLog($order->id, 'Ошибка инициализации оплаты', [
+                    'action_color' => '#DC2626',
+                    'comment' => "Метод: tbank_dolyame. Ошибка: " . $errorMessage,
+                    'section' => ShopOrderLog::SECTION_ORDERS,
+                    'info' => "Заказ № " . $order->order_number
+                ]);
+            }
+
+            return response()->json(['success' => false, 'message' => $errorMessage], 500);
         } catch (\Exception $e) {
             Log::error('handleTbankDolyamePayment: Exception during T-Bank payment initiation for order '.$order->id.': '.$e->getMessage(), ['exception' => $e]);
+
+            if ($order) {
+                $order->update([
+                    'is_active' => false,
+                    'comment' => trim(($order->comment ? $order->comment."\n" : '').'Ошибка Т-Банк Долями (системная): '.$e->getMessage()),
+                ]);
+
+                ShopOrderLog::createLog($order->id, 'Ошибка инициализации оплаты', [
+                    'action_color' => '#DC2626',
+                    'comment' => "Метод: tbank_dolyame (системная). Ошибка: " . $e->getMessage(),
+                    'section' => ShopOrderLog::SECTION_ORDERS,
+                    'info' => "Заказ № " . $order->order_number
+                ]);
+            }
 
             return response()->json(['success' => false, 'message' => 'An error occurred during payment processing'], 500);
         }
@@ -2402,22 +2860,34 @@ class ShopPaymentController extends Controller
             $statusName = $paymentStatusMap[$newStatus];
             $statusId = ShopPaymentStatus::where('name', $statusName)->value('id');
             if ($statusId) {
-                $order->update([
-                    'payment_status_id' => $statusId,
-                    'payed' => $newStatus === 'success' ? true : false,
-                ]);
+                $updateData = ['payment_status_id' => $statusId];
+
+                if ($newStatus === 'success') {
+                    // CONFIRMED/SETTLED — окончательная оплата
+                    $updateData['payed'] = true;
+                } elseif (in_array($newStatus, ['failed', 'cancelled'])) {
+                    // Отказ или отмена — снимаем оплату только если заказ ещё не был оплачен
+                    if (!$order->payed) {
+                        $updateData['payed'] = false;
+                    }
+                }
+                // AUTHORIZED (промежуточный статус) и pending — не трогаем payed:
+                // не сбрасываем в false если уже оплачен (race condition с SuccessURL)
+
+                $order->update($updateData);
             } else {
                 Log::warning('ShopPaymentStatus with name '.$statusName.' not found.');
             }
         }
 
+        $transactionStatus = $newStatus === 'success' ? 'paid' : $newStatus;
         $transaction->update([
-            'status' => $newStatus,
+            'status' => $transactionStatus,
             'response_data' => $webhookData,
             'processed_at' => now(),
         ]);
 
-        if ($newStatus === 'success') {
+        if ($newStatus === 'success' && $order->wasChanged('payed')) {
             try {
                 app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
             } catch (\Exception $e) {

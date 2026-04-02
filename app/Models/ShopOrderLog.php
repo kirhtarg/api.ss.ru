@@ -84,11 +84,12 @@ class ShopOrderLog extends Model
     /**
      * Создать лог "Заказ создан"
      */
-    public static function logOrderCreated($orderId, $userName = null, $section = null, $orderNumber = null)
+    public static function logOrderCreated($orderId, $userName = null, $section = null, $orderNumber = null, $comment = null)
     {
         return self::createLog($orderId, 'Заказ создан', [
             'action_color' => '#16A34A', // green-600
             'user_name' => $userName,
+            'comment' => $comment,
             'section' => $section ?? self::SECTION_CHECKOUT,
             'info' => $orderNumber ? "Заказ № {$orderNumber}" : null,
         ]);
