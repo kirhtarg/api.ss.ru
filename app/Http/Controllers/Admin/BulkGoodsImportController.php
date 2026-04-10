@@ -122,6 +122,7 @@ class BulkGoodsImportController extends Controller
 
         // Получаем параметры импорта
         $nameTrimSymbol = $request->input('name_trim_symbol');
+        $naming = $request->input('images_naming', 'hash');
 
         // Фильтруем пустые строки - оставляем только товары с заполненными SKU и названием
         $goods = [];
@@ -478,7 +479,7 @@ class BulkGoodsImportController extends Controller
                         // Присваиваем existingGood только при успешном нахождении (не перезаписываем null при неудаче).
                         if ($searchByNameInVariations && $searchByFieldInVariations === 'sku') {
                             // 1) По названию в основных товарах (с учётом поставщика)
-                            if (! empty($name)) {
+                            if (! $existingGood && ! empty($name)) {
                                 $normalizedName = $this->normalizeTextForSearch($name);
                                 $foundByName = ShopGood::where('name', $normalizedName);
                                 if ($supplierName) {
@@ -515,76 +516,82 @@ class BulkGoodsImportController extends Controller
                             }
                         } else {
                             // Обычный поиск товара по duplicateFields
-                            foreach ($duplicateFields as $field) {
-                                if ($field === 'sku') {
-                                    if (! empty($sku)) {
-                                        // Если указан поставщик, сначала ищем товар этого поставщика
-                                        if ($supplierName) {
-                                            $existingGood = ShopGood::where('sku', $sku)->where('supplier', $supplierName)->first();
-                                            if ($existingGood) {
-                                                $foundByFields[] = "SKU: '{$sku}' (поставщик: {$supplierName})";
+                            if (! $existingGood) {
+                                foreach ($duplicateFields as $field) {
+                                    if ($field === 'sku') {
+                                        if (! empty($sku)) {
+                                            // Если указан поставщик, сначала ищем товар этого поставщика
+                                            if ($supplierName) {
+                                                $existingGood = ShopGood::where('sku', $sku)->where('supplier', $supplierName)->first();
+                                                if ($existingGood) {
+                                                    $foundByFields[] = "SKU: '{$sku}' (поставщик: {$supplierName})";
+                                                } else {
+                                                    // Если не найден товар этого поставщика, проверяем есть ли товар с таким SKU вообще
+                                                    $existingGoodAnySupplier = ShopGood::where('sku', $sku)->first();
+                                                    if ($existingGoodAnySupplier) {
+                                                        // Найден товар с таким SKU, но другого поставщика
+                                                        // Это специальный случай - нужно обновить остатки и изменить привязку к поставщику
+                                                        $existingGood = $existingGoodAnySupplier;
+                                                        $foundByFields[] = "SKU: '{$sku}' (изменение поставщика с '{$existingGood->supplier}' на '{$supplierName}')";
+                                                    }
+                                                }
                                             } else {
-                                                // Если не найден товар этого поставщика, проверяем есть ли товар с таким SKU вообще
-                                                $existingGoodAnySupplier = ShopGood::where('sku', $sku)->first();
-                                                if ($existingGoodAnySupplier) {
-                                                    // Найден товар с таким SKU, но другого поставщика
-                                                    // Это специальный случай - нужно обновить остатки и изменить привязку к поставщику
-                                                    $existingGood = $existingGoodAnySupplier;
-                                                    $foundByFields[] = "SKU: '{$sku}' (изменение поставщика с '{$existingGood->supplier}' на '{$supplierName}')";
+                                                // Поставщик не указан - обычный поиск
+                                                $existingGood = ShopGood::where('sku', $sku)->first();
+                                                if ($existingGood) {
+                                                    $foundByFields[] = "SKU: '{$sku}'";
                                                 }
                                             }
                                         } else {
-                                            // Поставщик не указан - обычный поиск
-                                            $existingGood = ShopGood::where('sku', $sku)->first();
-                                            if ($existingGood) {
-                                                $foundByFields[] = "SKU: '{$sku}'";
+                                            // При пустом SKU не ищем по name, если 'name' не в duplicate_fields
+                                            if (in_array('name', $duplicateFields) && ! empty($name)) {
+                                                $goodQuery = ShopGood::whereNull('sku')->where('name', $name);
+                                                if ($supplierName) {
+                                                    $goodQuery->where('supplier', $supplierName);
+                                                }
+                                                $existingGood = $goodQuery->first();
+                                                if ($existingGood) {
+                                                    $foundByFields[] = $supplierName ? "пустой SKU + название: '{$name}' (поставщик: {$supplierName})" : "пустой SKU + название: '{$name}'";
+                                                }
                                             }
                                         }
-                                    } else {
-                                        // При пустом SKU не ищем по name, если 'name' не в duplicate_fields
-                                        if (in_array('name', $duplicateFields) && ! empty($name)) {
-                                            $goodQuery = ShopGood::whereNull('sku')->where('name', $name);
+                                    } elseif ($field === 'name') {
+                                        if (! empty($name)) {
+                                            $goodQuery = ShopGood::where('name', $this->normalizeTextForSearch($name));
                                             if ($supplierName) {
                                                 $goodQuery->where('supplier', $supplierName);
                                             }
                                             $existingGood = $goodQuery->first();
                                             if ($existingGood) {
-                                                $foundByFields[] = $supplierName ? "пустой SKU + название: '{$name}' (поставщик: {$supplierName})" : "пустой SKU + название: '{$name}'";
+                                                $foundByFields[] = $supplierName ? "название: '{$name}' (поставщик: {$supplierName})" : "название: '{$name}'";
                                             }
                                         }
                                     }
-                                } elseif ($field === 'name') {
-                                    if (! empty($name)) {
-                                        $goodQuery = ShopGood::where('name', $this->normalizeTextForSearch($name));
-                                        if ($supplierName) {
-                                            $goodQuery->where('supplier', $supplierName);
-                                        }
-                                        $existingGood = $goodQuery->first();
-                                        if ($existingGood) {
-                                            $foundByFields[] = $supplierName ? "название: '{$name}' (поставщик: {$supplierName})" : "название: '{$name}'";
-                                        }
-                                    }
-                                }
 
-                                if ($existingGood) {
-                                    break; // Найден товар, прекращаем поиск
+                                    if ($existingGood) {
+                                        break; // Найден товар, прекращаем поиск
+                                    }
                                 }
                             }
                         }
 
-                // FALLBACK_FIX: Search by variation SKU if not found by name/main SKU
-                if (! $existingGood && ! empty($sku)) {
-                    \Log::debug("Fallback search by variation SKU", ["sku" => $sku]);
-                    $variationQuery = \App\Models\ShopGoodVariation::where("sku", $sku);
-                    if ($supplierName) { $variationQuery->where("supplier", $supplierName); }
-                    $foundVar = $variationQuery->first();
-                    if (! $foundVar && $supplierName) { $foundVar = \App\Models\ShopGoodVariation::where("sku", $sku)->first(); }
-                    if ($foundVar && $foundVar->good) {
-                        $existingGood = $foundVar->good;
-                        $existingVariation = $foundVar;
-                        $foundByFields[] = "variation SKU (fallback): " . $sku;
-                    }
-                }
+                        // FALLBACK_FIX: Search by variation SKU if not found by name/main SKU
+                        if (! $existingGood && ! empty($sku)) {
+                            \Log::debug('Fallback search by variation SKU', ['sku' => $sku]);
+                            $variationQuery = \App\Models\ShopGoodVariation::where('sku', $sku);
+                            if ($supplierName) {
+                                $variationQuery->where('supplier', $supplierName);
+                            }
+                            $foundVar = $variationQuery->first();
+                            if (! $foundVar && $supplierName) {
+                                $foundVar = \App\Models\ShopGoodVariation::where('sku', $sku)->first();
+                            }
+                            if ($foundVar && $foundVar->good) {
+                                $existingGood = $foundVar->good;
+                                $existingVariation = $foundVar;
+                                $foundByFields[] = 'variation SKU (fallback): '.$sku;
+                            }
+                        }
                     }
 
                     // ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: При режиме "Искать в вариациях - по названию",
@@ -677,97 +684,99 @@ class BulkGoodsImportController extends Controller
                         // Ищем товар по указанным полям (обычная логика)
                         // Специальный режим: «Поиск в вариациях» по артикулу (SKU) — 1) по названию → добавить вариацию, 2) по артикулу в основных → обновить; поставщик учитывается.
                         // Критично: присваиваем existingGood только при успешном нахождении, иначе затирается результат из блока 407-465 (найденный по артикулу в основных).
-                        if ($searchByNameInVariations && $searchByFieldInVariations === 'sku') {
-                            if (! empty($name) && ! $existingGood) {
-                                $foundByName = ShopGood::where('name', $this->normalizeTextForSearch($name));
-                                if ($supplierName) {
-                                    $foundByName->where('supplier', $supplierName);
+                        if (! $existingGood) {
+                            if ($searchByNameInVariations && $searchByFieldInVariations === 'sku') {
+                                if (! empty($name) && ! $existingGood) {
+                                    $foundByName = ShopGood::where('name', $this->normalizeTextForSearch($name));
+                                    if ($supplierName) {
+                                        $foundByName->where('supplier', $supplierName);
+                                    }
+                                    $foundByName = $foundByName->first();
+                                    if (! $foundByName && $supplierName) {
+                                        $foundByName = ShopGood::where('name', $this->normalizeTextForSearch($name))->first();
+                                    }
+                                    if ($foundByName) {
+                                        $existingGood = $foundByName;
+                                        $foundMainGoodByName = true;
+                                        $foundByFields[] = $supplierName ? "название: '{$name}' (поиск в вариациях по SKU, добавление вариации, поставщик: {$supplierName})" : "название: '{$name}' (поиск в вариациях по SKU, добавление вариации)";
+                                    }
                                 }
-                                $foundByName = $foundByName->first();
-                                if (! $foundByName && $supplierName) {
-                                    $foundByName = ShopGood::where('name', $this->normalizeTextForSearch($name))->first();
-                                }
-                                if ($foundByName) {
-                                    $existingGood = $foundByName;
-                                    $foundMainGoodByName = true;
-                                    $foundByFields[] = $supplierName ? "название: '{$name}' (поиск в вариациях по SKU, добавление вариации, поставщик: {$supplierName})" : "название: '{$name}' (поиск в вариациях по SKU, добавление вариации)";
-                                }
-                            }
-                            if (! $existingGood && ! empty($sku)) {
-                                if ($supplierName) {
-                                    $foundBySku = ShopGood::where('sku', $sku)->where('supplier', $supplierName)->first();
-                                    if ($foundBySku) {
-                                        $existingGood = $foundBySku;
-                                        $foundByFields[] = "SKU: '{$sku}' (поиск в вариациях по SKU, обновление основного товара, поставщик: {$supplierName})";
+                                if (! $existingGood && ! empty($sku)) {
+                                    if ($supplierName) {
+                                        $foundBySku = ShopGood::where('sku', $sku)->where('supplier', $supplierName)->first();
+                                        if ($foundBySku) {
+                                            $existingGood = $foundBySku;
+                                            $foundByFields[] = "SKU: '{$sku}' (поиск в вариациях по SKU, обновление основного товара, поставщик: {$supplierName})";
+                                        } else {
+                                            $foundBySku = ShopGood::where('sku', $sku)->first();
+                                            if ($foundBySku) {
+                                                $existingGood = $foundBySku;
+                                                $foundByFields[] = "SKU: '{$sku}' (поиск в вариациях по SKU, обновление основного товара, без фильтра поставщика)";
+                                            }
+                                        }
                                     } else {
                                         $foundBySku = ShopGood::where('sku', $sku)->first();
                                         if ($foundBySku) {
                                             $existingGood = $foundBySku;
-                                            $foundByFields[] = "SKU: '{$sku}' (поиск в вариациях по SKU, обновление основного товара, без фильтра поставщика)";
+                                            $foundByFields[] = "SKU: '{$sku}' (поиск в вариациях по SKU, обновление основного товара)";
                                         }
                                     }
-                                } else {
-                                    $foundBySku = ShopGood::where('sku', $sku)->first();
-                                    if ($foundBySku) {
-                                        $existingGood = $foundBySku;
-                                        $foundByFields[] = "SKU: '{$sku}' (поиск в вариациях по SKU, обновление основного товара)";
-                                    }
                                 }
-                            }
-                        } else {
-                            foreach ($duplicateFields as $field) {
-                                if ($field === 'sku') {
-                                    if (! empty($sku)) {
-                                        // Если указан поставщик, сначала ищем товар этого поставщика
-                                        if ($supplierName) {
-                                            $existingGood = ShopGood::where('sku', $sku)->where('supplier', $supplierName)->first();
-                                            if ($existingGood) {
-                                                $foundByFields[] = "SKU: '{$sku}' (поставщик: {$supplierName})";
+                            } else {
+                                foreach ($duplicateFields as $field) {
+                                    if ($field === 'sku') {
+                                        if (! empty($sku)) {
+                                            // Если указан поставщик, сначала ищем товар этого поставщика
+                                            if ($supplierName) {
+                                                $existingGood = ShopGood::where('sku', $sku)->where('supplier', $supplierName)->first();
+                                                if ($existingGood) {
+                                                    $foundByFields[] = "SKU: '{$sku}' (поставщик: {$supplierName})";
+                                                } else {
+                                                    // Если не найден товар этого поставщика, проверяем есть ли товар с таким SKU вообще
+                                                    $existingGoodAnySupplier = ShopGood::where('sku', $sku)->first();
+                                                    if ($existingGoodAnySupplier) {
+                                                        // Найден товар с таким SKU, но другого поставщика
+                                                        // Это специальный случай - нужно обновить остатки и изменить привязку к поставщику
+                                                        $existingGood = $existingGoodAnySupplier;
+                                                        $foundByFields[] = "SKU: '{$sku}' (изменение поставщика с '{$existingGood->supplier}' на '{$supplierName}')";
+                                                    }
+                                                }
                                             } else {
-                                                // Если не найден товар этого поставщика, проверяем есть ли товар с таким SKU вообще
-                                                $existingGoodAnySupplier = ShopGood::where('sku', $sku)->first();
-                                                if ($existingGoodAnySupplier) {
-                                                    // Найден товар с таким SKU, но другого поставщика
-                                                    // Это специальный случай - нужно обновить остатки и изменить привязку к поставщику
-                                                    $existingGood = $existingGoodAnySupplier;
-                                                    $foundByFields[] = "SKU: '{$sku}' (изменение поставщика с '{$existingGood->supplier}' на '{$supplierName}')";
+                                                // Поставщик не указан - обычный поиск
+                                                $existingGood = ShopGood::where('sku', $sku)->first();
+                                                if ($existingGood) {
+                                                    $foundByFields[] = "SKU: '{$sku}'";
                                                 }
                                             }
                                         } else {
-                                            // Поставщик не указан - обычный поиск
-                                            $existingGood = ShopGood::where('sku', $sku)->first();
-                                            if ($existingGood) {
-                                                $foundByFields[] = "SKU: '{$sku}'";
+                                            // При пустом SKU не ищем по name, если 'name' не в duplicate_fields
+                                            if (in_array('name', $duplicateFields) && ! empty($name)) {
+                                                $goodQuery = ShopGood::whereNull('sku')->where('name', $name);
+                                                if ($supplierName) {
+                                                    $goodQuery->where('supplier', $supplierName);
+                                                }
+                                                $existingGood = $goodQuery->first();
+                                                if ($existingGood) {
+                                                    $foundByFields[] = $supplierName ? "пустой SKU + название: '{$name}' (поставщик: {$supplierName})" : "пустой SKU + название: '{$name}'";
+                                                }
                                             }
                                         }
-                                    } else {
-                                        // При пустом SKU не ищем по name, если 'name' не в duplicate_fields
-                                        if (in_array('name', $duplicateFields) && ! empty($name)) {
-                                            $goodQuery = ShopGood::whereNull('sku')->where('name', $name);
+                                    } elseif ($field === 'name') {
+                                        if (! empty($name)) {
+                                            $goodQuery = ShopGood::where('name', $this->normalizeTextForSearch($name));
                                             if ($supplierName) {
                                                 $goodQuery->where('supplier', $supplierName);
                                             }
                                             $existingGood = $goodQuery->first();
                                             if ($existingGood) {
-                                                $foundByFields[] = $supplierName ? "пустой SKU + название: '{$name}' (поставщик: {$supplierName})" : "пустой SKU + название: '{$name}'";
+                                                $foundByFields[] = $supplierName ? "название: '{$name}' (поставщик: {$supplierName})" : "название: '{$name}'";
                                             }
                                         }
                                     }
-                                } elseif ($field === 'name') {
-                                    if (! empty($name)) {
-                                        $goodQuery = ShopGood::where('name', $this->normalizeTextForSearch($name));
-                                        if ($supplierName) {
-                                            $goodQuery->where('supplier', $supplierName);
-                                        }
-                                        $existingGood = $goodQuery->first();
-                                        if ($existingGood) {
-                                            $foundByFields[] = $supplierName ? "название: '{$name}' (поставщик: {$supplierName})" : "название: '{$name}'";
-                                        }
-                                    }
-                                }
 
-                                if ($existingGood) {
-                                    break; // Найден товар, прекращаем поиск
+                                    if ($existingGood) {
+                                        break; // Найден товар, прекращаем поиск
+                                    }
                                 }
                             }
                         }
@@ -1401,7 +1410,7 @@ class BulkGoodsImportController extends Controller
                                 }
                             }
 
-                            $updateResult = $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation, $supplierStockFields, $nameTrimSymbol, $attachImagesToVariation, $searchByFieldInVariations, $skipImagesOnUpdateIfExists);
+                            $updateResult = $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation, $supplierStockFields, $nameTrimSymbol, $attachImagesToVariation, $searchByFieldInVariations, $skipImagesOnUpdateIfExists, $naming);
                             $results['imagesDownloaded'] += $updateResult['imageStats']['downloaded'];
                             $results['imagesFailed'] += $updateResult['imageStats']['failed'];
 
@@ -1619,38 +1628,54 @@ class BulkGoodsImportController extends Controller
                         // КРИТИЧНО: Финальная проверка - если вариация найдена по артикулу, не создаем новый товар
                         // Это защита от создания дубликата, если вариация была найдена, но код по какой-то причине
                         // не попал в блок обработки вариации выше
-                        if ($existingVariation && $searchByNameInVariations && $searchByFieldInVariations === 'sku') {
-                            // Вариация найдена по артикулу - используем существующий товар, не создаем новый
-                            $existingGoodFromVariation = $existingVariation->good;
-                            if ($existingGoodFromVariation) {
-                                // Обновляем вариацию, если еще не обновлена
-                                if ($duplicateAction === 'update') {
+                        // КРИТИЧНО: Финальная проверка - если товар или вариация найдены, не создаем новый товар
+                        if ($existingGood || $existingVariation) {
+                            // Если товар найден (в т.ч. через fallback или поиск в вариациях), обновляем его
+                            $goodToUpdate = $existingGood ?? ($existingVariation ? $existingVariation->good : null);
+                            
+                            if ($goodToUpdate && $duplicateAction === 'update') {
+                                if ($existingVariation) {
                                     $this->updateVariationFromGoodData($existingVariation, $goodData, $searchByNameInVariations);
-                                    $updateResult = $this->updateGood($existingGoodFromVariation, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, false, $supplierStockFields, $nameTrimSymbol, $existingVariation, $searchByFieldInVariations, $skipImagesOnUpdateIfExists);
-                                    $results['imagesDownloaded'] += $updateResult['imageStats']['downloaded'];
-                                    $results['imagesFailed'] += $updateResult['imageStats']['failed'];
-                                    $results['updated']++;
-
-                                    if (! empty($sku)) {
-                                        $results['goodIds'][$sku] = $existingGoodFromVariation->id;
-                                    }
-                                    if (isset($goodData['_row'])) {
-                                        $results['goodIds'][$goodData['_row']] = $existingGoodFromVariation->id;
-                                    }
-                                    if (! empty($sku)) {
-                                        $results['variationIds'][$sku] = $existingVariation->id;
-                                    }
-
-                                    $sheet = $goodData['_sheet'] ?? 'неизвестно';
-                                    $updateItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'good_id' => $existingGoodFromVariation->id, 'supplier' => ($existingGoodFromVariation->supplier ?? '')];
-
-                                    continue;
                                 }
+                                
+                                $updateResult = $this->updateGood(
+                                    $goodToUpdate, 
+                                    $goodData, 
+                                    $autoCreateCategories, 
+                                    $autoCreateBrands, 
+                                    $defaultCategory, 
+                                    $useDefaultCategory, 
+                                    $immutableFields, 
+                                    $searchByNameInVariations, 
+                                    $hasVariation, 
+                                    $supplierStockFields, 
+                                    $nameTrimSymbol, 
+                                    $existingVariation, 
+                                    $searchByFieldInVariations, 
+                                    $skipImagesOnUpdateIfExists, 
+                                    $naming
+                                );
+                                
+                                $results['imagesDownloaded'] += $updateResult['imageStats']['downloaded'];
+                                $results['imagesFailed'] += $updateResult['imageStats']['failed'];
+                                $results['updated']++;
+
+                                if (! empty($sku)) {
+                                    $results['goodIds'][$sku] = $goodToUpdate->id;
+                                }
+                                if (isset($goodData['_row'])) {
+                                    $results['goodIds'][$goodData['_row']] = $goodToUpdate->id;
+                                }
+
+                                $sheet = $goodData['_sheet'] ?? 'неизвестно';
+                                $updateItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'good_id' => $goodToUpdate->id, 'supplier' => ($goodToUpdate->supplier ?? '')];
+
+                                continue;
                             }
                         }
 
                         // Товар действительно не существует - создаем новый (с вариацией или без)
-                        $createResult = $this->createGood($goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $supplierStockFields, $nameTrimSymbol);
+                        $createResult = $this->createGood($goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $supplierStockFields, $nameTrimSymbol, $naming);
                         $newGood = $createResult['good'];
                         $results['imagesDownloaded'] += $createResult['imageStats']['downloaded'];
                         $results['imagesFailed'] += $createResult['imageStats']['failed'];
@@ -1939,7 +1964,7 @@ class BulkGoodsImportController extends Controller
         }
     }
 
-    private function createGood($goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory = null, $useDefaultCategory = false, $supplierStockFields = null, $nameTrimSymbol = null)
+    private function createGood($goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory = null, $useDefaultCategory = false, $supplierStockFields = null, $nameTrimSymbol = null, $naming = 'hash')
     {
         $imageStats = ['downloaded' => 0, 'failed' => 0];
 
@@ -2146,7 +2171,7 @@ class BulkGoodsImportController extends Controller
         // Обрабатываем изображения: при создании с вариацией — к вариации, иначе к товару
         if (isset($goodData['images']) && is_array($goodData['images'])) {
             $variationForImages = $variationId ? ShopGoodVariation::find($variationId) : null;
-            $imageStats = $this->processImages($good, $goodData['images'], $variationForImages);
+            $imageStats = $this->processImages($good, $goodData['images'], $variationForImages, false, $naming);
         }
 
         // Обрабатываем свойства товаров
@@ -2162,7 +2187,7 @@ class BulkGoodsImportController extends Controller
         return ['good' => $good, 'imageStats' => $imageStats];
     }
 
-    private function updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory = null, $useDefaultCategory = false, $immutableFields = [], $searchByNameInVariations = false, $hasVariation = false, $supplierStockFields = null, $nameTrimSymbol = null, $attachImagesToVariation = null, $searchByFieldInVariations = null, $skipImagesIfExistsOnUpdate = false)
+    private function updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory = null, $useDefaultCategory = false, $immutableFields = [], $searchByNameInVariations = false, $hasVariation = false, $supplierStockFields = null, $nameTrimSymbol = null, $attachImagesToVariation = null, $searchByFieldInVariations = null, $skipImagesIfExistsOnUpdate = false, $naming = 'hash')
     {
         $imageStats = ['downloaded' => 0, 'failed' => 0];
 
@@ -2503,7 +2528,7 @@ class BulkGoodsImportController extends Controller
         // Обрабатываем изображения. Если передан $attachImagesToVariation (при «Поиск в вариациях»),
         // привязываем изображения к вариации, а не к основному товару.
         if (isset($goodData['images']) && is_array($goodData['images'])) {
-            $imageStats = $this->processImages($existingGood, $goodData['images'], $attachImagesToVariation, $skipImagesIfExistsOnUpdate);
+            $imageStats = $this->processImages($existingGood, $goodData['images'], $attachImagesToVariation, $skipImagesIfExistsOnUpdate, $naming);
         }
 
         // Обрабатываем свойства товаров
@@ -2654,7 +2679,7 @@ class BulkGoodsImportController extends Controller
      * @param  array  $images  Массив URL или путей к изображениям
      * @param  object|null  $variation  Вариация: если передана, изображения привязываются к вариации, а не к товару
      */
-    private function processImages($good, $images, $variation = null, $skipIfHasImagesOnUpdate = false)
+    private function processImages($good, $images, $variation = null, $skipIfHasImagesOnUpdate = false, $naming = 'hash')
     {
         $stats = ['downloaded' => 0, 'failed' => 0];
         $attachToVariation = $variation !== null;
@@ -2757,7 +2782,7 @@ class BulkGoodsImportController extends Controller
                 $stats['downloaded']++;
             } else {
                 try {
-                    $downloadResponse = $this->downloadImage($imageUrl);
+                    $downloadResponse = $this->downloadImage($imageUrl, $naming);
                     if ($downloadResponse && isset($downloadResponse['data']['path'])) {
                         if (isset($downloadResponse['data']['skipped']) && $downloadResponse['data']['skipped']) {
                             $this->importLogService->logImageSkipped($imageUrl, 'Файл уже существует на диске', $good->sku ?? null);
@@ -2780,14 +2805,14 @@ class BulkGoodsImportController extends Controller
         return $stats;
     }
 
-    private function downloadImage($imageUrl)
+    private function downloadImage($imageUrl, $naming = 'hash')
     {
         // Используем тот же метод, что и в ShopGoodsController
         $response = Http::timeout(30)->post(url('/api/admin/shop/goods/download-image'), [
             'imageUrl' => $imageUrl,
             'storagePath' => '/shop/goods',
             'optimize' => true,
-            'naming' => 'hash',
+            'naming' => $naming,
             'resize' => 'no_change',
             'width' => null,
             'height' => null,

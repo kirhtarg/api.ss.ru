@@ -75,15 +75,19 @@ class OrderCalculationService
     /**
      * Рассчитать бонусы для элемента корзины
      */
-    public function calculateItemBonuses(array $calculationResult): int
+    public function calculateItemBonuses(array $calculationResult, ?User $user = null): int
     {
-        // Если товар акционный или демпинговый - бонусы не начисляются (логика из checkout.vue)
-        if ($calculationResult['is_demping'] || $calculationResult['sale_price'] > 0) {
+        // Без регистрации бонусы не начисляются
+        if (!$user) {
             return 0;
         }
 
-        // Стандартное начисление 3% от финальной цены
-        return (int)round($calculationResult['final_price'] * 0.03);
+        $settings = \App\Models\ShopBonusSettings::getSettingsForUser($user);
+        
+        // Если цена акционная или стоит флаг демпинга
+        $isSale = ($calculationResult['sale_price'] > 0) || ($calculationResult['is_demping'] ?? false);
+
+        return $settings->calculateOrderBonus($calculationResult['final_price'], $isSale);
     }
 
     /**

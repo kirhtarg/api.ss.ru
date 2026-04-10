@@ -45,16 +45,17 @@ class BonusService
         }
 
         $userBonus = UserBonus::getOrCreateForUser($order->user_id);
-        $settings = \App\Models\ShopBonusSettings::getActiveSettings();
+        
+        // Используем предварительно рассчитанные бонусы из заказа, если они есть
+        $bonusPoints = $order->order_bonus_points;
 
-        if (! $settings) {
-            $settings = \App\Models\ShopBonusSettings::getDefaultSettings();
+        $settings = \App\Models\ShopBonusSettings::getSettingsForUser($order->user_id);
+
+        if ($bonusPoints <= 0) {
+            // Если в заказе не было сохраненного значения, рассчитываем по старинке (но с учетом уровня пользователя)
+            $isSalePrice = $order->metadata['is_sale_price'] ?? false;
+            $bonusPoints = $settings->calculateOrderBonus($order->total_amount, $isSalePrice);
         }
-
-        // Определяем, является ли цена акционной (упрощенная логика)
-        $isSalePrice = $order->metadata['is_sale_price'] ?? false;
-
-        $bonusPoints = $settings->calculateOrderBonus($order->total_amount, $isSalePrice);
 
         if ($bonusPoints > 0) {
             $expiresAt = Carbon::now()->addDays($settings->bonus_expiry_days);

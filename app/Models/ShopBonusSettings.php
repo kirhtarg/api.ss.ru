@@ -47,6 +47,38 @@ class ShopBonusSettings extends Model
     }
 
     /**
+     * Получить настройки на основе суммы покупок
+     */
+    public static function getSettingsByAmount($amount)
+    {
+        return static::where('is_active', true)
+            ->where('min_purchase_amount', '<=', $amount)
+            ->orderBy('min_purchase_amount', 'desc')
+            ->first() ?? static::getDefaultSettings();
+    }
+
+    /**
+     * Получить настройки для конкретного пользователя
+     */
+    public static function getSettingsForUser($user)
+    {
+        if (!$user) {
+            return static::getDefaultSettings();
+        }
+
+        // Если передана модель или ID
+        $userId = is_object($user) ? $user->id : (int)$user;
+
+        // Сумма всех завершенных заказов
+        // Мы считаем заказы со статусом 'finished' (ID 6)
+        $totalPurchases = \App\Models\ShopOrder::where('user_id', $userId)
+            ->where('order_status_id', 6) // finished
+            ->sum('total_amount');
+
+        return static::getSettingsByAmount($totalPurchases);
+    }
+
+    /**
      * Получить настройки по умолчанию
      */
     public static function getDefaultSettings()
