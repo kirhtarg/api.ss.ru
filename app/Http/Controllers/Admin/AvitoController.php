@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Log;
 use App\Models\Setting;
 use App\Models\ShopCategory;
 use App\Models\ExportFile;
+use App\Models\ShopSupplier;
 use Illuminate\Support\Facades\Storage;
 
 class AvitoController extends Controller
@@ -59,6 +60,35 @@ class AvitoController extends Controller
             ]
         ]);
     }
+
+    /**
+     * Получить всех поставщиков для маппинга доставки
+     */
+    public function getSuppliers()
+    {
+        $suppliers = ShopSupplier::orderBy('name')->get();
+        return response()->json([
+            'success' => true,
+            'data' => $suppliers
+        ]);
+    }
+
+    /**
+     * Обновить способы доставки для поставщика
+     */
+    public function updateSupplierDelivery(Request $request, $id)
+    {
+        $validated = $request->validate([
+            'delivery_options' => 'nullable|string'
+        ]);
+
+        $supplier = ShopSupplier::findOrFail($id);
+        $supplier->update([
+            'avito_delivery_options' => $validated['delivery_options'] ?? null
+        ]);
+
+        return response()->json(['success' => true]);
+    }
     
     /**
      * Обновить постоянные теги
@@ -95,6 +125,7 @@ class AvitoController extends Controller
             'avito_feed_enabled' => 'nullable|boolean',
             'avito_description_before' => 'nullable|string',
             'avito_description_after' => 'nullable|string',
+            'avito_default_delivery' => 'nullable|string',
         ]);
 
         foreach ($settings as $key => $value) {

@@ -456,13 +456,51 @@ class ProcessExportJob implements ShouldQueue
             $query->whereIn('label_id', $filters['labels']);
         }
 
-        // Поставщики - поле supplier
+        // Фильтр по поставщику (текстовое поле)
+        if (isset($filters['supplier']) && !empty($filters['supplier'])) {
+            $query->where('supplier', $filters['supplier']);
+        }
+
+        // Поставщики - поле supplier (множественный выбор)
         if (isset($filters['suppliers']) && is_array($filters['suppliers']) && !empty($filters['suppliers'])) {
-            $suppliers = array_filter($filters['suppliers'], function ($supplier) {
+            $supplierIds = array_filter($filters['suppliers'], function ($supplier) {
                 return !empty($supplier);
             });
-            if (!empty($suppliers)) {
-                $query->whereIn('supplier', $suppliers);
+            $includeVariations = filter_var($filters['suppliers_include_variations'] ?? false, FILTER_VALIDATE_BOOLEAN);
+
+            if (!empty($supplierIds)) {
+                if ($includeVariations) {
+                    // Включаем товары с поставщиками И товары с вариациями с поставщиками
+                    $query->where(function ($q) use ($supplierIds) {
+                        // Товары с выбранными поставщиками
+                        $q->whereIn('supplier', $supplierIds)
+                          // Или товары, у которых есть вариации с выбранными поставщиками
+                            ->orWhereHas('variations', function ($varQ) use ($supplierIds) {
+                                $varQ->whereIn('supplier', $supplierIds);
+                            });
+                    });
+                } else {
+                    // Только товары с поставщиками (без учета вариаций)
+                    $query->whereIn('supplier', $supplierIds);
+                }
+            }
+        }
+
+        // Фильтр "Без поставщиков"
+        if (isset($filters['supplier_empty']) && filter_var($filters['supplier_empty'], FILTER_VALIDATE_BOOLEAN)) {
+            $includeVariations = filter_var($filters['supplier_empty_include_variations'] ?? false, FILTER_VALIDATE_BOOLEAN);
+            if ($includeVariations) {
+                $query->where(function ($q) {
+                    $q->where(function ($sq) {
+                        $sq->whereNull('supplier')->orWhere('supplier', '');
+                    })->whereDoesntHave('variations', function ($vq) {
+                        $vq->whereNotNull('supplier')->where('supplier', '!=', '');
+                    });
+                });
+            } else {
+                $query->where(function ($q) {
+                    $q->whereNull('supplier')->orWhere('supplier', '');
+                });
             }
         }
 
@@ -1857,7 +1895,18 @@ class ProcessExportJob implements ShouldQueue
             
             // Получаем запрос с учетом всех фильтров
             $query = $this->getExportQuery($config);
-            $goods = $query->get();
+            $goods = $query->with([
+                'categories', 
+                'brands', 
+                'images', 
+                'variations', 
+                'variations.images', 
+                'variations.attributeValues', 
+                'variations.attributeValues.attribute', 
+                'properties',
+                'shopSupplier',
+                'variations.shopSupplier'
+            ])->get();
 
             $service = new \App\Services\AvitoFeedService();
             // Генерируем XML контент с учетом отфильтрованных товаров

@@ -55,6 +55,14 @@ class ShopGoodVariation extends Model
         return $this->belongsTo(ShopGood::class, 'good_id');
     }
 
+    /**
+     * Поставщик вариации (связь по слагу)
+     */
+    public function shopSupplier(): BelongsTo
+    {
+        return $this->belongsTo(ShopSupplier::class, 'supplier', 'name');
+    }
+
     // Связи со старыми свойствами удалены; вариационные атрибуты берутся из таблиц
     // shop_variation_attributes_values -> shop_variation_attribute_values -> shop_variation_attributes
 

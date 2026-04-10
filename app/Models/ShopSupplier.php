@@ -21,6 +21,7 @@ class ShopSupplier extends Model
         'address',
         'is_active',
         'sort_order',
+        'avito_delivery_options',
     ];
 
     protected $casts = [

@@ -138,6 +138,14 @@ class ShopGood extends Model
     }
 
     /**
+     * Поставщик товара (связь по слагу)
+     */
+    public function shopSupplier(): BelongsTo
+    {
+        return $this->belongsTo(ShopSupplier::class, 'supplier', 'name');
+    }
+
+    /**
      * Изображения товара (только товара, без вариаций)
      */
     public function images(): HasMany

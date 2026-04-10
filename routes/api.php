@@ -1524,6 +1524,8 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/generate', [\App\Http\Controllers\Admin\AvitoController::class, 'generateNow']);
             Route::get('/tree', [\App\Http\Controllers\Admin\AvitoController::class, 'getTree']);
             Route::post('/tree/refresh', [\App\Http\Controllers\Admin\AvitoController::class, 'refreshTree']);
+            Route::get('/suppliers', [\App\Http\Controllers\Admin\AvitoController::class, 'getSuppliers']);
+            Route::post('/suppliers/{id}/delivery', [\App\Http\Controllers\Admin\AvitoController::class, 'updateSupplierDelivery']);
         });
 
 

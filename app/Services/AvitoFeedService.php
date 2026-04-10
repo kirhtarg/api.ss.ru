@@ -16,6 +16,8 @@ class AvitoFeedService
     protected $tags;
     protected $descBefore;
     protected $descAfter;
+    protected $defaultDelivery;
+    protected $propertyValuesMap;
 
     public function __construct()
     {
@@ -31,6 +33,7 @@ class AvitoFeedService
 
         $this->descBefore = Setting::where('key', 'avito_description_before')->value('value') ?: '';
         $this->descAfter = Setting::where('key', 'avito_description_after')->value('value') ?: '';
+        $this->defaultDelivery = Setting::where('key', 'avito_default_delivery')->value('value') ?: '';
     }
 
     /**
@@ -44,7 +47,6 @@ class AvitoFeedService
         ini_set('memory_limit', '2048M');
         ini_set('max_execution_time', '7200');
 
-        Log::error('AvitoFeedService: Starting feed generation (v5 - external goods support)');
         try {
             $xml = new \SimpleXMLElement('<?xml version="1.0" encoding="utf-8"?><Ads target="Avito" formatVersion="3"></Ads>');
 
@@ -60,7 +62,9 @@ class AvitoFeedService
                         'variations.images', 
                         'variations.attributeValues', 
                         'variations.attributeValues.attribute',
-                        'properties'
+                        'variations.shopSupplier',
+                        'properties',
+                        'shopSupplier'
                     ])
                     ->get();
             } else {
@@ -73,7 +77,9 @@ class AvitoFeedService
                     'variations.images', 
                     'variations.attributeValues', 
                     'variations.attributeValues.attribute',
-                    'properties'
+                    'variations.shopSupplier',
+                    'properties',
+                    'shopSupplier'
                 ]);
             }
 
@@ -264,6 +270,39 @@ class AvitoFeedService
         $this->addChildSafe($ad, 'Condition', 'Новое');
         $this->addChildSafe($ad, 'AdType', 'Товар приобретен на продажу');
         $this->addChildSafe($ad, 'ContactMethod', 'По телефону и в сообщениях');
+
+        // Добавляем способы доставки (ПВЗ, Курьер и т.д.)
+        $deliveryOptionsStr = '';
+        $supplier = $good->shopSupplier;
+
+        // Если у основного товара нет поставщика, пробуем найти его в вариациях
+        if (!$supplier && $good->variations->isNotEmpty()) {
+            foreach ($good->variations as $variation) {
+                if ($variation->shopSupplier) {
+                    $supplier = $variation->shopSupplier;
+                    break;
+                }
+            }
+        } elseif ($supplier) {
+            $source = 'main';
+        }
+
+        if ($supplier && !empty($supplier->avito_delivery_options)) {
+            $deliveryOptionsStr = $supplier->avito_delivery_options;
+        } elseif (!empty($this->defaultDelivery)) {
+            $deliveryOptionsStr = $this->defaultDelivery;
+            $source = 'default';
+        }
+
+        if (!empty($deliveryOptionsStr)) {
+            $deliveryNode = $ad->addChild('Delivery');
+            $options = array_map('trim', explode(',', $deliveryOptionsStr));
+            foreach ($options as $option) {
+                if (!empty($option)) {
+                    $this->addChildSafe($deliveryNode, 'Option', $option);
+                }
+            }
+        }
 
         // Применяем постоянные теги
         if (!empty($this->tags)) {
