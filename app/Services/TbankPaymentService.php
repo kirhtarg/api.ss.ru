@@ -742,12 +742,17 @@ class TbankPaymentService
         // AUTHORIZED = заморозка средств (двухэтапная оплата), деньги ещё не списаны
         // CONFIRMED / SETTLED = фактическое списание = успешная оплата
         if ($status) {
-            switch (strtoupper($status)) {
+            $tbankStatus = strtoupper($status);
+            switch ($tbankStatus) {
                 case 'CONFIRMED':
                 case 'SETTLED':
                     return 'success';
                 case 'AUTHORIZED':
                     return 'authorized'; // промежуточный статус, не оплачен
+                case 'REFUNDED':
+                case 'PARTIAL_REFUNDED':
+                    Log::info('T-Bank Webhook: Order refunded.', ['status' => $tbankStatus]);
+                    return 'refunded';
                 case 'REJECTED':
                 case 'DEADLINE_EXPIRED':
                     return 'failed';

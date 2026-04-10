@@ -2854,6 +2854,7 @@ class ShopPaymentController extends Controller
             'pending'    => 'pending',
             'failed'     => 'failed',
             'cancelled'  => 'cancelled',
+            'refunded'   => 'pending',
         ];
 
         if (isset($paymentStatusMap[$newStatus])) {
@@ -2865,11 +2866,13 @@ class ShopPaymentController extends Controller
                 if ($newStatus === 'success') {
                     // CONFIRMED/SETTLED — окончательная оплата
                     $updateData['payed'] = true;
+                } elseif ($newStatus === 'refunded') {
+                    // Возврат средств — снимаем отметку об оплате и ставим статус "Завершен" (ID 6) по просьбе клиента
+                    $updateData['payed'] = false;
+                    $updateData['status_id'] = 6;
                 } elseif (in_array($newStatus, ['failed', 'cancelled'])) {
-                    // Отказ или отмена — снимаем оплату только если заказ ещё не был оплачен
-                    if (!$order->payed) {
-                        $updateData['payed'] = false;
-                    }
+                    // Отказ или отмена — всегда снимаем оплату
+                    $updateData['payed'] = false;
                 }
                 // AUTHORIZED (промежуточный статус) и pending — не трогаем payed:
                 // не сбрасываем в false если уже оплачен (race condition с SuccessURL)
@@ -2899,7 +2902,7 @@ class ShopPaymentController extends Controller
             }
         }
 
-        return response('Webhook received', 200);
+        return response('OK', 200);
     }
 
     /**
