@@ -10,35 +10,32 @@ class GoodsFeedController extends Controller
 {
     public function getGoodsFeed(Request $request)
     {
-        $filePath = 'public/exports/goods_feed.xml';
-        if (! Storage::exists($filePath)) {
-            $content = `<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">
-  <channel>
-    <title>Товары магазина</title>
-    <link>{$request->getSchemeAndHttpHost()}</link>
-    <description>Каталог товаров</description>
-  </channel>
-</rss>`;
-
-            return response($content, 200)
-                ->header('Content-Type', 'application/xml; charset=utf-8')
-                ->header('Cache-Control', 'no-cache, no-store, must-revalidate')
-                ->header('Pragma', 'no-cache')
-                ->header('Expires', '0');
-        }
-        $file = Storage::get($filePath);
-
-        $response = response($file, 200)
-            ->header('Content-Type', 'application/xml; charset=utf-8')
-            ->header('Cache-Control', 'no-cache, no-store, must-revalidate')
-            ->header('Pragma', 'no-cache')
-            ->header('Expires', '0');
-            
-        if ($request->has('download') && $request->get('download') == '1') {
-            $response->header('Content-Disposition', 'attachment; filename="goods_feed.xml"');
+        $fileName = 'exports/goods_feed.xml';
+        $disk = Storage::disk('public');
+        
+        if (!$disk->exists($fileName)) {
+            return response('<?xml version="1.0" encoding="UTF-8"?><rss><channel><title>Фид не найден</title></channel></rss>', 404)
+                ->header('Content-Type', 'application/xml');
         }
 
-        return $response;
+        $fullPath = $disk->path($fileName);
+        
+        // Очищаем буфер вывода, чтобы избежать проблем с лишними символами или 0-байтовыми файлами
+        if (ob_get_level()) {
+            ob_end_clean();
+        }
+
+        // Если передан параметр download, принудительно скачиваем файл
+        if ($request->has('download')) {
+            return response()->download($fullPath, 'goods_feed.xml', [
+                'Content-Type' => 'application/octet-stream',
+            ]);
+        }
+
+        // По умолчанию (для ботов Яндекса) просто выводим содержимое файла
+        return response()->file($fullPath, [
+            'Content-Type' => 'application/xml; charset=utf-8',
+            'Cache-Control' => 'no-cache, no-store, must-revalidate',
+        ]);
     }
 }
