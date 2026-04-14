@@ -117,8 +117,19 @@ class BulkGoodsImportController extends Controller
         //     }
         // }
 
-        // РџРѕР»СѓС‡Р°РµРј РґР°РЅРЅС‹Рµ С‚РѕРІР°СЂРѕРІ
+        // Получаем данные товаров
         $allGoods = $request->input('goods', []);
+
+        // ГАРАНТИРОВАННАЯ ПРОВЕРКА (Удалите после теста)
+        if ($request->has('debug_test')) {
+             \Log::error('BulkImport: DEBUG TRIGGERED');
+             dd(['status' => 'WORKING', 'naming' => $request->input('images_naming')]);
+        }
+
+        \Log::error('BulkImport: Method started', [
+            'naming' => $request->input('images_naming', 'hash'),
+            'goods_count' => count($allGoods)
+        ]);
 
         // РџРѕР»СѓС‡Р°РµРј РїР°СЂР°РјРµС‚СЂС‹ РёРјРїРѕСЂС‚Р°
         $nameTrimSymbol = $request->input('name_trim_symbol');
@@ -1056,7 +1067,7 @@ class BulkGoodsImportController extends Controller
                             if (isset($goodData['images']) && is_array($goodData['images']) && $variationId) {
                                 $variationForImages = ShopGoodVariation::find($variationId);
                                 if ($variationForImages) {
-                                    $imageStats = $this->processImages($existingGood, $goodData['images'], $variationForImages, $skipImagesOnUpdateIfExists);
+                                    $imageStats = $this->processImages($existingGood, $goodData['images'], $variationForImages, $skipImagesOnUpdateIfExists, $naming);
                                     $results['imagesDownloaded'] += $imageStats['downloaded'];
                                     $results['imagesFailed'] += $imageStats['failed'];
                                 }
@@ -1145,7 +1156,7 @@ class BulkGoodsImportController extends Controller
                         if (isset($goodData['images']) && is_array($goodData['images']) && $variationId) {
                             $variationForImages = ShopGoodVariation::find($variationId);
                             if ($variationForImages) {
-                                $imageStats = $this->processImages($existingGood, $goodData['images'], $variationForImages, $skipImagesOnUpdateIfExists);
+                                $imageStats = $this->processImages($existingGood, $goodData['images'], $variationForImages, $skipImagesOnUpdateIfExists, $naming);
                                 $results['imagesDownloaded'] += $imageStats['downloaded'];
                                 $results['imagesFailed'] += $imageStats['failed'];
                             }
@@ -1354,7 +1365,7 @@ class BulkGoodsImportController extends Controller
                             if (isset($goodData['images']) && is_array($goodData['images']) && $variationId) {
                                 $variationForImages = ShopGoodVariation::find($variationId);
                                 if ($variationForImages) {
-                                    $imageStats = $this->processImages($existingGood, $goodData['images'], $variationForImages, $skipImagesOnUpdateIfExists);
+                                    $imageStats = $this->processImages($existingGood, $goodData['images'], $variationForImages, $skipImagesOnUpdateIfExists, $naming);
                                     $results['imagesDownloaded'] += $imageStats['downloaded'];
                                     $results['imagesFailed'] += $imageStats['failed'];
                                 }
