@@ -29,10 +29,16 @@ class GoodsFeedController extends Controller
         }
         $file = Storage::get($filePath);
 
-        return response($file, 200)
+        $response = response($file, 200)
             ->header('Content-Type', 'application/xml; charset=utf-8')
             ->header('Cache-Control', 'no-cache, no-store, must-revalidate')
             ->header('Pragma', 'no-cache')
             ->header('Expires', '0');
+            
+        if ($request->has('download') && $request->get('download') == '1') {
+            $response->header('Content-Disposition', 'attachment; filename="goods_feed.xml"');
+        }
+
+        return $response;
     }
 }
