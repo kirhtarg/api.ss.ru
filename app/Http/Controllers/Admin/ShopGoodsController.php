@@ -3762,7 +3762,7 @@ class ShopGoodsController extends Controller
             $storageFullPath = $frontendPublicPath.'/'.ltrim($fullPath, '/');
 
             // РџСЂРѕРІРµСЂСЏРµРј, СЃСѓС‰РµСЃС‚РІСѓРµС‚ Р»Рё С„Р°Р№Р» СѓР¶Рµ
-            if (file_exists($storageFullPath)) {
+            if ($naming !== 'hash' && file_exists($storageFullPath)) {
                 return response()->json([
                     'success' => true,
                     'data' => [

@@ -1046,7 +1046,7 @@ class BulkGoodsImportController extends Controller
                             if (!isset($goodData['_nameTrimSymbol'])) {
                                 $goodData['_nameTrimSymbol'] = $nameTrimSymbol;
                             }
-                            $variationId = $this->createSimpleVariation($existingGood, $goodData, $supplierStockFields);
+                            $variationId = $this->createSimpleVariation($existingGood, $goodData, $supplierStockFields, $naming);
                             if (!$variationId) {
                                 $results['skipped']++;
                                 $sheet = $goodData['_sheet'] ?? 'РЅРµРёР·РІРµСЃС‚РЅРѕ';
@@ -1121,7 +1121,7 @@ class BulkGoodsImportController extends Controller
                         if (!isset($goodData['_nameTrimSymbol'])) {
                             $goodData['_nameTrimSymbol'] = $nameTrimSymbol;
                         }
-                        $variationId = $this->processVariation($existingGood, $goodData['variation'], $goodData, $supplierStockFields);
+                        $variationId = $this->processVariation($existingGood, $goodData['variation'], $goodData, $supplierStockFields, $naming);
 
                         // РЎРѕС…СЂР°РЅСЏРµРј ID РІР°СЂРёР°С†РёРё РґР»СЏ СЃРІСЏР·Рё СЃ РёР·РѕР±СЂР°Р¶РµРЅРёСЏРјРё
                         if ($variationId) {
@@ -1277,7 +1277,7 @@ class BulkGoodsImportController extends Controller
                             if (!isset($goodData['_nameTrimSymbol'])) {
                                 $goodData['_nameTrimSymbol'] = $nameTrimSymbol;
                             }
-                            $variationId = $this->processVariation($existingGood, $goodData['variation'], $goodData, $supplierStockFields);
+                            $variationId = $this->processVariation($existingGood, $goodData['variation'], $goodData, $supplierStockFields, $naming);
 
                             // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј РєР°С‚РµРіРѕСЂРёРё С‚РѕРІР°СЂР° (РґР°Р¶Рµ РµСЃР»Рё РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚СЃСЏ С‚РѕР»СЊРєРѕ РІР°СЂРёР°С†РёСЏ)
                             $categoryIds = [];
@@ -1531,7 +1531,7 @@ class BulkGoodsImportController extends Controller
 
                             if ($doubleCheckGood) {
                                 // РўРѕРІР°СЂ РЅР°Р№РґРµРЅ РїСЂРё РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅРѕР№ РїСЂРѕРІРµСЂРєРµ - РѕР±СЂР°Р±Р°С‚С‹РІР°РµРј С‚РѕР»СЊРєРѕ РІР°СЂРёР°С†РёСЋ
-                                $variationId = $this->processVariation($doubleCheckGood, $goodData['variation'], $goodData, $supplierStockFields);
+                                $variationId = $this->processVariation($doubleCheckGood, $goodData['variation'], $goodData, $supplierStockFields, $naming);
 
                                 // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј РєР°С‚РµРіРѕСЂРёРё С‚РѕРІР°СЂР° (РґР°Р¶Рµ РµСЃР»Рё РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚СЃСЏ С‚РѕР»СЊРєРѕ РІР°СЂРёР°С†РёСЏ)
                                 $categoryIds = [];
@@ -1775,7 +1775,7 @@ class BulkGoodsImportController extends Controller
                                 if (!isset($goodData['_nameTrimSymbol'])) {
                                     $goodData['_nameTrimSymbol'] = $nameTrimSymbol;
                                 }
-                                $variationId = $this->processVariation($existingGood, $goodData['variation'], $goodData, $supplierStockFields);
+                                $variationId = $this->processVariation($existingGood, $goodData['variation'], $goodData, $supplierStockFields, $naming);
                                 $results['updated']++; // РЎС‡РёС‚Р°РµРј РєР°Рє РѕР±РЅРѕРІР»РµРЅРёРµ (РґРѕР±Р°РІР»РµРЅРёРµ РІР°СЂРёР°С†РёРё)
 
                                 // РЎРѕС…СЂР°РЅСЏРµРј ID С‚РѕРІР°СЂР°
@@ -2141,7 +2141,7 @@ class BulkGoodsImportController extends Controller
             if (!isset($goodData['_nameTrimSymbol'])) {
                 $goodData['_nameTrimSymbol'] = $nameTrimSymbol;
             }
-            $variationId = $this->processVariation($good, $goodData['variation'], $goodData, $supplierStockFields);
+            $variationId = $this->processVariation($good, $goodData['variation'], $goodData, $supplierStockFields, $naming);
 
             if ($variationId) {
                 // РљР РРўРР§РќРћ: Р‘РµСЂРµРј С†РµРЅСѓ РёР· РІР°СЂРёР°С†РёРё, РЅРѕ РµСЃР»Рё РµС‘ РЅРµС‚ - РїСЂРѕР±СѓРµРј РёР· goodData['price']
@@ -2589,7 +2589,7 @@ class BulkGoodsImportController extends Controller
             if (!isset($goodData['_nameTrimSymbol'])) {
                 $goodData['_nameTrimSymbol'] = $nameTrimSymbol;
             }
-            $this->processVariation($existingGood, $goodData['variation'], $goodData, $supplierStockFields);
+            $this->processVariation($existingGood, $goodData['variation'], $goodData, $supplierStockFields, $naming);
         }
 
         // Р•СЃР»Рё С‚РѕРІР°СЂ РёРјРµРµС‚ РІР°СЂРёР°С†РёРё, РѕР±РЅРѕРІР»СЏРµРј РІСЃРµ РµРіРѕ РІР°СЂРёР°С†РёРё РґР°РЅРЅС‹РјРё РёР· С‚РѕРІР°СЂР°
@@ -3842,7 +3842,7 @@ class BulkGoodsImportController extends Controller
      *
      * @return int|null ID РІР°СЂРёР°С†РёРё РёР»Рё null РїСЂРё РѕС€РёР±РєРµ
      */
-    private function createSimpleVariation($good, $goodData, $supplierStockFields = null)
+    private function createSimpleVariation($good, $goodData, $supplierStockFields = null, $naming = 'hash')
     {
         try {
             $nameTrimSymbol = $goodData['_nameTrimSymbol'] ?? null;
@@ -3943,7 +3943,7 @@ class BulkGoodsImportController extends Controller
      *
      * @return int|null ID РІР°СЂРёР°С†РёРё РёР»Рё null, РµСЃР»Рё РІР°СЂРёР°С†РёСЏ РЅРµ Р±С‹Р»Р° СЃРѕР·РґР°РЅР°/РѕР±РЅРѕРІР»РµРЅР°
      */
-    private function processVariation($good, $variationData, $goodData, $supplierStockFields = null)
+    private function processVariation($good, $variationData, $goodData, $supplierStockFields = null, $naming = 'hash')
     {
         try {
             // РљР РРўРР§РќРћ: РћР±СЂРµР·Р°РµРј Рё РѕР±РЅРѕРІР»СЏРµРј РЅР°Р·РІР°РЅРёРµ С‚РѕРІР°СЂР° РџР•Р Р•Р” РѕР±СЂР°Р±РѕС‚РєРѕР№ РІР°СЂРёР°С†РёРё
