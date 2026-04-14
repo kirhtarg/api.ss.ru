@@ -3714,6 +3714,12 @@ class ShopGoodsController extends Controller
             $width = $request->input('width');
             $height = $request->input('height');
 
+            \Log::info('API: downloadImage request received', [
+                'imageUrl' => $imageUrl,
+                'naming' => $naming,
+                'request_all' => $request->all()
+            ]);
+
             // Валидация URL
             if (! filter_var($imageUrl, FILTER_VALIDATE_URL)) {
                 return response()->json([

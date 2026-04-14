@@ -2843,6 +2843,11 @@ class BulkGoodsImportController extends Controller
 
     private function downloadImage($imageUrl, $naming = 'hash')
     {
+        \Log::info('BulkImport: Sending download request', [
+            'imageUrl' => $imageUrl,
+            'naming' => $naming
+        ]);
+
         // Используем тот же метод, что и в ShopGoodsController
         $response = Http::timeout(30)->post(url('/api/admin/shop/goods/download-image'), [
             'imageUrl' => $imageUrl,
@@ -2856,6 +2861,15 @@ class BulkGoodsImportController extends Controller
             'Authorization' => 'Bearer ' . request()->bearerToken(),
             'Content-Type' => 'application/json',
         ]);
+
+        if ($response->successful()) {
+            \Log::info('BulkImport: Download successful', ['data' => $response->json()]);
+        } else {
+            \Log::error('BulkImport: Download failed', [
+                'status' => $response->status(),
+                'body' => $response->body()
+            ]);
+        }
 
         return $response->json();
     }
