@@ -3762,9 +3762,23 @@ class ShopGoodsController extends Controller
             $storageFullPath = $frontendPublicPath.'/'.ltrim($fullPath, '/');
 
             // РџСЂРѕРІРµСЂСЏРµРј, СЃСѓС‰РµСЃС‚РІСѓРµС‚ Р»Рё С„Р°Р№Р» СѓР¶Рµ
+            // Логируем для отладки
+            \Log::info('API_DL: downloadImage started', [
+                'naming' => $naming,
+                'imageUrl' => $imageUrl,
+                'storagePath' => $storagePath,
+                'optimize' => $optimize
+            ]);
+
+            // Если не хеш и файл существует - пропускаем
             if ($naming !== 'hash' && file_exists($storageFullPath)) {
                 return response()->json([
                     'success' => true,
+                    'debug' => [
+                        'naming_received' => $naming,
+                        'file_exists' => true,
+                        'reason' => 'Condition naming !== hash AND file_exists failed'
+                    ],
                     'data' => [
                         'path' => $fullPath,
                         'originalUrl' => $imageUrl,
@@ -3819,6 +3833,10 @@ class ShopGoodsController extends Controller
 
             return response()->json([
                 'success' => true,
+                'debug' => [
+                    'naming_received' => $naming,
+                    'mode' => 'DOWNLOADED_OR_OVERWRITTEN'
+                ],
                 'data' => [
                     'path' => $fullPath,
                     'originalUrl' => $imageUrl,
@@ -3909,15 +3927,17 @@ class ShopGoodsController extends Controller
 
                 $cachedRelativePath = null;
                 try {
-                    $cached = Redis::hGet($cacheKey, $imageUrl);
-                    if (is_string($cached) && $cached !== '') {
-                        $cachedRelativePath = $cached;
-                        $cachedAbsolutePath = $frontendPublicPath.'/'.ltrim($cachedRelativePath, '/');
-                        if (file_exists($cachedAbsolutePath)) {
-                            $results[$imageUrl] = $cachedRelativePath;
-                            $skipped[] = $imageUrl;
-
-                            continue;
+                    // В режиме хеш игнорируем кэш Redis, чтобы форсировать обновление если нужно
+                    if ($naming !== 'hash') {
+                        $cached = Redis::hGet($cacheKey, $imageUrl);
+                        if (is_string($cached) && $cached !== '') {
+                            $cachedRelativePath = $cached;
+                            $cachedAbsolutePath = $frontendPublicPath.'/'.ltrim($cachedRelativePath, '/');
+                            if (file_exists($cachedAbsolutePath)) {
+                                $results[$imageUrl] = $cachedRelativePath;
+                                $skipped[] = $imageUrl;
+                                continue;
+                            }
                         }
                     }
                 } catch (\Throwable $e) {

@@ -2834,7 +2834,12 @@ class BulkGoodsImportController extends Controller
                     $downloadResponse = $this->downloadImage($imageUrl, $naming);
                     if ($downloadResponse && isset($downloadResponse['data']['path'])) {
                         if (isset($downloadResponse['data']['skipped']) && $downloadResponse['data']['skipped']) {
-                            $this->importLogService->logImageSkipped($imageUrl, 'Р¤Р°Р№Р» СѓР¶Рµ СЃСѓС‰РµСЃС‚РІСѓРµС‚ РЅР° РґРёСЃРєРµ', $good->sku ?? null);
+                             \Log::error('BulkImport: Image SKIPPED by API', [
+                                 'url' => $imageUrl,
+                                 'naming_sent' => $naming,
+                                 'api_response' => $downloadResponse
+                             ]);
+                             $this->importLogService->logImageSkipped($imageUrl, 'Файл уже существует на диске (пропущено API)', $good->sku ?? null);
                         }
                         ShopGoodImage::create($imageRecord($downloadResponse['data']['path']));
                         if (!(isset($downloadResponse['data']['skipped']) && $downloadResponse['data']['skipped'])) {
