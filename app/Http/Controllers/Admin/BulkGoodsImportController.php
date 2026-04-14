@@ -2825,6 +2825,7 @@ class BulkGoodsImportController extends Controller
         };
 
         foreach ($filteredImages as $imageUrl) {
+            \Log::error('BulkImport: Processing image URL', ['url' => $imageUrl, 'naming' => $naming]);
             if (str_starts_with($imageUrl, '/')) {
                 ShopGoodImage::create($imageRecord($imageUrl));
                 $stats['downloaded']++;
