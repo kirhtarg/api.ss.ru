@@ -3078,7 +3078,7 @@ class ShopGoodsController extends Controller
                             $position = mb_strpos($name, $symbol);
 
                             if ($position !== false) {
-                                // РЈРґР°Р»СЏРµРј СЃРёРјРІРѕР» Рё РІСЃС‘ РїРѕСЃР»Рµ РЅРµРіРѕ
+                                // РЈРґР°Р»СЏРµРј СЃРёРјРІРѕР» Рё РІСЃ‘ РїРѕСЃР»Рµ РЅРµРіРѕ
                                 $newName = mb_substr($name, 0, $position);
                                 $good->update(['name' => $newName]);
                             }
@@ -3770,21 +3770,37 @@ class ShopGoodsController extends Controller
                 'optimize' => $optimize
             ]);
 
-            // Если не хеш и файл существует - пропускаем
-            if ($naming !== 'hash' && file_exists($storageFullPath)) {
-                return response()->json([
-                    'success' => true,
-                    'debug' => [
-                        'naming_received' => $naming,
-                        'file_exists' => true,
-                        'reason' => 'Condition naming !== hash AND file_exists failed'
-                    ],
-                    'data' => [
-                        'path' => $fullPath,
-                        'originalUrl' => $imageUrl,
-                        'skipped' => true,
-                    ],
-                ]);
+            // ГЛУБОКАЯ ОТЛАДКА
+            \Log::info('API_DL: Debug condition check', [
+                'naming' => $naming,
+                'is_original' => ($naming === 'original'),
+                'is_hash' => ($naming === 'hash'),
+                'file_exists' => file_exists($storageFullPath),
+                'storageFullPath' => $storageFullPath
+            ]);
+
+            // Если режим "Оригинал" - проверяем наличие файла. Для "Хеш" - качаем ВСЕГДА (перезаписываем)
+            if ($naming === 'original') {
+                if (file_exists($storageFullPath)) {
+                    \Log::info('API_DL: Skipping because naming is original AND file exists');
+                    return response()->json([
+                        'success' => true,
+                        'debug' => [
+                            'naming_received' => $naming,
+                            'file_exists' => true,
+                            'info' => 'Skipped because naming is original'
+                        ],
+                        'data' => [
+                            'path' => $fullPath,
+                            'originalUrl' => $imageUrl,
+                            'skipped' => true,
+                        ],
+                    ]);
+                }
+            } else if ($naming === 'hash') {
+                \Log::info('API_DL: Proceeding because naming is hash (bypass exists check)');
+            } else {
+                \Log::warning('API_DL: Unknown naming mode, proceeding default', ['naming' => $naming]);
             }
 
             // РЎРѕР·РґР°РµРј РґРёСЂРµРєС‚РѕСЂРёСЋ РµСЃР»Рё РЅРµ СЃСѓС‰РµСЃС‚РІСѓРµС‚
