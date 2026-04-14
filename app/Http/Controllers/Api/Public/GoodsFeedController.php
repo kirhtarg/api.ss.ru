@@ -25,10 +25,11 @@ class GoodsFeedController extends Controller
             ob_end_clean();
         }
 
-        // Если передан параметр download, принудительно скачиваем файл
-        if ($request->has('download')) {
-            return response()->download($fullPath, 'goods_feed.xml', [
-                'Content-Type' => 'application/octet-stream',
+        // Если передан параметр download=1, принудительно скачиваем файл
+        if ($request->query('download') == '1') {
+            return $disk->download($fileName, 'goods_feed.xml', [
+                'Content-Type' => 'application/xml; charset=utf-8',
+                'Cache-Control' => 'no-cache, no-store, must-revalidate',
             ]);
         }
 
