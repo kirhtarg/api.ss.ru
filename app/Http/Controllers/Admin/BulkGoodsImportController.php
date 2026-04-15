@@ -121,16 +121,6 @@ class BulkGoodsImportController extends Controller
         $allGoods = $request->input('goods', []);
 
         // ГАРАНТИРОВАННАЯ ПРОВЕРКА (Удалите после теста)
-        if ($request->has('debug_test')) {
-             \Log::error('BulkImport: DEBUG TRIGGERED');
-             dd(['status' => 'WORKING', 'naming' => $request->input('images_naming')]);
-        }
-
-        \Log::error('BulkImport: Method started', [
-            'naming' => $request->input('images_naming', 'hash'),
-            'goods_count' => count($allGoods)
-        ]);
-
         // РџРѕР»СѓС‡Р°РµРј РїР°СЂР°РјРµС‚СЂС‹ РёРјРїРѕСЂС‚Р°
         $nameTrimSymbol = $request->input('name_trim_symbol');
         $naming = $request->input('images_naming', 'hash');
@@ -2727,9 +2717,7 @@ class BulkGoodsImportController extends Controller
      * @param  object|null  $variation  Р’Р°СЂРёР°С†РёСЏ: РµСЃР»Рё РїРµСЂРµРґР°РЅР°, РёР·РѕР±СЂР°Р¶РµРЅРёСЏ РїСЂРёРІСЏР·С‹РІР°СЋС‚СЃСЏ Рє РІР°СЂРёР°С†РёРё, Р° РЅРµ Рє С‚РѕРІР°СЂСѓ
      */
     private function processImages($good, $images, $variation = null, $skipIfHasImagesOnUpdate = false, $naming = 'hash')
-    {
-        \Log::error('BulkImport: processImages method called', ['naming' => $naming, 'images_count' => count($images)]);
-        $stats = ['downloaded' => 0, 'failed' => 0];
+    {        $stats = ['downloaded' => 0, 'failed' => 0];
         $attachToVariation = $variation !== null;
 
         $filteredImages = [];
@@ -2824,22 +2812,14 @@ class BulkGoodsImportController extends Controller
             ];
         };
 
-        foreach ($filteredImages as $imageUrl) {
-            \Log::error('BulkImport: Processing image URL', ['url' => $imageUrl, 'naming' => $naming]);
-            if (str_starts_with($imageUrl, '/')) {
+        foreach ($filteredImages as $imageUrl) {            if (str_starts_with($imageUrl, '/')) {
                 ShopGoodImage::create($imageRecord($imageUrl));
                 $stats['downloaded']++;
             } else {
                 try {
                     $downloadResponse = $this->downloadImage($imageUrl, $naming);
                     if ($downloadResponse && isset($downloadResponse['data']['path'])) {
-                        if (isset($downloadResponse['data']['skipped']) && $downloadResponse['data']['skipped']) {
-                             \Log::error('BulkImport: Image SKIPPED by API', [
-                                 'url' => $imageUrl,
-                                 'naming_sent' => $naming,
-                                 'api_response' => $downloadResponse
-                             ]);
-                             $this->importLogService->logImageSkipped($imageUrl, 'Файл уже существует на диске (пропущено API)', $good->sku ?? null);
+                        if (isset($downloadResponse['data']['skipped']) && $downloadResponse['data']['skipped']) {                             $this->importLogService->logImageSkipped($imageUrl, 'Файл уже существует на диске (пропущено API)', $good->sku ?? null);
                         }
                         ShopGoodImage::create($imageRecord($downloadResponse['data']['path']));
                         if (!(isset($downloadResponse['data']['skipped']) && $downloadResponse['data']['skipped'])) {
@@ -2861,12 +2841,6 @@ class BulkGoodsImportController extends Controller
 
     private function downloadImage($imageUrl, $naming = 'hash')
     {
-        \Log::error('BulkImport: downloadImage started', ['naming' => $naming]);
-        \Log::info('BulkImport: Sending download request', [
-            'imageUrl' => $imageUrl,
-            'naming' => $naming
-        ]);
-
         // РСЃРїРѕР»СЊР·СѓРµРј С‚РѕС‚ Р¶Рµ РјРµС‚РѕРґ, С‡С‚Рѕ Рё РІ ShopGoodsController
         $response = Http::timeout(30)->post(url('/api/admin/shop/goods/download-image'), [
             'imageUrl' => $imageUrl,
@@ -2881,14 +2855,7 @@ class BulkGoodsImportController extends Controller
             'Content-Type' => 'application/json',
         ]);
 
-        if ($response->successful()) {
-            \Log::info('BulkImport: Download successful', ['data' => $response->json()]);
-        } else {
-            \Log::error('BulkImport: Download failed', [
-                'status' => $response->status(),
-                'body' => $response->body()
-            ]);
-        }
+        if ($response->successful()) {        } else {        }
 
         return $response->json();
     }

@@ -78,6 +78,7 @@ class CdekService
             // Получаем токен авторизации
             $token = $this->getAccessToken();
             if (! $token) {
+                Log::warning('CdekService: Failed to get access token in getPickupPoints');
                 return null;
             }
 
@@ -130,7 +131,11 @@ class CdekService
 
                 return $points;
             } else {
-                Log::error('CdekService: API request failed: '.$response->body());
+                Log::error('CdekService: getPickupPoints API request failed', [
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                    'url' => $url,
+                ]);
 
                 return null;
             }
@@ -255,7 +260,7 @@ class CdekService
     public function getAccessToken()
     {
         if (! $this->settings || ! $this->settings->client_id || ! $this->settings->client_secret) {
-            Log::error('CDEK API keys are not configured.');
+            Log::error('CdekService: CDEK API keys are not configured or settings are not active.');
 
             return null;
         }
@@ -272,18 +277,16 @@ class CdekService
 
         for ($attempt = 1; $attempt <= $maxRetries; $attempt++) {
             try {
-                // Используем правильный endpoint для получения токена как в папке cdek
-                $params = [
+                // Используем правильный endpoint для получения токена
+                // Параметры передаем в теле запроса (form-data), что надежнее для OAuth2
+                $response = Http::asForm()->withOptions([
+                    'verify' => $this->sslVerify,
+                    'timeout' => $this->timeout,
+                ])->post(rtrim($this->apiUrl, '/').'/oauth/token', [
                     'grant_type' => 'client_credentials',
                     'client_id' => $this->settings->client_id,
                     'client_secret' => $this->settings->client_secret,
-                ];
-                $url = $this->apiUrl.'/oauth/token?'.http_build_query($params);
-
-                $response = Http::withOptions([
-                    'verify' => $this->sslVerify,
-                    'timeout' => $this->timeout,
-                ])->post($url);
+                ]);
 
                 if ($response->successful()) {
                     $data = $response->json();
@@ -296,12 +299,17 @@ class CdekService
                     }
                 }
 
+                Log::warning("CdekService: Failed to get access token on attempt {$attempt}", [
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                ]);
+
                 if ($attempt < $maxRetries) {
                     sleep($retryDelay);
                     $retryDelay *= 2; // Увеличиваем задержку
                 }
             } catch (\Exception $e) {
-                Log::error("CdekService: Error getting access token on attempt {$attempt}: ".$e->getMessage());
+                Log::error("CdekService: Exception while getting access token on attempt {$attempt}: ".$e->getMessage());
 
                 if ($attempt < $maxRetries) {
                     sleep($retryDelay);

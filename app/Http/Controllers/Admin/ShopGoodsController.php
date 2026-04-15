@@ -3687,7 +3687,6 @@ class ShopGoodsController extends Controller
      */
     public function downloadImage(Request $request): JsonResponse
     {
-        \Log::error('BulkImport: ShopGoodsController API hit', ['params' => $request->all()]);
         $validator = Validator::make($request->all(), [
             'imageUrl' => 'required|url',
             'storagePath' => 'required|string',
@@ -3715,11 +3714,6 @@ class ShopGoodsController extends Controller
             $width = $request->input('width');
             $height = $request->input('height');
 
-            \Log::info('API: downloadImage request received', [
-                'imageUrl' => $imageUrl,
-                'naming' => $naming,
-                'request_all' => $request->all()
-            ]);
 
             // Р’Р°Р»РёРґР°С†РёСЏ URL
             if (! filter_var($imageUrl, FILTER_VALIDATE_URL)) {
@@ -3762,45 +3756,16 @@ class ShopGoodsController extends Controller
             $storageFullPath = $frontendPublicPath.'/'.ltrim($fullPath, '/');
 
             // РџСЂРѕРІРµСЂСЏРµРј, СЃСѓС‰РµСЃС‚РІСѓРµС‚ Р»Рё С„Р°Р№Р» СѓР¶Рµ
-            // Логируем для отладки
-            \Log::info('API_DL: downloadImage started', [
-                'naming' => $naming,
-                'imageUrl' => $imageUrl,
-                'storagePath' => $storagePath,
-                'optimize' => $optimize
-            ]);
-
-            // ГЛУБОКАЯ ОТЛАДКА
-            \Log::info('API_DL: Debug condition check', [
-                'naming' => $naming,
-                'is_original' => ($naming === 'original'),
-                'is_hash' => ($naming === 'hash'),
-                'file_exists' => file_exists($storageFullPath),
-                'storageFullPath' => $storageFullPath
-            ]);
-
             // Если режим "Оригинал" - проверяем наличие файла. Для "Хеш" - качаем ВСЕГДА (перезаписываем)
-            if ($naming === 'original') {
-                if (file_exists($storageFullPath)) {
-                    \Log::info('API_DL: Skipping because naming is original AND file exists');
-                    return response()->json([
-                        'success' => true,
-                        'debug' => [
-                            'naming_received' => $naming,
-                            'file_exists' => true,
-                            'info' => 'Skipped because naming is original'
-                        ],
-                        'data' => [
-                            'path' => $fullPath,
-                            'originalUrl' => $imageUrl,
-                            'skipped' => true,
-                        ],
-                    ]);
-                }
-            } else if ($naming === 'hash') {
-                \Log::info('API_DL: Proceeding because naming is hash (bypass exists check)');
-            } else {
-                \Log::warning('API_DL: Unknown naming mode, proceeding default', ['naming' => $naming]);
+            if ($naming === 'original' && file_exists($storageFullPath)) {
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'path' => $fullPath,
+                        'originalUrl' => $imageUrl,
+                        'skipped' => true,
+                    ],
+                ]);
             }
 
             // РЎРѕР·РґР°РµРј РґРёСЂРµРєС‚РѕСЂРёСЋ РµСЃР»Рё РЅРµ СЃСѓС‰РµСЃС‚РІСѓРµС‚
@@ -3849,10 +3814,6 @@ class ShopGoodsController extends Controller
 
             return response()->json([
                 'success' => true,
-                'debug' => [
-                    'naming_received' => $naming,
-                    'mode' => 'DOWNLOADED_OR_OVERWRITTEN'
-                ],
                 'data' => [
                     'path' => $fullPath,
                     'originalUrl' => $imageUrl,
@@ -3976,7 +3937,7 @@ class ShopGoodsController extends Controller
                 $relativePath = rtrim($storagePath, '/').'/'.$fileName;
                 $absolutePath = $frontendPublicPath.'/'.ltrim($relativePath, '/');
                 $normalizedAbsolutePath = realpath($absolutePath) ?: $absolutePath;
-                if (file_exists($normalizedAbsolutePath)) {
+                if ($naming === 'original' && file_exists($normalizedAbsolutePath)) {
                     $results[$imageUrl] = $relativePath;
                     $skipped[] = $imageUrl;
 
