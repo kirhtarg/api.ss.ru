@@ -234,10 +234,7 @@ class ShopCdekController extends Controller
                 'data' => is_array($points) ? $points : [],
             ]);
         } catch (\Exception $e) {
-            Log::error('CDEK PVZ List Error: '.$e->getMessage(), [
-                'stack' => $e->getTraceAsString(),
-                'city_code' => $request->query('city_code')
-            ]);
+            Log::error('CDEK PVZ List Error: '.$e->getMessage());
 
             return response()->json([
                 'success' => false,

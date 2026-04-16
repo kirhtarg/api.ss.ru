@@ -1925,11 +1925,13 @@ class ShopGoodVariationsController extends Controller
                 ->where('stock_quantity', 0)
                 ->where(function ($query) {
                     $query->whereNull('remote_stock_quantity')
-                        ->orWhere('remote_stock_quantity', 0);
+                        ->orWhere('remote_stock_quantity', '0')
+                        ->orWhere('remote_stock_quantity', '');
                 })
                 ->where(function ($query) {
                     $query->whereNull('fast_remote_stock_quantity')
-                        ->orWhere('fast_remote_stock_quantity', 0);
+                        ->orWhere('fast_remote_stock_quantity', '0')
+                        ->orWhere('fast_remote_stock_quantity', '');
                 })
                 ->with(['good:id,name,sku', 'images']) // Р—Р°РіСЂСѓР¶Р°РµРј РґР°РЅРЅС‹Рµ С‚РѕРІР°СЂР° Рё РёР·РѕР±СЂР°Р¶РµРЅРёСЏ РґР»СЏ РѕС‚РѕР±СЂР°Р¶РµРЅРёСЏ
                 ->select([

@@ -78,7 +78,6 @@ class CdekService
             // Получаем токен авторизации
             $token = $this->getAccessToken();
             if (! $token) {
-                Log::warning('CdekService: Failed to get access token in getPickupPoints');
                 return null;
             }
 
@@ -284,33 +283,27 @@ class CdekService
                     'timeout' => $this->timeout,
                 ])->post(rtrim($this->apiUrl, '/').'/oauth/token', [
                     'grant_type' => 'client_credentials',
-                    'client_id' => $this->settings->client_id,
-                    'client_secret' => $this->settings->client_secret,
+                    'client_id' => trim($this->settings->client_id),
+                    'client_secret' => trim($this->settings->client_secret),
                 ]);
 
-                if ($response->successful()) {
-                    $data = $response->json();
-                    $token = $data['access_token'] ?? null;
-                    if ($token) {
-                        // Кэшируем токен на 50 минут (токены СДЭК живут 1 час)
-                        cache()->put($cacheKey, $token, 3000);
-
-                        return $token;
+                if (! $response->successful()) {
+                    if ($attempt < $maxRetries) {
+                        sleep($retryDelay);
+                        $retryDelay *= 2;
                     }
+                    continue;
                 }
 
-                Log::warning("CdekService: Failed to get access token on attempt {$attempt}", [
-                    'status' => $response->status(),
-                    'body' => $response->body(),
-                ]);
+                $data = $response->json();
+                $token = $data['access_token'] ?? null;
+                if ($token) {
+                    // Кэшируем токен на 50 минут (токены СДЭК живут 1 час)
+                    cache()->put($cacheKey, $token, 3000);
 
-                if ($attempt < $maxRetries) {
-                    sleep($retryDelay);
-                    $retryDelay *= 2; // Увеличиваем задержку
+                    return $token;
                 }
             } catch (\Exception $e) {
-                Log::error("CdekService: Exception while getting access token on attempt {$attempt}: ".$e->getMessage());
-
                 if ($attempt < $maxRetries) {
                     sleep($retryDelay);
                     $retryDelay *= 2;

@@ -34,7 +34,7 @@ class BulkGoodsImportController extends Controller
     }
 
     /**
-     * РќРѕСЂРјР°Р»РёР·СѓРµС‚ С‚РµРєСЃС‚: СѓРґР°Р»СЏРµС‚ РґРІРѕР№РЅС‹Рµ РїСЂРѕР±РµР»С‹ Рё Р»РёС€РЅРёРµ РїСЂРѕР±РµР»С‹ РІ РЅР°С‡Р°Р»Рµ/РєРѕРЅС†Рµ
+     * Нормализует текст: удаляет двойные пробелы и лишние пробелы в начале/конце
      */
     private function normalizeText(string $text): string
     {
@@ -42,18 +42,18 @@ class BulkGoodsImportController extends Controller
             return $text;
         }
 
-        // РЈР±РёСЂР°РµРј РїСЂРѕР±РµР»С‹ РІ РЅР°С‡Р°Р»Рµ Рё РєРѕРЅС†Рµ
+        // Убираем пробелы в начале и конце
         $text = trim($text);
 
-        // Р—Р°РјРµРЅСЏРµРј РјРЅРѕР¶РµСЃС‚РІРµРЅРЅС‹Рµ РїСЂРѕР±РµР»С‹ РЅР° РѕРґРёРЅ
+        // Заменяем множественные пробелы на один
         $text = preg_replace('/\s+/', ' ', $text);
 
         return $text;
     }
 
     /**
-     * РќРѕСЂРјР°Р»РёР·СѓРµС‚ С‚РµРєСЃС‚ РґР»СЏ РїРѕРёСЃРєР° РІ Р±Р°Р·Рµ РґР°РЅРЅС‹С… (РґР»СЏ СЃРѕРІРјРµСЃС‚РёРјРѕСЃС‚Рё СЃРѕ СЃС‚Р°СЂС‹РјРё Р·Р°РїРёСЃСЏРјРё)
-     * РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РґР»СЏ РїРѕРёСЃРєР° С‚РѕРІР°СЂРѕРІ СЃ СѓС‡РµС‚РѕРј РґРІРѕР№РЅС‹С… РїСЂРѕР±РµР»РѕРІ
+     * Нормализует текст для поиска в базе данных (для совместимости со старыми записями)
+     * Используется для поиска товаров с учетом двойных пробелов
      */
     private function normalizeTextForSearch(string $text): string
     {
@@ -63,19 +63,19 @@ class BulkGoodsImportController extends Controller
     public function bulkImport(Request $request)
     {
 
-        // РћРїСЂРµРґРµР»СЏРµРј РёРјСЏ РїРѕСЃС‚Р°РІС‰РёРєР°
+        // Определяем имя поставщика
         $supplierNameFromRequest = $request->input('supplier_name');
         if ($supplierNameFromRequest && $supplierNameFromRequest !== '__reset_all__') {
             $supplierNameFromRequest = trim($supplierNameFromRequest);
         }
 
-        // РџРѕР»СѓС‡Р°РµРј РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ Р±Р°С‚С‡Рµ РґР»СЏ РѕС‡РёСЃС‚РєРё Р»РѕРіРѕРІ
+        // Получаем информацию о батче для очистки логов
         $isFirstBatch = $request->input('is_first_batch', false);
 
-        // РџРѕР»СѓС‡Р°РµРј РІС‹Р±СЂР°РЅРЅС‹Рµ РїРѕР»СЏ РѕСЃС‚Р°С‚РєРѕРІ РёР· Р·Р°РїСЂРѕСЃР° РґР»СЏ РѕР±РЅСѓР»РµРЅРёСЏ
+        // Получаем выбранные поля остатков из запроса для обнуления
         $resetStockFields = $request->input('reset_stock_fields', []);
 
-        // РћРїСЂРµРґРµР»СЏРµРј supplierStockFields РґР»СЏ РѕР±РЅСѓР»РµРЅРёСЏ Рё РёСЃРїРѕР»СЊР·РѕРІР°РЅРёСЏ РІ РѕСЃС‚Р°Р»СЊРЅРѕР№ С‡Р°СЃС‚Рё РјРµС‚РѕРґР°
+        // Определяем supplierStockFields для обнуления и использования в остальной части метода
         $supplierStockFields = [];
         if (!empty($resetStockFields)) {
             foreach ($resetStockFields as $field) {
@@ -83,37 +83,37 @@ class BulkGoodsImportController extends Controller
             }
         }
 
-        // Р’С‹РїРѕР»РЅСЏРµРј РѕР±РЅСѓР»РµРЅРёРµ РѕСЃС‚Р°С‚РєРѕРІ РїРµСЂРµРґ РёРјРїРѕСЂС‚РѕРј (С‚РѕР»СЊРєРѕ РґР»СЏ РїРµСЂРІРѕРіРѕ Р±Р°С‚С‡Р°)
+        // Выполняем обнуление остатков перед импортом (только для первого батча)
         $resetStats = null;
         if ($isFirstBatch && !empty($supplierStockFields) && $supplierNameFromRequest) {
             $resetStats = $this->resetSupplierStocks($supplierNameFromRequest, $supplierStockFields);
 
         }
 
-        // РћС‡РёС‰Р°РµРј Р»РѕРіРё С‚РѕР»СЊРєРѕ РґР»СЏ РїРµСЂРІРѕРіРѕ Р±Р°С‚С‡Р°
+        // Очищаем логи только для первого батча
         if ($isFirstBatch) {
             $this->importLogService->clearAllLogs();
         }
 
-        // РЎРѕР·РґР°РµРј СЂРµР·РµСЂРІРЅСѓСЋ РєРѕРїРёСЋ РїРµСЂРµРґ РёРјРїРѕСЂС‚РѕРј (С‚РѕР»СЊРєРѕ РґР»СЏ РїРµСЂРІРѕРіРѕ Р±Р°С‚С‡Р°) - РІСЂРµРјРµРЅРЅРѕ РѕС‚РєР»СЋС‡РµРЅРѕ
+        // Создаем резервную копию перед импортом (только для первого батча) - временно отключено
         // $backupId = null;
         // $createBackup = $request->input('create_backup_before_import', false);
         // if ($isFirstBatch && $createBackup) {
         //     try {
         //         //         $backup = $this->backupService->createBackup(
-        //             'Р РµР·РµСЂРІРЅР°СЏ РєРѕРїРёСЏ РїРµСЂРµРґ РёРјРїРѕСЂС‚РѕРј ' . now()->format('d.m.Y H:i'),
+        //             'Резервная копия перед импортом ' . now()->format('d.m.Y H:i'),
         //             auth()->id()
         //         );
 
         //         $backupId = $backup->id;
 
         //         //     } catch (\Exception $e) {
-        //         Log::error('РћС€РёР±РєР° СЃРѕР·РґР°РЅРёСЏ СЂРµР·РµСЂРІРЅРѕР№ РєРѕРїРёРё РїРµСЂРµРґ РёРјРїРѕСЂС‚РѕРј', [
+        //         Log::error('Ошибка создания резервной копии перед импортом', [
         //             'error' => $e->getMessage(),
         //             'user_id' => auth()->id()
         //         ]);
 
-        //         // РџСЂРѕРґРѕР»Р¶Р°РµРј РёРјРїРѕСЂС‚, РЅРѕ Р»РѕРіРёСЂСѓРµРј РѕС€РёР±РєСѓ
+        //         // Продолжаем импорт, но логируем ошибку
         //     }
         // }
 
@@ -121,11 +121,11 @@ class BulkGoodsImportController extends Controller
         $allGoods = $request->input('goods', []);
 
         // ГАРАНТИРОВАННАЯ ПРОВЕРКА (Удалите после теста)
-        // РџРѕР»СѓС‡Р°РµРј РїР°СЂР°РјРµС‚СЂС‹ РёРјРїРѕСЂС‚Р°
+        // Получаем параметры импорта
         $nameTrimSymbol = $request->input('name_trim_symbol');
-        $naming = $request->input('images_naming', 'hash');
+        $naming = trim((string) $request->input('images_naming', 'hash'));
 
-        // Р¤РёР»СЊС‚СЂСѓРµРј РїСѓСЃС‚С‹Рµ СЃС‚СЂРѕРєРё - РѕСЃС‚Р°РІР»СЏРµРј С‚РѕР»СЊРєРѕ С‚РѕРІР°СЂС‹ СЃ Р·Р°РїРѕР»РЅРµРЅРЅС‹РјРё SKU Рё РЅР°Р·РІР°РЅРёРµРј
+        // Фильтруем пустые строки - оставляем только товары с заполненными SKU и названием
         $goods = [];
         $skippedRows = [];
 
@@ -133,15 +133,15 @@ class BulkGoodsImportController extends Controller
             $sku = isset($good['sku']) ? trim((string) $good['sku']) : '';
             $name = isset($good['name']) ? $this->normalizeText((string) $good['name']) : '';
 
-            // РџРѕР»СѓС‡Р°РµРј РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ Р»РёСЃС‚Рµ
-            $sheet = $good['_sheet'] ?? 'РЅРµРёР·РІРµСЃС‚РЅРѕ';
+            // Получаем информацию о листе
+            $sheet = $good['_sheet'] ?? 'неизвестно';
 
-            // РЎРѕР·РґР°РµРј СѓРЅРёРєР°Р»СЊРЅС‹Р№ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂ РґР»СЏ С‚РѕРІР°СЂР°
+            // Создаем уникальный идентификатор для товара
             $itemId = $sheet . '_' . $index . '_' . substr(md5($sku . $name), 0, 8);
 
-            // РџСЂРѕРїСѓСЃРєР°РµРј С‚РѕР»СЊРєРѕ РїРѕР»РЅРѕСЃС‚СЊСЋ РїСѓСЃС‚С‹Рµ СЃС‚СЂРѕРєРё (РіРґРµ Р SKU Р РЅР°Р·РІР°РЅРёРµ РїСѓСЃС‚С‹Рµ)
+            // Пропускаем только полностью пустые строки (где И SKU И название пустые)
             if (empty($sku) && empty($name)) {
-                $reason = 'РџСѓСЃС‚Р°СЏ СЃС‚СЂРѕРєР°';
+                $reason = 'Пустая строка';
 
                 $skippedRows[] = [
                     'count' => $index + 1,
@@ -154,9 +154,9 @@ class BulkGoodsImportController extends Controller
                 continue;
             }
 
-            // Р•СЃР»Рё РЅРµС‚ РЅРё SKU, РЅРё РЅР°Р·РІР°РЅРёСЏ - РїСЂРѕРїСѓСЃРєР°РµРј СЃС‚СЂРѕРєСѓ
+            // Если нет ни SKU, ни названия - пропускаем строку
             if (empty($sku) && empty($name)) {
-                $reason = 'РћС‚СЃСѓС‚СЃС‚РІСѓРµС‚ SKU Рё РЅР°Р·РІР°РЅРёРµ';
+                $reason = 'Отсутствует SKU и название';
                 $skippedRows[] = [
                     'count' => $index + 1,
                     'sku' => $sku,
@@ -168,13 +168,13 @@ class BulkGoodsImportController extends Controller
                 continue;
             }
 
-            // Р•СЃР»Рё РµСЃС‚СЊ С‚РѕР»СЊРєРѕ SKU Р±РµР· РЅР°Р·РІР°РЅРёСЏ - СЌС‚Рѕ РІР°Р»РёРґРЅРѕ РґР»СЏ РѕР±РЅРѕРІР»РµРЅРёСЏ СЃСѓС‰РµСЃС‚РІСѓСЋС‰РµРіРѕ С‚РѕРІР°СЂР°
-            // Р•СЃР»Рё РµСЃС‚СЊ С‚РѕР»СЊРєРѕ РЅР°Р·РІР°РЅРёРµ Р±РµР· SKU - СЌС‚Рѕ РІР°Р»РёРґРЅРѕ РґР»СЏ СЃРѕР·РґР°РЅРёСЏ РЅРѕРІРѕРіРѕ С‚РѕРІР°СЂР°
-            // Р•СЃР»Рё РµСЃС‚СЊ Рё SKU, Рё РЅР°Р·РІР°РЅРёРµ - СЌС‚Рѕ РІР°Р»РёРґРЅРѕ РґР»СЏ СЃРѕР·РґР°РЅРёСЏ РёР»Рё РѕР±РЅРѕРІР»РµРЅРёСЏ
+            // Если есть только SKU без названия - это валидно для обновления существующего товара
+            // Если есть только название без SKU - это валидно для создания нового товара
+            // Если есть и SKU, и название - это валидно для создания или обновления
 
-            // РќРѕСЂРјР°Р»РёР·СѓРµРј С‚РѕР»СЊРєРѕ С‚Рµ РїРѕР»СЏ, РєРѕС‚РѕСЂС‹Рµ Р±С‹Р»Рё РІ Р·Р°РїСЂРѕСЃРµ (РїСЂРёС€Р»Рё РёР· РјР°РїРїРёРЅРіР° РєРѕР»РѕРЅРѕРє).
-            // РќРµ РґРѕР±Р°РІР»СЏРµРј sku/name, РµСЃР»Рё РєРѕР»РѕРЅРєР° РЅРµ Р±С‹Р»Р° СЃРѕРїРѕСЃС‚Р°РІР»РµРЅР° вЂ” РёРЅР°С‡Рµ РїСЂРё РѕР±РЅРѕРІР»РµРЅРёРё
-            // РјС‹ Р±С‹ РїРµСЂРµР·Р°РїРёСЃС‹РІР°Р»Рё Р·РЅР°С‡РµРЅРёСЏ РІ Р‘Р” В«РїСѓСЃС‚С‹РјРёВ» РёР· С…РѕСЂРѕС€РёС… РґР°РЅРЅС‹С….
+            // Нормализуем только те поля, которые были в запросе (пришли из маппинга колонок).
+            // Не добавляем sku/name, если колонка не была сопоставлена — иначе при обновлении
+            // мы бы перезаписывали значения в БД «пустыми» из хороших данных.
             if (array_key_exists('sku', $good)) {
                 $good['sku'] = $sku;
             }
@@ -182,7 +182,7 @@ class BulkGoodsImportController extends Controller
                 $good['name'] = $name;
             }
 
-            // Р”РѕР±Р°РІР»СЏРµРј supplier_name РёР· Р·Р°РїСЂРѕСЃР°, РµСЃР»Рё СѓРєР°Р·Р°РЅ
+            // Добавляем supplier_name из запроса, если указан
             $supplierName = $request->input('supplier_name', null);
             if ($supplierName !== null && $supplierName !== '') {
                 $good['supplier_name'] = trim($supplierName);
@@ -192,12 +192,12 @@ class BulkGoodsImportController extends Controller
 
         }
 
-        // Р›РѕРіРёСЂСѓРµРј РїСЂРѕРїСѓС‰РµРЅРЅС‹Рµ СЃС‚СЂРѕРєРё
+        // Логируем пропущенные строки
         if (!empty($skippedRows)) {
             $this->importLogService->logSkippedBatch($skippedRows);
         }
 
-        // Р’Р°Р»РёРґРёСЂСѓРµРј С‚РѕР»СЊРєРѕ РЅРµРїСѓСЃС‚С‹Рµ С‚РѕРІР°СЂС‹
+        // Валидируем только непустые товары
         $validator = Validator::make([
             'goods' => $goods,
             'duplicate_action' => $request->input('duplicate_action'),
@@ -207,20 +207,20 @@ class BulkGoodsImportController extends Controller
         ], [
             'goods' => 'required|array',
             'goods.*.sku' => 'nullable|string|max:255',
-            'goods.*.name' => 'nullable|string|min:1', // name С‚РµРїРµСЂСЊ РЅРµРѕР±СЏР·Р°С‚РµР»РµРЅ, РµСЃР»Рё РµСЃС‚СЊ SKU
+            'goods.*.name' => 'nullable|string|min:1', // name теперь необязателен, если есть SKU
             'duplicate_action' => 'required|in:skip,update',
             'auto_create_categories' => 'boolean',
             'auto_create_brands' => 'boolean',
             'process_categories_and_brands' => 'boolean',
         ]);
 
-        // РџСЂРѕРІРµСЂСЏРµРј, РµСЃС‚СЊ Р»Рё С‚РѕРІР°СЂС‹ РґР»СЏ РѕР±СЂР°Р±РѕС‚РєРё РїРѕСЃР»Рµ С„РёР»СЊС‚СЂР°С†РёРё
+        // Проверяем, есть ли товары для обработки после фильтрации
         if (empty($goods)) {
             $skippedCount = count($skippedRows);
 
             return response()->json([
                 'success' => true,
-                'message' => "РќРµС‚ С‚РѕРІР°СЂРѕРІ РґР»СЏ РёРјРїРѕСЂС‚Р° (РІСЃРµ {$skippedCount} СЃС‚СЂРѕРє РїСѓСЃС‚С‹Рµ РёР»Рё РЅРµРїРѕР»РЅС‹Рµ)",
+                'message' => "Нет товаров для импорта (все {$skippedCount} строк пустые или неполные)",
                 'results' => [
                     'imported' => 0,
                     'updated' => 0,
@@ -235,16 +235,16 @@ class BulkGoodsImportController extends Controller
         }
 
         if ($validator->fails()) {
-            // Р›РѕРіРёСЂСѓРµРј РѕС€РёР±РєРё РІР°Р»РёРґР°С†РёРё СЃ РґРµС‚Р°Р»СЊРЅРѕР№ РёРЅС„РѕСЂРјР°С†РёРµР№
+            // Логируем ошибки валидации с детальной информацией
             $errors = $validator->errors();
             $errorMessages = [];
             foreach ($errors->all() as $error) {
                 $errorMessages[] = $error;
             }
 
-            $this->importLogService->logGeneralError('РћС€РёР±РєР° РІР°Р»РёРґР°С†РёРё: ' . implode('; ', $errorMessages));
+            $this->importLogService->logGeneralError('Ошибка валидации: ' . implode('; ', $errorMessages));
 
-            // Р›РѕРіРёСЂСѓРµРј РѕС€РёР±РєРё РІР°Р»РёРґР°С†РёРё С„Р°Р№Р»РѕРІ РѕС‚РґРµР»СЊРЅРѕ
+            // Логируем ошибки валидации файлов отдельно
             foreach ($errorMessages as $error) {
                 if (strpos($error, 'goods') !== false || strpos($error, 'file') !== false || strpos($error, 'required') !== false) {
                     $this->importLogService->logFileLoadingError($error);
@@ -253,7 +253,7 @@ class BulkGoodsImportController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'РћС€РёР±РєР° РІР°Р»РёРґР°С†РёРё',
+                'message' => 'Ошибка валидации',
                 'errors' => $validator->errors(),
             ], 422);
         }
@@ -267,7 +267,7 @@ class BulkGoodsImportController extends Controller
         $immutableFields = $request->input('immutable_fields', []);
         $supplierName = $request->input('supplier_name', null);
 
-        // РџСЂРµРѕР±СЂР°Р·СѓРµРј immutable_fields РІ РјР°СЃСЃРёРІ, РµСЃР»Рё РїСЂРёС€Р»Рѕ РєР°Рє СЃС‚СЂРѕРєР°
+        // Преобразуем immutable_fields в массив, если пришло как строка
         if (is_string($immutableFields)) {
             $immutableFields = json_decode($immutableFields, true) ?? [];
         }
@@ -275,7 +275,7 @@ class BulkGoodsImportController extends Controller
             $immutableFields = [];
         }
 
-        // РџСЂРµРѕР±СЂР°Р·СѓРµРј РІ boolean, РµСЃР»Рё РїСЂРёС€Р»Рѕ РєР°Рє СЃС‚СЂРѕРєР°
+        // Преобразуем в boolean, если пришло как строка
         if (is_string($useDefaultCategory)) {
             $useDefaultCategory = in_array(strtolower($useDefaultCategory), ['true', '1', 'yes', 'on']);
         }
@@ -287,17 +287,17 @@ class BulkGoodsImportController extends Controller
         }
         $skipImagesOnUpdateIfExists = (bool) $skipImagesOnUpdateIfExists;
 
-        // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј defaultCategory: РµСЃР»Рё СЌС‚Рѕ СЃС‚СЂРѕРєР° (РЅР°Р·РІР°РЅРёРµ), РЅР°С…РѕРґРёРј РёР»Рё СЃРѕР·РґР°РµРј РєР°С‚РµРіРѕСЂРёСЋ
-        // Р•СЃР»Рё СЌС‚Рѕ С‡РёСЃР»Рѕ (ID), РёСЃРїРѕР»СЊР·СѓРµРј РєР°Рє РµСЃС‚СЊ
+        // Обрабатываем defaultCategory: если это строка (название), находим или создаем категорию
+        // Если это число (ID), используем как есть
         if ($defaultCategory !== null && is_string($defaultCategory) && trim($defaultCategory) !== '') {
             $categoryName = trim($defaultCategory);
-            // РС‰РµРј РєР°С‚РµРіРѕСЂРёСЋ РїРѕ РЅР°Р·РІР°РЅРёСЋ
+            // Ищем категорию по названию
             $foundCategory = \App\Models\ShopCategory::where('name', $categoryName)->first();
 
             if ($foundCategory) {
                 $defaultCategory = $foundCategory->id;
             } else {
-                // Р•СЃР»Рё РєР°С‚РµРіРѕСЂРёСЏ РЅРµ РЅР°Р№РґРµРЅР°, СЃРѕР·РґР°РµРј РµС‘
+                // Если категория не найдена, создаем её
                 $newCategory = \App\Models\ShopCategory::create([
                     'name' => $categoryName,
                     'slug' => \Illuminate\Support\Str::slug($categoryName),
@@ -310,18 +310,18 @@ class BulkGoodsImportController extends Controller
                 $defaultCategory = $newCategory->id;
             }
         } elseif ($defaultCategory !== null && is_numeric($defaultCategory)) {
-            // Р•СЃР»Рё СЌС‚Рѕ С‡РёСЃР»Рѕ, РёСЃРїРѕР»СЊР·СѓРµРј РєР°Рє ID
+            // Если это число, используем как ID
             $defaultCategory = (int) $defaultCategory;
         } else {
-            // Р•СЃР»Рё РїСѓСЃС‚РѕРµ РёР»Рё null, СѓСЃС‚Р°РЅР°РІР»РёРІР°РµРј null
+            // Если пустое или null, устанавливаем null
             $defaultCategory = null;
         }
 
-        // РџРѕР»СѓС‡Р°РµРј РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ Р±Р°С‚С‡Рµ
+        // Получаем информацию о батче
         $batchNumber = $request->input('batch_number', 1);
         $totalBatches = $request->input('total_batches', 1);
 
-        // Р•СЃР»Рё СѓРєР°Р·Р°РЅ РїРѕСЃС‚Р°РІС‰РёРє Рё СЌС‚Рѕ РїРµСЂРІС‹Р№ Р±Р°С‚С‡, РѕР±РЅСѓР»СЏРµРј РѕСЃС‚Р°С‚РєРё Сѓ РІСЃРµС… С‚РѕРІР°СЂРѕРІ СЌС‚РѕРіРѕ РїРѕСЃС‚Р°РІС‰РёРєР°
+        // Если указан поставщик и это первый батч, обнуляем остатки у всех товаров этого поставщика
         if ($isFirstBatch && $supplierName !== null && $supplierName !== '') {
             $this->resetSupplierStockByName(trim($supplierName));
         }
@@ -329,29 +329,29 @@ class BulkGoodsImportController extends Controller
         $results = [
             'imported' => 0,
             'updated' => 0,
-            'skipped' => count($skippedRows), // Р’РєР»СЋС‡Р°РµРј РїСЂРѕРїСѓС‰РµРЅРЅС‹Рµ СЃС‚СЂРѕРєРё
+            'skipped' => count($skippedRows), // Включаем пропущенные строки
             'failed' => 0,
             'errors' => [],
             'goodIds' => [],
-            'variationIds' => [], // ID РІР°СЂРёР°С†РёР№ РґР»СЏ СЃРІСЏР·Рё СЃ РёР·РѕР±СЂР°Р¶РµРЅРёСЏРјРё
+            'variationIds' => [], // ID вариаций для связи с изображениями
             'newCategories' => [],
             'newBrands' => [],
-            'imagesDownloaded' => 0, // РљРѕР»РёС‡РµСЃС‚РІРѕ Р·Р°РіСЂСѓР¶РµРЅРЅС‹С… РёР·РѕР±СЂР°Р¶РµРЅРёР№
-            'imagesFailed' => 0, // РљРѕР»РёС‡РµСЃС‚РІРѕ РЅРµСѓРґР°С‡РЅС‹С… Р·Р°РіСЂСѓР·РѕРє РёР·РѕР±СЂР°Р¶РµРЅРёР№
+            'imagesDownloaded' => 0, // Количество загруженных изображений
+            'imagesFailed' => 0, // Количество неудачных загрузок изображений
         ];
 
-        // РџР°РєРµС‚РЅР°СЏ РѕР±СЂР°Р±РѕС‚РєР° РєР°С‚РµРіРѕСЂРёР№ Рё Р±СЂРµРЅРґРѕРІ
+        // Пакетная обработка категорий и брендов
         if ($processCategoriesAndBrands && ($autoCreateCategories || $autoCreateBrands)) {
             $this->processCategoriesAndBrandsBatch($goods, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory);
 
-            // РЎРѕР±РёСЂР°РµРј РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ РЅРѕРІС‹С… РєР°С‚РµРіРѕСЂРёСЏС… Рё Р±СЂРµРЅРґР°С…
+            // Собираем информацию о новых категориях и брендах
             $this->collectNewCategoriesAndBrands($goods, $results);
         }
 
         DB::beginTransaction();
 
         try {
-            // Р“СЂСѓРїРїРёСЂСѓРµРј С‚РѕРІР°СЂС‹ РґР»СЏ РїР°РєРµС‚РЅРѕРіРѕ Р»РѕРіРёСЂРѕРІР°РЅРёСЏ
+            // Группируем товары для пакетного логирования
             $loadItems = [];
             $updateItems = [];
             $skipItems = [];
@@ -359,30 +359,30 @@ class BulkGoodsImportController extends Controller
 
             foreach ($goods as $index => $goodData) {
                 $count = $index + 1;
-                // Р”Р»СЏ РїРѕРёСЃРєР°: С‚РѕР»СЊРєРѕ Р·РЅР°С‡РµРЅРёСЏ РёР· РјР°РїРїРёРЅРіР°. Р•СЃР»Рё РєРѕР»РѕРЅРєР° РЅРµ СЃРѕРїРѕСЃС‚Р°РІР»РµРЅР° вЂ” РїСѓСЃС‚Р°СЏ СЃС‚СЂРѕРєР°
+                // Для поиска: только значения из маппинга. Если колонка не сопоставлена — пустая строка
                 $sku = isset($goodData['sku']) ? trim((string) $goodData['sku']) : '';
                 $name = isset($goodData['name']) ? $this->normalizeText((string) $goodData['name']) : '';
 
                 try {
-                    // РџСѓСЃС‚С‹Рµ СЃС‚СЂРѕРєРё СѓР¶Рµ РѕС‚С„РёР»СЊС‚СЂРѕРІР°РЅС‹ РЅР° СЌС‚Р°РїРµ РІР°Р»РёРґР°С†РёРё
-                    // Р—РґРµСЃСЊ РѕР±СЂР°Р±Р°С‚С‹РІР°РµРј С‚РѕР»СЊРєРѕ РІР°Р»РёРґРЅС‹Рµ С‚РѕРІР°СЂС‹
+                    // Пустые строки уже отфильтрованы на этапе валидации
+                    // Здесь обрабатываем только валидные товары
 
-                    // РћРїСЂРµРґРµР»СЏРµРј РїРѕР»Рµ РґР»СЏ РїРѕРёСЃРєР° СЃРѕРІРїР°РґРµРЅРёР№
+                    // Определяем поле для поиска совпадений
                     $duplicateFields = $request->input('duplicate_fields', ['sku']);
                     $searchByNameInVariations = $request->input('search_by_name_in_variations', false);
-                    // РџСЂРµРѕР±СЂР°Р·СѓРµРј РІ boolean, РµСЃР»Рё РїСЂРёС€Р»Рѕ РєР°Рє СЃС‚СЂРѕРєР°
+                    // Преобразуем в boolean, если пришло как строка
                     if (is_string($searchByNameInVariations)) {
                         $searchByNameInVariations = in_array(strtolower($searchByNameInVariations), ['true', '1', 'yes', 'on']);
                     }
                     $searchByNameInVariations = (bool) $searchByNameInVariations;
 
-                    // РџРѕР»Рµ РґР»СЏ РїРѕРёСЃРєР° РІ РІР°СЂРёР°С†РёСЏС… ('name' РёР»Рё 'sku')
+                    // Поле для поиска в вариациях ('name' или 'sku')
                     $searchByFieldInVariations = $request->input('search_by_field_in_variations', 'name');
                     if (!in_array($searchByFieldInVariations, ['name', 'sku'])) {
-                        $searchByFieldInVariations = 'name'; // Р·РЅР°С‡РµРЅРёРµ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
+                        $searchByFieldInVariations = 'name'; // значение по умолчанию
                     }
 
-                    // РџРѕР»СѓС‡Р°РµРј РїРѕСЃС‚Р°РІС‰РёРєР°: РёР· РґР°РЅРЅС‹С… С‚РѕРІР°СЂР° (РґРѕР±Р°РІР»РµРЅРѕ РїСЂРё РїСЂРµРїСЂРѕС†РµСЃСЃРёРЅРіРµ РёР· request) РёР»Рё РёР· request
+                    // Получаем поставщика: из данных товара (добавлено при препроцессинге из request) или из request
                     $supplierName = null;
                     $supplierNameRaw = $goodData['supplier_name'] ?? $request->input('supplier_name', null);
                     if ($supplierNameRaw !== null && $supplierNameRaw !== '' && $supplierNameRaw !== '__reset_all__') {
@@ -394,29 +394,29 @@ class BulkGoodsImportController extends Controller
 
                     $existingGood = null;
                     $existingVariation = null;
-                    $foundByFields = []; // РњР°СЃСЃРёРІ РґР»СЏ С…СЂР°РЅРµРЅРёСЏ РёРЅС„РѕСЂРјР°С†РёРё Рѕ С‚РѕРј, РїРѕ РєР°РєРёРј РїРѕР»СЏРј РЅР°Р№РґРµРЅ С‚РѕРІР°СЂ
-                    $foundMainGoodByName = false; // Р”Р»СЏ В«РџРѕРёСЃРє РІ РІР°СЂРёР°С†РёСЏС…В» РїРѕ SKU: true, РµСЃР»Рё РѕСЃРЅРѕРІРЅРѕР№ С‚РѕРІР°СЂ РЅР°Р№РґРµРЅ РїРѕ РЅР°Р·РІР°РЅРёСЋ (С‚РѕРіРґР° РґРѕР±Р°РІР»СЏРµРј РІР°СЂРёР°С†РёСЋ)
+                    $foundByFields = []; // Массив для хранения информации о том, по каким полям найден товар
+                    $foundMainGoodByName = false; // Для «Поиск в вариациях» по SKU: true, если основной товар найден по названию (тогда добавляем вариацию)
 
-                    // РРЅРёС†РёР°Р»РёР·РёСЂСѓРµРј РїРµСЂРµРјРµРЅРЅСѓСЋ hasVariation
+                    // Инициализируем переменную hasVariation
                     $hasVariation = false;
 
-                    // Р•СЃР»Рё РµСЃС‚СЊ РїРѕР»Рµ variation, РІСЃРµРіРґР° РёС‰РµРј С‚РѕРІР°СЂ РїРѕ РёРјРµРЅРё
+                    // Если есть поле variation, всегда ищем товар по имени
                     $hasVariation = isset($goodData['variation']) && is_array($goodData['variation']) &&
                         isset($goodData['variation']['attributes']) &&
                         is_array($goodData['variation']['attributes']) &&
                         count($goodData['variation']['attributes']) > 0;
 
-                    // РЎРЅР°С‡Р°Р»Р° РїСЂРѕРІРµСЂСЏРµРј СЂРµР¶РёРј РїРѕРёСЃРєР° РІ РІР°СЂРёР°С†РёСЏС… (РµСЃР»Рё РІРєР»СЋС‡РµРЅ)
-                    // РџРѕРёСЃРє СЂР°Р±РѕС‚Р°РµС‚ Рё Р±РµР· РїРѕСЃС‚Р°РІС‰РёРєР°: РїСЂРё РѕС‚СЃСѓС‚СЃС‚РІРёРё РїРѕСЃС‚Р°РІС‰РёРєР° РёС‰РµРј РїРѕ РІСЃРµРј РІР°СЂРёР°С†РёСЏРј
+                    // Сначала проверяем режим поиска в вариациях (если включен)
+                    // Поиск работает и без поставщика: при отсутствии поставщика ищем по всем вариациям
                     if ($searchByNameInVariations && !$hasVariation) {
-                        // РџРѕРёСЃРє РІР°СЂРёР°С†РёР№ РїРѕ РёРјРµРЅРё РѕС‚РєР»СЋС‡Р°РµРј РґР»СЏ С‚РѕРІР°СЂРѕРІ СЃ РІР°СЂРёР°С†РёСЏРјРё,
-                        // РїРѕС‚РѕРјСѓ С‡С‚Рѕ РјРѕР¶РµС‚ Р±С‹С‚СЊ РЅРµСЃРєРѕР»СЊРєРѕ РІР°СЂРёР°С†РёР№ СЃ РѕРґРёРЅР°РєРѕРІС‹Рј SKU
-                        // РћРїСЂРµРґРµР»СЏРµРј Р·РЅР°С‡РµРЅРёРµ РґР»СЏ РїРѕРёСЃРєР° РІ РІР°СЂРёР°С†РёСЏС…
+                        // Поиск вариаций по имени отключаем для товаров с вариациями,
+                        // потому это может быть несколько вариаций с одинаковым SKU
+                        // Определяем значение для поиска в вариациях
                         $searchValue = ($searchByFieldInVariations === 'sku') ? $sku : $name;
 
                         if (!empty($searchValue)) {
-                            // РС‰РµРј РІР°СЂРёР°С†РёСЋ РїРѕ РІС‹Р±СЂР°РЅРЅРѕРјСѓ РїРѕР»СЋ Рё Р°С‚СЂРёР±СѓС‚Р°Рј
-                            // РЎРЅР°С‡Р°Р»Р° РїСЂРѕР±СѓРµРј РЅР°Р№С‚Рё СЃ СѓС‡РµС‚РѕРј РїРѕСЃС‚Р°РІС‰РёРєР°
+                            // Ищем вариацию по выбранному полю и атрибутам
+                            // Сначала пробуем найти с учетом поставщика
                             $existingVariation = null;
                             if ($supplierName) {
                                 $existingVariation = $this->findVariationByNameAndAttributes(
@@ -427,7 +427,7 @@ class BulkGoodsImportController extends Controller
                                 );
                             }
 
-                            // Р•СЃР»Рё РЅРµ РЅР°С€Р»Рё СЃ РїРѕСЃС‚Р°РІС‰РёРєРѕРј вЂ” РїСЂРѕР±СѓРµРј Р±РµР· РЅРµРіРѕ
+                            // Если не нашли с поставщиком — пробуем без него
                             if (!$existingVariation) {
                                 $existingVariation = $this->findVariationByNameAndAttributes(
                                     $searchByFieldInVariations,
@@ -443,11 +443,11 @@ class BulkGoodsImportController extends Controller
                         }
                     }
 
-                    // РџСЂРё РїРѕРёСЃРєРµ РІ РІР°СЂРёР°С†РёСЏС… РїРѕ SKU: РёС‰РµРј РІР°СЂРёР°С†РёСЋ РїРѕ Р°СЂС‚РёРєСѓР»Сѓ С‚Р°РєР¶Рµ РґР»СЏ СЃС‚СЂРѕРє РЎ РІР°СЂРёР°С†РёРµР№ (hasVariation),
-                    // С‚.Рє. РІ Р±Р»РѕРєРµ РІС‹С€Рµ РїРѕРёСЃРє РІС‹РїРѕР»РЅСЏРµС‚СЃСЏ С‚РѕР»СЊРєРѕ РїСЂРё !hasVariation. Р•СЃР»Рё РІР°СЂРёР°С†РёСЏ РЅР°Р№РґРµРЅР° РїРѕ SKU вЂ”
-                    // РїСЂРёРѕСЂРёС‚РµС‚: С‚РѕР»СЊРєРѕ РѕР±РЅРѕРІРёС‚СЊ РІР°СЂРёР°С†РёСЋ, РёРјСЏ РѕСЃРЅРѕРІРЅРѕРіРѕ С‚РѕРІР°СЂР° РЅРµ Р·Р°С‚СЂР°РіРёРІР°С‚СЊ.
+                    // При поиске в вариациях по SKU: ищем вариацию по артикулу также для строк С вариацией (hasVariation),
+                    // т.к. в блоке выше поиск выполняется только при !hasVariation. Если вариация найдена по SKU —
+                    // приоритет: только обновить вариацию, имя основного товара не затрагивать.
                     if (!$existingVariation && $searchByNameInVariations && $searchByFieldInVariations === 'sku' && !empty($sku) && $hasVariation) {
-                        // РЎРЅР°С‡Р°Р»Р° РїСЂРѕР±СѓРµРј РЅР°Р№С‚Рё СЃ СѓС‡РµС‚РѕРј РїРѕСЃС‚Р°РІС‰РёРєР°
+                        // Сначала пробуем найти с учетом поставщика
                         $existingVariation = null;
                         if ($supplierName) {
                             $existingVariation = $this->findVariationByNameAndAttributes(
@@ -458,7 +458,7 @@ class BulkGoodsImportController extends Controller
                             );
                         }
 
-                        // Р•СЃР»Рё РЅРµ РЅР°С€Р»Рё СЃ РїРѕСЃС‚Р°РІС‰РёРєРѕРј вЂ” РїСЂРѕР±СѓРµРј Р±РµР· РЅРµРіРѕ
+                        // Если не нашли с поставщиком — пробуем без него
                         if (!$existingVariation) {
                             $existingVariation = $this->findVariationByNameAndAttributes(
                                 'sku',
@@ -474,12 +474,12 @@ class BulkGoodsImportController extends Controller
                         }
                     }
 
-                    // Р•СЃР»Рё РІР°СЂРёР°С†РёСЏ РЅРµ РЅР°Р№РґРµРЅР° (РёР»Рё РїРѕРёСЃРє РІ РІР°СЂРёР°С†РёСЏС… РѕС‚РєР»СЋС‡РµРЅ), РёС‰РµРј С‚РѕРІР°СЂ РѕР±С‹С‡РЅС‹Рј СЃРїРѕСЃРѕР±РѕРј
+                    // Если вариация не найдена (или поиск в вариациях отключен), ищем товар обычным способом
                     if (!$existingVariation) {
-                        // РЎРїРµС†РёР°Р»СЊРЅС‹Р№ СЂРµР¶РёРј: В«РџРѕРёСЃРє РІ РІР°СЂРёР°С†РёСЏС…В» РїРѕ Р°СЂС‚РёРєСѓР»Сѓ (SKU). РџРѕСЂСЏРґРѕРє: 1) РїРѕ РЅР°Р·РІР°РЅРёСЋ в†’ РґРѕР±Р°РІРёС‚СЊ РІР°СЂРёР°С†РёСЋ, 2) РїРѕ Р°СЂС‚РёРєСѓР»Сѓ РІ РѕСЃРЅРѕРІРЅС‹С… в†’ РѕР±РЅРѕРІРёС‚СЊ; РїРѕСЃС‚Р°РІС‰РёРє СѓС‡РёС‚С‹РІР°РµС‚СЃСЏ.
-                        // РџСЂРёСЃРІР°РёРІР°РµРј existingGood С‚РѕР»СЊРєРѕ РїСЂРё СѓСЃРїРµС€РЅРѕРј РЅР°С…РѕР¶РґРµРЅРёРё (РЅРµ РїРµСЂРµР·Р°РїРёСЃС‹РІР°РµРј null РїСЂРё РЅРµСѓРґР°С‡Рµ).
+                        // Специальный режим: «Поиск в вариациях» по артикулу (SKU). Порядок: 1) по названию ? добавить вариацию, 2) по артикулу в основных ? обновить; поставщик учитывается.
+                        // Присваиваем existingGood только при успешном нахождении (не перезаписываем null при неудаче).
                         if ($searchByNameInVariations && $searchByFieldInVariations === 'sku') {
-                            // 1) РџРѕ РЅР°Р·РІР°РЅРёСЋ РІ РѕСЃРЅРѕРІРЅС‹С… С‚РѕРІР°СЂР°С… (СЃ СѓС‡С‘С‚РѕРј РїРѕСЃС‚Р°РІС‰РёРєР°)
+                            // 1) По названию в основных товарах (с учётом поставщика)
                             if (!$existingGood && !empty($name)) {
                                 $normalizedName = $this->normalizeTextForSearch($name);
                                 $foundByName = ShopGood::where('name', $normalizedName);
@@ -493,58 +493,58 @@ class BulkGoodsImportController extends Controller
                                 if ($foundByName) {
                                     $existingGood = $foundByName;
                                     $foundMainGoodByName = true;
-                                    $foundByFields[] = $supplierName ? "РЅР°Р·РІР°РЅРёРµ: '{$name}' (РїРѕРёСЃРє РІ РІР°СЂРёР°С†РёСЏС… РїРѕ SKU, РґРѕР±Р°РІР»РµРЅРёРµ РІР°СЂРёР°С†РёРё, РїРѕСЃС‚Р°РІС‰РёРє: {$supplierName})" : "РЅР°Р·РІР°РЅРёРµ: '{$name}' (РїРѕРёСЃРє РІ РІР°СЂРёР°С†РёСЏС… РїРѕ SKU, РґРѕР±Р°РІР»РµРЅРёРµ РІР°СЂРёР°С†РёРё)";
+                                    $foundByFields[] = $supplierName ? "название: '{$name}' (поиск в вариациях по SKU, добавление вариации, поставщик: {$supplierName})" : "название: '{$name}' (поиск в вариациях по SKU, добавление вариации)";
                                 }
                             }
-                            // 2) Р•СЃР»Рё РїРѕ РЅР°Р·РІР°РЅРёСЋ РЅРµ РЅР°С€Р»Рё вЂ” РїРѕ Р°СЂС‚РёРєСѓР»Сѓ РІ РѕСЃРЅРѕРІРЅС‹С… С‚РѕРІР°СЂР°С… (СЃ СѓС‡С‘С‚РѕРј РїРѕСЃС‚Р°РІС‰РёРєР°), РЅР°Р№РґРµРЅРЅРѕРµ вЂ” РѕР±РЅРѕРІРёС‚СЊ
+                            // 2) Если по названию не нашли — по артикулу в основных товарах (с учётом поставщика), найденное — обновить
                             if (!$existingGood && !empty($sku)) {
                                 if ($supplierName) {
                                     $existingGood = ShopGood::where('sku', $sku)->where('supplier', $supplierName)->first();
                                     if ($existingGood) {
-                                        $foundByFields[] = "SKU: '{$sku}' (РїРѕРёСЃРє РІ РІР°СЂРёР°С†РёСЏС… РїРѕ SKU, РѕР±РЅРѕРІР»РµРЅРёРµ РѕСЃРЅРѕРІРЅРѕРіРѕ С‚РѕРІР°СЂР°, РїРѕСЃС‚Р°РІС‰РёРє: {$supplierName})";
+                                        $foundByFields[] = "SKU: '{$sku}' (поиск в вариациях по SKU, обновление основного товара, поставщик: {$supplierName})";
                                     } else {
                                         $existingGood = ShopGood::where('sku', $sku)->first();
                                         if ($existingGood) {
-                                            $foundByFields[] = "SKU: '{$sku}' (РїРѕРёСЃРє РІ РІР°СЂРёР°С†РёСЏС… РїРѕ SKU, РѕР±РЅРѕРІР»РµРЅРёРµ РѕСЃРЅРѕРІРЅРѕРіРѕ С‚РѕРІР°СЂР°, Р±РµР· С„РёР»СЊС‚СЂР° РїРѕСЃС‚Р°РІС‰РёРєР°)";
+                                            $foundByFields[] = "SKU: '{$sku}' (поиск в вариациях по SKU, обновление основного товара, без фильтра поставщика)";
                                         }
                                     }
                                 } else {
                                     $existingGood = ShopGood::where('sku', $sku)->first();
                                     if ($existingGood) {
-                                        $foundByFields[] = "SKU: '{$sku}' (РїРѕРёСЃРє РІ РІР°СЂРёР°С†РёСЏС… РїРѕ SKU, РѕР±РЅРѕРІР»РµРЅРёРµ РѕСЃРЅРѕРІРЅРѕРіРѕ С‚РѕРІР°СЂР°)";
+                                        $foundByFields[] = "SKU: '{$sku}' (поиск в вариациях по SKU, обновление основного товара)";
                                     }
                                 }
                             }
                         } else {
-                            // РћР±С‹С‡РЅС‹Р№ РїРѕРёСЃРє С‚РѕРІР°СЂР° РїРѕ duplicateFields
+                            // Обычный поиск товара по duplicateFields
                             if (!$existingGood) {
                                 foreach ($duplicateFields as $field) {
                                     if ($field === 'sku') {
                                         if (!empty($sku)) {
-                                            // Р•СЃР»Рё СѓРєР°Р·Р°РЅ РїРѕСЃС‚Р°РІС‰РёРє, СЃРЅР°С‡Р°Р»Р° РёС‰РµРј С‚РѕРІР°СЂ СЌС‚РѕРіРѕ РїРѕСЃС‚Р°РІС‰РёРєР°
+                                            // Если указан поставщик, сначала ищем товар этого поставщика
                                             if ($supplierName) {
                                                 $existingGood = ShopGood::where('sku', $sku)->where('supplier', $supplierName)->first();
                                                 if ($existingGood) {
-                                                    $foundByFields[] = "SKU: '{$sku}' (РїРѕСЃС‚Р°РІС‰РёРє: {$supplierName})";
+                                                    $foundByFields[] = "SKU: '{$sku}' (поставщик: {$supplierName})";
                                                 } else {
-                                                    // Р•СЃР»Рё РЅРµ РЅР°Р№РґРµРЅ С‚РѕРІР°СЂ СЌС‚РѕРіРѕ РїРѕСЃС‚Р°РІС‰РёРєР°, РїСЂРѕРІРµСЂСЏРµРј РµСЃС‚СЊ Р»Рё С‚РѕРІР°СЂ СЃ С‚Р°РєРёРј SKU РІРѕРѕР±С‰Рµ
+                                                    // Если не найден товар этого поставщика, проверяем есть ли товар с таким SKU вообще
                                                     $existingGoodAnySupplier = ShopGood::where('sku', $sku)->first();
                                                     if ($existingGoodAnySupplier) {
-                                                        // РќР°Р№РґРµРЅ С‚РѕРІР°СЂ СЃ С‚Р°РєРёРј SKU, РЅРѕ РґСЂСѓРіРѕРіРѕ РїРѕСЃС‚Р°РІС‰РёРєР°
-                                                        // Р­С‚Рѕ СЃРїРµС†РёР°Р»СЊРЅС‹Р№ СЃР»СѓС‡Р°Р№ - РЅСѓР¶РЅРѕ РѕР±РЅРѕРІРёС‚СЊ РѕСЃС‚Р°С‚РєРё Рё РёР·РјРµРЅРёС‚СЊ РїСЂРёРІСЏР·РєСѓ Рє РїРѕСЃС‚Р°РІС‰РёРєСѓ
+                                                        // Найден товар с таким SKU, но другого поставщика
+                                                        // Это специальный случай - нужно обновить остатки и изменить привязку к поставщику
                                                         $existingGood = $existingGoodAnySupplier;
-                                                        $foundByFields[] = "SKU: '{$sku}' (РёР·РјРµРЅРµРЅРёРµ РїРѕСЃС‚Р°РІС‰РёРєР° СЃ '{$existingGood->supplier}' РЅР° '{$supplierName}')";
+                                                        $foundByFields[] = "SKU: '{$sku}' (изменение поставщика с '{$existingGood->supplier}' на '{$supplierName}')";
                                                     }
                                                 }
                                             } else {
-                                                // РџРѕСЃС‚Р°РІС‰РёРє РЅРµ СѓРєР°Р·Р°РЅ - РѕР±С‹С‡РЅС‹Р№ РїРѕРёСЃРє
+                                                // Поставщик не указан - обычный поиск
                                                 $existingGood = ShopGood::where('sku', $sku)->first();
                                                 if ($existingGood) {
                                                     $foundByFields[] = "SKU: '{$sku}'";
                                                 }
                                             }
                                         } else {
-                                            // РџСЂРё РїСѓСЃС‚РѕРј SKU РЅРµ РёС‰РµРј РїРѕ name, РµСЃР»Рё 'name' РЅРµ РІ duplicate_fields
+                                            // При пустом SKU не ищем по name, если 'name' не в duplicate_fields
                                             if (in_array('name', $duplicateFields) && !empty($name)) {
                                                 $goodQuery = ShopGood::whereNull('sku')->where('name', $name);
                                                 if ($supplierName) {
@@ -552,7 +552,7 @@ class BulkGoodsImportController extends Controller
                                                 }
                                                 $existingGood = $goodQuery->first();
                                                 if ($existingGood) {
-                                                    $foundByFields[] = $supplierName ? "РїСѓСЃС‚РѕР№ SKU + РЅР°Р·РІР°РЅРёРµ: '{$name}' (РїРѕСЃС‚Р°РІС‰РёРє: {$supplierName})" : "РїСѓСЃС‚РѕР№ SKU + РЅР°Р·РІР°РЅРёРµ: '{$name}'";
+                                                    $foundByFields[] = $supplierName ? "пустой SKU + название: '{$name}' (поставщик: {$supplierName})" : "пустой SKU + название: '{$name}'";
                                                 }
                                             }
                                         }
@@ -564,13 +564,13 @@ class BulkGoodsImportController extends Controller
                                             }
                                             $existingGood = $goodQuery->first();
                                             if ($existingGood) {
-                                                $foundByFields[] = $supplierName ? "РЅР°Р·РІР°РЅРёРµ: '{$name}' (РїРѕСЃС‚Р°РІС‰РёРє: {$supplierName})" : "РЅР°Р·РІР°РЅРёРµ: '{$name}'";
+                                                $foundByFields[] = $supplierName ? "название: '{$name}' (поставщик: {$supplierName})" : "название: '{$name}'";
                                             }
                                         }
                                     }
 
                                     if ($existingGood) {
-                                        break; // РќР°Р№РґРµРЅ С‚РѕРІР°СЂ, РїСЂРµРєСЂР°С‰Р°РµРј РїРѕРёСЃРє
+                                        break; // Найден товар, прекращаем поиск
                                     }
                                 }
                             }
@@ -595,55 +595,55 @@ class BulkGoodsImportController extends Controller
                         }
                     }
 
-                    // Р”РћРџРћР›РќРРўР•Р›Р¬РќРђРЇ РџР РћР’Р•Р РљРђ: РџСЂРё СЂРµР¶РёРјРµ "РСЃРєР°С‚СЊ РІ РІР°СЂРёР°С†РёСЏС… - РїРѕ РЅР°Р·РІР°РЅРёСЋ",
-                    // РµСЃР»Рё С‚РѕРІР°СЂ РЅРµ РЅР°Р№РґРµРЅ РїРѕСЃР»Рµ РІСЃРµС… РїСЂРѕРІРµСЂРѕРє, РїСЂРѕРІРµСЂСЏРµРј РіР»Р°РІРЅС‹Рµ С‚РѕРІР°СЂС‹ РїРѕ SKU
+                    // ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: При режиме "Искать в вариациях - по названию",
+                    // если товар не найден после всех проверок, проверяем главные товары по SKU
                     if (!$existingGood && $searchByNameInVariations && $searchByFieldInVariations === 'name' && !empty($sku)) {
                         if ($supplierName) {
                             $existingGood = ShopGood::where('sku', $sku)->where('supplier', $supplierName)->first();
                             if ($existingGood) {
-                                $foundByFields[] = "SKU: '{$sku}' (РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅР°СЏ РїСЂРѕРІРµСЂРєР° РїРѕСЃР»Рµ РїРѕРёСЃРєР° РІ РІР°СЂРёР°С†РёСЏС… РїРѕ РЅР°Р·РІР°РЅРёСЋ, РїРѕСЃС‚Р°РІС‰РёРє: {$supplierName})";
+                                $foundByFields[] = "SKU: '{$sku}' (дополнительная проверка после поиска в вариациях по названию, поставщик: {$supplierName})";
                             } else {
                                 $existingGood = ShopGood::where('sku', $sku)->first();
                                 if ($existingGood) {
-                                    $foundByFields[] = "SKU: '{$sku}' (РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅР°СЏ РїСЂРѕРІРµСЂРєР° РїРѕСЃР»Рµ РїРѕРёСЃРєР° РІ РІР°СЂРёР°С†РёСЏС… РїРѕ РЅР°Р·РІР°РЅРёСЋ, Р±РµР· С„РёР»СЊС‚СЂР° РїРѕСЃС‚Р°РІС‰РёРєР°)";
+                                    $foundByFields[] = "SKU: '{$sku}' (дополнительная проверка после поиска в вариациях по названию, без фильтра поставщика)";
                                 }
                             }
                         } else {
                             $existingGood = ShopGood::where('sku', $sku)->first();
                             if ($existingGood) {
-                                $foundByFields[] = "SKU: '{$sku}' (РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅР°СЏ РїСЂРѕРІРµСЂРєР° РїРѕСЃР»Рµ РїРѕРёСЃРєР° РІ РІР°СЂРёР°С†РёСЏС… РїРѕ РЅР°Р·РІР°РЅРёСЋ)";
+                                $foundByFields[] = "SKU: '{$sku}' (дополнительная проверка после поиска в вариациях по названию)";
                             }
                         }
                     }
 
                     if ($hasVariation && !$existingVariation) {
-                        // РџСЂРё РЅР°Р»РёС‡РёРё РІР°СЂРёР°С†РёРё РёС‰РµРј С‚РѕРІР°СЂ Р±РѕР»РµРµ С‚С‰Р°С‚РµР»СЊРЅРѕ (С‚РѕР»СЊРєРѕ РµСЃР»Рё РІР°СЂРёР°С†РёСЏ РµС‰С‘ РЅРµ РЅР°Р№РґРµРЅР° РїРѕ SKU)
-                        // Р’Р°Р¶РЅРѕ: РґР»СЏ РІР°СЂРёР°С†РёР№ С‚РѕРІР°СЂ РґРѕР»Р¶РµРЅ СЃСѓС‰РµСЃС‚РІРѕРІР°С‚СЊ, РёРЅР°С‡Рµ Р±СѓРґРµС‚ РѕС€РёР±РєР° РґСѓР±Р»РёСЂРѕРІР°РЅРёСЏ
-                        // РџСЂРѕРІРµСЂСЏРµРј РІСЃРµ РІРѕР·РјРѕР¶РЅС‹Рµ РІР°СЂРёР°РЅС‚С‹ РїРѕРёСЃРєР°
+                        // При наличии вариации ищем товар более тщательно (только если вариация ещё не найдена по SKU)
+                        // Важно: для вариаций товар должен существовать, иначе будет ошибка дублирования
+                        // Проверяем все возможные варианты поиска
 
-                        // 1. РЎРЅР°С‡Р°Р»Р° РїРѕ SKU (РµСЃР»Рё СѓРєР°Р·Р°РЅ) - СЃР°РјС‹Р№ РЅР°РґРµР¶РЅС‹Р№ СЃРїРѕСЃРѕР±
+                        // 1. Сначала по SKU (если указан) - самый надежный способ
                         if (!$existingGood && !empty($sku)) {
                             if ($supplierName) {
-                                // Р•СЃР»Рё СѓРєР°Р·Р°РЅ РїРѕСЃС‚Р°РІС‰РёРє, СЃРЅР°С‡Р°Р»Р° РёС‰РµРј С‚РѕРІР°СЂ СЌС‚РѕРіРѕ РїРѕСЃС‚Р°РІС‰РёРєР°
+                                // Если указан поставщик, сначала ищем товар этого поставщика
                                 $existingGood = ShopGood::where('sku', $sku)->where('supplier', $supplierName)->first();
                                 if ($existingGood) {
-                                    $foundByFields[] = "SKU: '{$sku}' (РґР»СЏ РІР°СЂРёР°С†РёРё, РїРѕСЃС‚Р°РІС‰РёРє: {$supplierName})";
+                                    $foundByFields[] = "SKU: '{$sku}' (для вариации, поставщик: {$supplierName})";
                                 } else {
-                                    // Р•СЃР»Рё РЅРµ РЅР°Р№РґРµРЅ С‚РѕРІР°СЂ СЌС‚РѕРіРѕ РїРѕСЃС‚Р°РІС‰РёРєР°, РёС‰РµРј Р»СЋР±РѕР№ С‚РѕРІР°СЂ СЃ С‚Р°РєРёРј SKU
+                                    // Если не найден товар этого поставщика, ищем любой товар с таким SKU
                                     $existingGood = ShopGood::where('sku', $sku)->first();
                                     if ($existingGood) {
-                                        $foundByFields[] = "SKU: '{$sku}' (РґР»СЏ РІР°СЂРёР°С†РёРё, СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёР№ С‚РѕРІР°СЂ РґСЂСѓРіРѕРіРѕ РїРѕСЃС‚Р°РІС‰РёРєР°)";
+                                        $foundByFields[] = "SKU: '{$sku}' (для вариации, существующий товар другого поставщика)";
                                     }
                                 }
                             } else {
                                 $existingGood = ShopGood::where('sku', $sku)->first();
                                 if ($existingGood) {
-                                    $foundByFields[] = "SKU: '{$sku}' (РґР»СЏ РІР°СЂРёР°С†РёРё)";
+                                    $foundByFields[] = "SKU: '{$sku}' (для вариации)";
                                 }
                             }
                         }
 
-                        // 2. Р•СЃР»Рё РЅРµ РЅР°Р№РґРµРЅ РїРѕ SKU, РёС‰РµРј РїРѕ РёРјРµРЅРё вЂ” С‚РѕР»СЊРєРѕ РµСЃР»Рё 'name' РІ duplicate_fields
+                        // 2. Если не найден по SKU, ищем по имени — только если 'name' в duplicate_fields
                         if (!$existingGood && in_array('name', $duplicateFields) && !empty($name)) {
                             $goodQuery = ShopGood::where('name', $this->normalizeTextForSearch($name));
                             if ($supplierName) {
@@ -651,11 +651,11 @@ class BulkGoodsImportController extends Controller
                             }
                             $existingGood = $goodQuery->first();
                             if ($existingGood) {
-                                $foundByFields[] = $supplierName ? "РЅР°Р·РІР°РЅРёРµ: '{$name}' (РґР»СЏ РІР°СЂРёР°С†РёРё, РїРѕСЃС‚Р°РІС‰РёРє: {$supplierName})" : "РЅР°Р·РІР°РЅРёРµ: '{$name}' (РґР»СЏ РІР°СЂРёР°С†РёРё)";
+                                $foundByFields[] = $supplierName ? "название: '{$name}' (для вариации, поставщик: {$supplierName})" : "название: '{$name}' (для вариации)";
                             }
                         }
 
-                        // 3. Р•СЃР»Рё РЅРµ РЅР°Р№РґРµРЅ, РїСЂРѕР±СѓРµРј РїРѕ РёРјРµРЅРё СЃ РїСѓСЃС‚С‹Рј SKU вЂ” С‚РѕР»СЊРєРѕ РµСЃР»Рё 'name' РІ duplicate_fields
+                        // 3. Если не найден, пробуем по имени с пустым SKU — только если 'name' в duplicate_fields
                         if (!$existingGood && in_array('name', $duplicateFields) && !empty($name)) {
                             $goodQuery = ShopGood::whereNull('sku')->where('name', $name);
                             if ($supplierName) {
@@ -663,13 +663,13 @@ class BulkGoodsImportController extends Controller
                             }
                             $existingGood = $goodQuery->first();
                             if ($existingGood) {
-                                $foundByFields[] = $supplierName ? "РїСѓСЃС‚РѕР№ SKU + РЅР°Р·РІР°РЅРёРµ: '{$name}' (РґР»СЏ РІР°СЂРёР°С†РёРё, РїРѕСЃС‚Р°РІС‰РёРє: {$supplierName})" : "РїСѓСЃС‚РѕР№ SKU + РЅР°Р·РІР°РЅРёРµ: '{$name}' (РґР»СЏ РІР°СЂРёР°С†РёРё)";
+                                $foundByFields[] = $supplierName ? "пустой SKU + название: '{$name}' (для вариации, поставщик: {$supplierName})" : "пустой SKU + название: '{$name}' (для вариации)";
                             }
                         }
 
-                        // 4. Р•СЃР»Рё РІСЃРµ РµС‰Рµ РЅРµ РЅР°Р№РґРµРЅ, РїСЂРѕР±СѓРµРј РїРѕРёСЃРє РїРѕ РёРјРµРЅРё Р±РµР· СѓС‡РµС‚Р° СЂРµРіРёСЃС‚СЂР° вЂ” С‚РѕР»СЊРєРѕ РµСЃР»Рё 'name' РІ duplicate_fields
+                        // 4. Если все еще не найден, пробуем поиск по имени без учета регистра — только если 'name' в duplicate_fields
                         if (!$existingGood && in_array('name', $duplicateFields) && !empty($name)) {
-                            // РќРѕСЂРјР°Р»РёР·СѓРµРј РёРјСЏ РґР»СЏ РїРѕРёСЃРєР° (СѓР±РёСЂР°РµРј Р»РёС€РЅРёРµ РїСЂРѕР±РµР»С‹, РїСЂРёРІРѕРґРёРј Рє РЅРёР¶РЅРµРјСѓ СЂРµРіРёСЃС‚СЂСѓ)
+                            // Нормализуем имя для поиска (убираем лишние пробелы, приводим к нижнему регистру)
                             $normalizedName = trim(preg_replace('/\s+/', ' ', mb_strtolower($name)));
                             $goodQuery = ShopGood::whereRaw('LOWER(TRIM(name)) = ?', [$normalizedName]);
                             if ($supplierName) {
@@ -682,9 +682,9 @@ class BulkGoodsImportController extends Controller
                         }
 
                     } else {
-                        // РС‰РµРј С‚РѕРІР°СЂ РїРѕ СѓРєР°Р·Р°РЅРЅС‹Рј РїРѕР»СЏРј (РѕР±С‹С‡РЅР°СЏ Р»РѕРіРёРєР°)
-                        // РЎРїРµС†РёР°Р»СЊРЅС‹Р№ СЂРµР¶РёРј: В«РџРѕРёСЃРє РІ РІР°СЂРёР°С†РёСЏС…В» РїРѕ Р°СЂС‚РёРєСѓР»Сѓ (SKU) вЂ” 1) РїРѕ РЅР°Р·РІР°РЅРёСЋ в†’ РґРѕР±Р°РІРёС‚СЊ РІР°СЂРёР°С†РёСЋ, 2) РїРѕ Р°СЂС‚РёРєСѓР»Сѓ РІ РѕСЃРЅРѕРІРЅС‹С… в†’ РѕР±РЅРѕРІРёС‚СЊ; РїРѕСЃС‚Р°РІС‰РёРє СѓС‡РёС‚С‹РІР°РµС‚СЃСЏ.
-                        // РљСЂРёС‚РёС‡РЅРѕ: РїСЂРёСЃРІР°РёРІР°РµРј existingGood С‚РѕР»СЊРєРѕ РїСЂРё СѓСЃРїРµС€РЅРѕРј РЅР°С…РѕР¶РґРµРЅРёРё, РёРЅР°С‡Рµ Р·Р°С‚РёСЂР°РµС‚СЃСЏ СЂРµР·СѓР»СЊС‚Р°С‚ РёР· Р±Р»РѕРєР° 407-465 (РЅР°Р№РґРµРЅРЅС‹Р№ РїРѕ Р°СЂС‚РёРєСѓР»Сѓ РІ РѕСЃРЅРѕРІРЅС‹С…).
+                        // Ищем товар по указанным полям (обычная логика)
+                        // Специальный режим: «Поиск в вариациях» по артикулу (SKU) — 1) по названию ? добавить вариацию, 2) по артикулу в основных ? обновить; поставщик учитывается.
+                        // Критично: присваиваем existingGood только при успешном нахождении, иначе затирается результат из блока 407-465 (найденный по артикулу в основных).
                         if (!$existingGood) {
                             if ($searchByNameInVariations && $searchByFieldInVariations === 'sku') {
                                 if (!empty($name) && !$existingGood) {
@@ -699,7 +699,7 @@ class BulkGoodsImportController extends Controller
                                     if ($foundByName) {
                                         $existingGood = $foundByName;
                                         $foundMainGoodByName = true;
-                                        $foundByFields[] = $supplierName ? "РЅР°Р·РІР°РЅРёРµ: '{$name}' (РїРѕРёСЃРє РІ РІР°СЂРёР°С†РёСЏС… РїРѕ SKU, РґРѕР±Р°РІР»РµРЅРёРµ РІР°СЂРёР°С†РёРё, РїРѕСЃС‚Р°РІС‰РёРє: {$supplierName})" : "РЅР°Р·РІР°РЅРёРµ: '{$name}' (РїРѕРёСЃРє РІ РІР°СЂРёР°С†РёСЏС… РїРѕ SKU, РґРѕР±Р°РІР»РµРЅРёРµ РІР°СЂРёР°С†РёРё)";
+                                        $foundByFields[] = $supplierName ? "название: '{$name}' (поиск в вариациях по SKU, добавление вариации, поставщик: {$supplierName})" : "название: '{$name}' (поиск в вариациях по SKU, добавление вариации)";
                                     }
                                 }
                                 if (!$existingGood && !empty($sku)) {
@@ -707,19 +707,19 @@ class BulkGoodsImportController extends Controller
                                         $foundBySku = ShopGood::where('sku', $sku)->where('supplier', $supplierName)->first();
                                         if ($foundBySku) {
                                             $existingGood = $foundBySku;
-                                            $foundByFields[] = "SKU: '{$sku}' (РїРѕРёСЃРє РІ РІР°СЂРёР°С†РёСЏС… РїРѕ SKU, РѕР±РЅРѕРІР»РµРЅРёРµ РѕСЃРЅРѕРІРЅРѕРіРѕ С‚РѕРІР°СЂР°, РїРѕСЃС‚Р°РІС‰РёРє: {$supplierName})";
+                                            $foundByFields[] = "SKU: '{$sku}' (поиск в вариациях по SKU, обновление основного товара, поставщик: {$supplierName})";
                                         } else {
                                             $foundBySku = ShopGood::where('sku', $sku)->first();
                                             if ($foundBySku) {
                                                 $existingGood = $foundBySku;
-                                                $foundByFields[] = "SKU: '{$sku}' (РїРѕРёСЃРє РІ РІР°СЂРёР°С†РёСЏС… РїРѕ SKU, РѕР±РЅРѕРІР»РµРЅРёРµ РѕСЃРЅРѕРІРЅРѕРіРѕ С‚РѕРІР°СЂР°, Р±РµР· С„РёР»СЊС‚СЂР° РїРѕСЃС‚Р°РІС‰РёРєР°)";
+                                                $foundByFields[] = "SKU: '{$sku}' (поиск в вариациях по SKU, обновление основного товара, без фильтра поставщика)";
                                             }
                                         }
                                     } else {
                                         $foundBySku = ShopGood::where('sku', $sku)->first();
                                         if ($foundBySku) {
                                             $existingGood = $foundBySku;
-                                            $foundByFields[] = "SKU: '{$sku}' (РїРѕРёСЃРє РІ РІР°СЂРёР°С†РёСЏС… РїРѕ SKU, РѕР±РЅРѕРІР»РµРЅРёРµ РѕСЃРЅРѕРІРЅРѕРіРѕ С‚РѕРІР°СЂР°)";
+                                            $foundByFields[] = "SKU: '{$sku}' (поиск в вариациях по SKU, обновление основного товара)";
                                         }
                                     }
                                 }
@@ -727,30 +727,30 @@ class BulkGoodsImportController extends Controller
                                 foreach ($duplicateFields as $field) {
                                     if ($field === 'sku') {
                                         if (!empty($sku)) {
-                                            // Р•СЃР»Рё СѓРєР°Р·Р°РЅ РїРѕСЃС‚Р°РІС‰РёРє, СЃРЅР°С‡Р°Р»Р° РёС‰РµРј С‚РѕРІР°СЂ СЌС‚РѕРіРѕ РїРѕСЃС‚Р°РІС‰РёРєР°
+                                            // Если указан поставщик, сначала ищем товар этого поставщика
                                             if ($supplierName) {
                                                 $existingGood = ShopGood::where('sku', $sku)->where('supplier', $supplierName)->first();
                                                 if ($existingGood) {
-                                                    $foundByFields[] = "SKU: '{$sku}' (РїРѕСЃС‚Р°РІС‰РёРє: {$supplierName})";
+                                                    $foundByFields[] = "SKU: '{$sku}' (поставщик: {$supplierName})";
                                                 } else {
-                                                    // Р•СЃР»Рё РЅРµ РЅР°Р№РґРµРЅ С‚РѕРІР°СЂ СЌС‚РѕРіРѕ РїРѕСЃС‚Р°РІС‰РёРєР°, РїСЂРѕРІРµСЂСЏРµРј РµСЃС‚СЊ Р»Рё С‚РѕРІР°СЂ СЃ С‚Р°РєРёРј SKU РІРѕРѕР±С‰Рµ
+                                                    // Если не найден товар этого поставщика, проверяем есть ли товар с таким SKU вообще
                                                     $existingGoodAnySupplier = ShopGood::where('sku', $sku)->first();
                                                     if ($existingGoodAnySupplier) {
-                                                        // РќР°Р№РґРµРЅ С‚РѕРІР°СЂ СЃ С‚Р°РєРёРј SKU, РЅРѕ РґСЂСѓРіРѕРіРѕ РїРѕСЃС‚Р°РІС‰РёРєР°
-                                                        // Р­С‚Рѕ СЃРїРµС†РёР°Р»СЊРЅС‹Р№ СЃР»СѓС‡Р°Р№ - РЅСѓР¶РЅРѕ РѕР±РЅРѕРІРёС‚СЊ РѕСЃС‚Р°С‚РєРё Рё РёР·РјРµРЅРёС‚СЊ РїСЂРёРІСЏР·РєСѓ Рє РїРѕСЃС‚Р°РІС‰РёРєСѓ
+                                                        // Найден товар с таким SKU, но другого поставщика
+                                                        // Это специальный случай - нужно обновить остатки и изменить привязку к поставщику
                                                         $existingGood = $existingGoodAnySupplier;
-                                                        $foundByFields[] = "SKU: '{$sku}' (РёР·РјРµРЅРµРЅРёРµ РїРѕСЃС‚Р°РІС‰РёРєР° СЃ '{$existingGood->supplier}' РЅР° '{$supplierName}')";
+                                                        $foundByFields[] = "SKU: '{$sku}' (изменение поставщика с '{$existingGood->supplier}' на '{$supplierName}')";
                                                     }
                                                 }
                                             } else {
-                                                // РџРѕСЃС‚Р°РІС‰РёРє РЅРµ СѓРєР°Р·Р°РЅ - РѕР±С‹С‡РЅС‹Р№ РїРѕРёСЃРє
+                                                // Поставщик не указан - обычный поиск
                                                 $existingGood = ShopGood::where('sku', $sku)->first();
                                                 if ($existingGood) {
                                                     $foundByFields[] = "SKU: '{$sku}'";
                                                 }
                                             }
                                         } else {
-                                            // РџСЂРё РїСѓСЃС‚РѕРј SKU РЅРµ РёС‰РµРј РїРѕ name, РµСЃР»Рё 'name' РЅРµ РІ duplicate_fields
+                                            // При пустом SKU не ищем по name, если 'name' не в duplicate_fields
                                             if (in_array('name', $duplicateFields) && !empty($name)) {
                                                 $goodQuery = ShopGood::whereNull('sku')->where('name', $name);
                                                 if ($supplierName) {
@@ -758,7 +758,7 @@ class BulkGoodsImportController extends Controller
                                                 }
                                                 $existingGood = $goodQuery->first();
                                                 if ($existingGood) {
-                                                    $foundByFields[] = $supplierName ? "РїСѓСЃС‚РѕР№ SKU + РЅР°Р·РІР°РЅРёРµ: '{$name}' (РїРѕСЃС‚Р°РІС‰РёРє: {$supplierName})" : "РїСѓСЃС‚РѕР№ SKU + РЅР°Р·РІР°РЅРёРµ: '{$name}'";
+                                                    $foundByFields[] = $supplierName ? "пустой SKU + название: '{$name}' (поставщик: {$supplierName})" : "пустой SKU + название: '{$name}'";
                                                 }
                                             }
                                         }
@@ -770,50 +770,50 @@ class BulkGoodsImportController extends Controller
                                             }
                                             $existingGood = $goodQuery->first();
                                             if ($existingGood) {
-                                                $foundByFields[] = $supplierName ? "РЅР°Р·РІР°РЅРёРµ: '{$name}' (РїРѕСЃС‚Р°РІС‰РёРє: {$supplierName})" : "РЅР°Р·РІР°РЅРёРµ: '{$name}'";
+                                                $foundByFields[] = $supplierName ? "название: '{$name}' (поставщик: {$supplierName})" : "название: '{$name}'";
                                             }
                                         }
                                     }
 
                                     if ($existingGood) {
-                                        break; // РќР°Р№РґРµРЅ С‚РѕРІР°СЂ, РїСЂРµРєСЂР°С‰Р°РµРј РїРѕРёСЃРє
+                                        break; // Найден товар, прекращаем поиск
                                     }
                                 }
                             }
                         }
                     }
 
-                    // Р•СЃР»Рё РЅР°Р№РґРµРЅР° РІР°СЂРёР°С†РёСЏ РїРѕ РёРјРµРЅРё (РїСЂРё РІРєР»СЋС‡РµРЅРЅРѕРј РїРѕРёСЃРєРµ РїРѕ РёРјРµРЅР°Рј РІ РІР°СЂРёР°С†РёСЏС…)
+                    // Если найдена вариация по имени (при включенном поиске по именам в вариациях)
                     if ($existingVariation && $searchByNameInVariations) {
-                        // РЈР±РµР¶РґР°РµРјСЃСЏ, С‡С‚Рѕ С‚РѕРІР°СЂ РЅР°Р№РґРµРЅ (РµСЃР»Рё РІР°СЂРёР°С†РёСЏ РЅР°Р№РґРµРЅР°, С‚РѕРІР°СЂ РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ)
+                        // Убеждаемся, это товар найден (если вариация найдена, товар должен быть)
                         if (!$existingGood && $existingVariation->good) {
                             $existingGood = $existingVariation->good;
                         }
 
-                        // Р•СЃР»Рё С‚РѕРІР°СЂ РІСЃРµ РµС‰Рµ РЅРµ РЅР°Р№РґРµРЅ, РїСЂРѕРїСѓСЃРєР°РµРј СЌС‚Сѓ СЃС‚СЂРѕРєСѓ
+                        // Если товар все еще не найден, пропускаем эту строку
                         if (!$existingGood) {
                             $results['skipped']++;
-                            $sheet = $goodData['_sheet'] ?? 'РЅРµРёР·РІРµСЃС‚РЅРѕ';
-                            $reason = 'Р’Р°СЂРёР°С†РёСЏ РЅР°Р№РґРµРЅР° РїРѕ ' . ($searchByFieldInVariations === 'sku' ? 'Р°СЂС‚РёРєСѓР»Сѓ' : 'РёРјРµРЅРё') . ' "' . ($searchValue ?? $sku) . '" (РїРѕР»Рµ: ' . $searchByFieldInVariations . '), РЅРѕ СЃРІСЏР·Р°РЅРЅС‹Р№ С‚РѕРІР°СЂ РЅРµ РЅР°Р№РґРµРЅ РІ Р±Р°Р·Рµ РґР°РЅРЅС‹С…. Р’Р°СЂРёР°С†РёСЏ ID: ' . $existingVariation->id;
+                            $sheet = $goodData['_sheet'] ?? 'неизвестно';
+                            $reason = 'Вариация найдена по ' . ($searchByFieldInVariations === 'sku' ? 'артикулу' : 'имени') . ' "' . ($searchValue ?? $sku) . '" (поле: ' . $searchByFieldInVariations . '), но связанный товар не найден в базе данных. Вариация ID: ' . $existingVariation->id;
                             $skipItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'reason' => $reason];
 
                             continue;
                         }
 
-                        // РљР РРўРР§РќРћ: Р”Р»СЏ С‚РѕРІР°СЂРѕРІ СЃ РІР°СЂРёР°С†РёСЏРјРё, РЅР°Р№РґРµРЅРЅС‹С… РїРѕ РёРјРµРЅРё, РѕС‚РґРµР»СЊРЅРѕ РѕР±СЂРµР·Р°РµРј Рё РѕР±РЅРѕРІР»СЏРµРј РЅР°Р·РІР°РЅРёРµ С‚РѕРІР°СЂР°.
-                        // РџСЂРё РїРѕРёСЃРєРµ РїРѕ Р°СЂС‚РёРєСѓР»Сѓ (SKU) РёРјСЏ РѕСЃРЅРѕРІРЅРѕРіРѕ С‚РѕРІР°СЂР° РЅРµ Р·Р°С‚СЂР°РіРёРІР°РµРј.
+                        // КРИТИЧНО: Для товаров с вариациями, найденных по имени, отдельно обрезаем и обновляем название товара.
+                        // При поиске по артикулу (SKU) имя основного товара не затрагиваем.
                         if ($searchByFieldInVariations !== 'sku') {
                             $nameFromData = isset($goodData['name']) ? trim($goodData['name']) : null;
                             $this->trimGoodName($existingGood, $nameTrimSymbol, $immutableFields, $nameFromData);
                         }
 
-                        // РћР±РЅРѕРІР»СЏРµРј РІР°СЂРёР°С†РёСЋ (РЅР°Р№РґРµРЅРЅСѓСЋ РїРѕ РёРјРµРЅРё РёР»Рё РїРѕ Р°СЂС‚РёРєСѓР»Сѓ)
+                        // Обновляем вариацию (найденную по имени или по артикулу)
                         $variationId = $this->updateVariationFromGoodData($existingVariation, $goodData, $searchByNameInVariations);
 
-                        // Р›РѕРіРёСЂСѓРµРј РґРµР№СЃС‚РІРёРµ СЃ РІР°СЂРёР°С†РёРµР№
-                        $sheet = $goodData['_sheet'] ?? 'РЅРµРёР·РІРµСЃС‚РЅРѕ';
+                        // Логируем действие с вариацией
+                        $sheet = $goodData['_sheet'] ?? 'неизвестно';
                         $variationAttributes = [];
-                        // РџРѕР»СѓС‡Р°РµРј Р°С‚СЂРёР±СѓС‚С‹ РІР°СЂРёР°С†РёРё РґР»СЏ Р»РѕРіРёСЂРѕРІР°РЅРёСЏ
+                        // Получаем атрибуты вариации для логирования
                         $variationAttributeRows = DB::table('shop_variation_attributes_values as vav')
                             ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
                             ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
@@ -828,46 +828,46 @@ class BulkGoodsImportController extends Controller
                             ];
                         }
 
-                        $details = 'РќР°Р№РґРµРЅР° РїРѕ ' . ($searchByFieldInVariations === 'sku' ? 'Р°СЂС‚РёРєСѓР»Сѓ' : 'РёРјРµРЅРё') . ' + СЃРѕРІРїР°РґРµРЅРёСЋ Р°С‚СЂРёР±СѓС‚РѕРІ: ' . ($searchByFieldInVariations === 'sku' ? ($searchValue ?? $sku) : $name);
-                        if ($sheet !== 'РЅРµРёР·РІРµСЃС‚РЅРѕ') {
-                            $details .= ", Р›РёСЃС‚: {$sheet}, РЎС‚СЂРѕРєР°: {$count}";
+                        $details = 'Найдена по ' . ($searchByFieldInVariations === 'sku' ? 'артикулу' : 'имени') . ' + совпадению атрибутов: ' . ($searchByFieldInVariations === 'sku' ? ($searchValue ?? $sku) : $name);
+                        if ($sheet !== 'неизвестно') {
+                            $details .= ", Лист: {$sheet}, Строка: {$count}";
                         }
 
                         $this->importLogService->logVariation(
-                            $searchByFieldInVariations === 'sku' ? 'РћР‘РќРћР’Р›Р•РќРђ Р’РђР РРђР¦РРЇ РџРћ РђР РўРРљРЈР›РЈ + РђРўР РР‘РЈРўРђРњ' : 'РћР‘РќРћР’Р›Р•РќРђ Р’РђР РРђР¦РРЇ РџРћ РРњР•РќР + РђРўР РР‘РЈРўРђРњ',
+                            $searchByFieldInVariations === 'sku' ? 'ОБНОВЛЕНА ВАРИАЦИЯ ПО АРТИКУЛУ + АТРИБУТАМ' : 'ОБНОВЛЕНА ВАРИАЦИЯ ПО ИМЕНИ + АТРИБУТАМ',
                             $existingGood->name ?? $name,
-                            $existingGood->sku ?? 'РЅРµС‚ SKU',
+                            $existingGood->sku ?? 'нет SKU',
                             $variationAttributes,
                             $existingVariation->id,
                             $details
                         );
 
-                        // РћР±СЂРµР·РєР° РЅР°Р·РІР°РЅРёСЏ РґР»СЏ С‚РѕРІР°СЂРѕРІ Р±РµР· РІР°СЂРёР°С†РёР№ Р±СѓРґРµС‚ РѕР±СЂР°Р±РѕС‚Р°РЅР° РІ updateGood
+                        // Обрезка названия для товаров без вариаций будет обработана в updateGood
 
-                        // РћР±РЅРѕРІР»СЏРµРј С‚РѕРІР°СЂ, РµСЃР»Рё РЅСѓР¶РЅРѕ
+                        // Обновляем товар, если нужно
                         if ($duplicateAction === 'update') {
-                            // РљР РРўРР§РќРћ: Р”Р»СЏ С‚РѕРІР°СЂРѕРІ СЃ РІР°СЂРёР°С†РёСЏРјРё РѕС‚РґРµР»СЊРЅРѕ РѕР±СЂРµР·Р°РµРј Рё РѕР±РЅРѕРІР»СЏРµРј РЅР°Р·РІР°РЅРёРµ.
-                            // РџСЂРё РїРѕРёСЃРєРµ РїРѕ Р°СЂС‚РёРєСѓР»Сѓ (SKU) РёРјСЏ РѕСЃРЅРѕРІРЅРѕРіРѕ С‚РѕРІР°СЂР° РЅРµ Р·Р°С‚СЂР°РіРёРІР°РµРј.
+                            // КРИТИЧНО: Для товаров с вариациями отдельно обрезаем и обновляем название.
+                            // При поиске по артикулу (SKU) имя основного товара не затрагиваем.
                             if ($hasVariation && $searchByFieldInVariations !== 'sku') {
                                 $nameFromData = isset($goodData['name']) ? trim($goodData['name']) : null;
                                 $this->trimGoodName($existingGood, $nameTrimSymbol, $immutableFields, $nameFromData);
                             }
 
-                            // РџСЂРѕРІРµСЂСЏРµРј РїРѕР»Рµ РґР»СЏ СѓРґР°Р»РµРЅРёСЏ РґСѓР±Р»РёРєР°С‚РѕРІ
+                            // Проверяем поле для удаления дубликатов
                             $duplicateCheckField = $request->input('duplicate_check_field');
 
-                            // РџСЂРѕРІРµСЂСЏРµРј СѓРЅРёРєР°Р»СЊРЅРѕСЃС‚СЊ Р·РЅР°С‡РµРЅРёСЏ, РєРѕС‚РѕСЂРѕРµ Р±СѓРґРµС‚ СѓСЃС‚Р°РЅРѕРІР»РµРЅРѕ С‚РѕРІР°СЂСѓ
+                            // Проверяем уникальность значения, которое будет установлено товару
                             if (!empty($duplicateCheckField) && isset($goodData[$duplicateCheckField])) {
                                 $fieldValue = $goodData[$duplicateCheckField];
 
-                                // РџСЂРѕРІРµСЂСЏРµРј, РµСЃС‚СЊ Р»Рё СѓР¶Рµ С‚РѕРІР°СЂ СЃ С‚Р°РєРёРј Р·РЅР°С‡РµРЅРёРµРј РїРѕР»СЏ (РІРєР»СЋС‡Р°СЏ С‚РµРєСѓС‰РёР№ С‚РѕРІР°СЂ)
+                                // Проверяем, есть ли уже товар с таким значением поля (включая текущий товар)
                                 $existingGoodWithField = ShopGood::where($duplicateCheckField, $fieldValue)->first();
 
-                                // Р•СЃР»Рё РЅР°Р№РґРµРЅ С‚РѕРІР°СЂ СЃ С‚Р°РєРёРј Р·РЅР°С‡РµРЅРёРµРј РїРѕР»СЏ, Рё СЌС‚Рѕ РќР• С‚РµРєСѓС‰РёР№ С‚РѕРІР°СЂ
+                                // Если найден товар с таким значением поля, и это НЕ текущий товар
                                 if ($existingGoodWithField && $existingGoodWithField->id !== $existingGood->id) {
-                                    // РЈРґР°Р»СЏРµРј РґСѓР±Р»РёРєР°С‚ С‚РѕРІР°СЂР°
+                                    // Удаляем дубликат товара
                                     try {
-                                        // РЈРґР°Р»СЏРµРј СЃРІСЏР·Р°РЅРЅС‹Рµ РґР°РЅРЅС‹Рµ
+                                        // Удаляем связанные данные
                                         $existingGoodWithField->categories()->detach();
                                         $existingGoodWithField->brands()->detach();
                                         $existingGoodWithField->tags()->detach();
@@ -875,29 +875,29 @@ class BulkGoodsImportController extends Controller
                                         $existingGoodWithField->images()->delete();
                                         $existingGoodWithField->variations()->delete();
 
-                                        // РЈРґР°Р»СЏРµРј СЃР°Рј С‚РѕРІР°СЂ
+                                        // Удаляем нам товар
                                         $existingGoodWithField->delete();
 
                                     } catch (\Exception $deleteException) {
-                                        Log::error('РћС€РёР±РєР° РїСЂРё СѓРґР°Р»РµРЅРёРё РґСѓР±Р»РёРєР°С‚Р° С‚РѕРІР°СЂР°', [
+                                        Log::error('Ошибка при удалении дубликата товара', [
                                             'duplicate_good_id' => $existingGoodWithField->id,
                                             'error' => $deleteException->getMessage(),
                                         ]);
-                                        // РџСЂРѕРґРѕР»Р¶Р°РµРј РёРјРїРѕСЂС‚, РЅРѕ Р»РѕРіРёСЂСѓРµРј РѕС€РёР±РєСѓ
+                                        // Продолжаем импорт, но логируем ошибку
                                     }
                                 } else {
                                 }
                             }
 
-                            // Р”Р»СЏ В«РџРѕРёСЃРє РІ РІР°СЂРёР°С†РёСЏС…В»: РёР·РѕР±СЂР°Р¶РµРЅРёСЏ РїСЂРёРІСЏР·С‹РІР°РµРј Рє РІР°СЂРёР°С†РёРё С‚РѕР»СЊРєРѕ РµСЃР»Рё Сѓ С‚РѕРІР°СЂР° РµСЃС‚СЊ РІР°СЂРёР°С†РёРё;
-                            // РµСЃР»Рё Сѓ С‚РѕРІР°СЂР° РЅРµС‚ РІР°СЂРёР°С†РёР№ вЂ” Рє РѕСЃРЅРѕРІРЅРѕРјСѓ С‚РѕРІР°СЂСѓ
+                            // Для «Поиск в вариациях»: изображения привязываем к вариации только если у товара есть вариации;
+                            // если у товара нет вариаций — к основному товару
                             $attachImagesTo = ($existingGood->variations()->count() > 0) ? $existingVariation : null;
                             $updateResult = $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation, $supplierStockFields, $nameTrimSymbol, $attachImagesTo, $searchByFieldInVariations, $skipImagesOnUpdateIfExists);
                             $results['imagesDownloaded'] += $updateResult['imageStats']['downloaded'];
                             $results['imagesFailed'] += $updateResult['imageStats']['failed'];
 
-                            // Р”Р»СЏ Р»РѕРіРёРєРё "РР·РјРµРЅРёС‚СЊ РІР°СЂРёР°С†РёСЋ" С‚Р°РєР¶Рµ РѕР±РЅРѕРІР»СЏРµРј РѕСЃС‚Р°С‚РєРё СЃРѕРїРѕСЃС‚Р°РІР»РµРЅРЅС‹С… РІР°СЂРёР°С†РёР№
-                            // Р’Р°Р¶РЅРѕ: РёСЃРїРѕР»СЊР·СѓРµРј $vid РІ С†РёРєР»Рµ, С‡С‚РѕР±С‹ РЅРµ РїРµСЂРµР·Р°РїРёСЃР°С‚СЊ $variationId (РЅСѓР¶РµРЅ РґР»СЏ variationIds РЅРёР¶Рµ)
+                            // Для логики "Изменить вариацию" также обновляем остатки сопоставленных вариаций
+                            // Важно: используем $vid в цикле, чтобы не перезаписать $variationId (нужен для variationIds ниже)
                             if (isset($goodData['variation_ids']) && is_array($goodData['variation_ids'])) {
                                 foreach ($goodData['variation_ids'] as $vid) {
                                     $variation = ShopGoodVariation::where('id', $vid)
@@ -905,7 +905,7 @@ class BulkGoodsImportController extends Controller
                                         ->first();
 
                                     if ($variation) {
-                                        // РћР±РЅРѕРІР»СЏРµРј РѕСЃС‚Р°С‚РєРё РІР°СЂРёР°С†РёРё РґР°РЅРЅС‹РјРё РёР· С‚РѕРІР°СЂР° СЃ РєРѕРЅРІРµСЂС‚Р°С†РёРµР№ С‚РёРїРѕРІ
+                                        // Обновляем остатки вариации данными из товара с конвертацией типов
                                         if (isset($goodData['stock_quantity']) && !in_array('stock_quantity', $immutableFields)) {
                                             $variation->stock_quantity = is_numeric($goodData['stock_quantity']) ? (float) $goodData['stock_quantity'] : 0;
                                         }
@@ -922,9 +922,9 @@ class BulkGoodsImportController extends Controller
                             }
                         }
 
-                        // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј РєР°С‚РµРіРѕСЂРёРё С‚РѕРІР°СЂР°
-                        // Р’РђР–РќРћ: РџСЂРё РѕР±РЅРѕРІР»РµРЅРёРё С‚РѕРІР°СЂР° РЅСѓР¶РЅРѕ РїСЂРѕРІРµСЂРёС‚СЊ СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РєР°С‚РµРіРѕСЂРёРё РџР•Р Р•Р” РїСЂРёРјРµРЅРµРЅРёРµРј РєР°С‚РµРіРѕСЂРёР№ РёР· С„Р°Р№Р»Р°
-                        // Р•СЃР»Рё РєР°С‚РµРіРѕСЂРёСЏ Р±С‹Р»Р° РїСЂРёРјРµРЅРµРЅР° РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РІ applyCategoryAndBrandIds, РЅРѕ Сѓ С‚РѕРІР°СЂР° СѓР¶Рµ РµСЃС‚СЊ РєР°С‚РµРіРѕСЂРёРё - РЅРµ РїРµСЂРµР·Р°РїРёСЃС‹РІР°РµРј
+                        // Обрабатываем категории товара
+                        // ВАЖНО: При обновлении товара нужно проверить существующие категории ПЕРЕД применением категорий из файла
+                        // Если категория была применена по умолчанию в applyCategoryAndBrandIds, но у товара уже есть категории - не перезаписываем
                         $existingCategoryIds = $existingGood->categories()->pluck('shop_categories.id')->toArray();
                         $categoryIds = [];
 
@@ -936,37 +936,37 @@ class BulkGoodsImportController extends Controller
                             });
                         }
 
-                        // Р•СЃР»Рё РєР°С‚РµРіРѕСЂРёРё РµСЃС‚СЊ РІ $goodData, РїСЂРѕРІРµСЂСЏРµРј, РЅРµ Р±С‹Р»Р° Р»Рё СЌС‚Рѕ РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
-                        // Р•СЃР»Рё РµРґРёРЅСЃС‚РІРµРЅРЅР°СЏ РєР°С‚РµРіРѕСЂРёСЏ СЃРѕРІРїР°РґР°РµС‚ СЃ defaultCategory, Рё Сѓ С‚РѕРІР°СЂР° СѓР¶Рµ РµСЃС‚СЊ РґСЂСѓРіРёРµ РєР°С‚РµРіРѕСЂРёРё - РЅРµ РїРµСЂРµР·Р°РїРёСЃС‹РІР°РµРј
+                        // Если категории есть в $goodData, проверяем, не была ли это категория по умолчанию
+                        // Если единственная категория совпадает с defaultCategory, и у товара уже есть другие категории - не перезаписываем
                         if (!empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null && !empty($existingCategoryIds)) {
                             $defaultCategoryId = (int) $defaultCategory;
-                            // Р•СЃР»Рё РµРґРёРЅСЃС‚РІРµРЅРЅР°СЏ РєР°С‚РµРіРѕСЂРёСЏ - СЌС‚Рѕ defaultCategory, Рё Сѓ С‚РѕРІР°СЂР° СѓР¶Рµ РµСЃС‚СЊ РґСЂСѓРіРёРµ РєР°С‚РµРіРѕСЂРёРё
+                            // Если единственная категория - это defaultCategory, и у товара уже есть другие категории
                             if (count($categoryIds) === 1 && $categoryIds[0] === $defaultCategoryId) {
-                                // Р’РµСЂРѕСЏС‚РЅРѕ, РєР°С‚РµРіРѕСЂРёСЏ Р±С‹Р»Р° РїСЂРёРјРµРЅРµРЅР° РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ - РѕСЃС‚Р°РІР»СЏРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РєР°С‚РµРіРѕСЂРёРё
+                                // Вероятно, категория была применена по умолчанию - оставляем существующие категории
                                 $categoryIds = $existingCategoryIds;
                             }
                         } elseif (empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null) {
-                            // Р•СЃР»Рё РєР°С‚РµРіРѕСЂРёР№ РЅРµС‚ РІ С„Р°Р№Р»Рµ, РЅРѕ РІРєР»СЋС‡РµРЅР° РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
-                            // РџСЂРё РѕР±РЅРѕРІР»РµРЅРёРё С‚РѕРІР°СЂР°: РїСЂРёРјРµРЅСЏРµРј РєР°С‚РµРіРѕСЂРёСЋ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ С‚РѕР»СЊРєРѕ РµСЃР»Рё Сѓ С‚РѕРІР°СЂР° РЅРµС‚ РєР°С‚РµРіРѕСЂРёР№
+                            // Если категорий нет в файле, но включена категория по умолчанию
+                            // При обновлении товара: применяем категорию по умолчанию только если у товара нет категорий
                             if (empty($existingCategoryIds)) {
-                                // РЈ С‚РѕРІР°СЂР° РЅРµС‚ РєР°С‚РµРіРѕСЂРёР№ - РїСЂРёРјРµРЅСЏРµРј РєР°С‚РµРіРѕСЂРёСЋ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
+                                // У товара нет категорий - применяем категорию по умолчанию
                                 $categoryIds = [(int) $defaultCategory];
                             } else {
-                                // РЈ С‚РѕРІР°СЂР° СѓР¶Рµ РµСЃС‚СЊ РєР°С‚РµРіРѕСЂРёРё - РѕСЃС‚Р°РІР»СЏРµРј РёС… Р±РµР· РёР·РјРµРЅРµРЅРёР№
+                                // У товара уже есть категории - оставляем их без изменений
                                 $categoryIds = $existingCategoryIds;
                             }
                         }
 
-                        // РЎРёРЅС…СЂРѕРЅРёР·РёСЂСѓРµРј РєР°С‚РµРіРѕСЂРёРё С‚РѕР»СЊРєРѕ РµСЃР»Рё РѕРЅРё Р±С‹Р»Рё СѓРєР°Р·Р°РЅС‹ РІ С„Р°Р№Р»Рµ РёР»Рё РїСЂРёРјРµРЅРµРЅР° РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
-                        // Р•СЃР»Рё РєР°С‚РµРіРѕСЂРёР№ РЅРµС‚ Рё РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РЅРµ РїСЂРёРјРµРЅСЏР»Р°СЃСЊ - РЅРµ С‚СЂРѕРіР°РµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РєР°С‚РµРіРѕСЂРёРё
+                        // Синхронизируем категории только если они были указаны в файле или применена категория по умолчанию
+                        // Если категорий нет и категория по умолчанию не применялась - не трогаем существующие категории
                         if (!empty($categoryIds)) {
                             $existingGood->categories()->sync($categoryIds);
                         }
-                        // Р•СЃР»Рё $categoryIds РїСѓСЃС‚РѕР№ Рё РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РЅРµ РїСЂРёРјРµРЅСЏР»Р°СЃСЊ - РЅРµ РІС‹Р·С‹РІР°РµРј sync, РѕСЃС‚Р°РІР»СЏРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РєР°С‚РµРіРѕСЂРёРё
+                        // Если $categoryIds пустой и категория по умолчанию не применялась - не вызываем sync, оставляем существующие категории
 
                         $results['updated']++;
 
-                        // РЎРѕС…СЂР°РЅСЏРµРј ID С‚РѕРІР°СЂР°
+                        // Сохраняем ID товара
                         if (!empty($sku)) {
                             $results['goodIds'][$sku] = $existingGood->id;
                         }
@@ -975,12 +975,12 @@ class BulkGoodsImportController extends Controller
                             $results['goodIds'][$goodData['_row']] = $existingGood->id;
                         }
 
-                        // РЎРѕС…СЂР°РЅСЏРµРј ID РІР°СЂРёР°С†РёРё РґР»СЏ СЃРІСЏР·Рё СЃ РёР·РѕР±СЂР°Р¶РµРЅРёСЏРјРё (С„СЂРѕРЅС‚РµРЅРґ: РІСЃС‚СЂРѕРµРЅРЅС‹Рµ Рё СЃРІСЏР·Р°РЅРЅС‹Рµ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ)
+                        // Сохраняем ID вариации для связи с изображениями (фронтенд: встроенные и связанные изображения)
                         if ($variationId) {
                             if (isset($goodData['_row'])) {
                                 $results['variationIds'][$goodData['_row']] = $variationId;
                             }
-                            // Р”Р»СЏ В«РџРѕРёСЃРє РІ РІР°СЂРёР°С†РёСЏС…В»: РІ СЃС‚СЂРѕРєРµ РЅРµС‚ variation.attributes, РґРѕР±Р°РІР»СЏРµРј РїРѕ sku Рё name РґР»СЏ РЅР°РґС‘Р¶РЅРѕРіРѕ РїРѕРёСЃРєР° РЅР° С„СЂРѕРЅС‚Рµ
+                            // Для «Поиск в вариациях»: в строке нет variation.attributes, добавляем по sku и name для надёжного поиска на фронте
                             if (!empty($sku)) {
                                 $results['variationIds'][$sku] = $variationId;
                             }
@@ -988,8 +988,8 @@ class BulkGoodsImportController extends Controller
                                 $results['variationIds'][$name] = $variationId;
                             }
 
-                            // РўР°РєР¶Рµ СЃРѕС…СЂР°РЅСЏРµРј РїРѕ РєР»СЋС‡Сѓ РЅР° РѕСЃРЅРѕРІРµ SKU + Р°С‚СЂРёР±СѓС‚РѕРІ РІР°СЂРёР°С†РёРё РґР»СЏ СЃР»СѓС‡Р°РµРІ,
-                            // РєРѕРіРґР° РЅРµСЃРєРѕР»СЊРєРѕ РІР°СЂРёР°С†РёР№ РёРјРµСЋС‚ РѕРґРёРЅР°РєРѕРІС‹Р№ SKU
+                            // Также сохраняем по ключу на основе SKU + атрибутов вариации для случаев,
+                            // когда несколько вариаций имеют одинаковый SKU
                             if (
                                 isset($goodData['sku']) && !empty($goodData['sku']) &&
                                 isset($goodData['variation']) && isset($goodData['variation']['attributes']) &&
@@ -999,7 +999,7 @@ class BulkGoodsImportController extends Controller
                                 $sku = trim($goodData['sku']);
                                 $attributes = $goodData['variation']['attributes'];
 
-                                // РЎРѕСЂС‚РёСЂСѓРµРј Р°С‚СЂРёР±СѓС‚С‹ РґР»СЏ РєРѕРЅСЃРёСЃС‚РµРЅС‚РЅРѕСЃС‚Рё РєР»СЋС‡Р°
+                                // Сортируем атрибуты для консистентности ключа
                                 $sortedAttributes = collect($attributes)->sortBy(function ($attr) {
                                     return $attr['name'] ?? '';
                                 })->map(function ($attr) {
@@ -1012,23 +1012,23 @@ class BulkGoodsImportController extends Controller
                             }
                         }
 
-                        // Р”РѕР±Р°РІР»СЏРµРј РІ РіСЂСѓРїРїСѓ РґР»СЏ РѕР±РЅРѕРІР»РµРЅРёСЏ
-                        $sheet = $goodData['_sheet'] ?? 'РЅРµРёР·РІРµСЃС‚РЅРѕ';
+                        // Добавляем в группу для обновления
+                        $sheet = $goodData['_sheet'] ?? 'неизвестно';
                         $updateItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'good_id' => $existingGood->id, 'supplier' => ($existingGood->supplier ?? '')];
 
-                        continue; // РџСЂРѕРїСѓСЃРєР°РµРј РґР°Р»СЊРЅРµР№С€СѓСЋ РѕР±СЂР°Р±РѕС‚РєСѓ
+                        continue; // Пропускаем дальнейшую обработку
                     }
 
-                    // РџРѕРёСЃРє РІ РІР°СЂРёР°С†РёСЏС… РїРѕ SKU: РІ РІР°СЂРёР°С†РёСЏС… РЅРµ РЅР°С€Р»Рё, РЅР°С€Р»Рё РѕСЃРЅРѕРІРЅРѕР№ С‚РѕРІР°СЂ РїРѕ РЅР°Р·РІР°РЅРёСЋ.
-                    // Р•СЃР»Рё Сѓ С‚РѕРІР°СЂР° СѓР¶Рµ РµСЃС‚СЊ РІР°СЂРёР°С†РёРё вЂ” РґРѕР±Р°РІР»СЏРµРј РЅРѕРІСѓСЋ (createSimpleVariation).
-                    // Р•СЃР»Рё Сѓ С‚РѕРІР°СЂР° РЅРµС‚ РІР°СЂРёР°С†РёР№ вЂ” РЅРµ СЃРѕР·РґР°С‘Рј РІР°СЂРёР°С†РёСЋ; РґР°Р»РµРµ СЃСЂР°Р±РѕС‚Р°РµС‚ В«if ($existingGood)В» Рё РѕР±РЅРѕРІРёС‚СЃСЏ РѕСЃРЅРѕРІРЅРѕР№ С‚РѕРІР°СЂ (updateGood).
+                    // Поиск в вариациях по SKU: в вариациях не нашли, нашли основной товар по названию.
+                    // Если у товара уже есть вариации — добавляем новую (createSimpleVariation).
+                    // Если у товара нет вариаций — не создаём вариацию; далее сработает «if ($existingGood)» и обновится основной товар (updateGood).
                     if ($searchByNameInVariations && !$hasVariation && !$existingVariation && $existingGood && $searchByFieldInVariations === 'sku' && $foundMainGoodByName) {
                         if ($existingGood->variations()->exists()) {
-                            // РўРѕРІР°СЂ СЃ РІР°СЂРёР°С†РёСЏРјРё вЂ” РґРѕР±Р°РІР»СЏРµРј РЅРѕРІСѓСЋ РІР°СЂРёР°С†РёСЋ (Р°СЂС‚РёРєСѓР» РѕР±СЏР·Р°С‚РµР»РµРЅ)
+                            // Товар с вариациями — добавляем новую вариацию (артикул обязателен)
                             if (empty($sku)) {
                                 $results['skipped']++;
-                                $sheet = $goodData['_sheet'] ?? 'РЅРµРёР·РІРµСЃС‚РЅРѕ';
-                                $reason = 'РџРѕРёСЃРє РІ РІР°СЂРёР°С†РёСЏС… РїРѕ SKU: С‚РѕРІР°СЂ РЅР°Р№РґРµРЅ РїРѕ РЅР°Р·РІР°РЅРёСЋ В«' . $name . 'В», Сѓ С‚РѕРІР°СЂР° РµСЃС‚СЊ РІР°СЂРёР°С†РёРё, РЅРѕ Р°СЂС‚РёРєСѓР» РІ СЃС‚СЂРѕРєРµ РїСѓСЃС‚РѕР№ вЂ” РЅРµРІРѕР·РјРѕР¶РЅРѕ СЃРѕР·РґР°С‚СЊ РІР°СЂРёР°С†РёСЋ.';
+                                $sheet = $goodData['_sheet'] ?? 'неизвестно';
+                                $reason = 'Поиск в вариациях по SKU: товар найден по названию «' . $name . '», у товара есть вариации, но артикул в строке пустой — невозможно создать вариацию.';
                                 $skipItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'reason' => $reason];
 
                                 continue;
@@ -1039,8 +1039,8 @@ class BulkGoodsImportController extends Controller
                             $variationId = $this->createSimpleVariation($existingGood, $goodData, $supplierStockFields, $naming);
                             if (!$variationId) {
                                 $results['skipped']++;
-                                $sheet = $goodData['_sheet'] ?? 'РЅРµРёР·РІРµСЃС‚РЅРѕ';
-                                $reason = 'РџРѕРёСЃРє РІ РІР°СЂРёР°С†РёСЏС… РїРѕ SKU: С‚РѕРІР°СЂ РЅР°Р№РґРµРЅ РїРѕ РЅР°Р·РІР°РЅРёСЋ В«' . $name . 'В», РЅРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ РІР°СЂРёР°С†РёСЋ (Р°СЂС‚РёРєСѓР»: ' . $sku . ').';
+                                $sheet = $goodData['_sheet'] ?? 'неизвестно';
+                                $reason = 'Поиск в вариациях по SKU: товар найден по названию «' . $name . '», не удалось создать вариацию (артикул: ' . $sku . ').';
                                 $skipItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'reason' => $reason];
 
                                 continue;
@@ -1093,34 +1093,34 @@ class BulkGoodsImportController extends Controller
                             if (isset($goodData['_row'])) {
                                 $results['goodIds'][$goodData['_row']] = $existingGood->id;
                             }
-                            $sheet = $goodData['_sheet'] ?? 'РЅРµРёР·РІРµСЃС‚РЅРѕ';
+                            $sheet = $goodData['_sheet'] ?? 'неизвестно';
                             $updateItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'good_id' => $existingGood->id, 'supplier' => ($existingGood->supplier ?? '')];
 
                             continue;
                         }
-                        // РўРѕРІР°СЂ Р±РµР· РІР°СЂРёР°С†РёР№ вЂ” РЅРµ СЃРѕР·РґР°С‘Рј РІР°СЂРёР°С†РёСЋ, РёРґС‘Рј РІ В«if ($existingGood)В» в†’ updateGood (РѕР±РЅРѕРІР»РµРЅРёРµ РѕСЃРЅРѕРІРЅРѕРіРѕ С‚РѕРІР°СЂР°)
+                        // Товар без вариаций — не создаём вариацию, идём в «if ($existingGood)» ? updateGood (обновление основного товара)
                     }
 
-                    // Р›РѕРіРёСЂСѓРµРј С‚РµРєСѓС‰РёРµ Р·РЅР°С‡РµРЅРёСЏ РїРµСЂРµРјРµРЅРЅС‹С… РґР»СЏ РѕС‚Р»Р°РґРєРё
+                    // Логируем текущие значения переменных для отладки
 
-                    // Р•СЃР»Рё РІРєР»СЋС‡РµРЅ РїРѕРёСЃРє РІ РІР°СЂРёР°С†РёСЏС… Рё С‚РѕРІР°СЂ РёРјРµРµС‚ РІР°СЂРёР°С†РёРё, РЅРѕ РІР°СЂРёР°С†РёСЏ РЅРµ РЅР°Р№РґРµРЅР°,
-                    // Р° С‚РѕРІР°СЂ РЅР°Р№РґРµРЅ - СЃРѕР·РґР°РµРј РЅРѕРІСѓСЋ РІР°СЂРёР°С†РёСЋ РґР»СЏ СЃСѓС‰РµСЃС‚РІСѓСЋС‰РµРіРѕ С‚РѕРІР°СЂР°
+                    // Если включен поиск в вариациях и товар имеет вариации, но вариация не найдена,
+                    // а товар найден - создаем новую вариацию для существующего товара
                     if ($searchByNameInVariations && $hasVariation && !$existingVariation && $existingGood) {
-                        // РЎРѕР·РґР°РµРј РЅРѕРІСѓСЋ РІР°СЂРёР°С†РёСЋ РґР»СЏ РЅР°Р№РґРµРЅРЅРѕРіРѕ С‚РѕРІР°СЂР°
-                        // РџРµСЂРµРґР°РµРј nameTrimSymbol РІ goodData РґР»СЏ РѕР±СЂРµР·РєРё РЅР°Р·РІР°РЅРёСЏ С‚РѕРІР°СЂР°
+                        // Создаем новую вариацию для найденного товара
+                        // Передаем nameTrimSymbol в goodData для обрезки названия товара
                         if (!isset($goodData['_nameTrimSymbol'])) {
                             $goodData['_nameTrimSymbol'] = $nameTrimSymbol;
                         }
                         $variationId = $this->processVariation($existingGood, $goodData['variation'], $goodData, $supplierStockFields, $naming);
 
-                        // РЎРѕС…СЂР°РЅСЏРµРј ID РІР°СЂРёР°С†РёРё РґР»СЏ СЃРІСЏР·Рё СЃ РёР·РѕР±СЂР°Р¶РµРЅРёСЏРјРё
+                        // Сохраняем ID вариации для связи с изображениями
                         if ($variationId) {
                             if (isset($goodData['_row'])) {
                                 $results['variationIds'][$goodData['_row']] = $variationId;
                             }
 
-                            // РўР°РєР¶Рµ СЃРѕС…СЂР°РЅСЏРµРј РїРѕ РєР»СЋС‡Сѓ РЅР° РѕСЃРЅРѕРІРµ SKU + Р°С‚СЂРёР±СѓС‚РѕРІ РІР°СЂРёР°С†РёРё РґР»СЏ СЃР»СѓС‡Р°РµРІ,
-                            // РєРѕРіРґР° РЅРµСЃРєРѕР»СЊРєРѕ РІР°СЂРёР°С†РёР№ РёРјРµСЋС‚ РѕРґРёРЅР°РєРѕРІС‹Р№ SKU
+                            // Также сохраняем по ключу на основе SKU + атрибутов вариации для случаев,
+                            // когда несколько вариаций имеют одинаковый SKU
                             if (
                                 isset($goodData['sku']) && !empty($goodData['sku']) &&
                                 isset($goodData['variation']) && isset($goodData['variation']['attributes']) &&
@@ -1130,7 +1130,7 @@ class BulkGoodsImportController extends Controller
                                 $sku = trim($goodData['sku']);
                                 $attributes = $goodData['variation']['attributes'];
 
-                                // РЎРѕСЂС‚РёСЂСѓРµРј Р°С‚СЂРёР±СѓС‚С‹ РґР»СЏ РєРѕРЅСЃРёСЃС‚РµРЅС‚РЅРѕСЃС‚Рё РєР»СЋС‡Р°
+                                // Сортируем атрибуты для консистентности ключа
                                 $sortedAttributes = collect($attributes)->sortBy(function ($attr) {
                                     return $attr['name'] ?? '';
                                 })->map(function ($attr) {
@@ -1142,7 +1142,7 @@ class BulkGoodsImportController extends Controller
                             }
                         }
 
-                        // РР·РѕР±СЂР°Р¶РµРЅРёСЏ РїСЂРёРІСЏР·С‹РІР°РµРј Рє СЃРѕР·РґР°РЅРЅРѕР№ РІР°СЂРёР°С†РёРё, Р° РЅРµ Рє РѕСЃРЅРѕРІРЅРѕРјСѓ С‚РѕРІР°СЂСѓ
+                        // Изображения привязываем к созданной вариации, а не к основному товару
                         if (isset($goodData['images']) && is_array($goodData['images']) && $variationId) {
                             $variationForImages = ShopGoodVariation::find($variationId);
                             if ($variationForImages) {
@@ -1152,7 +1152,7 @@ class BulkGoodsImportController extends Controller
                             }
                         }
 
-                        // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј РєР°С‚РµРіРѕСЂРёРё С‚РѕРІР°СЂР° (РґР°Р¶Рµ РµСЃР»Рё РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚СЃСЏ С‚РѕР»СЊРєРѕ РІР°СЂРёР°С†РёСЏ)
+                        // Обрабатываем категории товара (даже если обрабатывается только вариация)
                         $categoryIds = [];
                         if (isset($goodData['category']) && !empty($goodData['category'])) {
                             $categoryIds = [(int) $goodData['category']];
@@ -1162,40 +1162,40 @@ class BulkGoodsImportController extends Controller
                             });
                         }
 
-                        // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј РєР°С‚РµРіРѕСЂРёРё С‚РѕРІР°СЂР° РїСЂРё РѕР±РЅРѕРІР»РµРЅРёРё С‡РµСЂРµР· РІР°СЂРёР°С†РёСЋ
-                        // Р’РђР–РќРћ: РџСЂРѕРІРµСЂСЏРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РєР°С‚РµРіРѕСЂРёРё РџР•Р Р•Р” РїСЂРёРјРµРЅРµРЅРёРµРј РєР°С‚РµРіРѕСЂРёР№ РёР· С„Р°Р№Р»Р°
+                        // Обрабатываем категории товара при обновлении ??ерез вариацию
+                        // ВАЖНО: Проверяем существующие категории ПЕРЕД применением категорий из файла
                         $existingCategoryIds = $existingGood->categories()->pluck('shop_categories.id')->toArray();
 
-                        // Р•СЃР»Рё РєР°С‚РµРіРѕСЂРёРё РµСЃС‚СЊ РІ $goodData, РїСЂРѕРІРµСЂСЏРµРј, РЅРµ Р±С‹Р»Р° Р»Рё СЌС‚Рѕ РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
+                        // Если категории есть в $goodData, проверяем, не была ли это категория по умолчанию
                         if (!empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null && !empty($existingCategoryIds)) {
                             $defaultCategoryId = (int) $defaultCategory;
-                            // Р•СЃР»Рё РµРґРёРЅСЃС‚РІРµРЅРЅР°СЏ РєР°С‚РµРіРѕСЂРёСЏ - СЌС‚Рѕ defaultCategory, Рё Сѓ С‚РѕРІР°СЂР° СѓР¶Рµ РµСЃС‚СЊ РґСЂСѓРіРёРµ РєР°С‚РµРіРѕСЂРёРё
+                            // Если единственная категория - это defaultCategory, и у товара уже есть другие категории
                             if (count($categoryIds) === 1 && $categoryIds[0] === $defaultCategoryId) {
-                                // Р’РµСЂРѕСЏС‚РЅРѕ, РєР°С‚РµРіРѕСЂРёСЏ Р±С‹Р»Р° РїСЂРёРјРµРЅРµРЅР° РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ - РѕСЃС‚Р°РІР»СЏРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РєР°С‚РµРіРѕСЂРёРё
+                                // Вероятно, категория была применена по умолчанию - оставляем существующие категории
                                 $categoryIds = $existingCategoryIds;
                             }
                         } elseif (empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null) {
-                            // Р•СЃР»Рё РєР°С‚РµРіРѕСЂРёР№ РЅРµС‚ РІ С„Р°Р№Р»Рµ, РЅРѕ РІРєР»СЋС‡РµРЅР° РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
-                            // РџСЂРё РѕР±РЅРѕРІР»РµРЅРёРё С‚РѕРІР°СЂР°: РїСЂРёРјРµРЅСЏРµРј РєР°С‚РµРіРѕСЂРёСЋ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ С‚РѕР»СЊРєРѕ РµСЃР»Рё Сѓ С‚РѕРІР°СЂР° РЅРµС‚ РєР°С‚РµРіРѕСЂРёР№
+                            // Если категорий нет в файле, но включена категория по умолчанию
+                            // При обновлении товара: применяем категорию по умолчанию только если у товара нет категорий
                             if (empty($existingCategoryIds)) {
-                                // РЈ С‚РѕРІР°СЂР° РЅРµС‚ РєР°С‚РµРіРѕСЂРёР№ - РїСЂРёРјРµРЅСЏРµРј РєР°С‚РµРіРѕСЂРёСЋ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
+                                // У товара нет категорий - применяем категорию по умолчанию
                                 $categoryIds = [(int) $defaultCategory];
                             } else {
-                                // РЈ С‚РѕРІР°СЂР° СѓР¶Рµ РµСЃС‚СЊ РєР°С‚РµРіРѕСЂРёРё - РѕСЃС‚Р°РІР»СЏРµРј РёС… Р±РµР· РёР·РјРµРЅРµРЅРёР№
+                                // У товара уже есть категории - оставляем их без изменений
                                 $categoryIds = $existingCategoryIds;
                             }
                         }
 
-                        // РЎРёРЅС…СЂРѕРЅРёР·РёСЂСѓРµРј РєР°С‚РµРіРѕСЂРёРё С‚РѕР»СЊРєРѕ РµСЃР»Рё РѕРЅРё Р±С‹Р»Рё СѓРєР°Р·Р°РЅС‹ РІ С„Р°Р№Р»Рµ РёР»Рё РїСЂРёРјРµРЅРµРЅР° РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
-                        // Р•СЃР»Рё РєР°С‚РµРіРѕСЂРёР№ РЅРµС‚ Рё РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РЅРµ РїСЂРёРјРµРЅСЏР»Р°СЃСЊ - РЅРµ С‚СЂРѕРіР°РµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РєР°С‚РµРіРѕСЂРёРё
+                        // Синхронизируем категории только если они были указаны в файле или применена категория по умолчанию
+                        // Если категорий нет и категория по умолчанию не применялась - не трогаем существующие категории
                         if (!empty($categoryIds)) {
                             $existingGood->categories()->sync($categoryIds);
                         }
-                        // Р•СЃР»Рё $categoryIds РїСѓСЃС‚РѕР№ Рё РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РЅРµ РїСЂРёРјРµРЅСЏР»Р°СЃСЊ - РЅРµ РІС‹Р·С‹РІР°РµРј sync, РѕСЃС‚Р°РІР»СЏРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РєР°С‚РµРіРѕСЂРёРё
+                        // Если $categoryIds пустой и категория по умолчанию не применялась - не вызываем sync, оставляем существующие категории
 
-                        $results['updated']++; // РЎС‡РёС‚Р°РµРј РєР°Рє РѕР±РЅРѕРІР»РµРЅРёРµ (РґРѕР±Р°РІР»РµРЅРёРµ РІР°СЂРёР°С†РёРё)
+                        $results['updated']++; // Считаем как обновление (добавление вариации)
 
-                        // РЎРѕС…СЂР°РЅСЏРµРј ID С‚РѕРІР°СЂР°
+                        // Сохраняем ID товара
                         if (!empty($sku)) {
                             $results['goodIds'][$sku] = $existingGood->id;
                         }
@@ -1204,15 +1204,15 @@ class BulkGoodsImportController extends Controller
                             $results['goodIds'][$goodData['_row']] = $existingGood->id;
                         }
 
-                        // РЎРѕС…СЂР°РЅСЏРµРј ID РІР°СЂРёР°С†РёРё РґР»СЏ СЃРІСЏР·Рё СЃ РёР·РѕР±СЂР°Р¶РµРЅРёСЏРјРё
+                        // Сохраняем ID вариации для связи с изображениями
                         if ($variationId) {
-                            // РСЃРїРѕР»СЊР·СѓРµРј _row РєР°Рє РєР»СЋС‡ РґР»СЏ СЃРІСЏР·Рё СЃ РёР·РѕР±СЂР°Р¶РµРЅРёСЏРјРё (СЃР°РјС‹Р№ РЅР°РґРµР¶РЅС‹Р№ СЃРїРѕСЃРѕР±)
+                            // Используем _row как ключ для связи с изображениями (самый надежный способ)
                             if (isset($goodData['_row'])) {
                                 $results['variationIds'][$goodData['_row']] = $variationId;
                             }
 
-                            // РўР°РєР¶Рµ СЃРѕС…СЂР°РЅСЏРµРј РїРѕ РєР»СЋС‡Сѓ РЅР° РѕСЃРЅРѕРІРµ SKU + Р°С‚СЂРёР±СѓС‚РѕРІ РІР°СЂРёР°С†РёРё РґР»СЏ СЃР»СѓС‡Р°РµРІ,
-                            // РєРѕРіРґР° РЅРµСЃРєРѕР»СЊРєРѕ РІР°СЂРёР°С†РёР№ РёРјРµСЋС‚ РѕРґРёРЅР°РєРѕРІС‹Р№ SKU
+                            // Также сохраняем по ключу на основе SKU + атрибутов вариации для случаев,
+                            // когда несколько вариаций имеют одинаковый SKU
                             if (
                                 isset($goodData['sku']) && !empty($goodData['sku']) &&
                                 isset($goodData['variation']) && isset($goodData['variation']['attributes']) &&
@@ -1222,7 +1222,7 @@ class BulkGoodsImportController extends Controller
                                 $sku = trim($goodData['sku']);
                                 $attributes = $goodData['variation']['attributes'];
 
-                                // РЎРѕСЂС‚РёСЂСѓРµРј Р°С‚СЂРёР±СѓС‚С‹ РґР»СЏ РєРѕРЅСЃРёСЃС‚РµРЅС‚РЅРѕСЃС‚Рё РєР»СЋС‡Р°
+                                // Сортируем атрибуты для консистентности ключа
                                 $sortedAttributes = collect($attributes)->sortBy(function ($attr) {
                                     return $attr['name'] ?? '';
                                 })->map(function ($attr) {
@@ -1234,42 +1234,42 @@ class BulkGoodsImportController extends Controller
                             }
                         }
 
-                        // Р”РѕР±Р°РІР»СЏРµРј РІ РіСЂСѓРїРїСѓ РґР»СЏ РѕР±РЅРѕРІР»РµРЅРёСЏ
-                        $sheet = $goodData['_sheet'] ?? 'РЅРµРёР·РІРµСЃС‚РЅРѕ';
+                        // Добавляем в группу для обновления
+                        $sheet = $goodData['_sheet'] ?? 'неизвестно';
                         $updateItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'good_id' => $existingGood->id, 'supplier' => ($existingGood->supplier ?? '')];
 
-                        continue; // РџСЂРѕРїСѓСЃРєР°РµРј РґР°Р»СЊРЅРµР№С€СѓСЋ РѕР±СЂР°Р±РѕС‚РєСѓ
+                        continue; // Пропускаем дальнейшую обработку
                     }
 
                     if ($existingGood) {
-                        // РљР РРўРР§РќРћ: Р•СЃР»Рё РІР°СЂРёР°С†РёСЏ СѓР¶Рµ РЅР°Р№РґРµРЅР° Рё РѕР±РЅРѕРІР»РµРЅР° РІ Р±Р»РѕРєРµ РІС‹С€Рµ (691-921),
-                        // С‚Рѕ $existingVariation СѓСЃС‚Р°РЅРѕРІР»РµРЅ Рё РєРѕРґ РґРѕР»Р¶РµРЅ Р±С‹Р» СЃРґРµР»Р°С‚СЊ continue.
-                        // Р•СЃР»Рё РјС‹ РїРѕРїР°Р»Рё СЃСЋРґР°, РЅРѕ $existingVariation СѓСЃС‚Р°РЅРѕРІР»РµРЅ - СЌС‚Рѕ РѕС€РёР±РєР° Р»РѕРіРёРєРё.
-                        // РџСЂРѕРїСѓСЃРєР°РµРј РґР°Р»СЊРЅРµР№С€СѓСЋ РѕР±СЂР°Р±РѕС‚РєСѓ, С‡С‚РѕР±С‹ РЅРµ СЃРѕР·РґР°РІР°С‚СЊ РґСѓР±Р»РёРєР°С‚ С‚РѕРІР°СЂР°.
+                        // КРИТИЧНО: Если вариация уже найдена и обновлена в блоке выше (691-921),
+                        // то $existingVariation установлен и код должен был сделать continue.
+                        // Если мы попали ????да, но $existingVariation установлен - это ошибка логики.
+                        // Пропускаем дальнейшую обработку, чтобы не создавать дубликат товара.
                         if ($existingVariation && $searchByNameInVariations) {
-                            // Р’Р°СЂРёР°С†РёСЏ СѓР¶Рµ РѕР±СЂР°Р±РѕС‚Р°РЅР° РІС‹С€Рµ, РїСЂРѕРїСѓСЃРєР°РµРј
+                            // Вариация уже обработана выше, пропускаем
                             continue;
                         }
 
-                        // РўРѕРІР°СЂ СЃСѓС‰РµСЃС‚РІСѓРµС‚
-                        // Р•СЃР»Рё Сѓ СЃС‚СЂРѕРєРё РµСЃС‚СЊ РІР°СЂРёР°С†РёСЏ, РѕР±СЂР°Р±Р°С‚С‹РІР°РµРј РµС‘ РЅРµР·Р°РІРёСЃРёРјРѕ РѕС‚ duplicateAction
+                        // Товар существует
+                        // Если у строки есть вариация, обрабатываем её независимо от duplicateAction
                         if ($hasVariation) {
-                            // РљР РРўРР§РќРћ: РћС‚РґРµР»СЊРЅРѕ РѕР±СЂРµР·Р°РµРј Рё РѕР±РЅРѕРІР»СЏРµРј РЅР°Р·РІР°РЅРёРµ С‚РѕРІР°СЂР° СЃ РІР°СЂРёР°С†РёРµР№
-                            // Р­С‚Рѕ РґРѕР»Р¶РЅРѕ РїСЂРѕРёСЃС…РѕРґРёС‚СЊ Р”Рћ РѕР±СЂР°Р±РѕС‚РєРё РІР°СЂРёР°С†РёРё
-                            // Р’РђР–РќРћ: Р”Р»СЏ С‚РѕРІР°СЂРѕРІ СЃ РІР°СЂРёР°С†РёСЏРјРё РЅР°Р·РІР°РЅРёРµ РѕР±РЅРѕРІР»СЏРµС‚СЃСЏ РѕС‚РґРµР»СЊРЅРѕ, РЅРµР·Р°РІРёСЃРёРјРѕ РѕС‚ searchByNameInVariations
-                            // РљР РРўРР§РќРћ: Р”Р»СЏ С‚РѕРІР°СЂРѕРІ СЃ РІР°СЂРёР°С†РёСЏРјРё РѕС‚РґРµР»СЊРЅРѕ РѕР±СЂРµР·Р°РµРј Рё РѕР±РЅРѕРІР»СЏРµРј РЅР°Р·РІР°РЅРёРµ
-                            // РСЃРїРѕР»СЊР·СѓРµРј РЅР°Р·РІР°РЅРёРµ РёР· РґР°РЅРЅС‹С… РёРјРїРѕСЂС‚Р°, РµСЃР»Рё РѕРЅРѕ РµСЃС‚СЊ, РёРЅР°С‡Рµ РїСЂРѕРІРµСЂСЏРµРј РЅР°Р·РІР°РЅРёРµ РІ Р‘Р”
+                            // КРИТИЧНО: Отдельно обрезаем и обновляем название товара с вариацией
+                            // Это должно происходить ДО обработки вариации
+                            // ВАЖНО: Для товаров с вариациями название обновляется отдельно, независимо от searchByNameInVariations
+                            // КРИТИЧНО: Для товаров с вариациями отдельно обрезаем и обновляем название
+                            // Используем название из данных импорта, если оно есть, иначе проверяем название в БД
                             $nameFromData = isset($goodData['name']) ? trim($goodData['name']) : null;
                             $this->trimGoodName($existingGood, $nameTrimSymbol, $immutableFields, $nameFromData);
 
-                            // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј С‚РѕР»СЊРєРѕ РІР°СЂРёР°С†РёСЋ, РЅРѕ С‚Р°РєР¶Рµ РѕР±РЅРѕРІР»СЏРµРј РєР°С‚РµРіРѕСЂРёРё С‚РѕРІР°СЂР°, РµСЃР»Рё РЅСѓР¶РЅРѕ
-                            // РџРµСЂРµРґР°РµРј nameTrimSymbol РІ goodData РґР»СЏ РѕР±СЂРµР·РєРё РЅР°Р·РІР°РЅРёСЏ С‚РѕРІР°СЂР° (РЅР° СЃР»СѓС‡Р°Р№ РµСЃР»Рё РѕР±СЂРµР·РєР° РЅРµ Р±С‹Р»Р° РїСЂРёРјРµРЅРµРЅР° РІС‹С€Рµ)
+                            // Обрабатываем только вариацию, но также обновляем категории товара, если нужно
+                            // Передаем nameTrimSymbol в goodData для обрезки названия товара (на случай если обрезка не была применена выше)
                             if (!isset($goodData['_nameTrimSymbol'])) {
                                 $goodData['_nameTrimSymbol'] = $nameTrimSymbol;
                             }
                             $variationId = $this->processVariation($existingGood, $goodData['variation'], $goodData, $supplierStockFields, $naming);
 
-                            // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј РєР°С‚РµРіРѕСЂРёРё С‚РѕРІР°СЂР° (РґР°Р¶Рµ РµСЃР»Рё РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚СЃСЏ С‚РѕР»СЊРєРѕ РІР°СЂРёР°С†РёСЏ)
+                            // Обрабатываем категории товара (даже если обрабатывается только вариация)
                             $categoryIds = [];
                             if (isset($goodData['category']) && !empty($goodData['category'])) {
                                 $categoryIds = [(int) $goodData['category']];
@@ -1279,40 +1279,40 @@ class BulkGoodsImportController extends Controller
                                 });
                             }
 
-                            // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј РєР°С‚РµРіРѕСЂРёРё С‚РѕРІР°СЂР° РїСЂРё РѕР±РЅРѕРІР»РµРЅРёРё С‡РµСЂРµР· РІР°СЂРёР°С†РёСЋ
-                            // Р’РђР–РќРћ: РџСЂРѕРІРµСЂСЏРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РєР°С‚РµРіРѕСЂРёРё РџР•Р Р•Р” РїСЂРёРјРµРЅРµРЅРёРµРј РєР°С‚РµРіРѕСЂРёР№ РёР· С„Р°Р№Р»Р°
+                            // Обрабатываем категории товара при обновлении ??ерез вариацию
+                            // ВАЖНО: Проверяем существующие категории ПЕРЕД применением категорий из файла
                             $existingCategoryIds = $existingGood->categories()->pluck('shop_categories.id')->toArray();
 
-                            // Р•СЃР»Рё РєР°С‚РµРіРѕСЂРёРё РµСЃС‚СЊ РІ $goodData, РїСЂРѕРІРµСЂСЏРµРј, РЅРµ Р±С‹Р»Р° Р»Рё СЌС‚Рѕ РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
+                            // Если категории есть в $goodData, проверяем, не была ли это категория по умолчанию
                             if (!empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null && !empty($existingCategoryIds)) {
                                 $defaultCategoryId = (int) $defaultCategory;
-                                // Р•СЃР»Рё РµРґРёРЅСЃС‚РІРµРЅРЅР°СЏ РєР°С‚РµРіРѕСЂРёСЏ - СЌС‚Рѕ defaultCategory, Рё Сѓ С‚РѕРІР°СЂР° СѓР¶Рµ РµСЃС‚СЊ РґСЂСѓРіРёРµ РєР°С‚РµРіРѕСЂРёРё
+                                // Если единственная категория - это defaultCategory, и у товара уже есть другие категории
                                 if (count($categoryIds) === 1 && $categoryIds[0] === $defaultCategoryId) {
-                                    // Р’РµСЂРѕСЏС‚РЅРѕ, РєР°С‚РµРіРѕСЂРёСЏ Р±С‹Р»Р° РїСЂРёРјРµРЅРµРЅР° РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ - РѕСЃС‚Р°РІР»СЏРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РєР°С‚РµРіРѕСЂРёРё
+                                    // Вероятно, категория была применена по умолчанию - оставляем существующие категории
                                     $categoryIds = $existingCategoryIds;
                                 }
                             } elseif (empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null) {
-                                // Р•СЃР»Рё РєР°С‚РµРіРѕСЂРёР№ РЅРµС‚ РІ С„Р°Р№Р»Рµ, РЅРѕ РІРєР»СЋС‡РµРЅР° РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
-                                // РџСЂРё РѕР±РЅРѕРІР»РµРЅРёРё С‚РѕРІР°СЂР°: РїСЂРёРјРµРЅСЏРµРј РєР°С‚РµРіРѕСЂРёСЋ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ С‚РѕР»СЊРєРѕ РµСЃР»Рё Сѓ С‚РѕРІР°СЂР° РЅРµС‚ РєР°С‚РµРіРѕСЂРёР№
+                                // Если категорий нет в файле, но включена категория по умолчанию
+                                // При обновлении товара: применяем категорию по умолчанию только если у товара нет категорий
                                 if (empty($existingCategoryIds)) {
-                                    // РЈ С‚РѕРІР°СЂР° РЅРµС‚ РєР°С‚РµРіРѕСЂРёР№ - РїСЂРёРјРµРЅСЏРµРј РєР°С‚РµРіРѕСЂРёСЋ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
+                                    // У товара нет категорий - применяем категорию по умолчанию
                                     $categoryIds = [(int) $defaultCategory];
                                 } else {
-                                    // РЈ С‚РѕРІР°СЂР° СѓР¶Рµ РµСЃС‚СЊ РєР°С‚РµРіРѕСЂРёРё - РѕСЃС‚Р°РІР»СЏРµРј РёС… Р±РµР· РёР·РјРµРЅРµРЅРёР№
+                                    // У товара уже есть категории - оставляем их без изменений
                                     $categoryIds = $existingCategoryIds;
                                 }
                             }
 
-                            // РЎРёРЅС…СЂРѕРЅРёР·РёСЂСѓРµРј РєР°С‚РµРіРѕСЂРёРё С‚РѕР»СЊРєРѕ РµСЃР»Рё РѕРЅРё Р±С‹Р»Рё СѓРєР°Р·Р°РЅС‹ РІ С„Р°Р№Р»Рµ РёР»Рё РїСЂРёРјРµРЅРµРЅР° РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
-                            // Р•СЃР»Рё РєР°С‚РµРіРѕСЂРёР№ РЅРµС‚ Рё РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РЅРµ РїСЂРёРјРµРЅСЏР»Р°СЃСЊ - РЅРµ С‚СЂРѕРіР°РµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РєР°С‚РµРіРѕСЂРёРё
+                            // Синхронизируем категории только если они были указаны в файле или применена категория по умолчанию
+                            // Если категорий нет и категория по умолчанию не применялась - не трогаем существующие категории
                             if (!empty($categoryIds)) {
                                 $existingGood->categories()->sync($categoryIds);
                             }
-                            // Р•СЃР»Рё $categoryIds РїСѓСЃС‚РѕР№ Рё РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РЅРµ РїСЂРёРјРµРЅСЏР»Р°СЃСЊ - РЅРµ РІС‹Р·С‹РІР°РµРј sync, РѕСЃС‚Р°РІР»СЏРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РєР°С‚РµРіРѕСЂРёРё
+                            // Если $categoryIds пустой и категория по умолчанию не применялась - не вызываем sync, оставляем существующие категории
 
-                            $results['updated']++; // РЎС‡РёС‚Р°РµРј РєР°Рє РѕР±РЅРѕРІР»РµРЅРёРµ (РґРѕР±Р°РІР»РµРЅРёРµ РІР°СЂРёР°С†РёРё)
+                            $results['updated']++; // Считаем как обновление (добавление вариации)
 
-                            // РЎРѕС…СЂР°РЅСЏРµРј ID С‚РѕРІР°СЂР°
+                            // Сохраняем ID товара
                             if (!empty($sku)) {
                                 $results['goodIds'][$sku] = $existingGood->id;
                             }
@@ -1321,15 +1321,15 @@ class BulkGoodsImportController extends Controller
                                 $results['goodIds'][$goodData['_row']] = $existingGood->id;
                             }
 
-                            // РЎРѕС…СЂР°РЅСЏРµРј ID РІР°СЂРёР°С†РёРё РґР»СЏ СЃРІСЏР·Рё СЃ РёР·РѕР±СЂР°Р¶РµРЅРёСЏРјРё
+                            // Сохраняем ID вариации для связи с изображениями
                             if ($variationId) {
-                                // РСЃРїРѕР»СЊР·СѓРµРј _row РєР°Рє РєР»СЋС‡ РґР»СЏ СЃРІСЏР·Рё СЃ РёР·РѕР±СЂР°Р¶РµРЅРёСЏРјРё (СЃР°РјС‹Р№ РЅР°РґРµР¶РЅС‹Р№ СЃРїРѕСЃРѕР±)
+                                // Используем _row как ключ для связи с изображениями (самый надежный способ)
                                 if (isset($goodData['_row'])) {
                                     $results['variationIds'][$goodData['_row']] = $variationId;
                                 }
 
-                                // РўР°РєР¶Рµ СЃРѕС…СЂР°РЅСЏРµРј РїРѕ РєР»СЋС‡Сѓ РЅР° РѕСЃРЅРѕРІРµ SKU + Р°С‚СЂРёР±СѓС‚РѕРІ РІР°СЂРёР°С†РёРё РґР»СЏ СЃР»СѓС‡Р°РµРІ,
-                                // РєРѕРіРґР° РЅРµСЃРєРѕР»СЊРєРѕ РІР°СЂРёР°С†РёР№ РёРјРµСЋС‚ РѕРґРёРЅР°РєРѕРІС‹Р№ SKU
+                                // Также сохраняем по ключу на основе SKU + атрибутов вариации для случаев,
+                                // когда несколько вариаций имеют одинаковый SKU
                                 if (
                                     isset($goodData['sku']) && !empty($goodData['sku']) &&
                                     isset($goodData['variation']) && isset($goodData['variation']['attributes']) &&
@@ -1339,7 +1339,7 @@ class BulkGoodsImportController extends Controller
                                     $sku = trim($goodData['sku']);
                                     $attributes = $goodData['variation']['attributes'];
 
-                                    // РЎРѕСЂС‚РёСЂСѓРµРј Р°С‚СЂРёР±СѓС‚С‹ РґР»СЏ РєРѕРЅСЃРёСЃС‚РµРЅС‚РЅРѕСЃС‚Рё РєР»СЋС‡Р°
+                                    // Сортируем атрибуты для консистентности ключа
                                     $sortedAttributes = collect($attributes)->sortBy(function ($attr) {
                                         return $attr['name'] ?? '';
                                     })->map(function ($attr) {
@@ -1351,7 +1351,7 @@ class BulkGoodsImportController extends Controller
                                 }
                             }
 
-                            // РР·РѕР±СЂР°Р¶РµРЅРёСЏ РїСЂРёРІСЏР·С‹РІР°РµРј Рє РІР°СЂРёР°С†РёРё, Р° РЅРµ Рє РѕСЃРЅРѕРІРЅРѕРјСѓ С‚РѕРІР°СЂСѓ
+                            // Изображения привязываем к вариации, а не к основному товару
                             if (isset($goodData['images']) && is_array($goodData['images']) && $variationId) {
                                 $variationForImages = ShopGoodVariation::find($variationId);
                                 if ($variationForImages) {
@@ -1361,33 +1361,33 @@ class BulkGoodsImportController extends Controller
                                 }
                             }
 
-                            // Р”РѕР±Р°РІР»СЏРµРј РІ РіСЂСѓРїРїСѓ РґР»СЏ РѕР±РЅРѕРІР»РµРЅРёСЏ
-                            $sheet = $goodData['_sheet'] ?? 'РЅРµРёР·РІРµСЃС‚РЅРѕ';
+                            // Добавляем в группу для обновления
+                            $sheet = $goodData['_sheet'] ?? 'неизвестно';
                             $updateItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'good_id' => $existingGood->id, 'supplier' => ($existingGood->supplier ?? '')];
                         } elseif ($duplicateAction === 'update') {
-                            // РљР РРўРР§РќРћ: Р”Р»СЏ С‚РѕРІР°СЂРѕРІ СЃ РІР°СЂРёР°С†РёСЏРјРё РѕС‚РґРµР»СЊРЅРѕ РѕР±СЂРµР·Р°РµРј Рё РѕР±РЅРѕРІР»СЏРµРј РЅР°Р·РІР°РЅРёРµ
-                            // Р­С‚Рѕ РґРѕР»Р¶РЅРѕ РїСЂРѕРёСЃС…РѕРґРёС‚СЊ Р”Рћ РІС‹Р·РѕРІР° updateGood
+                            // КРИТИЧНО: Для товаров с вариациями отдельно обрезаем и обновляем название
+                            // Это должно происходить ДО вызова updateGood
                             if ($hasVariation) {
                                 $nameFromData = isset($goodData['name']) ? trim($goodData['name']) : null;
                                 $this->trimGoodName($existingGood, $nameTrimSymbol, $immutableFields, $nameFromData);
                             }
-                            // РћР±СЂРµР·РєР° РЅР°Р·РІР°РЅРёСЏ РґР»СЏ С‚РѕРІР°СЂРѕРІ Р±РµР· РІР°СЂРёР°С†РёР№ Р±СѓРґРµС‚ РѕР±СЂР°Р±РѕС‚Р°РЅР° РІ updateGood
+                            // Обрезка названия для товаров без вариаций будет обработана в updateGood
 
-                            // РџСЂРѕРІРµСЂСЏРµРј РїРѕР»Рµ РґР»СЏ СѓРґР°Р»РµРЅРёСЏ РґСѓР±Р»РёРєР°С‚РѕРІ (РґР»СЏ РІР°СЂРёР°РЅС‚Р° 2)
+                            // Проверяем поле для удаления дубликатов (для варианта 2)
                             $duplicateCheckField = $request->input('duplicate_check_field');
 
-                            // РџСЂРѕРІРµСЂСЏРµРј СѓРЅРёРєР°Р»СЊРЅРѕСЃС‚СЊ Р·РЅР°С‡РµРЅРёСЏ, РєРѕС‚РѕСЂРѕРµ Р±СѓРґРµС‚ СѓСЃС‚Р°РЅРѕРІР»РµРЅРѕ С‚РѕРІР°СЂСѓ
+                            // Проверяем уникальность значения, которое будет установлено товару
                             if (!empty($duplicateCheckField) && isset($goodData[$duplicateCheckField])) {
                                 $fieldValue = $goodData[$duplicateCheckField];
 
-                                // РџСЂРѕРІРµСЂСЏРµРј, РµСЃС‚СЊ Р»Рё СѓР¶Рµ С‚РѕРІР°СЂ СЃ С‚Р°РєРёРј Р·РЅР°С‡РµРЅРёРµРј РїРѕР»СЏ (РІРєР»СЋС‡Р°СЏ С‚РµРєСѓС‰РёР№ С‚РѕРІР°СЂ)
+                                // Проверяем, есть ли уже товар с таким значением поля (включая текущий товар)
                                 $existingGoodWithField = ShopGood::where($duplicateCheckField, $fieldValue)->first();
 
-                                // Р•СЃР»Рё РЅР°Р№РґРµРЅ С‚РѕРІР°СЂ СЃ С‚Р°РєРёРј Р·РЅР°С‡РµРЅРёРµРј РїРѕР»СЏ, Рё СЌС‚Рѕ РќР• С‚РµРєСѓС‰РёР№ С‚РѕРІР°СЂ
+                                // Если найден товар с таким значением поля, и это НЕ текущий товар
                                 if ($existingGoodWithField && $existingGoodWithField->id !== $existingGood->id) {
-                                    // РЈРґР°Р»СЏРµРј РґСѓР±Р»РёРєР°С‚ С‚РѕРІР°СЂР°
+                                    // Удаляем дубликат товара
                                     try {
-                                        // РЈРґР°Р»СЏРµРј СЃРІСЏР·Р°РЅРЅС‹Рµ РґР°РЅРЅС‹Рµ
+                                        // Удаляем связанные данные
                                         $existingGoodWithField->categories()->detach();
                                         $existingGoodWithField->brands()->detach();
                                         $existingGoodWithField->tags()->detach();
@@ -1395,25 +1395,25 @@ class BulkGoodsImportController extends Controller
                                         $existingGoodWithField->images()->delete();
                                         $existingGoodWithField->variations()->delete();
 
-                                        // РЈРґР°Р»СЏРµРј СЃР°Рј С‚РѕРІР°СЂ
+                                        // Удаляем нам товар
                                         $existingGoodWithField->delete();
 
                                     } catch (\Exception $deleteException) {
-                                        Log::error('РћС€РёР±РєР° РїСЂРё СѓРґР°Р»РµРЅРёРё РґСѓР±Р»РёРєР°С‚Р° С‚РѕРІР°СЂР° (РІР°СЂРёР°РЅС‚ 2)', [
+                                        Log::error('Ошибка при удалении дубликата товара (вариант 2)', [
                                             'duplicate_good_id' => $existingGoodWithField->id,
                                             'error' => $deleteException->getMessage(),
                                         ]);
-                                        // РџСЂРѕРґРѕР»Р¶Р°РµРј РёРјРїРѕСЂС‚, РЅРѕ Р»РѕРіРёСЂСѓРµРј РѕС€РёР±РєСѓ
+                                        // Продолжаем импорт, но логируем ошибку
                                     }
                                 } else {
                                 }
                             }
 
-                            // Р•СЃР»Рё Сѓ С‚РѕРІР°СЂР° РµСЃС‚СЊ РІР°СЂРёР°С†РёРё Рё РІ СЃС‚СЂРѕРєРµ СѓРєР°Р·Р°РЅ SKU вЂ” РѕР±РЅРѕРІР»СЏРµРј РІР°СЂРёР°С†РёСЋ Рё РїСЂРёРІСЏР·С‹РІР°РµРј РёР·РѕР±СЂР°Р¶РµРЅРёСЏ Рє РЅРµР№
+                            // Если у товара есть вариации и в строке указан SKU — обновляем вариацию и привязываем изображения к ней
                             $attachImagesToVariation = null;
                             if ($existingGood->variations()->count() > 0 && !empty($sku)) {
                                 $attachImagesToVariation = $existingGood->variations()->where('sku', $sku)->first();
-                                // РљСЂРёС‚РёС‡РЅРѕ: РѕР±РЅРѕРІР»СЏРµРј РІР°СЂРёР°С†РёСЋ (РѕСЃС‚Р°С‚РєРё, С†РµРЅР°, SKU Рё С‚.Рґ.) РёР· СЃС‚СЂРѕРєРё вЂ” РёРЅР°С‡Рµ РІР°СЂРёР°С†РёРё В«РЅРµ Р·Р°С‚СЂР°РіРёРІР°СЋС‚СЃСЏВ»
+                                // Критично: обновляем вариацию (остатки, цена, SKU и т.д.) из строки — иначе вариации «не затрагиваются»
                                 if ($attachImagesToVariation) {
                                     $this->updateVariationFromGoodData($attachImagesToVariation, $goodData, $searchByNameInVariations);
                                 }
@@ -1423,7 +1423,7 @@ class BulkGoodsImportController extends Controller
                             $results['imagesDownloaded'] += $updateResult['imageStats']['downloaded'];
                             $results['imagesFailed'] += $updateResult['imageStats']['failed'];
 
-                            // Р”Р»СЏ Р»РѕРіРёРєРё "РР·РјРµРЅРёС‚СЊ РІР°СЂРёР°С†РёСЋ" С‚Р°РєР¶Рµ РѕР±РЅРѕРІР»СЏРµРј РѕСЃС‚Р°С‚РєРё СЃРѕРїРѕСЃС‚Р°РІР»РµРЅРЅС‹С… РІР°СЂРёР°С†РёР№
+                            // Для логики "Изменить вариацию" также обновляем остатки сопоставленных вариаций
                             if (isset($goodData['variation_ids']) && is_array($goodData['variation_ids'])) {
                                 foreach ($goodData['variation_ids'] as $vid) {
                                     $variation = ShopGoodVariation::where('id', $vid)
@@ -1431,7 +1431,7 @@ class BulkGoodsImportController extends Controller
                                         ->first();
 
                                     if ($variation) {
-                                        // РћР±РЅРѕРІР»СЏРµРј РѕСЃС‚Р°С‚РєРё РІР°СЂРёР°С†РёРё РґР°РЅРЅС‹РјРё РёР· С‚РѕРІР°СЂР° СЃ РєРѕРЅРІРµСЂС‚Р°С†РёРµР№ С‚РёРїРѕРІ
+                                        // Обновляем остатки вариации данными из товара с конвертацией типов
                                         if (isset($goodData['stock_quantity']) && !in_array('stock_quantity', $immutableFields)) {
                                             $variation->stock_quantity = is_numeric($goodData['stock_quantity']) ? (float) $goodData['stock_quantity'] : 0;
                                         }
@@ -1451,18 +1451,18 @@ class BulkGoodsImportController extends Controller
 
                             $results['updated']++;
 
-                            // РЎРѕС…СЂР°РЅСЏРµРј ID С‚РѕРІР°СЂР°
-                            // Р•СЃР»Рё SKU РЅРµ РїСѓСЃС‚РѕР№, СЃРѕС…СЂР°РЅСЏРµРј РїРѕ SKU
+                            // Сохраняем ID товара
+                            // Если SKU не пустой, сохраняем по SKU
                             if (!empty($sku)) {
                                 $results['goodIds'][$sku] = $existingGood->id;
                             }
 
-                            // РўР°РєР¶Рµ РґРѕР±Р°РІР»СЏРµРј ID РїРѕ _row РґР»СЏ СЃРІСЏР·Рё СЃ РёР·РѕР±СЂР°Р¶РµРЅРёСЏРјРё
+                            // Также добавляем ID по _row для связи с изображениями
                             if (isset($goodData['_row'])) {
                                 $results['goodIds'][$goodData['_row']] = $existingGood->id;
                             }
 
-                            // РџСЂРё РїСЂРёРІСЏР·РєРµ РёР·РѕР±СЂР°Р¶РµРЅРёР№ Рє РІР°СЂРёР°С†РёРё вЂ” variationIds РґР»СЏ РІСЃС‚СЂРѕРµРЅРЅС‹С…/СЃРІСЏР·Р°РЅРЅС‹С… РёР·РѕР±СЂР°Р¶РµРЅРёР№ РЅР° С„СЂРѕРЅС‚Рµ
+                            // При привязке изображений к вариации — variationIds для встроенных/связанных изображений на фронте
                             if ($attachImagesToVariation) {
                                 if (isset($goodData['_row'])) {
                                     $results['variationIds'][$goodData['_row']] = $attachImagesToVariation->id;
@@ -1475,55 +1475,55 @@ class BulkGoodsImportController extends Controller
                                 }
                             }
 
-                            // Р”РѕР±Р°РІР»СЏРµРј РІ РіСЂСѓРїРїСѓ РґР»СЏ РѕР±РЅРѕРІР»РµРЅРёСЏ
-                            $sheet = $goodData['_sheet'] ?? 'РЅРµРёР·РІРµСЃС‚РЅРѕ';
+                            // Добавляем в группу для обновления
+                            $sheet = $goodData['_sheet'] ?? 'неизвестно';
                             $updateItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'good_id' => $existingGood->id];
                         } else {
                             $results['skipped']++;
 
-                            // Р”РѕР±Р°РІР»СЏРµРј РІ РіСЂСѓРїРїСѓ РґР»СЏ РїСЂРѕРїСѓСЃРєР°
-                            $sheet = $goodData['_sheet'] ?? 'РЅРµРёР·РІРµСЃС‚РЅРѕ';
-                            $foundByText = !empty($foundByFields) ? ' (РЅР°Р№РґРµРЅ РїРѕ: ' . implode(', ', $foundByFields) . ')' : '';
-                            $reason = 'Р”СѓР±Р»РёРєР°С‚ (РЅР°СЃС‚СЂРѕР№РєР°: РїСЂРѕРїСѓСЃС‚РёС‚СЊ)' . $foundByText . '. РќР°Р№РґРµРЅРЅС‹Р№ С‚РѕРІР°СЂ ID: ' . $existingGood->id . ', SKU: "' . ($existingGood->sku ?? 'РїСѓСЃС‚РѕР№') . '", РЅР°Р·РІР°РЅРёРµ: "' . $existingGood->name . '"';
+                            // Добавляем в группу для пропуска
+                            $sheet = $goodData['_sheet'] ?? 'неизвестно';
+                            $foundByText = !empty($foundByFields) ? ' (найден по: ' . implode(', ', $foundByFields) . ')' : '';
+                            $reason = 'Дубликат (настройка: пропустить)' . $foundByText . '. Найденный товар ID: ' . $existingGood->id . ', SKU: "' . ($existingGood->sku ?? 'пустой') . '", название: "' . $existingGood->name . '"';
                             $skipItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'reason' => $reason];
                         }
                     } else {
-                        // РљР РРўРР§РќРћ: Р•СЃР»Рё РІР°СЂРёР°С†РёСЏ РЅР°Р№РґРµРЅР° РїРѕ Р°СЂС‚РёРєСѓР»Сѓ, РЅРѕ С‚РѕРІР°СЂ РЅРµ РЅР°Р№РґРµРЅ РІ РѕСЃРЅРѕРІРЅРѕРј РїРѕРёСЃРєРµ,
-                        // СЌС‚Рѕ РѕР·РЅР°С‡Р°РµС‚, С‡С‚Рѕ РІР°СЂРёР°С†РёСЏ РїСЂРёРЅР°РґР»РµР¶РёС‚ СЃСѓС‰РµСЃС‚РІСѓСЋС‰РµРјСѓ С‚РѕРІР°СЂСѓ, РєРѕС‚РѕСЂС‹Р№ РјС‹ РґРѕР»Р¶РЅС‹ РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊ.
-                        // РќРµ СЃРѕР·РґР°РµРј РЅРѕРІС‹Р№ С‚РѕРІР°СЂ, РµСЃР»Рё РІР°СЂРёР°С†РёСЏ СѓР¶Рµ РЅР°Р№РґРµРЅР° Рё РѕР±СЂР°Р±РѕС‚Р°РЅР°.
+                        // КРИТИЧНО: Если вариация найдена по артикулу, но товар не найден в основном поиске,
+                        // это означает, это вариация принадлежит существующему товару, который мы должны использовать.
+                        // Не создаем новый товар, если вариация уже найдена и обработана.
                         if ($existingVariation && $searchByNameInVariations) {
-                            // Р’Р°СЂРёР°С†РёСЏ СѓР¶Рµ РЅР°Р№РґРµРЅР° Рё РѕР±СЂР°Р±РѕС‚Р°РЅР° РІС‹С€Рµ, РїСЂРѕРїСѓСЃРєР°РµРј СЃРѕР·РґР°РЅРёРµ РЅРѕРІРѕРіРѕ С‚РѕРІР°СЂР°
+                            // Вариация уже найдена и обработана выше, пропускаем создание нового товара
                             continue;
                         }
 
-                        // РўРѕРІР°СЂ РЅРµ РЅР°Р№РґРµРЅ РїСЂРё РїРµСЂРІРѕРЅР°С‡Р°Р»СЊРЅРѕРј РїРѕРёСЃРєРµ
-                        // Р•СЃР»Рё РµСЃС‚СЊ РІР°СЂРёР°С†РёСЏ, РґРµР»Р°РµРј РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅСѓСЋ РїСЂРѕРІРµСЂРєСѓ РїРµСЂРµРґ СЃРѕР·РґР°РЅРёРµРј С‚РѕРІР°СЂР°
-                        // С‡С‚РѕР±С‹ РёР·Р±РµР¶Р°С‚СЊ РѕС€РёР±РєРё РґСѓР±Р»РёСЂРѕРІР°РЅРёСЏ SKU
+                        // Товар не найден при первоначальном поиске
+                        // Если есть вариация, делаем дополнительную проверку перед созданием товара
+                        // чтобы избежать ошибки дублирования SKU
                         if ($hasVariation) {
-                            // Р”РѕРїРѕР»РЅРёС‚РµР»СЊРЅР°СЏ РїСЂРѕРІРµСЂРєР°: РёС‰РµРј С‚РѕРІР°СЂ РµС‰Рµ СЂР°Р· Р±РѕР»РµРµ С‚С‰Р°С‚РµР»СЊРЅРѕ
-                            // РїРµСЂРµРґ СЃРѕР·РґР°РЅРёРµРј, С‡С‚РѕР±С‹ РёР·Р±РµР¶Р°С‚СЊ РґСѓР±Р»РёСЂРѕРІР°РЅРёСЏ
+                            // Дополнительная проверка: ищем товар еще раз более тщательно
+                            // перед созданием, чтобы избежать дублирования
                             $doubleCheckGood = null;
 
-                            // РџСЂРѕРІРµСЂСЏРµРј РїРѕ SKU (РµСЃР»Рё СѓРєР°Р·Р°РЅ)
+                            // Проверяем по SKU (если указан)
                             if (!empty($sku)) {
                                 $doubleCheckGood = ShopGood::where('sku', $sku)->first();
                             }
 
-                            // Р•СЃР»Рё РЅРµ РЅР°Р№РґРµРЅ РїРѕ SKU, РїСЂРѕРІРµСЂСЏРµРј РїРѕ РёРјРµРЅРё вЂ” С‚РѕР»СЊРєРѕ РµСЃР»Рё 'name' РІ duplicate_fields
+                            // Если не найден по SKU, проверяем по имени — только если 'name' в duplicate_fields
                             if (!$doubleCheckGood && in_array('name', $duplicateFields) && !empty($name)) {
                                 $doubleCheckGood = ShopGood::where('name', $this->normalizeTextForSearch($name))->first();
                             }
 
-                            // Р•СЃР»Рё РІСЃРµ РµС‰Рµ РЅРµ РЅР°Р№РґРµРЅ, РїСЂРѕРІРµСЂСЏРµРј РїРѕ РёРјРµРЅРё СЃ РїСѓСЃС‚С‹Рј SKU вЂ” С‚РѕР»СЊРєРѕ РµСЃР»Рё 'name' РІ duplicate_fields
+                            // Если все еще не найден, проверяем по имени с пустым SKU — только если 'name' в duplicate_fields
                             if (!$doubleCheckGood && empty($sku) && in_array('name', $duplicateFields) && !empty($name)) {
                                 $doubleCheckGood = ShopGood::whereNull('sku')->where('name', $name)->first();
                             }
 
                             if ($doubleCheckGood) {
-                                // РўРѕРІР°СЂ РЅР°Р№РґРµРЅ РїСЂРё РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅРѕР№ РїСЂРѕРІРµСЂРєРµ - РѕР±СЂР°Р±Р°С‚С‹РІР°РµРј С‚РѕР»СЊРєРѕ РІР°СЂРёР°С†РёСЋ
+                                // Товар найден при дополнительной проверке - обрабатываем только вариацию
                                 $variationId = $this->processVariation($doubleCheckGood, $goodData['variation'], $goodData, $supplierStockFields, $naming);
 
-                                // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј РєР°С‚РµРіРѕСЂРёРё С‚РѕРІР°СЂР° (РґР°Р¶Рµ РµСЃР»Рё РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚СЃСЏ С‚РѕР»СЊРєРѕ РІР°СЂРёР°С†РёСЏ)
+                                // Обрабатываем категории товара (даже если обрабатывается только вариация)
                                 $categoryIds = [];
                                 if (isset($goodData['category']) && !empty($goodData['category'])) {
                                     $categoryIds = [(int) $goodData['category']];
@@ -1533,40 +1533,40 @@ class BulkGoodsImportController extends Controller
                                     });
                                 }
 
-                                // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј РєР°С‚РµРіРѕСЂРёРё С‚РѕРІР°СЂР° РїСЂРё РґРІРѕР№РЅРѕР№ РїСЂРѕРІРµСЂРєРµ
-                                // Р’РђР–РќРћ: РџСЂРѕРІРµСЂСЏРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РєР°С‚РµРіРѕСЂРёРё РџР•Р Р•Р” РїСЂРёРјРµРЅРµРЅРёРµРј РєР°С‚РµРіРѕСЂРёР№ РёР· С„Р°Р№Р»Р°
+                                // Обрабатываем категории товара при двойной проверке
+                                // ВАЖНО: Проверяем существующие категории ПЕРЕД применением категорий из файла
                                 $existingCategoryIds = $doubleCheckGood->categories()->pluck('shop_categories.id')->toArray();
 
-                                // Р•СЃР»Рё РєР°С‚РµРіРѕСЂРёРё РµСЃС‚СЊ РІ $goodData, РїСЂРѕРІРµСЂСЏРµРј, РЅРµ Р±С‹Р»Р° Р»Рё СЌС‚Рѕ РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
+                                // Если категории есть в $goodData, проверяем, не была ли это категория по умолчанию
                                 if (!empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null && !empty($existingCategoryIds)) {
                                     $defaultCategoryId = (int) $defaultCategory;
-                                    // Р•СЃР»Рё РµРґРёРЅСЃС‚РІРµРЅРЅР°СЏ РєР°С‚РµРіРѕСЂРёСЏ - СЌС‚Рѕ defaultCategory, Рё Сѓ С‚РѕРІР°СЂР° СѓР¶Рµ РµСЃС‚СЊ РґСЂСѓРіРёРµ РєР°С‚РµРіРѕСЂРёРё
+                                    // Если единственная категория - это defaultCategory, и у товара уже есть другие категории
                                     if (count($categoryIds) === 1 && $categoryIds[0] === $defaultCategoryId) {
-                                        // Р’РµСЂРѕСЏС‚РЅРѕ, РєР°С‚РµРіРѕСЂРёСЏ Р±С‹Р»Р° РїСЂРёРјРµРЅРµРЅР° РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ - РѕСЃС‚Р°РІР»СЏРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РєР°С‚РµРіРѕСЂРёРё
+                                        // Вероятно, категория была применена по умолчанию - оставляем существующие категории
                                         $categoryIds = $existingCategoryIds;
                                     }
                                 } elseif (empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null) {
-                                    // Р•СЃР»Рё РєР°С‚РµРіРѕСЂРёР№ РЅРµС‚ РІ С„Р°Р№Р»Рµ, РЅРѕ РІРєР»СЋС‡РµРЅР° РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
-                                    // РџСЂРё РѕР±РЅРѕРІР»РµРЅРёРё С‚РѕРІР°СЂР°: РїСЂРёРјРµРЅСЏРµРј РєР°С‚РµРіРѕСЂРёСЋ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ С‚РѕР»СЊРєРѕ РµСЃР»Рё Сѓ С‚РѕРІР°СЂР° РЅРµС‚ РєР°С‚РµРіРѕСЂРёР№
+                                    // Если категорий нет в файле, но включена категория по умолчанию
+                                    // При обновлении товара: применяем категорию по умолчанию только если у товара нет категорий
                                     if (empty($existingCategoryIds)) {
-                                        // РЈ С‚РѕРІР°СЂР° РЅРµС‚ РєР°С‚РµРіРѕСЂРёР№ - РїСЂРёРјРµРЅСЏРµРј РєР°С‚РµРіРѕСЂРёСЋ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
+                                        // У товара нет категорий - применяем категорию по умолчанию
                                         $categoryIds = [(int) $defaultCategory];
                                     } else {
-                                        // РЈ С‚РѕРІР°СЂР° СѓР¶Рµ РµСЃС‚СЊ РєР°С‚РµРіРѕСЂРёРё - РѕСЃС‚Р°РІР»СЏРµРј РёС… Р±РµР· РёР·РјРµРЅРµРЅРёР№
+                                        // У товара уже есть категории - оставляем их без изменений
                                         $categoryIds = $existingCategoryIds;
                                     }
                                 }
 
-                                // РЎРёРЅС…СЂРѕРЅРёР·РёСЂСѓРµРј РєР°С‚РµРіРѕСЂРёРё С‚РѕР»СЊРєРѕ РµСЃР»Рё РѕРЅРё Р±С‹Р»Рё СѓРєР°Р·Р°РЅС‹ РІ С„Р°Р№Р»Рµ РёР»Рё РїСЂРёРјРµРЅРµРЅР° РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
-                                // Р•СЃР»Рё РєР°С‚РµРіРѕСЂРёР№ РЅРµС‚ Рё РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РЅРµ РїСЂРёРјРµРЅСЏР»Р°СЃСЊ - РЅРµ С‚СЂРѕРіР°РµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РєР°С‚РµРіРѕСЂРёРё
+                                // Синхронизируем категории только если они были указаны в файле или применена категория по умолчанию
+                                // Если категорий нет и категория по умолчанию не применялась - не трогаем существующие категории
                                 if (!empty($categoryIds)) {
                                     $doubleCheckGood->categories()->sync($categoryIds);
                                 }
-                                // Р•СЃР»Рё $categoryIds РїСѓСЃС‚РѕР№ Рё РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РЅРµ РїСЂРёРјРµРЅСЏР»Р°СЃСЊ - РЅРµ РІС‹Р·С‹РІР°РµРј sync, РѕСЃС‚Р°РІР»СЏРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РєР°С‚РµРіРѕСЂРёРё
+                                // Если $categoryIds пустой и категория по умолчанию не применялась - не вызываем sync, оставляем существующие категории
 
-                                $results['updated']++; // РЎС‡РёС‚Р°РµРј РєР°Рє РѕР±РЅРѕРІР»РµРЅРёРµ (РґРѕР±Р°РІР»РµРЅРёРµ РІР°СЂРёР°С†РёРё)
+                                $results['updated']++; // Считаем как обновление (добавление вариации)
 
-                                // РЎРѕС…СЂР°РЅСЏРµРј ID С‚РѕРІР°СЂР°
+                                // Сохраняем ID товара
                                 if (!empty($sku)) {
                                     $results['goodIds'][$sku] = $doubleCheckGood->id;
                                 }
@@ -1575,14 +1575,14 @@ class BulkGoodsImportController extends Controller
                                     $results['goodIds'][$goodData['_row']] = $doubleCheckGood->id;
                                 }
 
-                                // РЎРѕС…СЂР°РЅСЏРµРј ID РІР°СЂРёР°С†РёРё РґР»СЏ СЃРІСЏР·Рё СЃ РёР·РѕР±СЂР°Р¶РµРЅРёСЏРјРё
+                                // Сохраняем ID вариации для связи с изображениями
                                 if ($variationId) {
                                     if (isset($goodData['_row'])) {
                                         $results['variationIds'][$goodData['_row']] = $variationId;
                                     }
 
-                                    // РўР°РєР¶Рµ СЃРѕС…СЂР°РЅСЏРµРј РїРѕ РєР»СЋС‡Сѓ РЅР° РѕСЃРЅРѕРІРµ SKU + Р°С‚СЂРёР±СѓС‚РѕРІ РІР°СЂРёР°С†РёРё РґР»СЏ СЃР»СѓС‡Р°РµРІ,
-                                    // РєРѕРіРґР° РЅРµСЃРєРѕР»СЊРєРѕ РІР°СЂРёР°С†РёР№ РёРјРµСЋС‚ РѕРґРёРЅР°РєРѕРІС‹Р№ SKU
+                                    // Также сохраняем по ключу на основе SKU + атрибутов вариации для случаев,
+                                    // когда несколько вариаций имеют одинаковый SKU
                                     if (
                                         isset($goodData['sku']) && !empty($goodData['sku']) &&
                                         isset($goodData['variation']) && isset($goodData['variation']['attributes']) &&
@@ -1592,7 +1592,7 @@ class BulkGoodsImportController extends Controller
                                         $sku = trim($goodData['sku']);
                                         $attributes = $goodData['variation']['attributes'];
 
-                                        // РЎРѕСЂС‚РёСЂСѓРµРј Р°С‚СЂРёР±СѓС‚С‹ РґР»СЏ РєРѕРЅСЃРёСЃС‚РµРЅС‚РЅРѕСЃС‚Рё РєР»СЋС‡Р°
+                                        // Сортируем атрибуты для консистентности ключа
                                         $sortedAttributes = collect($attributes)->sortBy(function ($attr) {
                                             return $attr['name'] ?? '';
                                         })->map(function ($attr) {
@@ -1604,44 +1604,44 @@ class BulkGoodsImportController extends Controller
                                     }
                                 }
 
-                                // Р”РѕР±Р°РІР»СЏРµРј РІ РіСЂСѓРїРїСѓ РґР»СЏ РѕР±РЅРѕРІР»РµРЅРёСЏ
-                                $sheet = $goodData['_sheet'] ?? 'РЅРµРёР·РІРµСЃС‚РЅРѕ';
+                                // Добавляем в группу для обновления
+                                $sheet = $goodData['_sheet'] ?? 'неизвестно';
                                 $updateItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'good_id' => $doubleCheckGood->id, 'supplier' => ($doubleCheckGood->supplier ?? '')];
 
-                                // РџСЂРѕРїСѓСЃРєР°РµРј СЃРѕР·РґР°РЅРёРµ С‚РѕРІР°СЂР°, С‚Р°Рє РєР°Рє РѕРЅ СѓР¶Рµ СЃСѓС‰РµСЃС‚РІСѓРµС‚
+                                // Пропускаем создание товара, так как он уже существует
                                 continue;
                             }
                         }
 
-                        // РџСЂРѕРІРµСЂСЏРµРј СЂРµР¶РёРј "РўРѕР»СЊРєРѕ РѕР±РЅРѕРІР»СЏС‚СЊ"
+                        // Проверяем режим "Только обновлять"
                         $onlyUpdateMode = $request->input('only_update_mode', false);
                         if ($onlyUpdateMode) {
-                            // Р’ СЂРµР¶РёРјРµ "РўРѕР»СЊРєРѕ РѕР±РЅРѕРІР»СЏС‚СЊ" РїСЂРѕРїСѓСЃРєР°РµРј СЃРѕР·РґР°РЅРёРµ РЅРѕРІС‹С… С‚РѕРІР°СЂРѕРІ
+                            // В режиме "Только обновлять" пропускаем создание новых товаров
                             $results['skipped']++;
-                            $sheet = $goodData['_sheet'] ?? 'РЅРµРёР·РІРµСЃС‚РЅРѕ';
+                            $sheet = $goodData['_sheet'] ?? 'неизвестно';
                             $searchDetails = [];
                             if (!empty($duplicateFields)) {
-                                $searchDetails[] = 'РїРѕР»СЏ РїРѕРёСЃРєР°: ' . implode(', ', $duplicateFields);
+                                $searchDetails[] = 'поля поиска: ' . implode(', ', $duplicateFields);
                             }
                             if (!empty($sku)) {
                                 $searchDetails[] = 'SKU: "' . $sku . '"';
                             }
                             if (!empty($name)) {
-                                $searchDetails[] = 'РЅР°Р·РІР°РЅРёРµ: "' . $name . '"';
+                                $searchDetails[] = 'название: "' . $name . '"';
                             }
                             $searchText = !empty($searchDetails) ? ' (' . implode(', ', $searchDetails) . ')' : '';
-                            $reason = 'Р РµР¶РёРј "С‚РѕР»СЊРєРѕ РѕР±РЅРѕРІР»СЏС‚СЊ" - С‚РѕРІР°СЂ РЅРµ РЅР°Р№РґРµРЅ РІ Р±Р°Р·Рµ РґР°РЅРЅС‹С…' . $searchText . '. Р’РєР»СЋС‡РµРЅ РїРѕРёСЃРє РїРѕ РїРѕР»СЏРј: ' . implode(', ', $duplicateFields);
+                            $reason = 'Режим "только обновлять" - товар не найден в базе данных' . $searchText . '. Включен поиск по полям: ' . implode(', ', $duplicateFields);
                             $skipItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'reason' => $reason];
 
                             continue;
                         }
 
-                        // РљР РРўРР§РќРћ: Р¤РёРЅР°Р»СЊРЅР°СЏ РїСЂРѕРІРµСЂРєР° - РµСЃР»Рё РІР°СЂРёР°С†РёСЏ РЅР°Р№РґРµРЅР° РїРѕ Р°СЂС‚РёРєСѓР»Сѓ, РЅРµ СЃРѕР·РґР°РµРј РЅРѕРІС‹Р№ С‚РѕРІР°СЂ
-                        // Р­С‚Рѕ Р·Р°С‰РёС‚Р° РѕС‚ СЃРѕР·РґР°РЅРёСЏ РґСѓР±Р»РёРєР°С‚Р°, РµСЃР»Рё РІР°СЂРёР°С†РёСЏ Р±С‹Р»Р° РЅР°Р№РґРµРЅР°, РЅРѕ РєРѕРґ РїРѕ РєР°РєРѕР№-С‚Рѕ РїСЂРёС‡РёРЅРµ
-                        // РЅРµ РїРѕРїР°Р» РІ Р±Р»РѕРє РѕР±СЂР°Р±РѕС‚РєРё РІР°СЂРёР°С†РёРё РІС‹С€Рµ
-                        // РљР РРўРР§РќРћ: Р¤РёРЅР°Р»СЊРЅР°СЏ РїСЂРѕРІРµСЂРєР° - РµСЃР»Рё С‚РѕРІР°СЂ РёР»Рё РІР°СЂРёР°С†РёСЏ РЅР°Р№РґРµРЅС‹, РЅРµ СЃРѕР·РґР°РµРј РЅРѕРІС‹Р№ С‚РѕРІР°СЂ
+                        // КРИТИЧНО: Финальная проверка - если вариация найдена по артикулу, не создаем новый товар
+                        // Это защита от создания дубликата, если вариация была найдена, но код по какой-то причине
+                        // не попал в блок обработки вариации выше
+                        // КРИТИЧНО: Финальная проверка - если товар или вариация найдены, не создаем новый товар
                         if ($existingGood || $existingVariation) {
-                            // Р•СЃР»Рё С‚РѕРІР°СЂ РЅР°Р№РґРµРЅ (РІ С‚.С‡. С‡РµСЂРµР· fallback РёР»Рё РїРѕРёСЃРє РІ РІР°СЂРёР°С†РёСЏС…), РѕР±РЅРѕРІР»СЏРµРј РµРіРѕ
+                            // Если товар найден (в т.??. ??ерез fallback или поиск в вариациях), обновляем его
                             $goodToUpdate = $existingGood ?? ($existingVariation ? $existingVariation->good : null);
 
                             if ($goodToUpdate && $duplicateAction === 'update') {
@@ -1678,40 +1678,40 @@ class BulkGoodsImportController extends Controller
                                     $results['goodIds'][$goodData['_row']] = $goodToUpdate->id;
                                 }
 
-                                $sheet = $goodData['_sheet'] ?? 'РЅРµРёР·РІРµСЃС‚РЅРѕ';
+                                $sheet = $goodData['_sheet'] ?? 'неизвестно';
                                 $updateItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'good_id' => $goodToUpdate->id, 'supplier' => ($goodToUpdate->supplier ?? '')];
 
                                 continue;
                             }
                         }
 
-                        // РўРѕРІР°СЂ РґРµР№СЃС‚РІРёС‚РµР»СЊРЅРѕ РЅРµ СЃСѓС‰РµСЃС‚РІСѓРµС‚ - СЃРѕР·РґР°РµРј РЅРѕРІС‹Р№ (СЃ РІР°СЂРёР°С†РёРµР№ РёР»Рё Р±РµР·)
+                        // Товар действительно не существует - создаем новый (с вариацией или без)
                         $createResult = $this->createGood($goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $supplierStockFields, $nameTrimSymbol, $naming);
                         $newGood = $createResult['good'];
                         $results['imagesDownloaded'] += $createResult['imageStats']['downloaded'];
                         $results['imagesFailed'] += $createResult['imageStats']['failed'];
                         $results['imported']++;
 
-                        // РЎРѕС…СЂР°РЅСЏРµРј ID С‚РѕРІР°СЂР°
-                        // Р•СЃР»Рё SKU РЅРµ РїСѓСЃС‚РѕР№, СЃРѕС…СЂР°РЅСЏРµРј РїРѕ SKU
+                        // Сохраняем ID товара
+                        // Если SKU не пустой, сохраняем по SKU
                         if (!empty($sku)) {
                             $results['goodIds'][$sku] = $newGood->id;
                         }
 
-                        // РўР°РєР¶Рµ РґРѕР±Р°РІР»СЏРµРј ID РїРѕ _row РґР»СЏ СЃРІСЏР·Рё СЃ РёР·РѕР±СЂР°Р¶РµРЅРёСЏРјРё
+                        // Также добавляем ID по _row для связи с изображениями
                         if (isset($goodData['_row'])) {
                             $results['goodIds'][$goodData['_row']] = $newGood->id;
                         }
 
-                        // РЎРѕС…СЂР°РЅСЏРµРј ID РІР°СЂРёР°С†РёРё, РµСЃР»Рё РѕРЅР° Р±С‹Р»Р° СЃРѕР·РґР°РЅР°
+                        // Сохраняем ID вариации, если она была создана
                         if (isset($newGood->lastVariationId) && $newGood->lastVariationId) {
-                            // РСЃРїРѕР»СЊР·СѓРµРј _row РєР°Рє РєР»СЋС‡ РґР»СЏ СЃРІСЏР·Рё СЃ РёР·РѕР±СЂР°Р¶РµРЅРёСЏРјРё (СЃР°РјС‹Р№ РЅР°РґРµР¶РЅС‹Р№ СЃРїРѕСЃРѕР±)
+                            // Используем _row как ключ для связи с изображениями (самый надежный способ)
                             if (isset($goodData['_row'])) {
                                 $results['variationIds'][$goodData['_row']] = $newGood->lastVariationId;
                             }
 
-                            // РўР°РєР¶Рµ СЃРѕС…СЂР°РЅСЏРµРј РїРѕ РєР»СЋС‡Сѓ РЅР° РѕСЃРЅРѕРІРµ SKU + Р°С‚СЂРёР±СѓС‚РѕРІ РІР°СЂРёР°С†РёРё РґР»СЏ СЃР»СѓС‡Р°РµРІ,
-                            // РєРѕРіРґР° РЅРµСЃРєРѕР»СЊРєРѕ РІР°СЂРёР°С†РёР№ РёРјРµСЋС‚ РѕРґРёРЅР°РєРѕРІС‹Р№ SKU
+                            // Также сохраняем по ключу на основе SKU + атрибутов вариации для случаев,
+                            // когда несколько вариаций имеют одинаковый SKU
                             if (
                                 isset($goodData['sku']) && !empty($goodData['sku']) &&
                                 isset($goodData['variation']) && isset($goodData['variation']['attributes']) &&
@@ -1721,7 +1721,7 @@ class BulkGoodsImportController extends Controller
                                 $sku = trim($goodData['sku']);
                                 $attributes = $goodData['variation']['attributes'];
 
-                                // РЎРѕСЂС‚РёСЂСѓРµРј Р°С‚СЂРёР±СѓС‚С‹ РґР»СЏ РєРѕРЅСЃРёСЃС‚РµРЅС‚РЅРѕСЃС‚Рё РєР»СЋС‡Р°
+                                // Сортируем атрибуты для консистентности ключа
                                 $sortedAttributes = collect($attributes)->sortBy(function ($attr) {
                                     return $attr['name'] ?? '';
                                 })->map(function ($attr) {
@@ -1733,21 +1733,21 @@ class BulkGoodsImportController extends Controller
                             }
                         }
 
-                        // Р”РѕР±Р°РІР»СЏРµРј РІ РіСЂСѓРїРїСѓ РґР»СЏ Р·Р°РіСЂСѓР·РєРё
-                        $sheet = $goodData['_sheet'] ?? 'РЅРµРёР·РІРµСЃС‚РЅРѕ';
+                        // Добавляем в группу для загрузки
+                        $sheet = $goodData['_sheet'] ?? 'неизвестно';
                         $loadItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'supplier' => ($newGood->supplier ?? ($goodData['supplier_name'] ?? ''))];
                     }
                 } catch (\Exception $e) {
-                    // РџСЂРѕРІРµСЂСЏРµРј, РЅРµ СЏРІР»СЏРµС‚СЃСЏ Р»Рё СЌС‚Рѕ РѕС€РёР±РєРѕР№ РґСѓР±Р»РёСЂРѕРІР°РЅРёСЏ РїСЂРё СЃРѕР·РґР°РЅРёРё С‚РѕРІР°СЂР° СЃ РІР°СЂРёР°С†РёРµР№
+                    // Проверяем, не является ли это ошибкой дублирования при создании товара с вариацией
                     $isDuplicateError = strpos($e->getMessage(), 'Duplicate entry') !== false ||
                         strpos($e->getMessage(), 'UNIQUE constraint') !== false ||
                         strpos($e->getMessage(), 'duplicate') !== false ||
                         $e->getCode() == 23000;
 
-                    // Р•СЃР»Рё РµСЃС‚СЊ РІР°СЂРёР°С†РёСЏ Рё РѕС€РёР±РєР° РґСѓР±Р»РёСЂРѕРІР°РЅРёСЏ - СЌС‚Рѕ Р·РЅР°С‡РёС‚ С‚РѕРІР°СЂ СѓР¶Рµ СЃСѓС‰РµСЃС‚РІСѓРµС‚
-                    // РќСѓР¶РЅРѕ РЅР°Р№С‚Рё РµРіРѕ Рё РѕР±СЂР°Р±РѕС‚Р°С‚СЊ РІР°СЂРёР°С†РёСЋ
+                    // Если есть вариация и ошибка дублирования - это значит товар уже существует
+                    // Нужно найти его и обработать вариацию
                     if ($hasVariation && $isDuplicateError && !$existingGood) {
-                        // РџСЂРѕР±СѓРµРј РЅР°Р№С‚Рё С‚РѕРІР°СЂ Р±РѕР»РµРµ С‚С‰Р°С‚РµР»СЊРЅРѕ
+                        // Пробуем найти товар более тщательно
                         if (!empty($sku)) {
                             $existingGood = ShopGood::where('sku', $sku)->first();
                         }
@@ -1759,16 +1759,16 @@ class BulkGoodsImportController extends Controller
                         }
 
                         if ($existingGood) {
-                            // РўРѕРІР°СЂ РЅР°Р№РґРµРЅ - РѕР±СЂР°Р±Р°С‚С‹РІР°РµРј С‚РѕР»СЊРєРѕ РІР°СЂРёР°С†РёСЋ
+                            // Товар найден - обрабатываем только вариацию
                             try {
-                                // РџРµСЂРµРґР°РµРј nameTrimSymbol РІ goodData РґР»СЏ РѕР±СЂРµР·РєРё РЅР°Р·РІР°РЅРёСЏ С‚РѕРІР°СЂР°
+                                // Передаем nameTrimSymbol в goodData для обрезки названия товара
                                 if (!isset($goodData['_nameTrimSymbol'])) {
                                     $goodData['_nameTrimSymbol'] = $nameTrimSymbol;
                                 }
                                 $variationId = $this->processVariation($existingGood, $goodData['variation'], $goodData, $supplierStockFields, $naming);
-                                $results['updated']++; // РЎС‡РёС‚Р°РµРј РєР°Рє РѕР±РЅРѕРІР»РµРЅРёРµ (РґРѕР±Р°РІР»РµРЅРёРµ РІР°СЂРёР°С†РёРё)
+                                $results['updated']++; // Считаем как обновление (добавление вариации)
 
-                                // РЎРѕС…СЂР°РЅСЏРµРј ID С‚РѕРІР°СЂР°
+                                // Сохраняем ID товара
                                 if (!empty($sku)) {
                                     $results['goodIds'][$sku] = $existingGood->id;
                                 }
@@ -1777,14 +1777,14 @@ class BulkGoodsImportController extends Controller
                                     $results['goodIds'][$goodData['_row']] = $existingGood->id;
                                 }
 
-                                // РЎРѕС…СЂР°РЅСЏРµРј ID РІР°СЂРёР°С†РёРё РґР»СЏ СЃРІСЏР·Рё СЃ РёР·РѕР±СЂР°Р¶РµРЅРёСЏРјРё
+                                // Сохраняем ID вариации для связи с изображениями
                                 if ($variationId) {
                                     if (isset($goodData['_row'])) {
                                         $results['variationIds'][$goodData['_row']] = $variationId;
                                     }
 
-                                    // РўР°РєР¶Рµ СЃРѕС…СЂР°РЅСЏРµРј РїРѕ РєР»СЋС‡Сѓ РЅР° РѕСЃРЅРѕРІРµ SKU + Р°С‚СЂРёР±СѓС‚РѕРІ РІР°СЂРёР°С†РёРё РґР»СЏ СЃР»СѓС‡Р°РµРІ,
-                                    // РєРѕРіРґР° РЅРµСЃРєРѕР»СЊРєРѕ РІР°СЂРёР°С†РёР№ РёРјРµСЋС‚ РѕРґРёРЅР°РєРѕРІС‹Р№ SKU
+                                    // Также сохраняем по ключу на основе SKU + атрибутов вариации для случаев,
+                                    // когда несколько вариаций имеют одинаковый SKU
                                     if (
                                         isset($goodData['sku']) && !empty($goodData['sku']) &&
                                         isset($goodData['variation']) && isset($goodData['variation']['attributes']) &&
@@ -1794,7 +1794,7 @@ class BulkGoodsImportController extends Controller
                                         $sku = trim($goodData['sku']);
                                         $attributes = $goodData['variation']['attributes'];
 
-                                        // РЎРѕСЂС‚РёСЂСѓРµРј Р°С‚СЂРёР±СѓС‚С‹ РґР»СЏ РєРѕРЅСЃРёСЃС‚РµРЅС‚РЅРѕСЃС‚Рё РєР»СЋС‡Р°
+                                        // Сортируем атрибуты для консистентности ключа
                                         $sortedAttributes = collect($attributes)->sortBy(function ($attr) {
                                             return $attr['name'] ?? '';
                                         })->map(function ($attr) {
@@ -1806,22 +1806,22 @@ class BulkGoodsImportController extends Controller
                                     }
                                 }
 
-                                // Р”РѕР±Р°РІР»СЏРµРј РІ РіСЂСѓРїРїСѓ РґР»СЏ РѕР±РЅРѕРІР»РµРЅРёСЏ
-                                $sheet = $goodData['_sheet'] ?? 'РЅРµРёР·РІРµСЃС‚РЅРѕ';
+                                // Добавляем в группу для обновления
+                                $sheet = $goodData['_sheet'] ?? 'неизвестно';
                                 $updateItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'good_id' => $existingGood->id, 'supplier' => ($existingGood->supplier ?? '')];
 
-                                // РџСЂРѕРїСѓСЃРєР°РµРј РѕР±СЂР°Р±РѕС‚РєСѓ РѕС€РёР±РєРё, С‚Р°Рє РєР°Рє РІР°СЂРёР°С†РёСЏ СѓСЃРїРµС€РЅРѕ РѕР±СЂР°Р±РѕС‚Р°РЅР°
+                                // Пропускаем обработку ошибки, так как вариация успешно обработана
                                 continue;
                             } catch (\Exception $variationError) {
-                                // Р•СЃР»Рё РѕР±СЂР°Р±РѕС‚РєР° РІР°СЂРёР°С†РёРё С‚РѕР¶Рµ РЅРµ СѓРґР°Р»Р°СЃСЊ - Р»РѕРіРёСЂСѓРµРј РѕС€РёР±РєСѓ
+                                // Если обработка вариации тоже не удалась - логируем ошибку
                                 $results['failed']++;
                                 $results['errors'][] = [
                                     'row' => $count,
                                     'sku' => $sku,
-                                    'error' => 'РўРѕРІР°СЂ РЅР°Р№РґРµРЅ, РЅРѕ РЅРµ СѓРґР°Р»РѕСЃСЊ РѕР±СЂР°Р±РѕС‚Р°С‚СЊ РІР°СЂРёР°С†РёСЋ: ' . $variationError->getMessage(),
+                                    'error' => 'Товар найден, но не удалось обработать вариацию: ' . $variationError->getMessage(),
                                 ];
 
-                                $sheet = $goodData['_sheet'] ?? 'РЅРµРёР·РІРµСЃС‚РЅРѕ';
+                                $sheet = $goodData['_sheet'] ?? 'неизвестно';
                                 $errorItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'error' => $variationError->getMessage()];
 
                                 continue;
@@ -1836,15 +1836,15 @@ class BulkGoodsImportController extends Controller
                         'error' => $e->getMessage(),
                     ];
 
-                    // Р”РѕР±Р°РІР»СЏРµРј РІ РіСЂСѓРїРїСѓ РґР»СЏ РѕС€РёР±РѕРє
-                    $sheet = $goodData['_sheet'] ?? 'РЅРµРёР·РІРµСЃС‚РЅРѕ';
+                    // Добавляем в группу для ошибок
+                    $sheet = $goodData['_sheet'] ?? 'неизвестно';
                     $errorItems[] = ['count' => $count, 'sku' => $sku, 'name' => $name, 'sheet' => $sheet, 'error' => $e->getMessage()];
                 }
             }
 
             DB::commit();
 
-            // РџР°РєРµС‚РЅРѕРµ Р»РѕРіРёСЂРѕРІР°РЅРёРµ РїРѕСЃР»Рµ СѓСЃРїРµС€РЅРѕРіРѕ РєРѕРјРјРёС‚Р°
+            // Пакетное логирование после успешного коммита
 
             if (!empty($loadItems)) {
                 $this->importLogService->logLoadedBatch($loadItems);
@@ -1861,12 +1861,12 @@ class BulkGoodsImportController extends Controller
 
             $response = [
                 'success' => true,
-                'message' => 'РРјРїРѕСЂС‚ Р·Р°РІРµСЂС€РµРЅ',
+                'message' => 'Импорт завершен',
                 'results' => $results,
-                // 'backup_id' => $backupId // РІСЂРµРјРµРЅРЅРѕ РѕС‚РєР»СЋС‡РµРЅРѕ
+                // 'backup_id' => $backupId // временно отключено
             ];
 
-            // Р”РѕР±Р°РІР»СЏРµРј СЃС‚Р°С‚РёСЃС‚РёРєСѓ РѕР±РЅСѓР»РµРЅРёСЏ, РµСЃР»Рё РѕРЅР° Р±С‹Р»Р° РІС‹РїРѕР»РЅРµРЅР°
+            // Добавляем статистику обнуления, если она была выполнена
             if ($resetStats !== null) {
                 $resetFieldsList = isset($resetStats['reset_fields']) ? implode(', ', $resetStats['reset_fields']) : '';
                 $response['reset_stats'] = [
@@ -1874,7 +1874,7 @@ class BulkGoodsImportController extends Controller
                     'updated_goods' => $resetStats['updated_goods'],
                     'updated_variations' => $resetStats['updated_variations'],
                     'reset_fields' => $resetStats['reset_fields'] ?? [],
-                    'message' => "РћР±РЅСѓР»РµРЅС‹ РѕСЃС‚Р°С‚РєРё {$resetStats['updated_goods']} С‚РѕРІР°СЂРѕРІ Рё {$resetStats['updated_variations']} РІР°СЂРёР°С†РёР№ РїРѕСЃС‚Р°РІС‰РёРєР° '{$resetStats['supplier_name']}'",
+                    'message' => "Обнулены остатки {$resetStats['updated_goods']} товаров и {$resetStats['updated_variations']} вариаций поставщика '{$resetStats['supplier_name']}'",
                 ];
             }
 
@@ -1883,10 +1883,10 @@ class BulkGoodsImportController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
 
-            // Р›РѕРіРёСЂСѓРµРј РѕР±С‰СѓСЋ РѕС€РёР±РєСѓ
-            $this->importLogService->logGeneralError('РћР±С‰Р°СЏ РѕС€РёР±РєР° РёРјРїРѕСЂС‚Р°: ' . $e->getMessage());
+            // Логируем общую ошибку
+            $this->importLogService->logGeneralError('Общая ошибка импорта: ' . $e->getMessage());
 
-            // Р›РѕРіРёСЂСѓРµРј РѕС€РёР±РєРё Р·Р°РіСЂСѓР·РєРё С„Р°Р№Р»РѕРІ РѕС‚РґРµР»СЊРЅРѕ
+            // Логируем ошибки загрузки файлов отдельно
             $errorMessage = $e->getMessage();
             if (
                 strpos($errorMessage, 'file') !== false ||
@@ -1899,80 +1899,80 @@ class BulkGoodsImportController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'РћС€РёР±РєР° РїСЂРё РёРјРїРѕСЂС‚Рµ: ' . $e->getMessage(),
+                'message' => 'Ошибка при импорте: ' . $e->getMessage(),
                 'results' => $results,
             ], 500);
         }
     }
 
     /**
-     * РћР±СЂРµР·Р°РµС‚ РЅР°Р·РІР°РЅРёРµ С‚РѕРІР°СЂР°, РµСЃР»Рё РІ РЅРµРј РЅР°Р№РґРµРЅ СѓРєР°Р·Р°РЅРЅС‹Р№ СЃРёРјРІРѕР» РѕР±СЂРµР·РєРё
+     * Обрезает название товара, если в нем найден указанный символ обрезки
      *
-     * @param  ShopGood  $good  РўРѕРІР°СЂ РґР»СЏ РѕР±СЂРµР·РєРё РЅР°Р·РІР°РЅРёСЏ
-     * @param  string|null  $nameTrimSymbol  РЎРёРјРІРѕР» РѕР±СЂРµР·РєРё
-     * @param  array  $immutableFields  РџРѕР»СЏ, РєРѕС‚РѕСЂС‹Рµ РЅРµР»СЊР·СЏ РёР·РјРµРЅСЏС‚СЊ
-     * @param  string|null  $nameFromData  РќР°Р·РІР°РЅРёРµ РёР· РґР°РЅРЅС‹С… РёРјРїРѕСЂС‚Р° (РµСЃР»Рё РѕС‚Р»РёС‡Р°РµС‚СЃСЏ РѕС‚ РЅР°Р·РІР°РЅРёСЏ РІ Р‘Р”)
-     * @return bool true РµСЃР»Рё РѕР±СЂРµР·РєР° Р±С‹Р»Р° РїСЂРёРјРµРЅРµРЅР°, false РµСЃР»Рё РЅРµС‚
+     * @param  ShopGood  $good  Товар для обрезки названия
+     * @param  string|null  $nameTrimSymbol  Символ обрезки
+     * @param  array  $immutableFields  Поля, которые нельзя изменять
+     * @param  string|null  $nameFromData  Название из данных импорта (если отличается от названия в БД)
+     * @return bool true если обрезка была применена, false если нет
      */
     private function trimGoodName($good, $nameTrimSymbol = null, $immutableFields = [], $nameFromData = null)
     {
-        // Р•СЃР»Рё СЃРёРјРІРѕР» РѕР±СЂРµР·РєРё РЅРµ СѓРєР°Р·Р°РЅ РёР»Рё С‚РѕРІР°СЂ РЅРµ РЅР°Р№РґРµРЅ - РЅРёС‡РµРіРѕ РЅРµ РґРµР»Р°РµРј
+        // Если символ обрезки не указан или товар не найден - ничего не делаем
         if (empty($nameTrimSymbol) || empty(trim($nameTrimSymbol)) || !$good || !$good->id) {
             return false;
         }
 
-        // Р•СЃР»Рё РЅР°Р·РІР°РЅРёРµ РІ immutableFields - РЅРµ РѕР±СЂРµР·Р°РµРј
+        // Если название в immutableFields - не обрезаем
         if (in_array('name', $immutableFields)) {
             return false;
         }
 
-        // РљР РРўРР§РќРћ: РџСЂРѕРІРµСЂСЏРµРј РЅР°Р·РІР°РЅРёРµ РІ Р‘Р”, РїРѕС‚РѕРјСѓ С‡С‚Рѕ РЅР° С„СЂРѕРЅС‚РµРЅРґРµ РЅР°Р·РІР°РЅРёРµ СѓР¶Рµ РјРѕР¶РµС‚ Р±С‹С‚СЊ РѕР±СЂРµР·Р°РЅРѕ
-        // Р•СЃР»Рё СЃРёРјРІРѕР» РѕР±СЂРµР·РєРё СѓРєР°Р·Р°РЅ, РІСЃРµРіРґР° РїСЂРѕРІРµСЂСЏРµРј РЅР°Р·РІР°РЅРёРµ РІ Р‘Р” РЅР° РЅР°Р»РёС‡РёРµ СЃРёРјРІРѕР»Р°
+        // КРИТИЧНО: Проверяем название в БД, потому что на фронтенде название уже может быть обрезано
+        // Если символ обрезки указан, всегда проверяем название в БД на наличие символа
         $nameInDb = $good->name ?? '';
         $nameToCheck = !empty($nameInDb) && !empty(trim($nameInDb)) ? trim($nameInDb) : null;
 
-        // Р•СЃР»Рё РЅР°Р·РІР°РЅРёРµ РІ Р‘Р” РїСѓСЃС‚РѕРµ, РЅРѕ РµСЃС‚СЊ РЅР°Р·РІР°РЅРёРµ РёР· РґР°РЅРЅС‹С… РёРјРїРѕСЂС‚Р° - РёСЃРїРѕР»СЊР·СѓРµРј РµРіРѕ
+        // Если название в БД пустое, но есть название из данных импорта - используем его
         if (empty($nameToCheck) && !empty($nameFromData) && !empty(trim($nameFromData))) {
             $nameToCheck = trim($nameFromData);
         }
 
-        // Р•СЃР»Рё РЅР°Р·РІР°РЅРёРµ РїСѓСЃС‚РѕРµ - РЅРёС‡РµРіРѕ РЅРµ РґРµР»Р°РµРј
+        // Если название пустое - ничего не делаем
         if (empty($nameToCheck)) {
             return false;
         }
 
         $trimSymbol = trim($nameTrimSymbol);
 
-        // РџСЂРѕРІРµСЂСЏРµРј РЅР°Р»РёС‡РёРµ СЃРёРјРІРѕР»Р° РѕР±СЂРµР·РєРё РІ РЅР°Р·РІР°РЅРёРё
+        // Проверяем наличие символа обрезки в названии
         $trimIndex = strpos($nameToCheck, $trimSymbol);
 
         if ($trimIndex === false) {
-            // РЎРёРјРІРѕР» РЅРµ РЅР°Р№РґРµРЅ - РѕР±СЂРµР·РєР° РЅРµ С‚СЂРµР±СѓРµС‚СЃСЏ
+            // Символ не найден - обрезка не требуется
             return false;
         }
 
-        // РЎРёРјРІРѕР» РЅР°Р№РґРµРЅ - РѕР±СЂРµР·Р°РµРј РЅР°Р·РІР°РЅРёРµ
+        // Символ найден - обрезаем название
         $trimmedName = trim(substr($nameToCheck, 0, $trimIndex));
 
-        // Р•СЃР»Рё РїРѕСЃР»Рµ РѕР±СЂРµР·РєРё РЅР°Р·РІР°РЅРёРµ РїСѓСЃС‚РѕРµ - РЅРµ РѕР±РЅРѕРІР»СЏРµРј
+        // Если после обрезки название пустое - не обновляем
         if (empty($trimmedName)) {
             return false;
         }
 
-        // РћР±РЅРѕРІР»СЏРµРј РЅР°Р·РІР°РЅРёРµ С‚РѕРІР°СЂР° С‡РµСЂРµР· РїСЂСЏРјРѕРµ SQL-РѕР±РЅРѕРІР»РµРЅРёРµ
-        // Р­С‚Рѕ РіР°СЂР°РЅС‚РёСЂСѓРµС‚ РѕР±РЅРѕРІР»РµРЅРёРµ РЅРµР·Р°РІРёСЃРёРјРѕ РѕС‚ СѓСЃР»РѕРІРёР№
+        // Обновляем название товара ??ерез прямое SQL-обновление
+        // Это гарантирует обновление независимо от условий
         try {
             DB::table('shop_goods')
                 ->where('id', $good->id)
                 ->update(['name' => $trimmedName]);
 
-            // РЎРёРЅС…СЂРѕРЅРёР·РёСЂСѓРµРј РјРѕРґРµР»СЊ СЃ Р±Р°Р·РѕР№ РґР°РЅРЅС‹С…
+            // Синхронизируем модель с базой данных
             $good->name = $trimmedName;
             $good->refresh();
 
             return true;
         } catch (\Exception $e) {
-            \Log::error('РћС€РёР±РєР° РїСЂРё РѕР±СЂРµР·РєРµ РЅР°Р·РІР°РЅРёСЏ С‚РѕРІР°СЂР°', [
+            \Log::error('Ошибка при обрезке названия товара', [
                 'good_id' => $good->id,
                 'error' => $e->getMessage(),
             ]);
@@ -1986,10 +1986,10 @@ class BulkGoodsImportController extends Controller
         $imageStats = ['downloaded' => 0, 'failed' => 0];
 
         $good = new ShopGood;
-        // Р•СЃР»Рё SKU РїСѓСЃС‚РѕР№, СѓСЃС‚Р°РЅР°РІР»РёРІР°РµРј null РІРјРµСЃС‚Рѕ РїСѓСЃС‚РѕР№ СЃС‚СЂРѕРєРё
+        // Если SKU пустой, устанавливаем null вместо пустой строки
         $good->sku = (isset($goodData['sku']) && !empty($goodData['sku'])) ? $goodData['sku'] : null;
 
-        // РџСЂРёРјРµРЅСЏРµРј РѕР±СЂРµР·РєСѓ РЅР°Р·РІР°РЅРёСЏ РїСЂРё СЃРѕР·РґР°РЅРёРё РЅРѕРІРѕРіРѕ С‚РѕРІР°СЂР°, РµСЃР»Рё СѓРєР°Р·Р°РЅ СЃРёРјРІРѕР» РѕР±СЂРµР·РєРё
+        // Применяем обрезку названия при создании нового товара, если указан символ обрезки
         $nameToSet = isset($goodData['name']) ? $this->normalizeText($goodData['name']) : '';
         if (!empty($nameTrimSymbol) && !empty(trim($nameTrimSymbol)) && !empty($nameToSet)) {
             $trimSymbol = trim($nameTrimSymbol);
@@ -2002,7 +2002,7 @@ class BulkGoodsImportController extends Controller
             }
         }
         $good->name = $nameToSet;
-        // РСЃРїРѕР»СЊР·СѓРµРј slug РёР· РґР°РЅРЅС‹С…, РµСЃР»Рё РѕРЅ РµСЃС‚СЊ Рё РЅРµ РїСѓСЃС‚РѕР№, РёРЅР°С‡Рµ РіРµРЅРµСЂРёСЂСѓРµРј Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё
+        // Используем slug из данных, если он есть и не пустой, иначе генерируем автоматически
         if (isset($goodData['slug']) && !empty($goodData['slug']) && trim($goodData['slug']) !== '') {
             $good->slug = trim($goodData['slug']);
         } else {
@@ -2011,19 +2011,19 @@ class BulkGoodsImportController extends Controller
         $good->description = $goodData['description'] ?? null;
         $good->short_description = $goodData['short_description'] ?? null;
 
-        // Р”Р»СЏ С‚РѕРІР°СЂРѕРІ СЃ РІР°СЂРёР°С†РёСЏРјРё СѓСЃС‚Р°РЅР°РІР»РёРІР°РµРј РІСЂРµРјРµРЅРЅС‹Рµ Р·РЅР°С‡РµРЅРёСЏ С†РµРЅ Рё РѕСЃС‚Р°С‚РєРѕРІ РїРµСЂРµРґ СЃРѕС…СЂР°РЅРµРЅРёРµРј
-        // РџРѕСЃР»Рµ РѕР±СЂР°Р±РѕС‚РєРё РІР°СЂРёР°С†РёР№ Р·РЅР°С‡РµРЅРёСЏ Р±СѓРґСѓС‚ РѕР±РЅРѕРІР»РµРЅС‹
+        // Для товаров с вариациями устанавливаем временные значения цен и остатков перед сохранением
+        // После обработки вариаций значения будут обновлены
         if (!isset($goodData['variation']) || !is_array($goodData['variation'])) {
-            // РџСЂРёРјРµРЅСЏРµРј РјРѕРґРёС„РёРєР°С†РёСЋ С†РµРЅС‹
+            // Применяем модификацию цены
             $priceModification = $goodData['price_modification'] ?? null;
             $rawPrice = $goodData['price'] ?? null;
 
-            // РџСЂРѕРІРµСЂСЏРµРј, С‡С‚Рѕ С†РµРЅР° РїРµСЂРµРґР°РЅР° Рё РЅРµ РїСѓСЃС‚Р°СЏ
+            // Проверяем, это цена передана и не пустая
             if ($rawPrice === null || $rawPrice === '' || $rawPrice === 0) {
-                // Р›РѕРіРёСЂСѓРµРј РїСЂРµРґСѓРїСЂРµР¶РґРµРЅРёРµ, РµСЃР»Рё С†РµРЅР° РЅРµ СѓСЃС‚Р°РЅРѕРІР»РµРЅР° РґР»СЏ С‚РѕРІР°СЂР° Р±РµР· РІР°СЂРёР°С†РёР№
-                \Log::warning('РўРѕРІР°СЂ СЃРѕР·РґР°РµС‚СЃСЏ Р±РµР· РІР°СЂРёР°С†РёР№ СЃ РїСѓСЃС‚РѕР№ С†РµРЅРѕР№', [
-                    'good_name' => $goodData['name'] ?? 'РЅРµРёР·РІРµСЃС‚РЅРѕ',
-                    'good_sku' => $goodData['sku'] ?? 'РЅРµС‚ SKU',
+                // Логируем предупреждение, если цена не установлена для товара без вариаций
+                \Log::warning('Товар создается без вариаций с пустой ценой', [
+                    'good_name' => $goodData['name'] ?? 'неизвестно',
+                    'good_sku' => $goodData['sku'] ?? 'нет SKU',
                     'price_in_data' => $rawPrice,
                     'has_variation_field' => isset($goodData['variation']),
                     'variation_is_array' => is_array($goodData['variation'] ?? null),
@@ -2031,13 +2031,13 @@ class BulkGoodsImportController extends Controller
             }
 
             $good->price = $this->applyPriceModification($rawPrice ?? 0, $priceModification['regular'] ?? null);
-            // РџСЂРёРјРµРЅСЏРµРј РјРѕРґРёС„РёРєР°С†РёСЋ Р°РєС†РёРѕРЅРЅРѕР№ С†РµРЅС‹ (РґР°Р¶Рµ РµСЃР»Рё sale_price РЅРµ РїРµСЂРµРґР°РЅР° РІ С„Р°Р№Р»Рµ, РЅРѕ РµСЃС‚СЊ РјРѕРґРёС„РёРєР°С†РёСЏ)
+            // Применяем модификацию акционной цены (даже если sale_price не передана в файле, но есть модификация)
             if (isset($priceModification) && isset($priceModification['sale'])) {
                 $good->sale_price = $this->applySalePriceModification($goodData, $priceModification);
             } else {
                 $good->sale_price = $goodData['sale_price'] ?? null;
             }
-            // РЈСЃС‚Р°РЅР°РІР»РёРІР°РµРј РѕСЃС‚Р°С‚РєРё РёР· РґР°РЅРЅС‹С… РёРјРїРѕСЂС‚Р°
+            // Устанавливаем остатки из данных импорта
             if ((isset($goodData['stock_quantity']) || isset($goodData['stock']))) {
                 $stockValue = is_numeric($goodData['stock_quantity'] ?? $goodData['stock'] ?? 0) ? (float) ($goodData['stock_quantity'] ?? $goodData['stock'] ?? 0) : 0;
                 $good->stock_quantity = $stockValue;
@@ -2053,30 +2053,30 @@ class BulkGoodsImportController extends Controller
                 $good->fast_remote_stock_quantity = $fastRemoteValue;
             }
         } else {
-            // Р”Р»СЏ С‚РѕРІР°СЂРѕРІ СЃ РІР°СЂРёР°С†РёСЏРјРё СѓСЃС‚Р°РЅР°РІР»РёРІР°РµРј РІСЂРµРјРµРЅРЅС‹Рµ Р·РЅР°С‡РµРЅРёСЏ (Р±СѓРґСѓС‚ РѕР±РЅРѕРІР»РµРЅС‹ РїРѕСЃР»Рµ СЃРѕР·РґР°РЅРёСЏ РІР°СЂРёР°С†РёРё)
-            $good->price = 0; // Р’СЂРµРјРµРЅРЅРѕРµ Р·РЅР°С‡РµРЅРёРµ, Р±СѓРґРµС‚ РѕР±РЅРѕРІР»РµРЅРѕ РїРѕСЃР»Рµ РѕР±СЂР°Р±РѕС‚РєРё РІР°СЂРёР°С†РёРё
+            // Для товаров с вариациями устанавливаем временные значения (будут обновлены после создания вариации)
+            $good->price = 0; // Временное значение, будет обновлено после обработки вариации
             $good->sale_price = null;
 
-            // РћСЃС‚Р°С‚РєРё РќР• СѓСЃС‚Р°РЅР°РІР»РёРІР°РµРј - РѕРЅРё Р±СѓРґСѓС‚ РІР·СЏС‚С‹ РёР· РІР°СЂРёР°С†РёР№ РёР»Рё РѕСЃС‚Р°РІР»РµРЅС‹ Р±РµР· РёР·РјРµРЅРµРЅРёР№
+            // Остатки НЕ устанавливаем - они будут взяты из вариаций или оставлены без изменений
         }
 
         $good->weight = $goodData['weight'] ?? 0;
         $good->width = $goodData['width'] ?? 0;
         $good->height = $goodData['height'] ?? 0;
-        // РџРѕРґРґРµСЂР¶РёРІР°РµРј Рё depth, Рё length РґР»СЏ РѕР±СЂР°С‚РЅРѕР№ СЃРѕРІРјРµСЃС‚РёРјРѕСЃС‚Рё
+        // Поддерживаем и depth, и length для обратной совместимости
         $good->depth = $goodData['depth'] ?? $goodData['length'] ?? 0;
         $good->is_active = $goodData['is_active'] ?? true;
         $good->is_featured = $goodData['is_featured'] ?? false;
         $good->meta_title = $goodData['meta_title'] ?? null;
         $good->meta_description = $goodData['meta_description'] ?? null;
 
-        // РЈСЃС‚Р°РЅР°РІР»РёРІР°РµРј РїРѕСЃС‚Р°РІС‰РёРєР° (С‚РµРєСЃС‚РѕРІРѕРµ РїРѕР»Рµ), РµСЃР»Рё РїРµСЂРµРґР°РЅ РІ Р·Р°РїСЂРѕСЃРµ
-        // Р СЃРѕР·РґР°РµРј Р·Р°РїРёСЃСЊ РІ С‚Р°Р±Р»РёС†Рµ shop_suppliers, РµСЃР»Рё РµС‘ РЅРµС‚
+        // Устанавливаем поставщика (текстовое поле), если передан в запросе
+        // И создаем запись в таблице shop_suppliers, если её нет
         if (isset($goodData['supplier_name']) && $goodData['supplier_name'] !== null && trim($goodData['supplier_name']) !== '') {
             $supplierName = trim($goodData['supplier_name']);
             $good->supplier = $supplierName;
 
-            // РќР°С…РѕРґРёРј РёР»Рё СЃРѕР·РґР°РµРј РїРѕСЃС‚Р°РІС‰РёРєР° РІ С‚Р°Р±Р»РёС†Рµ shop_suppliers
+            // Находим или создаем поставщика в таблице shop_suppliers
             $supplier = ShopSupplier::firstOrCreate(
                 ['name' => $supplierName],
                 [
@@ -2090,42 +2090,42 @@ class BulkGoodsImportController extends Controller
 
         $good->save();
 
-        // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј РєР°С‚РµРіРѕСЂРёРё
-        // Р’РђР–РќРћ: РєР°С‚РµРіРѕСЂРёРё СѓР¶Рµ РѕР±СЂР°Р±РѕС‚Р°РЅС‹ РІ applyCategoryAndBrandIds, РіРґРµ:
-        // - РљР°С‚РµРіРѕСЂРёРё РёР· С„Р°Р№Р»Р° РЅР°Р№РґРµРЅС‹/СЃРѕР·РґР°РЅС‹ Рё РїСЂРµРѕР±СЂР°Р·РѕРІР°РЅС‹ РІ ID
-        // - РљР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РїСЂРёРјРµРЅРµРЅР°, РµСЃР»Рё РЅСѓР¶РЅРѕ
-        // Р—РґРµСЃСЊ РјС‹ РїСЂРѕСЃС‚Рѕ РёР·РІР»РµРєР°РµРј СѓР¶Рµ РѕР±СЂР°Р±РѕС‚Р°РЅРЅС‹Рµ РєР°С‚РµРіРѕСЂРёРё
+        // Обрабатываем категории
+        // ВАЖНО: категории уже обработаны в applyCategoryAndBrandIds, где:
+        // - Категории из файла найдены/созданы и преобразованы в ID
+        // - Категория по умолчанию применена, если нужно
+        // Здесь мы просто извлекаем уже обработанные категории
         $categoryIds = [];
 
         if (isset($goodData['category']) && !empty($goodData['category'])) {
-            // РћРґРёРЅРѕС‡РЅР°СЏ РєР°С‚РµРіРѕСЂРёСЏ - Р·РЅР°С‡РµРЅРёРµ СѓР¶Рµ РґРѕР»Р¶РЅРѕ Р±С‹С‚СЊ ID РїРѕСЃР»Рµ applyCategoryAndBrandIds
+            // Одиночная категория - значение уже должно быть ID после applyCategoryAndBrandIds
             $categoryIds = [(int) $goodData['category']];
         } elseif (isset($goodData['categories']) && is_array($goodData['categories'])) {
-            // РњРЅРѕР¶РµСЃС‚РІРµРЅРЅС‹Рµ РєР°С‚РµРіРѕСЂРёРё - Р·РЅР°С‡РµРЅРёСЏ СѓР¶Рµ РґРѕР»Р¶РЅС‹ Р±С‹С‚СЊ ID РїРѕСЃР»Рµ applyCategoryAndBrandIds
+            // Множественные категории - значения уже должны быть ID после applyCategoryAndBrandIds
             $categoryIds = array_filter(array_map('intval', $goodData['categories']), function ($id) {
                 return $id > 0;
             });
         }
 
-        // РЎРёРЅС…СЂРѕРЅРёР·РёСЂСѓРµРј РєР°С‚РµРіРѕСЂРёРё (СѓР¶Рµ РѕР±СЂР°Р±РѕС‚Р°РЅРЅС‹Рµ, РІРєР»СЋС‡Р°СЏ РєР°С‚РµРіРѕСЂРёСЋ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ, РµСЃР»Рё РѕРЅР° Р±С‹Р»Р° РїСЂРёРјРµРЅРµРЅР°)
+        // Синхронизируем категории (уже обработанные, включая категорию по умолчанию, если она была применена)
         if (!empty($categoryIds)) {
             $good->categories()->sync($categoryIds);
         } else {
-            // Р•СЃР»Рё РєР°С‚РµРіРѕСЂРёР№ РЅРµС‚, РѕС‚РІСЏР·С‹РІР°РµРј РІСЃРµ РєР°С‚РµРіРѕСЂРёРё
+            // Если категорий нет, отвязываем все категории
             $good->categories()->sync([]);
         }
 
-        // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј Р±СЂРµРЅРґС‹
+        // Обрабатываем бренды
         if (isset($goodData['brand']) && is_numeric($goodData['brand'])) {
-            // РћРґРёРЅРѕС‡РЅС‹Р№ Р±СЂРµРЅРґ РїРѕ ID
+            // Одиночный бренд по ID
             $good->brands()->sync([$goodData['brand']]);
         } elseif (isset($goodData['brands']) && is_array($goodData['brands'])) {
-            // РњРЅРѕР¶РµСЃС‚РІРµРЅРЅС‹Рµ Р±СЂРµРЅРґС‹ - ID СѓР¶Рµ РїСЂРёРјРµРЅРµРЅС‹ РІ applyCategoryAndBrandIds
+            // Множественные бренды - ID уже применены в applyCategoryAndBrandIds
             $brandIds = array_filter($goodData['brands'], 'is_numeric');
             $good->brands()->sync($brandIds);
         }
 
-        // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј РІР°СЂРёР°С†РёРё С‚РѕРІР°СЂР° Р”Рћ РёР·РѕР±СЂР°Р¶РµРЅРёР№: РїСЂРё СЃРѕР·РґР°РЅРёРё СЃ РІР°СЂРёР°С†РёРµР№ РєР°СЂС‚РёРЅРєРё РІРµС€Р°РµРј РЅР° РІР°СЂРёР°С†РёСЋ
+        // Обрабатываем вариации товара ДО изображений: при создании с вариацией картинки вешаем на вариацию
         $variationId = null;
         if (isset($goodData['variation']) && is_array($goodData['variation'])) {
             if (!isset($goodData['_nameTrimSymbol'])) {
@@ -2134,14 +2134,14 @@ class BulkGoodsImportController extends Controller
             $variationId = $this->processVariation($good, $goodData['variation'], $goodData, $supplierStockFields, $naming);
 
             if ($variationId) {
-                // РљР РРўРР§РќРћ: Р‘РµСЂРµРј С†РµРЅСѓ РёР· РІР°СЂРёР°С†РёРё, РЅРѕ РµСЃР»Рё РµС‘ РЅРµС‚ - РїСЂРѕР±СѓРµРј РёР· goodData['price']
-                // Р­С‚Рѕ РЅСѓР¶РЅРѕ, РµСЃР»Рё С†РµРЅР° РЅРµ Р±С‹Р»Р° РїРµСЂРµРґР°РЅР° РІ variation.price, РЅРѕ РµСЃС‚СЊ РІ РѕСЃРЅРѕРІРЅРѕРј С‚РѕРІР°СЂРµ
+                // КРИТИЧНО: Берем цену из вариации, но если её нет - пробуем из goodData['price']
+                // Это нужно, если цена не была передана в variation.price, но есть в основном товаре
                 $variationPrice = $goodData['variation']['price'] ?? null;
                 if ($variationPrice === null || $variationPrice === '' || $variationPrice === 0) {
-                    // Р•СЃР»Рё С†РµРЅР° РІР°СЂРёР°С†РёРё РЅРµ СѓСЃС‚Р°РЅРѕРІР»РµРЅР°, Р±РµСЂРµРј РёР· goodData['price']
+                    // Если цена вариации не установлена, берем из goodData['price']
                     $variationPrice = $goodData['price'] ?? null;
                 }
-                // Р•СЃР»Рё Рё С‚Р°Рј РЅРµС‚ - РёСЃРїРѕР»СЊР·СѓРµРј С†РµРЅСѓ РёР· СЃРѕР·РґР°РЅРЅРѕР№ РІР°СЂРёР°С†РёРё (РµСЃР»Рё РѕРЅР° Р±С‹Р»Р° СѓСЃС‚Р°РЅРѕРІР»РµРЅР° РїСЂРё СЃРѕР·РґР°РЅРёРё)
+                // Если и там нет - используем цену из созданной вариации (если она была установлена при создании)
                 if (($variationPrice === null || $variationPrice === '' || $variationPrice === 0) && $variationId) {
                     $createdVariation = ShopGoodVariation::find($variationId);
                     if ($createdVariation && $createdVariation->price && $createdVariation->price > 0) {
@@ -2162,21 +2162,21 @@ class BulkGoodsImportController extends Controller
                 }
                 $good->save();
             } else {
-                // РљР РРўРР§РќРћ: Р•СЃР»Рё РІР°СЂРёР°С†РёСЏ РЅРµ Р±С‹Р»Р° СЃРѕР·РґР°РЅР°, РЅРѕ С‚РѕРІР°СЂ СЃРѕР·РґР°РЅ СЃ hasVariation=true,
-                // СѓСЃС‚Р°РЅР°РІР»РёРІР°РµРј С†РµРЅСѓ РёР· goodData['price'], С‡С‚РѕР±С‹ РЅРµ РѕСЃС‚Р°РІР»СЏС‚СЊ С†РµРЅСѓ 0
-                // Р­С‚Рѕ РјРѕР¶РµС‚ РїСЂРѕРёР·РѕР№С‚Рё, РµСЃР»Рё РІР°СЂРёР°С†РёСЏ РЅРµ СЃРѕР·РґР°Р»Р°СЃСЊ РёР·-Р·Р° РѕС€РёР±РєРё РёР»Рё РѕС‚СЃСѓС‚СЃС‚РІРёСЏ Р°С‚СЂРёР±СѓС‚РѕРІ
+                // КРИТИЧНО: Если вариация не была создана, но товар создан с hasVariation=true,
+                // устанавливаем цену из goodData['price'], чтобы не оставлять цену 0
+                // Это может произойти, если вариация не создалась из-за ошибки или отсутствия атрибутов
                 $priceModification = $goodData['price_modification'] ?? null;
                 $rawPrice = $goodData['price'] ?? null;
                 if ($rawPrice !== null && $rawPrice !== '' && $rawPrice !== 0) {
                     $good->price = $this->applyPriceModification($rawPrice, $priceModification['regular'] ?? null);
-                    \Log::warning('Р’Р°СЂРёР°С†РёСЏ РЅРµ СЃРѕР·РґР°РЅР°, РЅРѕ С‚РѕРІР°СЂ СЃРѕР·РґР°РЅ СЃ hasVariation=true. РЈСЃС‚Р°РЅРѕРІР»РµРЅР° С†РµРЅР° РёР· goodData[price]', [
+                    \Log::warning('Вариация не создана, но товар создан с hasVariation=true. Установлена цена из goodData[price]', [
                         'good_id' => $good->id,
                         'good_name' => $good->name,
                         'good_sku' => $good->sku,
                         'price_set' => $good->price,
                     ]);
                 } else {
-                    \Log::warning('Р’Р°СЂРёР°С†РёСЏ РЅРµ СЃРѕР·РґР°РЅР°, Рё С†РµРЅР° РІ goodData РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚. РўРѕРІР°СЂ СЃРѕР·РґР°РЅ СЃ С†РµРЅРѕР№ 0', [
+                    \Log::warning('Вариация не создана, и цена в goodData отсутствует. Товар создан с ценой 0', [
                         'good_id' => $good->id,
                         'good_name' => $good->name,
                         'good_sku' => $good->sku,
@@ -2185,18 +2185,18 @@ class BulkGoodsImportController extends Controller
             }
         }
 
-        // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј РёР·РѕР±СЂР°Р¶РµРЅРёСЏ: РїСЂРё СЃРѕР·РґР°РЅРёРё СЃ РІР°СЂРёР°С†РёРµР№ вЂ” Рє РІР°СЂРёР°С†РёРё, РёРЅР°С‡Рµ Рє С‚РѕРІР°СЂСѓ
+        // Обрабатываем изображения: при создании с вариацией — к вариации, иначе к товару
         if (isset($goodData['images']) && is_array($goodData['images'])) {
             $variationForImages = $variationId ? ShopGoodVariation::find($variationId) : null;
             $imageStats = $this->processImages($good, $goodData['images'], $variationForImages, false, $naming);
         }
 
-        // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј СЃРІРѕР№СЃС‚РІР° С‚РѕРІР°СЂРѕРІ
+        // Обрабатываем свойства товаров
         if (isset($goodData['properties']) && is_array($goodData['properties'])) {
             $this->processProperties($good, $goodData['properties']);
         }
 
-        // РЎРѕС…СЂР°РЅСЏРµРј ID РІР°СЂРёР°С†РёРё РІ РѕР±СЉРµРєС‚Рµ С‚РѕРІР°СЂР° РґР»СЏ РїРѕСЃР»РµРґСѓСЋС‰РµРіРѕ РёСЃРїРѕР»СЊР·РѕРІР°РЅРёСЏ
+        // Сохраняем ID вариации в объекте товара для последующего использования
         if ($variationId) {
             $good->lastVariationId = $variationId;
         }
@@ -2208,19 +2208,19 @@ class BulkGoodsImportController extends Controller
     {
         $imageStats = ['downloaded' => 0, 'failed' => 0];
 
-        // РћР±РЅРѕРІР»СЏРµРј РІСЃРµ РїРѕР»СЏ РёР· goodData, РєРѕС‚РѕСЂС‹Рµ РїРµСЂРµРґР°РЅС‹ РІ РёРјРїРѕСЂС‚Рµ
-        // Р­С‚Рѕ РїРѕР·РІРѕР»СЏРµС‚ РѕР±РЅРѕРІР»СЏС‚СЊ РІСЃРµ РїРѕР»СЏ, РѕС‚РјРµС‡РµРЅРЅС‹Рµ РґР»СЏ РёРјРїРѕСЂС‚Р°, Р° РЅРµ С‚РѕР»СЊРєРѕ С‚Рµ, С‡С‚Рѕ РёСЃРїРѕР»СЊР·СѓСЋС‚СЃСЏ РґР»СЏ РїРѕРёСЃРєР°
+        // Обновляем все поля из goodData, которые переданы в импорте
+        // Это позволяет обновлять все поля, отмеченные для импорта, а не только те, это используются для поиска
 
-        // РћР±РЅРѕРІР»СЏРµРј SKU (Р°СЂС‚РёРєСѓР») - РµСЃР»Рё РїРµСЂРµРґР°РЅ Рё РЅРµ РІ СЃРїРёСЃРєРµ РЅРµРёР·РјРµРЅСЏРµРјС‹С…, РѕР±РЅРѕРІР»СЏРµРј.
-        // РљР РРўРР§РќРћ: РџСЂРё РїРѕРёСЃРєРµ РІ РІР°СЂРёР°С†РёСЏС… РїРѕ Р°СЂС‚РёРєСѓР»Сѓ (SKU) Рё РЅР°Р»РёС‡РёРё РІР°СЂРёР°С†РёР№ Сѓ С‚РѕРІР°СЂР°,
-        // SKU РёР· С„Р°Р№Р»Р° РѕС‚РЅРѕСЃРёС‚СЃСЏ Рє РІР°СЂРёР°С†РёРё, Р° РЅРµ Рє РѕСЃРЅРѕРІРЅРѕРјСѓ С‚РѕРІР°СЂСѓ. РќРµ РѕР±РЅРѕРІР»СЏРµРј SKU РѕСЃРЅРѕРІРЅРѕРіРѕ С‚РѕРІР°СЂР°,
-        // С‡С‚РѕР±С‹ РёР·Р±РµР¶Р°С‚СЊ РєРѕРЅС„Р»РёРєС‚Р° СЃ СѓРЅРёРєР°Р»СЊРЅС‹Рј РёРЅРґРµРєСЃРѕРј (SKU СѓР¶Рµ СѓСЃС‚Р°РЅРѕРІР»РµРЅ РІ РІР°СЂРёР°С†РёРё).
-        // РќРµ В«РІРѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРјВ» Р°СЂС‚РёРєСѓР»: РµСЃР»Рё Сѓ С‚РѕРІР°СЂР° РІ Р‘Р” РѕРЅ РїСѓСЃС‚РѕР№, Р° РІ С„Р°Р№Р»Рµ вЂ” РЅРµРїСѓСЃС‚РѕР№,
-        // РЅРµ РїРµСЂРµР·Р°РїРёСЃС‹РІР°РµРј (РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ РјРѕРі РЅР°РјРµСЂРµРЅРЅРѕ РѕС‡РёСЃС‚РёС‚СЊ; Р·РЅР°С‡РµРЅРёРµ РІ С„Р°Р№Р»Рµ РјРѕРіР»Рѕ
-        // РѕСЃС‚Р°С‚СЊСЃСЏ РѕС‚ РІР°СЂРёР°С†РёРё/СЃС‚Р°СЂРѕРіРѕ Р·РЅР°С‡РµРЅРёСЏ).
+        // Обновляем SKU (артикул) - если передан и не в списке неизменяемых, обновляем.
+        // КРИТИЧНО: При поиске в вариациях по артикулу (SKU) и наличии вариаций у товара,
+        // SKU из файла относится к вариации, а не к основному товару. Не обновляем SKU основного товара,
+        // чтобы избежать конфликта с уникальным индексом (SKU уже установлен в вариации).
+        // Не «восстанавливаем» артикул: если у товара в БД он пустой, а в файле — непустой,
+        // не перезаписываем (пользователь мог намеренно очистить; значение в файле могло
+        // остаться от вариации/старого значения).
         if (isset($goodData['sku']) && !in_array('sku', $immutableFields)) {
-            // РџСЂРѕРїСѓСЃРєР°РµРј РѕР±РЅРѕРІР»РµРЅРёРµ SKU РѕСЃРЅРѕРІРЅРѕРіРѕ С‚РѕРІР°СЂР°, РµСЃР»Рё РЅР°Р№РґРµРЅ С‚РѕРІР°СЂ СЃ РІР°СЂРёР°С†РёСЏРјРё РїРѕ Р°СЂС‚РёРєСѓР»Сѓ
-            // (РІ СЌС‚РѕРј СЃР»СѓС‡Р°Рµ SKU РѕС‚РЅРѕСЃРёС‚СЃСЏ Рє РІР°СЂРёР°С†РёРё, Р° РЅРµ Рє РѕСЃРЅРѕРІРЅРѕРјСѓ С‚РѕРІР°СЂСѓ)
+            // Пропускаем обновление SKU основного товара, если найден товар с вариациями по артикулу
+            // (в этом случае SKU относится к вариации, а не к основному товару)
             $skipSkuUpdate = ($searchByNameInVariations && $searchByFieldInVariations === 'sku' && $existingGood->variations()->exists());
 
             if (!$skipSkuUpdate) {
@@ -2233,83 +2233,83 @@ class BulkGoodsImportController extends Controller
             }
         }
 
-        // РљР РРўРР§РќРћ: РћР±СЂР°Р±Р°С‚С‹РІР°РµРј РЅР°Р·РІР°РЅРёРµ. РџСЂРё РїРѕРёСЃРєРµ РІ РІР°СЂРёР°С†РёСЏС… РїРѕ Р°СЂС‚РёРєСѓР»Сѓ (SKU) РїРѕР»Рµ name РѕСЃРЅРѕРІРЅРѕРіРѕ С‚РѕРІР°СЂР°
-        // РЅРµ Р·Р°С‚СЂР°РіРёРІР°РµРј С‚РѕР»СЊРєРѕ Сѓ С‚РѕРІР°СЂРѕРІ РЎ РІР°СЂРёР°С†РёСЏРјРё. РЈ С‚РѕРІР°СЂРѕРІ Р±РµР· РІР°СЂРёР°С†РёР№ РёРјСЏ РѕР±РЅРѕРІР»СЏРµС‚СЃСЏ.
+        // КРИТИЧНО: Обрабатываем название. При поиске в вариациях по артикулу (SKU) поле name основного товара
+        // не затрагиваем только у товаров С вариациями. У товаров без вариаций имя обновляется.
         if (!($searchByNameInVariations && $searchByFieldInVariations === 'sku' && $existingGood->variations()->exists())) {
             if (isset($goodData['name']) && !empty(trim($goodData['name']))) {
                 $nameFromData = $this->normalizeText($goodData['name']);
-                // РџСЂСЏРјРѕРµ РѕР±РЅРѕРІР»РµРЅРёРµ РёРјРµРЅРё РёР· С„Р°Р№Р»Р° (РµСЃР»Рё name РЅРµ РІ В«РќРµ РёР·РјРµРЅСЏС‚СЊ РїРѕР»СЏВ»)
+                // Прямое обновление имени из файла (если name не в «Не изменять поля»)
                 if (!in_array('name', $immutableFields)) {
                     $existingGood->name = $nameFromData;
                 }
-                // РџСЂРёРјРµРЅСЏРµРј РѕР±СЂРµР·РєСѓ С‡РµСЂРµР· trimGoodName, РµСЃР»Рё РІ РЅР°Р·РІР°РЅРёРё РµСЃС‚СЊ СЃРёРјРІРѕР» РѕР±СЂРµР·РєРё
+                // Применяем обрезку ??ерез trimGoodName, если в названии есть символ обрезки
                 $this->trimGoodName($existingGood, $nameTrimSymbol, $immutableFields, $nameFromData);
                 unset($goodData['name']);
             } else {
-                // Р•СЃР»Рё РЅР°Р·РІР°РЅРёРµ РЅРµ РїРµСЂРµРґР°РЅРѕ РІ РґР°РЅРЅС‹С…, РЅРѕ РµСЃС‚СЊ СЃРёРјРІРѕР» РѕР±СЂРµР·РєРё вЂ” РїСЂРѕРІРµСЂСЏРµРј РЅР°Р·РІР°РЅРёРµ РІ Р‘Р”
+                // Если название не передано в данных, но есть символ обрезки — проверяем название в БД
                 if (!empty($nameTrimSymbol) && !empty(trim($nameTrimSymbol))) {
                     $this->trimGoodName($existingGood, $nameTrimSymbol, $immutableFields, null);
                 }
             }
         }
-        // РћР±РЅРѕРІР»СЏРµРј slug С‚РѕР»СЊРєРѕ РµСЃР»Рё РѕРЅ СЏРІРЅРѕ РїРµСЂРµРґР°РЅ РІ РґР°РЅРЅС‹С… (РІС‹Р±СЂР°РЅ РІ РјР°РїРїРёРЅРіРµ) Рё РЅРµ РІ СЃРїРёСЃРєРµ РЅРµРёР·РјРµРЅСЏРµРјС‹С…
-        // РџСЂРё РѕР±РЅРѕРІР»РµРЅРёРё СЃСѓС‰РµСЃС‚РІСѓСЋС‰РµР№ Р·Р°РїРёСЃРё РЅРµ СЃРѕР·РґР°РµРј slug Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё
+        // Обновляем slug только если он явно передан в данных (выбран в маппинге) и не в списке неизменяемых
+        // При обновлении существующей записи не создаем slug автоматически
         if (isset($goodData['slug']) && !in_array('slug', $immutableFields)) {
             if (!empty($goodData['slug']) && trim($goodData['slug']) !== '') {
                 $existingGood->slug = trim($goodData['slug']);
             }
-            // Р•СЃР»Рё slug РїРµСЂРµРґР°РЅ, РЅРѕ РїСѓСЃС‚РѕР№, РЅРµ РѕР±РЅРѕРІР»СЏРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёР№ slug
+            // Если slug передан, но пустой, не обновляем существующий slug
         }
-        // Р•СЃР»Рё slug РЅРµ РїРµСЂРµРґР°РЅ РІ РґР°РЅРЅС‹С… (РЅРµ РІС‹Р±СЂР°РЅ РІ РјР°РїРїРёРЅРіРµ), РѕСЃС‚Р°РІР»СЏРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёР№ slug Р±РµР· РёР·РјРµРЅРµРЅРёР№
+        // Если slug не передан в данных (не выбран в маппинге), оставляем существующий slug без изменений
 
-        // РћР±РЅРѕРІР»СЏРµРј РѕРїРёСЃР°РЅРёРµ С‚РѕР»СЊРєРѕ РµСЃР»Рё РѕРЅРѕ РїРµСЂРµРґР°РЅРѕ Рё РЅРµ РІ СЃРїРёСЃРєРµ РЅРµРёР·РјРµРЅСЏРµРјС‹С…
+        // Обновляем описание только если оно передано и не в списке неизменяемых
         if (isset($goodData['description']) && !in_array('description', $immutableFields)) {
             $existingGood->description = $goodData['description'];
         }
 
-        // РћР±РЅРѕРІР»СЏРµРј РєРѕСЂРѕС‚РєРѕРµ РѕРїРёСЃР°РЅРёРµ С‚РѕР»СЊРєРѕ РµСЃР»Рё РѕРЅРѕ РїРµСЂРµРґР°РЅРѕ Рё РЅРµ РІ СЃРїРёСЃРєРµ РЅРµРёР·РјРµРЅСЏРµРјС‹С…
+        // Обновляем короткое описание только если оно передано и не в списке неизменяемых
         if (isset($goodData['short_description']) && !in_array('short_description', $immutableFields)) {
             $existingGood->short_description = $goodData['short_description'];
         }
 
-        // РџСЂРёРјРµРЅСЏРµРј РјРѕРґРёС„РёРєР°С†РёСЋ С†РµРЅС‹ (С‚РѕР»СЊРєРѕ РµСЃР»Рё РїРѕР»Рµ РЅРµ РІ СЃРїРёСЃРєРµ РЅРµРёР·РјРµРЅСЏРµРјС‹С…)
+        // Применяем модификацию цены (только если поле не в списке неизменяемых)
         $priceModification = $goodData['price_modification'] ?? null;
 
-        // Р”Р»СЏ С‚РѕРІР°СЂРѕРІ СЃ РІР°СЂРёР°С†РёСЏРјРё С†РµРЅС‹ Р±РµСЂСѓС‚СЃСЏ РёР· РІР°СЂРёР°С†РёРё
+        // Для товаров с вариациями цены берутся из вариации
         if (isset($goodData['variation']) && is_array($goodData['variation'])) {
-            // РћР±РЅРѕРІР»СЏРµРј С†РµРЅС‹ РёР· РІР°СЂРёР°С†РёРё
+            // Обновляем цены из вариации
             if (isset($goodData['variation']['price']) && !in_array('price', $immutableFields)) {
                 $existingGood->price = $this->applyPriceModification($goodData['variation']['price'], $priceModification['regular'] ?? null);
             }
             if ((isset($goodData['variation']['sale_price']) || isset($priceModification)) && !in_array('sale_price', $immutableFields)) {
                 $goodData['sale_price'] = $goodData['variation']['sale_price'] ?? null;
                 $newSalePrice = $this->applySalePriceModification($goodData, $priceModification);
-                // Р•СЃР»Рё РµСЃС‚СЊ РјРѕРґРёС„РёРєР°С†РёСЏ Р°РєС†РёРѕРЅРЅРѕР№ С†РµРЅС‹, РІСЃРµРіРґР° РїСЂРёРјРµРЅСЏРµРј СЂРµР·СѓР»СЊС‚Р°С‚ (РґР°Р¶Рµ РµСЃР»Рё null)
+                // Если есть модификация акционной цены, всегда применяем результат (даже если null)
                 if (isset($priceModification) && isset($priceModification['sale'])) {
                     $existingGood->sale_price = $newSalePrice;
                 } else {
-                    // Р•СЃР»Рё РјРѕРґРёС„РёРєР°С†РёРё РЅРµС‚, РёСЃРїРѕР»СЊР·СѓРµРј Р·РЅР°С‡РµРЅРёРµ РёР· С„Р°Р№Р»Р° РёР»Рё РѕСЃС‚Р°РІР»СЏРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РµРµ
+                    // Если модификации нет, используем значение из файла или оставляем существующее
                     $existingGood->sale_price = $newSalePrice ?? $existingGood->sale_price;
                 }
             }
         } else {
-            // Р”Р»СЏ С‚РѕРІР°СЂРѕРІ Р±РµР· РІР°СЂРёР°С†РёР№ РѕР±РЅРѕРІР»СЏРµРј С†РµРЅС‹ РёР· goodData
+            // Для товаров без вариаций обновляем цены из goodData
             if (isset($goodData['price']) && !in_array('price', $immutableFields)) {
                 $existingGood->price = $this->applyPriceModification($goodData['price'], $priceModification['regular'] ?? null);
             }
             if ((isset($goodData['sale_price']) || isset($priceModification)) && !in_array('sale_price', $immutableFields)) {
                 $newSalePrice = $this->applySalePriceModification($goodData, $priceModification);
-                // Р•СЃР»Рё РµСЃС‚СЊ РјРѕРґРёС„РёРєР°С†РёСЏ Р°РєС†РёРѕРЅРЅРѕР№ С†РµРЅС‹, РІСЃРµРіРґР° РїСЂРёРјРµРЅСЏРµРј СЂРµР·СѓР»СЊС‚Р°С‚ (РґР°Р¶Рµ РµСЃР»Рё null)
+                // Если есть модификация акционной цены, всегда применяем результат (даже если null)
                 if (isset($priceModification) && isset($priceModification['sale'])) {
                     $existingGood->sale_price = $newSalePrice;
                 } else {
-                    // Р•СЃР»Рё РјРѕРґРёС„РёРєР°С†РёРё РЅРµС‚, РёСЃРїРѕР»СЊР·СѓРµРј Р·РЅР°С‡РµРЅРёРµ РёР· С„Р°Р№Р»Р° РёР»Рё РѕСЃС‚Р°РІР»СЏРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РµРµ
+                    // Если модификации нет, используем значение из файла или оставляем существующее
                     $existingGood->sale_price = $newSalePrice ?? $existingGood->sale_price;
                 }
             }
         }
 
-        // РћР±РЅРѕРІР»СЏРµРј РґРµРјРїРёРЅРі С†РµРЅСѓ, РµСЃР»Рё РїРµСЂРµРґР°РЅР° Рё РЅРµ РІ СЃРїРёСЃРєРµ РЅРµРёР·РјРµРЅСЏРµРјС‹С…
+        // Обновляем демпинг цену, если передана и не в списке неизменяемых
         if (isset($goodData['demping_price']) && !in_array('demping_price', $immutableFields)) {
             $existingGood->demping_price = $goodData['demping_price'];
         }
@@ -2317,9 +2317,9 @@ class BulkGoodsImportController extends Controller
             $existingGood->show_demping = $goodData['show_demping'];
         }
 
-        // РћР±РЅРѕРІР»СЏРµРј РѕСЃС‚Р°С‚РєРё С‚РѕР»СЊРєРѕ РµСЃР»Рё РѕРЅРё РїРµСЂРµРґР°РЅС‹ Рё РЅРµ РІ СЃРїРёСЃРєРµ РЅРµРёР·РјРµРЅСЏРµРјС‹С…
+        // Обновляем остатки только если они переданы и не в списке неизменяемых
         if (isset($goodData['variation']) && is_array($goodData['variation'])) {
-            // Р”Р»СЏ С‚РѕРІР°СЂРѕРІ СЃ РІР°СЂРёР°С†РёСЏРјРё РѕСЃС‚Р°С‚РєРё Р±РµСЂСѓС‚СЃСЏ РёР· РІР°СЂРёР°С†РёРё
+            // Для товаров с вариациями остатки берутся из вариации
             if ((isset($goodData['variation']['stock_quantity']) || isset($goodData['variation']['stock'])) && !in_array('stock_quantity', $immutableFields)) {
                 $stockValue = $goodData['variation']['stock_quantity'] ?? $goodData['variation']['stock'] ?? $existingGood->stock_quantity;
                 $existingGood->stock_quantity = is_numeric($stockValue) ? (float) $stockValue : $existingGood->stock_quantity;
@@ -2327,7 +2327,7 @@ class BulkGoodsImportController extends Controller
 
             if (!in_array('remote_stock_quantity', $immutableFields)) {
                 $remoteValue = $goodData['variation']['remote_stock_quantity'] ?? null;
-                // РћР±РЅРѕРІР»СЏРµРј С‚РѕР»СЊРєРѕ РµСЃР»Рё Р·РЅР°С‡РµРЅРёРµ РЅРµ РїСѓСЃС‚РѕРµ
+                // Обновляем только если значение не пустое
                 if ($remoteValue !== null && $remoteValue !== '' && trim($remoteValue) !== '') {
                     $existingGood->remote_stock_quantity = is_numeric($remoteValue) ? (string) $remoteValue : $remoteValue;
                 }
@@ -2335,14 +2335,14 @@ class BulkGoodsImportController extends Controller
 
             if (!in_array('fast_remote_stock_quantity', $immutableFields)) {
                 $fastRemoteValue = $goodData['variation']['fast_remote_stock_quantity'] ?? null;
-                // РћР±РЅРѕРІР»СЏРµРј С‚РѕР»СЊРєРѕ РµСЃР»Рё Р·РЅР°С‡РµРЅРёРµ РЅРµ РїСѓСЃС‚РѕРµ
+                // Обновляем только если значение не пустое
                 if ($fastRemoteValue !== null && $fastRemoteValue !== '' && trim($fastRemoteValue) !== '') {
                     $existingGood->fast_remote_stock_quantity = is_numeric($fastRemoteValue) ? (string) $fastRemoteValue : $fastRemoteValue;
                 }
             }
         } else {
-            // Р”Р»СЏ С‚РѕРІР°СЂРѕРІ Р±РµР· РІР°СЂРёР°С†РёР№ РѕСЃС‚Р°С‚РєРё Р±РµСЂСѓС‚СЃСЏ РёР· goodData СЃ РєРѕРЅРІРµСЂС‚Р°С†РёРµР№ С‚РёРїРѕРІ
-            // РћР±РЅРѕРІР»СЏРµРј РѕСЃС‚Р°С‚РєРё РёР· РґР°РЅРЅС‹С… РёРјРїРѕСЂС‚Р°, РµСЃР»Рё РѕРЅРё РїСЂРёСЃСѓС‚СЃС‚РІСѓСЋС‚
+            // Для товаров без вариаций остатки берутся из goodData с конвертацией типов
+            // Обновляем остатки из данных импорта, если они присутствуют
             if ((isset($goodData['stock_quantity']) || isset($goodData['stock'])) && !in_array('stock_quantity', $immutableFields)) {
                 $stockValue = $goodData['stock_quantity'] ?? $goodData['stock'] ?? $existingGood->stock_quantity;
                 $existingGood->stock_quantity = is_numeric($stockValue) ? (float) $stockValue : $existingGood->stock_quantity;
@@ -2350,7 +2350,7 @@ class BulkGoodsImportController extends Controller
 
             if (isset($goodData['remote_stock_quantity']) && !in_array('remote_stock_quantity', $immutableFields)) {
                 $remoteValue = $goodData['remote_stock_quantity'];
-                // РћР±РЅРѕРІР»СЏРµРј С‚РѕР»СЊРєРѕ РµСЃР»Рё Р·РЅР°С‡РµРЅРёРµ РЅРµ РїСѓСЃС‚РѕРµ
+                // Обновляем только если значение не пустое
                 if ($remoteValue !== null && $remoteValue !== '' && trim($remoteValue) !== '') {
                     $existingGood->remote_stock_quantity = is_numeric($remoteValue) ? (string) $remoteValue : $remoteValue;
                 }
@@ -2358,14 +2358,14 @@ class BulkGoodsImportController extends Controller
 
             if (isset($goodData['fast_remote_stock_quantity']) && !in_array('fast_remote_stock_quantity', $immutableFields)) {
                 $fastRemoteValue = $goodData['fast_remote_stock_quantity'];
-                // РћР±РЅРѕРІР»СЏРµРј С‚РѕР»СЊРєРѕ РµСЃР»Рё Р·РЅР°С‡РµРЅРёРµ РЅРµ РїСѓСЃС‚РѕРµ
+                // Обновляем только если значение не пустое
                 if ($fastRemoteValue !== null && $fastRemoteValue !== '' && trim($fastRemoteValue) !== '') {
                     $existingGood->fast_remote_stock_quantity = is_numeric($fastRemoteValue) ? (string) $fastRemoteValue : $fastRemoteValue;
                 }
             }
         }
 
-        // РћР±РЅРѕРІР»СЏРµРј СЂР°Р·РјРµСЂС‹ Рё РІРµСЃ, РµСЃР»Рё РїРµСЂРµРґР°РЅС‹ Рё РЅРµ РІ СЃРїРёСЃРєРµ РЅРµРёР·РјРµРЅСЏРµРјС‹С…
+        // Обновляем размеры и вес, если переданы и не в списке неизменяемых
         if (isset($goodData['weight']) && !in_array('weight', $immutableFields)) {
             $existingGood->weight = $goodData['weight'];
         }
@@ -2375,14 +2375,14 @@ class BulkGoodsImportController extends Controller
         if (isset($goodData['height']) && !in_array('height', $immutableFields)) {
             $existingGood->height = $goodData['height'];
         }
-        // РџРѕРґРґРµСЂР¶РёРІР°РµРј Рё depth, Рё length РґР»СЏ РѕР±СЂР°С‚РЅРѕР№ СЃРѕРІРјРµСЃС‚РёРјРѕСЃС‚Рё
+        // Поддерживаем и depth, и length для обратной совместимости
         if (isset($goodData['depth']) && !in_array('depth', $immutableFields)) {
             $existingGood->depth = $goodData['depth'];
         } elseif (isset($goodData['length']) && !in_array('depth', $immutableFields)) {
             $existingGood->depth = $goodData['length'];
         }
 
-        // РћР±РЅРѕРІР»СЏРµРј С„Р»Р°РіРё, РµСЃР»Рё РїРµСЂРµРґР°РЅС‹ Рё РЅРµ РІ СЃРїРёСЃРєРµ РЅРµРёР·РјРµРЅСЏРµРјС‹С…
+        // Обновляем флаги, если переданы и не в списке неизменяемых
         if (isset($goodData['is_active']) && !in_array('is_active', $immutableFields)) {
             $existingGood->is_active = $goodData['is_active'];
         }
@@ -2399,7 +2399,7 @@ class BulkGoodsImportController extends Controller
             $existingGood->is_preorder = $goodData['is_preorder'];
         }
 
-        // РћР±РЅРѕРІР»СЏРµРј РјРµС‚Р°-С‚РµРіРё, РµСЃР»Рё РїРµСЂРµРґР°РЅС‹ Рё РЅРµ РІ СЃРїРёСЃРєРµ РЅРµРёР·РјРµРЅСЏРµРјС‹С…
+        // Обновляем мета-теги, если переданы и не в списке неизменяемых
         if (isset($goodData['meta_title']) && !in_array('meta_title', $immutableFields)) {
             $existingGood->meta_title = $goodData['meta_title'];
         }
@@ -2407,21 +2407,21 @@ class BulkGoodsImportController extends Controller
             $existingGood->meta_description = $goodData['meta_description'];
         }
 
-        // РћР±РЅРѕРІР»СЏРµРј label_id, РµСЃР»Рё РїРµСЂРµРґР°РЅ Рё РЅРµ РІ СЃРїРёСЃРєРµ РЅРµРёР·РјРµРЅСЏРµРјС‹С…
+        // Обновляем label_id, если передан и не в списке неизменяемых
         if (isset($goodData['label_id']) && !in_array('label_id', $immutableFields)) {
             $existingGood->label_id = $goodData['label_id'];
         }
 
-        // РћР±РЅРѕРІР»СЏРµРј sort_order, РµСЃР»Рё РїРµСЂРµРґР°РЅ Рё РЅРµ РІ СЃРїРёСЃРєРµ РЅРµРёР·РјРµРЅСЏРµРјС‹С…
+        // Обновляем sort_order, если передан и не в списке неизменяемых
         if (isset($goodData['sort_order']) && !in_array('sort_order', $immutableFields)) {
             $existingGood->sort_order = $goodData['sort_order'];
         }
 
-        // РћР±РЅРѕРІР»СЏРµРј supplier (С‚РµРєСЃС‚РѕРІРѕРµ РїРѕР»Рµ), РµСЃР»Рё РїРµСЂРµРґР°РЅ supplier_name Рё РЅРµ РІ СЃРїРёСЃРєРµ РЅРµРёР·РјРµРЅСЏРµРјС‹С…
+        // Обновляем supplier (текстовое поле), если передан supplier_name и не в списке неизменяемых
         if (isset($goodData['supplier_name']) && !in_array('supplier', $immutableFields)) {
             $supplierName = trim($goodData['supplier_name'] ?? '');
             if ($supplierName !== '') {
-                // РќР°С…РѕРґРёРј РёР»Рё СЃРѕР·РґР°РµРј РїРѕСЃС‚Р°РІС‰РёРєР° РІ С‚Р°Р±Р»РёС†Рµ shop_suppliers
+                // Находим или создаем поставщика в таблице shop_suppliers
                 $supplier = ShopSupplier::firstOrCreate(
                     ['name' => $supplierName],
                     [
@@ -2431,7 +2431,7 @@ class BulkGoodsImportController extends Controller
                     ]
                 );
 
-                // РћР±РЅРѕРІР»СЏРµРј С‚РµРєСЃС‚РѕРІРѕРµ РїРѕР»Рµ supplier РІ С‚РѕРІР°СЂРµ
+                // Обновляем текстовое поле supplier в товаре
                 $existingGood->supplier = $supplierName;
 
             } else {
@@ -2439,12 +2439,12 @@ class BulkGoodsImportController extends Controller
             }
         }
 
-        // РћР±РЅРѕРІР»СЏРµРј РІСЃРµ РѕСЃС‚Р°Р»СЊРЅС‹Рµ РїРѕР»СЏ РёР· goodData, РєРѕС‚РѕСЂС‹Рµ РµСЃС‚СЊ РІ fillable РјРѕРґРµР»Рё
-        // Р­С‚Рѕ РіР°СЂР°РЅС‚РёСЂСѓРµС‚, С‡С‚Рѕ РІСЃРµ РїРѕР»СЏ, РѕС‚РјРµС‡РµРЅРЅС‹Рµ РґР»СЏ РёРјРїРѕСЂС‚Р°, Р±СѓРґСѓС‚ РѕР±РЅРѕРІР»РµРЅС‹
-        // РСЃРїРѕР»СЊР·СѓРµРј СЃРїРёСЃРѕРє fillable РїРѕР»РµР№ РёР· РјРѕРґРµР»Рё ShopGood
+        // Обновляем все остальные поля из goodData, которые есть в fillable модели
+        // Это гарантирует, это все поля, отмеченные для импорта, будут обновлены
+        // Используем список fillable полей из модели ShopGood
         $fillableFields = $existingGood->getFillable();
 
-        // РЎРїРёСЃРѕРє РїРѕР»РµР№, РєРѕС‚РѕСЂС‹Рµ СѓР¶Рµ РѕР±СЂР°Р±РѕС‚Р°РЅС‹ РІС‹С€Рµ (С‡С‚РѕР±С‹ РЅРµ РґСѓР±Р»РёСЂРѕРІР°С‚СЊ)
+        // Список полей, которые уже обработаны выше (чтобы не дублировать)
         $alreadyProcessed = [
             'name',
             'slug',
@@ -2473,25 +2473,25 @@ class BulkGoodsImportController extends Controller
             'sort_order',
         ];
 
-        // РћР±РЅРѕРІР»СЏРµРј РІСЃРµ РїРѕР»СЏ РёР· goodData, РєРѕС‚РѕСЂС‹Рµ РµСЃС‚СЊ РІ fillable Рё РЅРµ Р±С‹Р»Рё РѕР±СЂР°Р±РѕС‚Р°РЅС‹ РІС‹С€Рµ
+        // Обновляем все поля из goodData, которые есть в fillable и не были обработаны выше
         foreach ($fillableFields as $field) {
-            // РџСЂРѕРїСѓСЃРєР°РµРј РїРѕР»СЏ, РєРѕС‚РѕСЂС‹Рµ СѓР¶Рµ РѕР±СЂР°Р±РѕС‚Р°РЅС‹ РІС‹С€Рµ РёР»Рё СЏРІР»СЏСЋС‚СЃСЏ СЃР»СѓР¶РµР±РЅС‹РјРё (РЅР°С‡РёРЅР°СЋС‚СЃСЏ СЃ _)
+            // Пропускаем поля, которые уже обработаны выше или являются служебными (начинаются с _)
             if (in_array($field, $alreadyProcessed) || strpos($field, '_') === 0) {
                 continue;
             }
 
-            // РџСЂРѕРїСѓСЃРєР°РµРј РїРѕР»СЏ, РєРѕС‚РѕСЂС‹Рµ РЅР°С…РѕРґСЏС‚СЃСЏ РІ СЃРїРёСЃРєРµ РЅРµРёР·РјРµРЅСЏРµРјС‹С…
+            // Пропускаем поля, которые находятся в списке неизменяемых
             if (in_array($field, $immutableFields)) {
                 continue;
             }
 
-            // Р’РђР–РќРћ: РџСЂРѕРїСѓСЃРєР°РµРј РїРѕР»Рµ 'name', С‚Р°Рє РєР°Рє РѕРЅРѕ СѓР¶Рµ РѕР±СЂР°Р±РѕС‚Р°РЅРѕ РІС‹С€Рµ СЃ РѕР±СЂРµР·РєРѕР№
-            // Р•СЃР»Рё РѕР±РЅРѕРІРёС‚СЊ РµРіРѕ Р·РґРµСЃСЊ, РѕРЅРѕ РїРµСЂРµР·Р°РїРёС€РµС‚ РѕР±СЂРµР·Р°РЅРЅРѕРµ Р·РЅР°С‡РµРЅРёРµ РЅРµРѕР±СЂРµР·Р°РЅРЅС‹Рј
+            // ВАЖНО: Пропускаем поле 'name', так как оно уже обработано выше с обрезкой
+            // Если обновить его здесь, оно перезапишет обрезанное значение необрезанным
             if ($field === 'name') {
                 continue;
             }
 
-            // Р•СЃР»Рё РїРѕР»Рµ РµСЃС‚СЊ РІ goodData, РѕР±РЅРѕРІР»СЏРµРј РµРіРѕ
+            // Если поле есть в goodData, обновляем его
             if (isset($goodData[$field])) {
                 $existingGood->$field = $goodData[$field];
             }
@@ -2499,102 +2499,102 @@ class BulkGoodsImportController extends Controller
 
         $existingGood->save();
 
-        // Р•СЃР»Рё С‚РѕРІР°СЂ РёРјРµРµС‚ РІР°СЂРёР°С†РёРё, РЅРµ РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚СЃСЏ РєРѕРЅРєСЂРµС‚РЅР°СЏ РІР°СЂРёР°С†РёСЏ Рё Р±С‹Р»Рё РѕР±РЅРѕРІР»РµРЅС‹ РѕСЃС‚Р°С‚РєРё,
-        // РѕР±РЅРѕРІР»СЏРµРј РѕСЃС‚Р°С‚РєРё РІСЃРµС… Р°РєС‚РёРІРЅС‹С… РІР°СЂРёР°С†РёР№ РґР°РЅРЅС‹РјРё РёР· С‚РѕРІР°СЂР°
-        // РџСЂРё РёРјРїРѕСЂС‚Рµ РќР• РєРѕРїРёСЂСѓРµРј РѕСЃС‚Р°С‚РєРё РјРµР¶РґСѓ С‚РѕРІР°СЂРѕРј Рё РІР°СЂРёР°С†РёСЏРјРё
-        // РљР°Р¶РґС‹Р№ РѕР±СЉРµРєС‚ РѕР±РЅРѕРІР»СЏРµС‚СЃСЏ С‚РѕР»СЊРєРѕ СЃРІРѕРёРјРё РґР°РЅРЅС‹РјРё РёР· С„Р°Р№Р»Р°
+        // Если товар имеет вариации, не обрабатывается конкретная вариация и были обновлены остатки,
+        // обновляем остатки всех активных вариаций данными из товара
+        // При импорте НЕ копируем остатки между товаром и вариациями
+        // Каждый объект обновляется только своими данными из файла
 
-        // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј РєР°С‚РµРіРѕСЂРёРё
-        // Р’РђР–РќРћ: РєР°С‚РµРіРѕСЂРёРё СѓР¶Рµ РѕР±СЂР°Р±РѕС‚Р°РЅС‹ РІ processCategoriesAndBrandsBatch, РіРґРµ:
-        // - РљР°С‚РµРіРѕСЂРёРё РёР· С„Р°Р№Р»Р° РЅР°Р№РґРµРЅС‹/СЃРѕР·РґР°РЅС‹ Рё РїСЂРµРѕР±СЂР°Р·РѕРІР°РЅС‹ РІ ID
-        // Р—РґРµСЃСЊ РјС‹ РёР·РІР»РµРєР°РµРј СѓР¶Рµ РѕР±СЂР°Р±РѕС‚Р°РЅРЅС‹Рµ РєР°С‚РµРіРѕСЂРёРё
+        // Обрабатываем категории
+        // ВАЖНО: категории уже обработаны в processCategoriesAndBrandsBatch, где:
+        // - Категории из файла найдены/созданы и преобразованы в ID
+        // Здесь мы извлекаем уже обработанные категории
         $categoryIds = [];
 
         if (isset($goodData['category']) && !empty($goodData['category'])) {
-            // РћРґРёРЅРѕС‡РЅР°СЏ РєР°С‚РµРіРѕСЂРёСЏ - Р·РЅР°С‡РµРЅРёРµ СѓР¶Рµ РґРѕР»Р¶РЅРѕ Р±С‹С‚СЊ ID РїРѕСЃР»Рµ processCategoriesAndBrandsBatch
+            // Одиночная категория - значение уже должно быть ID после processCategoriesAndBrandsBatch
             $categoryIds = [(int) $goodData['category']];
         } elseif (isset($goodData['categories']) && is_array($goodData['categories'])) {
-            // РњРЅРѕР¶РµСЃС‚РІРµРЅРЅС‹Рµ РєР°С‚РµРіРѕСЂРёРё - Р·РЅР°С‡РµРЅРёСЏ СѓР¶Рµ РґРѕР»Р¶РЅС‹ Р±С‹С‚СЊ ID РїРѕСЃР»Рµ processCategoriesAndBrandsBatch
+            // Множественные категории - значения уже должны быть ID после processCategoriesAndBrandsBatch
             $categoryIds = array_filter(array_map('intval', $goodData['categories']), function ($id) {
                 return $id > 0;
             });
         }
 
-        // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј РєР°С‚РµРіРѕСЂРёРё РІ С„СѓРЅРєС†РёРё updateGood
-        // Р’РђР–РќРћ: РџСЂРѕРІРµСЂСЏРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РєР°С‚РµРіРѕСЂРёРё РџР•Р Р•Р” РїСЂРёРјРµРЅРµРЅРёРµРј РєР°С‚РµРіРѕСЂРёР№ РёР· С„Р°Р№Р»Р°
+        // Обрабатываем категории в функции updateGood
+        // ВАЖНО: Проверяем существующие категории ПЕРЕД применением категорий из файла
         $existingCategoryIds = $existingGood->categories()->pluck('shop_categories.id')->toArray();
 
-        // Р•СЃР»Рё РєР°С‚РµРіРѕСЂРёРё РµСЃС‚СЊ РІ $goodData, РїСЂРѕРІРµСЂСЏРµРј, РЅРµ Р±С‹Р»Р° Р»Рё СЌС‚Рѕ РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
+        // Если категории есть в $goodData, проверяем, не была ли это категория по умолчанию
         if (!empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null && !empty($existingCategoryIds)) {
             $defaultCategoryId = (int) $defaultCategory;
-            // Р•СЃР»Рё РµРґРёРЅСЃС‚РІРµРЅРЅР°СЏ РєР°С‚РµРіРѕСЂРёСЏ - СЌС‚Рѕ defaultCategory, Рё Сѓ С‚РѕРІР°СЂР° СѓР¶Рµ РµСЃС‚СЊ РґСЂСѓРіРёРµ РєР°С‚РµРіРѕСЂРёРё
+            // Если единственная категория - это defaultCategory, и у товара уже есть другие категории
             if (count($categoryIds) === 1 && $categoryIds[0] === $defaultCategoryId) {
-                // Р’РµСЂРѕСЏС‚РЅРѕ, РєР°С‚РµРіРѕСЂРёСЏ Р±С‹Р»Р° РїСЂРёРјРµРЅРµРЅР° РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ - РѕСЃС‚Р°РІР»СЏРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РєР°С‚РµРіРѕСЂРёРё
+                // Вероятно, категория была применена по умолчанию - оставляем существующие категории
                 $categoryIds = $existingCategoryIds;
             }
         } elseif (empty($categoryIds) && $useDefaultCategory && $defaultCategory !== null) {
-            // Р•СЃР»Рё РєР°С‚РµРіРѕСЂРёР№ РЅРµС‚ РІ С„Р°Р№Р»Рµ, РЅРѕ РІРєР»СЋС‡РµРЅР° РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
-            // РџСЂРё РѕР±РЅРѕРІР»РµРЅРёРё С‚РѕРІР°СЂР°: РїСЂРёРјРµРЅСЏРµРј РєР°С‚РµРіРѕСЂРёСЋ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ С‚РѕР»СЊРєРѕ РµСЃР»Рё Сѓ С‚РѕРІР°СЂР° РЅРµС‚ РєР°С‚РµРіРѕСЂРёР№
+            // Если категорий нет в файле, но включена категория по умолчанию
+            // При обновлении товара: применяем категорию по умолчанию только если у товара нет категорий
             if (empty($existingCategoryIds)) {
-                // РЈ С‚РѕРІР°СЂР° РЅРµС‚ РєР°С‚РµРіРѕСЂРёР№ - РїСЂРёРјРµРЅСЏРµРј РєР°С‚РµРіРѕСЂРёСЋ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
+                // У товара нет категорий - применяем категорию по умолчанию
                 $categoryIds = [(int) $defaultCategory];
             } else {
-                // РЈ С‚РѕРІР°СЂР° СѓР¶Рµ РµСЃС‚СЊ РєР°С‚РµРіРѕСЂРёРё - РѕСЃС‚Р°РІР»СЏРµРј РёС… Р±РµР· РёР·РјРµРЅРµРЅРёР№
+                // У товара уже есть категории - оставляем их без изменений
                 $categoryIds = $existingCategoryIds;
             }
         }
 
-        // РЎРёРЅС…СЂРѕРЅРёР·РёСЂСѓРµРј РєР°С‚РµРіРѕСЂРёРё С‚РѕР»СЊРєРѕ РµСЃР»Рё РѕРЅРё Р±С‹Р»Рё СѓРєР°Р·Р°РЅС‹ РІ С„Р°Р№Р»Рµ РёР»Рё РїСЂРёРјРµРЅРµРЅР° РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
-        // Р’РђР–РќРћ: РџСЂРё РѕР±РЅРѕРІР»РµРЅРёРё С‚РѕРІР°СЂР°, РµСЃР»Рё РєР°С‚РµРіРѕСЂРёР№ РЅРµС‚ РІ С„Р°Р№Р»Рµ Рё РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РЅРµ РїСЂРёРјРµРЅСЏР»Р°СЃСЊ,
-        // РЅРµ РѕС‚РІСЏР·С‹РІР°РµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РєР°С‚РµРіРѕСЂРёРё - РѕСЃС‚Р°РІР»СЏРµРј РёС… Р±РµР· РёР·РјРµРЅРµРЅРёР№
+        // Синхронизируем категории только если они были указаны в файле или применена категория по умолчанию
+        // ВАЖНО: При обновлении товара, если категорий нет в файле и категория по умолчанию не применялась,
+        // не отвязываем существующие категории - оставляем их без изменений
         if (!empty($categoryIds)) {
             $existingGood->categories()->sync($categoryIds);
         }
-        // Р•СЃР»Рё $categoryIds РїСѓСЃС‚РѕР№ Рё РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РЅРµ РїСЂРёРјРµРЅСЏР»Р°СЃСЊ - РЅРµ РІС‹Р·С‹РІР°РµРј sync, РѕСЃС‚Р°РІР»СЏРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РєР°С‚РµРіРѕСЂРёРё
+        // Если $categoryIds пустой и категория по умолчанию не применялась - не вызываем sync, оставляем существующие категории
 
-        // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј Р±СЂРµРЅРґС‹
+        // Обрабатываем бренды
         if (isset($goodData['brand']) && is_numeric($goodData['brand'])) {
-            // РћРґРёРЅРѕС‡РЅС‹Р№ Р±СЂРµРЅРґ РїРѕ ID
+            // Одиночный бренд по ID
             $existingGood->brands()->sync([$goodData['brand']]);
         } elseif (isset($goodData['brands']) && is_array($goodData['brands'])) {
-            // РњРЅРѕР¶РµСЃС‚РІРµРЅРЅС‹Рµ Р±СЂРµРЅРґС‹ - ID СѓР¶Рµ РїСЂРёРјРµРЅРµРЅС‹ РІ applyCategoryAndBrandIds
+            // Множественные бренды - ID уже применены в applyCategoryAndBrandIds
             $brandIds = array_filter($goodData['brands'], 'is_numeric');
             $existingGood->brands()->sync($brandIds);
         }
 
-        // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј РёР·РѕР±СЂР°Р¶РµРЅРёСЏ. Р•СЃР»Рё РїРµСЂРµРґР°РЅ $attachImagesToVariation (РїСЂРё В«РџРѕРёСЃРє РІ РІР°СЂРёР°С†РёСЏС…В»),
-        // РїСЂРёРІСЏР·С‹РІР°РµРј РёР·РѕР±СЂР°Р¶РµРЅРёСЏ Рє РІР°СЂРёР°С†РёРё, Р° РЅРµ Рє РѕСЃРЅРѕРІРЅРѕРјСѓ С‚РѕРІР°СЂСѓ.
+        // Обрабатываем изображения. Если передан $attachImagesToVariation (при «Поиск в вариациях»),
+        // привязываем изображения к вариации, а не к основному товару.
         if (isset($goodData['images']) && is_array($goodData['images'])) {
             $imageStats = $this->processImages($existingGood, $goodData['images'], $attachImagesToVariation, $skipImagesIfExistsOnUpdate, $naming);
         }
 
-        // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј СЃРІРѕР№СЃС‚РІР° С‚РѕРІР°СЂРѕРІ
+        // Обрабатываем свойства товаров
         if (isset($goodData['properties']) && is_array($goodData['properties'])) {
             $this->processProperties($existingGood, $goodData['properties']);
         }
 
-        // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј РІР°СЂРёР°С†РёРё С‚РѕРІР°СЂР°
+        // Обрабатываем вариации товара
         if (isset($goodData['variation']) && is_array($goodData['variation'])) {
-            // РџРµСЂРµРґР°РµРј nameTrimSymbol РІ goodData РґР»СЏ РѕР±СЂРµР·РєРё РЅР°Р·РІР°РЅРёСЏ С‚РѕРІР°СЂР°
+            // Передаем nameTrimSymbol в goodData для обрезки названия товара
             if (!isset($goodData['_nameTrimSymbol'])) {
                 $goodData['_nameTrimSymbol'] = $nameTrimSymbol;
             }
             $this->processVariation($existingGood, $goodData['variation'], $goodData, $supplierStockFields, $naming);
         }
 
-        // Р•СЃР»Рё С‚РѕРІР°СЂ РёРјРµРµС‚ РІР°СЂРёР°С†РёРё, РѕР±РЅРѕРІР»СЏРµРј РІСЃРµ РµРіРѕ РІР°СЂРёР°С†РёРё РґР°РЅРЅС‹РјРё РёР· С‚РѕРІР°СЂР°
-        // Р­С‚Рѕ РїСЂРёРјРµРЅСЏРµС‚СЃСЏ РєРѕРіРґР° С‚РѕРІР°СЂ РЅР°Р№РґРµРЅ РїРѕ Р°СЂС‚РёРєСѓР»Сѓ Рё РѕР±РЅРѕРІР»СЏРµС‚СЃСЏ, РЅРѕ РІР°СЂРёР°С†РёРё С‚РѕР¶Рµ РґРѕР»Р¶РЅС‹ РїРѕР»СѓС‡РёС‚СЊ РѕР±РЅРѕРІР»РµРЅРЅС‹Рµ РґР°РЅРЅС‹Рµ
-        // РќР• РїСЂРёРјРµРЅСЏРµС‚СЃСЏ РєРѕРіРґР° РІРєР»СЋС‡РµРЅ РїРѕРёСЃРє РІ РІР°СЂРёР°С†РёСЏС… - РІ СЌС‚РѕРј СЃР»СѓС‡Р°Рµ РѕР±РЅРѕРІР»СЏРµС‚СЃСЏ РєРѕРЅРєСЂРµС‚РЅР°СЏ РІР°СЂРёР°С†РёСЏ
+        // Если товар имеет вариации, обновляем все его вариации данными из товара
+        // Это применяется когда товар найден по артикулу и обновляется, но вариации тоже должны получить обновленные данные
+        // НЕ применяется когда включен поиск в вариациях - в этом случае обновляется конкретная вариация
         if (!$hasVariation && !$searchByNameInVariations && $existingGood->variations()->count() > 0) {
             $variations = $existingGood->variations;
 
             foreach ($variations as $variation) {
-                // РћР±РЅРѕРІР»СЏРµРј С†РµРЅС‹ РІР°СЂРёР°С†РёРё РґР°РЅРЅС‹РјРё РёР· С‚РѕРІР°СЂР° (РµСЃР»Рё РѕРЅРё РїРµСЂРµРґР°РЅС‹)
+                // Обновляем цены вариации данными из товара (если они переданы)
                 if (isset($goodData['price']) && !in_array('price', $immutableFields)) {
                     $variation->price = $this->applyPriceModification($goodData['price'], $priceModification['regular'] ?? null);
                 }
 
-                // РћР±РЅРѕРІР»СЏРµРј Р°РєС†РёРѕРЅРЅСѓСЋ С†РµРЅСѓ
+                // Обновляем акционную цену
                 if ((isset($goodData['sale_price']) || isset($priceModification)) && !in_array('sale_price', $immutableFields)) {
                     if (isset($priceModification) && isset($priceModification['sale'])) {
                         $variation->sale_price = $this->applySalePriceModification($goodData, $priceModification);
@@ -2603,24 +2603,24 @@ class BulkGoodsImportController extends Controller
                     }
                 }
 
-                // РћР±РЅРѕРІР»СЏРµРј РѕСЃС‚Р°С‚РєРё РІР°СЂРёР°С†РёРё РґР°РЅРЅС‹РјРё РёР· С‚РѕРІР°СЂР° СЃ РєРѕРЅРІРµСЂС‚Р°С†РёРµР№ С‚РёРїРѕРІ
+                // Обновляем остатки вариации данными из товара с конвертацией типов
                 if (isset($goodData['stock_quantity']) && !in_array('stock_quantity', $immutableFields)) {
                     $stockValue = $goodData['stock_quantity'];
-                    // РћР±РЅРѕРІР»СЏРµРј С‚РѕР»СЊРєРѕ РµСЃР»Рё Р·РЅР°С‡РµРЅРёРµ РЅРµ РїСѓСЃС‚РѕРµ
+                    // Обновляем только если значение не пустое
                     if ($stockValue !== null && $stockValue !== '' && trim($stockValue) !== '') {
                         $variation->stock_quantity = is_numeric($stockValue) ? (float) $stockValue : 0;
                     }
                 }
                 if (!in_array('remote_stock_quantity', $immutableFields)) {
                     $remoteValue = $goodData['remote_stock_quantity'] ?? null;
-                    // РћР±РЅРѕРІР»СЏРµРј С‚РѕР»СЊРєРѕ РµСЃР»Рё Р·РЅР°С‡РµРЅРёРµ РЅРµ РїСѓСЃС‚РѕРµ
+                    // Обновляем только если значение не пустое
                     if ($remoteValue !== null && $remoteValue !== '' && trim($remoteValue) !== '') {
                         $variation->remote_stock_quantity = is_numeric($remoteValue) ? (string) $remoteValue : $remoteValue;
                     }
                 }
                 if (!in_array('fast_remote_stock_quantity', $immutableFields)) {
                     $fastRemoteValue = $goodData['fast_remote_stock_quantity'] ?? null;
-                    // РћР±РЅРѕРІР»СЏРµРј С‚РѕР»СЊРєРѕ РµСЃР»Рё Р·РЅР°С‡РµРЅРёРµ РЅРµ РїСѓСЃС‚РѕРµ
+                    // Обновляем только если значение не пустое
                     if ($fastRemoteValue !== null && $fastRemoteValue !== '' && trim($fastRemoteValue) !== '') {
                         $variation->fast_remote_stock_quantity = is_numeric($fastRemoteValue) ? (string) $fastRemoteValue : $fastRemoteValue;
                     }
@@ -2640,10 +2640,10 @@ class BulkGoodsImportController extends Controller
 
         foreach ($categories as $category) {
             if (is_numeric($category)) {
-                // Р­С‚Рѕ ID РєР°С‚РµРіРѕСЂРёРё
+                // Это ID категории
                 $categoryIds[] = (int) $category;
             } else {
-                // Р­С‚Рѕ РЅР°Р·РІР°РЅРёРµ РєР°С‚РµРіРѕСЂРёРё
+                // Это название категории
                 $categorySlug = Str::slug($category);
                 $existingCategory = ShopCategory::where('name', $category)
                     ->orWhere('slug', $categorySlug)
@@ -2652,7 +2652,7 @@ class BulkGoodsImportController extends Controller
                 if ($existingCategory) {
                     $categoryIds[] = $existingCategory->id;
                 } elseif ($autoCreate) {
-                    // Р”РѕРїРѕР»РЅРёС‚РµР»СЊРЅР°СЏ РїСЂРѕРІРµСЂРєР° РЅР° СЃР»СѓС‡Р°Р№, РµСЃР»Рё slug СѓР¶Рµ СЃСѓС‰РµСЃС‚РІСѓРµС‚
+                    // Дополнительная проверка на случай, если slug уже существует
                     $existingCategoryBySlug = ShopCategory::where('slug', $categorySlug)->first();
                     if ($existingCategoryBySlug) {
                         $categoryIds[] = $existingCategoryBySlug->id;
@@ -2677,10 +2677,10 @@ class BulkGoodsImportController extends Controller
 
         foreach ($brands as $brand) {
             if (is_numeric($brand)) {
-                // Р­С‚Рѕ ID Р±СЂРµРЅРґР°
+                // Это ID бренда
                 $brandIds[] = (int) $brand;
             } else {
-                // Р­С‚Рѕ РЅР°Р·РІР°РЅРёРµ Р±СЂРµРЅРґР°
+                // Это название бренда
                 $brandSlug = Str::slug($brand);
                 $existingBrand = ShopBrand::where('name', $brand)
                     ->orWhere('slug', $brandSlug)
@@ -2689,7 +2689,7 @@ class BulkGoodsImportController extends Controller
                 if ($existingBrand) {
                     $brandIds[] = $existingBrand->id;
                 } elseif ($autoCreate) {
-                    // РџСЂРѕРІРµСЂСЏРµРј, РЅРµ СЃСѓС‰РµСЃС‚РІСѓРµС‚ Р»Рё СѓР¶Рµ Р±СЂРµРЅРґ СЃ С‚Р°РєРёРј slug
+                    // Проверяем, не существует ли уже бренд с таким slug
                     $existingBrandBySlug = ShopBrand::where('slug', $brandSlug)->first();
                     if ($existingBrandBySlug) {
                         $brandIds[] = $existingBrandBySlug->id;
@@ -2710,11 +2710,11 @@ class BulkGoodsImportController extends Controller
     }
 
     /**
-     * РћР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ: Р·Р°РіСЂСѓР·РєР° Рё РїСЂРёРІСЏР·РєР° Рє С‚РѕРІР°СЂСѓ РёР»Рё РІР°СЂРёР°С†РёРё.
+     * Обрабатывает изображения: загрузка и привязка к товару или вариации.
      *
-     * @param  object  $good  РўРѕРІР°СЂ (РґР»СЏ РѕС‡РёСЃС‚РєРё Excel-РёР·РѕР±СЂР°Р¶РµРЅРёР№ Рё РєРѕРіРґР° $variation РїСѓСЃС‚Р°СЏ)
-     * @param  array  $images  РњР°СЃСЃРёРІ URL РёР»Рё РїСѓС‚РµР№ Рє РёР·РѕР±СЂР°Р¶РµРЅРёСЏРј
-     * @param  object|null  $variation  Р’Р°СЂРёР°С†РёСЏ: РµСЃР»Рё РїРµСЂРµРґР°РЅР°, РёР·РѕР±СЂР°Р¶РµРЅРёСЏ РїСЂРёРІСЏР·С‹РІР°СЋС‚СЃСЏ Рє РІР°СЂРёР°С†РёРё, Р° РЅРµ Рє С‚РѕРІР°СЂСѓ
+     * @param  object  $good  Товар (для очистки Excel-изображений и когда $variation пустая)
+     * @param  array  $images  Массив URL или путей к изображениям
+     * @param  object|null  $variation  Вариация: если передана, изображения привязываются к вариации, а не к товару
      */
     private function processImages($good, $images, $variation = null, $skipIfHasImagesOnUpdate = false, $naming = 'hash')
     {        $stats = ['downloaded' => 0, 'failed' => 0];
@@ -2737,7 +2737,7 @@ class BulkGoodsImportController extends Controller
                     if ($hasImages) {
                         $firstImageUrl = $filteredImages[0] ?? null;
                         if ($firstImageUrl !== null) {
-                            $this->importLogService->logImageSkipped($firstImageUrl, 'РџСЂРѕРїСѓС‰РµРЅРѕ РїРѕ РЅР°СЃС‚СЂРѕР№РєРµ: Сѓ РІР°СЂРёР°С†РёРё СѓР¶Рµ РµСЃС‚СЊ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ', $good->sku ?? null);
+                            $this->importLogService->logImageSkipped($firstImageUrl, 'Пропущено по настройке: у вариации уже есть изображения', $good->sku ?? null);
                         }
 
                         return $stats;
@@ -2747,18 +2747,18 @@ class BulkGoodsImportController extends Controller
                     if ($hasImages) {
                         $firstImageUrl = $filteredImages[0] ?? null;
                         if ($firstImageUrl !== null) {
-                            $this->importLogService->logImageSkipped($firstImageUrl, 'РџСЂРѕРїСѓС‰РµРЅРѕ РїРѕ РЅР°СЃС‚СЂРѕР№РєРµ: Сѓ С‚РѕРІР°СЂР° СѓР¶Рµ РµСЃС‚СЊ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ', $good->sku ?? null);
+                            $this->importLogService->logImageSkipped($firstImageUrl, 'Пропущено по настройке: у товара уже есть изображения', $good->sku ?? null);
                         }
 
                         return $stats;
                     }
                 }
             } catch (\Exception $e) {
-                // Р’ СЃР»СѓС‡Р°Рµ РѕС€РёР±РєРё РїСЂРѕРІРµСЂРєРё РїСЂРѕРґРѕР»Р¶Р°РµРј РѕР±С‹С‡РЅСѓСЋ РѕР±СЂР°Р±РѕС‚РєСѓ, С‡С‚РѕР±С‹ РЅРµ Р±Р»РѕРєРёСЂРѕРІР°С‚СЊ РёРјРїРѕСЂС‚
+                // В случае ошибки проверки продолжаем обычную обработку, чтобы не блокировать импорт
             }
         }
 
-        // РџСЂРѕРІРµСЂСЏРµРј, РµСЃС‚СЊ Р»Рё СЃСЂРµРґРё РЅРѕРІС‹С… РёР·РѕР±СЂР°Р¶РµРЅРёР№ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ РёР· Excel
+        // Проверяем, есть ли среди новых изображений изображения из Excel
         $hasExcelImages = false;
         foreach ($images as $imageUrl) {
             if (str_starts_with($imageUrl, '/images/shop/goods/excel_')) {
@@ -2767,15 +2767,15 @@ class BulkGoodsImportController extends Controller
             }
         }
 
-        // Р•СЃР»Рё РµСЃС‚СЊ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ РёР· Excel, СѓРґР°Р»СЏРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ РёР· Excel
+        // Если есть изображения из Excel, удаляем существующие изображения из Excel
         if ($hasExcelImages) {
             if ($attachToVariation) {
-                // РџСЂРёРІСЏР·РєР° Рє РІР°СЂРёР°С†РёРё: СѓРґР°Р»СЏРµРј С‚РѕР»СЊРєРѕ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ СЌС‚РѕР№ РІР°СЂРёР°С†РёРё РёР· Excel
+                // Привязка к вариации: удаляем только изображения этой вариации из Excel
                 $existingExcelImages = ShopGoodImage::where('variation_id', $variation->id)
                     ->where('file_path', 'like', '/images/shop/goods/excel_%')
                     ->get();
             } else {
-                // РџСЂРёРІСЏР·РєР° Рє С‚РѕРІР°СЂСѓ: СѓРґР°Р»СЏРµРј РўРћР›Р¬РљРћ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ СЃР°РјРѕРіРѕ С‚РѕРІР°СЂР° РёР· Excel (РќР• С‚СЂРѕРіР°РµРј РІР°СЂРёР°С†РёРё)
+                // Привязка к товару: удаляем ТОЛЬКО изображения самого товара из Excel (НЕ трогаем вариации)
                 $existingExcelImages = ShopGoodImage::where('good_id', $good->id)
                     ->whereNull('variation_id')
                     ->where('file_path', 'like', '/images/shop/goods/excel_%')
@@ -2786,9 +2786,9 @@ class BulkGoodsImportController extends Controller
                 $filePath = str_replace('/images/', '', $existingImage->file_path);
                 $fullPath = frontend_public_path('images/' . $filePath);
                 if (file_exists($fullPath)) {
-                    unlink($fullPath); // РЈРґР°Р»СЏРµРј С„Р°Р№Р»
+                    unlink($fullPath); // Удаляем файл
                 }
-                $existingImage->delete(); // РЈРґР°Р»СЏРµРј Р·Р°РїРёСЃСЊ
+                $existingImage->delete(); // Удаляем запись
             }
         }
 
@@ -2841,7 +2841,7 @@ class BulkGoodsImportController extends Controller
 
     private function downloadImage($imageUrl, $naming = 'hash')
     {
-        // РСЃРїРѕР»СЊР·СѓРµРј С‚РѕС‚ Р¶Рµ РјРµС‚РѕРґ, С‡С‚Рѕ Рё РІ ShopGoodsController
+        // Используем тот же метод, что и в ShopGoodsController
         $response = Http::timeout(30)->post(url('/api/admin/shop/goods/download-image'), [
             'imageUrl' => $imageUrl,
             'storagePath' => '/shop/goods',
@@ -2875,18 +2875,18 @@ class BulkGoodsImportController extends Controller
     }
 
     /**
-     * РџР°РєРµС‚РЅР°СЏ РѕР±СЂР°Р±РѕС‚РєР° РєР°С‚РµРіРѕСЂРёР№ Рё Р±СЂРµРЅРґРѕРІ
+     * Пакетная обработка категорий и брендов
      */
     private function processCategoriesAndBrandsBatch(&$goods, $autoCreateCategories, $autoCreateBrands, $defaultCategory = null, $useDefaultCategory = false)
     {
-        // РЎРѕР±РёСЂР°РµРј РІСЃРµ СѓРЅРёРєР°Р»СЊРЅС‹Рµ РЅР°Р·РІР°РЅРёСЏ РєР°С‚РµРіРѕСЂРёР№ Рё Р±СЂРµРЅРґРѕРІ
+        // Собираем все уникальные названия категорий и брендов
         $allCategories = collect();
         $allBrands = collect();
 
         foreach ($goods as $good) {
-            // РЎРѕР±РёСЂР°РµРј РєР°С‚РµРіРѕСЂРёРё
+            // Собираем категории
             if (isset($good['category']) && is_string($good['category']) && !empty($good['category'])) {
-                // РЎРЅР°С‡Р°Р»Р° СЂР°Р·РґРµР»СЏРµРј РїРѕ Р·Р°РїСЏС‚С‹Рј (РµСЃР»Рё РµСЃС‚СЊ РЅРµСЃРєРѕР»СЊРєРѕ РєР°С‚РµРіРѕСЂРёР№)
+                // Сначала разделяем по запятым (если есть несколько категорий)
                 $categoryStrings = array_map('trim', explode(',', $good['category']));
 
                 foreach ($categoryStrings as $categoryString) {
@@ -2894,24 +2894,24 @@ class BulkGoodsImportController extends Controller
                         continue;
                     }
 
-                    // Р•СЃР»Рё РєР°С‚РµРіРѕСЂРёСЏ СЃРѕРґРµСЂР¶РёС‚ РёРµСЂР°СЂС…РёСЋ (>), СЂР°Р·Р±РёРІР°РµРј Рё СЃРѕР±РёСЂР°РµРј РІСЃРµ С‡Р°СЃС‚Рё РѕС‚РґРµР»СЊРЅРѕ
-                    // РќРћ СЃР°РјСѓ СЃС‚СЂРѕРєСѓ СЃ > РЅРµ РґРѕР±Р°РІР»СЏРµРј РІ СЃРїРёСЃРѕРє РґР»СЏ СЃРѕР·РґР°РЅРёСЏ
+                    // Если категория содержит иерархию (>), разбиваем и собираем все части отдельно
+                    // НО самую строку с > не добавляем в список для создания
                     if (strpos($categoryString, '>') !== false) {
                         $categoryParts = array_map('trim', explode('>', $categoryString));
-                        // Р”РѕР±Р°РІР»СЏРµРј С‚РѕР»СЊРєРѕ РѕС‚РґРµР»СЊРЅС‹Рµ С‡Р°СЃС‚Рё, РЅРµ СЃС‚СЂРѕРєСѓ С†РµР»РёРєРѕРј
+                        // Добавляем только отдельные части, не строку целиком
                         foreach ($categoryParts as $part) {
                             if (!empty($part)) {
                                 $allCategories->push($part);
                             }
                         }
                     } else {
-                        // РћР±С‹С‡РЅР°СЏ РєР°С‚РµРіРѕСЂРёСЏ Р±РµР· РёРµСЂР°СЂС…РёРё
+                        // Обычная категория без иерархии
                         $allCategories->push($categoryString);
                     }
                 }
             } elseif (isset($good['categories'])) {
                 if (is_string($good['categories'])) {
-                    // РЎРЅР°С‡Р°Р»Р° СЂР°Р·РґРµР»СЏРµРј РїРѕ СЂР°Р·РґРµР»РёС‚РµР»СЏРј (Р·Р°РїСЏС‚Р°СЏ, С‚РѕС‡РєР° СЃ Р·Р°РїСЏС‚РѕР№ Рё С‚.Рґ.)
+                    // Сначала разделяем по разделителям (запятая, точка с запятой и т.д.)
                     $categoryNames = $this->parseDelimitedString($good['categories']);
 
                     foreach ($categoryNames as $categoryName) {
@@ -2919,18 +2919,18 @@ class BulkGoodsImportController extends Controller
                             continue;
                         }
 
-                        // Р•СЃР»Рё РєР°С‚РµРіРѕСЂРёСЏ СЃРѕРґРµСЂР¶РёС‚ РёРµСЂР°СЂС…РёСЋ (>), СЂР°Р·Р±РёРІР°РµРј Рё СЃРѕР±РёСЂР°РµРј РІСЃРµ С‡Р°СЃС‚Рё РѕС‚РґРµР»СЊРЅРѕ
-                        // РќРћ СЃР°РјСѓ СЃС‚СЂРѕРєСѓ СЃ > РЅРµ РґРѕР±Р°РІР»СЏРµРј РІ СЃРїРёСЃРѕРє РґР»СЏ СЃРѕР·РґР°РЅРёСЏ
+                        // Если категория содержит иерархию (>), разбиваем и собираем все части отдельно
+                        // НО самую строку с > не добавляем в список для создания
                         if (strpos($categoryName, '>') !== false) {
                             $categoryParts = array_map('trim', explode('>', $categoryName));
-                            // Р”РѕР±Р°РІР»СЏРµРј С‚РѕР»СЊРєРѕ РѕС‚РґРµР»СЊРЅС‹Рµ С‡Р°СЃС‚Рё, РЅРµ СЃС‚СЂРѕРєСѓ С†РµР»РёРєРѕРј
+                            // Добавляем только отдельные части, не строку целиком
                             foreach ($categoryParts as $part) {
                                 if (!empty($part)) {
                                     $allCategories->push($part);
                                 }
                             }
                         } else {
-                            // РћР±С‹С‡РЅР°СЏ РєР°С‚РµРіРѕСЂРёСЏ Р±РµР· РёРµСЂР°СЂС…РёРё
+                            // Обычная категория без иерархии
                             $allCategories->push($categoryName);
                         }
                     }
@@ -2940,25 +2940,25 @@ class BulkGoodsImportController extends Controller
                             continue;
                         }
 
-                        // Р•СЃР»Рё РєР°С‚РµРіРѕСЂРёСЏ СЃРѕРґРµСЂР¶РёС‚ РёРµСЂР°СЂС…РёСЋ (>), СЂР°Р·Р±РёРІР°РµРј Рё СЃРѕР±РёСЂР°РµРј РІСЃРµ С‡Р°СЃС‚Рё РѕС‚РґРµР»СЊРЅРѕ
-                        // РќРћ СЃР°РјСѓ СЃС‚СЂРѕРєСѓ СЃ > РЅРµ РґРѕР±Р°РІР»СЏРµРј РІ СЃРїРёСЃРѕРє РґР»СЏ СЃРѕР·РґР°РЅРёСЏ
+                        // Если категория содержит иерархию (>), разбиваем и собираем все части отдельно
+                        // НО самую строку с > не добавляем в список для создания
                         if (strpos($categoryName, '>') !== false) {
                             $categoryParts = array_map('trim', explode('>', $categoryName));
-                            // Р”РѕР±Р°РІР»СЏРµРј С‚РѕР»СЊРєРѕ РѕС‚РґРµР»СЊРЅС‹Рµ С‡Р°СЃС‚Рё, РЅРµ СЃС‚СЂРѕРєСѓ С†РµР»РёРєРѕРј
+                            // Добавляем только отдельные части, не строку целиком
                             foreach ($categoryParts as $part) {
                                 if (!empty($part)) {
                                     $allCategories->push($part);
                                 }
                             }
                         } else {
-                            // РћР±С‹С‡РЅР°СЏ РєР°С‚РµРіРѕСЂРёСЏ Р±РµР· РёРµСЂР°СЂС…РёРё
+                            // Обычная категория без иерархии
                             $allCategories->push($categoryName);
                         }
                     }
                 }
             }
 
-            // РЎРѕР±РёСЂР°РµРј Р±СЂРµРЅРґС‹
+            // Собираем бренды
             if (isset($good['brand']) && is_string($good['brand']) && !empty($good['brand'])) {
                 $allBrands->push($good['brand']);
             } elseif (isset($good['brands'])) {
@@ -2974,26 +2974,26 @@ class BulkGoodsImportController extends Controller
         $allCategories = $allCategories->unique()->filter();
         $allBrands = $allBrands->unique()->filter();
 
-        // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј РєР°С‚РµРіРѕСЂРёРё РїР°РєРµС‚РЅРѕ
+        // Обрабатываем категории пакетно
         if ($allCategories->isNotEmpty()) {
             $this->processCategoriesBatch($allCategories, $autoCreateCategories);
         }
 
-        // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј Р±СЂРµРЅРґС‹ РїР°РєРµС‚РЅРѕ
+        // Обрабатываем бренды пакетно
         if ($allBrands->isNotEmpty()) {
             $this->processBrandsBatch($allBrands, $autoCreateBrands);
         }
 
-        // РџСЂРёРјРµРЅСЏРµРј РЅР°Р№РґРµРЅРЅС‹Рµ ID Рє С‚РѕРІР°СЂР°Рј
+        // Применяем найденные ID к товарам
         $this->applyCategoryAndBrandIds($goods, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory);
     }
 
     /**
-     * РџР°РєРµС‚РЅР°СЏ РѕР±СЂР°Р±РѕС‚РєР° РєР°С‚РµРіРѕСЂРёР№
+     * Пакетная обработка категорий
      */
     private function processCategoriesBatch($allCategories, $autoCreate)
     {
-        // Р—Р°РіСЂСѓР¶Р°РµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РєР°С‚РµРіРѕСЂРёРё РїРѕ РёРјРµРЅРё Рё slug
+        // Загружаем существующие категории по имени и slug
         $existingCategories = ShopCategory::where(function ($query) use ($allCategories) {
             $query->whereIn('name', $allCategories->toArray())
                 ->orWhereIn('slug', $allCategories->map(function ($name) {
@@ -3003,19 +3003,19 @@ class BulkGoodsImportController extends Controller
 
         $categoryMap = collect();
 
-        // РЎРѕР·РґР°РµРј РєР°СЂС‚Сѓ РїРѕ РёРјРµРЅРё Рё slug
+        // Создаем карту по имени и slug
         foreach ($existingCategories as $category) {
             $categoryMap[strtolower($category->name)] = $category->id;
             $categoryMap[strtolower($category->slug)] = $category->id;
         }
 
-        // РЎРѕР·РґР°РµРј РЅРµРґРѕСЃС‚Р°СЋС‰РёРµ РєР°С‚РµРіРѕСЂРёРё
-        // Р’РђР–РќРћ: Р¤РёР»СЊС‚СЂСѓРµРј РєР°С‚РµРіРѕСЂРёРё, РєРѕС‚РѕСЂС‹Рµ СЃРѕРґРµСЂР¶Р°С‚ > - С‚Р°РєРёРµ РєР°С‚РµРіРѕСЂРёРё РЅРµ РґРѕР»Р¶РЅС‹ СЃРѕР·РґР°РІР°С‚СЊСЃСЏ РЅР°РїСЂСЏРјСѓСЋ
-        // РћРЅРё РѕР±СЂР°Р±Р°С‚С‹РІР°СЋС‚СЃСЏ С‡РµСЂРµР· processCategoryHierarchy РІ applyCategoryAndBrandIds
+        // Создаем недостающие категории
+        // ВАЖНО: Фильтруем категории, которые содержат > - такие категории не должны создаваться напрямую
+        // Они обрабатываются ??ерез processCategoryHierarchy в applyCategoryAndBrandIds
         $createdCategories = [];
         if ($autoCreate) {
             $categoriesToCreate = $allCategories->filter(function ($name) use ($categoryMap) {
-                // РџСЂРѕРїСѓСЃРєР°РµРј РєР°С‚РµРіРѕСЂРёРё, РєРѕС‚РѕСЂС‹Рµ СЃРѕРґРµСЂР¶Р°С‚ > - СЌС‚Рѕ РёРµСЂР°СЂС…РёСЏ, Р° РЅРµ РЅР°Р·РІР°РЅРёРµ РєР°С‚РµРіРѕСЂРёРё
+                // Пропускаем категории, которые содержат > - это иерархия, а не название категории
                 if (strpos($name, '>') !== false) {
                     return false;
                 }
@@ -3027,14 +3027,14 @@ class BulkGoodsImportController extends Controller
             });
 
             foreach ($categoriesToCreate as $categoryName) {
-                // Р”РѕРїРѕР»РЅРёС‚РµР»СЊРЅР°СЏ РїСЂРѕРІРµСЂРєР° РЅР° СЃР»СѓС‡Р°Р№, РµСЃР»Рё РєР°С‚РµРіРѕСЂРёСЏ РІСЃРµ РµС‰Рµ СЃРѕРґРµСЂР¶РёС‚ >
+                // Дополнительная проверка на случай, если категория все еще содержит >
                 if (strpos($categoryName, '>') !== false) {
                     continue;
                 }
 
                 $categorySlug = Str::slug($categoryName);
 
-                // Р”РѕРїРѕР»РЅРёС‚РµР»СЊРЅР°СЏ РїСЂРѕРІРµСЂРєР° РЅР° СЃР»СѓС‡Р°Р№, РµСЃР»Рё slug СѓР¶Рµ СЃСѓС‰РµСЃС‚РІСѓРµС‚
+                // Дополнительная проверка на случай, если slug уже существует
                 $existingCategoryBySlug = ShopCategory::where('slug', $categorySlug)->first();
                 if ($existingCategoryBySlug) {
                     $categoryMap[strtolower($categoryName)] = $existingCategoryBySlug->id;
@@ -3053,19 +3053,19 @@ class BulkGoodsImportController extends Controller
             }
         }
 
-        // РЎРѕС…СЂР°РЅСЏРµРј РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ СЃРѕР·РґР°РЅРЅС‹С… РєР°С‚РµРіРѕСЂРёСЏС… РІ РєСЌС€Рµ
+        // Сохраняем информацию о созданных категориях в кэше
         cache(['created_categories_' . auth()->id() => $createdCategories], 300);
 
-        // РЎРѕС…СЂР°РЅСЏРµРј РєР°СЂС‚Сѓ РІ РєСЌС€Рµ РґР»СЏ РёСЃРїРѕР»СЊР·РѕРІР°РЅРёСЏ РІ applyCategoryAndBrandIds
-        cache(['category_map_' . auth()->id() => $categoryMap], 300); // 5 РјРёРЅСѓС‚
+        // Сохраняем карту в кэше для использования в applyCategoryAndBrandIds
+        cache(['category_map_' . auth()->id() => $categoryMap], 300); // 5 минут
     }
 
     /**
-     * РџР°РєРµС‚РЅР°СЏ РѕР±СЂР°Р±РѕС‚РєР° Р±СЂРµРЅРґРѕРІ
+     * Пакетная обработка брендов
      */
     private function processBrandsBatch($allBrands, $autoCreate)
     {
-        // Р—Р°РіСЂСѓР¶Р°РµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ Р±СЂРµРЅРґС‹ РїРѕ РёРјРµРЅРё Рё slug
+        // Загружаем существующие бренды по имени и slug
         $existingBrands = ShopBrand::where(function ($query) use ($allBrands) {
             $query->whereIn('name', $allBrands->toArray())
                 ->orWhereIn('slug', $allBrands->map(function ($name) {
@@ -3075,13 +3075,13 @@ class BulkGoodsImportController extends Controller
 
         $brandMap = collect();
 
-        // РЎРѕР·РґР°РµРј РєР°СЂС‚Сѓ РїРѕ РёРјРµРЅРё Рё slug
+        // Создаем карту по имени и slug
         foreach ($existingBrands as $brand) {
             $brandMap[strtolower($brand->name)] = $brand->id;
             $brandMap[strtolower($brand->slug)] = $brand->id;
         }
 
-        // РЎРѕР·РґР°РµРј РЅРµРґРѕСЃС‚Р°СЋС‰РёРµ Р±СЂРµРЅРґС‹
+        // Создаем недостающие бренды
         $createdBrands = [];
         if ($autoCreate) {
             $brandsToCreate = $allBrands->filter(function ($name) use ($brandMap) {
@@ -3094,7 +3094,7 @@ class BulkGoodsImportController extends Controller
             foreach ($brandsToCreate as $brandName) {
                 $brandSlug = Str::slug($brandName);
 
-                // Р”РѕРїРѕР»РЅРёС‚РµР»СЊРЅР°СЏ РїСЂРѕРІРµСЂРєР° РЅР° СЃР»СѓС‡Р°Р№, РµСЃР»Рё slug СѓР¶Рµ СЃСѓС‰РµСЃС‚РІСѓРµС‚
+                // Дополнительная проверка на случай, если slug уже существует
                 $existingBrandBySlug = ShopBrand::where('slug', $brandSlug)->first();
                 if ($existingBrandBySlug) {
                     $brandMap[strtolower($brandName)] = $existingBrandBySlug->id;
@@ -3114,25 +3114,25 @@ class BulkGoodsImportController extends Controller
             }
         }
 
-        // РЎРѕС…СЂР°РЅСЏРµРј РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ СЃРѕР·РґР°РЅРЅС‹С… Р±СЂРµРЅРґР°С… РІ РєСЌС€Рµ
+        // Сохраняем информацию о созданных брендах в кэше
         cache(['created_brands_' . auth()->id() => $createdBrands], 300);
 
-        // РЎРѕС…СЂР°РЅСЏРµРј РєР°СЂС‚Сѓ РІ РєСЌС€Рµ РґР»СЏ РёСЃРїРѕР»СЊР·РѕРІР°РЅРёСЏ РІ applyCategoryAndBrandIds
-        cache(['brand_map_' . auth()->id() => $brandMap], 300); // 5 РјРёРЅСѓС‚
+        // Сохраняем карту в кэше для использования в applyCategoryAndBrandIds
+        cache(['brand_map_' . auth()->id() => $brandMap], 300); // 5 минут
     }
 
     /**
-     * РџСЂРёРјРµРЅРµРЅРёРµ РЅР°Р№РґРµРЅРЅС‹С… ID Рє С‚РѕРІР°СЂР°Рј
+     * Применение найденных ID к товарам
      */
     private function applyCategoryAndBrandIds(&$goods, $autoCreateCategories = true, $autoCreateBrands = true, $defaultCategory = null, $useDefaultCategory = false)
     {
         $categoryMap = cache('category_map_' . auth()->id(), collect());
-        // РџСЂРµРѕР±СЂР°Р·СѓРµРј РєРѕР»Р»РµРєС†РёСЋ РІ РјР°СЃСЃРёРІ РґР»СЏ СѓРґРѕР±СЃС‚РІР° СЂР°Р±РѕС‚С‹
+        // Преобразуем коллекцию в массив для удобства работы
         $categoryMapArray = $categoryMap instanceof \Illuminate\Support\Collection ? $categoryMap->toArray() : (array) $categoryMap;
         $brandMap = cache('brand_map_' . auth()->id(), collect());
 
         foreach ($goods as &$good) {
-            // Р—Р°РїРѕРјРёРЅР°РµРј, Р±С‹Р»Р° Р»Рё РєР°С‚РµРіРѕСЂРёСЏ РІ РёСЃС…РѕРґРЅС‹С… РґР°РЅРЅС‹С… (РґРѕ РѕР±СЂР°Р±РѕС‚РєРё)
+            // Запоминаем, была ли категория в исходных данных (до обработки)
             $hadCategoryInFile = false;
             if (isset($good['category']) && !empty($good['category'])) {
                 $hadCategoryInFile = true;
@@ -3146,14 +3146,14 @@ class BulkGoodsImportController extends Controller
                 }
             }
 
-            // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј РєР°С‚РµРіРѕСЂРёРё
+            // Обрабатываем категории
             if (isset($good['category']) && !empty($good['category'])) {
-                // Р•СЃР»Рё РєР°С‚РµРіРѕСЂРёСЏ - СЃС‚СЂРѕРєР° РёР»Рё С‡РёСЃР»Рѕ, РїСЂРµРѕР±СЂР°Р·СѓРµРј РІ СЃС‚СЂРѕРєСѓ РґР»СЏ РѕР±СЂР°Р±РѕС‚РєРё
+                // Если категория - строка или число, преобразуем в строку для обработки
                 $categoryValue = (string) $good['category'];
                 if (!empty($categoryValue)) {
-                    // РџСЂРѕРІРµСЂСЏРµРј, СЃРѕРґРµСЂР¶РёС‚ Р»Рё СЃС‚СЂРѕРєР° СЃРёРјРІРѕР» > (РёРµСЂР°СЂС…РёСЏ РєР°С‚РµРіРѕСЂРёР№)
+                    // Проверяем, содержит ли строка символ > (иерархия категорий)
                     if (strpos($categoryValue, '>') !== false) {
-                        // Р Р°Р·Р±РёРІР°РµРј СЃС‚СЂРѕРєСѓ РїРѕ СЃРёРјРІРѕР»Сѓ > Рё РѕР±СЂР°Р±Р°С‚С‹РІР°РµРј РёРµСЂР°СЂС…РёСЋ
+                        // Разбиваем строку по символу > и обрабатываем иерархию
                         $categoryPath = array_map('trim', explode('>', $categoryValue));
                         $categoryId = $this->processCategoryHierarchy($categoryPath, $categoryMap, $autoCreateCategories);
                         if ($categoryId) {
@@ -3164,17 +3164,17 @@ class BulkGoodsImportController extends Controller
                             }
                         }
                     } else {
-                        // РћР±С‹С‡РЅР°СЏ РѕР±СЂР°Р±РѕС‚РєР° РѕРґРЅРѕР№ РєР°С‚РµРіРѕСЂРёРё
+                        // Обычная обработка одной категории
                         $categoryId = $categoryMapArray[strtolower($categoryValue)] ?? null;
                         if ($categoryId) {
                             $good['category'] = $categoryId;
                         } else {
                             if ($autoCreateCategories) {
-                                // РЎРѕР·РґР°РµРј РЅРѕРІСѓСЋ РєР°С‚РµРіРѕСЂРёСЋ, РµСЃР»Рё РѕРЅР° РЅРµ РЅР°Р№РґРµРЅР°
+                                // Создаем новую категорию, если она не найдена
                                 $categoryName = trim($categoryValue);
                                 $categorySlug = \Illuminate\Support\Str::slug($categoryName);
 
-                                // РџСЂРѕРІРµСЂСЏРµРј СѓРЅРёРєР°Р»СЊРЅРѕСЃС‚СЊ slug
+                                // Проверяем уникальность slug
                                 $slugCounter = 1;
                                 $baseSlug = $categorySlug;
                                 while (ShopCategory::where('slug', $categorySlug)->exists()) {
@@ -3191,13 +3191,13 @@ class BulkGoodsImportController extends Controller
                                     ]);
                                     $categoryId = $newCategory->id;
 
-                                    // Р”РѕР±Р°РІР»СЏРµРј РІ РєР°СЂС‚Сѓ
+                                    // Добавляем в карту
                                     $categoryMapArray[strtolower($categoryName)] = $categoryId;
 
-                                    // РћР±РЅРѕРІР»СЏРµРј РєРµС€ РєР°СЂС‚С‹
+                                    // Обновляем кеш карты
                                     cache(['category_map_' . auth()->id() => $categoryMapArray], 300);
 
-                                    // Р”РѕР±Р°РІР»СЏРµРј РІ СЃРїРёСЃРѕРє СЃРѕР·РґР°РЅРЅС‹С… РєР°С‚РµРіРѕСЂРёР№
+                                    // Добавляем в список созданных категорий
                                     $createdCategories = cache('created_categories_' . auth()->id(), []);
                                     if (!in_array($categoryId, $createdCategories)) {
                                         $createdCategories[] = $categoryId;
@@ -3206,7 +3206,7 @@ class BulkGoodsImportController extends Controller
 
                                     $good['category'] = $categoryId;
                                 } catch (\Exception $e) {
-                                    // Р•СЃР»Рё РѕС€РёР±РєР° РїСЂРё СЃРѕР·РґР°РЅРёРё, СѓРґР°Р»СЏРµРј РєР°С‚РµРіРѕСЂРёСЋ
+                                    // Если ошибка при создании, удаляем категорию
                                     unset($good['category']);
                                 }
                             } else {
@@ -3221,21 +3221,21 @@ class BulkGoodsImportController extends Controller
                     $categoryIds = [];
 
                     foreach ($categoryNames as $categoryName) {
-                        // РџСЂРµРѕР±СЂР°Р·СѓРµРј РІ СЃС‚СЂРѕРєСѓ РЅР° РІСЃСЏРєРёР№ СЃР»СѓС‡Р°Р№
+                        // Преобразуем в строку на всякий случай
                         $categoryName = (string) $categoryName;
-                        // РџСЂРѕРІРµСЂСЏРµРј, СЃРѕРґРµСЂР¶РёС‚ Р»Рё РєР°С‚РµРіРѕСЂРёСЏ РёРµСЂР°СЂС…РёСЋ
+                        // Проверяем, содержит ли категория иерархию
                         if (strpos($categoryName, '>') !== false) {
                             $categoryPath = array_map('trim', explode('>', $categoryName));
                             $categoryId = $this->processCategoryHierarchy($categoryPath, $categoryMapArray, $autoCreateCategories);
                         } else {
                             $categoryId = $categoryMapArray[strtolower($categoryName)] ?? null;
 
-                            // Р•СЃР»Рё РєР°С‚РµРіРѕСЂРёСЏ РЅРµ РЅР°Р№РґРµРЅР° Рё СЂР°Р·СЂРµС€РµРЅРѕ СЃРѕР·РґР°РЅРёРµ, СЃРѕР·РґР°РµРј РµС‘
+                            // Если категория не найдена и разрешено создание, создаем её
                             if (!$categoryId && $autoCreateCategories) {
                                 $categoryNameTrimmed = trim($categoryName);
                                 $categorySlug = \Illuminate\Support\Str::slug($categoryNameTrimmed);
 
-                                // РџСЂРѕРІРµСЂСЏРµРј СѓРЅРёРєР°Р»СЊРЅРѕСЃС‚СЊ slug
+                                // Проверяем уникальность slug
                                 $slugCounter = 1;
                                 $baseSlug = $categorySlug;
                                 while (ShopCategory::where('slug', $categorySlug)->exists()) {
@@ -3252,20 +3252,20 @@ class BulkGoodsImportController extends Controller
                                     ]);
                                     $categoryId = $newCategory->id;
 
-                                    // Р”РѕР±Р°РІР»СЏРµРј РІ РєР°СЂС‚Сѓ
+                                    // Добавляем в карту
                                     $categoryMapArray[strtolower($categoryNameTrimmed)] = $categoryId;
 
-                                    // РћР±РЅРѕРІР»СЏРµРј РєРµС€ РєР°СЂС‚С‹
+                                    // Обновляем кеш карты
                                     cache(['category_map_' . auth()->id() => $categoryMapArray], 300);
 
-                                    // Р”РѕР±Р°РІР»СЏРµРј РІ СЃРїРёСЃРѕРє СЃРѕР·РґР°РЅРЅС‹С… РєР°С‚РµРіРѕСЂРёР№
+                                    // Добавляем в список созданных категорий
                                     $createdCategories = cache('created_categories_' . auth()->id(), []);
                                     if (!in_array($categoryId, $createdCategories)) {
                                         $createdCategories[] = $categoryId;
                                         cache(['created_categories_' . auth()->id() => $createdCategories], 300);
                                     }
                                 } catch (\Exception $e) {
-                                    // Р•СЃР»Рё РѕС€РёР±РєР° РїСЂРё СЃРѕР·РґР°РЅРёРё, РїСЂРѕРїСѓСЃРєР°РµРј РєР°С‚РµРіРѕСЂРёСЋ
+                                    // Если ошибка при создании, пропускаем категорию
                                     $categoryId = null;
                                 }
                             }
@@ -3284,12 +3284,12 @@ class BulkGoodsImportController extends Controller
                         if (is_string($category) && !empty($category)) {
                             $categoryId = $categoryMapArray[strtolower($category)] ?? null;
 
-                            // Р•СЃР»Рё РєР°С‚РµРіРѕСЂРёСЏ РЅРµ РЅР°Р№РґРµРЅР° Рё СЂР°Р·СЂРµС€РµРЅРѕ СЃРѕР·РґР°РЅРёРµ, СЃРѕР·РґР°РµРј РµС‘
+                            // Если категория не найдена и разрешено создание, создаем её
                             if (!$categoryId && $autoCreateCategories) {
                                 $categoryNameTrimmed = trim($category);
                                 $categorySlug = \Illuminate\Support\Str::slug($categoryNameTrimmed);
 
-                                // РџСЂРѕРІРµСЂСЏРµРј СѓРЅРёРєР°Р»СЊРЅРѕСЃС‚СЊ slug
+                                // Проверяем уникальность slug
                                 $slugCounter = 1;
                                 $baseSlug = $categorySlug;
                                 while (ShopCategory::where('slug', $categorySlug)->exists()) {
@@ -3306,20 +3306,20 @@ class BulkGoodsImportController extends Controller
                                     ]);
                                     $categoryId = $newCategory->id;
 
-                                    // Р”РѕР±Р°РІР»СЏРµРј РІ РєР°СЂС‚Сѓ
+                                    // Добавляем в карту
                                     $categoryMapArray[strtolower($categoryNameTrimmed)] = $categoryId;
 
-                                    // РћР±РЅРѕРІР»СЏРµРј РєРµС€ РєР°СЂС‚С‹
+                                    // Обновляем кеш карты
                                     cache(['category_map_' . auth()->id() => $categoryMapArray], 300);
 
-                                    // Р”РѕР±Р°РІР»СЏРµРј РІ СЃРїРёСЃРѕРє СЃРѕР·РґР°РЅРЅС‹С… РєР°С‚РµРіРѕСЂРёР№
+                                    // Добавляем в список созданных категорий
                                     $createdCategories = cache('created_categories_' . auth()->id(), []);
                                     if (!in_array($categoryId, $createdCategories)) {
                                         $createdCategories[] = $categoryId;
                                         cache(['created_categories_' . auth()->id() => $createdCategories], 300);
                                     }
                                 } catch (\Exception $e) {
-                                    // Р•СЃР»Рё РѕС€РёР±РєР° РїСЂРё СЃРѕР·РґР°РЅРёРё, РїСЂРѕРїСѓСЃРєР°РµРј РєР°С‚РµРіРѕСЂРёСЋ
+                                    // Если ошибка при создании, пропускаем категорию
                                     $categoryId = null;
                                 }
                             }
@@ -3334,27 +3334,27 @@ class BulkGoodsImportController extends Controller
                 }
             }
 
-            // РџСЂРёРјРµРЅСЏРµРј РєР°С‚РµРіРѕСЂРёСЋ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РўРћР›Р¬РљРћ РµСЃР»Рё РїРѕСЃР»Рµ РѕР±СЂР°Р±РѕС‚РєРё РЅРµС‚ РІР°Р»РёРґРЅРѕР№ РєР°С‚РµРіРѕСЂРёРё
-            // Р’РђР–РќРћ: РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РќР• РґРѕР»Р¶РЅР° РїСЂРёРјРµРЅСЏС‚СЊСЃСЏ, РµСЃР»Рё РІ С„Р°Р№Р»Рµ Р±С‹Р»Р° РєР°С‚РµРіРѕСЂРёСЏ Рё РѕРЅР° РЅР°Р№РґРµРЅР°/СЃРѕР·РґР°РЅР°
+            // Применяем категорию по умолчанию ТОЛЬКО если после обработки нет валидной категории
+            // ВАЖНО: категория по умолчанию НЕ должна применяться, если в файле была категория и она найдена/создана
             if ($useDefaultCategory && $defaultCategory !== null) {
                 $hasValidCategory = false;
 
-                // РџСЂРѕРІРµСЂСЏРµРј category (РїРѕСЃР»Рµ РѕР±СЂР°Р±РѕС‚РєРё СЌС‚Рѕ РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ ID РёР»Рё null)
+                // Проверяем category (после обработки это должен быть ID или null)
                 if (isset($good['category'])) {
-                    // Р•СЃР»Рё category - СЌС‚Рѕ С‡РёСЃР»Рѕ (ID) Рё Р±РѕР»СЊС€Рµ 0, Р·РЅР°С‡РёС‚ РєР°С‚РµРіРѕСЂРёСЏ РЅР°Р№РґРµРЅР°/СЃРѕР·РґР°РЅР° РёР· С„Р°Р№Р»Р°
+                    // Если category - это число (ID) и больше 0, значит категория найдена/создана из файла
                     if (is_numeric($good['category']) && (int) $good['category'] > 0) {
                         $hasValidCategory = true;
                     }
-                    // Р•СЃР»Рё category - СЌС‚Рѕ СЃС‚СЂРѕРєР° (РЅРµ РѕР±СЂР°Р±РѕС‚Р°РЅР°), РїСЂРѕРІРµСЂСЏРµРј С‡С‚Рѕ РѕРЅР° РЅРµ РїСѓСЃС‚Р°СЏ
+                    // Если category - это строка (не обработана), проверяем это она не пустая
                     elseif (is_string($good['category']) && trim($good['category']) !== '') {
                         $hasValidCategory = true;
                     }
                 }
 
-                // РџСЂРѕРІРµСЂСЏРµРј РјР°СЃСЃРёРІ categories (РїРѕСЃР»Рµ РѕР±СЂР°Р±РѕС‚РєРё РґРѕР»Р¶РЅС‹ Р±С‹С‚СЊ С‚РѕР»СЊРєРѕ ID)
+                // Проверяем массив categories (после обработки должны быть только ID)
                 if (!$hasValidCategory && isset($good['categories'])) {
                     if (is_array($good['categories'])) {
-                        // Р¤РёР»СЊС‚СЂСѓРµРј С‚РѕР»СЊРєРѕ РІР°Р»РёРґРЅС‹Рµ ID (С‡РёСЃР»Р° > 0)
+                        // Фильтруем только валидные ID (числа > 0)
                         $validCategoryIds = array_filter($good['categories'], function ($cat) {
                             return is_numeric($cat) && (int) $cat > 0;
                         });
@@ -3368,19 +3368,19 @@ class BulkGoodsImportController extends Controller
                     }
                 }
 
-                // РџСЂРёРјРµРЅСЏРµРј РєР°С‚РµРіРѕСЂРёСЋ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РўРћР›Р¬РљРћ РµСЃР»Рё:
-                // - Р’ С„Р°Р№Р»Рµ РќР• Р±С‹Р»Рѕ РєР°С‚РµРіРѕСЂРёРё (hadCategoryInFile = false), РР›Р
-                // - Р’ С„Р°Р№Р»Рµ Р±С‹Р»Р° РєР°С‚РµРіРѕСЂРёСЏ, РЅРѕ РѕРЅР° РЅРµ РЅР°Р№РґРµРЅР°/РЅРµ СЃРѕР·РґР°РЅР° (hasValidCategory = false Р hadCategoryInFile = true)
-                // РќРћ РќР• РїСЂРёРјРµРЅСЏРµРј, РµСЃР»Рё РІ С„Р°Р№Р»Рµ Р±С‹Р»Р° РєР°С‚РµРіРѕСЂРёСЏ Рё РѕРЅР° РЅР°Р№РґРµРЅР°/СЃРѕР·РґР°РЅР° (hasValidCategory = true)
-                // Р“Р»Р°РІРЅРѕРµ РїСЂР°РІРёР»Рѕ: РµСЃР»Рё РєР°С‚РµРіРѕСЂРёСЏ РёР· С„Р°Р№Р»Р° РЅР°Р№РґРµРЅР° РёР»Рё СЃРѕР·РґР°РЅР°, РѕРЅР° РёРјРµРµС‚ РїСЂРёРѕСЂРёС‚РµС‚ РЅР°Рґ РєР°С‚РµРіРѕСЂРёРµР№ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
-                // Р•СЃР»Рё РєР°С‚РµРіРѕСЂРёСЏ Р±С‹Р»Р° РІ С„Р°Р№Р»Рµ, РЅРѕ РЅРµ РЅР°Р№РґРµРЅР°/РЅРµ СЃРѕР·РґР°РЅР° - РќР• РїСЂРёРјРµРЅСЏРµРј РєР°С‚РµРіРѕСЂРёСЋ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
+                // Применяем категорию по умолчанию ТОЛЬКО если:
+                // - В файле НЕ было категории (hadCategoryInFile = false), ИЛИ
+                // - В файле была категория, но она не найдена/не создана (hasValidCategory = false И hadCategoryInFile = true)
+                // НО НЕ применяем, если в файле была категория и она найдена/создана (hasValidCategory = true)
+                // Главное правило: если категория из файла найдена или создана, она имеет приоритет над категорией по умолчанию
+                // Если категория была в файле, но не найдена/не создана - НЕ применяем категорию по умолчанию
                 if (!$hasValidCategory && !$hadCategoryInFile) {
-                    // РРЅРёС†РёР°Р»РёР·РёСЂСѓРµРј РјР°СЃСЃРёРІ categories, РµСЃР»Рё РµРіРѕ РЅРµС‚
+                    // Инициализируем массив categories, если его нет
                     if (!isset($good['categories']) || !is_array($good['categories'])) {
                         $good['categories'] = [];
                     }
 
-                    // РЈР±РµР¶РґР°РµРјСЃСЏ, С‡С‚Рѕ РєР°С‚РµРіРѕСЂРёСЏ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РµС‰Рµ РЅРµ РґРѕР±Р°РІР»РµРЅР°
+                    // Убеждаемся, это категория по умолчанию еще не добавлена
                     $defaultCategoryId = (int) $defaultCategory;
                     $existingIds = array_map('intval', array_filter($good['categories'], 'is_numeric'));
                     if (!in_array($defaultCategoryId, $existingIds)) {
@@ -3389,7 +3389,7 @@ class BulkGoodsImportController extends Controller
                 }
             }
 
-            // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј Р±СЂРµРЅРґС‹
+            // Обрабатываем бренды
             if (isset($good['brand']) && is_string($good['brand']) && !empty($good['brand'])) {
                 $brandId = $brandMap[strtolower($good['brand'])] ?? null;
                 if ($brandId) {
@@ -3431,12 +3431,12 @@ class BulkGoodsImportController extends Controller
             }
         }
 
-        // РЎРѕС…СЂР°РЅСЏРµРј РѕР±РЅРѕРІР»РµРЅРЅСѓСЋ РєР°СЂС‚Сѓ РєР°С‚РµРіРѕСЂРёР№ РѕР±СЂР°С‚РЅРѕ РІ РєСЌС€
+        // Сохраняем обновленную карту категорий обратно в кэш
         cache(['category_map_' . auth()->id() => collect($categoryMapArray)], 300);
     }
 
     /**
-     * РџР°СЂСЃРёРЅРі СЃС‚СЂРѕРє СЃ СЂР°Р·РґРµР»РёС‚РµР»СЏРјРё
+     * Парсинг строк с разделителями
      */
     private function parseDelimitedString($str)
     {
@@ -3444,7 +3444,7 @@ class BulkGoodsImportController extends Controller
             return [];
         }
 
-        // РџРѕРґРґРµСЂР¶РёРІР°РµРј СЂР°Р·Р»РёС‡РЅС‹Рµ СЂР°Р·РґРµР»РёС‚РµР»Рё: Р·Р°РїСЏС‚Р°СЏ, С‚РѕС‡РєР° СЃ Р·Р°РїСЏС‚РѕР№, РІРµСЂС‚РёРєР°Р»СЊРЅР°СЏ С‡РµСЂС‚Р°, РїРµСЂРµРЅРѕСЃ СЃС‚СЂРѕРєРё
+        // Поддерживаем различные разделители: запятая, точка с запятой, вертикальная ??ерта, перенос строки
         return collect(preg_split('/[,;|\n\r]+/', $str))
             ->map(function ($item) {
                 return trim($item);
@@ -3454,8 +3454,8 @@ class BulkGoodsImportController extends Controller
     }
 
     /**
-     * РћР±СЂР°Р±РѕС‚РєР° РёРµСЂР°СЂС…РёРё РєР°С‚РµРіРѕСЂРёР№ (РљР°С‚РµРіРѕСЂРёСЏ>РџРѕРґРєР°С‚РµРіРѕСЂРёСЏ1>РџРѕРґРєР°С‚РµРіРѕСЂРёСЏ2)
-     * РЎРѕР·РґР°РµС‚ РєР°С‚РµРіРѕСЂРёРё СЃ РїСЂР°РІРёР»СЊРЅРѕР№ РёРµСЂР°СЂС…РёРµР№, РµСЃР»Рё РёС… РЅРµС‚
+     * Обработка иерархии категорий (Категория>Подкатегория1>Подкатегория2)
+     * Создает категории с правильной иерархией, если их нет
      */
     private function processCategoryHierarchy($categoryPath, &$categoryMapArray, $autoCreate = true)
     {
@@ -3472,21 +3472,21 @@ class BulkGoodsImportController extends Controller
                 continue;
             }
 
-            // РџСЂРѕРїСѓСЃРєР°РµРј РєР°С‚РµРіРѕСЂРёРё, РєРѕС‚РѕСЂС‹Рµ СЃРѕРґРµСЂР¶Р°С‚ > - СЌС‚Рѕ РЅРµ РЅР°Р·РІР°РЅРёРµ РєР°С‚РµРіРѕСЂРёРё, Р° РѕС€РёР±РєР° РїР°СЂСЃРёРЅРіР°
+            // Пропускаем категории, которые содержат > - это не название категории, а ошибка парсинга
             if (strpos($categoryName, '>') !== false) {
                 continue;
             }
 
-            // РС‰РµРј РєР°С‚РµРіРѕСЂРёСЋ РїРѕ РёРјРµРЅРё Рё СЂРѕРґРёС‚РµР»СЋ
+            // Ищем категорию по имени и родителю
             $categoryKey = $parentId
                 ? strtolower($categoryName) . '_parent_' . $parentId
                 : strtolower($categoryName);
 
-            // РЎРЅР°С‡Р°Р»Р° РїСЂРѕРІРµСЂСЏРµРј РІ РєР°СЂС‚Рµ
+            // Сначала проверяем в карте
             $categoryId = $categoryMapArray[$categoryKey] ?? null;
 
             if (!$categoryId) {
-                // РС‰РµРј РІ Р±Р°Р·Рµ РґР°РЅРЅС‹С… РїРѕ РёРјРµРЅРё Рё СЂРѕРґРёС‚РµР»СЋ (РїСЂРёРѕСЂРёС‚РµС‚ - С‚РѕС‡РЅРѕРµ СЃРѕРІРїР°РґРµРЅРёРµ)
+                // Ищем в базе данных по имени и родителю (приоритет - точное совпадение)
                 $query = ShopCategory::where('name', $categoryName);
                 if ($parentId) {
                     $query->where('parent_id', $parentId);
@@ -3498,13 +3498,13 @@ class BulkGoodsImportController extends Controller
                 if ($existingCategory) {
                     $categoryId = $existingCategory->id;
                     $categoryMapArray[$categoryKey] = $categoryId;
-                    // РўР°РєР¶Рµ РґРѕР±Р°РІР»СЏРµРј РІ РєР°СЂС‚Сѓ РїРѕ РёРјРµРЅРё РґР»СЏ РѕР±СЂР°С‚РЅРѕР№ СЃРѕРІРјРµСЃС‚РёРјРѕСЃС‚Рё
+                    // Также добавляем в карту по имени для обратной совместимости
                     $categoryMapArray[strtolower($categoryName)] = $categoryId;
                 } elseif ($autoCreate) {
-                    // РЎРѕР·РґР°РµРј РЅРѕРІСѓСЋ РєР°С‚РµРіРѕСЂРёСЋ
+                    // Создаем новую категорию
                     $categoryNameSlug = \Illuminate\Support\Str::slug($categoryName);
 
-                    // Р•СЃР»Рё РµСЃС‚СЊ СЂРѕРґРёС‚РµР»СЊ, С„РѕСЂРјРёСЂСѓРµРј slug РєР°Рє slug_СЂРѕРґРёС‚РµР»СЏ-slug_РєР°С‚РµРіРѕСЂРёРё
+                    // Если есть родитель, формируем slug как slug_родителя-slug_категории
                     if ($parentId) {
                         $parentCategory = ShopCategory::find($parentId);
                         if ($parentCategory && $parentCategory->slug) {
@@ -3519,12 +3519,12 @@ class BulkGoodsImportController extends Controller
                     $categorySlug = $baseSlug;
                     $slugCounter = 1;
 
-                    // РџСЂРѕРІРµСЂСЏРµРј СѓРЅРёРєР°Р»СЊРЅРѕСЃС‚СЊ slug РіР»РѕР±Р°Р»СЊРЅРѕ (slug РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ СѓРЅРёРєР°Р»СЊРЅС‹Рј РІ С‚Р°Р±Р»РёС†Рµ)
+                    // Проверяем уникальность slug глобально (slug должен быть уникальным в таблице)
                     while (ShopCategory::where('slug', $categorySlug)->exists()) {
-                        // Р•СЃР»Рё slug СѓР¶Рµ СЃСѓС‰РµСЃС‚РІСѓРµС‚, РїСЂРѕРІРµСЂСЏРµРј, РїРѕРґС…РѕРґРёС‚ Р»Рё СЃСѓС‰РµСЃС‚РІСѓСЋС‰Р°СЏ РєР°С‚РµРіРѕСЂРёСЏ
+                        // Если slug уже существует, проверяем, подходит ли существующая категория
                         $existingBySlug = ShopCategory::where('slug', $categorySlug)->first();
 
-                        // Р•СЃР»Рё СЃСѓС‰РµСЃС‚РІСѓСЋС‰Р°СЏ РєР°С‚РµРіРѕСЂРёСЏ РёРјРµРµС‚ РїСЂР°РІРёР»СЊРЅРѕРµ РёРјСЏ Рё СЂРѕРґРёС‚РµР»СЏ - РёСЃРїРѕР»СЊР·СѓРµРј РµС‘
+                        // Если существующая категория имеет правильное имя и родителя - используем её
                         if (
                             $existingBySlug &&
                             $existingBySlug->name === $categoryName &&
@@ -3534,12 +3534,12 @@ class BulkGoodsImportController extends Controller
                             break;
                         }
 
-                        // Р•СЃР»Рё РЅРµ РїРѕРґС…РѕРґРёС‚, СЃРѕР·РґР°РµРј СѓРЅРёРєР°Р»СЊРЅС‹Р№ slug СЃ СЃСѓС„С„РёРєСЃРѕРј
+                        // Если не подходит, создаем уникальный slug с суффиксом
                         $categorySlug = $baseSlug . '-' . $slugCounter;
                         $slugCounter++;
                     }
 
-                    // Р•СЃР»Рё РЅРµ РЅР°С€Р»Рё РїРѕРґС…РѕРґСЏС‰СѓСЋ РєР°С‚РµРіРѕСЂРёСЋ, СЃРѕР·РґР°РµРј РЅРѕРІСѓСЋ
+                    // Если не нашли подходящую категорию, создаем новую
                     if (!$categoryId) {
                         try {
                             $newCategory = ShopCategory::create([
@@ -3550,16 +3550,16 @@ class BulkGoodsImportController extends Controller
                             ]);
                             $categoryId = $newCategory->id;
 
-                            // Р”РѕР±Р°РІР»СЏРµРј РІ СЃРїРёСЃРѕРє СЃРѕР·РґР°РЅРЅС‹С… РєР°С‚РµРіРѕСЂРёР№
+                            // Добавляем в список созданных категорий
                             $createdCategories = cache('created_categories_' . auth()->id(), []);
                             if (!in_array($categoryId, $createdCategories)) {
                                 $createdCategories[] = $categoryId;
                                 cache(['created_categories_' . auth()->id() => $createdCategories], 300);
                             }
                         } catch (\Exception $e) {
-                            // Р•СЃР»Рё РѕС€РёР±РєР° РїСЂРё СЃРѕР·РґР°РЅРёРё (РЅР°РїСЂРёРјРµСЂ, РґСѓР±Р»РёРєР°С‚ slug), РїС‹С‚Р°РµРјСЃСЏ РЅР°Р№С‚Рё СЃСѓС‰РµСЃС‚РІСѓСЋС‰СѓСЋ
+                            // Если ошибка при создании (например, дубликат slug), пытаемся найти существующую
 
-                            // РџС‹С‚Р°РµРјСЃСЏ РЅР°Р№С‚Рё РєР°С‚РµРіРѕСЂРёСЋ РїРѕ РёРјРµРЅРё Рё СЂРѕРґРёС‚РµР»СЋ РµС‰Рµ СЂР°Р·
+                            // Пытаемся найти категорию по имени и родителю еще раз
                             $fallbackQuery = ShopCategory::where('name', $categoryName);
                             if ($parentId) {
                                 $fallbackQuery->where('parent_id', $parentId);
@@ -3571,7 +3571,7 @@ class BulkGoodsImportController extends Controller
                             if ($fallbackCategory) {
                                 $categoryId = $fallbackCategory->id;
                             } else {
-                                // Р•СЃР»Рё РЅРµ РЅР°С€Р»Рё, РїСЂРѕРїСѓСЃРєР°РµРј СЌС‚Сѓ РєР°С‚РµРіРѕСЂРёСЋ
+                                // Если не нашли, пропускаем эту категорию
                                 continue;
                             }
                         }
@@ -3579,45 +3579,45 @@ class BulkGoodsImportController extends Controller
 
                     if ($categoryId) {
                         $categoryMapArray[$categoryKey] = $categoryId;
-                        // РўР°РєР¶Рµ РґРѕР±Р°РІР»СЏРµРј РІ РєР°СЂС‚Сѓ РїРѕ РёРјРµРЅРё РґР»СЏ РѕР±СЂР°С‚РЅРѕР№ СЃРѕРІРјРµСЃС‚РёРјРѕСЃС‚Рё
+                        // Также добавляем в карту по имени для обратной совместимости
                         $categoryMapArray[strtolower($categoryName)] = $categoryId;
                     }
                 } else {
-                    // РќРµ СЃРѕР·РґР°РµРј РєР°С‚РµРіРѕСЂРёСЋ, РІРѕР·РІСЂР°С‰Р°РµРј null
+                    // Не создаем категорию, возвращаем null
                     return null;
                 }
             }
 
             $lastCategoryId = $categoryId;
-            $parentId = $categoryId; // РЎР»РµРґСѓСЋС‰Р°СЏ РєР°С‚РµРіРѕСЂРёСЏ Р±СѓРґРµС‚ РґРѕС‡РµСЂРЅРµР№ РґР»СЏ С‚РµРєСѓС‰РµР№
+            $parentId = $categoryId; // Следующая категория будет дочерней для текущей
         }
 
         return $lastCategoryId;
     }
 
     /**
-     * РЎРѕР±РёСЂР°РµС‚ РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ РЅРѕРІС‹С… РєР°С‚РµРіРѕСЂРёСЏС… Рё Р±СЂРµРЅРґР°С…
+     * Собирает информацию о новых категориях и брендах
      */
     private function collectNewCategoriesAndBrands($goods, &$results)
     {
         $newCategories = [];
         $newBrands = [];
 
-        // РџРѕР»СѓС‡Р°РµРј РєСЌС€ РєР°СЂС‚ РґР»СЏ РѕРїСЂРµРґРµР»РµРЅРёСЏ РЅРѕРІС‹С… СЌР»РµРјРµРЅС‚РѕРІ
+        // Получаем кэш карт для определения новых элементов
         $categoryMap = cache('category_map_' . auth()->id(), collect());
         $brandMap = cache('brand_map_' . auth()->id(), collect());
 
-        // РџРѕР»СѓС‡Р°РµРј РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ С‚РѕРј, РєР°РєРёРµ СЌР»РµРјРµРЅС‚С‹ Р±С‹Р»Рё СЃРѕР·РґР°РЅС‹ РІ СЌС‚РѕРј СЃРµР°РЅСЃРµ
+        // Получаем информацию о том, какие элементы были созданы в этом ??еансе
         $createdCategories = cache('created_categories_' . auth()->id(), []);
         $createdBrands = cache('created_brands_' . auth()->id(), []);
 
         foreach ($goods as $index => $goodData) {
 
-            // РЎРѕР±РёСЂР°РµРј С‚РѕР»СЊРєРѕ С‚Рµ РєР°С‚РµРіРѕСЂРёРё, РєРѕС‚РѕСЂС‹Рµ Р±С‹Р»Рё СЃРѕР·РґР°РЅС‹ РІ СЌС‚РѕРј СЃРµР°РЅСЃРµ
+            // Собираем только те категории, которые были созданы в этом ??еансе
             if (isset($goodData['categories']) && is_array($goodData['categories'])) {
                 foreach ($goodData['categories'] as $categoryId) {
                     if (is_numeric($categoryId) && in_array($categoryId, $createdCategories)) {
-                        // РС‰РµРј РЅР°Р·РІР°РЅРёРµ РєР°С‚РµРіРѕСЂРёРё РїРѕ ID РІ РєСЌС€Рµ
+                        // Ищем название категории по ID в кэше
                         $categoryName = $categoryMap->search(function ($item, $key) use ($categoryId) {
                             return $item == $categoryId;
                         });
@@ -3639,11 +3639,11 @@ class BulkGoodsImportController extends Controller
                 }
             }
 
-            // РЎРѕР±РёСЂР°РµРј С‚РѕР»СЊРєРѕ С‚Рµ Р±СЂРµРЅРґС‹, РєРѕС‚РѕСЂС‹Рµ Р±С‹Р»Рё СЃРѕР·РґР°РЅС‹ РІ СЌС‚РѕРј СЃРµР°РЅСЃРµ
+            // Собираем только те бренды, которые были созданы в этом ??еансе
             if (isset($goodData['brands']) && is_array($goodData['brands'])) {
                 foreach ($goodData['brands'] as $brandId) {
                     if (is_numeric($brandId) && in_array($brandId, $createdBrands)) {
-                        // РС‰РµРј РЅР°Р·РІР°РЅРёРµ Р±СЂРµРЅРґР° РїРѕ ID РІ РєСЌС€Рµ
+                        // Ищем название бренда по ID в кэше
                         $brandName = $brandMap->search(function ($item, $key) use ($brandId) {
                             return $item == $brandId;
                         });
@@ -3671,7 +3671,7 @@ class BulkGoodsImportController extends Controller
     }
 
     /**
-     * РџСЂРёРјРµРЅСЏРµС‚ РјРѕРґРёС„РёРєР°С†РёСЋ Рє РѕР±С‹С‡РЅРѕР№ С†РµРЅРµ
+     * Применяет модификацию к обычной цене
      */
     private function applyPriceModification($price, $modification)
     {
@@ -3683,10 +3683,10 @@ class BulkGoodsImportController extends Controller
         $addType = $modification['addType'] ?? 'percent';
         $addValue = $modification['addValue'] ?? 0;
 
-        // РЎРЅР°С‡Р°Р»Р° СѓРјРЅРѕР¶Р°РµРј С†РµРЅСѓ
+        // Сначала умножаем цену
         $newPrice = $price * $multiplier;
 
-        // Р—Р°С‚РµРј РїСЂРёРјРµРЅСЏРµРј РґРѕР±Р°РІР»РµРЅРёРµ/РІС‹С‡РёС‚Р°РЅРёРµ
+        // Затем применяем добавление/вычитание
         switch ($addType) {
             case 'percent':
                 $newPrice = $newPrice + ($newPrice * $addValue / 100);
@@ -3706,7 +3706,7 @@ class BulkGoodsImportController extends Controller
     }
 
     /**
-     * РџСЂРёРјРµРЅСЏРµС‚ РјРѕРґРёС„РёРєР°С†РёСЋ Рє Р°РєС†РёРѕРЅРЅРѕР№ С†РµРЅРµ
+     * Применяет модификацию к акционной цене
      */
     private function applySalePriceModification($goodData, $priceModification)
     {
@@ -3718,12 +3718,12 @@ class BulkGoodsImportController extends Controller
         $source = $saleModification['source'] ?? 'file';
 
         if ($source === 'new_price') {
-            // Р‘РµСЂРµРј РёР·РјРµРЅРµРЅРЅСѓСЋ РѕР±С‹С‡РЅСѓСЋ С†РµРЅСѓ
+            // Берем измененную обычную цену
             $regularPrice = $this->applyPriceModification($goodData['price'] ?? 0, $priceModification['regular'] ?? null);
 
             return $this->applyPriceModification($regularPrice, $saleModification);
         } else {
-            // Р‘РµСЂРµРј Р·РЅР°С‡РµРЅРёРµ РёР· С„Р°Р№Р»Р°
+            // Берем значение из файла
             $salePrice = $goodData['sale_price'] ?? null;
             if (!$salePrice) {
                 return null;
@@ -3734,8 +3734,8 @@ class BulkGoodsImportController extends Controller
     }
 
     /**
-     * РћР±СЂР°Р±Р°С‚С‹РІР°РµС‚ СЃРІРѕР№СЃС‚РІР° С‚РѕРІР°СЂР°
-     * РќРµ СѓРґР°Р»СЏРµС‚ СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ СЃРІРѕР№СЃС‚РІР°, С‚РѕР»СЊРєРѕ РѕР±РЅРѕРІР»СЏРµС‚ РёР»Рё РґРѕР±Р°РІР»СЏРµС‚ РЅРѕРІС‹Рµ
+     * Обрабатывает свойства товара
+     * Не удаляет существующие свойства, только обновляет или добавляет новые
      */
     private function processProperties($good, $properties)
     {
@@ -3743,8 +3743,8 @@ class BulkGoodsImportController extends Controller
             return;
         }
 
-        // РџРѕР»СѓС‡Р°РµРј С‚РµРєСѓС‰РёРµ СЃРІРѕР№СЃС‚РІР° С‚РѕРІР°СЂР°
-        // РљРѕР»РѕРЅРєР° variation_id Р±С‹Р»Р° СѓРґР°Р»РµРЅР° РёР· С‚Р°Р±Р»РёС†С‹, РїРѕСЌС‚РѕРјСѓ С„РёР»СЊС‚СЂСѓРµРј С‚РѕР»СЊРєРѕ РїРѕ good_id
+        // Получаем текущие свойства товара
+        // Колонка variation_id была удалена из таблицы, поэтому фильтруем только по good_id
         $existingProperties = ShopGoodProperty::where('good_id', $good->id)
             ->get()
             ->keyBy('property_id');
@@ -3758,12 +3758,12 @@ class BulkGoodsImportController extends Controller
                 }
 
                 try {
-                    // РС‰РµРј Р·РЅР°С‡РµРЅРёРµ РІ С‚Р°Р±Р»РёС†Рµ shop_property_values
+                    // Ищем значение в таблице shop_property_values
                     $propertyValue = ShopPropertyValue::where('property_id', $propertyId)
                         ->whereRaw('LOWER(value) = ?', [strtolower($valueString)])
                         ->first();
 
-                    // Р•СЃР»Рё РЅРµ РЅР°Р№РґРµРЅРѕ - СЃРѕР·РґР°РµРј РЅРѕРІРѕРµ Р·РЅР°С‡РµРЅРёРµ
+                    // Если не найдено - создаем новое значение
                     if (!$propertyValue) {
                         $propertyValue = ShopPropertyValue::create([
                             'property_id' => $propertyId,
@@ -3772,24 +3772,24 @@ class BulkGoodsImportController extends Controller
                         ]);
                     }
 
-                    // РџСЂРѕРІРµСЂСЏРµРј, СЃСѓС‰РµСЃС‚РІСѓРµС‚ Р»Рё СѓР¶Рµ СЌС‚Рѕ СЃРІРѕР№СЃС‚РІРѕ Сѓ С‚РѕРІР°СЂР°
+                    // Проверяем, существует ли уже это свойство у товара
                     $existingProperty = $existingProperties->get($propertyId);
 
                     if ($existingProperty) {
-                        // РЎРІРѕР№СЃС‚РІРѕ СѓР¶Рµ СЃСѓС‰РµСЃС‚РІСѓРµС‚ - РїСЂРѕРІРµСЂСЏРµРј Р·РЅР°С‡РµРЅРёРµ
+                        // Свойство уже существует - проверяем значение
                         $currentValueId = $existingProperty->shop_property_value_id;
 
-                        // РЎСЂР°РІРЅРёРІР°РµРј Р·РЅР°С‡РµРЅРёСЏ (СѓС‡РёС‚С‹РІР°РµРј null)
+                        // Сравниваем значения (учитываем null)
                         if ($currentValueId === null || $currentValueId != $propertyValue->id) {
-                            // Р—РЅР°С‡РµРЅРёРµ РёР·РјРµРЅРёР»РѕСЃСЊ РёР»Рё Р±С‹Р»Рѕ null - РѕР±РЅРѕРІР»СЏРµРј
+                            // Значение изменилось или было null - обновляем
                             $existingProperty->shop_property_value_id = $propertyValue->id;
                             $existingProperty->save();
 
                         } else {
-                            // Р—РЅР°С‡РµРЅРёРµ РЅРµ РёР·РјРµРЅРёР»РѕСЃСЊ - РїСЂРѕРїСѓСЃРєР°РµРј
+                            // Значение не изменилось - пропускаем
                         }
                     } else {
-                        // РЎРІРѕР№СЃС‚РІР° РЅРµС‚ - СЃРѕР·РґР°РµРј РЅРѕРІРѕРµ
+                        // Свойства нет - создаем новое
                         ShopGoodProperty::create([
                             'good_id' => $good->id,
                             'property_id' => $propertyId,
@@ -3798,21 +3798,21 @@ class BulkGoodsImportController extends Controller
 
                     }
                 } catch (\Exception $e) {
-                    // РџСЂРѕРїСѓСЃРєР°РµРј СЌС‚Рѕ СЃРІРѕР№СЃС‚РІРѕ РїСЂРё РѕС€РёР±РєРµ
+                    // Пропускаем это свойство при ошибке
                     continue;
                 }
             }
         }
 
-        // РЎС‚Р°СЂС‹Рµ СЃРІРѕР№СЃС‚РІР°, РєРѕС‚РѕСЂС‹С… РЅРµС‚ РІ РЅРѕРІС‹С… РґР°РЅРЅС‹С…, РЅРµ С‚СЂРѕРіР°РµРј (РЅРµ СѓРґР°Р»СЏРµРј)
+        // Старые свойства, которых нет в новых данных, не трогаем (не удаляем)
     }
 
     /**
-     * РЎРѕР·РґР°С‘С‚ РёР»Рё РѕР±РЅРѕРІР»СЏРµС‚ РІР°СЂРёР°С†РёСЋ Р±РµР· Р°С‚СЂРёР±СѓС‚РѕРІ (С‚РѕР»СЊРєРѕ sku, С†РµРЅР°, РѕСЃС‚Р°С‚РєРё).
-     * РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РїСЂРё В«РџРѕРёСЃРє РІ РІР°СЂРёР°С†РёСЏС…В» РїРѕ SKU: С‚РѕРІР°СЂ РЅР°Р№РґРµРЅ РїРѕ РЅР°Р·РІР°РЅРёСЋ вЂ” РґРѕР±Р°РІР»СЏРµРј РІР°СЂРёР°С†РёСЋ РїРѕ Р°СЂС‚РёРєСѓР»Сѓ РёР· СЃС‚СЂРѕРєРё.
-     * РђС‚СЂРёР±СѓС‚С‹ РІР°СЂРёР°С†РёРё (Р Р°Р·РјРµСЂ, Р¦РІРµС‚ Рё С‚.Рї.) РЅРµ С‚СЂРµР±СѓСЋС‚СЃСЏ.
+     * Создаёт или обновляет вариацию без атрибутов (только sku, цена, остатки).
+     * Используется при «Поиск в вариациях» по SKU: товар найден по названию — добавляем вариацию по артикулу из строки.
+     * ??трибуты вариации (Размер, Цвет и т.п.) не требуются.
      *
-     * @return int|null ID РІР°СЂРёР°С†РёРё РёР»Рё null РїСЂРё РѕС€РёР±РєРµ
+     * @return int|null ID вариации или null при ошибке
      */
     private function createSimpleVariation($good, $goodData, $supplierStockFields = null, $naming = 'hash')
     {
@@ -3837,8 +3837,8 @@ class BulkGoodsImportController extends Controller
             $variationPrice = $goodData['price'] ?? $good->price ?? 0;
             $variationSalePrice = $goodData['sale_price'] ?? null;
             $variationStockQuantity = isset($goodData['stock_quantity']) && is_numeric($goodData['stock_quantity']) ? (float) $goodData['stock_quantity'] : 0;
-            // Р’Р°Р¶РЅРѕ: РїРѕР»СЏ СѓРґР°Р»С‘РЅРЅС‹С… РѕСЃС‚Р°С‚РєРѕРІ С…СЂР°РЅРёРј РєР°Рє СЃС‚СЂРѕРєРё "РєР°Рє РµСЃС‚СЊ"
-            // Р•СЃР»Рё Р·РЅР°С‡РµРЅРёРµ С‡РёСЃР»РѕРІРѕРµ вЂ” РїСЂРёРІРѕРґРёРј Рє СЃС‚СЂРѕРєРµ, РёРЅР°С‡Рµ РёСЃРїРѕР»СЊР·СѓРµРј РёСЃС…РѕРґРЅСѓСЋ СЃС‚СЂРѕРєСѓ
+            // Важно: поля удалённых остатков храним как строки "как есть"
+            // Если значение числовое — приводим к строке, иначе используем исходную строку
             $variationRemoteStockQuantity = isset($goodData['remote_stock_quantity']) ? (
                 $goodData['remote_stock_quantity'] !== null && is_numeric($goodData['remote_stock_quantity'])
                 ? (string) $goodData['remote_stock_quantity']
@@ -3911,19 +3911,19 @@ class BulkGoodsImportController extends Controller
     }
 
     /**
-     * РћР±СЂР°Р±РѕС‚РєР° РІР°СЂРёР°С†РёРё С‚РѕРІР°СЂР° РїСЂРё РёРјРїРѕСЂС‚Рµ
+     * Обработка вариации товара при импорте
      *
-     * @return int|null ID РІР°СЂРёР°С†РёРё РёР»Рё null, РµСЃР»Рё РІР°СЂРёР°С†РёСЏ РЅРµ Р±С‹Р»Р° СЃРѕР·РґР°РЅР°/РѕР±РЅРѕРІР»РµРЅР°
+     * @return int|null ID вариации или null, если вариация не была создана/обновлена
      */
     private function processVariation($good, $variationData, $goodData, $supplierStockFields = null, $naming = 'hash')
     {
         try {
-            // РљР РРўРР§РќРћ: РћР±СЂРµР·Р°РµРј Рё РѕР±РЅРѕРІР»СЏРµРј РЅР°Р·РІР°РЅРёРµ С‚РѕРІР°СЂР° РџР•Р Р•Р” РѕР±СЂР°Р±РѕС‚РєРѕР№ РІР°СЂРёР°С†РёРё
-            // Р­С‚Рѕ РіР°СЂР°РЅС‚РёСЂСѓРµС‚, С‡С‚Рѕ РѕР±СЂРµР·РєР° Р±СѓРґРµС‚ РїСЂРёРјРµРЅРµРЅР° РґР»СЏ РІСЃРµС… С‚РѕРІР°СЂРѕРІ СЃ РІР°СЂРёР°С†РёСЏРјРё
-            // РџРѕР»СѓС‡Р°РµРј nameTrimSymbol РёР· goodData РёР»Рё РёР· РіР»РѕР±Р°Р»СЊРЅРѕРіРѕ РєРѕРЅС‚РµРєСЃС‚Р°
+            // КРИТИЧНО: Обрезаем и обновляем название товара ПЕРЕД обработкой вариации
+            // Это гарантирует, это обрезка будет применена для всех товаров с вариациями
+            // Получаем nameTrimSymbol из goodData или из глобального контекста
             $nameTrimSymbol = $goodData['_nameTrimSymbol'] ?? null;
             if (empty($nameTrimSymbol)) {
-                // РџСЂРѕР±СѓРµРј РїРѕР»СѓС‡РёС‚СЊ РёР· request С‡РµСЂРµР· РіР»РѕР±Р°Р»СЊРЅС‹Р№ РєРѕРЅС‚РµРєСЃС‚
+                // Пробуем получить из request ??ерез глобальный контекст
                 try {
                     $request = request();
                     $nameTrimSymbol = $request ? $request->input('name_trim_symbol') : null;
@@ -3932,13 +3932,13 @@ class BulkGoodsImportController extends Controller
                 }
             }
 
-            // РџСЂРёРјРµРЅСЏРµРј РѕР±СЂРµР·РєСѓ РЅР°Р·РІР°РЅРёСЏ С‚РѕРІР°СЂР°, РµСЃР»Рё СѓРєР°Р·Р°РЅ СЃРёРјРІРѕР» РѕР±СЂРµР·РєРё
-            // РСЃРїРѕР»СЊР·СѓРµРј РѕС‚РґРµР»СЊРЅСѓСЋ С„СѓРЅРєС†РёСЋ РґР»СЏ РѕР±СЂРµР·РєРё, РєРѕС‚РѕСЂР°СЏ РїСЂРѕРІРµСЂСЏРµС‚ РЅР°Р»РёС‡РёРµ СЃРёРјРІРѕР»Р° РІ РЅР°Р·РІР°РЅРёРё С‚РѕРІР°СЂР°
+            // Применяем обрезку названия товара, если указан символ обрезки
+            // Используем отдельную функцию для обрезки, которая проверяет наличие символа в названии товара
             $nameFromData = isset($goodData['name']) ? trim($goodData['name']) : null;
-            $immutableFields = []; // Р’ processVariation immutableFields РЅРµ РїРµСЂРµРґР°СЋС‚СЃСЏ, РёСЃРїРѕР»СЊР·СѓРµРј РїСѓСЃС‚РѕР№ РјР°СЃСЃРёРІ
+            $immutableFields = []; // В processVariation immutableFields не передаются, используем пустой массив
             $this->trimGoodName($good, $nameTrimSymbol, $immutableFields, $nameFromData);
 
-            // РџСЂРѕРІРµСЂСЏРµРј РЅР°Р»РёС‡РёРµ РґР°РЅРЅС‹С… РІР°СЂРёР°С†РёРё
+            // Проверяем наличие данных вариации
             if (!isset($variationData['attributes']) || !is_array($variationData['attributes']) || count($variationData['attributes']) === 0) {
                 return null;
             }
@@ -3954,7 +3954,7 @@ class BulkGoodsImportController extends Controller
             $tmpData["sale_price"] = $variationData["sale_price"] ?? $goodData["sale_price"] ?? null;
             $variationSalePrice = $this->applySalePriceModification($tmpData, $priceModification);
 
-            // РљРѕРЅРІРµСЂС‚РёСЂСѓРµРј РѕСЃС‚Р°С‚РєРё РёР· СЃС‚СЂРѕРє РІ С‡РёСЃР»Р°
+            // Конвертируем остатки из строк в числа
             $variationStockQuantity = $variationData['stock_quantity'] ?? $goodData['stock_quantity'] ?? 0;
             $variationStockQuantity = is_numeric($variationStockQuantity) ? (float) $variationStockQuantity : 0;
 
@@ -3964,13 +3964,13 @@ class BulkGoodsImportController extends Controller
             $variationFastRemoteStockQuantity = $variationData['fast_remote_stock_quantity'] ?? $goodData['fast_remote_stock_quantity'] ?? null;
             $variationFastRemoteStockQuantity = $variationFastRemoteStockQuantity !== null && is_numeric($variationFastRemoteStockQuantity) ? (string) $variationFastRemoteStockQuantity : $variationFastRemoteStockQuantity;
 
-            // РџСЂРѕРІРµСЂСЏРµРј, РµСЃС‚СЊ Р»Рё Сѓ С‚РѕРІР°СЂР° СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РІР°СЂРёР°С†РёРё
+            // Проверяем, есть ли у товара существующие вариации
             $hasExistingVariations = ShopGoodVariation::where('good_id', $good->id)->exists();
 
-            // РџРѕР»СѓС‡Р°РµРј СЃРїРёСЃРѕРє СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёС… Р°С‚СЂРёР±СѓС‚РѕРІ С‚РѕРІР°СЂР° (РµСЃР»Рё РµСЃС‚СЊ РІР°СЂРёР°С†РёРё)
+            // Получаем список существующих атрибутов товара (если есть вариации)
             $existingAttributeIds = [];
             if ($hasExistingVariations) {
-                // РџРѕР»СѓС‡Р°РµРј РІСЃРµ ID Р°С‚СЂРёР±СѓС‚РѕРІ, РёСЃРїРѕР»СЊР·СѓРµРјС‹С… РІ РІР°СЂРёР°С†РёСЏС… СЌС‚РѕРіРѕ С‚РѕРІР°СЂР°
+                // Получаем все ID атрибутов, используемых в вариациях этого товара
                 $variationIds = ShopGoodVariation::where('good_id', $good->id)->pluck('id')->toArray();
                 $existingAttributeValueIds = DB::table('shop_variation_attributes_values')
                     ->whereIn('variation_id', $variationIds)
@@ -3978,7 +3978,7 @@ class BulkGoodsImportController extends Controller
                     ->unique()
                     ->toArray();
 
-                // РџРѕР»СѓС‡Р°РµРј ID Р°С‚СЂРёР±СѓС‚РѕРІ РёР· Р·РЅР°С‡РµРЅРёР№
+                // Получаем ID атрибутов из значений
                 if (!empty($existingAttributeValueIds)) {
                     $existingAttributeIds = DB::table('shop_variation_attribute_values')
                         ->whereIn('id', $existingAttributeValueIds)
@@ -3988,7 +3988,7 @@ class BulkGoodsImportController extends Controller
                 }
             }
 
-            // РќР°С…РѕРґРёРј РёР»Рё СЃРѕР·РґР°РµРј Р°С‚СЂРёР±СѓС‚С‹ Рё РёС… Р·РЅР°С‡РµРЅРёСЏ
+            // Находим или создаем атрибуты и их значения
             $attributeValueIds = [];
             $hasErrors = false;
             foreach ($attributes as $index => $attr) {
@@ -4003,21 +4003,21 @@ class BulkGoodsImportController extends Controller
                     continue;
                 }
 
-                // РќР°С…РѕРґРёРј Р°С‚СЂРёР±СѓС‚ (РЅРµ СЃРѕР·РґР°РµРј РЅРѕРІС‹Рµ)
+                // Находим атрибут (не создаем новые)
                 $attribute = $this->findOrCreateVariationAttribute($attributeName, $hasExistingVariations, $existingAttributeIds);
                 if (!$attribute) {
-                    // РђС‚СЂРёР±СѓС‚ РЅРµ РЅР°Р№РґРµРЅ - РїСЂРѕРїСѓСЃРєР°РµРј СЌС‚Сѓ С…Р°СЂР°РєС‚РµСЂРёСЃС‚РёРєСѓ
+                    // ??трибут не найден - пропускаем эту характеристику
                     continue;
                 }
 
-                // РџСЂРѕРІРµСЂСЏРµРј, С‡С‚Рѕ Р°С‚СЂРёР±СѓС‚ РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РІ СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёС… РІР°СЂРёР°С†РёСЏС… (РµСЃР»Рё РѕРЅРё РµСЃС‚СЊ)
-                // Р’СЂРµРјРµРЅРЅРѕ РѕС‚РєР»СЋС‡РµРЅРѕ РґР»СЏ РѕС‚Р»Р°РґРєРё РїСЂРѕР±Р»РµРјС‹ РїРѕРёСЃРєР° РІР°СЂРёР°С†РёР№ Р±РµР· РїРѕСЃС‚Р°РІС‰РёРєР°
+                // Проверяем, это атрибут используется в существующих вариациях (если они есть)
+                // Временно отключено для отладки проблемы поиска вариаций без поставщика
                 // if ($hasExistingVariations && !in_array($attribute->id, $existingAttributeIds)) {
-                //     // РђС‚СЂРёР±СѓС‚ РЅРµ РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РІ СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёС… РІР°СЂРёР°С†РёСЏС… - РїСЂРѕРїСѓСЃРєР°РµРј
+                //     // ??трибут не используется в существующих вариациях - пропускаем
                 //     continue;
                 // }
 
-                // РќР°С…РѕРґРёРј РёР»Рё СЃРѕР·РґР°РµРј Р·РЅР°С‡РµРЅРёРµ Р°С‚СЂРёР±СѓС‚Р°
+                // Находим или создаем значение атрибута
                 $attributeValueId = $this->findOrCreateAttributeValue($attribute->id, $attributeValue);
                 if (!$attributeValueId) {
                     $hasErrors = true;
@@ -4028,36 +4028,36 @@ class BulkGoodsImportController extends Controller
                 $attributeValueIds[] = $attributeValueId;
             }
 
-            // Р•СЃР»Рё Р±С‹Р»Рё РѕС€РёР±РєРё РёР»Рё РЅРµС‚ РІР°Р»РёРґРЅС‹С… Р°С‚СЂРёР±СѓС‚РѕРІ - РЅРµ СЃРѕР·РґР°РµРј РІР°СЂРёР°С†РёСЋ
+            // Если были ошибки или нет валидных атрибутов - не создаем вариацию
             if ($hasErrors || empty($attributeValueIds)) {
-                // Р•СЃР»Рё РЅРµС‚ РІР°Р»РёРґРЅС‹С… Р°С‚СЂРёР±СѓС‚РѕРІ - РїСЂРѕСЃС‚Рѕ РїСЂРѕРїСѓСЃРєР°РµРј РІР°СЂРёР°С†РёСЋ Р±РµР· Р»РѕРіРёСЂРѕРІР°РЅРёСЏ
-                // (С…Р°СЂР°РєС‚РµСЂРёСЃС‚РёРєРё РЅРµ РЅР°Р№РґРµРЅС‹, СЌС‚Рѕ РЅРѕСЂРјР°Р»СЊРЅРѕРµ РїРѕРІРµРґРµРЅРёРµ)
+                // Если нет валидных атрибутов - просто пропускаем вариацию без логирования
+                // (характеристики не найдены, это нормальное поведение)
                 return null;
             }
 
-            // РЎРѕСЂС‚РёСЂСѓРµРј ID Р°С‚СЂРёР±СѓС‚РѕРІ РґР»СЏ СЃСЂР°РІРЅРµРЅРёСЏ
+            // Сортируем ID атрибутов для сравнения
             sort($attributeValueIds);
 
-            // РџРѕР»СѓС‡Р°РµРј РїРѕСЃС‚Р°РІС‰РёРєР° РґР»СЏ РІР°СЂРёР°С†РёРё
+            // Получаем поставщика для вариации
             $variationSupplier = isset($goodData['supplier_name']) && trim($goodData['supplier_name']) !== '' ? trim($goodData['supplier_name']) : null;
 
-            // РС‰РµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰СѓСЋ РІР°СЂРёР°С†РёСЋ СЃ С‚Р°РєРѕР№ Р¶Рµ РєРѕРјР±РёРЅР°С†РёРµР№ Р°С‚СЂРёР±СѓС‚РѕРІ Рё РїРѕСЃС‚Р°РІС‰РёРєРѕРј
+            // Ищем существующую вариацию с такой же комбинацией атрибутов и поставщиком
             $existingVariation = $this->findVariationByAttributes($good->id, $attributeValueIds, $variationSupplier);
 
             if ($existingVariation) {
-                // Р’Р°СЂРёР°С†РёСЏ СЃСѓС‰РµСЃС‚РІСѓРµС‚ - РѕР±РЅРѕРІР»СЏРµРј РІСЃРµ РїРѕР»СЏ РёР· goodData
+                // Вариация существует - обновляем все поля из goodData
 
-                // РћР±РЅРѕРІР»СЏРµРј С†РµРЅСѓ
+                // Обновляем цену
                 $existingVariation->price = $variationPrice;
 
-                // РћР±РЅРѕРІР»СЏРµРј Р°РєС†РёРѕРЅРЅСѓСЋ С†РµРЅСѓ, РµСЃР»Рё РїРµСЂРµРґР°РЅР°
+                // Обновляем акционную цену, если передана
                 if (isset($variationData['sale_price'])) {
                     $existingVariation->sale_price = $variationSalePrice;
                 } elseif (isset($goodData['sale_price'])) {
                     $existingVariation->sale_price = $goodData['sale_price'];
                 }
 
-                // РћР±РЅРѕРІР»СЏРµРј РѕСЃС‚Р°С‚РєРё
+                // Обновляем остатки
                 if ($supplierStockFields && isset($supplierStockFields['stock_quantity']) && $supplierStockFields['stock_quantity']) {
                     $existingVariation->stock_quantity = $variationStockQuantity;
                 }
@@ -4068,15 +4068,15 @@ class BulkGoodsImportController extends Controller
                     $existingVariation->fast_remote_stock_quantity = $variationFastRemoteStockQuantity;
                 }
 
-                // РћР±РЅРѕРІР»СЏРµРј SKU РІР°СЂРёР°С†РёРё РёР· РґР°РЅРЅС‹С… С‚РѕРІР°СЂР° РёР»Рё РёР· goodData
-                // Р”СѓР±Р»РёСЂРѕРІР°РЅРёРµ SKU СЂР°Р·СЂРµС€РµРЅРѕ РґР»СЏ РІР°СЂРёР°С†РёР№, РїРѕСЌС‚РѕРјСѓ РЅРµ РїСЂРѕРІРµСЂСЏРµРј СѓРЅРёРєР°Р»СЊРЅРѕСЃС‚СЊ
+                // Обновляем SKU вариации из данных товара или из goodData
+                // Дублирование SKU разрешено для вариаций, поэтому не проверяем уникальность
                 if (isset($goodData['sku']) && !empty($goodData['sku'])) {
                     $existingVariation->sku = $goodData['sku'];
                 } elseif ($good->sku) {
                     $existingVariation->sku = $good->sku;
                 }
 
-                // РћР±РЅРѕРІР»СЏРµРј СЂР°Р·РјРµСЂС‹ Рё РІРµСЃ, РµСЃР»Рё РїРµСЂРµРґР°РЅС‹
+                // Обновляем размеры и вес, если переданы
                 if (isset($goodData['weight'])) {
                     $existingVariation->weight = $goodData['weight'];
                 }
@@ -4092,12 +4092,12 @@ class BulkGoodsImportController extends Controller
                     $existingVariation->length = $goodData['length'];
                 }
 
-                // РћР±РЅРѕРІР»СЏРµРј С„Р»Р°Рі Р°РєС‚РёРІРЅРѕСЃС‚Рё, РµСЃР»Рё РїРµСЂРµРґР°РЅ
+                // Обновляем флаг активности, если передан
                 if (isset($goodData['is_active'])) {
                     $existingVariation->is_active = $goodData['is_active'];
                 }
 
-                // РћР±РЅРѕРІР»СЏРµРј РїРѕСЃС‚Р°РІС‰РёРєР° РІР°СЂРёР°С†РёРё
+                // Обновляем поставщика вариации
                 if (isset($goodData['supplier_name']) && trim($goodData['supplier_name']) !== '') {
                     $existingVariation->supplier = trim($goodData['supplier_name']);
                 }
@@ -4105,45 +4105,45 @@ class BulkGoodsImportController extends Controller
                 try {
                     $existingVariation->save();
                 } catch (QueryException $e) {
-                    // РРіРЅРѕСЂРёСЂСѓРµРј РѕС€РёР±РєРё РґСѓР±Р»РёСЂРѕРІР°РЅРёСЏ SKU РґР»СЏ РІР°СЂРёР°С†РёР№ (РґСѓР±Р»РёСЂРѕРІР°РЅРёРµ СЂР°Р·СЂРµС€РµРЅРѕ)
+                    // Игнорируем ошибки дублирования SKU для вариаций (дублирование разрешено)
                     if (
                         strpos($e->getMessage(), 'Duplicate entry') !== false ||
                         strpos($e->getMessage(), 'UNIQUE constraint') !== false ||
                         $e->getCode() == 23000
                     ) {
-                        // РџСЂРѕРїСѓСЃРєР°РµРј РѕС€РёР±РєСѓ РґСѓР±Р»РёСЂРѕРІР°РЅРёСЏ SKU - СЌС‚Рѕ СЂР°Р·СЂРµС€РµРЅРѕ РґР»СЏ РІР°СЂРёР°С†РёР№
+                        // Пропускаем ошибку дублирования SKU - это разрешено для вариаций
                     } else {
-                        // Р•СЃР»Рё СЌС‚Рѕ РґСЂСѓРіР°СЏ РѕС€РёР±РєР° - РїСЂРѕР±СЂР°СЃС‹РІР°РµРј РґР°Р»СЊС€Рµ
+                        // Если это другая ошибка - пробрасываем дальше
                         throw $e;
                     }
                 }
 
-                // Р›РѕРіРёСЂСѓРµРј РѕР±РЅРѕРІР»РµРЅРёРµ РІР°СЂРёР°С†РёРё
+                // Логируем обновление вариации
                 $this->importLogService->logVariation(
-                    'РћР‘РќРћР’Р›Р•РќРђ Р’РђР РРђР¦РРЇ',
+                    'ОБНОВЛЕНА ВАРИАЦИЯ',
                     $good->name,
-                    $good->sku ?? 'РЅРµС‚ SKU',
+                    $good->sku ?? 'нет SKU',
                     $attributes,
                     $existingVariation->id,
-                    "Р¦РµРЅР°: {$variationPrice}, РћСЃС‚Р°С‚РѕРє: {$variationStockQuantity}"
-                    . ($variationRemoteStockQuantity !== null ? ", РЈРґР°Р»РµРЅРЅС‹Р№ СЃРєР»Р°Рґ: {$variationRemoteStockQuantity}" : '')
-                    . ($variationFastRemoteStockQuantity !== null ? ", Р‘С‹СЃС‚СЂС‹Р№ СѓРґР°Р»РµРЅРЅС‹Р№ СЃРєР»Р°Рґ: {$variationFastRemoteStockQuantity}" : '')
-                    . (isset($existingVariation->supplier) && trim((string) $existingVariation->supplier) !== '' ? ", РџРѕСЃС‚Р°РІС‰РёРє: {$existingVariation->supplier}" : '')
-                    . (isset($good->id) ? ", ID С‚РѕРІР°СЂР°: {$good->id}" : '')
+                    "Цена: {$variationPrice}, Остаток: {$variationStockQuantity}"
+                    . ($variationRemoteStockQuantity !== null ? ", Удаленный склад: {$variationRemoteStockQuantity}" : '')
+                    . ($variationFastRemoteStockQuantity !== null ? ", Быстрый удаленный склад: {$variationFastRemoteStockQuantity}" : '')
+                    . (isset($existingVariation->supplier) && trim((string) $existingVariation->supplier) !== '' ? ", Поставщик: {$existingVariation->supplier}" : '')
+                    . (isset($good->id) ? ", ID товара: {$good->id}" : '')
                 );
 
-                // Р’РѕР·РІСЂР°С‰Р°РµРј ID РІР°СЂРёР°С†РёРё РґР»СЏ СЃРІСЏР·Рё СЃ РёР·РѕР±СЂР°Р¶РµРЅРёСЏРјРё
+                // Возвращаем ID вариации для связи с изображениями
                 return $existingVariation->id;
             } else {
-                // Р’Р°СЂРёР°С†РёСЏ РЅРµ СЃСѓС‰РµСЃС‚РІСѓРµС‚ - СЃРѕР·РґР°РµРј РЅРѕРІСѓСЋ
-                // РСЃРїРѕР»СЊР·СѓРµРј SKU РёР· goodData, РµСЃР»Рё РµСЃС‚СЊ, РёРЅР°С‡Рµ РёР· good
+                // Вариация не существует - создаем новую
+                // Используем SKU из goodData, если есть, иначе из good
                 $variationSku = isset($goodData['sku']) && !empty($goodData['sku']) ? $goodData['sku'] : ($good->sku ?? null);
 
-                // РћРїСЂРµРґРµР»СЏРµРј sort_order РґР»СЏ РЅРѕРІРѕР№ РІР°СЂРёР°С†РёРё
+                // Определяем sort_order для новой вариации
                 $maxSortOrder = $good->variations()->max('sort_order');
                 $sortOrder = $maxSortOrder !== null ? ($maxSortOrder + 1) : 0;
 
-                // Р”СѓР±Р»РёСЂРѕРІР°РЅРёРµ SKU СЂР°Р·СЂРµС€РµРЅРѕ РґР»СЏ РІР°СЂРёР°С†РёР№, РїРѕСЌС‚РѕРјСѓ РЅРµ РїСЂРѕРІРµСЂСЏРµРј СѓРЅРёРєР°Р»СЊРЅРѕСЃС‚СЊ
+                // Дублирование SKU разрешено для вариаций, поэтому не проверяем уникальность
                 $wasCreated = true;
                 try {
                     $variationDataToCreate = [
@@ -4161,32 +4161,32 @@ class BulkGoodsImportController extends Controller
                         'sort_order' => $sortOrder,
                     ];
 
-                    // Р”РѕР±Р°РІР»СЏРµРј РѕСЃС‚Р°С‚РєРё С‚РѕР»СЊРєРѕ РґР»СЏ СЂР°Р·СЂРµС€РµРЅРЅС‹С… РїРѕР»РµР№
-                    // РЈСЃС‚Р°РЅР°РІР»РёРІР°РµРј РѕСЃС‚Р°С‚РєРё РґР»СЏ РІР°СЂРёР°С†РёРё
+                    // Добавляем остатки только для разрешенных полей
+                    // Устанавливаем остатки для вариации
                     if (isset($variationData['remote_stock_quantity']) || isset($goodData['remote_stock_quantity'])) {
                         $variationDataToCreate['remote_stock_quantity'] = $variationRemoteStockQuantity;
                     }
-                    // Р•СЃР»Рё РїРѕР»Рµ РЅРµ СѓСЃС‚Р°РЅРѕРІР»РµРЅРѕ, РѕСЃС‚Р°РІР»СЏРµРј Р·РЅР°С‡РµРЅРёРµ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ (РЅРµ СѓСЃС‚Р°РЅР°РІР»РёРІР°РµРј null)
+                    // Если поле не установлено, оставляем значение по умолчанию (не устанавливаем null)
 
                     if (isset($variationData['fast_remote_stock_quantity']) || isset($goodData['fast_remote_stock_quantity'])) {
                         $variationDataToCreate['fast_remote_stock_quantity'] = $variationFastRemoteStockQuantity;
                     }
-                    // Р•СЃР»Рё РїРѕР»Рµ РЅРµ СѓСЃС‚Р°РЅРѕРІР»РµРЅРѕ, РѕСЃС‚Р°РІР»СЏРµРј Р·РЅР°С‡РµРЅРёРµ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ (РЅРµ СѓСЃС‚Р°РЅР°РІР»РёРІР°РµРј null)
+                    // Если поле не установлено, оставляем значение по умолчанию (не устанавливаем null)
 
                     $variationDataToCreate['stock_quantity'] = $variationStockQuantity;
 
                     $variation = ShopGoodVariation::create($variationDataToCreate);
                 } catch (QueryException $e) {
-                    // РРіРЅРѕСЂРёСЂСѓРµРј РѕС€РёР±РєРё РґСѓР±Р»РёСЂРѕРІР°РЅРёСЏ SKU РґР»СЏ РІР°СЂРёР°С†РёР№ (РґСѓР±Р»РёСЂРѕРІР°РЅРёРµ СЂР°Р·СЂРµС€РµРЅРѕ)
+                    // Игнорируем ошибки дублирования SKU для вариаций (дублирование разрешено)
                     if (
                         strpos($e->getMessage(), 'Duplicate entry') !== false ||
                         strpos($e->getMessage(), 'UNIQUE constraint') !== false ||
                         $e->getCode() == 23000
                     ) {
-                        // РџСЂРѕРїСѓСЃРєР°РµРј РѕС€РёР±РєСѓ РґСѓР±Р»РёСЂРѕРІР°РЅРёСЏ SKU - СЌС‚Рѕ СЂР°Р·СЂРµС€РµРЅРѕ РґР»СЏ РІР°СЂРёР°С†РёР№
-                        // РџСЂРѕР±СѓРµРј РЅР°Р№С‚Рё СЃСѓС‰РµСЃС‚РІСѓСЋС‰СѓСЋ РІР°СЂРёР°С†РёСЋ СЃ С‚Р°РєРёРј Р¶Рµ SKU Рё РѕР±РЅРѕРІРёС‚СЊ РµС‘
+                        // Пропускаем ошибку дублирования SKU - это разрешено для вариаций
+                        // Пробуем найти существующую вариацию с таким же SKU и обновить её
 
-                        // РС‰РµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰СѓСЋ РІР°СЂРёР°С†РёСЋ СЃ С‚Р°РєРёРј Р¶Рµ SKU Рё РїРѕСЃС‚Р°РІС‰РёРєРѕРј
+                        // Ищем существующую вариацию с таким же SKU и поставщиком
                         $supplierName = isset($goodData['supplier_name']) && trim($goodData['supplier_name']) !== '' ? trim($goodData['supplier_name']) : null;
                         $skuQuery = ShopGoodVariation::where('good_id', $good->id)
                             ->where('sku', $variationSku);
@@ -4196,17 +4196,17 @@ class BulkGoodsImportController extends Controller
                         $existingVariationBySku = $skuQuery->first();
 
                         if ($existingVariationBySku) {
-                            // РћР±РЅРѕРІР»СЏРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰СѓСЋ РІР°СЂРёР°С†РёСЋ - РІСЃРµ РїРѕР»СЏ РёР· goodData
+                            // Обновляем существующую вариацию - все поля из goodData
                             $existingVariationBySku->price = $variationPrice;
 
-                            // РћР±РЅРѕРІР»СЏРµРј Р°РєС†РёРѕРЅРЅСѓСЋ С†РµРЅСѓ, РµСЃР»Рё РїРµСЂРµРґР°РЅР°
+                            // Обновляем акционную цену, если передана
                             if (isset($variationData['sale_price'])) {
                                 $existingVariationBySku->sale_price = $variationSalePrice;
                             } elseif (isset($goodData['sale_price'])) {
                                 $existingVariationBySku->sale_price = $goodData['sale_price'];
                             }
 
-                            // РћР±РЅРѕРІР»СЏРµРј РѕСЃС‚Р°С‚РєРё С‚РѕР»СЊРєРѕ РµСЃР»Рё Р·РЅР°С‡РµРЅРёСЏ РЅРµ РїСѓСЃС‚С‹Рµ
+                            // Обновляем остатки только если значения не пустые
                             if ($variationStockQuantity !== null && $variationStockQuantity !== '' && trim($variationStockQuantity) !== '') {
                                 $existingVariationBySku->stock_quantity = $variationStockQuantity;
                             }
@@ -4223,7 +4223,7 @@ class BulkGoodsImportController extends Controller
                                 $existingVariationBySku->fast_remote_stock_quantity = $variationFastRemoteStockQuantity;
                             }
 
-                            // РћР±РЅРѕРІР»СЏРµРј СЂР°Р·РјРµСЂС‹ Рё РІРµСЃ, РµСЃР»Рё РїРµСЂРµРґР°РЅС‹
+                            // Обновляем размеры и вес, если переданы
                             if (isset($goodData['weight'])) {
                                 $existingVariationBySku->weight = $goodData['weight'];
                             }
@@ -4239,12 +4239,12 @@ class BulkGoodsImportController extends Controller
                                 $existingVariationBySku->length = $goodData['length'];
                             }
 
-                            // РћР±РЅРѕРІР»СЏРµРј С„Р»Р°Рі Р°РєС‚РёРІРЅРѕСЃС‚Рё, РµСЃР»Рё РїРµСЂРµРґР°РЅ
+                            // Обновляем флаг активности, если передан
                             if (isset($goodData['is_active'])) {
                                 $existingVariationBySku->is_active = $goodData['is_active'];
                             }
 
-                            // РћР±РЅРѕРІР»СЏРµРј РїРѕСЃС‚Р°РІС‰РёРєР° РІР°СЂРёР°С†РёРё
+                            // Обновляем поставщика вариации
                             if (isset($goodData['supplier_name']) && trim($goodData['supplier_name']) !== '') {
                                 $existingVariationBySku->supplier = trim($goodData['supplier_name']);
                             }
@@ -4252,13 +4252,13 @@ class BulkGoodsImportController extends Controller
                             try {
                                 $existingVariationBySku->save();
                             } catch (QueryException $saveException) {
-                                // РРіРЅРѕСЂРёСЂСѓРµРј РѕС€РёР±РєРё РґСѓР±Р»РёСЂРѕРІР°РЅРёСЏ SKU РїСЂРё СЃРѕС…СЂР°РЅРµРЅРёРё
+                                // Игнорируем ошибки дублирования SKU при сохранении
                                 if (
                                     strpos($saveException->getMessage(), 'Duplicate entry') !== false ||
                                     strpos($saveException->getMessage(), 'UNIQUE constraint') !== false ||
                                     $saveException->getCode() == 23000
                                 ) {
-                                    // РџСЂРѕРїСѓСЃРєР°РµРј РѕС€РёР±РєСѓ РґСѓР±Р»РёСЂРѕРІР°РЅРёСЏ SKU
+                                    // Пропускаем ошибку дублирования SKU
                                 } else {
                                     throw $saveException;
                                 }
@@ -4267,16 +4267,16 @@ class BulkGoodsImportController extends Controller
                             $variation = $existingVariationBySku;
                             $wasCreated = false;
                         } else {
-                            // Р•СЃР»Рё РЅРµ РЅР°С€Р»Рё - РїСЂРѕР±СЂР°СЃС‹РІР°РµРј РѕС€РёР±РєСѓ РґР°Р»СЊС€Рµ
+                            // Если не нашли - пробрасываем ошибку дальше
                             throw $e;
                         }
                     } else {
-                        // Р•СЃР»Рё СЌС‚Рѕ РґСЂСѓРіР°СЏ РѕС€РёР±РєР° - РїСЂРѕР±СЂР°СЃС‹РІР°РµРј РґР°Р»СЊС€Рµ
+                        // Если это другая ошибка - пробрасываем дальше
                         throw $e;
                     }
                 }
 
-                // РџСЂРёРІСЏР·С‹РІР°РµРј Р·РЅР°С‡РµРЅРёСЏ Р°С‚СЂРёР±СѓС‚РѕРІ Рє РІР°СЂРёР°С†РёРё
+                // Привязываем значения атрибутов к вариации
                 foreach ($attributeValueIds as $attributeValueId) {
                     DB::table('shop_variation_attributes_values')->insert([
                         'variation_id' => $variation->id,
@@ -4286,66 +4286,66 @@ class BulkGoodsImportController extends Controller
                     ]);
                 }
 
-                // Р›РѕРіРёСЂСѓРµРј РґРµР№СЃС‚РІРёРµ РЅР°Рґ РІР°СЂРёР°С†РёРµР№
+                // Логируем действие над вариацией
                 $this->importLogService->logVariation(
-                    $wasCreated ? 'РЎРћР—Р”РђРќРђ Р’РђР РРђР¦РРЇ' : 'РћР‘РќРћР’Р›Р•РќРђ Р’РђР РРђР¦РРЇ',
+                    $wasCreated ? 'СОЗДАНА ВАРИАЦИЯ' : 'ОБНОВЛЕНА ВАРИАЦИЯ',
                     $good->name,
-                    $variationSku ?? 'РЅРµС‚ SKU',
+                    $variationSku ?? 'нет SKU',
                     $attributes,
                     $variation->id,
-                    "Р¦РµРЅР°: {$variationPrice}, РћСЃС‚Р°С‚РѕРє: {$variationStockQuantity}"
-                    . ($variationRemoteStockQuantity !== null ? ", РЈРґР°Р»РµРЅРЅС‹Р№ СЃРєР»Р°Рґ: {$variationRemoteStockQuantity}" : '')
-                    . ($variationFastRemoteStockQuantity !== null ? ", Р‘С‹СЃС‚СЂС‹Р№ СѓРґР°Р»РµРЅРЅС‹Р№ СЃРєР»Р°Рґ: {$variationFastRemoteStockQuantity}" : '')
-                    . (isset($variation->supplier) && trim((string) $variation->supplier) !== '' ? ", РџРѕСЃС‚Р°РІС‰РёРє: {$variation->supplier}" : '')
-                    . (isset($good->id) ? ", ID С‚РѕРІР°СЂР°: {$good->id}" : '')
+                    "Цена: {$variationPrice}, Остаток: {$variationStockQuantity}"
+                    . ($variationRemoteStockQuantity !== null ? ", Удаленный склад: {$variationRemoteStockQuantity}" : '')
+                    . ($variationFastRemoteStockQuantity !== null ? ", Быстрый удаленный склад: {$variationFastRemoteStockQuantity}" : '')
+                    . (isset($variation->supplier) && trim((string) $variation->supplier) !== '' ? ", Поставщик: {$variation->supplier}" : '')
+                    . (isset($good->id) ? ", ID товара: {$good->id}" : '')
                 );
 
-                // Р’РѕР·РІСЂР°С‰Р°РµРј ID РІР°СЂРёР°С†РёРё РґР»СЏ СЃРІСЏР·Рё СЃ РёР·РѕР±СЂР°Р¶РµРЅРёСЏРјРё
+                // Возвращаем ID вариации для связи с изображениями
                 return $variation->id;
             }
 
             return null;
         } catch (\Exception $e) {
 
-            // Р›РѕРіРёСЂСѓРµРј РѕС€РёР±РєСѓ
+            // Логируем ошибку
             $this->importLogService->logVariation(
-                'РћРЁРР‘РљРђ Р’РђР РРђР¦РР',
-                $good->name ?? 'РЅРµРёР·РІРµСЃС‚РЅРѕ',
-                $good->sku ?? 'РЅРµС‚ SKU',
+                'ОШИБКА ВАРИАЦИИ',
+                $good->name ?? 'неизвестно',
+                $good->sku ?? 'нет SKU',
                 $variationData['attributes'] ?? [],
                 null,
-                "РћС€РёР±РєР°: {$e->getMessage()}"
+                "Ошибка: {$e->getMessage()}"
             );
 
-            // Р’РѕР·РІСЂР°С‰Р°РµРј null РїСЂРё РѕС€РёР±РєРµ (С„СѓРЅРєС†РёСЏ РґРѕР»Р¶РЅР° РІРѕР·РІСЂР°С‰Р°С‚СЊ int|null)
+            // Возвращаем null при ошибке (функция должна возвращать int|null)
             return null;
         }
     }
 
     /**
-     * РћР±РЅРѕРІРёС‚СЊ РІР°СЂРёР°С†РёСЋ РёР· РґР°РЅРЅС‹С… goodData
+     * Обновить вариацию из данных goodData
      *
-     * @param  ShopGoodVariation  $variation  Р’Р°СЂРёР°С†РёСЏ РґР»СЏ РѕР±РЅРѕРІР»РµРЅРёСЏ
-     * @param  array  $goodData  Р”Р°РЅРЅС‹Рµ С‚РѕРІР°СЂР°
-     * @param  bool  $searchByNameInVariations  Р•СЃР»Рё true, РїРѕР»Рµ name РЅРµ РѕР±РЅРѕРІР»СЏРµС‚СЃСЏ
-     * @return int ID РІР°СЂРёР°С†РёРё
+     * @param  ShopGoodVariation  $variation  Вариация для обновления
+     * @param  array  $goodData  Данные товара
+     * @param  bool  $searchByNameInVariations  Если true, поле name не обновляется
+     * @return int ID вариации
      */
     private function updateVariationFromGoodData($variation, $goodData, $searchByNameInVariations = false)
     {
-        // РћР±РЅРѕРІР»СЏРµРј С†РµРЅСѓ
+        // Обновляем цену
         if (isset($goodData['price'])) {
             $priceModification = $goodData["price_modification"] ?? null;
             $variation->price = $this->applyPriceModification($goodData["price"], $priceModification["regular"] ?? null);
         }
 
-        // РћР±РЅРѕРІР»СЏРµРј Р°РєС†РёРѕРЅРЅСѓСЋ С†РµРЅСѓ, РµСЃР»Рё РїРµСЂРµРґР°РЅР°
+        // Обновляем акционную цену, если передана
         if (isset($goodData['sale_price'])) {
             if (isset($goodData["sale_price"]) || (isset($priceModification) && isset($priceModification["sale"]))) {
                 $variation->sale_price = $this->applySalePriceModification($goodData, $priceModification);
             }
         }
 
-        // РћР±РЅРѕРІР»СЏРµРј РѕСЃС‚Р°С‚РєРё СЃ РєРѕРЅРІРµСЂС‚Р°С†РёРµР№ С‚РёРїРѕРІ
+        // Обновляем остатки с конвертацией типов
         if (isset($goodData['stock_quantity'])) {
             $variation->stock_quantity = is_numeric($goodData['stock_quantity']) ? (float) $goodData['stock_quantity'] : 0;
         }
@@ -4356,12 +4356,12 @@ class BulkGoodsImportController extends Controller
             $variation->fast_remote_stock_quantity = $goodData['fast_remote_stock_quantity'] !== null && is_numeric($goodData['fast_remote_stock_quantity']) ? (string) $goodData['fast_remote_stock_quantity'] : $goodData['fast_remote_stock_quantity'];
         }
 
-        // РћР±РЅРѕРІР»СЏРµРј SKU РІР°СЂРёР°С†РёРё РёР· РґР°РЅРЅС‹С… С‚РѕРІР°СЂР° РёР»Рё РёР· goodData
+        // Обновляем SKU вариации из данных товара или из goodData
         if (isset($goodData['sku']) && !empty($goodData['sku'])) {
             $variation->sku = $goodData['sku'];
         }
 
-        // РћР±РЅРѕРІР»СЏРµРј СЂР°Р·РјРµСЂС‹ Рё РІРµСЃ, РµСЃР»Рё РїРµСЂРµРґР°РЅС‹
+        // Обновляем размеры и вес, если переданы
         if (isset($goodData['weight'])) {
             $variation->weight = $goodData['weight'];
         }
@@ -4377,39 +4377,39 @@ class BulkGoodsImportController extends Controller
             $variation->length = $goodData['length'];
         }
 
-        // РћР±РЅРѕРІР»СЏРµРј С„Р»Р°Рі Р°РєС‚РёРІРЅРѕСЃС‚Рё, РµСЃР»Рё РїРµСЂРµРґР°РЅ
+        // Обновляем флаг активности, если передан
         if (isset($goodData['is_active'])) {
             $variation->is_active = $goodData['is_active'];
         }
 
-        // РћР±РЅРѕРІР»СЏРµРј РёРјСЏ РІР°СЂРёР°С†РёРё, РµСЃР»Рё РїРµСЂРµРґР°РЅРѕ Рё РЅРµ РІРєР»СЋС‡РµРЅ РїРѕРёСЃРє РїРѕ РёРјРµРЅР°Рј РІ РІР°СЂРёР°С†РёСЏС…
-        // Р•СЃР»Рё РІРєР»СЋС‡РµРЅ РїРѕРёСЃРє РїРѕ РёРјРµРЅР°Рј, РїРѕР»Рµ name РЅРµР»СЊР·СЏ РёР·РјРµРЅСЏС‚СЊ
+        // Обновляем имя вариации, если передано и не включен поиск по именам в вариациях
+        // Если включен поиск по именам, поле name нельзя изменять
         if (isset($goodData['name']) && !empty($goodData['name']) && !$searchByNameInVariations) {
             $variation->name = $goodData['name'];
         }
 
-        // РћР±РЅРѕРІР»СЏРµРј Р°С‚СЂРёР±СѓС‚С‹ РІР°СЂРёР°С†РёРё, РµСЃР»Рё РѕРЅРё РїРµСЂРµРґР°РЅС‹
+        // Обновляем атрибуты вариации, если они переданы
         if (isset($goodData['variation']) && isset($goodData['variation']['attributes']) && is_array($goodData['variation']['attributes'])) {
             $newAttributes = $goodData['variation']['attributes'];
 
-            // РЈРґР°Р»СЏРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ СЃРІСЏР·Рё СЃ Р°С‚СЂРёР±СѓС‚Р°РјРё
+            // Удаляем существующие связи с атрибутами
             DB::table('shop_variation_attributes_values')->where('variation_id', $variation->id)->delete();
 
-            // Р”РѕР±Р°РІР»СЏРµРј РЅРѕРІС‹Рµ СЃРІСЏР·Рё СЃ Р°С‚СЂРёР±СѓС‚Р°РјРё
+            // Добавляем новые связи с атрибутами
             foreach ($newAttributes as $attr) {
                 if (isset($attr['name']) && isset($attr['value'])) {
                     $attributeName = trim($attr['name']);
                     $attributeValue = trim($attr['value']);
 
                     if (!empty($attributeName) && !empty($attributeValue)) {
-                        // РќР°С…РѕРґРёРј РёР»Рё СЃРѕР·РґР°РµРј Р°С‚СЂРёР±СѓС‚
+                        // Находим или создаем атрибут
                         $attribute = DB::table('shop_variation_attributes')
                             ->where('name', $attributeName)
                             ->first();
 
                         if ($attribute) {
                             try {
-                                // РќР°С…РѕРґРёРј РёР»Рё СЃРѕР·РґР°РµРј Р·РЅР°С‡РµРЅРёРµ Р°С‚СЂРёР±СѓС‚Р°
+                                // Находим или создаем значение атрибута
                                 $attributeValueRecord = DB::table('shop_variation_attribute_values')
                                     ->where('attribute_id', $attribute->id)
                                     ->where('value', $attributeValue)
@@ -4423,16 +4423,16 @@ class BulkGoodsImportController extends Controller
                                         'updated_at' => now(),
                                     ]);
 
-                                    // РџСЂРѕРІРµСЂСЏРµРј, С‡С‚Рѕ insertGetId РІРµСЂРЅСѓР» РІР°Р»РёРґРЅС‹Р№ ID
+                                    // Проверяем, это insertGetId вернул валидный ID
                                     if ($newAttributeValueId && $newAttributeValueId > 0) {
                                         $attributeValueRecord = (object) ['id' => $newAttributeValueId];
                                     } else {
-                                        // Р•СЃР»Рё РЅРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ Р·РЅР°С‡РµРЅРёРµ Р°С‚СЂРёР±СѓС‚Р°, РїСЂРѕРїСѓСЃРєР°РµРј РµРіРѕ
+                                        // Если не удалось создать значение атрибута, пропускаем его
                                         continue;
                                     }
                                 }
 
-                                // Р”РѕР±Р°РІР»СЏРµРј СЃРІСЏР·СЊ РІР°СЂРёР°С†РёРё СЃ Р·РЅР°С‡РµРЅРёРµРј Р°С‚СЂРёР±СѓС‚Р°
+                                // Добавляем ??вязь вариации с значением атрибута
                                 if ($attributeValueRecord && isset($attributeValueRecord->id)) {
                                     DB::table('shop_variation_attributes_values')->insert([
                                         'variation_id' => $variation->id,
@@ -4442,15 +4442,15 @@ class BulkGoodsImportController extends Controller
                                     ]);
                                 }
                             } catch (\Exception $e) {
-                                // Р›РѕРіРёСЂСѓРµРј РѕС€РёР±РєСѓ, РЅРѕ РїСЂРѕРґРѕР»Р¶Р°РµРј РѕР±СЂР°Р±РѕС‚РєСѓ РѕСЃС‚Р°Р»СЊРЅС‹С… Р°С‚СЂРёР±СѓС‚РѕРІ
-                                \Log::error('РћС€РёР±РєР° РїСЂРё РѕР±СЂР°Р±РѕС‚РєРµ Р°С‚СЂРёР±СѓС‚Р° РІР°СЂРёР°С†РёРё', [
+                                // Логируем ошибку, но продолжаем обработку остальных атрибутов
+                                \Log::error('Ошибка при обработке атрибута вариации', [
                                     'variation_id' => $variation->id,
                                     'attribute_name' => $attributeName,
                                     'attribute_value' => $attributeValue,
                                     'error' => $e->getMessage(),
                                 ]);
 
-                                // РџСЂРѕРїСѓСЃРєР°РµРј СЌС‚РѕС‚ Р°С‚СЂРёР±СѓС‚ Рё РїСЂРѕРґРѕР»Р¶Р°РµРј СЃРѕ СЃР»РµРґСѓСЋС‰РёРј
+                                // Пропускаем этот атрибут и продолжаем со следующим
                                 continue;
                             }
                         }
@@ -4462,13 +4462,13 @@ class BulkGoodsImportController extends Controller
         try {
             $variation->save();
         } catch (QueryException $e) {
-            // РРіРЅРѕСЂРёСЂСѓРµРј РѕС€РёР±РєРё РґСѓР±Р»РёСЂРѕРІР°РЅРёСЏ SKU РґР»СЏ РІР°СЂРёР°С†РёР№ (РґСѓР±Р»РёСЂРѕРІР°РЅРёРµ СЂР°Р·СЂРµС€РµРЅРѕ)
+            // Игнорируем ошибки дублирования SKU для вариаций (дублирование разрешено)
             if (
                 strpos($e->getMessage(), 'Duplicate entry') === false &&
                 strpos($e->getMessage(), 'UNIQUE constraint') === false &&
                 $e->getCode() != 23000
             ) {
-                // Р•СЃР»Рё СЌС‚Рѕ РґСЂСѓРіР°СЏ РѕС€РёР±РєР° - РїСЂРѕР±СЂР°СЃС‹РІР°РµРј РґР°Р»СЊС€Рµ
+                // Если это другая ошибка - пробрасываем дальше
                 throw $e;
             }
         }
@@ -4477,12 +4477,12 @@ class BulkGoodsImportController extends Controller
     }
 
     /**
-     * РќР°Р№С‚Рё РёР»Рё СЃРѕР·РґР°С‚СЊ Р°С‚СЂРёР±СѓС‚ РІР°СЂРёР°С†РёРё
+     * Найти или создать атрибут вариации
      *
-     * @param  string  $attributeName  РќР°Р·РІР°РЅРёРµ Р°С‚СЂРёР±СѓС‚Р°
-     * @param  bool  $hasExistingVariations  Р•СЃС‚СЊ Р»Рё Сѓ С‚РѕРІР°СЂР° СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РІР°СЂРёР°С†РёРё
-     * @param  array  $existingAttributeIds  РњР°СЃСЃРёРІ ID СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёС… Р°С‚СЂРёР±СѓС‚РѕРІ С‚РѕРІР°СЂР°
-     * @return object|null РћР±СЉРµРєС‚ Р°С‚СЂРёР±СѓС‚Р° РёР»Рё null, РµСЃР»Рё РЅРµ РЅР°Р№РґРµРЅ Рё РЅРµ РјРѕР¶РµС‚ Р±С‹С‚СЊ СЃРѕР·РґР°РЅ
+     * @param  string  $attributeName  Название атрибута
+     * @param  bool  $hasExistingVariations  Есть ли у товара существующие вариации
+     * @param  array  $existingAttributeIds  Массив ID существующих атрибутов товара
+     * @return object|null Объект атрибута или null, если не найден и не может быть создан
      */
     private function findOrCreateVariationAttribute($attributeName, $hasExistingVariations = false, $existingAttributeIds = [])
     {
@@ -4494,12 +4494,12 @@ class BulkGoodsImportController extends Controller
             return $attribute;
         }
 
-        // РќРµ СЃРѕР·РґР°РµРј РЅРѕРІС‹Рµ Р°С‚СЂРёР±СѓС‚С‹ - РїСЂРѕСЃС‚Рѕ РІРѕР·РІСЂР°С‰Р°РµРј null, РµСЃР»Рё Р°С‚СЂРёР±СѓС‚ РЅРµ РЅР°Р№РґРµРЅ
+        // Не создаем новые атрибуты - просто возвращаем null, если атрибут не найден
         return null;
     }
 
     /**
-     * РќР°Р№С‚Рё РёР»Рё СЃРѕР·РґР°С‚СЊ Р·РЅР°С‡РµРЅРёРµ Р°С‚СЂРёР±СѓС‚Р°
+     * Найти или создать значение атрибута
      */
     private function findOrCreateAttributeValue($attributeId, $value)
     {
@@ -4512,7 +4512,7 @@ class BulkGoodsImportController extends Controller
             return $attributeValue->id;
         }
 
-        // РЎРѕР·РґР°РµРј РЅРѕРІРѕРµ Р·РЅР°С‡РµРЅРёРµ Р°С‚СЂРёР±СѓС‚Р°
+        // Создаем новое значение атрибута
         $id = DB::table('shop_variation_attribute_values')->insertGetId([
             'attribute_id' => $attributeId,
             'value' => $value,
@@ -4527,33 +4527,33 @@ class BulkGoodsImportController extends Controller
     }
 
     /**
-     * РќР°Р№С‚Рё РІР°СЂРёР°С†РёСЋ РїРѕ РёРјРµРЅРё/SKU Рё Р°С‚СЂРёР±СѓС‚Р°Рј
-     * Р’РѕР·РІСЂР°С‰Р°РµС‚ РІР°СЂРёР°С†РёСЋ, РµСЃР»Рё РЅР°Р№РґРµРЅР° СЃ С‚РѕС‡РЅРѕ СЃРѕРІРїР°РґР°СЋС‰РёРјРё Р°С‚СЂРёР±СѓС‚Р°РјРё, РёРЅР°С‡Рµ null
+     * Найти вариацию по имени/SKU и атрибутам
+     * Возвращает вариацию, если найдена с точно совпадающими атрибутами, иначе null
      */
     private function findVariationByNameAndAttributes($searchField, $searchValue, $importAttributes, $supplier = null)
     {
-        // Р•СЃР»Рё РЅРµС‚ Р°С‚СЂРёР±СѓС‚РѕРІ РґР»СЏ СЃСЂР°РІРЅРµРЅРёСЏ, РІРѕР·РІСЂР°С‰Р°РµРј null (РЅРµ РёСЃРїРѕР»СЊР·СѓРµРј СЃС‚Р°СЂС‹Р№ РїРѕРёСЃРє)
+        // Если нет атрибутов для сравнения, возвращаем null (не используем старый поиск)
         if (empty($importAttributes) || !is_array($importAttributes)) {
             return null;
         }
 
-        // РЎС‚СЂРѕРёРј Р·Р°РїСЂРѕСЃ РґР»СЏ РїРѕРёСЃРєР° РІР°СЂРёР°С†РёР№ РїРѕ РёРјРµРЅРё/SKU
+        // Строим запрос для поиска вариаций по имени/SKU
         $query = ShopGoodVariation::where($searchField, $searchField === 'name' ? $this->normalizeTextForSearch($searchValue) : $searchValue);
 
-        // Р¤РёР»СЊС‚СЂ РїРѕ РїРѕСЃС‚Р°РІС‰РёРєСѓ, РµСЃР»Рё СѓРєР°Р·Р°РЅ
+        // Фильтр по поставщику, если указан
         if ($supplier !== null && $supplier !== '') {
             $query->where('supplier', $supplier);
         }
 
-        // РџРѕР»СѓС‡Р°РµРј РІСЃРµ РЅР°Р№РґРµРЅРЅС‹Рµ РІР°СЂРёР°С†РёРё
+        // Получаем все найденные вариации
         $variations = $query->get();
 
-        // Р”Р»СЏ РєР°Р¶РґРѕР№ РІР°СЂРёР°С†РёРё РїСЂРѕРІРµСЂСЏРµРј СЃРѕРІРїР°РґРµРЅРёРµ Р°С‚СЂРёР±СѓС‚РѕРІ
+        // Для каждой вариации проверяем совпадение атрибутов
         foreach ($variations as $variation) {
-            // РџРѕР»СѓС‡Р°РµРј Р°С‚СЂРёР±СѓС‚С‹ СЃСѓС‰РµСЃС‚РІСѓСЋС‰РµР№ РІР°СЂРёР°С†РёРё
+            // Получаем атрибуты существующей вариации
             $existingAttributes = $this->getVariationAttributes($variation);
 
-            // РЎСЂР°РІРЅРёРІР°РµРј Р°С‚СЂРёР±СѓС‚С‹
+            // Сравниваем атрибуты
             if ($this->attributesMatch($existingAttributes, $importAttributes)) {
                 return $variation;
             }
@@ -4563,7 +4563,7 @@ class BulkGoodsImportController extends Controller
     }
 
     /**
-     * РџСЂРѕРІРµСЂСЏРµС‚, СЃРѕРІРїР°РґР°СЋС‚ Р»Рё РґРІР° РјР°СЃСЃРёРІР° Р°С‚СЂРёР±СѓС‚РѕРІ
+     * Проверяет, совпадают ли два массива атрибутов
      */
     private function attributesMatch($existingAttributes, $importAttributes)
     {
@@ -4571,7 +4571,7 @@ class BulkGoodsImportController extends Controller
             return false;
         }
 
-        // РЎРѕСЂС‚РёСЂСѓРµРј РѕР±Р° РјР°СЃСЃРёРІР° РґР»СЏ СЃСЂР°РІРЅРµРЅРёСЏ
+        // Сортируем оба массива для сравнения
         $importAttrsSorted = collect($importAttributes)->sortBy(function ($attr) {
             return $attr['name'] ?? '';
         })->map(function ($attr) {
@@ -4588,25 +4588,25 @@ class BulkGoodsImportController extends Controller
     }
 
     /**
-     * РќР°Р№С‚Рё РІР°СЂРёР°С†РёСЋ РїРѕ РєРѕРјР±РёРЅР°С†РёРё Р°С‚СЂРёР±СѓС‚РѕРІ
+     * Найти вариацию по комбинации атрибутов
      */
     private function findVariationByAttributes($goodId, $attributeValueIds, $supplier = null)
     {
-        // РџСЂРѕРІРµСЂСЏРµРј, С‡С‚Рѕ РјР°СЃСЃРёРІ Р°С‚СЂРёР±СѓС‚РѕРІ РЅРµ РїСѓСЃС‚РѕР№
+        // Проверяем, это массив атрибутов не пустой
         if (empty($attributeValueIds)) {
             return null;
         }
 
-        sort($attributeValueIds); // РЎРѕСЂС‚РёСЂСѓРµРј РґР»СЏ РєРѕРЅСЃРёСЃС‚РµРЅС‚РЅРѕСЃС‚Рё
+        sort($attributeValueIds); // Сортируем для консистентности
 
-        // РЎРЅР°С‡Р°Р»Р° РёС‰РµРј РІР°СЂРёР°С†РёСЋ СЃСЂРµРґРё РІР°СЂРёР°С†РёР№ СѓРєР°Р·Р°РЅРЅРѕРіРѕ РїРѕСЃС‚Р°РІС‰РёРєР° (РµСЃР»Рё РїРѕСЃС‚Р°РІС‰РёРє СѓРєР°Р·Р°РЅ)
+        // Сначала ищем вариацию среди вариаций указанного поставщика (если поставщик указан)
         if ($supplier !== null) {
             $supplierVariations = ShopGoodVariation::where('good_id', $goodId)
                 ->where('supplier', $supplier)
                 ->get();
 
             foreach ($supplierVariations as $variation) {
-                // РџРѕР»СѓС‡Р°РµРј Р°С‚СЂРёР±СѓС‚С‹ СЃСѓС‰РµСЃС‚РІСѓСЋС‰РµР№ РІР°СЂРёР°С†РёРё
+                // Получаем атрибуты существующей вариации
                 $existingAttributeValueIds = DB::table('shop_variation_attributes_values')
                     ->where('variation_id', $variation->id)
                     ->pluck('attribute_value_id')
@@ -4617,15 +4617,15 @@ class BulkGoodsImportController extends Controller
 
                 sort($existingAttributeValueIds);
 
-                // РЎСЂР°РІРЅРёРІР°РµРј РєРѕРјР±РёРЅР°С†РёРё Р°С‚СЂРёР±СѓС‚РѕРІ
+                // Сравниваем комбинации атрибутов
                 if ($existingAttributeValueIds === $attributeValueIds) {
                     return $variation;
                 }
             }
         }
 
-        // Р•СЃР»Рё РЅРµ РЅР°Р№РґРµРЅР° РІР°СЂРёР°С†РёСЏ РїРѕСЃС‚Р°РІС‰РёРєР° РёР»Рё РїРѕСЃС‚Р°РІС‰РёРє РЅРµ СѓРєР°Р·Р°РЅ,
-        // РёС‰РµРј СЃСЂРµРґРё РІР°СЂРёР°С†РёР№ Р±РµР· РїСЂРёРІСЏР·Р°РЅРЅРѕРіРѕ РїРѕСЃС‚Р°РІС‰РёРєР° (null РёР»Рё РїСѓСЃС‚Р°СЏ СЃС‚СЂРѕРєР°)
+        // Если не найдена вариация поставщика или поставщик не указан,
+        // ищем среди вариаций без привязанного поставщика (null или пустая строка)
         $nullSupplierVariations = ShopGoodVariation::where('good_id', $goodId)
             ->where(function ($query) {
                 $query->whereNull('supplier')
@@ -4634,7 +4634,7 @@ class BulkGoodsImportController extends Controller
             ->get();
 
         foreach ($nullSupplierVariations as $variation) {
-            // РџРѕР»СѓС‡Р°РµРј Р°С‚СЂРёР±СѓС‚С‹ СЃСѓС‰РµСЃС‚РІСѓСЋС‰РµР№ РІР°СЂРёР°С†РёРё
+            // Получаем атрибуты существующей вариации
             $existingAttributeValueIds = DB::table('shop_variation_attributes_values')
                 ->where('variation_id', $variation->id)
                 ->pluck('attribute_value_id')
@@ -4645,7 +4645,7 @@ class BulkGoodsImportController extends Controller
 
             sort($existingAttributeValueIds);
 
-            // РЎСЂР°РІРЅРёРІР°РµРј РєРѕРјР±РёРЅР°С†РёРё Р°С‚СЂРёР±СѓС‚РѕРІ
+            // Сравниваем комбинации атрибутов
             if ($existingAttributeValueIds === $attributeValueIds) {
                 return $variation;
             }
@@ -4655,47 +4655,47 @@ class BulkGoodsImportController extends Controller
     }
 
     /**
-     * РћР±РЅСѓР»РёС‚СЊ РѕСЃС‚Р°С‚РєРё Сѓ РІСЃРµС… С‚РѕРІР°СЂРѕРІ СѓРєР°Р·Р°РЅРЅРѕРіРѕ РїРѕСЃС‚Р°РІС‰РёРєР°
+     * Обнулить остатки у всех товаров указанного поставщика
      */
     private function resetSupplierStock($supplierId)
     {
         try {
-            // РџРѕР»СѓС‡Р°РµРј РёРјСЏ РїРѕСЃС‚Р°РІС‰РёРєР° РїРѕ ID
+            // Получаем имя поставщика по ID
             $supplier = ShopSupplier::find($supplierId);
             if (!$supplier) {
                 return;
             }
             $supplierName = $supplier->name;
 
-            // РћР±РЅСѓР»СЏРµРј РѕСЃС‚Р°С‚РєРё РЅР° СѓРґР°Р»РµРЅРЅРѕРј СЃРєР»Р°РґРµ Рё РѕСЃС‚Р°С‚РєРё Сѓ/СЃ Р±С‹СЃС‚СЂРѕ Сѓ С‚РѕРІР°СЂРѕРІ СЃ СѓРєР°Р·Р°РЅРЅС‹Рј РїРѕСЃС‚Р°РІС‰РёРєРѕРј
+            // Обнуляем остатки на удаленном складе и остатки у/?? быстро у товаров с указанным поставщиком
             ShopGood::where('supplier_id', $supplierId)
                 ->update([
                     'remote_stock_quantity' => null,
                     'fast_remote_stock_quantity' => null,
                 ]);
 
-            // РљР РРўРР§РќРћ: РћР±РЅСѓР»СЏРµРј РѕСЃС‚Р°С‚РєРё Сѓ РІР°СЂРёР°С†РёР№, РєРѕС‚РѕСЂС‹Рµ РїСЂРёРІСЏР·Р°РЅС‹ Рє РїРѕСЃС‚Р°РІС‰РёРєСѓ РїРѕ РїРѕР»СЋ supplier РІР°СЂРёР°С†РёРё,
-            // Р° РЅРµ С‡РµСЂРµР· СЃРІСЏР·СЊ СЃ С‚РѕРІР°СЂРѕРј. Р’Р°СЂРёР°С†РёРё РјРѕРіСѓС‚ Р±С‹С‚СЊ РїСЂРёРІСЏР·Р°РЅС‹ Рє РґСЂСѓРіРѕРјСѓ РїРѕСЃС‚Р°РІС‰РёРєСѓ, С‡РµРј РіР»Р°РІРЅС‹Р№ С‚РѕРІР°СЂ.
+            // КРИТИЧНО: Обнуляем остатки у вариаций, которые привязаны к поставщику по полю supplier вариации,
+            // а не ??ерез ??вязь с товаром. Вариации могут быть привязаны к другому поставщику, ??ем главный товар.
             ShopGoodVariation::where('supplier', $supplierName)
                 ->update([
                     'remote_stock_quantity' => null,
                     'fast_remote_stock_quantity' => null,
                 ]);
         } catch (\Exception $e) {
-            // Р›РѕРіРёСЂСѓРµРј РѕС€РёР±РєСѓ, РЅРѕ РЅРµ РїСЂРµСЂС‹РІР°РµРј РёРјРїРѕСЂС‚
-            Log::error('РћС€РёР±РєР° РїСЂРё РѕР±РЅСѓР»РµРЅРёРё РѕСЃС‚Р°С‚РєРѕРІ РїРѕСЃС‚Р°РІС‰РёРєР°: ' . $e->getMessage());
+            // Логируем ошибку, но не прерываем импорт
+            Log::error('Ошибка при обнулении остатков поставщика: ' . $e->getMessage());
         }
     }
 
     /**
-     * РћР±РЅСѓР»СЏРµС‚ РѕСЃС‚Р°С‚РєРё С‚РѕРІР°СЂРѕРІ Рё РІР°СЂРёР°С†РёР№ РїРѕСЃС‚Р°РІС‰РёРєР°
+     * Обнуляет остатки товаров и вариаций поставщика
      */
     private function resetSupplierStocks($supplierName, $supplierStockFields = null)
     {
         $updatedGoods = 0;
         $updatedVariations = 0;
 
-        // Р•СЃР»Рё РЅРµ СѓРєР°Р·Р°РЅС‹ РїРѕР»СЏ РґР»СЏ РѕР±РЅСѓР»РµРЅРёСЏ, РѕР±РЅСѓР»СЏРµРј РІСЃРµ (РѕР±СЂР°С‚РЅР°СЏ СЃРѕРІРјРµСЃС‚РёРјРѕСЃС‚СЊ)
+        // Если не указаны поля для обнуления, обнуляем все (обратная совместимость)
         if ($supplierStockFields === null) {
             $supplierStockFields = [
                 'stock_quantity' => true,
@@ -4705,22 +4705,22 @@ class BulkGoodsImportController extends Controller
         } else {
         }
 
-        // Р›РѕРіРёСЂСѓРµРј РїРѕР»СѓС‡РµРЅРЅС‹Рµ РЅР°СЃС‚СЂРѕР№РєРё РїРѕР»РµР№ РѕСЃС‚Р°С‚РєРѕРІ
+        // Логируем полученные настройки полей остатков
         try {
-            // РЎРЅР°С‡Р°Р»Р° РїСЂРѕРІРµСЂРёРј, СЃРєРѕР»СЊРєРѕ С‚РѕРІР°СЂРѕРІ Сѓ РїРѕСЃС‚Р°РІС‰РёРєР°
+            // Сначала проверим, сколько товаров у поставщика
             $goodsCount = ShopGood::where('supplier', $supplierName)->count();
 
-            // РџРѕР»СѓС‡Р°РµРј С‚РѕРІР°СЂС‹ РїРµСЂРµРґ РѕР±РЅРѕРІР»РµРЅРёРµРј РґР»СЏ РїСЂРѕРІРµСЂРєРё
+            // Получаем товары перед обновлением для проверки
             $goodsBefore = ShopGood::where('supplier', $supplierName)
                 ->select('id', 'name', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity')
                 ->limit(5)
                 ->get()
                 ->toArray();
 
-            // Р¤РѕСЂРјРёСЂСѓРµРј РјР°СЃСЃРёРІ РїРѕР»РµР№ РґР»СЏ РѕР±РЅРѕРІР»РµРЅРёСЏ РЅР° РѕСЃРЅРѕРІРµ РЅР°СЃС‚СЂРѕРµРє
+            // Формируем массив полей для обновления на основе настроек
             $updateFields = [];
 
-            // РџСЂРµРѕР±СЂР°Р·СѓРµРј Р·РЅР°С‡РµРЅРёСЏ РІ boolean РґР»СЏ РЅР°РґРµР¶РЅРѕСЃС‚Рё
+            // Преобразуем значения в boolean для надежности
             $stockQuantityEnabled = isset($supplierStockFields['stock_quantity']) &&
                 filter_var($supplierStockFields['stock_quantity'], FILTER_VALIDATE_BOOLEAN);
             $remoteStockEnabled = isset($supplierStockFields['remote_stock_quantity']) &&
@@ -4729,55 +4729,55 @@ class BulkGoodsImportController extends Controller
                 filter_var($supplierStockFields['fast_remote_stock_quantity'], FILTER_VALIDATE_BOOLEAN);
 
             if ($stockQuantityEnabled) {
-                $updateFields['stock_quantity'] = 0; // Р§РёСЃР»РѕРІРѕРµ РїРѕР»Рµ - СѓСЃС‚Р°РЅР°РІР»РёРІР°РµРј 0
+                $updateFields['stock_quantity'] = 0; // Числовое поле - устанавливаем 0
             }
             if ($remoteStockEnabled) {
-                $updateFields['remote_stock_quantity'] = null; // РЎС‚СЂРѕРєРѕРІРѕРµ РїРѕР»Рµ - СѓСЃС‚Р°РЅР°РІР»РёРІР°РµРј null
+                $updateFields['remote_stock_quantity'] = null; // Строковое поле - устанавливаем null
             }
             if ($fastRemoteStockEnabled) {
-                $updateFields['fast_remote_stock_quantity'] = null; // РЎС‚СЂРѕРєРѕРІРѕРµ РїРѕР»Рµ - СѓСЃС‚Р°РЅР°РІР»РёРІР°РµРј null
+                $updateFields['fast_remote_stock_quantity'] = null; // Строковое поле - устанавливаем null
             }
 
-            // Р•СЃР»Рё РЅРµС‚ РїРѕР»РµР№ РґР»СЏ РѕР±РЅРѕРІР»РµРЅРёСЏ, РїСЂРѕРїСѓСЃРєР°РµРј
+            // Если нет полей для обновления, пропускаем
             if (empty($updateFields)) {
                 return [
                     'goods_updated' => 0,
                     'variations_updated' => 0,
-                    'message' => 'РќРµС‚ РїРѕР»РµР№ РѕСЃС‚Р°С‚РєРѕРІ РґР»СЏ РѕР±РЅСѓР»РµРЅРёСЏ',
+                    'message' => 'Нет полей остатков для обнуления',
                 ];
             }
 
-            // РћР±РЅСѓР»СЏРµРј РѕСЃС‚Р°С‚РєРё Р’РЎР•РҐ С‚РѕРІР°СЂРѕРІ РїРѕСЃС‚Р°РІС‰РёРєР° С‚РѕР»СЊРєРѕ РґР»СЏ РІС‹Р±СЂР°РЅРЅС‹С… РїРѕР»РµР№
+            // Обнуляем остатки ВСЕХ товаров поставщика только для выбранных полей
             $goodsUpdated = ShopGood::where('supplier', $supplierName)
                 ->update($updateFields);
 
             $updatedGoods = $goodsUpdated;
 
-            // РџРѕР»СѓС‡Р°РµРј С‚РѕРІР°СЂС‹ РїРѕСЃР»Рµ РѕР±РЅРѕРІР»РµРЅРёСЏ РґР»СЏ РїСЂРѕРІРµСЂРєРё
+            // Получаем товары после обновления для проверки
             $goodsAfter = ShopGood::where('supplier', $supplierName)
                 ->select('id', 'name', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity')
                 ->limit(5)
                 ->get()
                 ->toArray();
 
-            // РџСЂРѕРІРµСЂСЏРµРј С‚РѕРІР°СЂС‹ РїРѕСЃР»Рµ РѕР±РЅРѕРІР»РµРЅРёСЏ
+            // Проверяем товары после обновления
             $goodsAfter = ShopGood::where('supplier', $supplierName)
                 ->select('id', 'name', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity')
                 ->limit(5)
                 ->get()
                 ->toArray();
 
-            // РџСЂРѕРІРµСЂСЏРµРј РІР°СЂРёР°С†РёРё СЃ СѓРєР°Р·Р°РЅРЅС‹Рј РїРѕСЃС‚Р°РІС‰РёРєРѕРј
+            // Проверяем вариации с указанным поставщиком
             $variationsCount = ShopGoodVariation::where('supplier', $supplierName)->count();
 
-            // РћР±РЅСѓР»СЏРµРј РѕСЃС‚Р°С‚РєРё РІР°СЂРёР°С†РёР№ СЃ СѓРєР°Р·Р°РЅРЅС‹Рј РїРѕСЃС‚Р°РІС‰РёРєРѕРј С‚РѕР»СЊРєРѕ РґР»СЏ РІС‹Р±СЂР°РЅРЅС‹С… РїРѕР»РµР№
+            // Обнуляем остатки вариаций с указанным поставщиком только для выбранных полей
             $variationsUpdated = ShopGoodVariation::where('supplier', $supplierName)
                 ->update($updateFields);
 
             $updatedVariations = $variationsUpdated;
 
         } catch (\Exception $e) {
-            Log::error('РћС€РёР±РєР° РїСЂРё РѕР±РЅСѓР»РµРЅРёРё РѕСЃС‚Р°С‚РєРѕРІ РїРѕСЃС‚Р°РІС‰РёРєР°', [
+            Log::error('Ошибка при обнулении остатков поставщика', [
                 'supplier_name' => $supplierName,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
@@ -4794,7 +4794,7 @@ class BulkGoodsImportController extends Controller
     }
 
     /**
-     * РћР±РЅСѓР»СЏРµС‚ РѕСЃС‚Р°С‚РєРё РІСЃРµС… С‚РѕРІР°СЂРѕРІ Рё РІР°СЂРёР°С†РёР№
+     * Обнуляет остатки всех товаров и вариаций
      */
     private function resetAllStocks()
     {
@@ -4802,7 +4802,7 @@ class BulkGoodsImportController extends Controller
         $updatedVariations = 0;
 
         try {
-            // РћР±РЅСѓР»СЏРµРј РѕСЃС‚Р°С‚РєРё РІСЃРµС… С‚РѕРІР°СЂРѕРІ
+            // Обнуляем остатки всех товаров
             $goodsUpdated = ShopGood::query()->update([
                 'stock_quantity' => 0,
                 'remote_stock_quantity' => null,
@@ -4811,7 +4811,7 @@ class BulkGoodsImportController extends Controller
 
             $updatedGoods = $goodsUpdated;
 
-            // РћР±РЅСѓР»СЏРµРј РѕСЃС‚Р°С‚РєРё РІСЃРµС… РІР°СЂРёР°С†РёР№
+            // Обнуляем остатки всех вариаций
             $variationsUpdated = ShopGoodVariation::query()->update([
                 'stock_quantity' => 0,
                 'remote_stock_quantity' => null,
@@ -4821,7 +4821,7 @@ class BulkGoodsImportController extends Controller
             $updatedVariations = $variationsUpdated;
 
         } catch (\Exception $e) {
-            Log::error('РћС€РёР±РєР° РїСЂРё РѕР±РЅСѓР»РµРЅРёРё РѕСЃС‚Р°С‚РєРѕРІ РІСЃРµС… С‚РѕРІР°СЂРѕРІ', [
+            Log::error('Ошибка при обнулении остатков всех товаров', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
@@ -4836,57 +4836,57 @@ class BulkGoodsImportController extends Controller
     }
 
     /**
-     * РћРўРљР›Р®Р§Р•РќРћ: РўРµСЃС‚РѕРІС‹Р№ РјРµС‚РѕРґ РґР»СЏ РїСЂРѕРІРµСЂРєРё РѕР±РЅСѓР»РµРЅРёСЏ РѕСЃС‚Р°С‚РєРѕРІ РїРѕСЃС‚Р°РІС‰РёРєР°
+     * ОТКЛЮЧЕНО: Тестовый метод для проверки обнуления остатков поставщика
      */
     public function testResetSupplierStocks(Request $request)
     {
         return response()->json([
             'success' => false,
-            'message' => 'РћР±РЅСѓР»РµРЅРёРµ РѕСЃС‚Р°С‚РєРѕРІ РѕС‚РєР»СЋС‡РµРЅРѕ',
-            'reason' => 'Р¤СѓРЅРєС†РёСЏ РѕР±РЅСѓР»РµРЅРёСЏ РѕСЃС‚Р°С‚РєРѕРІ РїРѕР»РЅРѕСЃС‚СЊСЋ РѕС‚РєР»СЋС‡РµРЅР° РїРѕ С‚СЂРµР±РѕРІР°РЅРёСЋ',
+            'message' => 'Обнуление остатков отключено',
+            'reason' => 'Функция обнуления остатков полностью отключена по требованию',
         ], 403);
     }
 
     /**
-     * РћРўРљР›Р®Р§Р•РќРћ: РўРµСЃС‚РѕРІС‹Р№ РјРµС‚РѕРґ РґР»СЏ РїСЂРѕРІРµСЂРєРё РѕР±РЅСѓР»РµРЅРёСЏ РѕСЃС‚Р°С‚РєРѕРІ РІСЃРµС… С‚РѕРІР°СЂРѕРІ
+     * ОТКЛЮЧЕНО: Тестовый метод для проверки обнуления остатков всех товаров
      */
     public function testResetAllStocks(Request $request)
     {
         return response()->json([
             'success' => false,
-            'message' => 'РћР±РЅСѓР»РµРЅРёРµ РѕСЃС‚Р°С‚РєРѕРІ РѕС‚РєР»СЋС‡РµРЅРѕ',
-            'reason' => 'Р¤СѓРЅРєС†РёСЏ РѕР±РЅСѓР»РµРЅРёСЏ РѕСЃС‚Р°С‚РєРѕРІ РїРѕР»РЅРѕСЃС‚СЊСЋ РѕС‚РєР»СЋС‡РµРЅР° РїРѕ С‚СЂРµР±РѕРІР°РЅРёСЋ',
+            'message' => 'Обнуление остатков отключено',
+            'reason' => 'Функция обнуления остатков полностью отключена по требованию',
         ], 403);
     }
 
     /**
-     * РћР±РЅСѓР»СЏРµС‚ РѕСЃС‚Р°С‚РєРё С‚РѕРІР°СЂРѕРІ РїРѕСЃС‚Р°РІС‰РёРєР° РїРѕ РёРјРµРЅРё (С‚РµРєСЃС‚РѕРІРѕРµ РїРѕР»Рµ)
+     * Обнуляет остатки товаров поставщика по имени (текстовое поле)
      */
     private function resetSupplierStockByName($supplierName)
     {
         try {
-            // РћР±РЅСѓР»СЏРµРј РѕСЃС‚Р°С‚РєРё РЅР° СѓРґР°Р»РµРЅРЅРѕРј СЃРєР»Р°РґРµ Рё РѕСЃС‚Р°С‚РєРё Сѓ/СЃ Р±С‹СЃС‚СЂРѕ Сѓ С‚РѕРІР°СЂРѕРІ СЃ СѓРєР°Р·Р°РЅРЅС‹Рј РїРѕСЃС‚Р°РІС‰РёРєРѕРј
+            // Обнуляем остатки на удаленном складе и остатки у/?? быстро у товаров с указанным поставщиком
             ShopGood::where('supplier', $supplierName)
                 ->update([
                     'remote_stock_quantity' => null,
                     'fast_remote_stock_quantity' => null,
                 ]);
 
-            // РљР РРўРР§РќРћ: РћР±РЅСѓР»СЏРµРј РѕСЃС‚Р°С‚РєРё Сѓ РІР°СЂРёР°С†РёР№, РєРѕС‚РѕСЂС‹Рµ РїСЂРёРІСЏР·Р°РЅС‹ Рє РїРѕСЃС‚Р°РІС‰РёРєСѓ РїРѕ РїРѕР»СЋ supplier РІР°СЂРёР°С†РёРё,
-            // Р° РЅРµ С‡РµСЂРµР· СЃРІСЏР·СЊ СЃ С‚РѕРІР°СЂРѕРј. Р’Р°СЂРёР°С†РёРё РјРѕРіСѓС‚ Р±С‹С‚СЊ РїСЂРёРІСЏР·Р°РЅС‹ Рє РґСЂСѓРіРѕРјСѓ РїРѕСЃС‚Р°РІС‰РёРєСѓ, С‡РµРј РіР»Р°РІРЅС‹Р№ С‚РѕРІР°СЂ.
+            // КРИТИЧНО: Обнуляем остатки у вариаций, которые привязаны к поставщику по полю supplier вариации,
+            // а не ??ерез ??вязь с товаром. Вариации могут быть привязаны к другому поставщику, ??ем главный товар.
             ShopGoodVariation::where('supplier', $supplierName)
                 ->update([
                     'remote_stock_quantity' => null,
                     'fast_remote_stock_quantity' => null,
                 ]);
         } catch (\Exception $e) {
-            // Р›РѕРіРёСЂСѓРµРј РѕС€РёР±РєСѓ, РЅРѕ РЅРµ РїСЂРµСЂС‹РІР°РµРј РёРјРїРѕСЂС‚
-            Log::error('РћС€РёР±РєР° РїСЂРё РѕР±РЅСѓР»РµРЅРёРё РѕСЃС‚Р°С‚РєРѕРІ РїРѕСЃС‚Р°РІС‰РёРєР° РїРѕ РёРјРµРЅРё: ' . $e->getMessage());
+            // Логируем ошибку, но не прерываем импорт
+            Log::error('Ошибка при обнулении остатков поставщика по имени: ' . $e->getMessage());
         }
     }
 
     /**
-     * РџСЂРѕРІРµСЂСЏРµС‚, СЃРѕРІРїР°РґР°СЋС‚ Р»Рё Р°С‚СЂРёР±СѓС‚С‹ РІР°СЂРёР°С†РёРё СЃ Р°С‚СЂРёР±СѓС‚Р°РјРё РІ goodData
+     * Проверяет, совпадают ли атрибуты вариации с атрибутами в goodData
      */
     private function checkVariationAttributesMatch($variation, $goodData)
     {
@@ -4901,7 +4901,7 @@ class BulkGoodsImportController extends Controller
             return false;
         }
 
-        // РЎРѕСЂС‚РёСЂСѓРµРј РѕР±Р° РјР°СЃСЃРёРІР° РґР»СЏ СЃСЂР°РІРЅРµРЅРёСЏ
+        // Сортируем оба массива для сравнения
         $newAttrsSorted = collect($newAttributes)->sortBy(function ($attr) {
             return $attr['name'] ?? '';
         })->map(function ($attr) {
@@ -4918,7 +4918,7 @@ class BulkGoodsImportController extends Controller
     }
 
     /**
-     * РџРѕР»СѓС‡Р°РµС‚ Р°С‚СЂРёР±СѓС‚С‹ РІР°СЂРёР°С†РёРё РІ С„РѕСЂРјР°С‚Рµ РјР°СЃСЃРёРІР°
+     * Получает атрибуты вариации в формате массива
      */
     private function getVariationAttributes($variation)
     {
@@ -4935,7 +4935,7 @@ class BulkGoodsImportController extends Controller
     }
 
     /**
-     * РџР°СЂСЃРёС‚ Р·Р°РіСЂСѓР¶РµРЅРЅС‹Р№ YML С„Р°Р№Р» РїРѕ РёРјРµРЅРё С„Р°Р№Р»Р°
+     * Парсит загруженный YML файл по имени файла
      */
     public function parseUploadedYMLFile(Request $request)
     {
@@ -4946,11 +4946,11 @@ class BulkGoodsImportController extends Controller
 
             $filename = $request->input('filename');
 
-            // Р’Р°Р»РёРґР°С†РёСЏ РёРјРµРЅРё С„Р°Р№Р»Р° РґР»СЏ Р±РµР·РѕРїР°СЃРЅРѕСЃС‚Рё
+            // Валидация имени файла для безопасности
             if (!preg_match('/^temp_[a-f0-9\-]+\.(xml|yml|txt)$/i', $filename)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'РќРµРІРµСЂРЅРѕРµ РёРјСЏ С„Р°Р№Р»Р°',
+                    'message' => 'Неверное имя файла',
                 ], 400);
             }
 
@@ -4959,20 +4959,20 @@ class BulkGoodsImportController extends Controller
             if (!file_exists($filePath)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Р¤Р°Р№Р» РЅРµ РЅР°Р№РґРµРЅ',
+                    'message' => 'Файл не найден',
                 ], 404);
             }
 
-            // Р§РёС‚Р°РµРј СЃРѕРґРµСЂР¶РёРјРѕРµ С„Р°Р№Р»Р°
+            // Читаем содержимое файла
             $fileContent = file_get_contents($filePath);
             if ($fileContent === false) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРѕС‡РёС‚Р°С‚СЊ С„Р°Р№Р»',
+                    'message' => 'Не удалось прочитать файл',
                 ], 500);
             }
 
-            // РџР°СЂСЃРёРј YML/XML
+            // Парсим YML/XML
             $ymlData = $this->parseYMLContent($fileContent);
 
             return response()->json([
@@ -4981,19 +4981,19 @@ class BulkGoodsImportController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('РћС€РёР±РєР° РїР°СЂСЃРёРЅРіР° Р·Р°РіСЂСѓР¶РµРЅРЅРѕРіРѕ YML С„Р°Р№Р»Р°', [
+            \Log::error('Ошибка парсинга загруженного YML файла', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            // Р¤РѕСЂРјРёСЂСѓРµРј Р±РѕР»РµРµ РїРѕРЅСЏС‚РЅРѕРµ СЃРѕРѕР±С‰РµРЅРёРµ РѕР± РѕС€РёР±РєРµ
+            // Формируем более понятное сообщение об ошибке
             $errorMessage = $e->getMessage();
             if (strpos($errorMessage, 'Opening and ending tag mismatch') !== false) {
-                $errorMessage = 'РћС€РёР±РєР° РїР°СЂСЃРёРЅРіР° YML: РќРµСЃРѕРѕС‚РІРµС‚СЃС‚РІРёРµ РѕС‚РєСЂС‹РІР°СЋС‰РёС… Рё Р·Р°РєСЂС‹РІР°СЋС‰РёС… С‚РµРіРѕРІ РІ XML С„Р°Р№Р»Рµ. ' .
-                    'РџСЂРѕРІРµСЂСЊС‚Рµ РєРѕСЂСЂРµРєС‚РЅРѕСЃС‚СЊ СЃС‚СЂСѓРєС‚СѓСЂС‹ XML С„Р°Р№Р»Р°. ' .
-                    'Р’РѕР·РјРѕР¶РЅРѕ, РЅРµРєРѕС‚РѕСЂС‹Рµ С‚РµРіРё РЅРµ Р·Р°РєСЂС‹С‚С‹ РёР»Рё Р·Р°РєСЂС‹С‚С‹ РЅРµРїСЂР°РІРёР»СЊРЅРѕ.';
+                $errorMessage = 'Ошибка парсинга YML: Несоответствие открывающих и закрывающих тегов в XML файле. ' .
+                    'Проверьте корректность структуры XML файла. ' .
+                    'Возможно, некоторые теги не закрыты или закрыты неправильно.';
             } elseif (strpos($errorMessage, 'parser error') !== false) {
-                $errorMessage = 'РћС€РёР±РєР° РїР°СЂСЃРёРЅРіР° YML: ' . $errorMessage;
+                $errorMessage = 'Ошибка парсинга YML: ' . $errorMessage;
             }
 
             return response()->json([
@@ -5005,30 +5005,30 @@ class BulkGoodsImportController extends Controller
     }
 
     /**
-     * РџР°СЂСЃРёС‚ СЃРѕРґРµСЂР¶РёРјРѕРµ YML/XML СЃС‚СЂРѕРєРё
+     * Парсит содержимое YML/XML строки
      */
     private function parseYMLContent($content)
     {
         try {
-            // Р’РєР»СЋС‡Р°РµРј РѕР±СЂР°Р±РѕС‚РєСѓ РѕС€РёР±РѕРє РґР»СЏ РїРѕР»СѓС‡РµРЅРёСЏ РґРµС‚Р°Р»СЊРЅРѕР№ РёРЅС„РѕСЂРјР°С†РёРё РѕР± РѕС€РёР±РєР°С… РїР°СЂСЃРёРЅРіР°
+            // Включаем обработку ошибок для получения детальной информации об ошибках парсинга
             libxml_use_internal_errors(true);
             libxml_clear_errors();
 
-            // Р—Р°РіСЂСѓР¶Р°РµРј XML
+            // Загружаем XML
             $xml = simplexml_load_string($content);
 
-            // РџРѕР»СѓС‡Р°РµРј РѕС€РёР±РєРё РїР°СЂСЃРёРЅРіР°, РµСЃР»Рё РѕРЅРё РµСЃС‚СЊ
+            // Получаем ошибки парсинга, если они есть
             $xmlErrors = libxml_get_errors();
             libxml_clear_errors();
             libxml_use_internal_errors(false);
 
             if ($xml === false) {
-                $errorMessage = 'РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ XML';
+                $errorMessage = 'Не удалось загрузить XML';
                 if (!empty($xmlErrors)) {
                     $errorDetails = [];
                     foreach ($xmlErrors as $error) {
                         $errorDetails[] = sprintf(
-                            'РЎС‚СЂРѕРєР° %d: %s',
+                            'Строка %d: %s',
                             $error->line,
                             trim($error->message)
                         );
@@ -5038,29 +5038,29 @@ class BulkGoodsImportController extends Controller
                 throw new \Exception($errorMessage);
             }
 
-            // РћРїСЂРµРґРµР»СЏРµРј СЃС‚СЂСѓРєС‚СѓСЂСѓ С„Р°Р№Р»Р°
+            // Определяем структуру файла
             $isStandardYML = isset($xml->shop) && isset($xml->shop->offers);
             $isCustomFormat = isset($xml->shop) && isset($xml->shop->items);
             $alternativeStructure = false;
 
             if (!$isStandardYML && !$isCustomFormat) {
-                // РџРѕРїСЂРѕР±СѓРµРј РЅР°Р№С‚Рё РґСЂСѓРіРёРµ РІРѕР·РјРѕР¶РЅС‹Рµ СЃС‚СЂСѓРєС‚СѓСЂС‹
+                // Попробуем найти другие возможные структуры
                 $alternativeStructure = $this->detectAlternativeXMLStructure($xml);
                 if (!$alternativeStructure) {
-                    throw new \Exception('Р¤Р°Р№Р» РЅРµ СЃРѕРґРµСЂР¶РёС‚ РєРѕСЂСЂРµРєС‚РЅСѓСЋ СЃС‚СЂСѓРєС‚СѓСЂСѓ YML РёР»Рё РїРѕРґРґРµСЂР¶РёРІР°РµРјРѕРіРѕ С„РѕСЂРјР°С‚Р° XML');
+                    throw new \Exception('Файл не содержит корректную структуру YML или поддерживаемого формата XML');
                 }
             }
 
-            // РџР°СЂСЃРёРј С‚РѕРІР°СЂС‹ Рё РєР°С‚РµРіРѕСЂРёРё
+            // Парсим товары и категории
             $categories = [];
             $offers = [];
             $shop = null;
 
             if ($isStandardYML) {
-                // РЎС‚Р°РЅРґР°СЂС‚РЅС‹Р№ YML С„РѕСЂРјР°С‚
+                // Стандартный YML формат
                 $shop = $xml->shop;
 
-                // РџР°СЂСЃРёРј РєР°С‚РµРіРѕСЂРёРё
+                // Парсим категории
                 if (isset($shop->categories) && isset($shop->categories->category)) {
                     foreach ($shop->categories->category as $category) {
                         $categories[] = [
@@ -5071,14 +5071,14 @@ class BulkGoodsImportController extends Controller
                     }
                 }
 
-                // РџР°СЂСЃРёРј С‚РѕРІР°СЂС‹
+                // Парсим товары
                 if (isset($shop->offers) && isset($shop->offers->offer)) {
                     foreach ($shop->offers->offer as $offer) {
                         $offers[] = $this->parseStandardYMLOffer($offer);
                     }
                 }
             } elseif ($isCustomFormat) {
-                // РљР°СЃС‚РѕРјРЅС‹Р№ С„РѕСЂРјР°С‚ (С‚РёРїР° Р’Р•Р›Рћ_2025-12-22.xml)
+                // Кастомный формат (типа ВЕЛО_2025-12-22.xml)
                 $shop = $xml->shop;
 
                 if (isset($shop->items) && isset($shop->items->item)) {
@@ -5090,9 +5090,9 @@ class BulkGoodsImportController extends Controller
                     }
                 }
             } elseif ($alternativeStructure) {
-                // РђР»СЊС‚РµСЂРЅР°С‚РёРІРЅР°СЏ СЃС‚СЂСѓРєС‚СѓСЂР° XML
+                // ??льтернативная структура XML
                 [$categories, $offers] = $this->parseAlternativeXMLStructure($xml, $alternativeStructure);
-                // Р”Р»СЏ Р°Р»СЊС‚РµСЂРЅР°С‚РёРІРЅС‹С… СЃС‚СЂСѓРєС‚СѓСЂ shop РјРѕР¶РµС‚ Р±С‹С‚СЊ РІ РґСЂСѓРіРѕРј РјРµСЃС‚Рµ РёР»Рё РѕС‚СЃСѓС‚СЃС‚РІРѕРІР°С‚СЊ
+                // Для альтернативных структур shop может быть в другом месте или отсутствовать
                 $shop = isset($xml->shop) ? $xml->shop : null;
             }
 
@@ -5107,17 +5107,17 @@ class BulkGoodsImportController extends Controller
             ];
 
         } catch (\Exception $e) {
-            throw new \Exception('РћС€РёР±РєР° РїР°СЂСЃРёРЅРіР° YML: ' . $e->getMessage());
+            throw new \Exception('Ошибка парсинга YML: ' . $e->getMessage());
         }
     }
 
     /**
-     * РџР°СЂСЃРёС‚ С‚РѕРІР°СЂ РІ СЃС‚Р°РЅРґР°СЂС‚РЅРѕРј YML С„РѕСЂРјР°С‚Рµ
+     * Парсит товар в стандартном YML формате
      */
     private function parseStandardYMLOffer($offer)
     {
         $rawXmlPrice = (string) ($offer->price ?? 0);
-        $parsedPrice = (float) preg_replace('/\s+/', '', str_replace(["\xC2\xA0", 'СЂСѓР±.', 'СЂСѓР±', 'СЂ.', 'СЂ'], '', $rawXmlPrice));
+        $parsedPrice = (float) preg_replace('/\s+/', '', str_replace(["\xC2\xA0", 'руб.', 'руб', 'р.', 'р'], '', $rawXmlPrice));
 
         return [
             'id' => (string) $offer['id'],
@@ -5136,20 +5136,20 @@ class BulkGoodsImportController extends Controller
     }
 
     /**
-     * РџР°СЂСЃРёС‚ С‚РѕРІР°СЂ РІ РєР°СЃС‚РѕРјРЅРѕРј С„РѕСЂРјР°С‚Рµ (Р’Р•Р›Рћ_2025-12-22.xml)
+     * Парсит товар в кастомном формате (ВЕЛО_2025-12-22.xml)
      */
     private function parseCustomFormatItem($item, &$categories)
     {
         $rawPrice = (string) $item->price;
 
-        // РСЃРїРѕР»СЊР·СѓРµРј СЂР°СЃС€РёСЂРµРЅРЅСѓСЋ РѕС‡РёСЃС‚РєСѓ С†РµРЅС‹
-        $cleanedPrice = str_replace("\xC2\xA0", '', $rawPrice); // РЈРґР°Р»СЏРµРј РЅРµСЂР°Р·СЂС‹РІРЅС‹Р№ РїСЂРѕР±РµР» (UTF-8: C2 A0)
-        $cleanedPrice = preg_replace('/\s+/', '', $cleanedPrice); // РЈРґР°Р»СЏРµРј РѕСЃС‚Р°Р»СЊРЅС‹Рµ РїСЂРѕР±РµР»СЊРЅС‹Рµ СЃРёРјРІРѕР»С‹
-        $cleanedPrice = str_replace(['СЂСѓР±.', 'СЂСѓР±', 'СЂ.', 'СЂ'], '', $cleanedPrice); // РЈРґР°Р»СЏРµРј РѕР±РѕР·РЅР°С‡РµРЅРёСЏ СЂСѓР±Р»РµР№
+        // Используем расширенную очистку цены
+        $cleanedPrice = str_replace("\xC2\xA0", '', $rawPrice); // Удаляем неразрывный пробел (UTF-8: C2 A0)
+        $cleanedPrice = preg_replace('/\s+/', '', $cleanedPrice); // Удаляем остальные пробельные символы
+        $cleanedPrice = str_replace(['руб.', 'руб', 'р.', 'р'], '', $cleanedPrice); // Удаляем обозначения рублей
 
         $parsedPrice = (float) $cleanedPrice;
 
-        // РР·РІР»РµРєР°РµРј РґР°РЅРЅС‹Рµ С‚РѕРІР°СЂР°
+        // Извлекаем данные товара
         $offerData = [
             'id' => (string) $item->id,
             'name' => (string) $item->name,
@@ -5165,7 +5165,7 @@ class BulkGoodsImportController extends Controller
             'params' => [],
         ];
 
-        // РџР°СЂСЃРёРј РїР°СЂР°РјРµС‚СЂС‹
+        // Парсим параметры
         if (isset($item->param)) {
             foreach ($item->param as $param) {
                 $paramName = (string) $param['name'];
@@ -5176,21 +5176,21 @@ class BulkGoodsImportController extends Controller
                     'value' => $paramValue,
                 ];
 
-                // РР·РІР»РµРєР°РµРј РїСЂРѕРёР·РІРѕРґРёС‚РµР»СЏ РёР· РїР°СЂР°РјРµС‚СЂРѕРІ
-                if ($paramName === 'РџСЂРѕРёР·РІРѕРґРёС‚РµР»СЊ') {
+                // Извлекаем производителя из параметров
+                if ($paramName === 'Производитель') {
                     $offerData['vendor'] = $paramValue;
                 }
             }
         }
 
-        // РЎРѕР·РґР°РµРј РєР°С‚РµРіРѕСЂРёРё РёР· level РґР°РЅРЅС‹С…
+        // Создаем категории из level данных
         $this->extractCategoriesFromItem($item, $categories);
 
         return $offerData;
     }
 
     /**
-     * РџР°СЂСЃРёС‚ РїР°СЂР°РјРµС‚СЂС‹ YML С‚РѕРІР°СЂР°
+     * Парсит параметры YML товара
      */
     private function parseYMLParams($offer)
     {
@@ -5209,11 +5209,11 @@ class BulkGoodsImportController extends Controller
 
 
     /**
-     * РР·РІР»РµРєР°РµС‚ РєР°С‚РµРіРѕСЂРёРё РёР· level РїРѕР»РµР№ С‚РѕРІР°СЂР°
+     * Извлекает категории из level полей товара
      */
     private function extractCategoriesFromItem($item, &$categories)
     {
-        // РџСЂРѕС…РѕРґРёРј РїРѕ РІСЃРµРј level РїРѕР»СЏРј (РѕС‚ 0 РґРѕ 3)
+        // Проходим по всем level полям (от 0 до 3)
         for ($level = 0; $level <= 3; $level++) {
             $idField = "level_id_$level";
             $nameField = "level_name_$level";
@@ -5222,13 +5222,13 @@ class BulkGoodsImportController extends Controller
                 $categoryId = (string) $item->$idField;
                 $categoryName = (string) $item->$nameField;
 
-                // РџСЂРѕРІРµСЂСЏРµРј, РЅРµ РґРѕР±Р°РІР»РµРЅР° Р»Рё СѓР¶Рµ СЌС‚Р° РєР°С‚РµРіРѕСЂРёСЏ
+                // Проверяем, не добавлена ли уже ста категория
                 $existingCategory = array_filter($categories, function ($cat) use ($categoryId) {
                     return $cat['id'] === $categoryId;
                 });
 
                 if (empty($existingCategory)) {
-                    // РћРїСЂРµРґРµР»СЏРµРј parentId (РїСЂРµРґС‹РґСѓС‰РёР№ СѓСЂРѕРІРµРЅСЊ)
+                    // Определяем parentId (предыдущий уровень)
                     $parentId = null;
                     if ($level > 0) {
                         $parentField = 'level_id_' . ($level - 1);
@@ -5248,34 +5248,34 @@ class BulkGoodsImportController extends Controller
     }
 
     /**
-     * РћРїСЂРµРґРµР»СЏРµС‚ Р°Р»СЊС‚РµСЂРЅР°С‚РёРІРЅС‹Рµ СЃС‚СЂСѓРєС‚СѓСЂС‹ XML С„Р°Р№Р»РѕРІ
+     * Определяет альтернативные структуры XML файлов
      */
     private function detectAlternativeXMLStructure($xml)
     {
-        // РџСЂРѕРІРµСЂСЏРµРј СЂР°Р·Р»РёС‡РЅС‹Рµ РІРѕР·РјРѕР¶РЅС‹Рµ СЃС‚СЂСѓРєС‚СѓСЂС‹
+        // Проверяем различные возможные структуры
 
-        // РЎС‚СЂСѓРєС‚СѓСЂР°: <yml_catalog><shop><items><item>...</item></items></shop></yml_catalog>
+        // Структура: <yml_catalog><shop><items><item>...</item></items></shop></yml_catalog>
         if ($xml->getName() === 'yml_catalog' && isset($xml->shop) && isset($xml->shop->items)) {
             return 'yml_catalog_custom';
         }
 
-        // РЎС‚СЂСѓРєС‚СѓСЂР°: <offers><offer>...</offer></offers> (Р±РµР· shop)
+        // Структура: <offers><offer>...</offer></offers> (без shop)
         if ($xml->getName() === 'offers' && isset($xml->offer)) {
             return 'offers_only';
         }
 
-        // РЎС‚СЂСѓРєС‚СѓСЂР°: <items><item>...</item></items> (Р±РµР· shop)
+        // Структура: <items><item>...</item></items> (без shop)
         if ($xml->getName() === 'items' && isset($xml->item)) {
             return 'items_only';
         }
 
-        // Р”СЂСѓРіРёРµ РІРѕР·РјРѕР¶РЅС‹Рµ СЃС‚СЂСѓРєС‚СѓСЂС‹ РјРѕР¶РЅРѕ РґРѕР±Р°РІРёС‚СЊ Р·РґРµСЃСЊ
+        // Другие возможные структуры можно добавить здесь
 
         return false;
     }
 
     /**
-     * РџР°СЂСЃРёС‚ С‚РѕРІР°СЂС‹ РёР· Р°Р»СЊС‚РµСЂРЅР°С‚РёРІРЅС‹С… СЃС‚СЂСѓРєС‚СѓСЂ XML
+     * Парсит товары из альтернативных структур XML
      */
     private function parseAlternativeXMLStructure($xml, $structureType)
     {
@@ -5284,7 +5284,7 @@ class BulkGoodsImportController extends Controller
 
         switch ($structureType) {
             case 'yml_catalog_custom':
-                // РЎС‚СЂСѓРєС‚СѓСЂР°: <yml_catalog><shop><items><item>...</item></items></shop></yml_catalog>
+                // Структура: <yml_catalog><shop><items><item>...</item></items></shop></yml_catalog>
                 if (isset($xml->shop->items->item)) {
                     foreach ($xml->shop->items->item as $item) {
                         $offerData = $this->parseCustomFormatItem($item, $categories);
@@ -5296,7 +5296,7 @@ class BulkGoodsImportController extends Controller
                 break;
 
             case 'offers_only':
-                // РЎС‚СЂСѓРєС‚СѓСЂР°: <offers><offer>...</offer></offers>
+                // Структура: <offers><offer>...</offer></offers>
                 if (isset($xml->offer)) {
                     foreach ($xml->offer as $offer) {
                         $offers[] = $this->parseStandardYMLOffer($offer);
@@ -5305,7 +5305,7 @@ class BulkGoodsImportController extends Controller
                 break;
 
             case 'items_only':
-                // РЎС‚СЂСѓРєС‚СѓСЂР°: <items><item>...</item></items>
+                // Структура: <items><item>...</item></items>
                 if (isset($xml->item)) {
                     foreach ($xml->item as $item) {
                         $offerData = $this->parseCustomFormatItem($item, $categories);
@@ -5321,7 +5321,7 @@ class BulkGoodsImportController extends Controller
     }
 
     /**
-     * РџР°СЂСЃРёС‚ YML/XML РїРѕ URL
+     * Парсит YML/XML по URL
      */
     public function parseYMLFromUrl(Request $request)
     {
@@ -5336,7 +5336,7 @@ class BulkGoodsImportController extends Controller
             $username = $request->input('username');
             $password = $request->input('password');
 
-            // Р—Р°РіСЂСѓР¶Р°РµРј XML РїРѕ URL
+            // Загружаем XML по URL
             $ch = curl_init();
             curl_setopt($ch, CURLOPT_URL, $url);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -5345,13 +5345,13 @@ class BulkGoodsImportController extends Controller
             curl_setopt($ch, CURLOPT_TIMEOUT, 30);
             curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
 
-            // HTTP Basic Authentication, РµСЃР»Рё СѓРєР°Р·Р°РЅС‹ СѓС‡РµС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ
+            // HTTP Basic Authentication, если указаны учетные данные
             if (!empty($username) && !empty($password)) {
                 curl_setopt($ch, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
                 curl_setopt($ch, CURLOPT_USERPWD, $username . ':' . $password);
             }
 
-            // РќР°СЃС‚СЂРѕР№РєРё SSL (Р°РЅР°Р»РѕРіРёС‡РЅРѕ РјРµС‚РѕРґСѓ proxyYMLFeed)
+            // Настройки SSL (аналогично методу proxyYMLFeed)
             curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
             curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
             curl_setopt($ch, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
@@ -5375,12 +5375,12 @@ class BulkGoodsImportController extends Controller
             curl_close($ch);
 
             if ($xmlContent === false || $curlErrno !== 0) {
-                $errorMessage = $curlError ?: 'РќРµРёР·РІРµСЃС‚РЅР°СЏ РѕС€РёР±РєР° cURL';
+                $errorMessage = $curlError ?: 'Неизвестная ошибка cURL';
                 if ($curlErrno) {
-                    $errorMessage .= ' (РєРѕРґ РѕС€РёР±РєРё: ' . $curlErrno . ')';
+                    $errorMessage .= ' (код ошибки: ' . $curlErrno . ')';
                 }
 
-                \Log::error('РћС€РёР±РєР° cURL РїСЂРё Р·Р°РіСЂСѓР·РєРµ YML РїРѕ URL', [
+                \Log::error('Ошибка cURL при загрузке YML по URL', [
                     'url' => $url,
                     'curl_error' => $curlError,
                     'curl_errno' => $curlErrno,
@@ -5389,25 +5389,25 @@ class BulkGoodsImportController extends Controller
 
                 return response()->json([
                     'success' => false,
-                    'error' => 'РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё С„РёРґР°: ' . $errorMessage,
+                    'error' => 'Ошибка загрузки фида: ' . $errorMessage,
                 ], 500);
             }
 
             if ($httpCode !== 200) {
                 return response()->json([
                     'success' => false,
-                    'error' => "РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё С„РёРґР°: HTTP {$httpCode}",
+                    'error' => "Ошибка загрузки фида: HTTP {$httpCode}",
                 ], $httpCode);
             }
 
             if (empty($xmlContent)) {
                 return response()->json([
                     'success' => false,
-                    'error' => 'Р¤РёРґ РїСѓСЃС‚',
+                    'error' => 'Фид пуст',
                 ], 400);
             }
 
-            // РџР°СЂСЃРёРј XML СЃРѕРґРµСЂР¶РёРјРѕРµ
+            // Парсим XML содержимое
             $ymlData = $this->parseYMLContent($xmlContent);
 
             return response()->json([
@@ -5416,20 +5416,20 @@ class BulkGoodsImportController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('РћС€РёР±РєР° РїР°СЂСЃРёРЅРіР° YML РїРѕ URL', [
+            \Log::error('Ошибка парсинга YML по URL', [
                 'url' => $request->input('url'),
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            // Р¤РѕСЂРјРёСЂСѓРµРј Р±РѕР»РµРµ РїРѕРЅСЏС‚РЅРѕРµ СЃРѕРѕР±С‰РµРЅРёРµ РѕР± РѕС€РёР±РєРµ
+            // Формируем более понятное сообщение об ошибке
             $errorMessage = $e->getMessage();
             if (strpos($errorMessage, 'Opening and ending tag mismatch') !== false) {
-                $errorMessage = 'РћС€РёР±РєР° РїР°СЂСЃРёРЅРіР° YML: РќРµСЃРѕРѕС‚РІРµС‚СЃС‚РІРёРµ РѕС‚РєСЂС‹РІР°СЋС‰РёС… Рё Р·Р°РєСЂС‹РІР°СЋС‰РёС… С‚РµРіРѕРІ РІ XML С„Р°Р№Р»Рµ. ' .
-                    'РџСЂРѕРІРµСЂСЊС‚Рµ РєРѕСЂСЂРµРєС‚РЅРѕСЃС‚СЊ СЃС‚СЂСѓРєС‚СѓСЂС‹ XML С„Р°Р№Р»Р°. ' .
-                    'Р’РѕР·РјРѕР¶РЅРѕ, РЅРµРєРѕС‚РѕСЂС‹Рµ С‚РµРіРё РЅРµ Р·Р°РєСЂС‹С‚С‹ РёР»Рё Р·Р°РєСЂС‹С‚С‹ РЅРµРїСЂР°РІРёР»СЊРЅРѕ.';
+                $errorMessage = 'Ошибка парсинга YML: Несоответствие открывающих и закрывающих тегов в XML файле. ' .
+                    'Проверьте корректность структуры XML файла. ' .
+                    'Возможно, некоторые теги не закрыты или закрыты неправильно.';
             } elseif (strpos($errorMessage, 'parser error') !== false) {
-                $errorMessage = 'РћС€РёР±РєР° РїР°СЂСЃРёРЅРіР° YML: ' . $errorMessage;
+                $errorMessage = 'Ошибка парсинга YML: ' . $errorMessage;
             }
 
             return response()->json([
