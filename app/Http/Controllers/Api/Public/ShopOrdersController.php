@@ -53,8 +53,8 @@ class ShopOrdersController extends Controller
 
             DB::beginTransaction();
 
-            // Генерируем номер заказа
-            $orderNumber = 'ORD-'.date('Ymd').'-'.str_pad(ShopOrder::count() + 1, 3, '0', STR_PAD_LEFT);
+            // Генерируем номер заказа в едином формате для всех способов оплаты
+            $orderNumber = $this->generateOrderNumber();
 
             // Пересчитываем товары и бонусы через сервис
             $orderItems = [];
@@ -207,5 +207,25 @@ class ShopOrdersController extends Controller
                 'message' => 'Ошибка при создании заказа',
             ], 500);
         }
+    }
+    /**
+     * Формат: SS-YYYYMMDD-XXXXXX
+     */
+    protected function generateOrderNumber(): string
+    {
+        $datePart = date('Ymd');
+        $prefix = 'SS-'.$datePart.'-';
+        $attempts = 0;
+        do {
+            $randomPart = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+            $orderNumber = $prefix.$randomPart;
+            $exists = ShopOrder::where('order_number', $orderNumber)->exists();
+            $attempts++;
+        } while ($exists && $attempts < 5);
+        if ($exists) {
+            $orderNumber = $prefix.uniqid();
+        }
+
+        return $orderNumber;
     }
 }

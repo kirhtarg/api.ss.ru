@@ -18,12 +18,14 @@ class ShopOrderStatus extends Model
         'is_cancelled',
         'sort_order',
         'description',
+        'is_taken_to_work',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
         'is_finished' => 'boolean',
         'is_cancelled' => 'boolean',
+        'is_taken_to_work' => 'boolean',
     ];
 
     public function orders()

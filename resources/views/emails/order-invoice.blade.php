@@ -385,6 +385,19 @@
                            ($order->bonus_points_to_use && $order->bonus_points_to_use > 0);
         @endphp
 
+        @if($order->has_certificate && $order->certificate_code)
+            <div class="discounts" style="border-left-color: #dc2626;">
+                <h4 style="color: #b91c1c;">Сертификат:</h4>
+                <table>
+                    <tr>
+                        <td class="label">Код сертификата:</td>
+                        <td class="amount" style="color: #dc2626;">{{ $order->certificate_code }}</td>
+                    </tr>
+                </table>
+                <p style="margin: 12px 0 0; color: #b91c1c; font-weight: 600;">Мы свяжемся с Вами по поводу индивидуальных условий.</p>
+            </div>
+        @endif
+
         @if($hasDiscounts)
             <div class="discounts">
                 <h4>Применённые скидки:</h4>

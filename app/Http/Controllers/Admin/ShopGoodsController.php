@@ -2260,13 +2260,14 @@ class ShopGoodsController extends Controller
         $validator = Validator::make($rawJsonData, [
             'ids' => $idsRules,
             'ids.*' => 'exists:shop_goods,id',
-            'action' => 'required|in:activate,deactivate,delete,delete_without_supplier,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_fast_remote_stock,update_price,update_sale_price,update_demping_price,toggle_show_demping,toggle_fields,update_label,remove_after_symbol,replace_text,update_dimensions,enable_preorder,disable_preorder,clear_by_tags,clear_by_suppliers,delete_images,delete_zero_stock_no_media',
+            'action' => 'required|in:activate,deactivate,delete,delete_without_supplier,delete_without_images,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_fast_remote_stock,update_price,update_sale_price,update_demping_price,toggle_show_demping,toggle_fields,update_label,remove_after_symbol,replace_text,update_dimensions,enable_preorder,disable_preorder,clear_by_tags,clear_by_suppliers,delete_images,delete_zero_stock_no_media',
             'data' => 'nullable|array',
             'data.field' => 'nullable|in:name,description,short_description',
             'data.mode' => 'nullable|in:exact,start_end',
             'data.delete_type' => 'nullable|in:goods,variations,goods_and_variations',
             'data.variation_ids' => 'nullable|array',
             'data.variation_ids.*' => 'exists:shop_good_variations,id',
+            'data.delete_good_if_all_variations_removed' => 'nullable|boolean',
             'data.show_demping' => 'nullable|boolean',
             'data.is_sale' => 'nullable|boolean',
             'data.is_new' => 'nullable|boolean',
@@ -2520,6 +2521,71 @@ class ShopGoodsController extends Controller
                     'deleted_count' => $deletedCount,
                     'moved_images_count' => $movedImagesCount,
                     'variation_ids' => $variationIds,
+                ]);
+            }
+
+            if ($action === 'delete_without_images') {
+                $deleteGoodIfAllVariationsRemoved = (bool) ($data['delete_good_if_all_variations_removed'] ?? true);
+                $goodsForProcessing = ShopGood::whereIn('id', $ids)
+                    ->with(['images', 'variations.images'])
+                    ->get();
+
+                $deletedCount = 0;
+                $goodsWithoutVariationsCount = 0;
+                $deletedVariationsCount = 0;
+                $deletedGoodsAfterVariationsRemovedCount = 0;
+
+                foreach ($goodsForProcessing as $good) {
+                    $oldValues = $good->toArray();
+                    $variations = $good->variations;
+
+                    if ($variations->isEmpty()) {
+                        if ($good->images->count() > 0) {
+                            continue;
+                        }
+
+                        $goodsWithoutVariationsCount++;
+                        $this->logAudit($good, 'bulk_deleted_without_images', $oldValues, null);
+                        $good->delete();
+                        $deletedCount++;
+                        continue;
+                    }
+
+                    $variationsWithoutImages = $variations->filter(function ($variation) {
+                        return $variation->images->count() === 0;
+                    });
+
+                    if ($variationsWithoutImages->isEmpty()) {
+                        continue;
+                    }
+
+                    foreach ($variationsWithoutImages as $variation) {
+                        $variation->delete();
+                        $deletedVariationsCount++;
+                    }
+
+                    if ($deleteGoodIfAllVariationsRemoved && $variationsWithoutImages->count() === $variations->count()) {
+                        $this->logAudit($good, 'bulk_deleted_without_images', $oldValues, null);
+                        $good->delete();
+                        $deletedGoodsAfterVariationsRemovedCount++;
+                        $deletedCount++;
+                    }
+                }
+
+                DB::commit();
+
+                $message = "Удалено товаров без изображений: {$deletedCount}";
+                $message .= ". Товаров без вариаций: {$goodsWithoutVariationsCount}";
+                $message .= ". Удалено вариаций без изображений: {$deletedVariationsCount}";
+                $message .= ". Удалено товаров после очистки всех вариаций: {$deletedGoodsAfterVariationsRemovedCount}";
+
+                return response()->json([
+                    'success' => true,
+                    'message' => $message,
+                    'deleted_count' => $deletedCount,
+                    'deleted_goods_without_variations_count' => $goodsWithoutVariationsCount,
+                    'deleted_variations_count' => $deletedVariationsCount,
+                    'deleted_goods_after_variations_removed_count' => $deletedGoodsAfterVariationsRemovedCount,
                 ]);
             }
 
@@ -3065,7 +3131,7 @@ class ShopGoodsController extends Controller
                         }
                         break;
                     case 'update_label':
-                        if (isset($data['label_id'])) {
+                        if (array_key_exists('label_id', $data)) {
                             $good->update(['label_id' => $data['label_id'] ?: null]);
                         }
                         break;
@@ -3211,6 +3277,78 @@ class ShopGoodsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка массового обновления: '.$e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function findGoodsWithoutImages(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'good_ids' => 'required|array',
+            'good_ids.*' => 'exists:shop_goods,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        try {
+            $goodIds = $request->get('good_ids', []);
+
+            $goodsForProcessing = ShopGood::query()
+                ->whereIn('id', $goodIds)
+                ->with(['images', 'variations.images'])
+                ->get();
+
+            $goodsCount = 0;
+            $goodsWithoutVariationsCount = 0;
+            $goodsWithAllVariationsWithoutImagesCount = 0;
+            $variationsCount = 0;
+
+            foreach ($goodsForProcessing as $good) {
+                $variations = $good->variations;
+
+                if ($variations->isEmpty()) {
+                    if ($good->images->count() === 0) {
+                        $goodsCount++;
+                        $goodsWithoutVariationsCount++;
+                    }
+                    continue;
+                }
+
+                $variationsWithoutImages = $variations->filter(function ($variation) {
+                    return $variation->images->count() === 0;
+                });
+
+                if ($variationsWithoutImages->isEmpty()) {
+                    continue;
+                }
+
+                $goodsCount++;
+                $variationsCount += $variationsWithoutImages->count();
+
+                if ($variationsWithoutImages->count() === $variations->count()) {
+                    $goodsWithAllVariationsWithoutImagesCount++;
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'goods_count' => $goodsCount,
+                    'goods_without_variations_count' => $goodsWithoutVariationsCount,
+                    'goods_with_all_variations_without_images_count' => $goodsWithAllVariationsWithoutImagesCount,
+                    'variations_count' => $variationsCount,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка поиска товаров без изображений: '.$e->getMessage(),
             ], 500);
         }
     }

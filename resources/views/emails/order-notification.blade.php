@@ -237,6 +237,16 @@
                     </span>
                 </div>
 
+                @if($order->has_certificate && $order->certificate_code)
+                <div class="info-row">
+                    <span class="info-label">Сертификат:</span>
+                    <span class="info-value" style="color: #dc2626; font-weight: 700;">{{ $order->certificate_code }}</span>
+                </div>
+                <div style="margin-top: 12px; padding: 12px; background: #fff5f5; border: 1px solid #fecaca; border-radius: 6px; color: #b91c1c; font-weight: 600;">
+                    Мы свяжемся с Вами по поводу индивидуальных условий.
+                </div>
+                @endif
+
                 @if($order->sale_discount_amount > 0)
                 <div class="info-row">
                     <span class="info-label">Акционные скидки:</span>
@@ -410,4 +420,3 @@
     </div>
 </body>
 </html>
-

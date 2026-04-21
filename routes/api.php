@@ -1,7 +1,7 @@
 <?php
-// Test comment in routes/api.php
 
 use App\Http\Controllers\Admin\ShopGoodImageController;
+use App\Http\Controllers\Admin\ShopGoodsMediaTransferController;
 use App\Http\Controllers\Api\Public\ShopTemplateController;
 use App\Http\Controllers\Api\Public\SiteInfoController;
 use App\Http\Controllers\Api\Public\SiteMenuController;
@@ -1931,6 +1931,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/transfer-data', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'transferData']);
                 Route::post('/change-variation', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'changeVariation']);
                 Route::post('/transfer-media-var-to-main', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'transferMediaVarToMain']);
+                Route::post('/transfer-media-main-to-main', [\App\Http\Controllers\Admin\ShopGoodsMediaTransferController::class, 'transferMediaMainToMain']);
                 Route::post('/merge-variations', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'mergeVariations']);
                 Route::get('/variations/images-count', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getVariationsImagesCount']);
                 Route::post('/check-duplicates', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'checkDuplicates']);
@@ -2018,6 +2019,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 // Получить ID вариаций для списка товаров
                 Route::post('/variations/get-ids', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'getVariationIdsByGoods']);
                 Route::post('/variations/find-zero-stock-no-media', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'findZeroStockNoMediaVariations']);
+                Route::post('/find-without-images', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'findGoodsWithoutImages']);
 
                 // Видео товаров
                 Route::prefix('{goodId}/videos')->group(function () {
@@ -2165,6 +2167,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::delete('/log-icons/{iconId}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'deleteLogIcon']);
                 Route::get('/{orderId}/logs', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'getOrderLogs']);
                 Route::post('/{orderId}/logs', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'addOrderLog']);
+                Route::get('/manager-statistics', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'getManagerStatistics']);
                 Route::put('/{id}/pay-agree', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updatePayAgree']);
                 // Bulk operations
                 Route::post('/bulk/delete', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'bulkDelete']);

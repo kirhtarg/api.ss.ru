@@ -825,6 +825,8 @@ class CartController extends Controller
                 'birthday_discount_amount' => 'nullable|numeric',
                 'total_discount_amount' => 'nullable|numeric',
                 'promo_code' => 'nullable|string|max:50',
+                'certificate_code' => 'nullable|string|max:255',
+                'has_certificate' => 'nullable|boolean',
                 'promo_code_id' => 'nullable|integer',
                 'use_bonus_points' => 'nullable|boolean',
                 'bonus_points_to_use' => 'nullable|integer|min:0',
@@ -895,6 +897,9 @@ class CartController extends Controller
             Log::info('final customer_id:', ['customer_id' => $customerId, 'type' => gettype($customerId)]);
             Log::info('total_discount_amount:', ['amount' => $request->get('total_discount_amount')]);
             Log::info('bonus_points_to_use:', ['points' => $request->get('bonus_points_to_use')]);
+
+            $certificateData = $this->extractCertificateData($request->all());
+            $isCertificateOrder = $certificateData['has_certificate'];
 
             // Генерируем уникальный номер заказа
             $orderNumber = $this->generateUniqueOrderNumber();
@@ -1043,12 +1048,13 @@ class CartController extends Controller
             // Пересчитываем общую сумму
             $deliveryCost = $request->get('delivery_cost', 0);
             $overtaxAmount = (float) $request->get('overtax_amount', 0) + (float) $request->get('payment_surcharge_amount', 0);
-            $totalDiscount = $request->get('total_discount_amount', 0);
+            $totalDiscount = $isCertificateOrder ? 0 : $request->get('total_discount_amount', 0);
 
             // РАСЧЕТ ИТОГА: 
             // Суть бага была в том, что recalculatedSubtotal УЖЕ включал акционную скидку, 
             // а потом из него вычитался totalDiscount, в котором ТАКЖЕ сидела акционная скидка.
             // Теперь считаем от БАЗОВОЙ суммы (recalculatedRegularSubtotal).
+            $finalSubtotal = $isCertificateOrder ? $recalculatedRegularSubtotal : $recalculatedSubtotal;
             $finalTotalAmount = $recalculatedRegularSubtotal + $overtaxAmount - $totalDiscount;
             
             if ($finalTotalAmount < 0) {
@@ -1071,18 +1077,20 @@ class CartController extends Controller
                 'customer_email' => $request->get('customer_email'),
                 'customer_phone' => $request->get('customer_phone'),
                 'items' => $finalItems, // Используем проверенные товары
-                'subtotal' => $recalculatedSubtotal, // Используем пересчитанную сумму
-                'discount_amount' => $request->get('total_discount_amount', 0),
-                'sale_discount_amount' => $request->get('sale_discount_amount', 0),
-                'registered_user_discount_amount' => $request->get('registered_user_discount_amount', 0),
-                'promo_code_discount_amount' => $request->get('promo_code_discount_amount', 0),
-                'birthday_discount_amount' => $request->get('birthday_discount_amount', 0),
+                'subtotal' => $finalSubtotal, // Используем пересчитанную сумму
+                'discount_amount' => $totalDiscount,
+                'sale_discount_amount' => $isCertificateOrder ? 0 : $request->get('sale_discount_amount', 0),
+                'registered_user_discount_amount' => $isCertificateOrder ? 0 : $request->get('registered_user_discount_amount', 0),
+                'promo_code_discount_amount' => $isCertificateOrder ? 0 : $request->get('promo_code_discount_amount', 0),
+                'birthday_discount_amount' => $isCertificateOrder ? 0 : $request->get('birthday_discount_amount', 0),
                 'total_discount_amount' => $totalDiscount,
-                'promo_code' => $request->get('promo_code'),
-                'promo_code_id' => $request->get('promo_code_id'),
-                'use_bonus_points' => $request->get('use_bonus_points', false),
-                'bonus_points_to_use' => $request->get('bonus_points_to_use', 0),
-                'order_bonus_points' => $request->get('order_bonus_points', 0),
+                'promo_code' => $isCertificateOrder ? null : $request->get('promo_code'),
+                'certificate_code' => $certificateData['certificate_code'],
+                'has_certificate' => $isCertificateOrder,
+                'promo_code_id' => $isCertificateOrder ? null : $request->get('promo_code_id'),
+                'use_bonus_points' => $isCertificateOrder ? false : $request->get('use_bonus_points', false),
+                'bonus_points_to_use' => $isCertificateOrder ? 0 : $request->get('bonus_points_to_use', 0),
+                'order_bonus_points' => $isCertificateOrder ? 0 : $request->get('order_bonus_points', 0),
                 'overtax_amount' => $overtaxAmount,
                 'overtax_text' => $request->get('overtax_text') ?: ($request->get('payment_surcharge_amount', 0) > 0 ? 'Наценка за способ оплаты' : null),
 
@@ -1120,7 +1128,7 @@ class CartController extends Controller
             ShopOrderLog::logOrderCreated($order->id, $userName ?? $request->get('customer_name', 'Покупатель'), ShopOrderLog::SECTION_ORDERS, $order->order_number);
 
             // Создаем запись об использовании промокода, если он был применен
-            if ($request->get('promo_code_id')) {
+            if (! $isCertificateOrder && $request->get('promo_code_id')) {
                 try {
                     $promocode = \App\Models\Promocode::find($request->get('promo_code_id'));
                     if ($promocode) {
@@ -1147,7 +1155,7 @@ class CartController extends Controller
             }
 
             // Списываем бонусы с баланса пользователя через UserBonus (единое хранилище)
-            if ($customerId && $request->get('use_bonus_points') && $request->get('bonus_points_to_use', 0) > 0) {
+            if (! $isCertificateOrder && $customerId && $request->get('use_bonus_points') && $request->get('bonus_points_to_use', 0) > 0) {
                 try {
                     $bonusPointsToUse = (int) $request->get('bonus_points_to_use', 0);
                     $userBonus = \App\Models\UserBonus::getOrCreateForUser($customerId);
@@ -1264,6 +1272,9 @@ class CartController extends Controller
                     'promo_code_discount_amount' => $order->promo_code_discount_amount,
                     'birthday_discount_amount' => $order->birthday_discount_amount,
                     'total_discount_amount' => $order->total_discount_amount,
+                    'certificate_code' => $order->certificate_code,
+                    'has_certificate' => (bool) ($order->has_certificate ?? false),
+                    'bonus_points_to_use' => (int) ($order->bonus_points_to_use ?? 0),
                 ],
             ];
 
@@ -1831,28 +1842,31 @@ class CartController extends Controller
      */
     private function generateUniqueOrderNumber()
     {
-        $date = date('Ymd');
-        $prefix = 'ORD-'.$date.'-';
-
-        // Получаем следующий ID заказа из таблицы shop_orders
-        $nextOrderId = ShopOrder::max('id') + 1;
-
-        // Если заказов еще нет, начинаем с 1
-        if (! $nextOrderId) {
-            $nextOrderId = 1;
-        }
-
-        // Форматируем номер с ID заказа
-        $orderNumber = $prefix.str_pad($nextOrderId, 4, '0', STR_PAD_LEFT);
-
-        // Проверяем уникальность (на случай race condition)
-        $counter = 1;
-        while (ShopOrder::where('order_number', $orderNumber)->exists()) {
-            $orderNumber = $prefix.str_pad($nextOrderId + $counter, 4, '0', STR_PAD_LEFT);
-            $counter++;
+        $datePart = date('Ymd');
+        $prefix = 'SS-'.$datePart.'-';
+        $attempts = 0;
+        do {
+            $randomPart = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+            $orderNumber = $prefix.$randomPart;
+            $exists = ShopOrder::where('order_number', $orderNumber)->exists();
+            $attempts++;
+        } while ($exists && $attempts < 5);
+        if ($exists) {
+            $orderNumber = $prefix.uniqid();
         }
 
         return $orderNumber;
+    }
+
+    private function extractCertificateData(array $payload): array
+    {
+        $certificateCode = trim((string) ($payload['certificate_code'] ?? ''));
+        $hasCertificate = $certificateCode !== '' || (bool) ($payload['has_certificate'] ?? false);
+
+        return [
+            'certificate_code' => $hasCertificate ? $certificateCode : null,
+            'has_certificate' => $hasCertificate,
+        ];
     }
 
     /**

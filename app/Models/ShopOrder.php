@@ -32,6 +32,8 @@ class ShopOrder extends Model
         'birthday_discount_amount',
         'total_discount_amount',
         'promo_code',
+        'certificate_code',
+        'has_certificate',
         'promo_code_id',
         'use_bonus_points',
         'bonus_points_to_use',
@@ -60,6 +62,7 @@ class ShopOrder extends Model
         'surcharge_enabled',
         'surcharge_value',
         'surcharge_type',
+        'manager_id',
     ];
 
     protected $attributes = [
@@ -75,6 +78,7 @@ class ShopOrder extends Model
         'promo_code_discount_amount' => 'decimal:2',
         'birthday_discount_amount' => 'decimal:2',
         'total_discount_amount' => 'decimal:2',
+        'has_certificate' => 'boolean',
         'delivery_cost' => 'decimal:2',
         'total_amount' => 'decimal:2',
         'total_quantity' => 'integer',
@@ -96,6 +100,11 @@ class ShopOrder extends Model
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function manager()
+    {
+        return $this->belongsTo(User::class, 'manager_id');
     }
 
     public function status()
@@ -140,7 +149,9 @@ class ShopOrder extends Model
             return [];
         }
 
-        return array_map(function ($item) {
+        $isCertificateOrder = ! empty(trim((string) ($this->certificate_code ?? ''))) || (bool) ($this->has_certificate ?? false);
+
+        return array_map(function ($item) use ($isCertificateOrder) {
             $goodId = $item['good_id'] ?? null;
             $variationId = $item['variation_id'] ?? null;
 
@@ -189,17 +200,20 @@ class ShopOrder extends Model
                 }
             }
 
-            $quantity = $item['quantity'] ?? 1;
-            $price = $item['price'] ?? 0;
+            $quantity = (int) ($item['quantity'] ?? 1);
+            $storedPrice = (float) ($item['price'] ?? 0);
+            $basePrice = (float) ($item['base_price'] ?? $item['regular_price'] ?? $item['original_price'] ?? $storedPrice);
             $salePrice = $item['sale_price'] ?? $goodInfo['sale_price'] ?? null;
+            $finalPrice = (float) ($item['final_price'] ?? (($salePrice && $salePrice > 0) ? $salePrice : $storedPrice));
 
             $total = $item['total'] ?? 0;
-            if ($total == 0) {
-                if ($salePrice && $salePrice > 0) {
-                    $total = $salePrice * $quantity;
-                } else {
-                    $total = $price * $quantity;
-                }
+            if ($isCertificateOrder) {
+                $total = $basePrice * $quantity;
+                $salePrice = null;
+                $finalPrice = $basePrice;
+                $storedPrice = $basePrice;
+            } elseif ((float) $total == 0.0) {
+                $total = $finalPrice * $quantity;
             }
 
             $weight = null;
@@ -251,11 +265,12 @@ class ShopOrder extends Model
                 'variation_sku' => $variationSku,
                 'attributes' => $attributes,
                 'quantity' => $quantity,
-                'price' => $price,
-                'base_price' => $item['base_price'] ?? $price,
+                'price' => $storedPrice,
+                'base_price' => $basePrice,
                 'sale_price' => $salePrice,
-                'final_price' => ($salePrice && $salePrice > 0) ? $salePrice : $price,
-                'discount_amount' => $item['discount_amount'] ?? 0,
+                'final_price' => $finalPrice,
+                'unit_price' => $finalPrice,
+                'discount_amount' => $isCertificateOrder ? 0 : ($item['discount_amount'] ?? 0),
                 'bonus_points' => $item['bonus_points'] ?? 0,
                 'total' => $total,
                 'weight' => isset($item['weight']) ? $item['weight'] : ($weight !== null ? (float) $weight : null),

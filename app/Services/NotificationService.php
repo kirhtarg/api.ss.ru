@@ -547,6 +547,8 @@ class NotificationService
         $birthdayDiscount = (float) ($order->birthday_discount_amount ?? 0);
         $overtaxAmount = (float) ($order->overtax_amount ?? 0);
         $overtaxText = $order->overtax_text ?: 'Наценка';
+        $certificateCode = trim((string) ($order->certificate_code ?? ''));
+        $hasCertificate = (bool) ($order->has_certificate ?? false) || $certificateCode !== '';
 
         $fmt = fn ($v) => number_format($v, 0, ',', ' ').' ₽';
 
@@ -554,6 +556,10 @@ class NotificationService
 
         if ($forTelegram) {
             $lines[] = '💵 <b>Сумма товаров:</b> '.$fmt($baseTotal);
+            if ($hasCertificate) {
+                $lines[] = '🎫 <b>Сертификат:</b> '.$certificateCode;
+                $lines[] = '📞 <b>Сообщение:</b> Мы свяжемся с Вами по поводу индивидуальных условий.';
+            }
             if ($saleDiscount > 0) {
                 $lines[] = '🏷 <b>Акционные скидки:</b> -'.$fmt($saleDiscount);
             }
@@ -576,6 +582,10 @@ class NotificationService
             $lines[] = '💰 <b>Итого к оплате:</b> '.$fmt((float) ($order->total_amount ?? 0));
         } else {
             $lines[] = 'Сумма товаров: '.$fmt($baseTotal);
+            if ($hasCertificate) {
+                $lines[] = 'Сертификат: '.$certificateCode;
+                $lines[] = 'Сообщение: Мы свяжемся с Вами по поводу индивидуальных условий.';
+            }
             if ($saleDiscount > 0) {
                 $lines[] = 'Акционные скидки: -'.$fmt($saleDiscount);
             }

@@ -667,6 +667,7 @@ class ShopPaymentController extends Controller
 
                 return null;
             }
+            $orderData = $this->normalizeCertificateOrderData($orderData);
             $order = ShopOrder::create([
                 'order_number' => $transaction->request_data['order_number'] ?? $this->generateOrderNumber(),
                 'user_id' => $orderData['customer_id'] ?? null,
@@ -691,6 +692,8 @@ class ShopPaymentController extends Controller
                 'birthday_discount_amount' => $orderData['birthday_discount_amount'] ?? 0,
                 'total_discount_amount' => $orderData['total_discount_amount'] ?? 0,
                 'promo_code' => $orderData['promo_code'] ?? null,
+                'certificate_code' => $orderData['certificate_code'] ?? null,
+                'has_certificate' => (bool) ($orderData['has_certificate'] ?? false),
                 'promo_code_id' => $orderData['promo_code_id'] ?? null,
                 'use_bonus_points' => $orderData['use_bonus_points'] ?? false,
                 'bonus_points_to_use' => $orderData['bonus_points_to_use'] ?? 0,
@@ -713,6 +716,7 @@ class ShopPaymentController extends Controller
     protected function createOrderFromPayload(array $orderData, ?int $paymentMethodId, string $orderNumber, ?string $ip, ?string $userAgent): ?ShopOrder
     {
         try {
+            $orderData = $this->normalizeCertificateOrderData($orderData);
             $order = ShopOrder::create([
                 'order_number' => $orderNumber,
                 'user_id' => $orderData['customer_id'] ?? null,
@@ -737,6 +741,8 @@ class ShopPaymentController extends Controller
                 'birthday_discount_amount' => $orderData['birthday_discount_amount'] ?? 0,
                 'total_discount_amount' => $orderData['total_discount_amount'] ?? 0,
                 'promo_code' => $orderData['promo_code'] ?? null,
+                'certificate_code' => $orderData['certificate_code'] ?? null,
+                'has_certificate' => (bool) ($orderData['has_certificate'] ?? false),
                 'promo_code_id' => $orderData['promo_code_id'] ?? null,
                 'use_bonus_points' => $orderData['use_bonus_points'] ?? false,
                 'bonus_points_to_use' => $orderData['bonus_points_to_use'] ?? 0,
@@ -751,7 +757,7 @@ class ShopPaymentController extends Controller
             ]);
 
             // Списываем бонусы через UserBonus (единое хранилище) при использовании бонусов
-            if ($order && ($orderData['use_bonus_points'] ?? false) && ($orderData['bonus_points_to_use'] ?? 0) > 0) {
+            if ($order && ! ($orderData['has_certificate'] ?? false) && ($orderData['use_bonus_points'] ?? false) && ($orderData['bonus_points_to_use'] ?? 0) > 0) {
                 $customerId = $orderData['customer_id'] ?? null;
                 if ($customerId) {
                     try {
@@ -811,6 +817,9 @@ class ShopPaymentController extends Controller
 
         // Извлекаем order_data из запроса
         $orderData = $request->input('order_data');
+        $certificateData = $this->extractCertificateData($orderData);
+        $orderData['certificate_code'] = $certificateData['certificate_code'];
+        $orderData['has_certificate'] = $certificateData['has_certificate'];
         $paymentMethod = ShopPaymentMethod::findOrFail($request->payment_method_id);
 
         // SERVER-SIDE RECALCULATION (AUTHORITATIVE)
@@ -905,6 +914,7 @@ class ShopPaymentController extends Controller
             // Overwrite subtotal with server-calculated value (selling price subtotal)
             $orderData['subtotal'] = $recalculatedSubtotal;
             $orderData['sale_discount_amount'] = max(0, $recalculatedBaseSubtotal - $recalculatedSubtotal);
+            $isCertificateOrder = (bool) ($orderData['has_certificate'] ?? false);
 
             // --- Full discount and total recalculation ---
             $user = isset($orderData['customer_id']) ? \App\Models\User::find($orderData['customer_id']) : null;
@@ -917,13 +927,13 @@ class ShopPaymentController extends Controller
 
             // 1. Registered User Discount
             // Use client-sent value — User model has no `discount` field, client computes it correctly from site settings
-            $registeredUserDiscountAmount = (float) ($orderData['registered_user_discount_amount'] ?? 0);
+            $registeredUserDiscountAmount = $isCertificateOrder ? 0.0 : (float) ($orderData['registered_user_discount_amount'] ?? 0);
 
             $subtotalAfterUserDiscount = $recalculatedSubtotal - $registeredUserDiscountAmount;
 
             // 2. Promo Code Discount
             $promoCode = null;
-            $promoCodeString = $orderData['promo_code'] ?? null;
+            $promoCodeString = $isCertificateOrder ? null : ($orderData['promo_code'] ?? null);
             if ($promoCodeString) {
                 $promoCode = \App\Models\Promocode::where('code', $promoCodeString)->first();
             }
@@ -946,7 +956,7 @@ class ShopPaymentController extends Controller
             }
 
             // 3. Bonus Points Discount
-            if (($orderData['use_bonus_points'] ?? false) && ($orderData['bonus_points_to_use'] ?? 0) > 0 && $user) {
+            if (! $isCertificateOrder && ($orderData['use_bonus_points'] ?? false) && ($orderData['bonus_points_to_use'] ?? 0) > 0 && $user) {
                 $pointsToUse = (int) $orderData['bonus_points_to_use'];
                 $baseAmountForBonuses = $subtotalAfterUserDiscount - $promoCodeDiscountAmount;
                 $userBonus = \App\Models\UserBonus::getOrCreateForUser($user->id);
@@ -959,9 +969,9 @@ class ShopPaymentController extends Controller
             }
 
             // 4. Final Calculation
-            $birthdayDiscountAmount = (float) ($orderData['birthday_discount_amount'] ?? 0);
-            $saleDiscountAmount = (float) ($orderData['sale_discount_amount'] ?? 0);
-            $deliveryCost = $isFreeDelivery ? 0 : ($orderData['delivery_cost'] ?? 0);
+            $birthdayDiscountAmount = $isCertificateOrder ? 0.0 : (float) ($orderData['birthday_discount_amount'] ?? 0);
+            $saleDiscountAmount = $isCertificateOrder ? 0.0 : (float) ($orderData['sale_discount_amount'] ?? 0);
+            $deliveryCost = $isCertificateOrder ? ($orderData['delivery_cost'] ?? 0) : ($isFreeDelivery ? 0 : ($orderData['delivery_cost'] ?? 0));
             
             // Total discount for database (sum of all extra discounts on top of sale prices)
             $totalDiscount = $registeredUserDiscountAmount + $promoCodeDiscountAmount + $bonusPointsDiscountAmount + $birthdayDiscountAmount;
@@ -970,6 +980,11 @@ class ShopPaymentController extends Controller
             // overtax_amount combines site overtax + payment method surcharge (same as CartController)
             $overtaxAmount = (float) ($orderData['overtax_amount'] ?? 0) + (float) ($orderData['payment_surcharge_amount'] ?? 0);
             $finalTotalAmount = $recalculatedSubtotal - ($registeredUserDiscountAmount + $promoCodeDiscountAmount + $bonusPointsDiscountAmount + $birthdayDiscountAmount) + $overtaxAmount;
+            if ($isCertificateOrder) {
+                $orderData['subtotal'] = $recalculatedBaseSubtotal;
+                $totalDiscount = 0.0;
+                $finalTotalAmount = $recalculatedBaseSubtotal + $overtaxAmount;
+            }
 
             // Overwrite client-sent amounts with authoritative server calculation
             $orderData['total_amount'] = round($finalTotalAmount, 2);
@@ -982,8 +997,14 @@ class ShopPaymentController extends Controller
             // The monetary value is what we calculated as bonusPointsDiscountAmount.
             // Let's assume 1 point = 1 RUB for simplicity.
             $orderData['bonus_points_to_use'] = (int) round($bonusPointsDiscountAmount);
+            $orderData['use_bonus_points'] = $isCertificateOrder ? false : ($orderData['use_bonus_points'] ?? false);
+            $orderData['order_bonus_points'] = $isCertificateOrder ? 0 : ($orderData['order_bonus_points'] ?? 0);
             $orderData['delivery_cost'] = round($deliveryCost, 2);
             $orderData['overtax_amount'] = round($overtaxAmount, 2);
+            if ($isCertificateOrder) {
+                $orderData['promo_code'] = null;
+                $orderData['promo_code_id'] = null;
+            }
             // overtax_text: use client value; if absent but payment surcharge present, use default
             if (empty($orderData['overtax_text']) && (float) ($orderData['payment_surcharge_amount'] ?? 0) > 0) {
                 $orderData['overtax_text'] = 'Наценка за способ оплаты';
@@ -1015,6 +1036,8 @@ class ShopPaymentController extends Controller
                 'birthday_discount_amount' => $orderData['birthday_discount_amount'] ?? 0,
                 'total_discount_amount' => $orderData['total_discount_amount'] ?? 0,
                 'promo_code' => $orderData['promo_code'] ?? null,
+                'certificate_code' => $orderData['certificate_code'] ?? null,
+                'has_certificate' => (bool) ($orderData['has_certificate'] ?? false),
                 'promo_code_id' => $orderData['promo_code_id'] ?? null,
                 'use_bonus_points' => $orderData['use_bonus_points'] ?? false,
                 'bonus_points_to_use' => $orderData['bonus_points_to_use'] ?? 0,
@@ -3248,6 +3271,40 @@ class ShopPaymentController extends Controller
         }
 
         return $orderNumber;
+    }
+
+    protected function extractCertificateData(?array $payload): array
+    {
+        $payload = $payload ?? [];
+        $certificateCode = trim((string) ($payload['certificate_code'] ?? ''));
+        $hasCertificate = $certificateCode !== '' || (bool) ($payload['has_certificate'] ?? false);
+
+        return [
+            'certificate_code' => $hasCertificate ? $certificateCode : null,
+            'has_certificate' => $hasCertificate,
+        ];
+    }
+
+    protected function normalizeCertificateOrderData(array $orderData): array
+    {
+        $certificateData = $this->extractCertificateData($orderData);
+        $orderData['certificate_code'] = $certificateData['certificate_code'];
+        $orderData['has_certificate'] = $certificateData['has_certificate'];
+
+        if ($certificateData['has_certificate']) {
+            $orderData['promo_code'] = null;
+            $orderData['promo_code_id'] = null;
+            $orderData['sale_discount_amount'] = 0;
+            $orderData['registered_user_discount_amount'] = 0;
+            $orderData['promo_code_discount_amount'] = 0;
+            $orderData['birthday_discount_amount'] = 0;
+            $orderData['total_discount_amount'] = 0;
+            $orderData['use_bonus_points'] = false;
+            $orderData['bonus_points_to_use'] = 0;
+            $orderData['order_bonus_points'] = 0;
+        }
+
+        return $orderData;
     }
 
     /**

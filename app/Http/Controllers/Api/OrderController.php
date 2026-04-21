@@ -55,6 +55,11 @@ class OrderController extends Controller
                     'promo_code_discount_amount' => $order->promo_code_discount_amount,
                     'birthday_discount_amount' => $order->birthday_discount_amount,
                     'total_discount_amount' => $order->total_discount_amount,
+                    'certificate_code' => $order->certificate_code,
+                    'has_certificate' => (bool) ($order->has_certificate ?? false),
+                    'bonus_points_to_use' => (int) ($order->bonus_points_to_use ?? 0),
+                    'overtax_amount' => (float) ($order->overtax_amount ?? 0),
+                    'overtax_text' => $order->overtax_text ?? null,
                     // Дополнительные данные для витрины
                     'metadata' => $order->metadata,
                     'customer' => [

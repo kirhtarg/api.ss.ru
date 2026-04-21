@@ -37,7 +37,7 @@ class ShopOrdersController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $query = ShopOrder::with(['status', 'user', 'paymentMethod', 'deliveryMethod']);
+            $query = ShopOrder::with(['status', 'user', 'paymentMethod', 'deliveryMethod', 'manager']);
 
             // Сортировка
             $sortBy = $request->get('sort_by', 'created_at');
@@ -256,10 +256,18 @@ class ShopOrdersController extends Controller
                     'payed' => (bool) $order->payed,
                     'pay_agree' => (bool) ($order->pay_agree ?? false),
                     'is_active' => (bool) ($order->is_active ?? false),
+                    'manager_id' => $order->manager_id,
+                    'manager_name' => $order->manager ? $order->manager->name : null,
+                    'manager' => $order->manager ? [
+                        'id' => $order->manager->id,
+                        'name' => $order->manager->name,
+                    ] : null,
                     'order_bonus_points' => (int) ($order->order_bonus_points ?? 0),
                     'user_bonus_points' => $order->user_id ? (\App\Models\UserBonus::where('user_id', $order->user_id)->value('points') ?? 0) : 0,
                     'use_bonus_points' => (bool) ($order->use_bonus_points ?? false),
                     'bonus_points_to_use' => (int) ($order->bonus_points_to_use ?? 0),
+                    'certificate_code' => $order->certificate_code,
+                    'has_certificate' => (bool) ($order->has_certificate ?? false),
                     'promo_code' => $order->promo_code,
                     'total_amount' => (float) $order->total_amount,
                     'subtotal' => (float) $order->subtotal,
@@ -321,7 +329,7 @@ class ShopOrdersController extends Controller
     public function show($id): JsonResponse
     {
         try {
-            $order = ShopOrder::with(['status', 'user', 'deliveryStatus', 'paymentMethod', 'deliveryMethod'])
+            $order = ShopOrder::with(['status', 'user', 'deliveryStatus', 'paymentMethod', 'deliveryMethod', 'manager'])
                 ->findOrFail($id);
 
             $formattedOrder = $this->formatOrderForResponse($order);
@@ -601,6 +609,54 @@ class ShopOrdersController extends Controller
     }
 
     /**
+     * Получить статистику по менеджерам
+     */
+    public function getManagerStatistics(Request $request): JsonResponse
+    {
+        try {
+            $query = ShopOrder::query()
+                ->whereNotNull('manager_id')
+                ->with(['manager', 'status']);
+
+            if ($request->filled('date_from')) {
+                $query->where('created_at', '>=', $request->date_from . ' 00:00:00');
+            }
+            if ($request->filled('date_to')) {
+                $query->where('created_at', '<=', $request->date_to . ' 23:59:59');
+            }
+            if ($request->filled('manager_id')) {
+                $query->where('manager_id', $request->manager_id);
+            }
+
+            $orders = $query->get();
+
+            $stats = $orders->groupBy('manager_id')->map(function ($managerOrders) {
+                $manager = $managerOrders->first()->manager;
+                if (!$manager) return null;
+                
+                return [
+                    'manager_id' => $manager->id,
+                    'manager_name' => $manager->name,
+                    'total_orders' => $managerOrders->count(),
+                    'total_amount' => (float) $managerOrders->sum('total_amount'),
+                    'finished_orders' => $managerOrders->filter(fn($o) => $o->status?->is_finished)->count(),
+                    'finished_amount' => (float) $managerOrders->filter(fn($o) => $o->status?->is_finished)->sum('total_amount'),
+                ];
+            })->filter()->values();
+
+            return response()->json([
+                'success' => true,
+                'data' => $stats,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения статистики: '.$e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * Получить список статусов заказов
      */
     public function getStatuses(): JsonResponse
@@ -618,6 +674,7 @@ class ShopOrdersController extends Controller
                         'is_active' => (bool) $status->is_active,
                         'is_finished' => (bool) $status->is_finished,
                         'is_cancelled' => (bool) $status->is_cancelled,
+                        'is_taken_to_work' => (bool) $status->is_taken_to_work,
                         'sort_order' => $status->sort_order,
                         'description' => $status->description,
                     ];
@@ -644,6 +701,7 @@ class ShopOrdersController extends Controller
             $validator = Validator::make($request->all(), [
                 'status_id' => 'required|integer|exists:shop_order_statuses,id',
                 'is_restore' => 'sometimes|boolean',
+                'take_to_work' => 'sometimes|boolean',
                 'comment' => 'nullable|string|max:2000',
             ]);
 
@@ -682,6 +740,11 @@ class ShopOrdersController extends Controller
             if ($oldStatus && $oldStatus->is_cancelled && ! $newStatus->is_cancelled && $request->get('is_restore', false)) {
                 $this->deductOrderItemsFromStock($order);
                 $this->deductUserBonuses($order);
+            }
+
+            // Привязка менеджера при установке статуса "Взял в работу" или при явном флаге
+            if (($newStatus->is_taken_to_work || $request->get('take_to_work')) && !$order->manager_id) {
+                $order->manager_id = $request->user() ? $request->user()->id : null;
             }
 
             $order->status_id = $statusId;
@@ -1897,6 +1960,12 @@ class ShopOrdersController extends Controller
             'status_color' => $order->status ? $order->status->color : '#6B7280',
             'status_is_finished' => $order->status ? (bool) $order->status->is_finished : false,
             'status_is_cancelled' => $order->status ? (bool) $order->status->is_cancelled : false,
+            'manager_id' => $order->manager_id,
+            'manager' => $order->manager ? [
+                'id' => $order->manager->id,
+                'name' => $order->manager->name,
+                'email' => $order->manager->email,
+            ] : null,
             'payed' => (bool) $order->payed,
             'pay_agree' => (bool) ($order->pay_agree ?? false),
             'is_active' => (bool) ($order->is_active ?? false),
@@ -1928,6 +1997,8 @@ class ShopOrdersController extends Controller
             'comment' => $order->comment,
             'cancellation_request' => (bool) ($order->cancellation_request ?? false),
             'promo_code' => $order->promo_code,
+            'certificate_code' => $order->certificate_code,
+            'has_certificate' => (bool) ($order->has_certificate ?? false),
             'promo_code_id' => $order->promo_code_id,
             'use_bonus_points' => $order->use_bonus_points ?? false,
             'bonus_points_to_use' => $order->bonus_points_to_use ?? 0,
