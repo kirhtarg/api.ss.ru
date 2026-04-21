@@ -51,7 +51,7 @@ class ShopSupplier extends Model
      */
     public function goods(): HasMany
     {
-        return $this->hasMany(ShopGood::class, 'supplier_id');
+        return $this->hasMany(ShopGood::class, 'supplier', 'name');
     }
 
     /**

@@ -1032,7 +1032,7 @@ class ShopGoodsController extends Controller
 
         $allowedSortFields = [
             'id', 'name', 'sku', 'price', 'rating', 'stock_quantity', 'remote_stock_quantity',
-            'fast_remote_stock_quantity', 'created_at', 'sort_order', 'supplier', 'slug',
+            'fast_remote_stock_quantity', 'created_at', 'updated_at', 'sort_order', 'supplier', 'slug',
             'categories', 'brands',
         ];
 

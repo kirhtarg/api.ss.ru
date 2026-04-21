@@ -459,7 +459,7 @@ class ShopGoodVariationsController extends Controller
         try {
             DB::beginTransaction();
 
-            // РСЃРїРѕР»СЊР·СѓРµРј Р°СЂС‚РёРєСѓР» СЂРѕРґРёС‚РµР»СЊСЃРєРѕРіРѕ С‚РѕРІР°СЂР° Р±РµР· РґРѕР±Р°РІР»РµРЅРёР№
+            // Р˜СЃРїРѕР»СЊР·СѓРµРј Р°СЂС‚РёРєСѓР» СЂРѕРґРёС‚РµР»СЊСЃРєРѕРіРѕ С‚РѕРІР°СЂР° Р±РµР· РґРѕР±Р°РІР»РµРЅРёР№
             $variationSku = $request->get('sku') ?: $good->sku;
             $variationName = $request->get('name') ?: $good->name;
 
@@ -803,7 +803,7 @@ class ShopGoodVariationsController extends Controller
                     throw new \Exception("Р—РЅР°С‡РµРЅРёРµ ID {$valueId} РЅРµ РїСЂРёРЅР°РґР»РµР¶РёС‚ Р°С‚СЂРёР±СѓС‚Сѓ ID {$attributeId}");
                 }
 
-                // РС‰РµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰СѓСЋ СЃРІСЏР·СЊ РґР»СЏ СЌС‚РѕРіРѕ Р°С‚СЂРёР±СѓС‚Р°
+                // Р˜С‰РµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰СѓСЋ СЃРІСЏР·СЊ РґР»СЏ СЌС‚РѕРіРѕ Р°С‚СЂРёР±СѓС‚Р°
                 // РќР°Рј РЅСѓР¶РЅРѕ РЅР°Р№С‚Рё Р·Р°РїРёСЃСЊ РІ shop_variation_attributes_values, РєРѕС‚РѕСЂР°СЏ СЃСЃС‹Р»Р°РµС‚СЃСЏ РЅР° Р·РЅР°С‡РµРЅРёРµ,
                 // РєРѕС‚РѕСЂРѕРµ РІ СЃРІРѕСЋ РѕС‡РµСЂРµРґСЊ СЃСЃС‹Р»Р°РµС‚СЃСЏ РЅР° СЌС‚РѕС‚ Р°С‚СЂРёР±СѓС‚.
 
@@ -816,7 +816,7 @@ class ShopGoodVariationsController extends Controller
                     ->first();
 
                 if ($currentValues) {
-                    // Р•СЃР»Рё СЃРІСЏР·СЊ РµСЃС‚СЊ, РѕР±РЅРѕРІР»СЏРµРј РµС‘
+                    // Р•СЃР»Рё СЃРІСЏР·СЊ РµСЃС‚СЊ, РѕР±РЅРѕРІР»СЏРµРј Рµ‘
                     if ($currentValues->attribute_value_id != $valueId) {
                         DB::table('shop_variation_attributes_values')
                             ->where('id', $currentValues->id)
@@ -896,6 +896,118 @@ class ShopGoodVariationsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'РћС€РёР±РєР° СѓРґР°Р»РµРЅРёСЏ РІР°СЂРёР°С†РёРё: '.$e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Склонировать вариацию
+     *
+     * @param Request $request
+     * @param int $goodId
+     * @param int $variationId
+     * @return JsonResponse
+     */
+    public function clone(Request $request, $goodId, $variationId): JsonResponse
+    {
+        $good = ShopGood::findOrFail($goodId);
+        $originalVariation = ShopGoodVariation::where('good_id', $goodId)->findOrFail($variationId);
+
+        try {
+            \DB::beginTransaction();
+
+            // 1. Клонируем саму вариацию
+            $newVariation = $originalVariation->replicate(['sort_order']);
+            
+            // Если есть артикул, добавляем суффикс, чтобы избежать дубликатов
+            if ($originalVariation->sku) {
+                $newVariation->sku = $originalVariation->sku . '-copy-' . time();
+            }
+            
+            $newVariation->sort_order = $good->variations()->max('sort_order') + 1;
+            $newVariation->save();
+
+            // 2. Копируем атрибуты (новая схема)
+            $attributes = \DB::table('shop_variation_attributes_values')
+                ->where('variation_id', $originalVariation->id)
+                ->get();
+            
+            foreach ($attributes as $attr) {
+                \DB::table('shop_variation_attributes_values')->insert([
+                    'variation_id' => $newVariation->id,
+                    'attribute_value_id' => $attr->attribute_value_id,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+
+            // 3. Копируем изображения
+            $sourceImages = \App\Models\ShopGoodImage::where('variation_id', $originalVariation->id)
+                ->ordered()
+                ->get();
+
+            if ($sourceImages->isNotEmpty()) {
+                $frontendPublicPath = frontend_public_path();
+                
+                foreach ($sourceImages as $sourceImage) {
+                    try {
+                        $sourcePath = $frontendPublicPath . '/' . $sourceImage->file_path;
+
+                        if (file_exists($sourcePath)) {
+                            // Генерируем новое имя файла
+                            $pathInfo = pathinfo($sourceImage->file_path);
+                            $extension = $pathInfo['extension'] ?? 'jpg';
+                            $newFileName = 'variation_' . $newVariation->id . '_' . uniqid() . '.' . $extension;
+                            $newRelativePath = ($pathInfo['dirname'] !== '.' ? $pathInfo['dirname'] : 'images') . '/' . $newFileName;
+                            $newFullPath = $frontendPublicPath . '/' . $newRelativePath;
+
+                            // Убедимся, что директория существует
+                            $directory = dirname($newFullPath);
+                            if (!file_exists($directory)) {
+                                mkdir($directory, 0755, true);
+                            }
+
+                            // Копируем файл
+                            if (copy($sourcePath, $newFullPath)) {
+                                \App\Models\ShopGoodImage::create([
+                                    'good_id' => $sourceImage->good_id,
+                                    'variation_id' => $newVariation->id,
+                                    'file_path' => $newRelativePath,
+                                    'alt_text' => $sourceImage->alt_text,
+                                    'is_main' => $sourceImage->is_main,
+                                    'sort_order' => $sourceImage->sort_order,
+                                ]);
+                            }
+                        }
+                    } catch (\Exception $imgEx) {
+                        \Log::warning("Failed to copy image during variation clone", [
+                            'variation_id' => $newVariation->id,
+                            'image_id' => $sourceImage->id,
+                            'error' => $imgEx->getMessage()
+                        ]);
+                    }
+                }
+            }
+
+            \DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Вариация успешно склонирована',
+                'data' => $newVariation,
+            ]);
+
+        } catch (\Exception $e) {
+            \DB::rollBack();
+            \Log::error('Error cloning variation: ' . $e->getMessage(), [
+                'good_id' => $goodId,
+                'variation_id' => $variationId,
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка клонирования вариации: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -1198,7 +1310,7 @@ class ShopGoodVariationsController extends Controller
     }
 
     /**
-     * РР·РјРµРЅРёС‚СЊ РїРѕСЂСЏРґРѕРє РІР°СЂРёР°С†РёР№
+     * Р˜Р·РјРµРЅРёС‚СЊ РїРѕСЂСЏРґРѕРє РІР°СЂРёР°С†РёР№
      */
     public function reorder(Request $request, $goodId): JsonResponse
     {

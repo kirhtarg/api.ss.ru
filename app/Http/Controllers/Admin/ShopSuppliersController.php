@@ -3,9 +3,12 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\ShopGood;
+use App\Models\ShopGoodVariation;
 use App\Models\ShopSupplier;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
@@ -42,7 +45,24 @@ class ShopSuppliersController extends Controller
             $query->active();
         }
 
-        $suppliers = $query->get();
+        $suppliers = $query->get()->map(function ($supplier) {
+            $supplierName = $supplier->name;
+
+            // Количество вариаций этого поставщика
+            $supplier->variations_count = ShopGoodVariation::where('supplier', $supplierName)->count();
+
+            // Количество товаров с вариациями этого поставщика
+            $supplier->products_with_variations_count = ShopGood::whereHas('variations', function ($q) use ($supplierName) {
+                $q->where('supplier', $supplierName);
+            })->count();
+
+            // Количество товаров без вариаций этого поставщика
+            $supplier->products_without_variations_count = ShopGood::whereDoesntHave('variations')
+                ->where('supplier', $supplierName)
+                ->count();
+
+            return $supplier;
+        });
 
         return response()->json([
             'success' => true,
@@ -76,7 +96,7 @@ class ShopSuppliersController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
+            'name' => 'required|string|max:255|unique:shop_suppliers,name',
             'slug' => 'nullable|string|max:255|unique:shop_suppliers,slug',
             'description' => 'nullable|string',
             'contact_person' => 'nullable|string|max:255',
@@ -134,7 +154,7 @@ class ShopSuppliersController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'name' => 'sometimes|required|string|max:255',
+            'name' => 'sometimes|required|string|max:255|unique:shop_suppliers,name,'.$id,
             'slug' => 'sometimes|nullable|string|max:255|unique:shop_suppliers,slug,'.$id,
             'description' => 'nullable|string',
             'contact_person' => 'nullable|string|max:255',
@@ -168,7 +188,14 @@ class ShopSuppliersController extends Controller
             }
         }
 
+        $oldName = $supplier->name;
         $supplier->update($data);
+
+        // Если имя изменилось, обновляем его во всех связанных товарах и вариациях
+        if (isset($data['name']) && $data['name'] !== $oldName) {
+            ShopGood::where('supplier', $oldName)->update(['supplier' => $data['name']]);
+            ShopGoodVariation::where('supplier', $oldName)->update(['supplier' => $data['name']]);
+        }
 
         return response()->json([
             'success' => true,
@@ -191,13 +218,15 @@ class ShopSuppliersController extends Controller
             ], 404);
         }
 
-        // Проверяем, есть ли товары с этим поставщиком
-        $goodsCount = $supplier->goods()->count();
+        // Проверяем, есть ли товары или вариации с этим поставщиком
+        $supplierName = $supplier->name;
+        $hasGoods = ShopGood::where('supplier', $supplierName)->exists();
+        $hasVariations = ShopGoodVariation::where('supplier', $supplierName)->exists();
 
-        if ($goodsCount > 0) {
+        if ($hasGoods || $hasVariations) {
             return response()->json([
                 'success' => false,
-                'message' => "Невозможно удалить поставщика. С ним связано {$goodsCount} товаров.",
+                'message' => 'Невозможно удалить поставщика. У него есть привязанные товары или вариации.',
             ], 422);
         }
 
@@ -206,6 +235,61 @@ class ShopSuppliersController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Поставщик успешно удален',
+        ]);
+    }
+
+    /**
+     * Массовое удаление поставщиков
+     */
+    public function bulkDestroy(Request $request): JsonResponse
+    {
+        $ids = $request->input('ids', []);
+
+        if (empty($ids)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Не выбраны поставщики для удаления',
+            ], 422);
+        }
+
+        $suppliers = ShopSupplier::whereIn('id', $ids)->get();
+        $deletedCount = 0;
+        $deletedIds = [];
+        $skippedCount = 0;
+        $skippedNames = [];
+
+        foreach ($suppliers as $supplier) {
+            $supplierId = $supplier->id;
+            $supplierName = $supplier->name;
+            
+            // Проверяем наличие привязанных товаров/вариаций
+            $hasGoods = ShopGood::where('supplier', $supplierName)->exists();
+            $hasVariations = ShopGoodVariation::where('supplier', $supplierName)->exists();
+
+            if ($hasGoods || $hasVariations) {
+                $skippedCount++;
+                $skippedNames[] = $supplierName;
+                continue;
+            }
+
+            $supplier->delete();
+            $deletedCount++;
+            $deletedIds[] = $supplierId;
+        }
+
+        $message = "Удалено поставщиков: {$deletedCount}.";
+        if ($skippedCount > 0) {
+            $message .= " Пропущено: {$skippedCount} (имеют привязанные товары: " . implode(', ', $skippedNames) . ").";
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => $message,
+            'data' => [
+                'deleted_count' => $deletedCount,
+                'skipped_count' => $skippedCount,
+                'deleted_ids' => $deletedIds,
+            ],
         ]);
     }
 }

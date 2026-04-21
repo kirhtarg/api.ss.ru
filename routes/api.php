@@ -2003,6 +2003,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::put('/{variationId}/fast-remote-stock', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'updateVariationFastRemoteStock']);
                     Route::put('/{variationId}/price', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'updateVariationPrice']);
                     Route::put('/{variationId}/demping', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'updateVariationDemping']);
+                    Route::post('/{variationId}/clone', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'clone']);
                 });
 
                 // Глобальное создание атрибутов вариаций (без привязки к товару)
@@ -2068,6 +2069,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
             // Поставщики
             Route::prefix('suppliers')->group(function () {
+                Route::post('/bulk-delete', [\App\Http\Controllers\Admin\ShopSuppliersController::class, 'bulkDestroy']);
                 Route::get('/', [\App\Http\Controllers\Admin\ShopSuppliersController::class, 'index']);
                 Route::get('/{id}', [\App\Http\Controllers\Admin\ShopSuppliersController::class, 'show']);
                 Route::post('/', [\App\Http\Controllers\Admin\ShopSuppliersController::class, 'store']);
