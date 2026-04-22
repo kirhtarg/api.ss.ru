@@ -14,6 +14,7 @@ use App\Models\UserBonus;
 use App\Models\UserBonusTransaction;
 use App\Services\CdekService;
 use App\Services\TbankPaymentService;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -100,9 +101,9 @@ class ShopOrdersController extends Controller
                                     $statusQ->where('is_finished', false)
                                         ->where('is_cancelled', false);
                                 })
-                                // ИЛИ заказы с заявкой на отмену
+                                    // ИЛИ заказы с заявкой на отмену
                                     ->orWhere('cancellation_request', true)
-                                // ИЛИ отмененные оплаченные заказы
+                                    // ИЛИ отмененные оплаченные заказы
                                     ->orWhere(function ($cancelQ) {
                                         $cancelQ->whereHas('status', function ($statusQ) {
                                             $statusQ->where('is_cancelled', true);
@@ -124,7 +125,7 @@ class ShopOrdersController extends Controller
                             }
                         }
                     });
-                } elseif (! is_array($statuses)) {
+                } elseif (!is_array($statuses)) {
                     // Если передан один статус (для обратной совместимости)
                     if ($statuses === 'not_finished') {
                         // Фильтруем:
@@ -137,9 +138,9 @@ class ShopOrdersController extends Controller
                                 $statusQ->where('is_finished', false)
                                     ->where('is_cancelled', false);
                             })
-                            // ИЛИ заказы с заявкой на отмену
+                                // ИЛИ заказы с заявкой на отмену
                                 ->orWhere('cancellation_request', true)
-                            // ИЛИ отмененные оплаченные заказы
+                                // ИЛИ отмененные оплаченные заказы
                                 ->orWhere(function ($cancelQ) {
                                     $cancelQ->whereHas('status', function ($statusQ) {
                                         $statusQ->where('is_cancelled', true);
@@ -163,7 +164,7 @@ class ShopOrdersController extends Controller
                     $query->whereHas('paymentMethod', function ($q) use ($paymentTypes) {
                         $q->whereIn('type', $paymentTypes);
                     });
-                } elseif (! is_array($paymentTypes)) {
+                } elseif (!is_array($paymentTypes)) {
                     // Если передан один тип оплаты (для обратной совместимости)
                     $query->whereHas('paymentMethod', function ($q) use ($paymentTypes) {
                         $q->where('type', $paymentTypes);
@@ -177,7 +178,7 @@ class ShopOrdersController extends Controller
                 // Если передан массив ID методов доставки
                 if (is_array($deliveryMethodIds) && count($deliveryMethodIds) > 0) {
                     $query->whereIn('shipping_method_id', $deliveryMethodIds);
-                } elseif (! is_array($deliveryMethodIds)) {
+                } elseif (!is_array($deliveryMethodIds)) {
                     // Если передан один ID метода доставки (для обратной совместимости)
                     $query->where('shipping_method_id', $deliveryMethodIds);
                 }
@@ -194,6 +195,7 @@ class ShopOrdersController extends Controller
                 $payed = $request->boolean('payed');
                 $query->where('payed', $payed);
             }
+
 
             // Фильтрация по дате
             if ($request->filled('date_from') && $request->filled('date_to')) {
@@ -318,7 +320,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка загрузки заказов: '.$e->getMessage(),
+                'message' => 'Ошибка загрузки заказов: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -388,7 +390,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка загрузки заказа: '.$e->getMessage(),
+                'message' => 'Ошибка загрузки заказа: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -425,7 +427,7 @@ class ShopOrdersController extends Controller
             'message' => 'Заказ создан успешно',
             'data' => [
                 'id' => rand(100, 999),
-                'order_number' => 'ORD-'.str_pad(rand(1, 999), 3, '0', STR_PAD_LEFT),
+                'order_number' => 'ORD-' . str_pad(rand(1, 999), 3, '0', STR_PAD_LEFT),
             ],
         ], 201);
     }
@@ -494,7 +496,7 @@ class ShopOrdersController extends Controller
             if ($request->has('delivery_cost')) {
                 $order->delivery_cost = (float) $request->get('delivery_cost');
             }
-            
+
             // Новые поля скидок
             if ($request->has('sale_discount_amount')) {
                 $order->sale_discount_amount = (float) $request->get('sale_discount_amount');
@@ -521,10 +523,10 @@ class ShopOrdersController extends Controller
 
             // Пересчитываем общую скидку и итоговую сумму
             $totalDiscount = ($order->sale_discount_amount ?? 0) +
-                            ($order->registered_user_discount_amount ?? 0) +
-                            ($order->promo_code_discount_amount ?? 0) +
-                            ($order->birthday_discount_amount ?? 0) +
-                            ($order->bonus_points_to_use ?? 0);
+                ($order->registered_user_discount_amount ?? 0) +
+                ($order->promo_code_discount_amount ?? 0) +
+                ($order->birthday_discount_amount ?? 0) +
+                ($order->bonus_points_to_use ?? 0);
 
             $order->total_discount_amount = $totalDiscount;
             // subtotal уже содержит акционную цену, поэтому из него вычитаем только неакционные скидки
@@ -546,7 +548,7 @@ class ShopOrdersController extends Controller
             }
 
             $order->save();
-            $order->load(['status']);
+            $order->load(['status', 'manager']);
 
             return response()->json([
                 'success' => true,
@@ -565,7 +567,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления заказа: '.$e->getMessage(),
+                'message' => 'Ошибка обновления заказа: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -603,7 +605,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления заказа: '.$e->getMessage(),
+                'message' => 'Ошибка удаления заказа: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -614,44 +616,89 @@ class ShopOrdersController extends Controller
     public function getManagerStatistics(Request $request): JsonResponse
     {
         try {
+            $availableMonthsStart = Carbon::now()->startOfMonth()->subMonths(11);
+            $availableMonthsEnd = Carbon::now()->endOfMonth();
+            $dateFrom = $request->filled('date_from')
+                ? Carbon::parse($request->get('date_from'))->startOfDay()
+                : Carbon::now()->startOfMonth()->startOfDay();
+            $dateTo = $request->filled('date_to')
+                ? Carbon::parse($request->get('date_to'))->endOfDay()
+                : Carbon::now()->endOfMonth()->endOfDay();
+            $search = trim((string) $request->get('search', ''));
+
             $query = ShopOrder::query()
                 ->whereNotNull('manager_id')
-                ->with(['manager', 'status']);
+                ->with(['manager', 'status'])
+                ->whereBetween('created_at', [$dateFrom, $dateTo]);
 
-            if ($request->filled('date_from')) {
-                $query->where('created_at', '>=', $request->date_from . ' 00:00:00');
-            }
-            if ($request->filled('date_to')) {
-                $query->where('created_at', '<=', $request->date_to . ' 23:59:59');
-            }
             if ($request->filled('manager_id')) {
                 $query->where('manager_id', $request->manager_id);
+            }
+            if ($search !== '') {
+                $query->whereHas('manager', function ($managerQuery) use ($search) {
+                    $managerQuery->where('name', 'like', '%' . $search . '%');
+                });
             }
 
             $orders = $query->get();
 
             $stats = $orders->groupBy('manager_id')->map(function ($managerOrders) {
                 $manager = $managerOrders->first()->manager;
-                if (!$manager) return null;
-                
+                if (!$manager) {
+                    return null;
+                }
+
+                $finishedOrders = $managerOrders->filter(fn($order) => (bool) ($order->status?->is_finished));
+                $cancelledOrders = $managerOrders->filter(fn($order) => (bool) ($order->status?->is_cancelled));
+                $unfinishedOrders = $managerOrders->filter(function ($order) {
+                    return !(bool) ($order->status?->is_finished) && !(bool) ($order->status?->is_cancelled);
+                });
+
                 return [
                     'manager_id' => $manager->id,
                     'manager_name' => $manager->name,
                     'total_orders' => $managerOrders->count(),
                     'total_amount' => (float) $managerOrders->sum('total_amount'),
-                    'finished_orders' => $managerOrders->filter(fn($o) => $o->status?->is_finished)->count(),
-                    'finished_amount' => (float) $managerOrders->filter(fn($o) => $o->status?->is_finished)->sum('total_amount'),
+                    'finished_orders' => $finishedOrders->count(),
+                    'finished_amount' => (float) $finishedOrders->sum('total_amount'),
+                    'unfinished_orders' => $unfinishedOrders->count(),
+                    'unfinished_amount' => (float) $unfinishedOrders->sum('total_amount'),
+                    'cancelled_orders' => $cancelledOrders->count(),
+                    'cancelled_amount' => (float) $cancelledOrders->sum('total_amount'),
                 ];
-            })->filter()->values();
+            })->filter()->sortBy('manager_name', SORT_NATURAL | SORT_FLAG_CASE)->values();
+
+            $availableMonths = ShopOrder::query()
+                ->whereNotNull('manager_id')
+                ->whereBetween('created_at', [$availableMonthsStart, $availableMonthsEnd])
+                ->selectRaw("DATE_FORMAT(created_at, '%Y-%m') as month_value")
+                ->groupBy('month_value')
+                ->orderByDesc('month_value')
+                ->pluck('month_value')
+                ->map(function ($monthValue) {
+                    $monthDate = Carbon::createFromFormat('Y-m', $monthValue)->startOfMonth();
+
+                    return [
+                        'value' => $monthValue,
+                        'label' => $monthDate->translatedFormat('F Y'),
+                    ];
+                })
+                ->values();
 
             return response()->json([
                 'success' => true,
                 'data' => $stats,
+                'meta' => [
+                    'date_from' => $dateFrom->toDateString(),
+                    'date_to' => $dateTo->toDateString(),
+                    'search' => $search,
+                    'available_months' => $availableMonths,
+                ],
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения статистики: '.$e->getMessage(),
+                'message' => 'Ошибка получения статистики: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -687,7 +734,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка загрузки статусов: '.$e->getMessage(),
+                'message' => 'Ошибка загрузки статусов: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -719,7 +766,7 @@ class ShopOrdersController extends Controller
             $oldStatus = $order->status;
 
             // Проверка на завершенный статус для неоплаченного заказа
-            if ($newStatus->is_finished && ! $order->payed) {
+            if ($newStatus->is_finished && !$order->payed) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Нельзя установить завершенный статус для неоплаченного заказа',
@@ -737,7 +784,7 @@ class ShopOrdersController extends Controller
             }
 
             // Если старый статус был отмененным и выбирается другой статус (восстановление), вычитаем товары и бонусы
-            if ($oldStatus && $oldStatus->is_cancelled && ! $newStatus->is_cancelled && $request->get('is_restore', false)) {
+            if ($oldStatus && $oldStatus->is_cancelled && !$newStatus->is_cancelled && $request->get('is_restore', false)) {
                 $this->deductOrderItemsFromStock($order);
                 $this->deductUserBonuses($order);
             }
@@ -786,6 +833,8 @@ class ShopOrdersController extends Controller
                     'status_color' => $order->status->color,
                     'status_is_finished' => (bool) $order->status->is_finished,
                     'status_is_cancelled' => (bool) $order->status->is_cancelled,
+                    'manager_id' => $order->manager_id,
+                    'manager_name' => $order->manager?->name,
                     'cancellation_request' => (bool) ($order->cancellation_request ?? false),
                 ],
             ]);
@@ -797,7 +846,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления статуса: '.$e->getMessage(),
+                'message' => 'Ошибка обновления статуса: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -812,7 +861,7 @@ class ShopOrdersController extends Controller
         try {
             $items = is_string($order->items) ? json_decode($order->items, true) : $order->items;
 
-            if (! is_array($items) || empty($items)) {
+            if (!is_array($items) || empty($items)) {
                 Log::info('Заказ не содержит товаров для вычитания со склада', [
                     'order_id' => $order->id,
                 ]);
@@ -825,7 +874,7 @@ class ShopOrdersController extends Controller
                 $variationId = $item['variation_id'] ?? null;
                 $quantity = (int) ($item['quantity'] ?? 0);
 
-                if (! $goodId || $quantity <= 0) {
+                if (!$goodId || $quantity <= 0) {
                     continue;
                 }
 
@@ -868,7 +917,7 @@ class ShopOrdersController extends Controller
             }
 
         } catch (\Exception $e) {
-            Log::error('Ошибка при вычитании товаров со склада: '.$e->getMessage(), [
+            Log::error('Ошибка при вычитании товаров со склада: ' . $e->getMessage(), [
                 'order_id' => $order->id,
                 'error' => $e->getTraceAsString(),
             ]);
@@ -881,7 +930,7 @@ class ShopOrdersController extends Controller
     private function restoreUserBonuses(ShopOrder $order): void
     {
         try {
-            if (! $order->user_id || ! $order->use_bonus_points || ! $order->bonus_points_to_use || $order->bonus_points_to_use <= 0) {
+            if (!$order->user_id || !$order->use_bonus_points || !$order->bonus_points_to_use || $order->bonus_points_to_use <= 0) {
                 return;
             }
 
@@ -913,7 +962,7 @@ class ShopOrdersController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Ошибка при возврате бонусов пользователю: '.$e->getMessage(), [
+            Log::error('Ошибка при возврате бонусов пользователю: ' . $e->getMessage(), [
                 'order_id' => $order->id,
                 'error' => $e->getTraceAsString(),
             ]);
@@ -926,7 +975,7 @@ class ShopOrdersController extends Controller
     private function deductUserBonuses(ShopOrder $order): void
     {
         try {
-            if (! $order->user_id || ! $order->use_bonus_points || ! $order->bonus_points_to_use || $order->bonus_points_to_use <= 0) {
+            if (!$order->user_id || !$order->use_bonus_points || !$order->bonus_points_to_use || $order->bonus_points_to_use <= 0) {
                 return;
             }
 
@@ -973,7 +1022,7 @@ class ShopOrdersController extends Controller
             }
 
         } catch (\Exception $e) {
-            Log::error('Ошибка при списании бонусов у пользователя: '.$e->getMessage(), [
+            Log::error('Ошибка при списании бонусов у пользователя: ' . $e->getMessage(), [
                 'order_id' => $order->id,
                 'error' => $e->getTraceAsString(),
             ]);
@@ -989,7 +1038,7 @@ class ShopOrdersController extends Controller
         try {
             $items = is_string($order->items) ? json_decode($order->items, true) : $order->items;
 
-            if (! is_array($items) || empty($items)) {
+            if (!is_array($items) || empty($items)) {
                 Log::info('Заказ не содержит товаров для возврата на склад', [
                     'order_id' => $order->id,
                 ]);
@@ -1002,7 +1051,7 @@ class ShopOrdersController extends Controller
                 $variationId = $item['variation_id'] ?? null;
                 $quantity = (int) ($item['quantity'] ?? 0);
 
-                if (! $goodId || $quantity <= 0) {
+                if (!$goodId || $quantity <= 0) {
                     continue;
                 }
 
@@ -1043,7 +1092,7 @@ class ShopOrdersController extends Controller
             }
 
         } catch (\Exception $e) {
-            Log::error('Ошибка при возврате товаров на склад: '.$e->getMessage(), [
+            Log::error('Ошибка при возврате товаров на склад: ' . $e->getMessage(), [
                 'order_id' => $order->id,
                 'error' => $e->getTraceAsString(),
             ]);
@@ -1133,7 +1182,7 @@ class ShopOrdersController extends Controller
                     } else {
                         // ОТЗЫВ начисленных бонусов (списываем с баланса)
                         $pointsToRevoke = min($userBonus->points, $bonusPoints);
-                        
+
                         if ($pointsToRevoke > 0) {
                             // Ищем транзакцию начисления бонусов за этот заказ
                             $earnTransaction = \App\Models\UserBonusTransaction::where('user_id', $order->user_id)
@@ -1171,7 +1220,7 @@ class ShopOrdersController extends Controller
                                 } catch (\Exception $e) {
                                     return response()->json([
                                         'success' => false,
-                                        'message' => 'Ошибка списания бонусов: '.$e->getMessage(),
+                                        'message' => 'Ошибка списания бонусов: ' . $e->getMessage(),
                                     ], 422);
                                 }
                             }
@@ -1224,7 +1273,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления статуса оплаты: '.$e->getMessage(),
+                'message' => 'Ошибка обновления статуса оплаты: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -1267,7 +1316,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления статуса активности: '.$e->getMessage(),
+                'message' => 'Ошибка обновления статуса активности: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -1293,7 +1342,7 @@ class ShopOrdersController extends Controller
             $order = ShopOrder::findOrFail($id);
 
             // Проверяем, что комментарий можно изменить только если он пустой
-            if (! empty($order->comment) && $request->filled('comment')) {
+            if (!empty($order->comment) && $request->filled('comment')) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Комментарий можно изменить только если он пустой',
@@ -1319,7 +1368,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления комментария: '.$e->getMessage(),
+                'message' => 'Ошибка обновления комментария: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -1333,7 +1382,7 @@ class ShopOrdersController extends Controller
             $order = ShopOrder::findOrFail($id);
 
             // Проверяем, что заказ использует СДЭК
-            if (! $order->cdek_order_uuid) {
+            if (!$order->cdek_order_uuid) {
                 return response()->json([
                     'success' => false,
                     'message' => 'У заказа нет UUID заказа СДЭК',
@@ -1344,7 +1393,7 @@ class ShopOrdersController extends Controller
             $cdekService = new CdekService;
             $statusResult = $cdekService->getOrderStatus($order->cdek_order_uuid);
 
-            if (! $statusResult['success']) {
+            if (!$statusResult['success']) {
                 // Если заказ не найден в СДЭК (удален из ЛК) или любая ошибка получения статуса
                 // Обновляем статус на "заказ не найден" при любой ошибке получения статуса
                 $isNotFound = isset($statusResult['not_found']) && $statusResult['not_found'];
@@ -1518,11 +1567,11 @@ class ShopOrdersController extends Controller
                 'message' => 'Заказ не найден',
             ], 404);
         } catch (\Exception $e) {
-            Log::error('Ошибка обновления статуса доставки: '.$e->getMessage());
+            Log::error('Ошибка обновления статуса доставки: ' . $e->getMessage());
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления статуса доставки: '.$e->getMessage(),
+                'message' => 'Ошибка обновления статуса доставки: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -1563,7 +1612,7 @@ class ShopOrdersController extends Controller
             $order = ShopOrder::with(['status'])->findOrFail($id);
 
             // Проверяем, что заказ оплачен
-            if (! $order->payed) {
+            if (!$order->payed) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Заказ не может быть завершен, так как он не оплачен',
@@ -1577,20 +1626,20 @@ class ShopOrdersController extends Controller
                 ->first();
 
             // Если не найден по is_finished, пытаемся найти по имени 'finished'
-            if (! $finishedStatus) {
+            if (!$finishedStatus) {
                 $finishedStatus = ShopOrderStatus::where('name', 'finished')
                     ->where('is_active', true)
                     ->first();
             }
 
             // Если все еще не найден, пытаемся найти по display_name 'Завершен'
-            if (! $finishedStatus) {
+            if (!$finishedStatus) {
                 $finishedStatus = ShopOrderStatus::where('display_name', 'Завершен')
                     ->where('is_active', true)
                     ->first();
             }
 
-            if (! $finishedStatus) {
+            if (!$finishedStatus) {
                 // Логируем для отладки
                 \Log::warning('Не найден статус для завершенных заказов', [
                     'order_id' => $id,
@@ -1630,7 +1679,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка завершения заказа: '.$e->getMessage(),
+                'message' => 'Ошибка завершения заказа: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -1751,7 +1800,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка добавления товара: '.$e->getMessage(),
+                'message' => 'Ошибка добавления товара: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -1786,7 +1835,7 @@ class ShopOrdersController extends Controller
                 }
             }
 
-            if (! $itemFound) {
+            if (!$itemFound) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Товар не найден в заказе',
@@ -1827,7 +1876,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления товара: '.$e->getMessage(),
+                'message' => 'Ошибка удаления товара: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -1897,13 +1946,13 @@ class ShopOrdersController extends Controller
             $order->items = $items;
             $order->subtotal = $subtotal;
             $order->total_quantity = $totalQuantity;
-            
+
             // Пересчитываем общую скидку и итоговую сумму
             $totalDiscount = ($order->sale_discount_amount ?? 0) +
-                            ($order->registered_user_discount_amount ?? 0) +
-                            ($order->promo_code_discount_amount ?? 0) +
-                            ($order->birthday_discount_amount ?? 0) +
-                            ($order->bonus_points_to_use ?? 0);
+                ($order->registered_user_discount_amount ?? 0) +
+                ($order->promo_code_discount_amount ?? 0) +
+                ($order->birthday_discount_amount ?? 0) +
+                ($order->bonus_points_to_use ?? 0);
 
             $order->total_discount_amount = $totalDiscount;
             // subtotal уже содержит акционную цену, поэтому из него вычитаем только неакционные скидки
@@ -1929,7 +1978,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления товара: '.$e->getMessage(),
+                'message' => 'Ошибка обновления товара: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -2007,13 +2056,13 @@ class ShopOrdersController extends Controller
             'items_count' => count($items),
             'created_at' => $order->created_at->toISOString(),
             'updated_at' => $order->updated_at->toISOString(),
-            'items' => array_map(function($item) use ($order) {
+            'items' => array_map(function ($item) use ($order) {
                 // Пытаемся рассчитать финальную цену через сервис, если это возможно
                 try {
                     $good = ShopGood::find($item['good_id']);
                     $variation = isset($item['variation_id']) ? ShopGoodVariation::find($item['variation_id']) : null;
                     $user = $order->user;
-                    
+
                     if ($good) {
                         $calc = $this->calculationService->calculateFinalUnitPrice($good, $variation, $user);
                         $item['calculated_price'] = $calc['final_price'];
@@ -2051,7 +2100,7 @@ class ShopOrdersController extends Controller
             $order = ShopOrder::findOrFail($id);
 
             // Проверяем, что заказ использует СДЭК
-            if (! $order->cdek_order_uuid) {
+            if (!$order->cdek_order_uuid) {
                 return response()->json([
                     'success' => false,
                     'message' => 'У заказа нет UUID заказа СДЭК',
@@ -2068,7 +2117,7 @@ class ShopOrdersController extends Controller
 
             if ($result['success']) {
                 // Возвращаем URL прокси вместо прямого URL СДЭК
-                $proxyUrl = url('/api/admin/shop/orders/'.$id.'/cdek/barcode/download');
+                $proxyUrl = url('/api/admin/shop/orders/' . $id . '/cdek/barcode/download');
 
                 return response()->json([
                     'success' => true,
@@ -2083,11 +2132,11 @@ class ShopOrdersController extends Controller
             }
 
         } catch (\Exception $e) {
-            Log::error('Ошибка получения штрихкода СДЭК: '.$e->getMessage());
+            Log::error('Ошибка получения штрихкода СДЭК: ' . $e->getMessage());
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения штрихкода: '.$e->getMessage(),
+                'message' => 'Ошибка получения штрихкода: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -2100,7 +2149,7 @@ class ShopOrdersController extends Controller
         try {
             $order = ShopOrder::findOrFail($id);
 
-            if (! $order->cdek_order_uuid) {
+            if (!$order->cdek_order_uuid) {
                 return response()->json([
                     'success' => false,
                     'message' => 'У заказа нет UUID заказа СДЭК',
@@ -2115,7 +2164,7 @@ class ShopOrdersController extends Controller
                 $request->get('lang', 'RUS')
             );
 
-            if (! $result['success'] || ! isset($result['url'])) {
+            if (!$result['success'] || !isset($result['url'])) {
                 return response()->json([
                     'success' => false,
                     'message' => $result['message'] ?? 'Ошибка получения штрихкода',
@@ -2124,7 +2173,7 @@ class ShopOrdersController extends Controller
 
             // Получаем токен СДЭК
             $token = $cdekService->getAccessToken();
-            if (! $token) {
+            if (!$token) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Не удалось получить токен доступа СДЭК',
@@ -2136,13 +2185,13 @@ class ShopOrdersController extends Controller
                 'verify' => config('cdek.ssl_verify', false),
                 'timeout' => 30,
             ])->withHeaders([
-                'Authorization' => 'Bearer '.$token,
-            ])->get($result['url']);
+                        'Authorization' => 'Bearer ' . $token,
+                    ])->get($result['url']);
 
             if ($response->successful()) {
                 return response($response->body(), 200)
                     ->header('Content-Type', 'application/pdf')
-                    ->header('Content-Disposition', 'inline; filename="cdek-barcode-'.$order->order_number.'.pdf"');
+                    ->header('Content-Disposition', 'inline; filename="cdek-barcode-' . $order->order_number . '.pdf"');
             } else {
                 return response()->json([
                     'success' => false,
@@ -2151,11 +2200,11 @@ class ShopOrdersController extends Controller
             }
 
         } catch (\Exception $e) {
-            Log::error('Ошибка скачивания штрихкода СДЭК: '.$e->getMessage());
+            Log::error('Ошибка скачивания штрихкода СДЭК: ' . $e->getMessage());
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка скачивания штрихкода: '.$e->getMessage(),
+                'message' => 'Ошибка скачивания штрихкода: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -2169,7 +2218,7 @@ class ShopOrdersController extends Controller
             $order = ShopOrder::findOrFail($id);
 
             // Проверяем, что заказ использует СДЭК
-            if (! $order->cdek_order_uuid) {
+            if (!$order->cdek_order_uuid) {
                 return response()->json([
                     'success' => false,
                     'message' => 'У заказа нет UUID заказа СДЭК',
@@ -2181,7 +2230,7 @@ class ShopOrdersController extends Controller
 
             if ($result['success']) {
                 // Возвращаем URL прокси вместо прямого URL СДЭК
-                $proxyUrl = url('/api/admin/shop/orders/'.$id.'/cdek/waybill/download');
+                $proxyUrl = url('/api/admin/shop/orders/' . $id . '/cdek/waybill/download');
 
                 return response()->json([
                     'success' => true,
@@ -2196,11 +2245,11 @@ class ShopOrdersController extends Controller
             }
 
         } catch (\Exception $e) {
-            Log::error('Ошибка получения накладной СДЭК: '.$e->getMessage());
+            Log::error('Ошибка получения накладной СДЭК: ' . $e->getMessage());
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения накладной: '.$e->getMessage(),
+                'message' => 'Ошибка получения накладной: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -2213,7 +2262,7 @@ class ShopOrdersController extends Controller
         try {
             $order = ShopOrder::findOrFail($id);
 
-            if (! $order->cdek_order_uuid) {
+            if (!$order->cdek_order_uuid) {
                 return response()->json([
                     'success' => false,
                     'message' => 'У заказа нет UUID заказа СДЭК',
@@ -2224,7 +2273,7 @@ class ShopOrdersController extends Controller
 
             // Получаем токен СДЭК заранее
             $token = $cdekService->getAccessToken();
-            if (! $token) {
+            if (!$token) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Не удалось получить токен доступа СДЭК',
@@ -2233,7 +2282,7 @@ class ShopOrdersController extends Controller
 
             $result = $cdekService->getWaybill($order->cdek_order_uuid);
 
-            if (! $result['success'] || ! isset($result['url'])) {
+            if (!$result['success'] || !isset($result['url'])) {
                 return response()->json([
                     'success' => false,
                     'message' => $result['message'] ?? 'Ошибка получения накладной',
@@ -2245,8 +2294,8 @@ class ShopOrdersController extends Controller
                 'verify' => config('cdek.ssl_verify', false),
                 'timeout' => 30,
             ])->withHeaders([
-                'Authorization' => 'Bearer '.$token,
-            ])->get($result['url']);
+                        'Authorization' => 'Bearer ' . $token,
+                    ])->get($result['url']);
 
             if ($response->successful()) {
                 // Проверяем, что ответ действительно PDF
@@ -2254,7 +2303,7 @@ class ShopOrdersController extends Controller
                 if (strpos($contentType, 'application/pdf') !== false || strpos($contentType, 'application/octet-stream') !== false) {
                     return response($response->body(), 200)
                         ->header('Content-Type', 'application/pdf')
-                        ->header('Content-Disposition', 'inline; filename="cdek-waybill-'.$order->order_number.'.pdf"');
+                        ->header('Content-Disposition', 'inline; filename="cdek-waybill-' . $order->order_number . '.pdf"');
                 } else {
                     // Если ответ не PDF, возвращаем ошибку
                     $responseBody = $response->body();
@@ -2281,7 +2330,7 @@ class ShopOrdersController extends Controller
 
                         return response()->json([
                             'success' => false,
-                            'message' => 'Накладная еще не сгенерирована. Статус заказа: '.$orderStatusName.'. Накладная будет доступна после обработки заказа в СДЭК.',
+                            'message' => 'Накладная еще не сгенерирована. Статус заказа: ' . $orderStatusName . '. Накладная будет доступна после обработки заказа в СДЭК.',
                         ], 404);
                     }
 
@@ -2293,7 +2342,7 @@ class ShopOrdersController extends Controller
 
                 // Пытаемся распарсить как JSON для получения сообщения об ошибке
                 $errorData = json_decode($responseBody, true);
-                $errorMessage = $errorData['message'] ?? $errorData['error'] ?? 'Ошибка скачивания накладной из СДЭК (HTTP '.$statusCode.')';
+                $errorMessage = $errorData['message'] ?? $errorData['error'] ?? 'Ошибка скачивания накладной из СДЭК (HTTP ' . $statusCode . ')';
 
                 return response()->json([
                     'success' => false,
@@ -2302,11 +2351,11 @@ class ShopOrdersController extends Controller
             }
 
         } catch (\Exception $e) {
-            Log::error('Ошибка скачивания накладной СДЭК: '.$e->getMessage());
+            Log::error('Ошибка скачивания накладной СДЭК: ' . $e->getMessage());
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка скачивания накладной: '.$e->getMessage(),
+                'message' => 'Ошибка скачивания накладной: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -2344,28 +2393,28 @@ class ShopOrdersController extends Controller
                 $dateFrom = $request->get('date_from');
                 $dateTo = $request->get('date_to');
 
-                $baseQuery = ShopOrder::whereBetween('created_at', [$dateFrom.' 00:00:00', $dateTo.' 23:59:59']);
+                $baseQuery = ShopOrder::whereBetween('created_at', [$dateFrom . ' 00:00:00', $dateTo . ' 23:59:59']);
 
                 $totalOrders = $baseQuery->count();
                 $totalRevenue = $baseQuery->sum('total_amount');
 
                 // Оплаченные заказы
-                $paidOrders = ShopOrder::whereBetween('created_at', [$dateFrom.' 00:00:00', $dateTo.' 23:59:59'])
+                $paidOrders = ShopOrder::whereBetween('created_at', [$dateFrom . ' 00:00:00', $dateTo . ' 23:59:59'])
                     ->where('payed', true)
                     ->count();
-                $paidRevenue = ShopOrder::whereBetween('created_at', [$dateFrom.' 00:00:00', $dateTo.' 23:59:59'])
+                $paidRevenue = ShopOrder::whereBetween('created_at', [$dateFrom . ' 00:00:00', $dateTo . ' 23:59:59'])
                     ->where('payed', true)
                     ->sum('total_amount');
 
                 // Неоплаченные заказы: payed = 0, false или NULL
-                $unpaidOrders = ShopOrder::whereBetween('created_at', [$dateFrom.' 00:00:00', $dateTo.' 23:59:59'])
+                $unpaidOrders = ShopOrder::whereBetween('created_at', [$dateFrom . ' 00:00:00', $dateTo . ' 23:59:59'])
                     ->where(function ($q) {
                         $q->where('payed', false)
                             ->orWhere('payed', 0)
                             ->orWhereNull('payed');
                     })
                     ->count();
-                $unpaidRevenue = ShopOrder::whereBetween('created_at', [$dateFrom.' 00:00:00', $dateTo.' 23:59:59'])
+                $unpaidRevenue = ShopOrder::whereBetween('created_at', [$dateFrom . ' 00:00:00', $dateTo . ' 23:59:59'])
                     ->where(function ($q) {
                         $q->where('payed', false)
                             ->orWhere('payed', 0)
@@ -2392,11 +2441,11 @@ class ShopOrdersController extends Controller
                 ],
             ]);
         } catch (\Exception $e) {
-            Log::error('Ошибка получения статистики заказов: '.$e->getMessage());
+            Log::error('Ошибка получения статистики заказов: ' . $e->getMessage());
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения статистики: '.$e->getMessage(),
+                'message' => 'Ошибка получения статистики: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -2418,6 +2467,7 @@ class ShopOrdersController extends Controller
                         'is_active' => (bool) $status->is_active,
                         'is_finished' => (bool) $status->is_finished,
                         'is_cancelled' => (bool) $status->is_cancelled,
+                        'is_taken_to_work' => (bool) $status->is_taken_to_work,
                         'sort_order' => $status->sort_order,
                         'description' => $status->description,
                     ];
@@ -2430,7 +2480,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка загрузки статусов: '.$e->getMessage(),
+                'message' => 'Ошибка загрузки статусов: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -2448,6 +2498,7 @@ class ShopOrdersController extends Controller
                 'is_active' => 'sometimes|boolean',
                 'is_finished' => 'sometimes|boolean',
                 'is_cancelled' => 'sometimes|boolean',
+                'is_taken_to_work' => 'sometimes|boolean',
                 'description' => 'nullable|string',
             ]);
 
@@ -2471,6 +2522,11 @@ class ShopOrdersController extends Controller
                 ShopOrderStatus::where('is_cancelled', true)->update(['is_cancelled' => false]);
             }
 
+            // Если is_taken_to_work=true, сбрасываем у других
+            if ($request->get('is_taken_to_work', false)) {
+                ShopOrderStatus::where('is_taken_to_work', true)->update(['is_taken_to_work' => false]);
+            }
+
             $maxSortOrder = ShopOrderStatus::max('sort_order') ?? 0;
 
             $status = ShopOrderStatus::create([
@@ -2480,6 +2536,7 @@ class ShopOrdersController extends Controller
                 'is_active' => $request->get('is_active', true),
                 'is_finished' => $request->get('is_finished', false),
                 'is_cancelled' => $request->get('is_cancelled', false),
+                'is_taken_to_work' => $request->get('is_taken_to_work', false),
                 'sort_order' => $maxSortOrder + 1,
                 'description' => $request->get('description'),
             ]);
@@ -2497,6 +2554,7 @@ class ShopOrdersController extends Controller
                     'is_active' => (bool) $status->is_active,
                     'is_finished' => (bool) $status->is_finished,
                     'is_cancelled' => (bool) $status->is_cancelled,
+                    'is_taken_to_work' => (bool) $status->is_taken_to_work,
                     'sort_order' => $status->sort_order,
                     'description' => $status->description,
                 ],
@@ -2507,7 +2565,7 @@ class ShopOrdersController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания статуса: '.$e->getMessage(),
+                'message' => 'Ошибка создания статуса: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -2521,12 +2579,13 @@ class ShopOrdersController extends Controller
             $status = ShopOrderStatus::findOrFail($id);
 
             $validator = Validator::make($request->all(), [
-                'name' => 'sometimes|string|max:255|unique:shop_order_statuses,name,'.$id,
+                'name' => 'sometimes|string|max:255|unique:shop_order_statuses,name,' . $id,
                 'display_name' => 'sometimes|string|max:255',
                 'color' => 'nullable|string|max:7',
                 'is_active' => 'sometimes|boolean',
                 'is_finished' => 'sometimes|boolean',
                 'is_cancelled' => 'sometimes|boolean',
+                'is_taken_to_work' => 'sometimes|boolean',
                 'description' => 'nullable|string',
             ]);
 
@@ -2550,6 +2609,11 @@ class ShopOrdersController extends Controller
                 ShopOrderStatus::where('id', '!=', $id)->where('is_cancelled', true)->update(['is_cancelled' => false]);
             }
 
+            // Если is_taken_to_work=true, сбрасываем у других
+            if ($request->has('is_taken_to_work') && $request->get('is_taken_to_work')) {
+                ShopOrderStatus::where('id', '!=', $id)->where('is_taken_to_work', true)->update(['is_taken_to_work' => false]);
+            }
+
             $updateData = [];
             if ($request->has('name')) {
                 $updateData['name'] = $request->get('name');
@@ -2568,6 +2632,9 @@ class ShopOrdersController extends Controller
             }
             if ($request->has('is_cancelled')) {
                 $updateData['is_cancelled'] = $request->get('is_cancelled');
+            }
+            if ($request->has('is_taken_to_work')) {
+                $updateData['is_taken_to_work'] = $request->get('is_taken_to_work');
             }
             if ($request->has('description')) {
                 $updateData['description'] = $request->get('description');
@@ -2589,6 +2656,7 @@ class ShopOrdersController extends Controller
                     'is_active' => (bool) $status->is_active,
                     'is_finished' => (bool) $status->is_finished,
                     'is_cancelled' => (bool) $status->is_cancelled,
+                    'is_taken_to_work' => (bool) $status->is_taken_to_work,
                     'sort_order' => $status->sort_order,
                     'description' => $status->description,
                 ],
@@ -2599,7 +2667,7 @@ class ShopOrdersController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления статуса: '.$e->getMessage(),
+                'message' => 'Ошибка обновления статуса: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -2627,6 +2695,13 @@ class ShopOrdersController extends Controller
                 ], 422);
             }
 
+            if ($status->is_taken_to_work) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Нельзя удалить статус "Взял в работу"',
+                ], 422);
+            }
+
             // Проверяем, есть ли заказы с этим статусом
             $ordersCount = ShopOrder::where('status_id', $id)->count();
             if ($ordersCount > 0) {
@@ -2646,7 +2721,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления статуса: '.$e->getMessage(),
+                'message' => 'Ошибка удаления статуса: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -2690,7 +2765,7 @@ class ShopOrdersController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка изменения порядка: '.$e->getMessage(),
+                'message' => 'Ошибка изменения порядка: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -2742,7 +2817,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения логов: '.$e->getMessage(),
+                'message' => 'Ошибка получения логов: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -2807,7 +2882,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка добавления комментария: '.$e->getMessage(),
+                'message' => 'Ошибка добавления комментария: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -2871,7 +2946,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения статистики логов: '.$e->getMessage(),
+                'message' => 'Ошибка получения статистики логов: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -2905,7 +2980,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения иконок: '.$e->getMessage(),
+                'message' => 'Ошибка получения иконок: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -2955,7 +3030,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка создания иконки: '.$e->getMessage(),
+                'message' => 'Ошибка создания иконки: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -3015,7 +3090,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления иконки: '.$e->getMessage(),
+                'message' => 'Ошибка обновления иконки: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -3046,7 +3121,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка удаления иконки: '.$e->getMessage(),
+                'message' => 'Ошибка удаления иконки: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -3110,9 +3185,9 @@ class ShopOrdersController extends Controller
                         new \App\Mail\OrderPaymentApprovedMail($order, $contacts, $siteInfo)
                     );
 
-                    Log::info('Payment approved email sent to: '.$order->customer_email);
+                    Log::info('Payment approved email sent to: ' . $order->customer_email);
                 } catch (\Exception $e) {
-                    Log::error('Ошибка отправки письма о разрешении оплаты: '.$e->getMessage(), [
+                    Log::error('Ошибка отправки письма о разрешении оплаты: ' . $e->getMessage(), [
                         'order_id' => $order->id,
                         'trace' => $e->getTraceAsString(),
                     ]);
@@ -3131,7 +3206,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка обновления: '.$e->getMessage(),
+                'message' => 'Ошибка обновления: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -3186,7 +3261,7 @@ class ShopOrdersController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка массового удаления: '.$e->getMessage(),
+                'message' => 'Ошибка массового удаления: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -3227,12 +3302,12 @@ class ShopOrdersController extends Controller
 
             foreach ($orderIds as $orderId) {
                 $order = ShopOrder::with('status')->find($orderId);
-                if (! $order) {
+                if (!$order) {
                     continue;
                 }
 
                 // Проверка на завершенный статус для неоплаченного заказа
-                if ($newStatus->is_finished && ! $order->payed) {
+                if ($newStatus->is_finished && !$order->payed) {
                     $skippedCount++;
 
                     continue;
@@ -3244,6 +3319,10 @@ class ShopOrdersController extends Controller
                 if ($newStatus->is_cancelled) {
                     $this->restoreOrderItemsToStock($order);
                     $this->restoreUserBonuses($order);
+                }
+
+                if ($newStatus->is_taken_to_work && !$order->manager_id) {
+                    $order->manager_id = $user ? $user->id : null;
                 }
 
                 $order->status_id = $statusId;
@@ -3290,7 +3369,7 @@ class ShopOrdersController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка массового обновления статуса: '.$e->getMessage(),
+                'message' => 'Ошибка массового обновления статуса: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -3329,7 +3408,7 @@ class ShopOrdersController extends Controller
 
             foreach ($orderIds as $orderId) {
                 $order = ShopOrder::find($orderId);
-                if (! $order || $order->payed === $payed) {
+                if (!$order || $order->payed === $payed) {
                     continue;
                 }
 
@@ -3364,7 +3443,7 @@ class ShopOrdersController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка массового обновления статуса оплаты: '.$e->getMessage(),
+                'message' => 'Ошибка массового обновления статуса оплаты: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -3415,7 +3494,7 @@ class ShopOrdersController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Комментарий добавлен к '.count($orderIds).' заказам',
+                'message' => 'Комментарий добавлен к ' . count($orderIds) . ' заказам',
                 'data' => [
                     'updated_count' => count($orderIds),
                 ],
@@ -3425,7 +3504,7 @@ class ShopOrdersController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка массового добавления комментария: '.$e->getMessage(),
+                'message' => 'Ошибка массового добавления комментария: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -3448,7 +3527,7 @@ class ShopOrdersController extends Controller
             }
 
             // Проверяем, что у заказа есть способ оплаты
-            if (! $order->payment_method_id) {
+            if (!$order->payment_method_id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'У заказа не указан способ оплаты',
@@ -3456,7 +3535,7 @@ class ShopOrdersController extends Controller
             }
 
             $paymentMethod = $order->paymentMethod;
-            if (! $paymentMethod) {
+            if (!$paymentMethod) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Способ оплаты не найден',
@@ -3464,7 +3543,7 @@ class ShopOrdersController extends Controller
             }
 
             // Проверяем, что способ оплаты активен
-            if (! $paymentMethod->is_active) {
+            if (!$paymentMethod->is_active) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Способ оплаты неактивен',
@@ -3488,7 +3567,7 @@ class ShopOrdersController extends Controller
                 'payment_method_id' => $paymentMethod->id,
                 'amount' => $order->total_amount,
                 'order_number' => $order->order_number,
-                'return_url' => config('app.frontend_url', 'https://skateandsnow.ru').'/order/'.$order->order_number,
+                'return_url' => config('app.frontend_url', 'https://skateandsnow.ru') . '/order/' . $order->order_number,
             ];
 
             // Создаем контроллер платежей для вызова методов создания платежа
@@ -3520,7 +3599,7 @@ class ShopOrdersController extends Controller
                     ], 400);
             }
 
-            if (! $result) {
+            if (!$result) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Не удалось создать новый платеж - пустой ответ',
@@ -3531,7 +3610,7 @@ class ShopOrdersController extends Controller
             $content = $result->getContent();
             $resultData = json_decode($content, true);
 
-            if (! $resultData || ! isset($resultData['success']) || ! $resultData['success']) {
+            if (!$resultData || !isset($resultData['success']) || !$resultData['success']) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Не удалось создать новый платеж',
@@ -3585,7 +3664,7 @@ class ShopOrdersController extends Controller
             $order = ShopOrder::findOrFail($orderId);
 
             // Проверяем, что у заказа есть платежная ссылка
-            if (! $order->payment_url) {
+            if (!$order->payment_url) {
                 return response()->json([
                     'success' => false,
                     'message' => 'У заказа нет платежной ссылки',
@@ -3593,7 +3672,7 @@ class ShopOrdersController extends Controller
             }
 
             // Проверяем, что у клиента есть email
-            if (! $order->customer_email) {
+            if (!$order->customer_email) {
                 return response()->json([
                     'success' => false,
                     'message' => 'У клиента не указан email',
@@ -3630,7 +3709,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка отправки email: '.$e->getMessage(),
+                'message' => 'Ошибка отправки email: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -3664,9 +3743,9 @@ class ShopOrdersController extends Controller
                 'capture' => true,
                 'confirmation' => [
                     'type' => 'redirect',
-                    'return_url' => config('app.frontend_url', 'https://skateandsnow.ru').'/order/'.$order->order_number,
+                    'return_url' => config('app.frontend_url', 'https://skateandsnow.ru') . '/order/' . $order->order_number,
                 ],
-                'description' => 'Заказ №'.$order->order_number,
+                'description' => 'Заказ №' . $order->order_number,
                 'metadata' => [
                     'transaction_id' => $transaction->id,
                     'order_number' => $order->order_number,
@@ -3685,7 +3764,7 @@ class ShopOrdersController extends Controller
                     ->withOptions(['verify' => false]) // Отключаем SSL верификацию для локальной разработки
                     ->post($apiUrl, $paymentData);
             } catch (\Illuminate\Http\Client\ConnectionException $e) {
-                throw new \Exception('Ошибка подключения к YooKassa API: '.$e->getMessage());
+                throw new \Exception('Ошибка подключения к YooKassa API: ' . $e->getMessage());
             } catch (\Exception $e) {
                 throw $e;
             }
@@ -3701,7 +3780,7 @@ class ShopOrdersController extends Controller
                 }
 
                 // Проверяем, что получили payment_url
-                if (! $paymentUrl) {
+                if (!$paymentUrl) {
                     // Обновляем транзакцию как failed
                     $transaction->update([
                         'status' => 'failed',
@@ -3743,7 +3822,7 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при перегенерации платежа YooKassa: '.$e->getMessage(),
+                'message' => 'Ошибка при перегенерации платежа YooKassa: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -3756,7 +3835,7 @@ class ShopOrdersController extends Controller
         try {
             $settings = $paymentMethod->getApiSettings();
 
-            if (! $this->validateYandexPaySettings($settings)) {
+            if (!$this->validateYandexPaySettings($settings)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Неверные настройки Yandex Pay',
@@ -3768,10 +3847,10 @@ class ShopOrdersController extends Controller
                 : 'https://pay.yandex.ru/api/merchant/v1/orders';
 
             $amountValue = number_format((float) $order->total_amount, 2, '.', '');
-            $returnUrl = config('app.frontend_url', 'https://skateandsnow.ru').'/checkout?payment=return&payment_type=yandex_pay';
+            $returnUrl = config('app.frontend_url', 'https://skateandsnow.ru') . '/checkout?payment=return&payment_type=yandex_pay';
 
             $orderData = [
-                'orderId' => 'REGENERATE-'.$order->order_number.'-'.time(),
+                'orderId' => 'REGENERATE-' . $order->order_number . '-' . time(),
                 'merchantId' => $settings['merchant_id'] ?? null,
                 'currencyCode' => $settings['currency'] ?? 'RUB',
                 'amount' => [
@@ -3781,8 +3860,8 @@ class ShopOrdersController extends Controller
                 'cart' => [
                     'items' => [
                         [
-                            'productId' => 'ORDER-'.$order->id,
-                            'description' => 'Заказ №'.$order->order_number,
+                            'productId' => 'ORDER-' . $order->id,
+                            'description' => 'Заказ №' . $order->order_number,
                             'quantity' => ['count' => '1.0', 'available' => '1.0'],
                             'amount' => [
                                 'value' => $amountValue,
@@ -3813,7 +3892,7 @@ class ShopOrdersController extends Controller
 
             try {
                 $response = \Illuminate\Support\Facades\Http::withHeaders([
-                    'Authorization' => 'Api-Key '.$apiKey,
+                    'Authorization' => 'Api-Key ' . $apiKey,
                     'Content-Type' => 'application/json',
                     'X-Request-Id' => uniqid('regenerate_', true),
                     'X-Request-Timeout' => '30000',
@@ -3823,7 +3902,7 @@ class ShopOrdersController extends Controller
                     ->withOptions(['verify' => false]) // Отключаем SSL верификацию для локальной разработки
                     ->post($apiUrl, $orderData);
             } catch (\Illuminate\Http\Client\ConnectionException $e) {
-                throw new \Exception('Ошибка подключения к Yandex Pay API: '.$e->getMessage());
+                throw new \Exception('Ошибка подключения к Yandex Pay API: ' . $e->getMessage());
             } catch (\Exception $e) {
                 throw $e;
             }
@@ -3835,7 +3914,7 @@ class ShopOrdersController extends Controller
                 $paymentUrl = $responseData['data']['paymentUrl'] ?? $responseData['paymentUrl'] ?? null;
 
                 // Проверяем, что получили payment_url
-                if (! $paymentUrl) {
+                if (!$paymentUrl) {
                     // Обновляем транзакцию как failed
                     $transaction->update([
                         'status' => 'failed',
@@ -3876,7 +3955,7 @@ class ShopOrdersController extends Controller
 
                 return response()->json([
                     'success' => false,
-                    'message' => 'Ошибка создания платежа в Yandex Pay: '.$response->body(),
+                    'message' => 'Ошибка создания платежа в Yandex Pay: ' . $response->body(),
                 ], 500);
             }
 
@@ -3889,7 +3968,7 @@ class ShopOrdersController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка при перегенерации платежа Yandex Pay: '.$e->getMessage(),
+                'message' => 'Ошибка при перегенерации платежа Yandex Pay: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -3918,7 +3997,7 @@ class ShopOrdersController extends Controller
             $orderStub->items = $order->items;
             $orderStub->delivery_cost = $order->delivery_cost ?? 0;
             $result = $service->initiatePayment($orderStub);
-            if (! empty($result['success']) && ! empty($result['payment_url'])) {
+            if (!empty($result['success']) && !empty($result['payment_url'])) {
                 $transaction->update([
                     'transaction_id' => $result['transaction_id'] ?? null,
                     'response_data' => $result['response_data'] ?? null,
@@ -3971,7 +4050,7 @@ class ShopOrdersController extends Controller
             $orderStub->items = $order->items;
             $orderStub->delivery_cost = $order->delivery_cost ?? 0;
             $result = $service->initiatePayment($orderStub);
-            if (! empty($result['success']) && ! empty($result['payment_url'])) {
+            if (!empty($result['success']) && !empty($result['payment_url'])) {
                 $transaction->update([
                     'transaction_id' => $result['transaction_id'] ?? null,
                     'response_data' => $result['response_data'] ?? null,
@@ -4011,9 +4090,9 @@ class ShopOrdersController extends Controller
 
         // В test режиме нужен merchant_id, в live режиме нужен secret_key
         if ($settings['mode'] === 'test' || $settings['mode'] === 'sandbox') {
-            return ! empty($settings['merchant_id']);
+            return !empty($settings['merchant_id']);
         } elseif ($settings['mode'] === 'live') {
-            return ! empty($settings['secret_key']);
+            return !empty($settings['secret_key']);
         }
 
         return false;
@@ -4024,7 +4103,7 @@ class ShopOrdersController extends Controller
      */
     private function sendNewPaymentLinkEmail($order, $newPaymentUrl)
     {
-        if (! $newPaymentUrl || ! $order->customer_email) {
+        if (!$newPaymentUrl || !$order->customer_email) {
             return;
         }
 
@@ -4055,7 +4134,7 @@ class ShopOrdersController extends Controller
      */
     private function formatVariationProperties($variation): string
     {
-        if (! $variation) {
+        if (!$variation) {
             return '';
         }
 
@@ -4075,7 +4154,7 @@ class ShopOrdersController extends Controller
                     $propName = $row->attribute_name ?? '';
                     $propValue = $row->value_value ?? '';
 
-                    return $propName.': '.$propValue;
+                    return $propName . ': ' . $propValue;
                 })->join(', ');
             }
 
