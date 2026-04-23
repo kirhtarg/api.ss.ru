@@ -21,6 +21,9 @@ class ShopGoodsMediaTransferController extends Controller
             'target_good_id' => 'required|exists:shop_goods,id',
             'donor_good_ids' => 'required|array|min:1',
             'donor_good_ids.*' => 'exists:shop_goods,id',
+            'copy_description' => 'boolean',
+            'copy_short_description' => 'boolean',
+            'description_source_id' => 'nullable|exists:shop_goods,id',
         ]);
 
         if ($validator->fails()) {
@@ -36,6 +39,33 @@ class ShopGoodsMediaTransferController extends Controller
 
             $targetGoodId = $request->input('target_good_id');
             $donorGoodIds = $request->input('donor_good_ids');
+            $copyDescription = $request->boolean('copy_description', true);
+            $copyShortDescription = $request->boolean('copy_short_description', true);
+            $descriptionSourceId = $request->input('description_source_id');
+
+            $targetGood = ShopGood::find($targetGoodId);
+            if (!$targetGood) {
+                throw new \Exception("Целевой товар не найден");
+            }
+
+            // Перенос описаний
+            if (($copyDescription || $copyShortDescription) && $descriptionSourceId) {
+                $sourceGood = ShopGood::find($descriptionSourceId);
+                if ($sourceGood && in_array($descriptionSourceId, $donorGoodIds)) {
+                    $updateData = [];
+                    if ($copyDescription && $sourceGood->description) {
+                        $updateData['description'] = $sourceGood->description;
+                    }
+                    if ($copyShortDescription && $sourceGood->short_description) {
+                        $updateData['short_description'] = $sourceGood->short_description;
+                    }
+
+                    if (!empty($updateData)) {
+                        $this->logAudit($targetGood, 'updated', $targetGood->only(array_keys($updateData)), $updateData);
+                        $targetGood->update($updateData);
+                    }
+                }
+            }
 
             $totalImagesTransferred = 0;
             $deletedGoodsCount = 0;

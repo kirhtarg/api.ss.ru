@@ -36,6 +36,36 @@ return Application::configure(basePath: dirname(__DIR__))
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ]);
     })
+    ->withSchedule(function (\Illuminate\Console\Scheduling\Schedule $schedule) {
+        try {
+            $settings = \Illuminate\Support\Facades\DB::table('settings')
+                ->where('group', 'shop')
+                ->whereIn('key', ['yml_feed_regeneration_frequency', 'yml_feed_regeneration_time'])
+                ->pluck('value', 'key')
+                ->toArray();
+
+            $frequency = $settings['yml_feed_regeneration_frequency'] ?? 'daily';
+            $time = $settings['yml_feed_regeneration_time'] ?? '03:00';
+
+            $event = $schedule->command('shop:generate-yml');
+
+            switch ($frequency) {
+                case 'hourly':
+                    $event->hourly();
+                    break;
+                case 'weekly':
+                    $event->weeklyOn(1, $time); // Понедельник по умолчанию
+                    break;
+                case 'daily':
+                default:
+                    $event->dailyAt($time);
+                    break;
+            }
+        } catch (\Exception $e) {
+            // Резервный вариант, если БД недоступна
+            $schedule->command('shop:generate-yml')->dailyAt('03:00');
+        }
+    })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (\Throwable $e, $request) {
             if ($request->is('api/*')) {

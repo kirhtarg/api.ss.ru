@@ -369,4 +369,43 @@ class ShopBrandsController extends Controller
             ], 500);
         }
     }
+
+    public function bulkDelete(Request $request)
+    {
+        try {
+            $ids = $request->input('ids', []);
+            if (empty($ids)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не выбраны бренды для удаления',
+                ], 422);
+            }
+
+            $brands = ShopBrand::whereIn('id', $ids)->get();
+            $count = 0;
+
+            foreach ($brands as $brand) {
+                // Удаляем логотип если есть
+                if ($brand->logo) {
+                    $imagePath = public_path($brand->logo);
+                    if (file_exists($imagePath)) {
+                        @unlink($imagePath);
+                    }
+                }
+                
+                $brand->delete();
+                $count++;
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => "Успешно удалено брендов: $count",
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при массовом удалении: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
 }

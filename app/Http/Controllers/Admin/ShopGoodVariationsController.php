@@ -261,6 +261,335 @@ class ShopGoodVariationsController extends Controller
         ]);
     }
 
+    public function updateGlobalAttribute(Request $request, $attributeId): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'name' => 'required|string|max:255',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $attribute = DB::table('shop_variation_attributes')->where('id', (int) $attributeId)->first();
+            if (!$attribute) {
+                return response()->json(['success' => false, 'message' => 'Атрибут не найден'], 404);
+            }
+
+            $name = trim($request->input('name'));
+            
+            // Проверка на дубликат имени
+            $exists = DB::table('shop_variation_attributes')
+                ->where('name', $name)
+                ->where('id', '!=', (int) $attributeId)
+                ->exists();
+                
+            if ($exists) {
+                return response()->json(['success' => false, 'message' => 'Атрибут с таким названием уже существует'], 422);
+            }
+
+            // Перегенерация slug
+            $baseSlug = \Illuminate\Support\Str::slug($name) ?: ('attr-' . uniqid());
+            $slug = $baseSlug;
+            $i = 2;
+            while (DB::table('shop_variation_attributes')->where('slug', $slug)->where('id', '!=', (int) $attributeId)->exists()) {
+                $slug = $baseSlug . '-' . $i;
+                $i++;
+            }
+
+            DB::table('shop_variation_attributes')->where('id', (int) $attributeId)->update([
+                'name' => $name,
+                'slug' => $slug,
+                'updated_at' => now(),
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => ['id' => (int) $attributeId, 'name' => $name, 'slug' => $slug],
+                'message' => 'Атрибут успешно обновлен'
+            ]);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Error updating global attribute: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Произошла ошибка при обновлении атрибута: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function deleteGlobalAttribute($attributeId): JsonResponse
+    {
+        try {
+            $attribute = DB::table('shop_variation_attributes')->where('id', (int) $attributeId)->first();
+            if (!$attribute) {
+                return response()->json(['success' => false, 'message' => 'Атрибут не найден'], 404);
+            }
+
+            DB::beginTransaction();
+
+            // Удаляем связи значений атрибута с вариациями
+            $valueIds = DB::table('shop_variation_attribute_values')
+                ->where('attribute_id', (int) $attributeId)
+                ->pluck('id');
+                
+            if ($valueIds->isNotEmpty()) {
+                DB::table('shop_variation_attributes_values')
+                    ->whereIn('attribute_value_id', $valueIds)
+                    ->delete();
+            }
+
+            // Удаляем значения атрибута
+            DB::table('shop_variation_attribute_values')->where('attribute_id', (int) $attributeId)->delete();
+
+            // Удаляем сам атрибут
+            DB::table('shop_variation_attributes')->where('id', (int) $attributeId)->delete();
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Атрибут и все его значения успешно удалены'
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            \Illuminate\Support\Facades\Log::error('Error deleting global attribute: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Произошла ошибка при удалении атрибута: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function getGlobalAttributeValues($attributeId): JsonResponse
+    {
+        try {
+            $attribute = DB::table('shop_variation_attributes')->where('id', (int) $attributeId)->first();
+            if (!$attribute) {
+                return response()->json(['success' => false, 'message' => 'Атрибут не найден'], 404);
+            }
+
+            $values = DB::table('shop_variation_attribute_values')
+                ->where('attribute_id', (int) $attributeId)
+                ->orderBy('value')
+                ->get();
+
+            // Подсчитаем количество вариаций, использующих каждое значение
+            $goodsCount = DB::table('shop_variation_attributes_values')
+                ->whereIn('attribute_value_id', $values->pluck('id'))
+                ->select('attribute_value_id', DB::raw('COUNT(variation_id) as goods_count'))
+                ->groupBy('attribute_value_id')
+                ->get()
+                ->keyBy('attribute_value_id');
+
+            foreach ($values as $val) {
+                $val->goods_count = $goodsCount->has($val->id) ? $goodsCount->get($val->id)->goods_count : 0;
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $values
+            ]);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Error fetching global attribute values: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Произошла ошибка при загрузке значений атрибута: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function createGlobalAttributeValue(Request $request, $attributeId): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'value' => 'required|string|max:255',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $newValue = trim($request->input('value'));
+
+            $exists = DB::table('shop_variation_attribute_values')
+                ->where('attribute_id', (int) $attributeId)
+                ->where('value', $newValue)
+                ->exists();
+
+            if ($exists) {
+                return response()->json(['success' => false, 'message' => 'Такое значение уже существует'], 422);
+            }
+
+            $id = DB::table('shop_variation_attribute_values')->insertGetId([
+                'attribute_id' => (int) $attributeId,
+                'value' => $newValue,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'id' => $id,
+                    'value' => $newValue
+                ]
+            ]);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Error creating global attribute value: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Произошла ошибка при создании значения: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function updateGlobalAttributeValue(Request $request, $attributeId, $valueId): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'value' => 'required|string|max:255',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $value = DB::table('shop_variation_attribute_values')
+                ->where('attribute_id', (int) $attributeId)
+                ->where('id', (int) $valueId)
+                ->first();
+
+            if (!$value) {
+                return response()->json(['success' => false, 'message' => 'Значение не найдено'], 404);
+            }
+            
+            $newValue = trim($request->input('value'));
+            
+            $exists = DB::table('shop_variation_attribute_values')
+                ->where('attribute_id', (int) $attributeId)
+                ->where('value', $newValue)
+                ->where('id', '!=', (int) $valueId)
+                ->exists();
+                
+            if ($exists) {
+                return response()->json(['success' => false, 'message' => 'Такое значение уже существует'], 422);
+            }
+
+            DB::table('shop_variation_attribute_values')
+                ->where('id', (int) $valueId)
+                ->update([
+                    'value' => $newValue,
+                    'updated_at' => now(),
+                ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => ['id' => (int) $valueId, 'attribute_id' => (int) $attributeId, 'value' => $newValue],
+                'message' => 'Значение успешно обновлено'
+            ]);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Error updating global attribute value: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Произошла ошибка при обновлении значения: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function deleteGlobalAttributeValue($attributeId, $valueId): JsonResponse
+    {
+        try {
+            $value = DB::table('shop_variation_attribute_values')
+                ->where('attribute_id', (int) $attributeId)
+                ->where('id', (int) $valueId)
+                ->first();
+
+            if (!$value) {
+                return response()->json(['success' => false, 'message' => 'Значение не найдено'], 404);
+            }
+
+            DB::beginTransaction();
+
+            // Удаляем связи значения с вариациями
+            DB::table('shop_variation_attributes_values')->where('attribute_value_id', (int) $valueId)->delete();
+
+            // Удаляем само значение
+            DB::table('shop_variation_attribute_values')->where('id', (int) $valueId)->delete();
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Значение успешно удалено'
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            \Illuminate\Support\Facades\Log::error('Error deleting global attribute value: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Произошла ошибка при удалении значения: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function bulkDeleteGlobalAttributeValues(Request $request, $attributeId): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'value_ids' => 'required|array',
+                'value_ids.*' => 'integer|exists:shop_variation_attribute_values,id',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $valueIds = $request->input('value_ids');
+
+            DB::beginTransaction();
+
+            // Удаляем связи с вариациями
+            DB::table('shop_variation_attributes_values')->whereIn('attribute_value_id', $valueIds)->delete();
+            
+            // Удаляем сами значения
+            DB::table('shop_variation_attribute_values')
+                ->where('attribute_id', (int) $attributeId)
+                ->whereIn('id', $valueIds)
+                ->delete();
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => count($valueIds) . ' значений успешно удалено'
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            \Illuminate\Support\Facades\Log::error('Error bulk deleting global attribute values: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Произошла ошибка при массовом удалении значений: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
     /**
      * РЎРѕР·РґР°С‚СЊ РЅРѕРІС‹Р№ Р°С‚СЂРёР±СѓС‚ РІР°СЂРёР°С†РёР№ (РіР»РѕР±Р°Р»СЊРЅРѕ, Р±РµР· РїСЂРёРІСЏР·РєРё Рє С‚РѕРІР°СЂСѓ)
      */

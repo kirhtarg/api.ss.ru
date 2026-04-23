@@ -86,268 +86,24 @@ class ShopImportExportController extends Controller
     /**
      * Экспорт товаров в YML (Yandex Market Language)
      */
-    public function exportYml(Request $request): JsonResponse
+    public function exportYml(Request $request, \App\Services\YmlFeedService $ymlService): JsonResponse
     {
-        try {
-            // Увеличиваем лимиты для генерации большого файла
-            ini_set('memory_limit', '512M');
-            set_time_limit(300);
+        $result = $ymlService->generate();
 
-            $filename = 'goods_feed.xml';
-            $filepath = 'exports/'.$filename;
-
-            // Создаем директорию если не существует
-            if (! Storage::disk('public')->exists('exports')) {
-                Storage::disk('public')->makeDirectory('exports');
-            }
-
-            // Удаляем старый файл перед генерацией, чтобы избежать артефактов
-            if (Storage::disk('public')->exists($filepath)) {
-                Storage::disk('public')->delete($filepath);
-            }
-
-            // Используем прямой доступ к файлу для потоковой записи
-            $fullPath = Storage::disk('public')->path($filepath);
-            $handle = fopen($fullPath, 'w');
-
-            if (! $handle) {
-                throw new \Exception("Не удалось открыть файл для записи: $fullPath");
-            }
-
-            fwrite($handle, '<?xml version="1.0" encoding="UTF-8"?>'.PHP_EOL);
-            fwrite($handle, '<yml_catalog date="'.date('Y-m-d H:i').'">'.PHP_EOL);
-            fwrite($handle, '    <!-- build:'.date('c').' env='.config('app.env').' -->'.PHP_EOL);
-            fwrite($handle, '    <shop>'.PHP_EOL);
-
-            // Название и базовый URL магазина
-            $shopSettings = DB::table('settings')
-                ->where('group', 'shop')
-                ->whereIn('key', ['site_name'])
-                ->pluck('value', 'key')
-                ->toArray();
-
-            $shopName = $shopSettings['site_name'] ?? 'Skate & Snow';
-            $mainSite = $this->getMainSiteUrl();
-
-            fwrite($handle, '        <name>'.htmlspecialchars($shopName).'</name>'.PHP_EOL);
-            fwrite($handle, '        <company>'.htmlspecialchars($shopName).'</company>'.PHP_EOL);
-            fwrite($handle, '        <url>'.htmlspecialchars($mainSite).'</url>'.PHP_EOL);
-            fwrite($handle, '        <currencies>'.PHP_EOL);
-            fwrite($handle, '            <currency id="RUR" rate="1"/>'.PHP_EOL);
-            fwrite($handle, '        </currencies>'.PHP_EOL);
-
-            // Категории
-            fwrite($handle, '        <categories>'.PHP_EOL);
-            ShopCategory::chunk(100, function ($categories) use ($handle) {
-                foreach ($categories as $category) {
-                    $parentId = $category->parent_id ? ' parentId="'.$category->parent_id.'"' : '';
-                    fwrite($handle, '            <category id="'.$category->id.'"'.$parentId.'>'.htmlspecialchars($category->name).'</category>'.PHP_EOL);
-                }
-            });
-            fwrite($handle, '        </categories>'.PHP_EOL);
-
-            // Товары
-            fwrite($handle, '        <offers>'.PHP_EOL);
-
-            // Загружаем товары порциями для экономии памяти
-            // Используем те же связи, что и в ShopGoodsController
-            $query = ShopGood::with([
-                'categories:id,name',
-                'brands:id,name',
-                'images:id,good_id,file_path,alt_text,is_main,sort_order',
-                'variations' => function ($q) {
-                    $q->select('id', 'good_id')
-                        ->with('images:id,variation_id,file_path,alt_text,is_main,sort_order');
-                },
-            ]);
-
-            // Если нужно, можно добавить фильтр активности
-            // $query->where('is_active', true);
-
-            $count = 0;
-            $query->chunk(200, function ($goods) use ($handle, &$count) {
-                foreach ($goods as $good) {
-                    $this->writeOfferToHandle($handle, $good);
-                    $count++;
-                }
-                // Освобождаем память
-                unset($goods);
-            });
-
-            fwrite($handle, '        </offers>'.PHP_EOL);
-            fwrite($handle, '    </shop>'.PHP_EOL);
-            fwrite($handle, '</yml_catalog>');
-
-            fclose($handle);
-
-            // Получаем метаданные файла на API
-            $url = Storage::disk('public')->url($filepath);
-            $size = Storage::disk('public')->size($filepath);
-            $lastModified = Storage::disk('public')->lastModified($filepath);
-
+        if ($result['success']) {
             return response()->json([
                 'success' => true,
                 'message' => 'YML фид успешно сгенерирован',
-                'data' => [
-                    'filename' => $filename,
-                    'download_url' => $url,
-                    'frontend_url' => null,
-                    'generated_at' => date('Y-m-d H:i:s', $lastModified),
-                    'size' => round($size / 1024, 2).' KB',
-                    'count' => $count,
-                ],
+                'data' => $result,
             ]);
-
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка генерации YML: '.$e->getMessage(),
-            ], 500);
         }
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Ошибка генерации YML: '.$result['message'],
+        ], 500);
     }
 
-    private function getMainSiteUrl(): string
-    {
-        static $cached = null;
-
-        if ($cached !== null) {
-            return $cached;
-        }
-
-        $mainSite = DB::table('settings')
-            ->where('group', 'shop')
-            ->where('key', 'main_site')
-            ->value('value');
-
-        $mainSite = is_string($mainSite) ? trim($mainSite) : '';
-
-        // 1. Если main_site задан — используем его как есть
-        if ($mainSite !== '') {
-            $cached = rtrim($mainSite, '/');
-
-            return $cached;
-        }
-
-        // 2. Иначе пробуем FRONTEND_URL через конфиг (env подтягивается в config/app.php)
-        $frontendUrl = config('app.frontend_url');
-        $frontendUrl = is_string($frontendUrl) ? trim($frontendUrl) : '';
-
-        if ($frontendUrl === '') {
-            throw new \RuntimeException(
-                'Не задан домен магазина: ни main_site в настройках, ни app.frontend_url в конфиге'
-            );
-        }
-
-        $cached = rtrim($frontendUrl, '/');
-
-        return $cached;
-
-    }
-
-    private function getYmlImageUrl($filePath): ?string
-    {
-        if (! $filePath) {
-            return null;
-        }
-
-        if (str_starts_with($filePath, 'http')) {
-            return $filePath;
-        }
-
-        $frontendBase = $this->getMainSiteUrl();
-        $cleanPath = ltrim($filePath, '/');
-
-        if (str_starts_with($cleanPath, 'images/')) {
-            return $frontendBase.'/'.$cleanPath;
-        }
-
-        if (str_starts_with($cleanPath, 'storage/')) {
-            $apiBase = rtrim(config('app.url'), '/');
-
-            return $apiBase.'/'.$cleanPath;
-        }
-
-        return $frontendBase.'/images/'.$cleanPath;
-    }
-
-    private function writeOfferToHandle($handle, $good): void
-    {
-        // Пропускаем товары без цены или имени
-        if (empty($good->price) || empty($good->name)) {
-            return;
-        }
-
-        // Определяем доступность
-        $available = ($good->stock_quantity > 0) ? 'true' : 'false';
-
-        fwrite($handle, '            <offer id="'.$good->id.'" available="'.$available.'">'.PHP_EOL);
-
-        $url = $this->getMainSiteUrl().'/product/'.($good->slug ?? $good->id);
-        fwrite($handle, '                <url>'.htmlspecialchars($url).'</url>'.PHP_EOL);
-
-        // Цена
-        $price = $good->sale_price ?? $good->price;
-        $oldPrice = $good->sale_price ? $good->price : null;
-
-        fwrite($handle, '                <price>'.$price.'</price>'.PHP_EOL);
-        if ($oldPrice) {
-            fwrite($handle, '                <oldprice>'.$oldPrice.'</oldprice>'.PHP_EOL);
-        }
-
-        fwrite($handle, '                <currencyId>RUR</currencyId>'.PHP_EOL);
-
-        // Категория (берем первую из списка)
-        if ($good->categories->isNotEmpty()) {
-            $categoryId = $good->categories->first()->id;
-            fwrite($handle, '                <categoryId>'.$categoryId.'</categoryId>'.PHP_EOL);
-        }
-
-        // Изображения
-        $images = collect();
-
-        // 1. Пробуем взять изображения самого товара
-        if ($good->images->isNotEmpty()) {
-            $images = $good->images;
-        }
-        // 2. Если у товара нет изображений, ищем в вариациях
-        elseif ($good->variations->isNotEmpty()) {
-            foreach ($good->variations as $variation) {
-                if ($variation->images->isNotEmpty()) {
-                    $images = $variation->images;
-                    break; // Берем изображения из первой попавшейся вариации с картинками
-                }
-            }
-        }
-
-        if ($images->isNotEmpty()) {
-            $images = $images->sortBy('sort_order')->sortByDesc('is_main');
-
-            foreach ($images as $image) {
-                $path = $image->file_path;
-                $imgUrl = $this->getYmlImageUrl($path);
-                if ($imgUrl) {
-                    fwrite($handle, '                <picture>'.htmlspecialchars($imgUrl).'</picture>'.PHP_EOL);
-                }
-            }
-        }
-
-        fwrite($handle, '                <name>'.htmlspecialchars($good->name).'</name>'.PHP_EOL);
-
-        // Бренд
-        if ($good->brands->isNotEmpty()) {
-            $brandName = $good->brands->first()->name;
-            fwrite($handle, '                <vendor>'.htmlspecialchars($brandName).'</vendor>'.PHP_EOL);
-        }
-
-        if (! empty($good->description)) {
-            $description = strip_tags($good->description);
-            // Удаляем недопустимые символы
-            $description = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $description);
-            fwrite($handle, '                <description><![CDATA['.$description.']]></description>'.PHP_EOL);
-        }
-
-        fwrite($handle, '            </offer>'.PHP_EOL);
-    }
 
     /**
      * Получение статуса YML фида
@@ -356,49 +112,80 @@ class ShopImportExportController extends Controller
     {
         try {
             $filename = 'goods_feed.xml';
-            $filepath = 'exports/'.$filename;
+            $filepath = 'exports/' . $filename;
+
+            $data = [
+                'exists' => false,
+                'filename' => $filename,
+                'schedule' => [
+                    'frequency' => DB::table('settings')->where('group', 'shop')->where('key', 'yml_feed_regeneration_frequency')->value('value') ?? 'daily',
+                    'time' => DB::table('settings')->where('group', 'shop')->where('key', 'yml_feed_regeneration_time')->value('value') ?? '03:00',
+                ],
+            ];
 
             if (Storage::disk('public')->exists($filepath)) {
                 $url = Storage::disk('public')->url($filepath);
                 $size = Storage::disk('public')->size($filepath);
                 $lastModified = Storage::disk('public')->lastModified($filepath);
 
+                $data['exists'] = true;
+                $data['download_url'] = $url;
+                $data['generated_at'] = date('Y-m-d H:i:s', $lastModified);
+                $data['size'] = round($size / 1024, 2) . ' KB';
+
                 // Проверяем наличие на фронтенде
                 $frontendPathRelative = config('frontend.path');
-                $frontendUrl = null;
-
                 if ($frontendPathRelative) {
                     $frontendBasePath = base_path($frontendPathRelative);
-                    $frontendPublicPath = $frontendBasePath.'/public';
+                    $frontendPublicPath = $frontendBasePath . '/public';
 
-                    if (is_dir($frontendPublicPath) && file_exists($frontendPublicPath.'/'.$filename)) {
-                        $frontendUrl = config('app.frontend_url').'/'.$filename;
+                    if (is_dir($frontendPublicPath) && file_exists($frontendPublicPath . '/' . $filename)) {
+                        $data['frontend_url'] = config('app.frontend_url') . '/' . $filename;
                     }
                 }
-
-                return response()->json([
-                    'success' => true,
-                    'data' => [
-                        'exists' => true,
-                        'filename' => $filename,
-                        'download_url' => $url,
-                        'frontend_url' => $frontendUrl,
-                        'generated_at' => date('Y-m-d H:i:s', $lastModified),
-                        'size' => round($size / 1024, 2).' KB',
-                    ],
-                ]);
-            } else {
-                return response()->json([
-                    'success' => true,
-                    'data' => [
-                        'exists' => false,
-                    ],
-                ]);
             }
+
+            return response()->json([
+                'success' => true,
+                'data' => $data,
+            ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения статуса YML: '.$e->getMessage(),
+                'message' => 'Ошибка получения статуса YML: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Сохранение настроек расписания YML
+     */
+    public function updateYmlSchedule(Request $request): JsonResponse
+    {
+        $request->validate([
+            'frequency' => 'required|string|in:hourly,daily,weekly',
+            'time' => 'required|string|regex:/^[0-9]{2}:[0-9]{2}$/',
+        ]);
+
+        try {
+            DB::table('settings')
+                ->where('group', 'shop')
+                ->where('key', 'yml_feed_regeneration_frequency')
+                ->update(['value' => $request->frequency]);
+
+            DB::table('settings')
+                ->where('group', 'shop')
+                ->where('key', 'yml_feed_regeneration_time')
+                ->update(['value' => $request->time]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Настройки расписания обновлены',
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка сохранения настроек: ' . $e->getMessage(),
             ], 500);
         }
     }

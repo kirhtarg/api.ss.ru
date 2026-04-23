@@ -1958,6 +1958,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::post('/export/excel', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'exportExcel']);
                     Route::post('/export/yml', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'exportYml']);
                     Route::get('/export/yml/status', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getYmlStatus']);
+                    Route::post('/export/yml/schedule', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'updateYmlSchedule']);
                     Route::post('/import/csv', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'importCsv']);
                     Route::get('/template', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getTemplate']);
                 });
@@ -2007,19 +2008,35 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::post('/{variationId}/clone', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'clone']);
                 });
 
-                // Глобальное создание атрибутов вариаций (без привязки к товару)
-                Route::post('/variations/attributes/global', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'createAttributeGlobal']);
-                // Получить список всех характеристик вариаций (без привязки к товару)
-                Route::get('/variations/attributes', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'listAttributes']);
-                // Массовая загрузка атрибутов вариаций
-                Route::post('/variations/attributes/bulk', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'getBulkAttributes']);
-
-                // Глобальное массовое обновление вариаций (без привязки к товару)
-                Route::post('/variations/bulk-update', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'globalBulkUpdate']);
-                // Получить ID вариаций для списка товаров
                 Route::post('/variations/get-ids', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'getVariationIdsByGoods']);
                 Route::post('/variations/find-zero-stock-no-media', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'findZeroStockNoMediaVariations']);
                 Route::post('/find-without-images', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'findGoodsWithoutImages']);
+
+                // Глобальное управление вариациями
+                Route::prefix('variations')->group(function () {
+                    // Атрибуты
+                    Route::prefix('attributes')->group(function () {
+                        Route::get('/', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'listAttributes']);
+                        Route::post('/global', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'createAttributeGlobal']);
+                        Route::post('/bulk', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'getBulkAttributes']);
+                        
+                        Route::prefix('{attributeId}')->group(function () {
+                            Route::put('/', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'updateGlobalAttribute']);
+                            Route::delete('/', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'deleteGlobalAttribute']);
+                            
+                            // Значения
+                            Route::prefix('values')->group(function () {
+                                Route::get('/', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'getGlobalAttributeValues']);
+                                Route::post('/', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'createGlobalAttributeValue']);
+                                Route::delete('/', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'bulkDeleteGlobalAttributeValues']);
+                                Route::put('/{valueId}', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'updateGlobalAttributeValue']);
+                                Route::delete('/{valueId}', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'deleteGlobalAttributeValue']);
+                            });
+                        });
+                    });
+                    
+                    Route::post('/bulk-update', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'globalBulkUpdate']);
+                });
 
                 // Видео товаров
                 Route::prefix('{goodId}/videos')->group(function () {
@@ -2118,6 +2135,7 @@ Route::middleware('auth:sanctum')->group(function () {
             // Бренды
             Route::prefix('brands')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Admin\ShopBrandsController::class, 'index']);
+                Route::post('/bulk-delete', [\App\Http\Controllers\Admin\ShopBrandsController::class, 'bulkDelete']);
                 Route::get('/active', [\App\Http\Controllers\Admin\ShopBrandsController::class, 'active']);
                 Route::get('/{id}', [\App\Http\Controllers\Admin\ShopBrandsController::class, 'show']);
                 Route::post('/', [\App\Http\Controllers\Admin\ShopBrandsController::class, 'store']);
