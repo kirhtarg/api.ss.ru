@@ -145,9 +145,10 @@ class AvitoFeedService
         // Разделяем путь категории Авито (формат: "Хобби и отдых > Спорт и отдых > Зимний спорт > ...")
         $parts = array_map('trim', explode('>', $avitoCategory));
 
-        // Определяем Category — это ВТОРОЙ уровень дерева Авито (не корневой "Хобби и отдых")
-        // Допустимые верхние категории: Спорт и отдых, Охота и рыбалка, Велосипеды, Музыкальные инструменты, и т.д.
-        // Если путь начинается с корневого уровня (Хобби и отдых, Личные вещи, и т.д.) — пропускаем его
+        $originalRoot = count($parts) > 0 ? $parts[0] : '';
+
+        // Корневые категории Авито не должны попадать в тег <Category>
+        // Авито начинает иерархию XML со второго уровня (например, "Спорт и отдых", а не "Хобби и отдых")
         $topLevelRoots = [
             'Хобби и отдых', 'Личные вещи', 'Для дома и дачи', 'Электроника',
             'Готовый бизнес и оборудование', 'Транспорт', 'Недвижимость',
@@ -155,21 +156,49 @@ class AvitoFeedService
         ];
 
         if (count($parts) >= 2 && in_array($parts[0], $topLevelRoots)) {
-            // Пропускаем корневой уровень — Category берём из parts[1]
-            $categoryValue = $parts[1];
-            $subParts = array_slice($parts, 2);
-        } else {
-            // Путь уже начинается с допустимой категории
-            $categoryValue = $parts[0];
-            $subParts = array_slice($parts, 1);
+            // Отрезаем корневой элемент, чтобы parts[0] стал реальной Category
+            $parts = array_values(array_slice($parts, 1));
         }
 
-        $this->addChildSafe($ad, 'Category', $categoryValue);
+        $defaultTags = ['Category', 'GoodsType', 'GoodsSubType', 'GoodsSubCategory'];
 
-        // Подкатегория → GoodsSubType (если есть)
-        if (!empty($subParts)) {
-            // Берём самый глубокий (leaf) элемент как GoodsSubType
-            $this->addChildSafe($ad, 'GoodsSubType', end($subParts));
+        $cat = $parts[0] ?? '';
+        $subCat = $parts[1] ?? '';
+
+        // Настраиваем авто-определение тегов по конкретным категориям
+        if ($cat === 'Велосипеды') {
+            $defaultTags = ['Category', 'VehicleType', 'GoodsSubCategory', 'GoodsType', 'GoodsSubType'];
+        } elseif ($cat === 'Спорт и отдых') {
+            if ($subCat === 'Дайвинг и водный спорт') {
+                $defaultTags = ['Category', 'GoodsType', 'WaterSportType', 'GoodsSubType'];
+            } elseif ($subCat === 'Зимний спорт' || $subCat === 'Зимние виды спорта') {
+                $defaultTags = ['Category', 'GoodsType', 'WinterSportType', 'GoodsSubType'];
+            } elseif ($subCat === 'Туризм и отдых на природе') {
+                $defaultTags = ['Category', 'GoodsType', 'TourismType', 'GoodsSubType'];
+            } elseif ($subCat === 'Фитнес и тренажеры' || $subCat === 'Фитнесс и тренажеры') {
+                $defaultTags = ['Category', 'GoodsType', 'FitnessType', 'GoodsSubType'];
+            }
+        }
+
+        if ($originalRoot === 'Транспорт' || $cat === 'Транспорт') {
+            $defaultTags = ['Category', 'GoodsType', 'ProductSubType'];
+        }
+
+        foreach ($parts as $index => $part) {
+            if ($part === '') {
+                continue;
+            }
+
+            // Если в строке указан кастомный тег (например, "VehicleType:Горные")
+            if (strpos($part, ':') !== false) {
+                list($customTag, $value) = explode(':', $part, 2);
+                $this->addChildSafe($ad, trim($customTag), trim($value));
+            } else {
+                // Иначе используем стандартный тег для этого уровня
+                if (isset($defaultTags[$index])) {
+                    $this->addChildSafe($ad, $defaultTags[$index], $part);
+                }
+            }
         }
 
         // ГЕО: берем из основного контакта
