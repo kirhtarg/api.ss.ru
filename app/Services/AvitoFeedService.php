@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\ShopGood;
+use App\Models\ShopCategory;
 use App\Models\Setting;
 use App\Models\Contact;
 use Illuminate\Support\Facades\Storage;
@@ -18,6 +19,9 @@ class AvitoFeedService
     protected $descAfter;
     protected $defaultDelivery;
     protected $propertyValuesMap;
+    protected $categoryParents;
+    protected $categoryDepths;
+    protected $allCategoriesById;
 
     public function __construct()
     {
@@ -34,6 +38,30 @@ class AvitoFeedService
         $this->descBefore = Setting::where('key', 'avito_description_before')->value('value') ?: '';
         $this->descAfter = Setting::where('key', 'avito_description_after')->value('value') ?: '';
         $this->defaultDelivery = Setting::where('key', 'avito_default_delivery')->value('value') ?: '';
+
+        // Предварительная загрузка всех категорий для эффективного поиска самой глубокой вложенности
+        $allCats = ShopCategory::all();
+        $this->allCategoriesById = $allCats->keyBy('id');
+        $this->categoryParents = $allCats->pluck('parent_id', 'id')->toArray();
+        $this->categoryDepths = [];
+
+        foreach ($this->categoryParents as $id => $parentId) {
+            $depth = 0;
+            $currId = $id;
+            $visited = []; // Защита от циклов
+            while (isset($this->categoryParents[$currId]) && $this->categoryParents[$currId]) {
+                if (in_array($currId, $visited)) {
+                    break;
+                }
+                $visited[] = $currId;
+                $depth++;
+                $currId = $this->categoryParents[$currId];
+                if ($depth > 20) {
+                    break;
+                }
+            }
+            $this->categoryDepths[$id] = $depth;
+        }
     }
 
     /**
@@ -132,14 +160,28 @@ class AvitoFeedService
 
         // Категория Авито из маппинга (с поиском по родителям)
         $avitoCategory = 'Спорт и отдых';
-        $category = $good->categories->first();
+        
+        // Находим категорию с максимальной вложенностью среди всех категорий товара
+        $category = null;
+        if ($good->categories->isNotEmpty()) {
+            $maxDepth = -1;
+            foreach ($good->categories as $cat) {
+                $depth = $this->categoryDepths[$cat->id] ?? 0;
+                if ($depth > $maxDepth) {
+                    $maxDepth = $depth;
+                    $category = $cat;
+                }
+            }
+        }
 
         while ($category) {
             if (isset($this->mapping[$category->id]) && !empty($this->mapping[$category->id])) {
                 $avitoCategory = $this->mapping[$category->id];
                 break;
             }
-            $category = $category->parent;
+            // Используем кеш родителей, чтобы избежать N+1 запросов к БД
+            $parentId = $this->categoryParents[$category->id] ?? null;
+            $category = $parentId ? ($this->allCategoriesById[$parentId] ?? null) : null;
         }
 
         // Разделяем путь категории Авито (формат: "Хобби и отдых > Спорт и отдых > Зимний спорт > ...")
