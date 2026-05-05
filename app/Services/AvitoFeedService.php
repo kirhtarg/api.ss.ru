@@ -220,11 +220,11 @@ class AvitoFeedService
 
             $this->addChildSafe($ad, 'Address', trim($address));
             
-            if ($mainAddress->latitude) {
-                $this->addChildSafe($ad, 'Latitude', $mainAddress->latitude);
-            }
             if ($mainAddress->longitude) {
-                $this->addChildSafe($ad, 'Longitude', $mainAddress->longitude);
+                $this->addChildSafe($ad, 'Latitude', $mainAddress->longitude);
+            }
+            if ($mainAddress->latitude) {
+                $this->addChildSafe($ad, 'Longitude', $mainAddress->latitude);
             }
         } else {
             $this->addChildSafe($ad, 'Address', Setting::where('key', 'contact_address')->value('value') ?: 'Москва');
@@ -445,6 +445,9 @@ class AvitoFeedService
         }
         
         $result = $extra ? ($extra . "<br><br>" . $fullDesc) : $fullDesc;
+        
+        // Добавляем полное название в самое начало
+        $result = "<strong>" . $good->name . "</strong><br><br>" . $result;
         
         // Добавляем глобальные обертки
         if ($this->descBefore) {
