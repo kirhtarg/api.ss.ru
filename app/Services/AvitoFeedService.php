@@ -210,18 +210,23 @@ class AvitoFeedService
         $subCat = $parts[1] ?? '';
 
         // Настраиваем авто-определение тегов по конкретным категориям
-        if ($cat === 'Велосипеды') {
+        if (mb_stripos($avitoCategory, 'Велосипеды') !== false) {
             $defaultTags = ['Category', 'VehicleType', 'GoodsSubCategory', 'GoodsType', 'GoodsSubType'];
-        } elseif ($cat === 'Спорт и отдых') {
-            if ($subCat === 'Дайвинг и водный спорт') {
+        } 
+        
+        // Для категории "Спорт и отдых" и её подкатегорий
+        if (mb_stripos($avitoCategory, 'Спорт и отдых') !== false) {
+            if (mb_stripos($avitoCategory, 'Дайвинг и водный спорт') !== false) {
                 $defaultTags = ['Category', 'GoodsType', 'WaterSportType', 'GoodsSubType'];
-            } elseif ($subCat === 'Зимний спорт' || $subCat === 'Зимние виды спорта') {
+            } elseif (mb_stripos($avitoCategory, 'Зимний спорт') !== false || mb_stripos($avitoCategory, 'Зимние виды спорта') !== false) {
                 $defaultTags = ['Category', 'GoodsType', 'WinterSportType', 'GoodsSubType'];
-            } elseif ($subCat === 'Туризм и отдых на природе') {
+            } elseif (mb_stripos($avitoCategory, 'Туризм и отдых на природе') !== false) {
+                // Category > GoodsType > TourismType > GoodsSubType
                 $defaultTags = ['Category', 'GoodsType', 'TourismType', 'GoodsSubType'];
-            } elseif ($subCat === 'Фитнес и тренажеры' || $subCat === 'Фитнесс и тренажеры') {
+            } elseif (mb_stripos($avitoCategory, 'Фитнес и тренажеры') !== false || mb_stripos($avitoCategory, 'Фитнесс и тренажеры') !== false) {
                 $defaultTags = ['Category', 'GoodsType', 'FitnessType', 'GoodsSubType'];
-            } elseif ($subCat === 'Ролики и скейтбординг') {
+            } elseif (mb_stripos($avitoCategory, 'Ролики и скейтбординг') !== false) {
+                // Для скейтбординга: Category > GoodsType > GoodsSubCategory > GoodsSubType
                 $defaultTags = ['Category', 'GoodsType', 'GoodsSubCategory', 'GoodsSubType'];
             }
         }
