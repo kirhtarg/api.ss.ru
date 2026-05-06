@@ -338,6 +338,11 @@ class AvitoFeedService
         // Собираем все разрешенные бренды: глобальные + категорийные
         $allAllowedBrands = array_unique(array_merge($this->allowedBrands, $categoryBrands));
 
+        // Отладка
+        if ($brandName !== 'Другой') {
+            \Illuminate\Support\Facades\Log::info("Avito brand check: {$brandName}. Allowed count: " . count($allAllowedBrands));
+        }
+
         // Если включен белый список, проверяем наличие в нем
         if (!empty($allAllowedBrands)) {
             $found = false;
@@ -752,27 +757,29 @@ class AvitoFeedService
 
         $brands = [];
 
-        // 1. Пытаемся вытащить из формата <brand name="3D Family"/>
-        if (str_contains($input, '<brand')) {
-            preg_match_all('/name="([^"]+)"/', $input, $matches);
-            if (!empty($matches[1])) {
-                $brands = array_merge($brands, $matches[1]);
+        // 1. Пытаемся вытащить из формата <brand name="3D Family"/> или <brand name='3D Family'/>
+        preg_match_all('/name=["\']([^"\']+)["\']/', $input, $matches);
+        if (!empty($matches[1])) {
+            $brands = array_merge($brands, $matches[1]);
+        }
+
+        // 2. Пытаемся вытащить из формата <brand>3D Family</brand>
+        preg_match_all('/<brand>(.*?)<\/brand>/i', $input, $matches);
+        if (!empty($matches[1])) {
+            $brands = array_merge($brands, $matches[1]);
+        }
+
+        // 3. Также пробуем обычный текстовый формат (запятые, новые строки)
+        // Убираем все теги и делим по разделителям
+        $plainText = preg_replace('/<[^>]*>/', "\n", $input);
+        $lines = preg_split('/[,\n\r|]+/', $plainText);
+        foreach ($lines as $line) {
+            $b = trim($line);
+            if (!empty($b)) {
+                $brands[] = $b;
             }
         }
 
-        // 2. Если брендов не нашли, пробуем разделить по запятым и новым строкам
-        if (empty($brands)) {
-            // Заменяем запятые на переносы строк для унификации
-            $input = str_replace(',', "\n", $input);
-            $lines = explode("\n", $input);
-            foreach ($lines as $line) {
-                $b = trim($line);
-                if (!empty($b) && !str_starts_with($b, '<')) {
-                    $brands[] = $b;
-                }
-            }
-        }
-
-        return array_unique(array_filter($brands));
+        return array_values(array_unique(array_filter(array_map('trim', $brands))));
     }
 }
