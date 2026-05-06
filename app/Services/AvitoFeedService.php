@@ -23,6 +23,14 @@ class AvitoFeedService
     protected $categoryDepths;
     protected $allCategoriesById;
     protected $allowedBrands = [];
+    protected $allowedModels = [];
+    protected $currentCategoryBrands = [];
+    protected $currentCategoryModels = [];
+    protected $currentHierarchy = [];
+    protected $globalHierarchy = [];
+    
+    protected $lastBrand = null;
+    protected $lastModel = null;
 
     public function __construct()
     {
@@ -40,9 +48,33 @@ class AvitoFeedService
         $this->descAfter = Setting::where('key', 'avito_description_after')->value('value') ?: '';
         $this->defaultDelivery = Setting::where('key', 'avito_default_delivery')->value('value') ?: '';
 
-        // Загрузка белого списка брендов
+        // Загрузка иерархии брендов и моделей
         $brandsInput = Setting::where('key', 'avito_brand_whitelist')->value('value') ?: '';
-        $this->allowedBrands = $this->parseBrands($brandsInput);
+        $modelsInput = Setting::where('key', 'avito_model_whitelist')->value('value') ?: '';
+        $brandExternalUrl = Setting::where('key', 'avito_brand_external_url')->value('value') ?: '';
+        $modelExternalUrl = Setting::where('key', 'avito_model_external_url')->value('value') ?: '';
+        
+        $this->globalHierarchy = $this->parseWhitelist($brandsInput, 'brand');
+        
+        if ($brandExternalUrl) {
+            $externalBrands = $this->fetchExternalWhitelist($brandExternalUrl);
+            if ($externalBrands) {
+                $this->globalHierarchy = $this->mergeHierarchies($this->globalHierarchy, $this->parseWhitelist($externalBrands, 'brand'));
+            }
+        }
+
+        $this->globalHierarchy = $this->mergeHierarchies($this->globalHierarchy, $this->parseWhitelist($modelsInput, 'model'));
+
+        if ($modelExternalUrl) {
+            $externalModels = $this->fetchExternalWhitelist($modelExternalUrl);
+            if ($externalModels) {
+                $this->globalHierarchy = $this->mergeHierarchies($this->globalHierarchy, $this->parseWhitelist($externalModels, 'model'));
+            }
+        }
+        
+        // Для обратной совместимости (если где-то еще используются)
+        $this->allowedBrands = array_keys($this->globalHierarchy);
+        $this->allowedModels = isset($this->globalHierarchy['*']) ? array_keys($this->globalHierarchy['*']['models']) : [];
 
         // Предварительная загрузка всех категорий для эффективного поиска самой глубокой вложенности
         $allCats = ShopCategory::all();
@@ -181,20 +213,28 @@ class AvitoFeedService
         }
 
         $categoryBrands = [];
+        $categoryModels = [];
         while ($category) {
             $mappingData = $this->mapping[$category->id] ?? null;
             
-            // Если маппинг - массив (новый формат: ['path' => '...', 'brands' => '...'])
+            // Если маппинг - массив (новый формат: ['path' => '...', 'brands' => '...', 'models' => '...'])
             if (is_array($mappingData)) {
                 if (empty($avitoCategory) || $avitoCategory === 'Спорт и отдых') {
                     $avitoCategory = $mappingData['path'] ?? 'Спорт и отдых';
                 }
                 if (!empty($mappingData['brands'])) {
-                    $categoryBrands = array_merge($categoryBrands, $this->parseBrands($mappingData['brands']));
+                    $categoryBrands = array_merge($categoryBrands, $this->parseWhitelist($mappingData['brands'], 'brand'));
                 }
-                // Если путь найден, прекращаем поиск по родителям для пути, 
-                // но бренды мы могли бы собирать и дальше (наследование брендов)
-                // Однако для простоты пока остановимся на первом найденном маппинге
+                if (!empty($mappingData['models'])) {
+                    $categoryModels = array_merge($categoryModels, $this->parseWhitelist($mappingData['models'], 'model'));
+                }
+                if (!empty($mappingData['external_url'])) {
+                    $externalData = $this->fetchExternalWhitelist($mappingData['external_url']);
+                    if ($externalData) {
+                        $categoryBrands = array_merge($categoryBrands, $this->parseWhitelist($externalData, 'brand'));
+                    }
+                }
+                // Если путь найден, прекращаем поиск по родителям для пути
                 if (!empty($mappingData['path'])) break;
             } 
             // Старый формат - просто строка
@@ -313,7 +353,15 @@ class AvitoFeedService
         
         // Заголовок — Avito ограничивает 50 символами
         $title = mb_substr($good->name, 0, 50);
-        $this->addChildSafe($ad, 'Title', $title);
+        
+        // Проверка на категорию Велосипеды для особого формирования заголовка и тега Model
+        $isBicycle = false;
+        foreach ($parts as $p) {
+            if (mb_stripos(mb_strtolower($p), 'велосипеды') !== false) {
+                $isBicycle = true;
+                break;
+            }
+        }
 
         // Описание с форматированием
         $description = $this->formatDescription($good);
@@ -331,37 +379,31 @@ class AvitoFeedService
             $image->addAttribute('url', $imgUrl);
         }
 
+        // Сброс состояния валидации для нового объявления
+        $this->lastBrand = null;
+        $this->lastModel = null;
+        
+        // Подготовка иерархии для текущей категории
+        $catHierarchy = $this->parseWhitelist($categoryBrands, 'brand');
+        $catHierarchy = $this->mergeHierarchies($catHierarchy, $this->parseWhitelist($categoryModels, 'model'));
+        $this->currentHierarchy = $this->mergeHierarchies($this->globalHierarchy, $catHierarchy);
+
         // Бренд
         $brand = $good->brands->first();
         $brandName = $brand ? $brand->name : 'Другой';
-
-        // Собираем все разрешенные бренды: глобальные + категорийные
-        $allAllowedBrands = array_unique(array_merge($this->allowedBrands, $categoryBrands));
-
-        // Отладка
-        if ($brandName !== 'Другой') {
-            \Illuminate\Support\Facades\Log::info("Avito brand check: {$brandName}. Allowed count: " . count($allAllowedBrands));
-        }
-
-        // Если включен белый список, проверяем наличие в нем
-        if (!empty($allAllowedBrands)) {
-            $found = false;
-            foreach ($allAllowedBrands as $allowed) {
-                if (mb_strtolower(trim($allowed)) === mb_strtolower(trim($brandName))) {
-                    $brandName = $allowed; // Берем написание из белого списка (регистр и т.д.)
-                    $found = true;
-                    break;
-                }
-            }
-            if (!$found) {
-                $brandName = 'Другой';
-            }
-        }
-
+        
         $this->addChildSafe($ad, 'Brand', $brandName);
+        
+        // Обработка модели для велосипедов
+        if ($isBicycle) {
+            $extractedModel = $this->extractModelName($good->name, $brand ? $brand->name : '');
+            if ($extractedModel) {
+                $this->addChildSafe($ad, 'Model', $extractedModel);
+            }
+        }
 
-        // Динамические параметры (например, VehicleType для Велосипедов)
-        // Берем из карточки товара те характеристики, которые названы по-английски или с префиксом Avito:
+        // Динамические параметры (характеристики)
+        $wheelDiameter = '';
         if ($good->relationLoaded('properties') && $good->properties) {
             foreach ($good->properties as $property) {
                 // Пытаемся получить строковое значение свойства
@@ -385,6 +427,12 @@ class AvitoFeedService
 
                         if (preg_match('/^[a-zA-Z0-9_]+$/', $tagName)) {
                             $this->addChildSafe($ad, $tagName, $value);
+                            
+                            // Запоминаем диаметр колес для заголовка велосипеда
+                            if ($tagName === 'WheelDiameter') {
+                                $wheelDiameter = $value;
+                            }
+                            
                             continue; // Переходим к следующему свойству
                         }
                     }
@@ -393,6 +441,8 @@ class AvitoFeedService
                 }
             }
         }
+
+        $this->addChildSafe($ad, 'Title', $title);
 
         $this->addChildSafe($ad, 'Condition', 'Новое');
         $this->addChildSafe($ad, 'AdType', 'Товар приобретен на продажу');
@@ -607,7 +657,7 @@ class AvitoFeedService
             
             // Список тегов, которые НЕЛЬЗЯ разбивать на Option, даже если там есть символ |
             $noSplit = [
-                'Title', 'Description', 'Address', 'Id', 'FeedVersion', 'Brand', 
+                'Title', 'Description', 'Address', 'Id', 'FeedVersion', 'Brand', 'Model', 'WheelDiameter',
                 'Price', 'Category', 'GoodsType', 'GoodsSubType', 'GoodsSubCategory', 
                 'Condition', 'AdType', 'ContactMethod', 'VehicleType', 'TourismType',
                 'WinterSportType', 'WaterSportType', 'FitnessType'
@@ -745,37 +795,310 @@ class AvitoFeedService
     }
 
     /**
-     * Парсинг списка брендов из разных форматов (запятые, новые строки, XML теги авито)
+     * Безопасное добавление дочернего узла с поддержкой pipe-разделителя и белого списка
      */
-    private function parseBrands($input)
+    protected function addChildSafe($parent, $name, $value)
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        // Список тегов, которые не нужно разбивать по пайпу
+        $noSplit = ['Brand', 'Model', 'WheelDiameter', 'Title', 'Address', 'Description'];
+        
+        // Фильтрация Brand и Model через белый список (с учетом иерархии)
+        if ($name === 'Brand' || $name === 'Model') {
+            $value = $this->validateHierarchy($name, $value);
+        }
+
+        // Если это строка и содержит пайп, и тег не в списке исключений, разбиваем на Option
+        if (is_string($value) && str_contains($value, '|') && !in_array($name, $noSplit)) {
+            $node = $parent->addChild($name);
+            $options = explode('|', $value);
+            foreach ($options as $option) {
+                $option = trim($option);
+                if ($option !== '') {
+                    $node->addChild('Option', htmlspecialchars($option));
+                }
+            }
+            return $node;
+        }
+
+        return $parent->addChild($name, htmlspecialchars((string)$value));
+    }
+
+    /**
+     * Парсинг списка (брендов, моделей) из разных форматов (запятые, новые строки, XML теги авито)
+     */
+    private function parseWhitelist($input)
     {
         if (empty($input)) return [];
 
-        $brands = [];
+        $items = [];
 
-        // 1. Пытаемся вытащить из формата <brand name="3D Family"/> или <brand name='3D Family'/>
+        // 1. Пытаемся вытащить из формата <brand name="3D Family"/> или <brend_velosipedy name="BH"/>
         preg_match_all('/name=["\']([^"\']+)["\']/', $input, $matches);
-        if (!empty($matches[1])) {
-            $brands = array_merge($brands, $matches[1]);
-        }
+    /**
+     * Парсинг списка (брендов, моделей) из разных форматов (запятые, новые строки, XML теги авито)
+     * Поддерживает иерархию: <brand name="X"><model name="Y"><god name="Z"/></model></brand>
+     */
+    private function parseWhitelist($input, $defaultType = 'brand')
+    {
+        if (empty($input)) return [];
 
-        // 2. Пытаемся вытащить из формата <brand>3D Family</brand>
-        preg_match_all('/<brand>(.*?)<\/brand>/i', $input, $matches);
-        if (!empty($matches[1])) {
-            $brands = array_merge($brands, $matches[1]);
-        }
+        $hierarchy = [];
 
-        // 3. Также пробуем обычный текстовый формат (запятые, новые строки)
-        // Убираем все теги и делим по разделителям
-        $plainText = preg_replace('/<[^>]*>/', "\n", $input);
-        $lines = preg_split('/[,\n\r|]+/', $plainText);
-        foreach ($lines as $line) {
-            $b = trim($line);
-            if (!empty($b)) {
-                $brands[] = $b;
+        // 1. Попытка парсинга как XML (иерархический формат)
+        if (str_contains($input, '<')) {
+            try {
+                // Обертываем в корень, чтобы SimpleXML мог прочитать последовательность тегов
+                $xmlString = '<?xml version="1.0" encoding="UTF-8"?><root>' . $input . '</root>';
+                $prevErrors = libxml_use_internal_errors(true);
+                $xml = simplexml_load_string($xmlString);
+                
+                if ($xml) {
+                    // Парсим бренды и вложенные модели
+                    foreach ($xml->xpath('//brand') as $brandNode) {
+                        $brandName = (string)$brandNode['name'];
+                        if (!$brandName) continue;
+                        
+                        if (!isset($hierarchy[$brandName])) {
+                            $hierarchy[$brandName] = ['models' => []];
+                        }
+                        
+                        foreach ($brandNode->model as $modelNode) {
+                            $modelName = (string)$modelNode['name'];
+                            if (!$modelName) continue;
+                            
+                            if (!isset($hierarchy[$brandName]['models'][$modelName])) {
+                                $hierarchy[$brandName]['models'][$modelName] = ['years' => []];
+                            }
+                            
+                            foreach ($modelNode->god as $godNode) {
+                                $yearName = (string)$godNode['name'];
+                                if ($yearName) {
+                                    $hierarchy[$brandName]['models'][$modelName]['years'][] = $yearName;
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Парсим модели вне брендов (глобальные для этой строки)
+                    foreach ($xml->xpath('/root/model') as $modelNode) {
+                        $modelName = (string)$modelNode['name'];
+                        if ($modelName) {
+                            if (!isset($hierarchy['*'])) $hierarchy['*'] = ['models' => []];
+                            $hierarchy['*']['models'][$modelName] = ['years' => []];
+                        }
+                    }
+                }
+                libxml_use_internal_errors($prevErrors);
+            } catch (\Exception $e) {
+                // Игнорируем ошибки XML
             }
         }
 
-        return array_values(array_unique(array_filter(array_map('trim', $brands))));
+        // 2. Если иерархия пуста или есть текстовые части, парсим как плоский список
+        $plainText = strip_tags($input);
+        $lines = preg_split('/[,\n\r|]+/', $plainText);
+        foreach ($lines as $line) {
+            $item = trim($line);
+            if (empty($item)) continue;
+            
+            if ($defaultType === 'brand') {
+                if (!isset($hierarchy[$item])) {
+                    $hierarchy[$item] = ['models' => []];
+                }
+            } else {
+                if (!isset($hierarchy['*'])) $hierarchy['*'] = ['models' => []];
+                if (!isset($hierarchy['*']['models'][$item])) {
+                    $hierarchy['*']['models'][$item] = ['years' => []];
+                }
+            }
+        }
+
+        return $hierarchy;
+    }
+
+    /**
+     * Рекурсивное слияние двух иерархий вайтлистов
+     */
+    private function mergeHierarchies($h1, $h2)
+    {
+        foreach ($h2 as $brand => $data) {
+            if (!isset($h1[$brand])) {
+                $h1[$brand] = $data;
+            } else {
+                foreach ($data['models'] as $model => $mdata) {
+                    if (!isset($h1[$brand]['models'][$model])) {
+                        $h1[$brand]['models'][$model] = $mdata;
+                    } else {
+                        $h1[$brand]['models'][$model]['years'] = array_unique(array_merge(
+                            $h1[$brand]['models'][$model]['years'] ?? [],
+                            $mdata['years'] ?? []
+                        ));
+                    }
+                }
+            }
+        }
+        return $h1;
+    }
+
+    /**
+     * Валидация значения относительно иерархии (стейт-зависимая)
+     */
+    private function validateHierarchy($type, $value)
+    {
+        $hierarchy = $this->currentHierarchy;
+        if (empty($hierarchy)) return $value;
+
+        $trimmedValue = mb_strtolower(trim($value));
+
+        if ($type === 'Brand') {
+            foreach ($hierarchy as $bName => $bData) {
+                if ($bName === '*') continue;
+                if (mb_strtolower(trim($bName)) === $trimmedValue) {
+                    $this->lastBrand = $bName;
+                    return $bName;
+                }
+            }
+            $this->lastBrand = 'Другой';
+            return 'Другой';
+        }
+
+        if ($type === 'Model') {
+            $brand = $this->lastBrand;
+            
+            // 1. Ищем в иерархии конкретного бренда
+            if ($brand && isset($hierarchy[$brand]) && !empty($hierarchy[$brand]['models'])) {
+                $models = $hierarchy[$brand]['models'];
+                foreach ($models as $mName => $mData) {
+                    if (mb_strtolower(trim($mName)) === $trimmedValue) {
+                        $this->lastModel = $mName;
+                        return $mName;
+                    }
+                }
+                
+                // Fallback на "Другая" или "Другой" ВНУТРИ бренда
+                foreach ($models as $mName => $mData) {
+                    $low = mb_strtolower(trim($mName));
+                    if ($low === 'другая' || $low === 'другой') {
+                        $this->lastModel = $mName;
+                        return $mName;
+                    }
+                }
+            }
+            
+            // 2. Ищем в глобальном пуле моделей (*)
+            if (isset($hierarchy['*']['models'])) {
+                foreach ($hierarchy['*']['models'] as $mName => $mData) {
+                    if (mb_strtolower(trim($mName)) === $trimmedValue) {
+                        $this->lastModel = $mName;
+                        return $mName;
+                    }
+                }
+            }
+            
+            $this->lastModel = 'Другой';
+            return 'Другой';
+        }
+
+        return $value;
+    }
+
+    /**
+     * Извлечение модели из названия товара
+     */
+    protected function extractModelName(string $name, string $brand): string
+    {
+        if (!$name || !$brand) {
+            return '';
+        }
+
+        // Находим позицию бренда в названии (регистронезависимо)
+        $brandIndex = stripos($name, $brand);
+
+        if ($brandIndex === false) {
+            // Если бренд не найден в названии, пробуем взять все название
+            return $name;
+        }
+
+        // Модель и год - это часть после бренда
+        $afterBrand = trim(substr($name, $brandIndex + strlen($brand)));
+        if (!$afterBrand) {
+            return '';
+        }
+
+        // Модель - все остальное после удаления года
+        $year = $this->extractYearFromText($afterBrand);
+        if ($year) {
+            return trim(str_replace($year, '', $afterBrand));
+        }
+
+        return $afterBrand;
+    }
+
+    /**
+     * Функция извлечения года из текста
+     */
+    protected function extractYearFromText(string $text): string
+    {
+        if (!$text) {
+            return '';
+        }
+
+        // Ищем 4-значные числа в диапазоне лет
+        preg_match_all('/\b(20\d{2}|19\d{2})\b/', $text, $matches);
+
+        if (!empty($matches[0])) {
+            return $matches[0][0];
+        }
+
+        return '';
+    }
+    /**
+     * Загрузка внешнего списка с кешированием на 24 часа
+     */
+    private function fetchExternalWhitelist($url)
+    {
+        if (empty($url)) return null;
+
+        $cacheDir = storage_path('app/avito_cache');
+        if (!file_exists($cacheDir)) {
+            mkdir($cacheDir, 0777, true);
+        }
+
+        $hash = md5($url);
+        $cacheFile = $cacheDir . '/' . $hash . '.xml';
+        
+        // Кеш на 24 часа
+        if (file_exists($cacheFile) && (time() - filemtime($cacheFile) < 86400)) {
+            return file_get_contents($cacheFile);
+        }
+
+        try {
+            $context = stream_context_create([
+                'http' => [
+                    'timeout' => 10,
+                    'header' => "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36\r\n"
+                ]
+            ]);
+            
+            $content = @file_get_contents($url, false, $context);
+            
+            if ($content) {
+                file_put_contents($cacheFile, $content);
+                return $content;
+            }
+        } catch (\Exception $e) {
+            Log::error('Avito Feed: Failed to fetch external whitelist from ' . $url . ': ' . $e->getMessage());
+        }
+
+        // Если не удалось загрузить, но есть старый кеш - используем его
+        if (file_exists($cacheFile)) {
+            return file_get_contents($cacheFile);
+        }
+
+        return null;
     }
 }
