@@ -210,25 +210,30 @@ class AvitoFeedService
         $subCat = $parts[1] ?? '';
 
         // Настраиваем авто-определение тегов по конкретным категориям
-        if (mb_stripos($avitoCategory, 'Велосипеды') !== false) {
+        $avitoCategoryLower = mb_strtolower($avitoCategory);
+        
+        if (mb_stripos($avitoCategoryLower, 'велосипеды') !== false) {
             $defaultTags = ['Category', 'VehicleType', 'GoodsSubCategory', 'GoodsType', 'GoodsSubType'];
         } 
         
-        // Для категории "Спорт и отдых" и её подкатегорий
-        if (mb_stripos($avitoCategory, 'Спорт и отдых') !== false) {
-            if (mb_stripos($avitoCategory, 'Дайвинг и водный спорт') !== false) {
-                $defaultTags = ['Category', 'GoodsType', 'WaterSportType', 'GoodsSubType'];
-            } elseif (mb_stripos($avitoCategory, 'Зимний спорт') !== false || mb_stripos($avitoCategory, 'Зимние виды спорта') !== false) {
-                $defaultTags = ['Category', 'GoodsType', 'WinterSportType', 'GoodsSubType'];
-            } elseif (mb_stripos($avitoCategory, 'Туризм и отдых на природе') !== false) {
-                // Category > GoodsType > TourismType > GoodsSubType
-                $defaultTags = ['Category', 'GoodsType', 'TourismType', 'GoodsSubType'];
-            } elseif (mb_stripos($avitoCategory, 'Фитнес и тренажеры') !== false || mb_stripos($avitoCategory, 'Фитнесс и тренажеры') !== false) {
-                $defaultTags = ['Category', 'GoodsType', 'FitnessType', 'GoodsSubType'];
-            } elseif (mb_stripos($avitoCategory, 'Ролики и скейтбординг') !== false) {
-                // Для скейтбординга: Category > GoodsType > GoodsSubCategory > GoodsSubType
-                $defaultTags = ['Category', 'GoodsType', 'GoodsSubCategory', 'GoodsSubType'];
-            }
+        if (mb_stripos($avitoCategoryLower, 'туризм и отдых на природе') !== false) {
+            $defaultTags = ['Category', 'GoodsType', 'TourismType', 'GoodsSubType'];
+        }
+        
+        if (mb_stripos($avitoCategoryLower, 'ролики и скейтбординг') !== false) {
+            $defaultTags = ['Category', 'GoodsType', 'GoodsSubCategory', 'GoodsSubType'];
+        }
+
+        if (mb_stripos($avitoCategoryLower, 'зимний спорт') !== false || mb_stripos($avitoCategoryLower, 'зимние виды спорта') !== false) {
+            $defaultTags = ['Category', 'GoodsType', 'WinterSportType', 'GoodsSubType'];
+        }
+
+        if (mb_stripos($avitoCategoryLower, 'дайвинг и водный спорт') !== false) {
+            $defaultTags = ['Category', 'GoodsType', 'WaterSportType', 'GoodsSubType'];
+        }
+
+        if (mb_stripos($avitoCategoryLower, 'фитнес и тренажеры') !== false || mb_stripos($avitoCategoryLower, 'фитнесс и тренажеры') !== false) {
+            $defaultTags = ['Category', 'GoodsType', 'FitnessType', 'GoodsSubType'];
         }
 
         if ($originalRoot === 'Транспорт' || $cat === 'Транспорт') {
