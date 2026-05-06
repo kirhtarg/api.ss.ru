@@ -563,7 +563,26 @@ class AvitoFeedService
     {
         $child = $node->addChild($name);
         if ($value !== null && $value !== '') {
-            $child[0] = (string)$value;
+            $value = (string)$value;
+            
+            // Список тегов, которые НЕЛЬЗЯ разбивать на Option, даже если там есть символ |
+            $noSplit = [
+                'Title', 'Description', 'Address', 'Id', 'FeedVersion', 'Brand', 
+                'Price', 'Category', 'GoodsType', 'GoodsSubType', 'GoodsSubCategory', 
+                'Condition', 'AdType', 'ContactMethod', 'VehicleType', 'TourismType',
+                'WinterSportType', 'WaterSportType', 'FitnessType'
+            ];
+            
+            if (str_contains($value, '|') && !in_array($name, $noSplit)) {
+                $options = array_map('trim', explode('|', $value));
+                foreach ($options as $option) {
+                    if ($option !== '') {
+                        $child->addChild('Option', $option);
+                    }
+                }
+            } else {
+                $child[0] = $value;
+            }
         }
         return $child;
     }
