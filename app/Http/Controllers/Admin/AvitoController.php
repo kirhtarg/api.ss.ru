@@ -128,6 +128,8 @@ class AvitoController extends Controller
             'avito_default_delivery' => 'nullable|string',
             'avito_brand_whitelist' => 'nullable|string',
             'avito_model_whitelist' => 'nullable|string',
+            'avito_brand_external_url' => 'nullable|string',
+            'avito_model_external_url' => 'nullable|string',
         ]);
 
         foreach ($settings as $key => $value) {
