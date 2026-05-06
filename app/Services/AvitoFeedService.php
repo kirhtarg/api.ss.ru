@@ -22,6 +22,7 @@ class AvitoFeedService
     protected $categoryParents;
     protected $categoryDepths;
     protected $allCategoriesById;
+    protected $allowedBrands = [];
 
     public function __construct()
     {
@@ -38,6 +39,10 @@ class AvitoFeedService
         $this->descBefore = Setting::where('key', 'avito_description_before')->value('value') ?: '';
         $this->descAfter = Setting::where('key', 'avito_description_after')->value('value') ?: '';
         $this->defaultDelivery = Setting::where('key', 'avito_default_delivery')->value('value') ?: '';
+
+        // Загрузка белого списка брендов
+        $brandsInput = Setting::where('key', 'avito_brand_whitelist')->value('value') ?: '';
+        $this->allowedBrands = $this->parseBrands($brandsInput);
 
         // Предварительная загрузка всех категорий для эффективного поиска самой глубокой вложенности
         $allCats = ShopCategory::all();
@@ -175,11 +180,29 @@ class AvitoFeedService
             }
         }
 
+        $categoryBrands = [];
         while ($category) {
-            if (isset($this->mapping[$category->id]) && !empty($this->mapping[$category->id])) {
-                $avitoCategory = $this->mapping[$category->id];
+            $mappingData = $this->mapping[$category->id] ?? null;
+            
+            // Если маппинг - массив (новый формат: ['path' => '...', 'brands' => '...'])
+            if (is_array($mappingData)) {
+                if (empty($avitoCategory) || $avitoCategory === 'Спорт и отдых') {
+                    $avitoCategory = $mappingData['path'] ?? 'Спорт и отдых';
+                }
+                if (!empty($mappingData['brands'])) {
+                    $categoryBrands = array_merge($categoryBrands, $this->parseBrands($mappingData['brands']));
+                }
+                // Если путь найден, прекращаем поиск по родителям для пути, 
+                // но бренды мы могли бы собирать и дальше (наследование брендов)
+                // Однако для простоты пока остановимся на первом найденном маппинге
+                if (!empty($mappingData['path'])) break;
+            } 
+            // Старый формат - просто строка
+            elseif (!empty($mappingData)) {
+                $avitoCategory = $mappingData;
                 break;
             }
+
             // Используем кеш родителей, чтобы избежать N+1 запросов к БД
             $parentId = $this->categoryParents[$category->id] ?? null;
             $category = $parentId ? ($this->allCategoriesById[$parentId] ?? null) : null;
@@ -310,11 +333,27 @@ class AvitoFeedService
 
         // Бренд
         $brand = $good->brands->first();
-        if ($brand && !empty($brand->name)) {
-            $this->addChildSafe($ad, 'Brand', $brand->name);
-        } else {
-            $this->addChildSafe($ad, 'Brand', 'Без бренда');
+        $brandName = $brand ? $brand->name : 'Другой';
+
+        // Собираем все разрешенные бренды: глобальные + категорийные
+        $allAllowedBrands = array_unique(array_merge($this->allowedBrands, $categoryBrands));
+
+        // Если включен белый список, проверяем наличие в нем
+        if (!empty($allAllowedBrands)) {
+            $found = false;
+            foreach ($allAllowedBrands as $allowed) {
+                if (mb_strtolower(trim($allowed)) === mb_strtolower(trim($brandName))) {
+                    $brandName = $allowed; // Берем написание из белого списка (регистр и т.д.)
+                    $found = true;
+                    break;
+                }
+            }
+            if (!$found) {
+                $brandName = 'Другой';
+            }
         }
+
+        $this->addChildSafe($ad, 'Brand', $brandName);
 
         // Динамические параметры (например, VehicleType для Велосипедов)
         // Берем из карточки товара те характеристики, которые названы по-английски или с префиксом Avito:
@@ -702,5 +741,38 @@ class AvitoFeedService
         }
 
         return $urls;
+    }
+
+    /**
+     * Парсинг списка брендов из разных форматов (запятые, новые строки, XML теги авито)
+     */
+    private function parseBrands($input)
+    {
+        if (empty($input)) return [];
+
+        $brands = [];
+
+        // 1. Пытаемся вытащить из формата <brand name="3D Family"/>
+        if (str_contains($input, '<brand')) {
+            preg_match_all('/name="([^"]+)"/', $input, $matches);
+            if (!empty($matches[1])) {
+                $brands = array_merge($brands, $matches[1]);
+            }
+        }
+
+        // 2. Если брендов не нашли, пробуем разделить по запятым и новым строкам
+        if (empty($brands)) {
+            // Заменяем запятые на переносы строк для унификации
+            $input = str_replace(',', "\n", $input);
+            $lines = explode("\n", $input);
+            foreach ($lines as $line) {
+                $b = trim($line);
+                if (!empty($b) && !str_starts_with($b, '<')) {
+                    $brands[] = $b;
+                }
+            }
+        }
+
+        return array_unique(array_filter($brands));
     }
 }
