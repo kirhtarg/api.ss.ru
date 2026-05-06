@@ -393,13 +393,17 @@ class AvitoFeedService
         $brand = $good->brands->first();
         $brandName = $brand ? $brand->name : 'Другой';
         
-        $this->addChildSafe($ad, 'Brand', $brandName);
+        // Валидация бренда через иерархию (поиск в белых списках)
+        $validatedBrand = $this->validateHierarchy('Brand', $brandName);
+        $this->addChildSafe($ad, 'Brand', $validatedBrand);
         
         // Обработка модели для велосипедов
         if ($isBicycle) {
             $extractedModel = $this->extractModelName($good->name, $brand ? $brand->name : '');
             if ($extractedModel) {
-                $this->addChildSafe($ad, 'Model', $extractedModel);
+                // Валидация модели через иерархию
+                $validatedModel = $this->validateHierarchy('Model', $extractedModel);
+                $this->addChildSafe($ad, 'Model', $validatedModel);
             }
         }
 
@@ -974,8 +978,8 @@ class AvitoFeedService
                 $loggedModels[$value] = true;
             }
 
-            $this->lastModel = 'Другой';
-            return 'Другой';
+            $this->lastModel = 'Другая';
+            return 'Другая';
         }
 
         return $value;
