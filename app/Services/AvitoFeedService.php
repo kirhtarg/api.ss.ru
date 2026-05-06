@@ -284,8 +284,8 @@ class AvitoFeedService
                 $defaultTags = ['Category', 'GoodsType', 'TourismType', 'GoodsSubType', 'ProductType'];
                 break;
             }
-            if (mb_stripos($pLower, 'ролики') !== false || mb_stripos($pLower, 'скейтборд') !== false) {
-                $defaultTags = ['Category', 'GoodsType', 'GoodsSubCategory', 'GoodsSubType'];
+            if (mb_stripos($pLower, 'ролики') !== false || mb_stripos($pLower, 'скейтборд') !== false || mb_stripos($pLower, 'самокаты') !== false) {
+                $defaultTags = ['Category', 'GoodsType', 'GoodsSubCategory', 'GoodsSubType', 'ProductType'];
                 break;
             }
             if (mb_stripos($pLower, 'зимний спорт') !== false || mb_stripos($pLower, 'зимние виды спорта') !== false) {
@@ -358,10 +358,14 @@ class AvitoFeedService
         
         // Проверка на категорию Велосипеды для особого формирования заголовка и тега Model
         $isBicycle = false;
+        $isEquipment = false;
         foreach ($parts as $p) {
-            if (mb_stripos(mb_strtolower($p), 'велосипеды') !== false) {
+            $pLower = mb_strtolower($p);
+            if (mb_stripos($pLower, 'велосипеды') !== false) {
                 $isBicycle = true;
-                break;
+            }
+            if ($originalRoot === 'Транспорт' && mb_stripos($pLower, 'экипировка') !== false) {
+                $isEquipment = true;
             }
         }
 
@@ -393,9 +397,12 @@ class AvitoFeedService
         $brand = $good->brands->first();
         $brandName = $brand ? $brand->name : 'Другой';
         
+        // Для категории Транспорт > Экипировка тег Brand заменяется на EquipmentBrand (с 10.05.2026 обязательно)
+        $brandTag = $isEquipment ? 'EquipmentBrand' : 'Brand';
+        
         // Валидация бренда через иерархию (поиск в белых списках)
-        $validatedBrand = $this->validateHierarchy('Brand', $brandName);
-        $this->addChildSafe($ad, 'Brand', $validatedBrand);
+        $validatedBrand = $this->validateHierarchy($brandTag, $brandName);
+        $this->addChildSafe($ad, $brandTag, $validatedBrand);
         
         // Обработка модели для велосипедов
         if ($isBicycle) {
@@ -784,10 +791,10 @@ class AvitoFeedService
         }
 
         // Список тегов, которые не нужно разбивать по пайпу
-        $noSplit = ['Brand', 'Model', 'WheelDiameter', 'Title', 'Address', 'Description'];
+        $noSplit = ['Brand', 'EquipmentBrand', 'Model', 'WheelDiameter', 'Title', 'Address', 'Description'];
         
         // Фильтрация Brand и Model через белый список (с учетом иерархии)
-        if ($name === 'Brand' || $name === 'Model') {
+        if ($name === 'Brand' || $name === 'EquipmentBrand' || $name === 'Model') {
             $value = $this->validateHierarchy($name, $value);
         }
 
@@ -927,7 +934,7 @@ class AvitoFeedService
 
         $trimmedValue = mb_strtolower(trim($value));
 
-        if ($type === 'Brand') {
+        if ($type === 'Brand' || $type === 'EquipmentBrand') {
             foreach ($hierarchy as $bName => $bData) {
                 if ($bName === '*') continue;
                 if (mb_strtolower(trim($bName)) === $trimmedValue) {
