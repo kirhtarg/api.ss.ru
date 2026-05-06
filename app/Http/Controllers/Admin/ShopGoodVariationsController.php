@@ -2192,11 +2192,6 @@ class ShopGoodVariationsController extends Controller
                             }
                         }
 
-                        // РџСЂРѕРІРµСЂРєР°: Р°РєС†РёРѕРЅРЅР°СЏ С†РµРЅР° РґРѕР»Р¶РЅР° Р±С‹С‚СЊ РјРµРЅСЊС€Рµ Р±Р°Р·РѕРІРѕР№
-                        // РўРѕР»СЊРєРѕ РµСЃР»Рё Р±Р°Р·РѕРІР°СЏ С†РµРЅР° Р±РѕР»СЊС€Рµ 0, РёРЅР°С‡Рµ РїСЂРѕРІРµСЂРєР° РЅРµ РёРјРµРµС‚ СЃРјС‹СЃР»Р°
-                        if ($newSalePrice !== null && $basePrice > 0 && $newSalePrice >= $basePrice) {
-                            $newSalePrice = null;
-                        }
 
                         $variation->sale_price = $newSalePrice;
                         $variation->save();

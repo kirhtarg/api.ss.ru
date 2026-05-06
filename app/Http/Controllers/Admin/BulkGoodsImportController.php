@@ -4772,6 +4772,13 @@ class BulkGoodsImportController extends Controller
 
             // Обнуляем остатки вариаций с указанным поставщиком только для выбранных полей
             $variationsUpdated = ShopGoodVariation::where('supplier', $supplierName)
+                ->orWhere(function ($query) use ($supplierName) {
+                    $query->where(function ($q) {
+                        $q->whereNull('supplier')->orWhere('supplier', '');
+                    })->whereHas('good', function ($q) use ($supplierName) {
+                        $q->where('supplier', $supplierName);
+                    });
+                })
                 ->update($updateFields);
 
             $updatedVariations = $variationsUpdated;
@@ -4875,6 +4882,13 @@ class BulkGoodsImportController extends Controller
             // КРИТИЧНО: Обнуляем остатки у вариаций, которые привязаны к поставщику по полю supplier вариации,
             // а не ??ерез ??вязь с товаром. Вариации могут быть привязаны к другому поставщику, ??ем главный товар.
             ShopGoodVariation::where('supplier', $supplierName)
+                ->orWhere(function ($query) use ($supplierName) {
+                    $query->where(function ($q) {
+                        $q->whereNull('supplier')->orWhere('supplier', '');
+                    })->whereHas('good', function ($q) use ($supplierName) {
+                        $q->where('supplier', $supplierName);
+                    });
+                })
                 ->update([
                     'remote_stock_quantity' => null,
                     'fast_remote_stock_quantity' => null,

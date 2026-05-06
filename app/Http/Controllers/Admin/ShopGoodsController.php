@@ -208,6 +208,115 @@ class ShopGoodsController extends Controller
             $query->byTag($request->get('tag_id'));
         }
 
+        // Фильтр по габаритам и весу
+        if ($request->filled('dimensions_weight_filter')) {
+            $type = $request->input('dimensions_weight_filter');
+            if ($type === 'empty_dimensions') {
+                $query->where(function ($q) {
+                    $q->whereNull('width')->orWhere('width', 0)
+                        ->orWhereNull('height')->orWhere('height', 0)
+                        ->orWhereNull('depth')->orWhere('depth', 0);
+                });
+            } elseif ($type === 'empty_weight') {
+                $query->where(function ($q) {
+                    $q->whereNull('weight')->orWhere('weight', 0);
+                });
+            } elseif ($type === 'empty_both') {
+                $query->where(function ($q) {
+                    $q->where(function ($sq) {
+                        $sq->whereNull('width')->orWhere('width', 0)
+                            ->orWhereNull('height')->orWhere('height', 0)
+                            ->orWhereNull('depth')->orWhere('depth', 0);
+                    })->where(function ($sq) {
+                        $sq->whereNull('weight')->orWhere('weight', 0);
+                    });
+                });
+            } elseif ($type === 'filled_dimensions') {
+                $query->where('width', '>', 0)
+                    ->where('height', '>', 0)
+                    ->where('depth', '>', 0);
+            } elseif ($type === 'filled_weight') {
+                $query->where('weight', '>', 0);
+            } elseif ($type === 'filled_both') {
+                $query->where('width', '>', 0)
+                    ->where('height', '>', 0)
+                    ->where('depth', '>', 0)
+                    ->where('weight', '>', 0);
+            }
+        }
+
+        // Фильтр по изображениям
+        if ($request->filled('images_filter')) {
+            $type = $request->input('images_filter');
+            if ($type === 'with_images_main') {
+                $query->has('images');
+            } elseif ($type === 'with_images_variations') {
+                $query->has('variations.images');
+            } elseif ($type === 'without_images_main') {
+                // Выводим только записи без изображений И без вариаций (согласно пожеланию пользователя)
+                $query->doesntHave('images')->whereDoesntHave('variations');
+            } elseif ($type === 'without_images_variations') {
+                $query->whereHas('variations', function ($q) {
+                    $q->doesntHave('images');
+                });
+            }
+        }
+
+        // Фильтр по атрибутам вариаций (товары С этими атрибутами)
+        if ($request->has('variation_attribute_names')) {
+            $attributeNames = $request->input('variation_attribute_names');
+            // Обрабатываем как массив, так и строку
+            if (! is_array($attributeNames)) {
+                $attributeNames = [$attributeNames];
+            }
+            if (! empty($attributeNames)) {
+                // Фильтруем товары, у которых есть ХОТЯ БЫ ОДНА вариация со ВСЕМИ указанными атрибутами
+                $query->whereExists(function ($subQuery) use ($attributeNames) {
+                    $subQuery->selectRaw('1')
+                        ->from('shop_good_variations as v')
+                        ->whereColumn('v.good_id', 'shop_goods.id')
+                        ->where(function ($q) use ($attributeNames) {
+                            foreach ($attributeNames as $name) {
+                                $q->whereExists(function ($attrSubQuery) use ($name) {
+                                    $attrSubQuery->selectRaw('1')
+                                        ->from('shop_variation_attributes_values as vav')
+                                        ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                                        ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                                        ->whereColumn('vav.variation_id', 'v.id')
+                                        ->where('a.name', $name);
+                                });
+                            }
+                        });
+                });
+            }
+        }
+
+        // Исключение атрибутов вариаций
+        if ($request->has('exclude_variation_attribute_names')) {
+            $excludeAttributeNames = $request->input('exclude_variation_attribute_names');
+            if (! is_array($excludeAttributeNames)) {
+                $excludeAttributeNames = [$excludeAttributeNames];
+            }
+            if (! empty($excludeAttributeNames)) {
+                // Показываем товары с вариациями, у которых нет указанных атрибутов
+                $query->whereExists(function ($subQuery) {
+                    $subQuery->selectRaw('1')
+                        ->from('shop_good_variations')
+                        ->whereColumn('good_id', 'shop_goods.id')
+                        ->limit(1);
+                })->whereNotExists(function ($subQuery) use ($excludeAttributeNames) {
+                    $subQuery->selectRaw('1')
+                        ->from('shop_good_variations as v')
+                        ->join('shop_variation_attributes_values as vav', 'v.id', '=', 'vav.variation_id')
+                        ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                        ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                        ->whereColumn('v.good_id', 'shop_goods.id')
+                        ->whereIn('a.name', $excludeAttributeNames)
+                        ->limit(1);
+                });
+            }
+        }
+
         // Фильтр по множественным тегам
         if ($request->has('tags')) {
             $tagIds = $request->input('tags');
@@ -3688,16 +3797,23 @@ class ShopGoodsController extends Controller
                 $attributeNames = [$attributeNames];
             }
             if (! empty($attributeNames)) {
-                // Фильтруем товары, у которых есть вариации с указанными атрибутами
+                // Фильтруем товары, у которых есть ХОТЯ БЫ ОДНА вариация со ВСЕМИ указанными атрибутами
                 $query->whereExists(function ($subQuery) use ($attributeNames) {
                     $subQuery->selectRaw('1')
                         ->from('shop_good_variations as v')
-                        ->join('shop_variation_attributes_values as vav', 'v.id', '=', 'vav.variation_id')
-                        ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
-                        ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
-                        ->whereRaw('v.good_id = shop_goods.id')
-                        ->whereIn('a.name', $attributeNames)
-                        ->limit(1);
+                        ->whereColumn('v.good_id', 'shop_goods.id')
+                        ->where(function ($q) use ($attributeNames) {
+                            foreach ($attributeNames as $name) {
+                                $q->whereExists(function ($attrSubQuery) use ($name) {
+                                    $attrSubQuery->selectRaw('1')
+                                        ->from('shop_variation_attributes_values as vav')
+                                        ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                                        ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                                        ->whereColumn('vav.variation_id', 'v.id')
+                                        ->where('a.name', $name);
+                                });
+                            }
+                        });
                 });
             }
         }

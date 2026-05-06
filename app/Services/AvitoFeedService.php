@@ -419,19 +419,48 @@ class AvitoFeedService
     {
         $prices = [];
         
-        // Цена самого товара
-        $prices[] = $this->calculateFinalPrice($good);
+        // Цена самого товара (только если есть в наличии)
+        if ($this->isInStock($good)) {
+            $prices[] = $this->calculateFinalPrice($good);
+        }
 
-        // Цены активных вариаций
+        // Цены активных вариаций (только если есть в наличии)
         foreach ($good->variations as $v) {
-            if ($v->is_active) {
+            if ($v->is_active && $this->isInStock($v)) {
                 $prices[] = $this->calculateFinalPrice($v);
             }
         }
 
         $prices = array_filter($prices, fn($p) => $p > 0);
         
-        return !empty($prices) ? min($prices) : 0;
+        // Если ничего нет в наличии, возвращаем базовую цену товара как fallback
+        return !empty($prices) ? min($prices) : $this->calculateFinalPrice($good);
+    }
+
+    /**
+     * Проверка наличия товара или вариации
+     */
+    private function isInStock($item)
+    {
+        if ($item->stock_quantity > 0) return true;
+        
+        if ($this->hasValueStock($item->remote_stock_quantity)) return true;
+        if ($this->hasValueStock($item->fast_remote_stock_quantity)) return true;
+        
+        return false;
+    }
+
+    /**
+     * Проверка строкового или числового значения остатка
+     */
+    private function hasValueStock($value)
+    {
+        if (empty($value)) return false;
+        if (is_numeric($value) && (int)$value <= 0) return false;
+        if ($value === '0') return false;
+        
+        // Если это строка типа ">10", то это считается наличием
+        return true;
     }
 
     /**
@@ -452,52 +481,56 @@ class AvitoFeedService
 
     protected function formatDescription($good)
     {
-        $allowedTags = '<p><br><strong><em><ul><ol><li>';
-        $desc = strip_tags($good->description ?? '', $allowedTags);
-        $brief = strip_tags($good->brief_description ?? '', $allowedTags);
+        $desc = $this->cleanHtml($good->description ?? '');
+        $brief = $this->cleanHtml($good->brief_description ?? '');
         
         $fullDesc = '';
         if ($brief) {
             $fullDesc .= $brief;
             if ($desc) {
-                $fullDesc .= "<br><br>" . $desc;
+                $fullDesc .= "<br>" . $desc;
             }
         } else {
             $fullDesc = $desc;
         }
-        
-        $extra = "";
-        if ($good->sku) {
-            $extra .= "<strong>Артикул:</strong> {$good->sku}<br>";
-        }
-        
+
+        // 1. Название товара
+        $result = "<strong>" . $good->name . "</strong><br>";
+
+        // 2. Список вариаций в наличии (Атрибуты - Цена)
         if ($good->variations->count() > 0) {
-            $activeVariations = $good->variations->filter(fn($v) => $v->is_active);
-            if ($activeVariations->count() > 0) {
-                $extra .= "<strong>Доступные варианты:</strong><br>";
-                foreach ($activeVariations as $v) {
+            $stockVariations = $good->variations->filter(function($v) {
+                return $v->is_active && $this->isInStock($v);
+            });
+
+            if ($stockVariations->count() > 0) {
+                foreach ($stockVariations as $v) {
                     $attrString = $v->attributes_string;
-                    $extra .= "- " . ($attrString ?: $v->name);
-                    if ($v->sku) {
-                        $extra .= " (Артикул: {$v->sku})";
-                    }
-                    $extra .= "<br>";
+                    $priceVal = $this->calculateFinalPrice($v);
+                    $price = number_format($priceVal, 0, '.', ' ');
+                    $result .= ($attrString ?: $v->name) . " - " . $price . " руб.<br>";
                 }
             }
         }
+
+        // 3. Артикул и доп. информация
+        if ($good->sku) {
+            $result .= "<strong>Артикул:</strong> {$good->sku}<br>";
+        }
         
-        $result = $extra ? ($extra . "<br><br>" . $fullDesc) : $fullDesc;
+        // 4. Основное описание
+        $result .= $fullDesc;
         
-        // Добавляем полное название в самое начало
-        $result = "<strong>" . $good->name . "</strong><br><br>" . $result;
-        
-        // Добавляем глобальные обертки
+        // 5. Глобальные обертки
         if ($this->descBefore) {
-            $result = $this->descBefore . "<br><br>" . $result;
+            $result = $this->descBefore . "<br>" . $result;
         }
         if ($this->descAfter) {
-            $result = $result . "<br><br>" . $this->descAfter;
+            $result = $result . "<br>" . $this->descAfter;
         }
+        
+        // Заменяем все множественные <br> на одинарные
+        $result = preg_replace('/(<br\s*\/?>\s*)+/i', '<br>', $result);
         
         return $result;
     }
@@ -519,24 +552,93 @@ class AvitoFeedService
         return $child;
     }
 
+    /**
+     * Очистка HTML для Авито с сохранением структуры (переносы строк вместо блоков)
+     */
+    private function cleanHtml($html)
+    {
+        if (empty($html)) return '';
+
+        // Декодируем сущности (например, &quot;)
+        $html = htmlspecialchars_decode($html);
+
+        // Специальная обработка для структуры <div class="title">...</div><div class="val">...</div>
+        // Добавляем двоеточие между названием характеристики и значением
+        $html = preg_replace('/<\/div>\s*<div[^>]*class="val"[^>]*>/i', ': ', $html);
+
+        // Заменяем закрывающие теги блочных элементов на <br>, чтобы текст не слипался
+        $blockTags = ['</div>', '</tr>', '</td>', '</li>', '</p>', '</h1>', '</h2>', '</h3>', '</h4>', '</h5>', '</h6>'];
+        $html = str_ireplace($blockTags, '<br>', $html);
+
+        // Оставляем только разрешенные Авито теги
+        $allowedTags = '<p><br><strong><em><ul><ol><li>';
+        $cleaned = strip_tags($html, $allowedTags);
+
+        // Удаляем дублирующиеся <br> и лишние пробелы
+        $cleaned = preg_replace('/(<br\s*\/?>\s*)+/i', '<br>', $cleaned);
+        $cleaned = preg_replace('/[ \t]+/', ' ', $cleaned);
+        
+        return trim($cleaned);
+    }
+
     protected function getImages($good)
     {
         $urls = [];
         $base = rtrim($this->baseUrl, '/');
 
-        // Если есть вариации, собираем картинки из всех вариаций
+        // Если есть вариации, собираем картинки
         if ($good->variations->count() > 0) {
-            foreach ($good->variations as $variation) {
-                if ($variation->is_active && $variation->images) {
-                    foreach ($variation->images as $img) {
-                        $path = ltrim($img->file_path ?? $img->url, '/');
-                        if ($path) {
-                            $url = $base . '/' . $path;
-                            if (!in_array($url, $urls)) {
-                                $urls[] = $url;
+            $activeVariations = $good->variations->filter(fn($v) => $v->is_active);
+
+            // Пытаемся сгруппировать по цвету
+            $byColor = [];
+            foreach ($activeVariations as $v) {
+                $colorValue = null;
+                // Ищем атрибут "Цвет"
+                foreach ($v->attributeValues as $av) {
+                    if ($av->attribute && mb_strtolower($av->attribute->name) === 'цвет') {
+                        $colorValue = mb_strtolower(trim($av->value));
+                        break;
+                    }
+                }
+
+                if ($colorValue) {
+                    $byColor[$colorValue][] = $v;
+                }
+            }
+
+            if (!empty($byColor)) {
+                // Если есть цвета, берем по одному фото на каждый цвет
+                foreach ($byColor as $color => $variations) {
+                    foreach ($variations as $v) {
+                        if ($v->images->count() > 0) {
+                            $img = $v->images->first();
+                            $path = ltrim($img->file_path ?? $img->url, '/');
+                            if ($path) {
+                                $url = $base . '/' . $path;
+                                if (!in_array($url, $urls)) {
+                                    $urls[] = $url;
+                                }
                             }
+                            break; // Взяли одно фото для этого цвета, переходим к следующему
                         }
-                        if (count($urls) >= 10) break 2;
+                    }
+                    if (count($urls) >= 10) break;
+                }
+            } else {
+                // Если атрибута цвет нет, берем картинки из всех активных вариаций (старая логика)
+                foreach ($activeVariations as $v) {
+                    if ($v->images) {
+                        foreach ($v->images as $img) {
+                            $path = ltrim($img->file_path ?? $img->url, '/');
+                            if ($path) {
+                                $url = $base . '/' . $path;
+                                if (!in_array($url, $urls)) {
+                                    $urls[] = $url;
+                                }
+                            }
+                            if (count($urls) >= 10) break 2;
+                        }
                     }
                 }
             }
