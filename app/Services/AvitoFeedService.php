@@ -185,6 +185,8 @@ class AvitoFeedService
         }
 
         // Разделяем путь категории Авито (формат: "Хобби и отдых > Спорт и отдых > Зимний спорт > ...")
+        // Также поддерживаем различные варианты тире как разделителей
+        $avitoCategory = str_replace([' - ', ' – ', ' — '], ' > ', $avitoCategory);
         $parts = array_map('trim', explode('>', $avitoCategory));
 
         $originalRoot = count($parts) > 0 ? $parts[0] : '';
@@ -219,6 +221,8 @@ class AvitoFeedService
                 $defaultTags = ['Category', 'GoodsType', 'TourismType', 'GoodsSubType'];
             } elseif ($subCat === 'Фитнес и тренажеры' || $subCat === 'Фитнесс и тренажеры') {
                 $defaultTags = ['Category', 'GoodsType', 'FitnessType', 'GoodsSubType'];
+            } elseif ($subCat === 'Ролики и скейтбординг') {
+                $defaultTags = ['Category', 'GoodsType', 'GoodsSubCategory', 'GoodsSubType'];
             }
         }
 
