@@ -270,7 +270,7 @@ class AvitoFeedService
             $parts = array_values(array_slice($parts, 1));
         }
 
-        $defaultTags = ['Category', 'GoodsType', 'GoodsSubType', 'GoodsSubCategory'];
+        $defaultTags = ['Category', 'GoodsType', 'GoodsSubType', 'GoodsSubCategory', 'ProductType'];
 
         // Настраиваем авто-определение тегов по конкретным частям пути
         foreach ($parts as $p) {
@@ -281,7 +281,7 @@ class AvitoFeedService
                 break;
             }
             if (mb_stripos($pLower, 'туризм') !== false) {
-                $defaultTags = ['Category', 'GoodsType', 'TourismType', 'GoodsSubType'];
+                $defaultTags = ['Category', 'GoodsType', 'TourismType', 'GoodsSubType', 'ProductType'];
                 break;
             }
             if (mb_stripos($pLower, 'ролики') !== false || mb_stripos($pLower, 'скейтборд') !== false) {
@@ -289,15 +289,15 @@ class AvitoFeedService
                 break;
             }
             if (mb_stripos($pLower, 'зимний спорт') !== false || mb_stripos($pLower, 'зимние виды спорта') !== false) {
-                $defaultTags = ['Category', 'GoodsType', 'WinterSportType', 'GoodsSubType'];
+                $defaultTags = ['Category', 'GoodsType', 'WinterSportType', 'GoodsSubType', 'ProductType'];
                 break;
             }
             if (mb_stripos($pLower, 'дайвинг') !== false || mb_stripos($pLower, 'водный спорт') !== false) {
-                $defaultTags = ['Category', 'GoodsType', 'WaterSportType', 'GoodsSubType'];
+                $defaultTags = ['Category', 'GoodsType', 'WaterSportType', 'GoodsSubType', 'ProductType'];
                 break;
             }
             if (mb_stripos($pLower, 'фитнес') !== false || mb_stripos($pLower, 'тренажеры') !== false) {
-                $defaultTags = ['Category', 'GoodsType', 'FitnessType', 'GoodsSubType'];
+                $defaultTags = ['Category', 'GoodsType', 'FitnessType', 'GoodsSubType', 'ProductType'];
                 break;
             }
         }
