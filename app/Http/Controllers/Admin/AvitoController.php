@@ -135,7 +135,7 @@ class AvitoController extends Controller
         foreach ($settings as $key => $value) {
             Setting::updateOrCreate(
                 ['key' => $key],
-                ['value' => $value, 'group' => 'avito', 'type' => null]
+                ['value' => $value, 'group' => 'avito', 'type' => 'string']
             );
         }
 

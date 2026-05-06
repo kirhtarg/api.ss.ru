@@ -448,10 +448,11 @@ class AvitoFeedService
         }
 
         $this->addChildSafe($ad, 'Title', $title);
-
-        $this->addChildSafe($ad, 'Condition', 'Новое');
-        $this->addChildSafe($ad, 'AdType', 'Товар приобретен на продажу');
-        $this->addChildSafe($ad, 'ContactMethod', 'По телефону и в сообщениях');
+        
+        // Добавляем обязательные поля, если они еще не добавлены через маппинг или теги
+        if (!isset($ad->Condition)) $this->addChildSafe($ad, 'Condition', 'Новое');
+        if (!isset($ad->AdType)) $this->addChildSafe($ad, 'AdType', 'Товар приобретен на продажу');
+        if (!isset($ad->ContactMethod)) $this->addChildSafe($ad, 'ContactMethod', 'По телефону и в сообщениях');
 
         // Добавляем способы доставки (ПВЗ, Курьер и т.д.)
         $deliveryOptionsStr = '';
@@ -971,15 +972,17 @@ class AvitoFeedService
                 }
             }
             
-            // Если модель не найдена в вайтлисте, логируем для отладки (лимитированно)
-            static $loggedModels = [];
-            if (!isset($loggedModels[$value]) && count($loggedModels) < 100) {
-                Log::info("AvitoFeed: Model '{$value}' (brand '{$brand}') not found in whitelist, defaulting to 'Другой/Другая'");
-                $loggedModels[$value] = true;
+            // Если модель не найдена в вайтлисте
+            $fallback = 'Другая';
+            // Если мы в категории велосипедов, точно ставим "Другая"
+            if ($this->isBicycle($this->lastCategory)) {
+                $fallback = 'Другая';
             }
-
-            $this->lastModel = 'Другая';
-            return 'Другая';
+            
+            Log::debug("Avito Hierarchy: Model '{$value}' (brand '{$brand}') NOT FOUND. Using fallback: {$fallback}");
+            
+            $this->lastModel = $fallback;
+            return $fallback;
         }
 
         return $value;
@@ -999,22 +1002,29 @@ class AvitoFeedService
 
         if ($brandIndex === false) {
             // Если бренд не найден в названии, пробуем взять все название
-            return $name;
+            $model = $name;
+        } else {
+            // Модель и год - это часть после бренда
+            $model = trim(substr($name, $brandIndex + strlen($brand)));
         }
 
-        // Модель и год - это часть после бренда
-        $afterBrand = trim(substr($name, $brandIndex + strlen($brand)));
-        if (!$afterBrand) {
+        if (!$model) {
             return '';
         }
 
-        // Модель - все остальное после удаления года
-        $year = $this->extractYearFromText($afterBrand);
-        if ($year) {
-            return trim(str_replace($year, '', $afterBrand));
+        // Удаляем общие префиксы категорий
+        $prefixes = ['Велосипед', 'Сноуборд', 'Ботинки', 'Крепления', 'Маска', 'Шлем', 'Защита', 'Лыжи'];
+        foreach ($prefixes as $prefix) {
+            $model = trim(str_ireplace($prefix, '', $model));
         }
 
-        return $afterBrand;
+        // Модель - все остальное после удаления года
+        $year = $this->extractYearFromText($model);
+        if ($year) {
+            return trim(str_replace($year, '', $model));
+        }
+
+        return $model;
     }
 
     /**
