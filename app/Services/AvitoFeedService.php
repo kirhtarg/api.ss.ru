@@ -389,17 +389,7 @@ class AvitoFeedService
                         }
                     }
 
-                    // 2. Если Имя свойства строго на английском (например: VehicleType, SportType)
-                    if (preg_match('/^[A-Z][a-zA-Z0-9]*$/', $propName)) {
-                        $this->addChildSafe($ad, $propName, $value);
-                    }
-                    // 3. Если есть префикс "Avito: " (например: "Avito: VehicleType")
-                    elseif (str_starts_with($propName, 'Avito:')) {
-                        $tagName = trim(substr($propName, 6));
-                        if (preg_match('/^[a-zA-Z0-9_]+$/', $tagName)) {
-                            $this->addChildSafe($ad, $tagName, $value);
-                        }
-                    }
+                    // Выводим только то, что явно замаплено в интерфейсе (пункт 1 выше)
                 }
             }
         }
