@@ -223,10 +223,10 @@ class AvitoFeedService
                     $avitoCategory = $mappingData['path'] ?? 'Спорт и отдых';
                 }
                 if (!empty($mappingData['brands'])) {
-                    $categoryBrands = array_merge($categoryBrands, $this->parseWhitelist($mappingData['brands'], 'brand'));
+                    $categoryBrands = $this->mergeHierarchies($categoryBrands, $this->parseWhitelist($mappingData['brands'], 'brand'));
                 }
                 if (!empty($mappingData['models'])) {
-                    $categoryModels = array_merge($categoryModels, $this->parseWhitelist($mappingData['models'], 'model'));
+                    $categoryModels = $this->mergeHierarchies($categoryModels, $this->parseWhitelist($mappingData['models'], 'model'));
                 }
 
                 if (!empty($mappingData['external_url'])) {
@@ -385,9 +385,8 @@ class AvitoFeedService
         $this->lastBrand = null;
         $this->lastModel = null;
         
-        // Подготовка иерархии для текущей категории
-        $catHierarchy = $this->parseWhitelist($categoryBrands, 'brand');
-        $catHierarchy = $this->mergeHierarchies($catHierarchy, $this->parseWhitelist($categoryModels, 'model'));
+        // Подготовка иерархии для текущей категории (уже распарсено в цикле выше)
+        $catHierarchy = $this->mergeHierarchies($categoryBrands, $categoryModels);
         $this->currentHierarchy = $this->mergeHierarchies($this->globalHierarchy, $catHierarchy);
 
         // Бренд
@@ -891,6 +890,9 @@ class AvitoFeedService
      */
     private function mergeHierarchies($h1, $h2)
     {
+        if (empty($h2)) return $h1;
+        if (empty($h1)) return $h2;
+
         foreach ($h2 as $brand => $data) {
             if (!isset($h1[$brand])) {
                 $h1[$brand] = $data;
@@ -965,6 +967,13 @@ class AvitoFeedService
                 }
             }
             
+            // Если модель не найдена в вайтлисте, логируем для отладки (лимитированно)
+            static $loggedModels = [];
+            if (!isset($loggedModels[$value]) && count($loggedModels) < 100) {
+                Log::info("AvitoFeed: Model '{$value}' (brand '{$brand}') not found in whitelist, defaulting to 'Другой/Другая'");
+                $loggedModels[$value] = true;
+            }
+
             $this->lastModel = 'Другой';
             return 'Другой';
         }
