@@ -228,12 +228,14 @@ class AvitoFeedService
                 if (!empty($mappingData['models'])) {
                     $categoryModels = array_merge($categoryModels, $this->parseWhitelist($mappingData['models'], 'model'));
                 }
+
                 if (!empty($mappingData['external_url'])) {
                     $externalData = $this->fetchExternalWhitelist($mappingData['external_url']);
                     if ($externalData) {
-                        $categoryBrands = array_merge($categoryBrands, $this->parseWhitelist($externalData, 'brand'));
+                        $categoryBrands = $this->mergeHierarchies($categoryBrands, $this->parseWhitelist($externalData, 'brand'));
                     }
                 }
+
                 // Если путь найден, прекращаем поиск по родителям для пути
                 if (!empty($mappingData['path'])) break;
             } 
@@ -649,33 +651,7 @@ class AvitoFeedService
         $dom->appendChild($owner->createCDATASection($value));
     }
 
-    protected function addChildSafe(\SimpleXMLElement $node, $name, $value)
-    {
-        $child = $node->addChild($name);
-        if ($value !== null && $value !== '') {
-            $value = (string)$value;
-            
-            // Список тегов, которые НЕЛЬЗЯ разбивать на Option, даже если там есть символ |
-            $noSplit = [
-                'Title', 'Description', 'Address', 'Id', 'FeedVersion', 'Brand', 'Model', 'WheelDiameter',
-                'Price', 'Category', 'GoodsType', 'GoodsSubType', 'GoodsSubCategory', 
-                'Condition', 'AdType', 'ContactMethod', 'VehicleType', 'TourismType',
-                'WinterSportType', 'WaterSportType', 'FitnessType'
-            ];
-            
-            if (str_contains($value, '|') && !in_array($name, $noSplit)) {
-                $options = array_map('trim', explode('|', $value));
-                foreach ($options as $option) {
-                    if ($option !== '') {
-                        $child->addChild('Option', $option);
-                    }
-                }
-            } else {
-                $child[0] = $value;
-            }
-        }
-        return $child;
-    }
+
 
     /**
      * Очистка HTML для Авито с сохранением структуры (переносы строк вместо блоков)
@@ -827,17 +803,7 @@ class AvitoFeedService
         return $parent->addChild($name, htmlspecialchars((string)$value));
     }
 
-    /**
-     * Парсинг списка (брендов, моделей) из разных форматов (запятые, новые строки, XML теги авито)
-     */
-    private function parseWhitelist($input)
-    {
-        if (empty($input)) return [];
 
-        $items = [];
-
-        // 1. Пытаемся вытащить из формата <brand name="3D Family"/> или <brend_velosipedy name="BH"/>
-        preg_match_all('/name=["\']([^"\']+)["\']/', $input, $matches);
     /**
      * Парсинг списка (брендов, моделей) из разных форматов (запятые, новые строки, XML теги авито)
      * Поддерживает иерархию: <brand name="X"><model name="Y"><god name="Z"/></model></brand>
