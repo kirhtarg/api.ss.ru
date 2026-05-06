@@ -375,8 +375,14 @@ class AvitoFeedService
                     $propName = trim($property->name);
                     
                     // 1. Свойство замаплено в интерфейсе
-                    if (isset($this->propertyMapping[$property->id]) && !empty($this->propertyMapping[$property->id])) {
+                    if (isset($this->propertyMapping[$property->id])) {
                         $tagName = trim($this->propertyMapping[$property->id]);
+                        
+                        // Если в маппинге пусто - значит пользователь хочет исключить это свойство
+                        if ($tagName === '') {
+                            continue;
+                        }
+
                         if (preg_match('/^[a-zA-Z0-9_]+$/', $tagName)) {
                             $this->addChildSafe($ad, $tagName, $value);
                             continue; // Переходим к следующему свойству
