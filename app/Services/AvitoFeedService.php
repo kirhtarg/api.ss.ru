@@ -157,6 +157,8 @@ class AvitoFeedService
         $ad = $xml->addChild('Ad');
 
         $this->addChildSafe($ad, 'Id', "g_{$good->id}");
+        // Временный тег для проверки того, что код на сервере действительно обновился
+        $this->addChildSafe($ad, 'FeedVersion', '1.0.2'); 
 
         // Категория Авито из маппинга (с поиском по родителям)
         $avitoCategory = 'Спорт и отдых';
