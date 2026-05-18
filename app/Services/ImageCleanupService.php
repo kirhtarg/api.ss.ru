@@ -22,7 +22,15 @@ class ImageCleanupService
         $bytesSaved = 0;
         $logs = [];
 
+        // Исключаем бесхозные записи из группировки поиска дубликатов (где нет ни товара, ни вариации)
         $groupsQuery = ShopGoodImage::select('good_id', 'variation_id')
+            ->where(function ($query) {
+                $query->where(function ($q) {
+                    $q->whereNotNull('good_id')->where('good_id', '>', 0);
+                })->orWhere(function ($q) {
+                    $q->whereNotNull('variation_id')->where('variation_id', '>', 0);
+                });
+            })
             ->groupBy('good_id', 'variation_id')
             ->orderBy('good_id', 'asc')
             ->orderBy('variation_id', 'asc');
@@ -38,11 +46,22 @@ class ImageCleanupService
         $groups = $groupsQuery->get();
 
         foreach ($groups as $group) {
-            $images = ShopGoodImage::where('good_id', $group->good_id)
-                ->where('variation_id', $group->variation_id)
-                ->with(['variation'])
-                ->orderBy('id', 'asc')
-                ->get();
+            $imagesQuery = ShopGoodImage::with(['variation', 'good', 'variation.good'])
+                ->orderBy('id', 'asc');
+                
+            if (is_null($group->good_id)) {
+                $imagesQuery->whereNull('good_id');
+            } else {
+                $imagesQuery->where('good_id', $group->good_id);
+            }
+            
+            if (is_null($group->variation_id)) {
+                $imagesQuery->whereNull('variation_id');
+            } else {
+                $imagesQuery->where('variation_id', $group->variation_id);
+            }
+            
+            $images = $imagesQuery->get();
 
             $hashes = [];
 
@@ -66,9 +85,25 @@ class ImageCleanupService
 
                     $targetId = $hashes[$hash];
                     
-                    $goodId = $image->good_id;
-                    if (!$goodId && $image->variation) {
-                        $goodId = $image->variation->good_id;
+                    $goodId = null;
+                    $isOrphan = false;
+
+                    if ($image->good_id && $image->good_id > 0) {
+                        $goodId = $image->good_id;
+                        if (!$image->good) {
+                            $isOrphan = true;
+                        }
+                    } elseif ($image->variation_id && $image->variation_id > 0) {
+                        if ($image->variation) {
+                            $goodId = $image->variation->good_id;
+                            if (!$image->variation->good) {
+                                $isOrphan = true;
+                            }
+                        } else {
+                            $isOrphan = true;
+                        }
+                    } else {
+                        $isOrphan = true;
                     }
                     
                     $logs[] = [
@@ -79,7 +114,8 @@ class ImageCleanupService
                         'duplicate_of' => $targetId,
                         'size' => $fileSize,
                         'size_human' => round($fileSize / 1024, 2) . ' KB',
-                        'type' => 'duplicate'
+                        'type' => 'duplicate',
+                        'is_orphan' => $isOrphan
                     ];
                 } else {
                     $hashes[$hash] = $image->id;
@@ -87,9 +123,17 @@ class ImageCleanupService
             }
         }
 
+        // Считаем общее число валидных групп (исключая полностью пустые)
+        $totalGroups = DB::table(DB::raw('(
+            select 1 from shop_good_images 
+            where (good_id is not null and good_id > 0) 
+               or (variation_id is not null and variation_id > 0) 
+            group by good_id, variation_id
+        ) as temp'))->count();
+
         return [
             'stats' => [
-                'total_in_db' => DB::table(DB::raw('(select 1 from shop_good_images group by good_id, variation_id) as temp'))->count(),
+                'total_in_db' => $totalGroups,
                 'total_images' => ShopGoodImage::count(),
                 'total_checked' => $totalChecked,
                 'groups_checked' => count($groups),
@@ -110,7 +154,7 @@ class ImageCleanupService
         $brokenFound = 0;
         $logs = [];
 
-        $query = ShopGoodImage::with(['variation']);
+        $query = ShopGoodImage::with(['variation', 'good', 'variation.good']);
             
         if ($limit) {
             $query->limit($limit); 
@@ -131,9 +175,25 @@ class ImageCleanupService
             if (!file_exists($fullPath) || is_dir($fullPath)) {
                 $brokenFound++;
                 
-                $goodId = $image->good_id;
-                if (!$goodId && $image->variation) {
-                    $goodId = $image->variation->good_id;
+                $goodId = null;
+                $isOrphan = false;
+
+                if ($image->good_id && $image->good_id > 0) {
+                    $goodId = $image->good_id;
+                    if (!$image->good) {
+                        $isOrphan = true;
+                    }
+                } elseif ($image->variation_id && $image->variation_id > 0) {
+                    if ($image->variation) {
+                        $goodId = $image->variation->good_id;
+                        if (!$image->variation->good) {
+                            $isOrphan = true;
+                        }
+                    } else {
+                        $isOrphan = true;
+                    }
+                } else {
+                    $isOrphan = true;
                 }
                 
                 $logs[] = [
@@ -141,7 +201,8 @@ class ImageCleanupService
                     'file_path' => $image->file_path,
                     'good_id' => $goodId,
                     'variation_id' => $image->variation_id,
-                    'type' => 'broken'
+                    'type' => 'broken',
+                    'is_orphan' => $isOrphan
                 ];
                 
                 if ($limit && $brokenFound >= $limit) {
@@ -180,10 +241,19 @@ class ImageCleanupService
             $fileName = ltrim($image->file_path, '/\\');
             $fullPath = $this->imagesBaseDir . DIRECTORY_SEPARATOR . $fileName;
 
-            // Если это не битая ссылка (т.е. файл существует), удаляем файл
+            // Если это не битая ссылка (т.е. файл существует)
             if (file_exists($fullPath) && !is_dir($fullPath)) {
-                $bytesDeleted += filesize($fullPath);
-                @unlink($fullPath);
+                // ЗАЩИТА: Проверяем, используется ли этот же файл другими записями в БД,
+                // которые НЕ входят в список удаляемых в данный момент ($ids).
+                $isUsedElsewhere = ShopGoodImage::where('file_path', $image->file_path)
+                    ->whereNotIn('id', $ids)
+                    ->exists();
+
+                if (!$isUsedElsewhere) {
+                    // Файл уникален и нигде больше не используется, можно безопасно удалять с диска
+                    $bytesDeleted += filesize($fullPath);
+                    @unlink($fullPath);
+                }
             }
             
             $image->delete();
