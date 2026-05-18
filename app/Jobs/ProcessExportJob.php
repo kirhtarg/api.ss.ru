@@ -1921,6 +1921,14 @@ class ProcessExportJob implements ShouldQueue
                 Storage::put($filePath, $xmlContent);
                 $fileSize = strlen($xmlContent);
 
+                // Дополнительно генерируем файл с остатками
+                try {
+                    $stocksXml = $service->generateStocks($goods);
+                    Storage::put('exports/avito_stocks.xml', $stocksXml);
+                } catch (\Exception $e) {
+                    \Illuminate\Support\Facades\Log::error('Avito Stocks Export failed: ' . $e->getMessage());
+                }
+
                 $this->exportFile->update([
                     'status' => 'completed',
                     'filename' => $permanentFilename,

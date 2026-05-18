@@ -1770,18 +1770,8 @@ class ShopOrdersController extends Controller
             }
 
             // Пересчитываем суммы заказа
-            $subtotal = 0;
-            $totalQuantity = 0;
-            foreach ($items as $item) {
-                $subtotal += $item['total'] ?? 0;
-                $totalQuantity += $item['quantity'] ?? 0;
-            }
-
             $order->items = $items;
-            $order->subtotal = $subtotal;
-            $order->total_quantity = $totalQuantity;
-            // Пересчитываем итоговую сумму (учитывая скидки и доставку)
-            $order->total_amount = $subtotal - ($order->total_discount_amount ?? 0) + ($order->delivery_cost ?? 0);
+            $this->recalculateOrderAmounts($order);
             $order->save();
 
             // Загружаем обновленный заказ
@@ -1845,19 +1835,8 @@ class ShopOrdersController extends Controller
             // Переиндексируем массив
             $items = array_values($items);
 
-            // Пересчитываем суммы заказа
-            $subtotal = 0;
-            $totalQuantity = 0;
-            foreach ($items as $item) {
-                $subtotal += $item['total'] ?? 0;
-                $totalQuantity += $item['quantity'] ?? 0;
-            }
-
             $order->items = $items;
-            $order->subtotal = $subtotal;
-            $order->total_quantity = $totalQuantity;
-            // Пересчитываем итоговую сумму
-            $order->total_amount = $subtotal - ($order->total_discount_amount ?? 0) + ($order->delivery_cost ?? 0);
+            $this->recalculateOrderAmounts($order);
             $order->save();
 
             // Загружаем обновленный заказ
@@ -1935,34 +1914,8 @@ class ShopOrdersController extends Controller
                 ], 404);
             }
 
-            // Пересчитываем суммы заказа
-            $subtotal = 0;
-            $totalQuantity = 0;
-            foreach ($items as $item) {
-                $subtotal += $item['total'] ?? 0;
-                $totalQuantity += $item['quantity'] ?? 0;
-            }
-
             $order->items = $items;
-            $order->subtotal = $subtotal;
-            $order->total_quantity = $totalQuantity;
-
-            // Пересчитываем общую скидку и итоговую сумму
-            $totalDiscount = ($order->sale_discount_amount ?? 0) +
-                ($order->registered_user_discount_amount ?? 0) +
-                ($order->promo_code_discount_amount ?? 0) +
-                ($order->birthday_discount_amount ?? 0) +
-                ($order->bonus_points_to_use ?? 0);
-
-            $order->total_discount_amount = $totalDiscount;
-            // subtotal уже содержит акционную цену, поэтому из него вычитаем только неакционные скидки
-            // delivery_cost не включаем в total_amount — он хранится отдельно (payment = total_amount + delivery_cost)
-            $order->total_amount = $subtotal
-                - ($order->registered_user_discount_amount ?? 0)
-                - ($order->promo_code_discount_amount ?? 0)
-                - ($order->birthday_discount_amount ?? 0)
-                - ($order->bonus_points_to_use ?? 0)
-                + ($order->overtax_amount ?? 0);
+            $this->recalculateOrderAmounts($order);
             $order->save();
 
             return response()->json([
@@ -1986,6 +1939,112 @@ class ShopOrdersController extends Controller
     /**
      * Форматировать заказ для ответа
      */
+    /**
+     * Пересчет сумм заказа и скидок при изменении состава товаров
+     */
+    protected function recalculateOrderAmounts(ShopOrder $order)
+    {
+        $items = is_array($order->items) ? $order->items : json_decode($order->items, true);
+        $items = $items ?: [];
+
+        $subtotal = 0;
+        $baseSubtotal = 0;
+        $totalQuantity = 0;
+        $discountableSubtotal = 0;
+
+        foreach ($items as $item) {
+            $itemTotal = $item['total'] ?? 0;
+            $quantity = $item['quantity'] ?? 1;
+            
+            $basePrice = $item['base_price'] ?? $item['price'] ?? 0;
+            $itemBaseTotal = $basePrice * $quantity;
+            
+            $subtotal += $itemTotal;
+            $baseSubtotal += $itemBaseTotal;
+            $totalQuantity += $quantity;
+            
+            $isSale = $item['is_sale_price'] ?? (($item['sale_price'] ?? 0) > 0);
+            $isDemping = $item['show_demping'] ?? false;
+            
+            if (!$isSale && !$isDemping) {
+                $discountableSubtotal += $itemTotal;
+            }
+        }
+
+        $order->subtotal = $subtotal;
+        $order->total_quantity = $totalQuantity;
+        $order->sale_discount_amount = max(0, $baseSubtotal - $subtotal);
+
+        // 1. Скидка зарегистрированного пользователя / День рождения
+        if (($order->registered_user_discount_amount ?? 0) > 0) {
+            $order->registered_user_discount_amount = round($discountableSubtotal * 0.05, 2);
+        }
+        
+        if (($order->birthday_discount_amount ?? 0) > 0) {
+            $order->birthday_discount_amount = round($discountableSubtotal * 0.10, 2);
+        }
+
+        $subtotalAfterUserDiscount = $subtotal - ($order->registered_user_discount_amount ?? 0) - ($order->birthday_discount_amount ?? 0);
+
+        // 2. Промокод
+        $promoCodeDiscountAmount = 0;
+        if ($order->promo_code_id) {
+            $promoCode = \App\Models\Promocode::find($order->promo_code_id);
+            if ($promoCode) {
+                if (empty($items)) {
+                    $promoCodeDiscountAmount = 0;
+                } else {
+                    $discountResult = $promoCode->calculateDiscount($subtotalAfterUserDiscount, $items, $order->user_id);
+                    if (isset($discountResult['discount']) && $discountResult['discount'] > 0) {
+                        $promoCodeDiscountAmount = $discountResult['discount'];
+                    }
+                }
+            }
+        }
+        $order->promo_code_discount_amount = $promoCodeDiscountAmount;
+
+        // 3. Бонусы
+        $bonusPointsDiscountAmount = 0;
+        if (($order->bonus_points_to_use ?? 0) > 0) {
+            $originalBonusPointsToUse = (int) $order->bonus_points_to_use;
+            $pointsToUse = $originalBonusPointsToUse;
+            $baseAmountForBonuses = $subtotalAfterUserDiscount - $promoCodeDiscountAmount;
+            
+            $maxBonusPercent = (float) (\App\Models\Setting::where('key', 'tag_max_bonus_tax')->value('value') ?? 50) / 100;
+            $maxBonusUsage = $baseAmountForBonuses * $maxBonusPercent;
+            $bonusPointsDiscountAmount = min($pointsToUse, $baseAmountForBonuses, $maxBonusUsage);
+            $newBonusPointsToUse = (int) round(max(0, $bonusPointsDiscountAmount));
+
+            if ($newBonusPointsToUse < $originalBonusPointsToUse && $order->user_id) {
+                // Возвращаем разницу пользователю
+                $difference = $originalBonusPointsToUse - $newBonusPointsToUse;
+                $userBonus = \App\Models\UserBonus::getOrCreateForUser($order->user_id);
+                $userBonus->addPoints(
+                    $difference,
+                    "Возврат бонусов из-за пересчета суммы заказа #{$order->order_number}",
+                    $order->id,
+                    null,
+                    ['source' => 'recalculation']
+                );
+            }
+
+            $order->bonus_points_to_use = $newBonusPointsToUse;
+            if ($order->bonus_points_to_use <= 0) {
+                $order->use_bonus_points = false;
+            }
+        }
+
+        // 4. Итоги
+        $totalDiscount = ($order->registered_user_discount_amount ?? 0) +
+            ($order->birthday_discount_amount ?? 0) +
+            ($order->promo_code_discount_amount ?? 0) +
+            ($order->bonus_points_to_use ?? 0);
+
+        $order->total_discount_amount = $totalDiscount + ($order->sale_discount_amount ?? 0);
+
+        $order->total_amount = $subtotal - $totalDiscount + ($order->overtax_amount ?? 0);
+    }
+
     private function formatOrderForResponse($order)
     {
         $items = is_array($order->items) ? $order->items : json_decode($order->items, true);

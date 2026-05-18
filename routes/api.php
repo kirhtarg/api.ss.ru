@@ -1903,6 +1903,12 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Shop management (для пользователей с доступом к shop) - CORS ПЕРВЫЙ!
         Route::middleware([\App\Http\Middleware\CustomCors::class, 'auth:sanctum', 'role:admin,manager'])->prefix('shop')->group(function () {
+            // Очистка дубликатов изображений (перед товарами)
+            Route::prefix('images-cleanup')->group(function () {
+                Route::get('/scan', [\App\Http\Controllers\Admin\ImageCleanupController::class, 'scan']);
+                Route::post('/cleanup', [\App\Http\Controllers\Admin\ImageCleanupController::class, 'destroy']);
+            });
+
             // Товары
             Route::prefix('goods')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'index']);
@@ -1962,6 +1968,8 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::post('/import/csv', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'importCsv']);
                     Route::get('/template', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getTemplate']);
                 });
+
+                // Скачивание изображений для импорта
 
                 // Скачивание изображений для импорта
                 Route::post('/download-image', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'downloadImage']);
@@ -2080,6 +2088,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::post('/reorder', [\App\Http\Controllers\Admin\ShopGoodVideosController::class, 'reorder']);
                 });
             });
+
 
             // Изображения вариаций
             Route::prefix('variations/{variationId}/images')->group(function () {

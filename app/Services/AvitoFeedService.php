@@ -31,6 +31,7 @@ class AvitoFeedService
     
     protected $lastBrand = null;
     protected $lastModel = null;
+    protected $lastCategory = null;
 
     public function __construct()
     {
@@ -184,6 +185,33 @@ class AvitoFeedService
                 'error' => $e->getMessage()
             ];
         }
+    }
+
+    /**
+     * Генерация XML файла с остатками для Авито (Stock Management)
+     * @param \Illuminate\Support\Collection|null $goods Колекция товаров (опционально)
+     * @return string XML контент
+     */
+    public function generateStocks($goods = null)
+    {
+        if (!$goods) {
+            $goods = ShopGood::where('is_active', true)
+                ->where('is_show', true)
+                ->get();
+        }
+
+        $xml = new \SimpleXMLElement('<?xml version="1.0" encoding="utf-8"?><items></items>');
+        $xml->addAttribute('date', date('Y-m-d\TH:i:s'));
+        $xml->addAttribute('formatVersion', '1');
+
+        foreach ($goods as $good) {
+            $item = $xml->addChild('item');
+            // ID должен совпадать с Id в основном фиде
+            $item->addChild('id', "g_{$good->id}");
+            $item->addChild('stock', $this->getStockValue($good));
+        }
+
+        return $xml->asXML();
     }
 
     /**
@@ -377,6 +405,10 @@ class AvitoFeedService
         $price = (int)$this->getMinPrice($good);
         $this->addChildSafe($ad, 'Price', $price);
 
+        // Остатки
+        $stockValue = $this->getStockValue($good);
+        $this->addChildSafe($ad, 'Stock', $stockValue);
+
         // Изображения
         $images = $ad->addChild('Images');
         $allImages = $this->getImages($good);
@@ -388,6 +420,7 @@ class AvitoFeedService
         // Сброс состояния валидации для нового объявления
         $this->lastBrand = null;
         $this->lastModel = null;
+        $this->lastCategory = $parts;
         
         // Подготовка иерархии для текущей категории (уже распарсено в цикле выше)
         $catHierarchy = $this->mergeHierarchies($categoryBrands, $categoryModels);
@@ -559,14 +592,30 @@ class AvitoFeedService
     /**
      * Проверка наличия товара или вариации
      */
+    /**
+     * Расчет остатка для Авито
+     */
+    private function getStockValue($item)
+    {
+        // 1. Если есть основной остаток > 0 - передаем его
+        if ($item->stock_quantity > 0) {
+            return (int)$item->stock_quantity;
+        }
+
+        // 2. Если основной = 0, проверяем удаленный и быстрый остатки у склада (с)
+        if ($this->hasValueStock($item->remote_stock_quantity) || $this->hasValueStock($item->fast_remote_stock_quantity)) {
+            return 10;
+        }
+
+        return 0;
+    }
+
+    /**
+     * Проверка наличия товара или вариации
+     */
     private function isInStock($item)
     {
-        if ($item->stock_quantity > 0) return true;
-        
-        if ($this->hasValueStock($item->remote_stock_quantity)) return true;
-        if ($this->hasValueStock($item->fast_remote_stock_quantity)) return true;
-        
-        return false;
+        return $this->getStockValue($item) > 0;
     }
 
     /**
@@ -616,40 +665,70 @@ class AvitoFeedService
         // 1. Название товара
         $result = "<strong>" . $good->name . "</strong><br>";
 
-        // 2. Список вариаций в наличии (Атрибуты - Цена)
+        // 2. Список вариаций в наличии (только цвета и диапазон цен)
         if ($good->variations->count() > 0) {
             $stockVariations = $good->variations->filter(function($v) {
                 return $v->is_active && $this->isInStock($v);
             });
 
             if ($stockVariations->count() > 0) {
+                $colors = [];
+                $prices = [];
                 foreach ($stockVariations as $v) {
-                    $attrString = $v->attributes_string;
-                    $priceVal = $this->calculateFinalPrice($v);
-                    $price = number_format($priceVal, 0, '.', ' ');
-                    $result .= ($attrString ?: $v->name) . " - " . $price . " руб.<br>";
+                    $prices[] = $this->calculateFinalPrice($v);
+                    // Ищем атрибут "Цвет"
+                    if ($v->attributeValues) {
+                        foreach ($v->attributeValues as $av) {
+                            if ($av->attribute && mb_strtolower($av->attribute->name) === 'цвет') {
+                                $colors[] = trim($av->value);
+                            }
+                        }
+                    }
+                }
+                
+                $uniqueColors = array_unique($colors);
+                if (!empty($uniqueColors)) {
+                    $result .= "Цвета: " . implode(', ', $uniqueColors) . "<br>";
+                }
+                
+                if (!empty($prices)) {
+                    $minPrice = min($prices);
+                    $maxPrice = max($prices);
+                    $priceStr = "Цена: " . number_format($minPrice, 0, '.', ' ');
+                    if ($maxPrice > $minPrice) {
+                        $priceStr .= " - " . number_format($maxPrice, 0, '.', ' ');
+                    }
+                    $result .= $priceStr . " руб.<br>";
                 }
             }
         }
 
-        // 3. Артикул и доп. информация
+        // 3. Артикул
         if ($good->sku) {
-            $result .= "<strong>Артикул:</strong> {$good->sku}<br>";
+            // Добавляем пустую строку ПОСЛЕ артикула (т.е. два <br>)
+            $result .= "<strong>Артикул:</strong> {$good->sku}<br><br>";
         }
         
         // 4. Основное описание
         $result .= $fullDesc;
         
-        // 5. Глобальные обертки
+        // 5. Глобальные обертки (с очисткой HTML для Авито)
         if ($this->descBefore) {
-            $result = $this->descBefore . "<br>" . $result;
-        }
-        if ($this->descAfter) {
-            $result = $result . "<br>" . $this->descAfter;
+            $cleanedBefore = $this->cleanHtml($this->descBefore);
+            // Убираем лишние переносы в конце блока, чтобы заголовок шел сразу через одну строку
+            $cleanedBefore = preg_replace('/(<br\s*\/?>\s*)+$/i', '', $cleanedBefore);
+            $result = $cleanedBefore . "<br>" . $result;
         }
         
-        // Заменяем все множественные <br> на одинарные
-        $result = preg_replace('/(<br\s*\/?>\s*)+/i', '<br>', $result);
+        if ($this->descAfter) {
+            $cleanedAfter = $this->cleanHtml($this->descAfter);
+            // Убираем лишние переносы в начале блока
+            $cleanedAfter = preg_replace('/^(<br\s*\/?>\s*)+/i', '', $cleanedAfter);
+            $result = $result . "<br>" . $cleanedAfter;
+        }
+        
+        // Финальная чистка: заменяем 3 и более <br> на 2
+        $result = preg_replace('/(<br\s*\/?>\s*){3,}/i', '<br><br>', $result);
         
         return $result;
     }
@@ -675,22 +754,23 @@ class AvitoFeedService
         $html = htmlspecialchars_decode($html);
 
         // Специальная обработка для структуры <div class="title">...</div><div class="val">...</div>
-        // Добавляем двоеточие между названием характеристики и значением
         $html = preg_replace('/<\/div>\s*<div[^>]*class="val"[^>]*>/i', ': ', $html);
 
-        // Заменяем закрывающие теги блочных элементов на <br>, чтобы текст не слипался
-        $blockTags = ['</div>', '</tr>', '</td>', '</li>', '</p>', '</h1>', '</h2>', '</h3>', '</h4>', '</h5>', '</h6>'];
+        // Заменяем закрывающие теги блочных элементов на <br>
+        $blockTags = ['</div>', '</tr>', '</td>', '</li>', '</p>', '</h1>', '2>', '</h3>', '</h4>', '</h5>', '</h6>'];
         $html = str_ireplace($blockTags, '<br>', $html);
 
         // Оставляем только разрешенные Авито теги
         $allowedTags = '<p><br><strong><em><ul><ol><li>';
         $cleaned = strip_tags($html, $allowedTags);
 
-        // Удаляем дублирующиеся <br> и лишние пробелы
-        $cleaned = preg_replace('/(<br\s*\/?>\s*)+/i', '<br>', $cleaned);
+        // Убираем лишние пробелы и табуляции
         $cleaned = preg_replace('/[ \t]+/', ' ', $cleaned);
         
-        return trim($cleaned);
+        // Заменяем множественные <br> (более 2-х) на 2
+        $cleaned = preg_replace('/(<br\s*\/?>\s*){3,}/i', '<br><br>', $cleaned);
+        
+        return trim($cleaned, " \t\n\r\0\x0B");
     }
 
     protected function getImages($good)
@@ -1096,5 +1176,22 @@ class AvitoFeedService
         }
 
         return null;
+    }
+    /**
+     * Проверка, является ли категория велосипедной
+     */
+    protected function isBicycle($parts): bool
+    {
+        if (!is_array($parts)) {
+            return false;
+        }
+
+        foreach ($parts as $p) {
+            if (mb_stripos(mb_strtolower($p), 'велосипеды') !== false) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

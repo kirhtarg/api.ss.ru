@@ -962,8 +962,8 @@ class ShopPaymentController extends Controller
                 $userBonus = \App\Models\UserBonus::getOrCreateForUser($user->id);
 
                 if ($userBonus->points >= $pointsToUse) {
-                    // This rule should be in a setting. For now, assume bonuses can cover up to 50% of the amount.
-                    $maxBonusUsage = $baseAmountForBonuses * 0.5;
+                    $maxBonusPercent = (float) (\App\Models\Setting::where('key', 'tag_max_bonus_tax')->value('value') ?? 50) / 100;
+                    $maxBonusUsage = $baseAmountForBonuses * $maxBonusPercent;
                     $bonusPointsDiscountAmount = min($pointsToUse, $baseAmountForBonuses, $maxBonusUsage);
                 }
             }

@@ -272,6 +272,7 @@ class AvitoController extends Controller
             ->first();
 
         $publicUrl = url('/api/public/avito/feed/' . $permanentFilename);
+        $stocksUrl = url('/api/public/avito/feed/avito_stocks.xml');
 
         return response()->json([
             'found' => !!$export,
@@ -280,6 +281,7 @@ class AvitoController extends Controller
             'file_size' => $export ? $export->file_size : 0,
             'total_rows' => $export ? $export->total_rows : 0,
             'public_url' => $publicUrl,
+            'stocks_url' => $stocksUrl,
         ]);
     }
 
