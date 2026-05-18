@@ -89,7 +89,7 @@ class ImageCleanupService
 
         return [
             'stats' => [
-                'total_in_db' => ShopGoodImage::select('good_id', 'variation_id')->groupBy('good_id', 'variation_id')->get()->count(),
+                'total_in_db' => DB::table(DB::raw('(select 1 from shop_good_images group by good_id, variation_id) as temp'))->count(),
                 'total_images' => ShopGoodImage::count(),
                 'total_checked' => $totalChecked,
                 'groups_checked' => count($groups),
@@ -153,6 +153,7 @@ class ImageCleanupService
         return [
             'stats' => [
                 'total_in_db' => ShopGoodImage::count(),
+                'total_images' => ShopGoodImage::count(),
                 'total_checked' => $totalChecked,
                 'broken_found' => $brokenFound,
                 'next_offset' => $offset + $totalChecked,
