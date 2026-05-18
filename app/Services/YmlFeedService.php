@@ -196,7 +196,7 @@ class YmlFeedService
 
         fwrite($handle, '            <offer id="' . $good->id . '" available="' . $available . '">' . PHP_EOL);
 
-        $url = $this->getMainSiteUrl() . '/product/' . ($good->slug ?? $good->id);
+        $url = $this->getMainSiteUrl() . '/catalog/' . ($good->slug ?? $good->id);
         fwrite($handle, '                <url>' . htmlspecialchars($url) . '</url>' . PHP_EOL);
 
         // Цена
