@@ -1907,6 +1907,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::prefix('images-cleanup')->group(function () {
                 Route::get('/scan', [\App\Http\Controllers\Admin\ImageCleanupController::class, 'scan']);
                 Route::post('/cleanup', [\App\Http\Controllers\Admin\ImageCleanupController::class, 'destroy']);
+                Route::post('/download-external', [\App\Http\Controllers\Admin\ImageCleanupController::class, 'downloadExternal']);
             });
 
             // Товары
