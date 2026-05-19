@@ -238,8 +238,12 @@ class ImageCleanupService
 
         $query = ShopGoodImage::with(['variation', 'good', 'variation.good'])
             ->where(function ($q) {
-                $q->where('file_path', 'like', 'http://%')
-                    ->orWhere('file_path', 'like', 'https://%');
+                $q->where('file_path', 'like', '%http://%')
+                    ->orWhere('file_path', 'like', '%https://%')
+                    ->orWhere('file_path', 'like', '//%')
+                    ->orWhere('file_path', 'like', ' //%')
+                    ->orWhere('file_path', 'like', '/http://%')
+                    ->orWhere('file_path', 'like', '/https://%');
             })
             ->orderBy('id', 'desc');
 
@@ -256,6 +260,10 @@ class ImageCleanupService
         foreach ($images as $image) {
             $totalChecked++;
 
+            if (!$this->isExternalUrl($image->file_path)) {
+                continue;
+            }
+
             $check = $this->checkExternalImageUrl($image->file_path);
             $isAvailable = $check['available'];
             $availableFound += $isAvailable ? 1 : 0;
@@ -271,9 +279,14 @@ class ImageCleanupService
             ]);
         }
 
-        $totalExternal = ShopGoodImage::where('file_path', 'like', 'http://%')
-            ->orWhere('file_path', 'like', 'https://%')
-            ->count();
+        $totalExternal = ShopGoodImage::where(function ($q) {
+            $q->where('file_path', 'like', '%http://%')
+                ->orWhere('file_path', 'like', '%https://%')
+                ->orWhere('file_path', 'like', '//%')
+                ->orWhere('file_path', 'like', ' //%')
+                ->orWhere('file_path', 'like', '/http://%')
+                ->orWhere('file_path', 'like', '/https://%');
+        })->count();
 
         return [
             'stats' => [
@@ -530,7 +543,7 @@ class ImageCleanupService
 
     private function isExternalUrl($path)
     {
-        return is_string($path) && preg_match('#^https?://#i', trim($path)) === 1;
+        return is_string($path) && preg_match('#^((https?:)?//|/+https?://)#i', trim($path)) === 1;
     }
 
     private function imageContext(ShopGoodImage $image)
@@ -577,6 +590,7 @@ class ImageCleanupService
 
     private function downloadExternalImage($url, $maxBytes = 31457280, $allowPartial = false)
     {
+        $url = $this->normalizeExternalUrl($url);
         $data = '';
         $tooLarge = false;
         $ch = curl_init();
@@ -646,6 +660,21 @@ class ImageCleanupService
             'content_type' => $mimeType,
             'data' => $data,
         ];
+    }
+
+    private function normalizeExternalUrl($url)
+    {
+        $url = trim((string) $url);
+
+        if (str_starts_with($url, '//')) {
+            return 'https:' . $url;
+        }
+
+        if (preg_match('#^/+https?://#i', $url) === 1) {
+            return ltrim($url, '/');
+        }
+
+        return $url;
     }
 
     private function saveExternalImageData(ShopGoodImage $image, $data, $contentType)

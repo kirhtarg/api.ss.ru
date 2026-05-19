@@ -621,6 +621,11 @@ Route::middleware(['cors', 'throttle:public'])->group(function () {
     });
     Route::post('/public/shop/goods/details', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getGoodsDetails']);
 
+    Route::options('/public/shop/catalog/resolve/{slug}', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/catalog/resolve/{slug}', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'resolveCatalogSlug']);
+
     Route::options('/public/shop/goods/{id}', function () {
         return response()->json([], 200);
     });

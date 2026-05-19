@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
 use App\Models\Setting;
+use App\Models\ShopCategory;
 use App\Models\ShopGood;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -1822,6 +1823,48 @@ class ShopGoodsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка получения товара',
+            ], 500);
+        }
+    }
+
+    /**
+     * Resolve catalog slug without using 404 responses for normal routing probes.
+     */
+    public function resolveCatalogSlug($slug): JsonResponse
+    {
+        try {
+            $normalizedGoodSlug = $this->normalizeSlug($slug);
+
+            $category = ShopCategory::where('slug', $slug)
+                ->where('is_active', true)
+                ->first(['id', 'slug', 'parent_id']);
+
+            $good = ShopGood::where('slug', $normalizedGoodSlug)
+                ->where('is_active', true)
+                ->first(['id', 'slug']);
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'slug' => $slug,
+                    'normalized_good_slug' => $normalizedGoodSlug,
+                    'is_category' => (bool) $category,
+                    'is_product' => (bool) $good,
+                    'category' => $category ? [
+                        'id' => $category->id,
+                        'slug' => $category->slug,
+                        'parent_id' => $category->parent_id,
+                    ] : null,
+                    'product' => $good ? [
+                        'id' => $good->id,
+                        'slug' => $good->slug,
+                    ] : null,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка определения типа каталожного slug',
             ], 500);
         }
     }
