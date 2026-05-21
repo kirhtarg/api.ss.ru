@@ -821,6 +821,16 @@ class ShopGoodImagesController extends Controller
                     $validator->errors()->add("images.{$index}.variation_id", 'variation_id должен быть положительным целым числом');
                 }
 
+                if (($image['image_action'] ?? 'add') === 'skip') {
+                    if ($hasGoodId && ShopGoodImage::where('good_id', $image['good_id'])->whereNull('variation_id')->exists()) {
+                        continue;
+                    }
+
+                    if ($hasVariationId && ShopGoodImage::whereNull('good_id')->where('variation_id', $image['variation_id'])->exists()) {
+                        continue;
+                    }
+                }
+
                 // Проверяем существование файла (ищем в директории фронтенда)
                 if (!empty($image['file_path'])) {
                     // Сначала проверяем в public_path API
@@ -1000,6 +1010,29 @@ class ShopGoodImagesController extends Controller
         $goodId = $good->id;
         $frontendPublicPath = frontend_public_path();
         $results = ['created' => [], 'updated' => [], 'skipped' => [], 'errors' => []];
+
+        $skipIfHasImages = collect($imagesData)->contains(function ($imageData) {
+            return ($imageData['image_action'] ?? 'add') === 'skip';
+        });
+
+        if ($skipIfHasImages) {
+            $hasExistingImages = ShopGoodImage::where('good_id', $goodId)
+                ->whereNull('variation_id')
+                ->exists();
+
+            if ($hasExistingImages) {
+                foreach ($imagesData as $imageData) {
+                    $results['skipped'][] = [
+                        'good_id' => $goodId,
+                        'file_path' => $imageData['file_path'] ?? null,
+                        'status' => 'skipped',
+                        'message' => 'Изображение пропущено: у товара уже есть привязанные изображения',
+                    ];
+                }
+
+                return $results;
+            }
+        }
 
         // Проверяем существование всех файлов и валидируем данные
         $validImages = [];
@@ -1338,6 +1371,29 @@ class ShopGoodImagesController extends Controller
         $variationId = $variation->id;
         $frontendPublicPath = frontend_public_path();
         $results = ['created' => [], 'updated' => [], 'skipped' => [], 'errors' => []];
+
+        $skipIfHasImages = collect($imagesData)->contains(function ($imageData) {
+            return ($imageData['image_action'] ?? 'add') === 'skip';
+        });
+
+        if ($skipIfHasImages) {
+            $hasExistingImages = ShopGoodImage::whereNull('good_id')
+                ->where('variation_id', $variationId)
+                ->exists();
+
+            if ($hasExistingImages) {
+                foreach ($imagesData as $imageData) {
+                    $results['skipped'][] = [
+                        'variation_id' => $variationId,
+                        'file_path' => $imageData['file_path'] ?? null,
+                        'status' => 'skipped',
+                        'message' => 'Изображение пропущено: у вариации уже есть привязанные изображения',
+                    ];
+                }
+
+                return $results;
+            }
+        }
 
         // Проверяем существование всех файлов и валидируем данные
         $validImages = [];

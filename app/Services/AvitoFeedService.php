@@ -408,6 +408,7 @@ class AvitoFeedService
         // Остатки
         $stockValue = $this->getStockValue($good);
         $this->addChildSafe($ad, 'Stock', $stockValue);
+        $this->addDeliveryDimensions($ad, $good);
 
         // Изображения
         $images = $ad->addChild('Images');
@@ -597,17 +598,9 @@ class AvitoFeedService
      */
     private function getStockValue($item)
     {
-        // 1. Если есть основной остаток > 0 - передаем его
-        if ($item->stock_quantity > 0) {
-            return (int)$item->stock_quantity;
-        }
-
-        // 2. Если основной = 0, проверяем удаленный и быстрый остатки у склада (с)
-        if ($this->hasValueStock($item->remote_stock_quantity) || $this->hasValueStock($item->fast_remote_stock_quantity)) {
-            return 10;
-        }
-
-        return 0;
+        return $this->normalizeNumericStock($item->stock_quantity ?? 0)
+            + $this->normalizeStringStock($item->remote_stock_quantity ?? null)
+            + $this->normalizeStringStock($item->fast_remote_stock_quantity ?? null);
     }
 
     /**
@@ -618,17 +611,89 @@ class AvitoFeedService
         return $this->getStockValue($item) > 0;
     }
 
-    /**
-     * Проверка строкового или числового значения остатка
-     */
-    private function hasValueStock($value)
+    private function normalizeNumericStock($value): int
     {
-        if (empty($value)) return false;
-        if (is_numeric($value) && (int)$value <= 0) return false;
-        if ($value === '0') return false;
-        
-        // Если это строка типа ">10", то это считается наличием
-        return true;
+        return max(0, (int) $value);
+    }
+
+    private function normalizeStringStock($value): int
+    {
+        $stockValue = trim((string) ($value ?? ''));
+
+        if ($stockValue === '' || $stockValue === '0') {
+            return 0;
+        }
+
+        if (is_numeric($stockValue)) {
+            return max(0, (int) $stockValue);
+        }
+
+        return 10;
+    }
+
+    private function addDeliveryDimensions(\SimpleXMLElement $ad, ShopGood $good): void
+    {
+        $dimensions = [
+            'WeightForDelivery' => $this->getDeliveryDimensionValue($good, 'weight'),
+            'LengthForDelivery' => $this->getDeliveryDimensionValue($good, 'length'),
+            'HeightForDelivery' => $this->getDeliveryDimensionValue($good, 'height'),
+            'WidthForDelivery' => $this->getDeliveryDimensionValue($good, 'width'),
+        ];
+
+        foreach ($dimensions as $tag => $value) {
+            if ($value === null) {
+                continue;
+            }
+
+            $this->addChildSafe($ad, $tag, $this->formatDeliveryDimensionValue($value));
+        }
+    }
+
+    private function getDeliveryDimensionValue(ShopGood $good, string $field): ?float
+    {
+        $value = $this->positiveFloat($good->{$field} ?? null);
+
+        if ($value !== null) {
+            return $value;
+        }
+
+        if (!$good->relationLoaded('variations') || !$good->variations) {
+            return null;
+        }
+
+        $maxVariationValue = null;
+
+        foreach ($good->variations as $variation) {
+            if (isset($variation->is_active) && !$variation->is_active) {
+                continue;
+            }
+
+            $variationValue = $this->positiveFloat($variation->{$field} ?? null);
+
+            if ($variationValue !== null && ($maxVariationValue === null || $variationValue > $maxVariationValue)) {
+                $maxVariationValue = $variationValue;
+            }
+        }
+
+        return $maxVariationValue;
+    }
+
+    private function positiveFloat($value): ?float
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        $numeric = (float) str_replace(',', '.', (string) $value);
+
+        return $numeric > 0 ? $numeric : null;
+    }
+
+    private function formatDeliveryDimensionValue(float $value): string
+    {
+        $formatted = number_format($value, 2, ',', '');
+
+        return rtrim(rtrim($formatted, '0'), ',');
     }
 
     /**
