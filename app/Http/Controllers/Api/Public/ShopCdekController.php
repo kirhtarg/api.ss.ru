@@ -545,7 +545,8 @@ class ShopCdekController extends Controller
                         $weight = $good->weight > 0 ? (float) $good->weight : null;
                     }
                     if ($length === null) {
-                        $length = $good->length > 0 ? (float) $good->length : null;
+                        $goodLength = $good->length ?? $good->depth ?? null;
+                        $length = $goodLength > 0 ? (float) $goodLength : null;
                     }
                     if ($width === null) {
                         $width = $good->width > 0 ? (float) $good->width : null;

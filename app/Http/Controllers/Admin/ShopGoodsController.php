@@ -243,6 +243,24 @@ class ShopGoodsController extends Controller
                     ->where('height', '>', 0)
                     ->where('depth', '>', 0)
                     ->where('weight', '>', 0);
+            } elseif ($type === 'exact_dimensions') {
+                $exactFields = [
+                    'exact_width' => 'width',
+                    'exact_height' => 'height',
+                    'exact_depth' => 'depth',
+                    'exact_weight' => 'weight',
+                ];
+
+                foreach ($exactFields as $requestKey => $column) {
+                    if (! $request->filled($requestKey)) {
+                        continue;
+                    }
+
+                    $value = str_replace(',', '.', (string) $request->input($requestKey));
+                    if (is_numeric($value)) {
+                        $query->where($column, (float) $value);
+                    }
+                }
             }
         }
 

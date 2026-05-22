@@ -262,6 +262,18 @@ class ProcessExportJob implements ShouldQueue
             }
         }
 
+        $filters = $this->normalizeExportFilterAliases($config['filters'] ?? []);
+        $variationRelation = function ($variationQuery) use ($filters) {
+            $variationQuery->select([
+                'id', 'good_id', 'name', 'sku', 'price', 'sale_price', 'demping_price', 'show_demping',
+                'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity', 'is_active', 'supplier',
+            ]);
+
+            if ($this->hasExportVariationRowFilters($filters)) {
+                $this->applyExportVariationRowFilters($variationQuery, $filters);
+            }
+        };
+
         $query = ShopGood::select([
             'id', 'name', 'sku', 'description', 'short_description',
             'price', 'sale_price', 'demping_price', 'show_demping',
@@ -276,7 +288,7 @@ class ProcessExportJob implements ShouldQueue
             'label:id,name,color',
             'properties:id,name,slug',
             'images:id,good_id,file_path,alt_text,is_main,sort_order',
-            'variations:id,good_id,name,sku,price,sale_price,demping_price,show_demping,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,is_active',
+            'variations' => $variationRelation,
             'variations.images:id,variation_id,file_path,alt_text,is_main,sort_order',
         ]);
 
@@ -288,7 +300,7 @@ class ProcessExportJob implements ShouldQueue
         else {
             // Применяем фильтры из конфигурации только если нет selected_ids
             if (isset($config['filters'])) {
-                $this->applyFilters($query, $config['filters']);
+                $this->applyFilters($query, $filters);
             }
         }
 
@@ -360,6 +372,7 @@ class ProcessExportJob implements ShouldQueue
      */
     protected function applyFilters($query, array $filters): void
     {
+        $filters = $this->normalizeExportFilterAliases($filters);
 
         // Реализуем фильтры аналогично ShopGoodsController
 
@@ -413,6 +426,61 @@ class ProcessExportJob implements ShouldQueue
                 }
                 elseif ($value === 'false') {
                     $query->whereDoesntHave($relation);
+                }
+            }
+        }
+
+        // Фильтр по габаритам и весу
+        if (isset($filters['dimensions_weight_filter']) && $filters['dimensions_weight_filter'] !== '') {
+            $type = $filters['dimensions_weight_filter'];
+            if ($type === 'empty_dimensions') {
+                $query->where(function ($q) {
+                    $q->whereNull('width')->orWhere('width', 0)
+                        ->orWhereNull('height')->orWhere('height', 0)
+                        ->orWhereNull('depth')->orWhere('depth', 0);
+                });
+            } elseif ($type === 'empty_weight') {
+                $query->where(function ($q) {
+                    $q->whereNull('weight')->orWhere('weight', 0);
+                });
+            } elseif ($type === 'empty_both') {
+                $query->where(function ($q) {
+                    $q->where(function ($sq) {
+                        $sq->whereNull('width')->orWhere('width', 0)
+                            ->orWhereNull('height')->orWhere('height', 0)
+                            ->orWhereNull('depth')->orWhere('depth', 0);
+                    })->where(function ($sq) {
+                        $sq->whereNull('weight')->orWhere('weight', 0);
+                    });
+                });
+            } elseif ($type === 'filled_dimensions') {
+                $query->where('width', '>', 0)
+                    ->where('height', '>', 0)
+                    ->where('depth', '>', 0);
+            } elseif ($type === 'filled_weight') {
+                $query->where('weight', '>', 0);
+            } elseif ($type === 'filled_both') {
+                $query->where('width', '>', 0)
+                    ->where('height', '>', 0)
+                    ->where('depth', '>', 0)
+                    ->where('weight', '>', 0);
+            } elseif ($type === 'exact_dimensions') {
+                $exactFields = [
+                    'exact_width' => 'width',
+                    'exact_height' => 'height',
+                    'exact_depth' => 'depth',
+                    'exact_weight' => 'weight',
+                ];
+
+                foreach ($exactFields as $filterKey => $column) {
+                    if (! isset($filters[$filterKey]) || $filters[$filterKey] === '') {
+                        continue;
+                    }
+
+                    $value = str_replace(',', '.', (string) $filters[$filterKey]);
+                    if (is_numeric($value)) {
+                        $query->where($column, (float) $value);
+                    }
                 }
             }
         }
@@ -886,6 +954,153 @@ class ProcessExportJob implements ShouldQueue
 
     }
 
+    private function normalizeExportFilterAliases(array $filters): array
+    {
+        if (!empty($filters['remote_stock_variations_not_empty']) || !empty($filters['remote_stock_goods_not_empty'])) {
+            $filters['remote_stock_quantity_not_empty'] = '1';
+        } elseif (!empty($filters['remote_stock_variations_empty']) || !empty($filters['remote_stock_goods_empty'])) {
+            $filters['remote_stock_quantity_empty'] = '1';
+        } elseif (isset($filters['remote_stock_variations_exact']) || isset($filters['remote_stock_goods_exact'])) {
+            $filters['remote_stock_quantity'] = $filters['remote_stock_variations_exact'] ?? $filters['remote_stock_goods_exact'];
+        }
+
+        if (!empty($filters['fast_remote_stock_variations_not_empty']) || !empty($filters['fast_remote_stock_goods_not_empty'])) {
+            $filters['fast_remote_stock_quantity_not_empty'] = '1';
+        } elseif (!empty($filters['fast_remote_stock_variations_empty']) || !empty($filters['fast_remote_stock_goods_empty'])) {
+            $filters['fast_remote_stock_quantity_empty'] = '1';
+        } elseif (isset($filters['fast_remote_stock_variations_exact']) || isset($filters['fast_remote_stock_goods_exact'])) {
+            $filters['fast_remote_stock_quantity'] = $filters['fast_remote_stock_variations_exact'] ?? $filters['fast_remote_stock_goods_exact'];
+        }
+
+        if (!empty($filters['total_stock_variations_not_empty']) || !empty($filters['total_stock_goods_not_empty'])) {
+            $filters['total_stock_not_empty'] = '1';
+        } elseif (!empty($filters['total_stock_variations_both_empty']) || !empty($filters['total_stock_goods_both_empty'])) {
+            $filters['total_stock_both_empty'] = '1';
+        }
+
+        return $filters;
+    }
+
+    private function hasExportVariationRowFilters(array $filters): bool
+    {
+        $keys = [
+            'min_price',
+            'max_price',
+            'stock_variations_not_empty',
+            'stock_variations_empty',
+            'stock_variations_exact',
+            'stock_variations_low',
+            'remote_stock_variations_not_empty',
+            'remote_stock_variations_empty',
+            'remote_stock_variations_exact',
+            'fast_remote_stock_variations_not_empty',
+            'fast_remote_stock_variations_empty',
+            'fast_remote_stock_variations_exact',
+            'total_stock_variations_not_empty',
+            'total_stock_variations_both_empty',
+            'variation_attribute_names',
+            'exclude_variation_attribute_names',
+        ];
+
+        foreach ($keys as $key) {
+            if (array_key_exists($key, $filters) && $filters[$key] !== '' && $filters[$key] !== null) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function applyExportVariationRowFilters($query, array $filters): void
+    {
+        if (isset($filters['min_price']) && $filters['min_price'] !== '') {
+            $query->where('price', '>=', (float) $filters['min_price']);
+        }
+        if (isset($filters['max_price']) && $filters['max_price'] !== '') {
+            $query->where('price', '<=', (float) $filters['max_price']);
+        }
+
+        if (($filters['stock_variations_not_empty'] ?? null) === '1') {
+            $query->where('stock_quantity', '>', 0);
+        } elseif (($filters['stock_variations_empty'] ?? null) === '1') {
+            $query->where(function ($stockQuery) {
+                $stockQuery->whereNull('stock_quantity')->orWhere('stock_quantity', '<=', 0);
+            });
+        } elseif (isset($filters['stock_variations_exact']) && $filters['stock_variations_exact'] !== '') {
+            $query->where('stock_quantity', '=', (int) $filters['stock_variations_exact']);
+        } elseif (($filters['stock_variations_low'] ?? null) === '1') {
+            $query->where('stock_quantity', '>', 0)->where('stock_quantity', '<', 3);
+        }
+
+        if (($filters['remote_stock_variations_not_empty'] ?? null) === '1') {
+            $query->whereNotNull('remote_stock_quantity')
+                ->where('remote_stock_quantity', '!=', '')
+                ->where('remote_stock_quantity', '!=', '0')
+                ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+        } elseif (($filters['remote_stock_variations_empty'] ?? null) === '1') {
+            $query->where(function ($remoteQuery) {
+                $remoteQuery->whereNull('remote_stock_quantity')
+                    ->orWhere('remote_stock_quantity', '=', '')
+                    ->orWhere('remote_stock_quantity', '=', '0')
+                    ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
+            });
+        } elseif (isset($filters['remote_stock_variations_exact']) && $filters['remote_stock_variations_exact'] !== '') {
+            $query->where('remote_stock_quantity', '=', $filters['remote_stock_variations_exact']);
+        }
+
+        if (($filters['fast_remote_stock_variations_not_empty'] ?? null) === '1') {
+            $query->whereNotNull('fast_remote_stock_quantity')
+                ->where('fast_remote_stock_quantity', '!=', '')
+                ->where('fast_remote_stock_quantity', '!=', '0')
+                ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
+        } elseif (($filters['fast_remote_stock_variations_empty'] ?? null) === '1') {
+            $query->where(function ($fastRemoteQuery) {
+                $fastRemoteQuery->whereNull('fast_remote_stock_quantity')
+                    ->orWhere('fast_remote_stock_quantity', '=', '')
+                    ->orWhere('fast_remote_stock_quantity', '=', '0')
+                    ->orWhereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) = 0');
+            });
+        } elseif (isset($filters['fast_remote_stock_variations_exact']) && $filters['fast_remote_stock_variations_exact'] !== '') {
+            $query->where('fast_remote_stock_quantity', '=', $filters['fast_remote_stock_variations_exact']);
+        }
+
+        if (($filters['total_stock_variations_not_empty'] ?? null) === '1') {
+            $query->where(function ($totalQuery) {
+                $totalQuery->where('stock_quantity', '>', 0)
+                    ->orWhere(function ($remote) {
+                        $remote->whereNotNull('remote_stock_quantity')
+                            ->where('remote_stock_quantity', '!=', '')
+                            ->where('remote_stock_quantity', '!=', '0')
+                            ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                    })
+                    ->orWhere(function ($fastRemote) {
+                        $fastRemote->whereNotNull('fast_remote_stock_quantity')
+                            ->where('fast_remote_stock_quantity', '!=', '')
+                            ->where('fast_remote_stock_quantity', '!=', '0')
+                            ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
+                    });
+            });
+        } elseif (($filters['total_stock_variations_both_empty'] ?? null) === '1') {
+            $query->where(function ($totalQuery) {
+                $totalQuery->where(function ($stock) {
+                    $stock->whereNull('stock_quantity')->orWhere('stock_quantity', '<=', 0);
+                })
+                    ->where(function ($remote) {
+                        $remote->whereNull('remote_stock_quantity')
+                            ->orWhere('remote_stock_quantity', '=', '')
+                            ->orWhere('remote_stock_quantity', '=', '0')
+                            ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
+                    })
+                    ->where(function ($fastRemote) {
+                        $fastRemote->whereNull('fast_remote_stock_quantity')
+                            ->orWhere('fast_remote_stock_quantity', '=', '')
+                            ->orWhere('fast_remote_stock_quantity', '=', '0')
+                            ->orWhereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) = 0');
+                    });
+            });
+        }
+    }
+
     /**
      * Применить фильтр цены
      */
@@ -1144,6 +1359,7 @@ class ProcessExportJob implements ShouldQueue
                 return $isArray ? ($variation['demping_price'] ?? $good['demping_price'] ?? 0) : ($variation->demping_price ?? $good->demping_price);
             case 'stock_quantity':
                 return $isArray ? ($variation['stock_quantity'] ?? $good['stock_quantity'] ?? 0) : ($variation->stock_quantity ?? $good->stock_quantity);
+            case 'remote_stock':
             case 'remote_stock_quantity':
                 return $isArray ? ($variation['remote_stock_quantity'] ?? $good['remote_stock_quantity'] ?? '') : ($variation->remote_stock_quantity ?? $good->remote_stock_quantity);
             case 'fast_remote_stock_quantity':

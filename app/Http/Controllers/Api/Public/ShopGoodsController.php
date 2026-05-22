@@ -1370,6 +1370,7 @@ class ShopGoodsController extends Controller
                     // Добавляем поля размеров и веса
                     'weight' => $good->weight,
                     'length' => $good->depth, // В базе данных поле называется depth, но в API возвращаем как length
+                    'depth' => $good->depth,
                     'width' => $good->width,
                     'height' => $good->height,
                     // Добавляем информацию об остатках
@@ -1419,6 +1420,7 @@ class ShopGoodsController extends Controller
                         // Добавляем поля размеров и веса для вариаций
                         'weight' => $variation->weight,
                         'length' => $variation->length,
+                        'depth' => $variation->length,
                         'width' => $variation->width,
                         'height' => $variation->height,
                         // Добавляем информацию об остатках для вариаций

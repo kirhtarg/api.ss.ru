@@ -345,13 +345,6 @@ class ExportFilesController extends Controller
 
         $filename = $exportFile->original_filename;
 
-        \Log::info('Starting file download', [
-            'file_id' => $exportFile->id,
-            'file_path' => $exportFile->file_path,
-            'filename' => $filename,
-            'exists' => Storage::exists($exportFile->file_path),
-        ]);
-
         if (! Storage::exists($exportFile->file_path)) {
             \Log::error('File does not exist for download', ['path' => $exportFile->file_path]);
             abort(404, 'Файл не найден');

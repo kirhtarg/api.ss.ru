@@ -715,7 +715,7 @@ class AvitoFeedService
     protected function formatDescription($good)
     {
         $desc = $this->cleanHtml($good->description ?? '');
-        $brief = $this->cleanHtml($good->brief_description ?? '');
+        $brief = $this->cleanHtml($good->short_description ?? '');
         
         $fullDesc = '';
         if ($brief) {
@@ -1130,8 +1130,6 @@ class AvitoFeedService
             if ($this->isBicycle($this->lastCategory)) {
                 $fallback = 'Другая';
             }
-            
-            Log::debug("Avito Hierarchy: Model '{$value}' (brand '{$brand}') NOT FOUND. Using fallback: {$fallback}");
             
             $this->lastModel = $fallback;
             return $fallback;
