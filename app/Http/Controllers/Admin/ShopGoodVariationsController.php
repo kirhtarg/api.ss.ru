@@ -2021,6 +2021,67 @@ class ShopGoodVariationsController extends Controller
     }
 
     /**
+     * Получить ID товаров для серверного выбора "все с учетом фильтра".
+     */
+    private function resolveGoodsIdsFromSelectionFilters(Request $originalRequest): array
+    {
+        $filters = $originalRequest->get('filters', []);
+        if (! is_array($filters)) {
+            return [];
+        }
+
+        unset($filters['selected_ids'], $filters['ids'], $filters['ids_only'], $filters['limit'], $filters['page'], $filters['per_page']);
+        $filters = $this->normalizeSelectionFilters($filters);
+
+        $filters['ids_only'] = '1';
+        $filters['limit'] = '1000000';
+
+        $filterRequest = Request::create('/api/admin/shop/goods', 'GET', $filters);
+        $filterRequest->headers->replace($originalRequest->headers->all());
+        $filterRequest->setUserResolver($originalRequest->getUserResolver());
+        $filterRequest->setRouteResolver($originalRequest->getRouteResolver());
+
+        $response = app(ShopGoodsController::class)->index($filterRequest);
+        $responseData = json_decode($response->getContent(), true);
+        $ids = $responseData['ids'] ?? [];
+
+        if (! is_array($ids)) {
+            return [];
+        }
+
+        return array_values(array_unique(array_filter(array_map('intval', $ids), fn ($id) => $id > 0)));
+    }
+
+    private function normalizeSelectionFilters(array $filters): array
+    {
+        $normalized = [];
+
+        foreach ($filters as $key => $value) {
+            $values = is_array($value) ? array_values($value) : [$value];
+
+            if (preg_match('/^([^\[]+)\[([^\]]+)\]\[\]$/', (string) $key, $matches)) {
+                $root = $matches[1];
+                $index = $matches[2];
+                if (! isset($normalized[$root]) || ! is_array($normalized[$root])) {
+                    $normalized[$root] = [];
+                }
+                $normalized[$root][$index] = array_values(array_merge($normalized[$root][$index] ?? [], $values));
+                continue;
+            }
+
+            if (substr((string) $key, -2) === '[]') {
+                $baseKey = substr((string) $key, 0, -2);
+                $normalized[$baseKey] = array_values(array_merge($normalized[$baseKey] ?? [], $values));
+                continue;
+            }
+
+            $normalized[$key] = is_array($value) ? $values : $value;
+        }
+
+        return $normalized;
+    }
+
+    /**
      * Р“Р»РѕР±Р°Р»СЊРЅРѕРµ РјР°СЃСЃРѕРІРѕРµ РѕР±РЅРѕРІР»РµРЅРёРµ РІР°СЂРёР°С†РёР№ (Р±РµР· РїСЂРёРІСЏР·РєРё Рє С‚РѕРІР°СЂСѓ)
      * РџРѕРґРґРµСЂР¶РёРІР°РµС‚ РґРІР° РІР°СЂРёР°РЅС‚Р°:
      * 1. РџРµСЂРµРґР°С‡Р° variation_ids - РѕР±РЅРѕРІР»РµРЅРёРµ РєРѕРЅРєСЂРµС‚РЅС‹С… РІР°СЂРёР°С†РёР№
@@ -2028,11 +2089,18 @@ class ShopGoodVariationsController extends Controller
      */
     public function globalBulkUpdate(Request $request): JsonResponse
     {
+        if ($request->get('selection_mode') === 'filters') {
+            $goodIds = $this->resolveGoodsIdsFromSelectionFilters($request);
+            $request->merge(['good_ids' => $goodIds]);
+        }
+
+        $goodIdsItemRule = $request->get('selection_mode') === 'filters' ? 'integer' : 'exists:shop_goods,id';
+
         $validator = Validator::make($request->all(), [
             'variation_ids' => 'nullable|array',
             'variation_ids.*' => 'exists:shop_good_variations,id',
             'good_ids' => 'nullable|array',
-            'good_ids.*' => 'exists:shop_goods,id',
+            'good_ids.*' => $goodIdsItemRule,
             'action' => 'required|in:delete,change_stock,change_remote_stock,change_price,change_sale_price,change_demping_price,activate,deactivate,enable_demping,disable_demping',
             'data' => 'nullable|array',
         ]);

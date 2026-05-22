@@ -52,6 +52,7 @@ class ShopGoodsController extends Controller
 
         // Флаг: применять фильтры остатков только к основному товару, игнорируя вариации
         $stockOnlyGoods = $request->boolean('stock_only_goods', false);
+        $this->normalizeCatalogFilterAliases($request);
 
         // Загружаем pivot данные для свойств (поддерживаем разные схемы: value или shop_property_value_id)
         $hasValueCol = Schema::hasColumn('shop_good_properties', 'value');
@@ -1236,11 +1237,11 @@ class ShopGoodsController extends Controller
         // ids_only: вернуть только список ID (для массового выбора)
         $idsOnly = $request->has('ids_only') && $request->get('ids_only') === '1';
         if ($idsOnly) {
-            $limit = (int) $request->get('limit', 30000);
+            $limit = (int) $request->get('limit', 1000000);
             if ($limit <= 0) {
-                $limit = 30000;
+                $limit = 1000000;
             }
-            $limit = min($limit, 30000);
+            $limit = min($limit, 1000000);
             $ids = $query->select('shop_goods.id')->limit($limit)->pluck('shop_goods.id')->toArray();
 
             return response()->json([
@@ -1256,25 +1257,29 @@ class ShopGoodsController extends Controller
         if ($forExport && $countOnly) {
             // ТОЛЬКО ПОДСЧ§ЕТ СТЧ ОК - без загрузки данных
             $goodsIdsQuery = clone $query;
-            $goodsIdsQuery->select('id');
+            $goodsIdsQuery->select('shop_goods.id')->distinct();
 
-            $totalRows = DB::table('shop_goods')
-                ->leftJoin('shop_good_variations', 'shop_goods.id', '=', 'shop_good_variations.good_id')
-                ->whereIn('shop_goods.id', $goodsIdsQuery)
-                ->selectRaw('
-                    SUM(CASE
-                        WHEN shop_good_variations.id IS NULL THEN 1
-                        ELSE 0
-                    END) as goods_without_variations,
-                    COUNT(shop_good_variations.id) as variations_count
-                ')
-                ->first();
+            $goodsWithoutVariations = DB::table('shop_goods')
+                ->whereIn('shop_goods.id', clone $goodsIdsQuery)
+                ->whereNotExists(function ($subQuery) {
+                    $subQuery->selectRaw('1')
+                        ->from('shop_good_variations')
+                        ->whereColumn('shop_good_variations.good_id', 'shop_goods.id');
+                })
+                ->count();
 
-            $totalRowsCount = ($totalRows->goods_without_variations ?? 0) + ($totalRows->variations_count ?? 0);
+            $variationsQuery = ShopGoodVariation::query()->whereIn('good_id', clone $goodsIdsQuery);
+            if ($this->hasExportVariationRowFilters($request)) {
+                $this->applyExportVariationRowFilters($variationsQuery, $request);
+            }
+            $variationsCount = $variationsQuery->count();
+            $totalRowsCount = $goodsWithoutVariations + $variationsCount;
 
             return response()->json([
                 'success' => true,
                 'count' => $totalRowsCount,
+                'goods_count' => (int) $goodsWithoutVariations,
+                'variations_count' => (int) $variationsCount,
             ]);
         }
 
@@ -1282,24 +1287,34 @@ class ShopGoodsController extends Controller
             // Оптимизированный подсчет количества строк для экспорта
             // Чспользуем SQL для подсчета без загрузки всех данных
             $goodsIdsQuery = clone $query;
-            $goodsIdsQuery->select('id');
+            $goodsIdsQuery->select('shop_goods.id')->distinct();
 
-            $totalRows = DB::table('shop_goods')
-                ->leftJoin('shop_good_variations', 'shop_goods.id', '=', 'shop_good_variations.good_id')
-                ->whereIn('shop_goods.id', $goodsIdsQuery)
-                ->selectRaw('
-                    SUM(CASE
-                        WHEN shop_good_variations.id IS NULL THEN 1
-                        ELSE 0
-                    END) as goods_without_variations,
-                    COUNT(shop_good_variations.id) as variations_count
-                ')
-                ->first();
+            $goodsWithoutVariations = DB::table('shop_goods')
+                ->whereIn('shop_goods.id', clone $goodsIdsQuery)
+                ->whereNotExists(function ($subQuery) {
+                    $subQuery->selectRaw('1')
+                        ->from('shop_good_variations')
+                        ->whereColumn('shop_good_variations.good_id', 'shop_goods.id');
+                })
+                ->count();
 
-            $totalRowsCount = ($totalRows->goods_without_variations ?? 0) + ($totalRows->variations_count ?? 0);
+            $variationsQuery = ShopGoodVariation::query()->whereIn('good_id', clone $goodsIdsQuery);
+            if ($this->hasExportVariationRowFilters($request)) {
+                $this->applyExportVariationRowFilters($variationsQuery, $request);
+            }
+            $variationsCount = $variationsQuery->count();
+            $totalRowsCount = $goodsWithoutVariations + $variationsCount;
 
             // Теперь загружаем товары для экспорта
             $goods = $query->get();
+            if ($this->hasExportVariationRowFilters($request)) {
+                $goods->load([
+                    'variations' => function ($variationQuery) use ($request) {
+                        $this->applyExportVariationRowFilters($variationQuery, $request);
+                    },
+                    'variations.images:id,variation_id,file_path,alt_text,is_main,sort_order',
+                ]);
+            }
 
             // Загружаем значения свойств для всех товаров (как в обычном режиме)
             $hasValueCol = Schema::hasColumn('shop_good_properties', 'value');
@@ -2406,12 +2421,287 @@ class ShopGoodsController extends Controller
     }
 
     /**
+     * Получить ID товаров для серверного выбора "все с учетом фильтра".
+     */
+    private function resolveGoodsIdsFromSelectionFilters(array $payload, Request $originalRequest): array
+    {
+        $filters = $payload['filters'] ?? [];
+        if (! is_array($filters)) {
+            return [];
+        }
+
+        unset($filters['selected_ids'], $filters['ids'], $filters['ids_only'], $filters['limit'], $filters['page'], $filters['per_page']);
+        $filters = $this->normalizeSelectionFilters($filters);
+
+        $filters['ids_only'] = '1';
+        $filters['limit'] = '1000000';
+
+        $filterRequest = Request::create('/api/admin/shop/goods', 'GET', $filters);
+        $filterRequest->headers->replace($originalRequest->headers->all());
+        $filterRequest->setUserResolver($originalRequest->getUserResolver());
+        $filterRequest->setRouteResolver($originalRequest->getRouteResolver());
+
+        $response = $this->index($filterRequest);
+        $responseData = json_decode($response->getContent(), true);
+        $ids = $responseData['ids'] ?? [];
+
+        if (! is_array($ids)) {
+            return [];
+        }
+
+        return array_values(array_unique(array_filter(array_map('intval', $ids), fn ($id) => $id > 0)));
+    }
+
+    private function normalizeSelectionFilters(array $filters): array
+    {
+        $normalized = [];
+
+        foreach ($filters as $key => $value) {
+            $values = is_array($value) ? array_values($value) : [$value];
+
+            if (preg_match('/^([^\[]+)\[([^\]]+)\]\[\]$/', (string) $key, $matches)) {
+                $root = $matches[1];
+                $index = $matches[2];
+                if (! isset($normalized[$root]) || ! is_array($normalized[$root])) {
+                    $normalized[$root] = [];
+                }
+                $normalized[$root][$index] = array_values(array_merge($normalized[$root][$index] ?? [], $values));
+                continue;
+            }
+
+            if (substr((string) $key, -2) === '[]') {
+                $baseKey = substr((string) $key, 0, -2);
+                $normalized[$baseKey] = array_values(array_merge($normalized[$baseKey] ?? [], $values));
+                continue;
+            }
+
+            $normalized[$key] = is_array($value) ? $values : $value;
+        }
+
+        return $normalized;
+    }
+
+    private function hasExportVariationRowFilters(Request $request): bool
+    {
+        $keys = [
+            'min_price',
+            'max_price',
+            'stock_variations_not_empty',
+            'stock_variations_empty',
+            'stock_variations_exact',
+            'stock_variations_low',
+            'remote_stock_variations_not_empty',
+            'remote_stock_variations_empty',
+            'remote_stock_variations_exact',
+            'fast_remote_stock_variations_not_empty',
+            'fast_remote_stock_variations_empty',
+            'fast_remote_stock_variations_exact',
+            'total_stock_variations_not_empty',
+            'total_stock_variations_both_empty',
+            'variation_attribute_names',
+            'exclude_variation_attribute_names',
+        ];
+
+        foreach ($keys as $key) {
+            if ($request->filled($key) || $request->has($key)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function normalizeCatalogFilterAliases(Request $request): void
+    {
+        $merge = [];
+
+        if ($request->filled('in_stock') && ! $request->filled('stock_variations_not_empty') && ! $request->filled('stock_goods_not_empty') && ! $request->filled('stock_variations_empty') && ! $request->filled('stock_goods_empty')) {
+            $inStock = (string) $request->get('in_stock');
+            if ($inStock === 'true' || $inStock === '1') {
+                $merge['stock_variations_not_empty'] = '1';
+                $merge['stock_goods_not_empty'] = '1';
+            } elseif ($inStock === 'false' || $inStock === '0') {
+                $merge['stock_variations_empty'] = '1';
+                $merge['stock_goods_empty'] = '1';
+            } elseif ($inStock === 'low') {
+                $merge['stock_variations_low'] = '1';
+                $merge['stock_goods_low'] = '1';
+            } elseif (str_starts_with($inStock, 'exact:')) {
+                $exactStock = (string) ((int) substr($inStock, 6));
+                $merge['stock_variations_exact'] = $exactStock;
+                $merge['stock_goods_exact'] = $exactStock;
+            }
+        }
+
+        if ($request->filled('remote_stock_quantity_not_empty')) {
+            $merge['remote_stock_variations_not_empty'] = '1';
+            $merge['remote_stock_goods_not_empty'] = '1';
+        } elseif ($request->filled('remote_stock_quantity_empty')) {
+            $merge['remote_stock_variations_empty'] = '1';
+            $merge['remote_stock_goods_empty'] = '1';
+        } elseif ($request->filled('remote_stock_quantity')) {
+            $merge['remote_stock_variations_exact'] = $request->get('remote_stock_quantity');
+            $merge['remote_stock_goods_exact'] = $request->get('remote_stock_quantity');
+        }
+
+        if ($request->filled('fast_remote_stock_quantity_not_empty')) {
+            $merge['fast_remote_stock_variations_not_empty'] = '1';
+            $merge['fast_remote_stock_goods_not_empty'] = '1';
+        } elseif ($request->filled('fast_remote_stock_quantity_empty')) {
+            $merge['fast_remote_stock_variations_empty'] = '1';
+            $merge['fast_remote_stock_goods_empty'] = '1';
+        } elseif ($request->filled('fast_remote_stock_quantity')) {
+            $merge['fast_remote_stock_variations_exact'] = $request->get('fast_remote_stock_quantity');
+            $merge['fast_remote_stock_goods_exact'] = $request->get('fast_remote_stock_quantity');
+        }
+
+        if ($request->filled('total_stock_not_empty')) {
+            $merge['total_stock_variations_not_empty'] = '1';
+            $merge['total_stock_goods_not_empty'] = '1';
+        }
+
+        if (! empty($merge)) {
+            $request->merge($merge);
+        }
+    }
+
+    private function applyExportVariationRowFilters($query, Request $request): void
+    {
+        if ($request->filled('min_price')) {
+            $query->where('price', '>=', (float) $request->get('min_price'));
+        }
+        if ($request->filled('max_price')) {
+            $query->where('price', '<=', (float) $request->get('max_price'));
+        }
+
+        if ($request->get('stock_variations_not_empty') === '1') {
+            $query->where('stock_quantity', '>', 0);
+        } elseif ($request->get('stock_variations_empty') === '1') {
+            $query->where(function ($stockQuery) {
+                $stockQuery->whereNull('stock_quantity')->orWhere('stock_quantity', '<=', 0);
+            });
+        } elseif ($request->filled('stock_variations_exact')) {
+            $query->where('stock_quantity', '=', (int) $request->get('stock_variations_exact'));
+        } elseif ($request->get('stock_variations_low') === '1') {
+            $query->where('stock_quantity', '>', 0)->where('stock_quantity', '<', 3);
+        }
+
+        if ($request->get('remote_stock_variations_not_empty') === '1') {
+            $query->whereNotNull('remote_stock_quantity')
+                ->where('remote_stock_quantity', '!=', '')
+                ->where('remote_stock_quantity', '!=', '0')
+                ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+        } elseif ($request->get('remote_stock_variations_empty') === '1') {
+            $query->where(function ($remoteQuery) {
+                $remoteQuery->whereNull('remote_stock_quantity')
+                    ->orWhere('remote_stock_quantity', '=', '')
+                    ->orWhere('remote_stock_quantity', '=', '0')
+                    ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
+            });
+        } elseif ($request->filled('remote_stock_variations_exact')) {
+            $query->where('remote_stock_quantity', '=', $request->get('remote_stock_variations_exact'));
+        }
+
+        if ($request->get('fast_remote_stock_variations_not_empty') === '1') {
+            $query->whereNotNull('fast_remote_stock_quantity')
+                ->where('fast_remote_stock_quantity', '!=', '')
+                ->where('fast_remote_stock_quantity', '!=', '0')
+                ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
+        } elseif ($request->get('fast_remote_stock_variations_empty') === '1') {
+            $query->where(function ($fastRemoteQuery) {
+                $fastRemoteQuery->whereNull('fast_remote_stock_quantity')
+                    ->orWhere('fast_remote_stock_quantity', '=', '')
+                    ->orWhere('fast_remote_stock_quantity', '=', '0')
+                    ->orWhereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) = 0');
+            });
+        } elseif ($request->filled('fast_remote_stock_variations_exact')) {
+            $query->where('fast_remote_stock_quantity', '=', $request->get('fast_remote_stock_variations_exact'));
+        }
+
+        if ($request->get('total_stock_variations_not_empty') === '1') {
+            $query->where(function ($totalQuery) {
+                $totalQuery->where('stock_quantity', '>', 0)
+                    ->orWhere(function ($remote) {
+                        $remote->whereNotNull('remote_stock_quantity')
+                            ->where('remote_stock_quantity', '!=', '')
+                            ->where('remote_stock_quantity', '!=', '0')
+                            ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+                    })
+                    ->orWhere(function ($fastRemote) {
+                        $fastRemote->whereNotNull('fast_remote_stock_quantity')
+                            ->where('fast_remote_stock_quantity', '!=', '')
+                            ->where('fast_remote_stock_quantity', '!=', '0')
+                            ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
+                    });
+            });
+        } elseif ($request->get('total_stock_variations_both_empty') === '1') {
+            $query->where(function ($totalQuery) {
+                $totalQuery->where(function ($stock) {
+                    $stock->whereNull('stock_quantity')->orWhere('stock_quantity', '<=', 0);
+                })
+                    ->where(function ($remote) {
+                        $remote->whereNull('remote_stock_quantity')
+                            ->orWhere('remote_stock_quantity', '=', '')
+                            ->orWhere('remote_stock_quantity', '=', '0')
+                            ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
+                    })
+                    ->where(function ($fastRemote) {
+                        $fastRemote->whereNull('fast_remote_stock_quantity')
+                            ->orWhere('fast_remote_stock_quantity', '=', '')
+                            ->orWhere('fast_remote_stock_quantity', '=', '0')
+                            ->orWhereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) = 0');
+                    });
+            });
+        }
+
+        if ($request->has('variation_attribute_names')) {
+            $attributeNames = $request->input('variation_attribute_names');
+            if (! is_array($attributeNames)) {
+                $attributeNames = [$attributeNames];
+            }
+            foreach (array_filter($attributeNames) as $name) {
+                $query->whereExists(function ($attrSubQuery) use ($name) {
+                    $attrSubQuery->selectRaw('1')
+                        ->from('shop_variation_attributes_values as vav')
+                        ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                        ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                        ->whereColumn('vav.variation_id', 'shop_good_variations.id')
+                        ->where('a.name', $name);
+                });
+            }
+        }
+
+        if ($request->has('exclude_variation_attribute_names')) {
+            $excludeAttributeNames = $request->input('exclude_variation_attribute_names');
+            if (! is_array($excludeAttributeNames)) {
+                $excludeAttributeNames = [$excludeAttributeNames];
+            }
+            $excludeAttributeNames = array_filter($excludeAttributeNames);
+            if (! empty($excludeAttributeNames)) {
+                $query->whereNotExists(function ($attrSubQuery) use ($excludeAttributeNames) {
+                    $attrSubQuery->selectRaw('1')
+                        ->from('shop_variation_attributes_values as vav')
+                        ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                        ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+                        ->whereColumn('vav.variation_id', 'shop_good_variations.id')
+                        ->whereIn('a.name', $excludeAttributeNames);
+                });
+            }
+        }
+    }
+
+    /**
      * Массовое обновление товаров
      */
     public function bulkUpdate(Request $request): JsonResponse
     {
         // Получаем сырые JSON данные до обработки middleware
-        $rawJsonData = json_decode($request->getContent(), true);
+        $rawJsonData = json_decode($request->getContent(), true) ?: [];
+
+        if (($rawJsonData['selection_mode'] ?? null) === 'filters') {
+            $rawJsonData['ids'] = $this->resolveGoodsIdsFromSelectionFilters($rawJsonData, $request);
+            $request->merge(['ids' => $rawJsonData['ids']]);
+        }
 
         $action = $rawJsonData['action'] ?? $request->get('action');
 
@@ -2420,9 +2710,11 @@ class ShopGoodsController extends Controller
             ? 'nullable|array'
             : 'required|array';
 
+        $idsItemRule = (($rawJsonData['selection_mode'] ?? null) === 'filters') ? 'integer' : 'exists:shop_goods,id';
+
         $validator = Validator::make($rawJsonData, [
             'ids' => $idsRules,
-            'ids.*' => 'exists:shop_goods,id',
+            'ids.*' => $idsItemRule,
             'action' => 'required|in:activate,deactivate,delete,delete_without_supplier,delete_without_images,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_fast_remote_stock,update_price,update_sale_price,update_demping_price,toggle_show_demping,toggle_fields,update_label,remove_after_symbol,replace_text,update_dimensions,enable_preorder,disable_preorder,clear_by_tags,clear_by_suppliers,delete_images,delete_zero_stock_no_media',
             'data' => 'nullable|array',
             'data.field' => 'nullable|in:name,description,short_description',
@@ -3423,7 +3715,7 @@ class ShopGoodsController extends Controller
 
             // Формируем сообщение в зависимости от действия
             $message = 'Массовое обновление выполнено успешно';
-            $responseData = ['success' => true, 'message' => $message];
+            $responseData = ['success' => true, 'message' => $message, 'updated_count' => count($ids)];
 
             if ($action === 'delete_without_supplier') {
                 $message = "Удалено вариаций без поставщика: {$deletedVariationsCount}";
