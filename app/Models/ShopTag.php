@@ -17,11 +17,17 @@ class ShopTag extends Model
         'slug',
         'is_active',
         'sort_order',
+        'disables_bonuses',
+        'disables_registered_discount',
+        'extra_discount_percent',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
         'sort_order' => 'integer',
+        'disables_bonuses' => 'boolean',
+        'disables_registered_discount' => 'boolean',
+        'extra_discount_percent' => 'decimal:2',
     ];
 
     protected static function boot()

@@ -899,6 +899,22 @@ Route::middleware(['cors', 'throttle:public'])->group(function () {
     });
     Route::post('/public/shop/cdek/get-postal-code', [App\Http\Controllers\Api\Public\ShopCdekController::class, 'getPostalCode']);
 
+    // Маршруты Деловых линий для магазина
+    Route::options('/public/shop/dellin/settings/active', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/dellin/settings/active', [App\Http\Controllers\Api\Public\ShopDellinController::class, 'getActiveSettings']);
+
+    Route::options('/public/shop/dellin/terminals', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/dellin/terminals', [App\Http\Controllers\Api\Public\ShopDellinController::class, 'getTerminals']);
+
+    Route::options('/public/shop/dellin/tariffs', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/dellin/tariffs', [App\Http\Controllers\Api\Public\ShopDellinController::class, 'getTariffs']);
+
     // Order details API
     Route::options('/public/order/details', function () {
         return response()->json([], 200);
@@ -1516,6 +1532,17 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/{exportFile}/complete-test', [\App\Http\Controllers\Admin\ExportFilesController::class, 'completeTest']);
         });
 
+        Route::middleware('role:admin')->prefix('database-backups')->group(function () {
+            Route::get('/', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'index']);
+            Route::post('/', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'store']);
+            Route::get('/schedule', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'schedule']);
+            Route::post('/schedule', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'updateSchedule']);
+            Route::get('/logs', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'logs']);
+            Route::get('/{filename}/download', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'download']);
+            Route::post('/{filename}/restore', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'restore']);
+            Route::delete('/{filename}', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'destroy']);
+        });
+
         // Avito Feed management
         Route::prefix('avito')->group(function () {
             Route::get('/get-permanent-status', [\App\Http\Controllers\Admin\AvitoController::class, 'getPermanentFeedStatus']);
@@ -2045,6 +2072,7 @@ Route::middleware('auth:sanctum')->group(function () {
                                 Route::get('/', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'getGlobalAttributeValues']);
                                 Route::post('/', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'createGlobalAttributeValue']);
                                 Route::delete('/', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'bulkDeleteGlobalAttributeValues']);
+                                Route::post('/merge', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'mergeGlobalAttributeValues']);
                                 Route::put('/{valueId}', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'updateGlobalAttributeValue']);
                                 Route::delete('/{valueId}', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'deleteGlobalAttributeValue']);
                             });
@@ -2304,6 +2332,9 @@ Route::middleware('auth:sanctum')->group(function () {
             // Управление способами оплаты
             Route::prefix('payment-methods')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'index']);
+                Route::post('/{id}/dolyame-test/order', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'createDolyameTestOrder']);
+                Route::post('/{id}/dolyame-test/status/{orderNumber}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'getDolyameTestOrderStatus']);
+                Route::post('/{id}/dolyame-test/refund', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'refundDolyameTestOrder']);
                 Route::get('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'show']);
                 Route::post('/', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'store']);
                 Route::put('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'update']);
@@ -2475,6 +2506,25 @@ Route::middleware('auth:sanctum')->group(function () {
                                 'description' => 'Настройка пунктов меню администратора',
                                 'icon' => 'fas fa-bars',
                                 'component' => 'MenuManager',
+                                'order' => 0,
+                                'is_active' => true,
+                                'created_at' => null,
+                                'updated_at' => null,
+                            ],
+                        ]);
+                    }
+
+                    if ($slug === 'backup') {
+                        return response()->json([
+                            'success' => true,
+                            'data' => [
+                                'id' => null,
+                                'name' => 'Backup',
+                                'slug' => 'backup',
+                                'title' => 'Бэкапы базы данных',
+                                'description' => 'Создание, скачивание, восстановление и расписание бэкапов базы данных',
+                                'icon' => 'mdi:database-clock',
+                                'component' => 'Backup',
                                 'order' => 0,
                                 'is_active' => true,
                                 'created_at' => null,
@@ -3563,6 +3613,9 @@ Route::middleware('auth:sanctum')->group(function () {
             // Управление способами оплаты (доступно менеджерам и админам)
             Route::prefix('payment-methods')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'index']);
+                Route::post('/{id}/dolyame-test/order', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'createDolyameTestOrder']);
+                Route::post('/{id}/dolyame-test/status/{orderNumber}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'getDolyameTestOrderStatus']);
+                Route::post('/{id}/dolyame-test/refund', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'refundDolyameTestOrder']);
                 Route::get('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'show']);
                 Route::post('/', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'store']);
                 Route::put('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'update']);

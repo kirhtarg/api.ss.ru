@@ -140,6 +140,7 @@ class ShopGoodVariationsController extends Controller
             ->orderBy('a.name')
             ->get([
                 'a.id', 'a.name', 'a.slug',
+                \Illuminate\Support\Facades\DB::raw('COUNT(DISTINCT av.id) as values_count'),
                 \Illuminate\Support\Facades\DB::raw('COUNT(vav.id) as usage_count'),
             ]);
 
@@ -448,6 +449,139 @@ class ShopGoodVariationsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Произошла ошибка при создании значения: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function mergeGlobalAttributeValues(Request $request, $attributeId): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'value_ids' => 'required|array|min:2',
+                'value_ids.*' => 'integer|distinct|exists:shop_variation_attribute_values,id',
+                'target_value' => 'required|string|max:255',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $attributeId = (int) $attributeId;
+            $targetValue = trim((string) $request->input('target_value'));
+            $valueIds = collect($request->input('value_ids'))
+                ->map(fn ($id) => (int) $id)
+                ->filter(fn ($id) => $id > 0)
+                ->unique()
+                ->values();
+
+            $attribute = DB::table('shop_variation_attributes')->where('id', $attributeId)->first();
+            if (!$attribute) {
+                return response()->json(['success' => false, 'message' => 'Атрибут не найден'], 404);
+            }
+
+            $values = DB::table('shop_variation_attribute_values')
+                ->where('attribute_id', $attributeId)
+                ->whereIn('id', $valueIds)
+                ->get();
+
+            if ($values->count() !== $valueIds->count()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Некоторые значения не принадлежат выбранному атрибуту'
+                ], 422);
+            }
+
+            DB::beginTransaction();
+
+            $targetRow = DB::table('shop_variation_attribute_values')
+                ->where('attribute_id', $attributeId)
+                ->where('value', $targetValue)
+                ->first();
+
+            if (!$targetRow) {
+                $selectedTarget = $values->first(fn ($value) => trim((string) $value->value) === $targetValue);
+
+                if ($selectedTarget) {
+                    $targetId = (int) $selectedTarget->id;
+                } else {
+                    $targetId = DB::table('shop_variation_attribute_values')->insertGetId([
+                        'attribute_id' => $attributeId,
+                        'value' => $targetValue,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                }
+            } else {
+                $targetId = (int) $targetRow->id;
+            }
+
+            $sourceIds = $valueIds
+                ->filter(fn ($id) => $id !== $targetId)
+                ->values();
+
+            $updatedLinks = 0;
+            $deletedDuplicateLinks = 0;
+
+            if ($sourceIds->isNotEmpty()) {
+                $links = DB::table('shop_variation_attributes_values')
+                    ->whereIn('attribute_value_id', $sourceIds)
+                    ->get(['id', 'variation_id', 'attribute_value_id']);
+
+                foreach ($links as $link) {
+                    $hasTarget = DB::table('shop_variation_attributes_values')
+                        ->where('variation_id', $link->variation_id)
+                        ->where('attribute_value_id', $targetId)
+                        ->exists();
+
+                    if ($hasTarget) {
+                        DB::table('shop_variation_attributes_values')->where('id', $link->id)->delete();
+                        $deletedDuplicateLinks++;
+                    } else {
+                        DB::table('shop_variation_attributes_values')->where('id', $link->id)->update([
+                            'attribute_value_id' => $targetId,
+                            'updated_at' => now(),
+                        ]);
+                        $updatedLinks++;
+                    }
+                }
+
+                DB::table('shop_variation_attribute_values')
+                    ->where('attribute_id', $attributeId)
+                    ->whereIn('id', $sourceIds)
+                    ->delete();
+            }
+
+            DB::table('shop_variation_attribute_values')
+                ->where('id', $targetId)
+                ->update([
+                    'value' => $targetValue,
+                    'updated_at' => now(),
+                ]);
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Значения успешно объединены',
+                'data' => [
+                    'target_value_id' => $targetId,
+                    'target_value' => $targetValue,
+                    'updated_links' => $updatedLinks,
+                    'deleted_duplicate_links' => $deletedDuplicateLinks,
+                    'deleted_values' => $sourceIds->count(),
+                ]
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            \Illuminate\Support\Facades\Log::error('Error merging global attribute values: ' . $e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Произошла ошибка при объединении значений: ' . $e->getMessage()
             ], 500);
         }
     }

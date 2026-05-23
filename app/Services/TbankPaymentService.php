@@ -204,10 +204,14 @@ class TbankPaymentService
                     'items' => $items,
                     'prepaid_amount' => 0.0, // Changed from prepayment_amount to prepaid_amount
                 ],
-                'notification_url' => url('/api/webhooks/tbank'),
+                'notification_url' => url('/api/webhooks/dolyame'),
                 'success_url' => url('/api/public/shop/payment/return?payment_type=tbank_dolyame&status=success&order_number='.urlencode($orderNumber)),
                 'fail_url' => url('/api/public/shop/payment/return?payment_type=tbank_dolyame&status=fail&order_number='.urlencode($orderNumber)),
             ];
+
+            if (! empty($this->settings['dolyame_demo_flow'])) {
+                $payload['create_demo'] = ['flow' => $this->settings['dolyame_demo_flow']];
+            }
 
             // Детальное логирование запроса для отладки
             Log::debug('Dolyame Partner: Full request payload', [

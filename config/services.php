@@ -132,4 +132,9 @@ return [
         'ca_bundle_path' => env('HTTP_CLIENT_CA_BUNDLE'),
     ],
 
+    'dellin' => [
+        'verify_ssl' => env('DELLIN_VERIFY_SSL', env('HTTP_CLIENT_VERIFY', true)),
+        'ca_bundle_path' => env('DELLIN_CA_BUNDLE', env('HTTP_CLIENT_CA_BUNDLE')),
+    ],
+
 ];

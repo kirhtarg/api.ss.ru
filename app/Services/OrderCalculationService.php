@@ -18,12 +18,26 @@ class OrderCalculationService
     {
         $basePrice = $variation ? ($variation->price > 0 ? $variation->price : $good->price) : $good->price;
         $salePrice = $variation ? ($variation->sale_price > 0 ? $variation->sale_price : $good->sale_price) : $good->sale_price;
+        $tagDiscount = $good->tags()
+            ->where('extra_discount_percent', '>', 0)
+            ->orderByDesc('extra_discount_percent')
+            ->first();
         
         $finalPrice = $basePrice;
         $isDemping = (bool)($good->is_demping ?? false);
 
-        // Если есть акционная цена, она приоритетнее базовой
-        if ($salePrice > 0) {
+        // Если у тега есть скидка, она считается от базовой цены и игнорирует акцию/демпинг.
+        if ($tagDiscount) {
+            $percent = min(max((float) $tagDiscount->extra_discount_percent, 0), 100);
+            $finalPrice = max(round($basePrice - ($basePrice * ($percent / 100))), 0.01);
+            $salePrice = 0;
+            $resultTagDiscount = [
+                'name' => $tagDiscount->name,
+                'percent' => $percent,
+                'amount' => max(0, $basePrice - $finalPrice),
+            ];
+        } elseif ($salePrice > 0) {
+            // Если есть акционная цена, она приоритетнее базовой
             $finalPrice = $salePrice;
         }
 
@@ -38,8 +52,12 @@ class OrderCalculationService
             'discounts' => []
         ];
 
+        if (isset($resultTagDiscount)) {
+            $result['discounts']['tag'] = $resultTagDiscount;
+        }
+
         // Расчет дополнительных скидок для зарегистрированных пользователей
-        if ($user && !$isDemping && $salePrice <= 0) {
+        if ($user && !$isDemping && $salePrice <= 0 && ! $tagDiscount) {
             // Скидка 5% для зарегистрированных (пример из логики проекта)
             $regDiscountPercent = 5;
             $regDiscountAmount = round($finalPrice * ($regDiscountPercent / 100));

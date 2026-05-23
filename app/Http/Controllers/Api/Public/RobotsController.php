@@ -17,6 +17,7 @@ class RobotsController extends Controller
             $content = [
                 'User-agent: *',
                 'Disallow:',
+                'Clean-param: etext&utm_source&utm_medium&utm_campaign&utm_content&utm_term&yclid&ymclid&gclid&fbclid&from&roistat&openstat /',
                 'Sitemap: '.($request->getSchemeAndHttpHost() ?: 'http://localhost:3000').'/sitemap.xml',
             ].implode("\n");
 

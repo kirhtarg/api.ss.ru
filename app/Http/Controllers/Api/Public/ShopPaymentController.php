@@ -1663,7 +1663,7 @@ class ShopPaymentController extends Controller
                 'onSuccess' => $returnUrl,
                 'onError' => $returnUrl,
             ],
-            'callbackUrl' => $settings['webhook_url'] ?? (rtrim(request()->getSchemeAndHttpHost(), '/') . '/api/webhooks/yandex-pay'),
+            'callbackUrl' => url('/api/webhooks/yandex-pay'),
             'metadata' => json_encode(['order_id' => $order->id, 'payment_method_id' => $paymentMethod->id]),
         ];
         try {
@@ -1862,7 +1862,7 @@ class ShopPaymentController extends Controller
                 'total' => ['amount' => $amountValue],
             ],
             'confirmation' => ['type' => 'redirect', 'return_url' => $returnUrl],
-            'callbackUrl' => $settings['webhook_url'] ?? (rtrim(request()->getSchemeAndHttpHost(), '/') . '/api/webhooks/yandex-pay'),
+            'callbackUrl' => url('/api/webhooks/yandex-pay'),
             'metadata' => json_encode(['order_number' => $orderNumber, 'payment_method_id' => $paymentMethod->id]),
         ];
         try {
@@ -2943,8 +2943,57 @@ class ShopPaymentController extends Controller
 
         $order = \App\Models\ShopOrder::where('order_number', $orderNumber)->first();
         if (!$order) {
-            \Log::warning('Dolyame webhook: Order not found', ['order_number' => $orderNumber]);
-            return response('Order not found', 404);
+            $testCacheKey = 'dolyame:test:'.$orderNumber;
+            $testData = \Illuminate\Support\Facades\Cache::get($testCacheKey);
+            if (! $testData) {
+                \Log::warning('Dolyame webhook: Order not found', ['order_number' => $orderNumber]);
+                return response('Order not found', 404);
+            }
+
+            $paymentMethod = \App\Models\ShopPaymentMethod::find($testData['payment_method_id'] ?? null)
+                ?: \App\Models\ShopPaymentMethod::where('type', 'tbank_dolyame')->where('is_active', true)->first();
+            $settings = $this->normalizePaymentSettings($paymentMethod ? $paymentMethod->settings : []);
+            $partnerSettings = [
+                'api_url' => $settings['api_url'] ?? config('services.dolyame.api_url'),
+                'dolyame_login' => $settings['dolyame_login1'] ?? $settings['dolyame_login'] ?? '',
+                'dolyame_password' => $settings['dolyame_password1'] ?? $settings['dolyame_password'] ?? '',
+                'verify_ssl' => $settings['verify_ssl'] ?? config('services.dolyame.verify_ssl', true),
+                'ca_bundle_path' => $settings['ca_bundle_path'] ?? config('services.dolyame.ca_bundle_path'),
+                'cert_path' => $settings['dolyame_cert_path'] ?? null,
+                'key_path' => $settings['dolyame_cert_key_path'] ?? null,
+                'key_password' => $settings['dolyame_cert_key_password'] ?? null,
+            ];
+
+            $service = new \App\Services\DolyamePartnerService($partnerSettings);
+            $infoResponse = $service->getOrderInfo($orderNumber);
+            $actualStatus = $infoResponse['response']['status'] ?? null;
+            $commitResponse = null;
+
+            if (! empty($infoResponse['success']) && $actualStatus === 'wait_for_commit') {
+                $commitResponse = $service->commitOrder(
+                    $orderNumber,
+                    (float) ($testData['amount'] ?? 0),
+                    is_array($testData['items'] ?? null) ? $testData['items'] : []
+                );
+            }
+
+            $testData = array_merge($testData, [
+                'webhook_received' => true,
+                'webhook_received_at' => now()->toDateTimeString(),
+                'webhook_status' => $actualStatus,
+                'webhook_payload' => $webhookData,
+                'webhook_info_response' => $infoResponse['response'] ?? $infoResponse,
+                'commit_response' => $commitResponse['response'] ?? $commitResponse,
+            ]);
+            \Illuminate\Support\Facades\Cache::put($testCacheKey, $testData, now()->addDays(7));
+
+            \Log::info('Dolyame test webhook processed without local order', [
+                'order_number' => $orderNumber,
+                'status' => $actualStatus,
+                'commit_success' => $commitResponse ? ! empty($commitResponse['success']) : null,
+            ]);
+
+            return response('Test webhook processed', 200);
         }
 
         $paymentMethod = $order->paymentMethod;
@@ -3338,12 +3387,36 @@ class ShopPaymentController extends Controller
             ?? ($yandexOrder['metadata'] ?? null)
             ?? ($object['metadata'] ?? null);
         $metadata = is_string($metadataRaw) ? json_decode($metadataRaw, true) : $metadataRaw;
+        $metadata = is_array($metadata) ? $metadata : [];
+        $webhookOrderId = $yandexOrder['orderId'] ?? ($object['metadata']['order_number'] ?? null) ?? ($object['id'] ?? null);
 
         // Обработка тестового вебхука для диагностики
-        if (isset($metadata['is_test']) && $metadata['is_test'] && isset($metadata['test_id'])) {
+        $testId = null;
+        if (! empty($metadata['is_test']) && ! empty($metadata['test_id'])) {
             $testId = $metadata['test_id'];
-            Cache::put("yandex_pay_test_webhook:{$testId}", $request->all(), 600);
-            Log::info("Yandex Pay Test Webhook recorded for test_id: {$testId}");
+        } elseif ($webhookOrderId) {
+            $testOrder = Cache::get("yandex_pay_test_order:{$webhookOrderId}");
+            $testId = $testOrder['test_id'] ?? null;
+        }
+
+        if ($testId) {
+            Cache::put("yandex_pay_test_webhook:{$testId}", [
+                'received_at' => now()->toDateTimeString(),
+                'method' => $request->method(),
+                'url' => $request->fullUrl(),
+                'headers' => $request->headers->all(),
+                'payload' => $request->all(),
+                'metadata' => $metadata,
+                'order_id' => $webhookOrderId,
+                'event' => $event,
+                'event_type' => $eventType,
+                'payment_status' => $yandexOrder['paymentStatus'] ?? ($object['status'] ?? null),
+            ], now()->addHours(2));
+            Log::info("Yandex Pay Test Webhook recorded for test_id: {$testId}", [
+                'order_id' => $webhookOrderId,
+                'event' => $event,
+                'event_type' => $eventType,
+            ]);
             return response()->json(['status' => 'ok']);
         }
 

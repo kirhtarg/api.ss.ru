@@ -11,6 +11,12 @@ class ShopDellinSettings extends Model
 
     protected $fillable = [
         'appkey',
+        'auth_type',
+        'pat',
+        'login',
+        'password',
+        'session_id',
+        'session_expires_at',
         'sender_company',
         'sender_name',
         'sender_phone',
@@ -26,6 +32,7 @@ class ShopDellinSettings extends Model
         'default_length',
         'default_width',
         'default_height',
+        'cash_on_delivery_enabled',
         'is_active',
     ];
 
@@ -34,7 +41,9 @@ class ShopDellinSettings extends Model
         'default_length' => 'decimal:2',
         'default_width' => 'decimal:2',
         'default_height' => 'decimal:2',
+        'cash_on_delivery_enabled' => 'boolean',
         'is_active' => 'boolean',
+        'session_expires_at' => 'datetime',
     ];
 
     /**

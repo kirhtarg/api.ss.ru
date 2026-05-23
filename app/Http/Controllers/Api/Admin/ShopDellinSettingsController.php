@@ -85,6 +85,10 @@ class ShopDellinSettingsController extends Controller
 
         $validator = Validator::make($request->all(), [
             'appkey' => 'required|string|max:255',
+            'auth_type' => 'nullable|string|in:appkey,pat,login_password',
+            'pat' => 'nullable|string|max:255',
+            'login' => 'nullable|string|max:255',
+            'password' => 'nullable|string|max:255',
             'sender_company' => 'nullable|string|max:255',
             'sender_name' => 'nullable|string|max:255',
             'sender_phone' => 'nullable|string|max:255',
@@ -100,6 +104,7 @@ class ShopDellinSettingsController extends Controller
             'default_length' => 'nullable|numeric|min:1|max:1000',
             'default_width' => 'nullable|numeric|min:1|max:1000',
             'default_height' => 'nullable|numeric|min:1|max:1000',
+            'cash_on_delivery_enabled' => 'boolean',
             'is_active' => 'boolean',
         ]);
 
@@ -140,6 +145,10 @@ class ShopDellinSettingsController extends Controller
 
         $validator = Validator::make($request->all(), [
             'appkey' => 'sometimes|string|max:255',
+            'auth_type' => 'nullable|string|in:appkey,pat,login_password',
+            'pat' => 'nullable|string|max:255',
+            'login' => 'nullable|string|max:255',
+            'password' => 'nullable|string|max:255',
             'sender_company' => 'nullable|string|max:255',
             'sender_name' => 'nullable|string|max:255',
             'sender_phone' => 'nullable|string|max:255',
@@ -155,6 +164,7 @@ class ShopDellinSettingsController extends Controller
             'default_length' => 'nullable|numeric|min:1|max:1000',
             'default_width' => 'nullable|numeric|min:1|max:1000',
             'default_height' => 'nullable|numeric|min:1|max:1000',
+            'cash_on_delivery_enabled' => 'boolean',
             'is_active' => 'boolean',
         ]);
 
@@ -232,6 +242,10 @@ class ShopDellinSettingsController extends Controller
 
         $validator = Validator::make($request->all(), [
             'appkey' => 'required|string',
+            'auth_type' => 'nullable|string|in:appkey,pat,login_password',
+            'pat' => 'nullable|string',
+            'login' => 'nullable|string',
+            'password' => 'nullable|string',
         ]);
 
         if ($validator->fails()) {
@@ -242,7 +256,13 @@ class ShopDellinSettingsController extends Controller
             ], 422);
         }
 
-        $validation = $this->validateDellinKey($request->appkey);
+        $validation = $this->validateDellinKey(
+            $request->appkey,
+            $request->get('auth_type', 'appkey'),
+            $request->get('pat'),
+            $request->get('login'),
+            $request->get('password')
+        );
 
         return response()->json([
             'success' => $validation['valid'],
@@ -250,6 +270,9 @@ class ShopDellinSettingsController extends Controller
             'data' => [
                 'valid' => $validation['valid'],
                 'error' => $validation['error'] ?? null,
+                'session_id' => $validation['session_id'] ?? null,
+                'session_expires_at' => ! empty($validation['session_id']) ? now()->addDays(30)->toDateTimeString() : null,
+                'raw' => $validation['raw'] ?? null,
             ],
         ]);
     }
@@ -257,31 +280,107 @@ class ShopDellinSettingsController extends Controller
     /**
      * Проверить валидность API ключа Деловых линий
      */
-    private function validateDellinKey($appkey)
+    private function validateDellinKey($appkey, string $authType = 'appkey', ?string $pat = null, ?string $login = null, ?string $password = null)
     {
         try {
-            // API Деловых линий: проверяем ключ через простой запрос к API
-            // Используем метод получения городов для проверки валидности ключа
-            $response = Http::withOptions([
-                'verify' => true,
-                'timeout' => 30,
-            ])->post('https://api.dellin.ru/v1/public/request', [
-                'appkey' => $appkey,
-                'method' => 'getCities',
-                'params' => [
-                    'q' => 'Москва',
-                ],
-            ]);
+            $sessionId = null;
 
-            // Если запрос успешен, ключ валиден
-            if ($response->successful()) {
-                $data = $response->json();
-                // Проверяем, что ответ содержит данные (не ошибку)
-                if (isset($data['data']) || (isset($data['success']) && $data['success'])) {
+            if ($authType === 'pat' && $pat) {
+                $authResponse = Http::withOptions([
+                    'verify' => $this->getDellinVerifyOption(),
+                    'timeout' => 30,
+                ])->post('https://api.dellin.ru/v4/auth/login.json', [
+                    'appkey' => $appkey,
+                    'pat' => $pat,
+                ]);
+
+                $authData = $authResponse->json();
+                $sessionId = $authData['data']['sessionID'] ?? null;
+                if (! $authResponse->successful() || ! $sessionId) {
                     return [
-                        'valid' => true,
+                        'valid' => false,
+                        'error' => $this->extractDellinError($authData, 'Не удалось авторизоваться по PAT-токену'),
+                        'raw' => $authData,
                     ];
                 }
+            }
+
+            if ($authType === 'login_password' && $login && $password) {
+                $authResponse = Http::withOptions([
+                    'verify' => $this->getDellinVerifyOption(),
+                    'timeout' => 30,
+                ])->post('https://api.dellin.ru/v3/auth/login.json', [
+                    'appkey' => $appkey,
+                    'login' => $login,
+                    'password' => $password,
+                ]);
+
+                $authData = $authResponse->json();
+                $sessionId = $authData['data']['sessionID'] ?? null;
+                if (! $authResponse->successful() || ! $sessionId) {
+                    return [
+                        'valid' => false,
+                        'error' => $this->extractDellinError($authData, 'Не удалось авторизоваться по логину и паролю'),
+                        'raw' => $authData,
+                    ];
+                }
+            }
+
+            $payload = [
+                'appkey' => $appkey,
+                'delivery' => [
+                    'deliveryType' => ['type' => 'auto'],
+                    'derival' => [
+                        'produceDate' => $this->getNextDellinProduceDate(),
+                        'variant' => 'terminal',
+                        'terminalID' => '314',
+                    ],
+                    'arrival' => [
+                        'variant' => 'terminal',
+                        'terminalID' => '264',
+                    ],
+                ],
+                'cargo' => [
+                    'quantity' => 1,
+                    'length' => 0.6,
+                    'width' => 0.3,
+                    'height' => 0.39,
+                    'weight' => 8.5,
+                    'totalVolume' => 0.1,
+                    'totalWeight' => 8.5,
+                    'hazardClass' => 0,
+                    'insurance' => [
+                        'statedValue' => 5000,
+                        'term' => true,
+                    ],
+                ],
+            ];
+
+            if ($sessionId) {
+                $payload['sessionID'] = $sessionId;
+            }
+
+            $response = Http::withOptions([
+                'verify' => $this->getDellinVerifyOption(),
+                'timeout' => 30,
+            ])->post('https://api.dellin.ru/v2/calculator.json', $payload);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                $metadataStatus = (int) ($data['metadata']['status'] ?? 0);
+                if ($metadataStatus === 200 || isset($data['data'])) {
+                    return [
+                        'valid' => true,
+                        'session_id' => $sessionId,
+                        'raw' => $data,
+                    ];
+                }
+
+                return [
+                    'valid' => false,
+                    'error' => $this->extractDellinError($data, 'Ошибка проверки ключа'),
+                    'raw' => $data,
+                ];
             }
 
             // Если ошибка авторизации, ключ невалиден
@@ -294,11 +393,12 @@ class ShopDellinSettingsController extends Controller
 
             // Другие ошибки
             $errorData = $response->json();
-            $errorMessage = $errorData['errors'][0]['message'] ?? $errorData['message'] ?? 'Ошибка проверки ключа';
+            $errorMessage = $this->extractDellinError($errorData, 'Ошибка проверки ключа');
 
             return [
                 'valid' => false,
                 'error' => $errorMessage,
+                'raw' => $errorData,
             ];
         } catch (\Exception $e) {
             // Если API недоступен или произошла ошибка, проверяем формат ключа
@@ -310,12 +410,44 @@ class ShopDellinSettingsController extends Controller
                 ];
             }
 
-            // Если формат ключа выглядит корректным, но API недоступен,
-            // разрешаем ключ (в реальной реализации нужно использовать правильный endpoint)
             return [
-                'valid' => true,
-                'error' => null,
+                'valid' => false,
+                'error' => 'Не удалось проверить ключ через API Деловых линий: '.$e->getMessage(),
             ];
         }
+    }
+
+    private function extractDellinError($data, string $fallback): string
+    {
+        if (! is_array($data)) {
+            return $fallback;
+        }
+
+        return $data['errors'][0]['detail']
+            ?? $data['errors'][0]['message']
+            ?? $data['error']['message']
+            ?? $data['message']
+            ?? $fallback;
+    }
+
+    private function getDellinVerifyOption()
+    {
+        $caBundle = config('services.dellin.ca_bundle_path');
+        if ($caBundle && file_exists($caBundle)) {
+            return $caBundle;
+        }
+
+        return filter_var(config('services.dellin.verify_ssl', true), FILTER_VALIDATE_BOOLEAN);
+    }
+
+    private function getNextDellinProduceDate(): string
+    {
+        $date = now()->addDays(3);
+
+        while ($date->isWeekend()) {
+            $date->addDay();
+        }
+
+        return $date->format('Y-m-d');
     }
 }

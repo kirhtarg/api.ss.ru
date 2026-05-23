@@ -617,6 +617,7 @@ class YandexPayController extends Controller
             $orderNumber = 'TEST-'.date('Ymd').'-'.strtoupper(Str::random(6));
             $currency = $settings['currency'] ?? 'RUB';
             $amountString = number_format($request->amount, 2, '.', '');
+            $callbackUrl = url('/api/webhooks/yandex-pay');
 
             $orderData = [
                 'orderId' => $orderNumber,
@@ -651,6 +652,7 @@ class YandexPayController extends Controller
                     'onSuccess' => config('app.frontend_url', 'http://localhost:3000').'/checkout?payment=test_success',
                     'onError' => config('app.frontend_url', 'http://localhost:3000').'/checkout?payment=test_error',
                 ],
+                'callbackUrl' => $callbackUrl,
                 'metadata' => json_encode([
                     'is_test' => true,
                     'test_id' => $testId,
@@ -674,11 +676,22 @@ class YandexPayController extends Controller
             ])->post($apiUrl.'/orders', $orderData);
 
             $responseData = $response->json();
+            Cache::put("yandex_pay_test_order:{$orderNumber}", [
+                'test_id' => $testId,
+                'order_number' => $orderNumber,
+                'payment_method_id' => $request->payment_method_id,
+                'amount' => $amountString,
+                'callback_url' => $callbackUrl,
+                'created_at' => now()->toDateTimeString(),
+                'request_payload' => $orderData,
+                'server_response' => $responseData,
+            ], now()->addHours(2));
 
             return response()->json([
                 'success' => true,
                 'test_id' => $testId,
                 'api_url' => $apiUrl.'/orders',
+                'callback_url' => $callbackUrl,
                 'request_payload' => $orderData,
                 'server_response' => $responseData,
                 'mode' => $settings['mode'] ?? 'test',
@@ -715,9 +728,13 @@ class YandexPayController extends Controller
             ]);
         }
 
+        $testOrder = Cache::get("yandex_pay_test_order:{$testId}");
+
         return response()->json([
             'success' => true,
             'received' => false,
+            'test_order' => $testOrder,
         ]);
     }
+
 }

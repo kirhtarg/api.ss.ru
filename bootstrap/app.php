@@ -65,6 +65,43 @@ return Application::configure(basePath: dirname(__DIR__))
             // Резервный вариант, если БД недоступна
             $schedule->command('shop:generate-yml')->dailyAt('03:00');
         }
+
+        try {
+            $backupSettings = \Illuminate\Support\Facades\DB::table('settings')
+                ->whereIn('key', [
+                    'database_backup_enabled',
+                    'database_backup_frequency',
+                    'database_backup_time',
+                    'database_backup_weekday',
+                ])
+                ->pluck('value', 'key')
+                ->toArray();
+
+            if (($backupSettings['database_backup_enabled'] ?? '0') === '1') {
+                $frequency = $backupSettings['database_backup_frequency'] ?? 'daily';
+                $time = $backupSettings['database_backup_time'] ?? '03:30';
+                $weekday = (int) ($backupSettings['database_backup_weekday'] ?? 1);
+                $event = $schedule->command('database:backup --scheduled')->withoutOverlapping();
+
+                switch ($frequency) {
+                    case 'hourly':
+                        $event->hourly();
+                        break;
+                    case 'weekly':
+                        $event->weeklyOn($weekday, $time);
+                        break;
+                    case 'monthly':
+                        $event->monthlyOn(1, $time);
+                        break;
+                    case 'daily':
+                    default:
+                        $event->dailyAt($time);
+                        break;
+                }
+            }
+        } catch (\Exception $e) {
+            // Если БД недоступна, плановый бэкап не регистрируем.
+        }
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (\Throwable $e, $request) {

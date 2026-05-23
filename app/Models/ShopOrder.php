@@ -156,6 +156,24 @@ class ShopOrder extends Model
             $variationId = $item['variation_id'] ?? null;
 
             $goodInfo = $this->getGoodInfo($goodId);
+            $itemTags = $item['tags'] ?? [];
+            if (empty($itemTags) && $goodId) {
+                try {
+                    $itemTags = DB::table('shop_tags')
+                        ->join('shop_good_tags', 'shop_good_tags.shop_tag_id', '=', 'shop_tags.id')
+                        ->where('shop_good_tags.shop_good_id', (int) $goodId)
+                        ->select('shop_tags.id', 'shop_tags.name', 'shop_tags.slug', 'shop_tags.color', 'shop_tags.disables_bonuses', 'shop_tags.disables_registered_discount', 'shop_tags.extra_discount_percent')
+                        ->get()
+                        ->map(fn ($tag) => (array) $tag)
+                        ->toArray();
+                } catch (\Exception $e) {
+                    $itemTags = [];
+                }
+            }
+            $tagDiscount = collect($itemTags)
+                ->filter(fn ($tag) => (float) ($tag['extra_discount_percent'] ?? 0) > 0)
+                ->sortByDesc(fn ($tag) => (float) ($tag['extra_discount_percent'] ?? 0))
+                ->first();
             
             // Если variation_name или variation_sku отсутствуют, пробуем достать из БД
             $variationName = $item['variation_name'] ?? null;
@@ -271,6 +289,9 @@ class ShopOrder extends Model
                 'final_price' => $finalPrice,
                 'unit_price' => $finalPrice,
                 'discount_amount' => $isCertificateOrder ? 0 : ($item['discount_amount'] ?? 0),
+                'tag_discount_percent' => (float) ($item['tag_discount_percent'] ?? ($tagDiscount['extra_discount_percent'] ?? 0)),
+                'tag_discount_name' => $item['tag_discount_name'] ?? ($tagDiscount['name'] ?? null),
+                'tags' => $itemTags,
                 'bonus_points' => $item['bonus_points'] ?? 0,
                 'total' => $total,
                 'weight' => isset($item['weight']) ? $item['weight'] : ($weight !== null ? (float) $weight : null),

@@ -561,7 +561,7 @@ class CartController extends Controller
                 $cartItem->delete();
             } else {
                 // Проверяем остатки перед обновлением количества
-                $good = ShopGood::find($goodId);
+                $good = ShopGood::with('tags')->find($goodId);
                 if (! $good) {
                     return response()->json([
                         'success' => false,
@@ -1001,17 +1001,24 @@ class CartController extends Controller
                     }
                 }
 
-                // Определяем финальную цену (копируем логику из formatCartData)
+                $tagDiscount = $this->getGoodTagDiscount($good);
+                $tagDiscountPercent = $tagDiscount['percent'];
+
+                // Если у тега есть скидка, она считается от базовой цены и игнорирует акцию/демпинг.
                 $finalPrice = $dbPrice;
                 $showDemping = ($dbShowDemping == 1 || $dbShowDemping === true || $dbShowDemping === '1');
 
-                if ($showDemping && $dbDempingPrice && $dbDempingPrice > 0) {
+                if ($tagDiscountPercent > 0) {
+                    $finalPrice = $this->applyTagExtraDiscount($dbPrice, $tagDiscountPercent);
+                    $showDemping = false;
+                } elseif ($showDemping && $dbDempingPrice && $dbDempingPrice > 0) {
                     $finalPrice = $dbDempingPrice;
                 } elseif ($dbSalePrice && $dbSalePrice > 0 && $dbSalePrice < $dbPrice) {
                     $finalPrice = $dbSalePrice;
                 }
 
                 $itemTotal = $finalPrice * $quantity;
+                $discountAmount = max(0, ($dbPrice - $finalPrice) * $quantity);
 
                 // Гарантированно получаем и сохраняем параметры вариации
                 $variationName = null;
@@ -1037,6 +1044,20 @@ class CartController extends Controller
                     'final_price' => $finalPrice,
                     'show_demping' => $showDemping,
                     'total' => $itemTotal,
+                    'discount_amount' => $discountAmount,
+                    'tag_discount_percent' => $tagDiscountPercent,
+                    'tag_discount_name' => $tagDiscount['name'],
+                    'tags' => $good->tags ? $good->tags->map(function ($tag) {
+                        return [
+                            'id' => $tag->id,
+                            'name' => $tag->name,
+                            'slug' => $tag->slug,
+                            'color' => $tag->color,
+                            'disables_bonuses' => (bool) $tag->disables_bonuses,
+                            'disables_registered_discount' => (bool) $tag->disables_registered_discount,
+                            'extra_discount_percent' => (float) $tag->extra_discount_percent,
+                        ];
+                    })->values()->toArray() : [],
                 ]);
 
                 $finalItems[] = $newItem;
@@ -1114,6 +1135,10 @@ class CartController extends Controller
                     'cdek_pvz_code' => $request->get('cdek_pvz_code'),
                     'cdek_delivery_address' => $request->get('cdek_delivery_address'),
                     'cdek_packages' => $request->get('cdek_packages'),
+                    'dellin_tariff_code' => $request->get('dellin_tariff_code'),
+                    'dellin_delivery_type' => $request->get('dellin_delivery_type'),
+                    'dellin_terminal_id' => $request->get('dellin_terminal_id'),
+                    'dellin_delivery_address' => $request->get('dellin_delivery_address'),
                 ],
             ];
 
@@ -1346,6 +1371,30 @@ class CartController extends Controller
         return $sessionId;
     }
 
+    private function getGoodTagDiscount(ShopGood $good): array
+    {
+        $tags = $good->relationLoaded('tags') ? $good->tags : $good->tags()->get();
+        $discountTag = $tags
+            ->filter(fn ($tag) => (float) ($tag->extra_discount_percent ?? 0) > 0)
+            ->sortByDesc(fn ($tag) => (float) ($tag->extra_discount_percent ?? 0))
+            ->first();
+
+        return [
+            'percent' => $discountTag ? min(max((float) $discountTag->extra_discount_percent, 0), 100) : 0,
+            'name' => $discountTag ? $discountTag->name : null,
+        ];
+    }
+
+    private function applyTagExtraDiscount(float $basePrice, float $percent): float
+    {
+        if ($basePrice <= 0 || $percent <= 0) {
+            return $basePrice;
+        }
+
+        $discount = $basePrice * (min(max($percent, 0), 100) / 100);
+        return max(\App\Helpers\PriceHelper::roundPrice($basePrice - $discount), 0.01);
+    }
+
     /**
      * Получить элементы корзины
      */
@@ -1354,7 +1403,7 @@ class CartController extends Controller
         $query = ShopCartItem::active()->with([
             'good' => function ($query) {
                 $query->select('id', 'name', 'slug', 'sku', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity', 'demping_price', 'show_demping', 'price', 'sale_price', 'is_preorder')
-                    ->with('tags:id,name,slug,color');
+                    ->with('tags:id,name,slug,color,disables_bonuses,disables_registered_discount,extra_discount_percent');
             },
             'variation' => function ($query) {
                 $query->select('id', 'good_id', 'name', 'sku', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity', 'demping_price', 'show_demping', 'price', 'sale_price');

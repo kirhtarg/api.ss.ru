@@ -33,7 +33,7 @@ class ShopTagsController extends Controller
         $sortBy = $request->get('sort_by', 'sort_order');
         $sortDirection = $request->get('sort_direction', 'asc');
 
-        if (in_array($sortBy, ['name', 'created_at', 'sort_order'])) {
+        if (in_array($sortBy, ['name', 'created_at', 'sort_order', 'extra_discount_percent'])) {
             $query->orderBy($sortBy, $sortDirection);
         }
 
@@ -75,6 +75,9 @@ class ShopTagsController extends Controller
             'slug' => 'nullable|string|max:255|unique:shop_tags,slug',
             'is_active' => 'boolean',
             'sort_order' => 'integer',
+            'disables_bonuses' => 'boolean',
+            'disables_registered_discount' => 'boolean',
+            'extra_discount_percent' => 'nullable|numeric|min:0|max:100',
         ]);
 
         if ($validator->fails()) {
@@ -107,6 +110,9 @@ class ShopTagsController extends Controller
             'slug' => ['nullable', 'string', 'max:255', Rule::unique('shop_tags', 'slug')->ignore($id)],
             'is_active' => 'boolean',
             'sort_order' => 'integer',
+            'disables_bonuses' => 'boolean',
+            'disables_registered_discount' => 'boolean',
+            'extra_discount_percent' => 'nullable|numeric|min:0|max:100',
         ]);
 
         if ($validator->fails()) {
@@ -145,7 +151,15 @@ class ShopTagsController extends Controller
      */
     public function active(): JsonResponse
     {
-        $tags = ShopTag::active()->ordered()->get(['id', 'name', 'color']);
+        $tags = ShopTag::active()->ordered()->get([
+            'id',
+            'name',
+            'color',
+            'slug',
+            'disables_bonuses',
+            'disables_registered_discount',
+            'extra_discount_percent',
+        ]);
 
         return response()->json([
             'success' => true,

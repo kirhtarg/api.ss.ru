@@ -3,7 +3,12 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\ShopOrder;
+use App\Models\ShopOrderStatus;
 use App\Models\ShopPaymentMethod;
+use App\Models\ShopPaymentStatus;
+use App\Models\ShopPaymentTransaction;
+use App\Services\DolyamePartnerService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -381,5 +386,294 @@ class ShopPaymentController extends Controller
                 'error' => $e->getMessage(),
             ], 500);
         }
+    }
+
+    public function createDolyameTestOrder(Request $request, int $id): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'scenario' => 'required|string|in:success_one,success_two,reject',
+            'settings' => 'nullable|array',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        try {
+            $paymentMethod = ShopPaymentMethod::findOrFail($id);
+            if ($paymentMethod->type !== 'tbank_dolyame') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Тестовые заказы Долями доступны только для способа оплаты "Долями"',
+                ], 422);
+            }
+
+            $scenario = $request->string('scenario')->toString();
+            $items = $this->buildDolyameTestItems($scenario);
+            $amount = round(array_reduce($items, fn ($sum, $item) => $sum + $item['price'] * $item['quantity'], 0), 2);
+            $orderNumber = $this->generateDolyameTestOrderNumber();
+
+            $settings = $this->normalizeDolyamePartnerSettings(array_replace(
+                $this->normalizePaymentSettings($paymentMethod->settings),
+                $request->get('settings', [])
+            ));
+
+            $demoFlow = $scenario === 'reject' ? 'reject' : null;
+            $service = new DolyamePartnerService($settings);
+            $response = $service->createOrder(
+                $orderNumber,
+                $amount,
+                $items,
+                url('/api/webhooks/dolyame'),
+                url('/api/public/shop/payment/return?payment_type=tbank_dolyame&status=success&order_number='.urlencode($orderNumber)),
+                url('/api/public/shop/payment/return?payment_type=tbank_dolyame&status=fail&order_number='.urlencode($orderNumber)),
+                $demoFlow
+            );
+
+            if (empty($response['success'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $response['message'] ?? 'Ошибка создания тестового заказа Долями',
+                    'order_id' => null,
+                    'order_number' => $orderNumber,
+                    'response' => $response,
+                ], 422);
+            }
+
+            \Illuminate\Support\Facades\Cache::put('dolyame:test:'.$orderNumber, [
+                'order_number' => $orderNumber,
+                'payment_method_id' => $paymentMethod->id,
+                'scenario' => $scenario,
+                'scenario_title' => $this->getDolyameScenarioTitle($scenario),
+                'amount' => $amount,
+                'items' => $items,
+                'payment_url' => $response['payment_url'] ?? $response['link'] ?? null,
+                'created_at' => now()->toDateTimeString(),
+                'webhook_received' => false,
+                'webhook_received_at' => null,
+                'webhook_status' => null,
+                'webhook_payload' => null,
+                'commit_response' => null,
+            ], now()->addDays(7));
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Тестовая заявка Долями создана без заказа в системе',
+                'data' => [
+                    'order_id' => null,
+                    'order_number' => $orderNumber,
+                    'scenario' => $scenario,
+                    'scenario_title' => $this->getDolyameScenarioTitle($scenario),
+                    'amount' => $amount,
+                    'items' => $items,
+                    'payment_url' => $response['payment_url'] ?? $response['link'] ?? null,
+                    'response' => $response['response'] ?? null,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка создания тестового заказа Долями',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function getDolyameTestOrderStatus(Request $request, int $id, string $orderNumber): JsonResponse
+    {
+        try {
+            $paymentMethod = ShopPaymentMethod::findOrFail($id);
+            $settings = $this->normalizeDolyamePartnerSettings(array_replace(
+                $this->normalizePaymentSettings($paymentMethod->settings),
+                $request->get('settings', [])
+            ));
+            $response = (new DolyamePartnerService($settings))->getOrderInfo($orderNumber);
+            $order = ShopOrder::where('order_number', $orderNumber)->first();
+            $testData = \Illuminate\Support\Facades\Cache::get('dolyame:test:'.$orderNumber);
+
+            return response()->json([
+                'success' => ! empty($response['success']),
+                'data' => [
+                    'order_id' => $order?->id,
+                    'order_number' => $orderNumber,
+                    'local_payed' => (bool) ($order?->payed),
+                    'local_payment_status' => $order?->paymentStatus?->name,
+                    'provider_status' => $response['response']['status'] ?? null,
+                    'webhook_received' => (bool) ($testData['webhook_received'] ?? false),
+                    'webhook_received_at' => $testData['webhook_received_at'] ?? null,
+                    'webhook_status' => $testData['webhook_status'] ?? null,
+                    'webhook_payload' => $testData['webhook_payload'] ?? null,
+                    'webhook_info_response' => $testData['webhook_info_response'] ?? null,
+                    'commit_response' => $testData['commit_response'] ?? null,
+                    'response' => $response['response'] ?? $response,
+                ],
+            ], ! empty($response['success']) ? 200 : 422);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка проверки статуса тестового заказа Долями',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function refundDolyameTestOrder(Request $request, int $id): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'order_number' => 'required|string',
+            'refund_type' => 'required|string|in:full,partial',
+            'settings' => 'nullable|array',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        try {
+            $paymentMethod = ShopPaymentMethod::findOrFail($id);
+            $order = ShopOrder::where('order_number', $request->get('order_number'))->first();
+            $items = $request->get('items', []);
+            if (! is_array($items) || empty($items)) {
+                $items = is_array($order?->items) ? $order->items : [];
+            }
+
+            if ($request->get('refund_type') === 'partial') {
+                $firstItem = $items[0] ?? null;
+                if (! $firstItem) {
+                    return response()->json(['success' => false, 'message' => 'В заказе нет позиций для частичного возврата'], 422);
+                }
+                $items = [[
+                    'name' => $firstItem['name'] ?? $firstItem['good_name'] ?? 'Товар',
+                    'quantity' => 1,
+                    'price' => (float) ($firstItem['price'] ?? $firstItem['final_price'] ?? 0),
+                ]];
+            }
+
+            $items = array_values(array_filter(array_map(function ($item) {
+                return [
+                    'name' => $item['name'] ?? $item['good_name'] ?? 'Товар',
+                    'quantity' => (float) ($item['quantity'] ?? 1),
+                    'price' => (float) ($item['price'] ?? $item['final_price'] ?? 0),
+                ];
+            }, $items), fn ($item) => $item['price'] > 0 && $item['quantity'] > 0));
+
+            $amount = round(array_reduce($items, fn ($sum, $item) => $sum + $item['price'] * $item['quantity'], 0), 2);
+            $settings = $this->normalizeDolyamePartnerSettings(array_replace(
+                $this->normalizePaymentSettings($paymentMethod->settings),
+                $request->get('settings', [])
+            ));
+            $orderNumber = $request->get('order_number');
+            $response = (new DolyamePartnerService($settings))->refundOrder($orderNumber, $amount, $items);
+
+            if ($order) {
+                ShopPaymentTransaction::create([
+                    'order_id' => $order->id,
+                    'payment_method_id' => $paymentMethod->id,
+                    'status' => empty($response['success'])
+                        ? 'failed'
+                        : ($request->get('refund_type') === 'full' ? 'refunded' : 'partial_refunded'),
+                    'amount' => $amount,
+                    'transaction_id' => $orderNumber.'-refund-'.now()->format('His'),
+                    'request_data' => [
+                        'refund_type' => $request->get('refund_type'),
+                        'items' => $items,
+                    ],
+                    'response_data' => $response['response'] ?? $response,
+                    'error_message' => empty($response['success']) ? ($response['message'] ?? 'Ошибка возврата Долями') : null,
+                ]);
+            }
+
+            if ($order && ! empty($response['success']) && $request->get('refund_type') === 'full') {
+                $refundedStatusId = ShopPaymentStatus::where('name', 'refunded')->value('id')
+                    ?? ShopPaymentStatus::where('name', 'canceled')->value('id');
+                if ($refundedStatusId) {
+                    $order->update(['payment_status_id' => $refundedStatusId]);
+                }
+            }
+
+            return response()->json([
+                'success' => ! empty($response['success']),
+                'message' => ! empty($response['success']) ? 'Возврат отправлен в Долями' : ($response['message'] ?? 'Ошибка возврата Долями'),
+                'data' => [
+                    'order_id' => $order?->id,
+                    'order_number' => $orderNumber,
+                    'refund_type' => $request->get('refund_type'),
+                    'amount' => $amount,
+                    'items' => $items,
+                    'response' => $response['response'] ?? $response,
+                ],
+            ], ! empty($response['success']) ? 200 : 422);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка возврата тестового заказа Долями',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    protected function normalizePaymentSettings($settings): array
+    {
+        if (is_array($settings)) {
+            return $settings;
+        }
+        if (is_string($settings) && $settings !== '') {
+            $decoded = json_decode($settings, true);
+
+            return is_array($decoded) ? $decoded : [];
+        }
+
+        return [];
+    }
+
+    protected function normalizeDolyamePartnerSettings(array $settings): array
+    {
+        $settings['dolyame_provider'] = 'partner';
+        $settings['api_url'] = $settings['dolyame_api_url'] ?? $settings['api_url'] ?? 'https://partner.dolyame.ru/v1';
+        $settings['dolyame_login'] = $settings['dolyame_login1'] ?? $settings['dolyame_login'] ?? '';
+        $settings['dolyame_password'] = $settings['dolyame_password1'] ?? $settings['dolyame_password'] ?? '';
+
+        return $settings;
+    }
+
+    protected function buildDolyameTestItems(string $scenario): array
+    {
+        if ($scenario === 'success_two') {
+            return [
+                ['name' => 'Dolyame test item 1', 'quantity' => 1, 'price' => 600.0],
+                ['name' => 'Dolyame test item 2', 'quantity' => 1, 'price' => 700.0],
+            ];
+        }
+
+        return [
+            ['name' => $scenario === 'reject' ? 'Dolyame reject test item' : 'Dolyame success test item', 'quantity' => 1, 'price' => 1000.0],
+        ];
+    }
+
+    protected function getDolyameScenarioTitle(string $scenario): string
+    {
+        return match ($scenario) {
+            'success_one' => 'успешная оплата, 1 позиция',
+            'success_two' => 'успешная оплата, 2 позиции',
+            'reject' => 'отказ в услуге',
+            default => $scenario,
+        };
+    }
+
+    protected function generateDolyameTestOrderNumber(): string
+    {
+        do {
+            $orderNumber = 'SST'.now()->format('ymdHis').random_int(100, 999);
+        } while (ShopOrder::where('order_number', $orderNumber)->exists());
+
+        return $orderNumber;
     }
 }

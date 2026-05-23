@@ -477,6 +477,8 @@ class ShopImportExportController extends Controller
             $mode = $request->input('mode', 'open'); // 'open' or 'closed'
             $frontendUrl = config('app.frontend_url', 'https://skateandsnow.ru');
 
+            $trackingCleanParams = 'etext&utm_source&utm_medium&utm_campaign&utm_content&utm_term&yclid&ymclid&gclid&fbclid&from&roistat&openstat';
+
             if ($mode === 'closed') {
                 $content = "User-agent: *\n";
                 $content .= "Disallow: /\n";
@@ -486,6 +488,7 @@ class ShopImportExportController extends Controller
                 $content .= "Disallow: /admin\n";
                 $content .= "Disallow: /cms\n";
                 $content .= "Allow: /\n";
+                $content .= "Clean-param: {$trackingCleanParams} /\n";
                 $content .= 'Sitemap: '.$frontendUrl."/sitemap.xml\n";
             }
 
