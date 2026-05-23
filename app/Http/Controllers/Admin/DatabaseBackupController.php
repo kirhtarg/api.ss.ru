@@ -22,6 +22,7 @@ class DatabaseBackupController extends Controller
                 'backups' => $this->backupService->listBackups(),
                 'schedule' => $this->getScheduleData(),
                 'logs' => $this->backupService->listActionLogs(),
+                'environment' => $this->backupService->environmentStatus(),
             ],
         ]);
     }

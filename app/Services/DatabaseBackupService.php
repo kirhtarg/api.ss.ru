@@ -24,7 +24,7 @@ class DatabaseBackupService
         $backups = [];
 
         foreach ($files as $path) {
-            if (! Str::endsWith($path, '.sql') && ! Str::endsWith($path, '.sqlite')) {
+            if (! Str::endsWith($path, '.sql') && ! Str::endsWith($path, '.sql.gz') && ! Str::endsWith($path, '.sqlite')) {
                 continue;
             }
 
@@ -55,7 +55,11 @@ class DatabaseBackupService
         $this->ensureDirectoryExists();
 
         $config = $this->connectionConfig();
-        $extension = $config['driver'] === 'sqlite' ? 'sqlite' : 'sql';
+        $extension = match ($config['driver']) {
+            'mysql', 'mariadb', 'pgsql' => 'sql.gz',
+            'sqlite' => 'sqlite',
+            default => 'sql',
+        };
         $filename = sprintf(
             'database_%s_%s.%s',
             date('Y_m_d_H_i_s'),
@@ -211,42 +215,92 @@ class DatabaseBackupService
         ];
     }
 
-    private function dumpMysql(string $absolutePath, array $config): void
+    public function environmentStatus(): array
     {
-        $binary = $this->findBinary(env('DB_BACKUP_MYSQLDUMP_PATH'), 'mysqldump', 'DB_BACKUP_MYSQLDUMP_PATH');
-        if (! $binary) {
-            $this->dumpMysqlWithPdo($absolutePath);
+        $config = $this->connectionConfig();
+        $driver = $config['driver'];
+        $dumpBinary = null;
+        $restoreBinary = null;
+        $dumpEnvName = null;
+        $restoreEnvName = null;
 
-            return;
+        if (in_array($driver, ['mysql', 'mariadb'], true)) {
+            $dumpEnvName = 'DB_BACKUP_MYSQLDUMP_PATH';
+            $restoreEnvName = 'DB_BACKUP_MYSQL_PATH';
+            $dumpBinary = $this->findBinary(env($dumpEnvName), 'mysqldump', $dumpEnvName);
+            $restoreBinary = $this->findBinary(env($restoreEnvName), 'mysql', $restoreEnvName);
+        } elseif ($driver === 'pgsql') {
+            $dumpEnvName = 'DB_BACKUP_PG_DUMP_PATH';
+            $restoreEnvName = 'DB_BACKUP_PSQL_PATH';
+            $dumpBinary = $this->findBinary(env($dumpEnvName), 'pg_dump', $dumpEnvName);
+            $restoreBinary = $this->findBinary(env($restoreEnvName), 'psql', $restoreEnvName);
         }
 
-        $command = [
-            $binary,
-            '--single-transaction',
-            '--routines',
-            '--triggers',
-            '--events',
-            '--default-character-set=utf8mb4',
-            '--host='.$config['host'],
-            '--port='.(string) $config['port'],
-            '--user='.$config['username'],
-            '--result-file='.$absolutePath,
-            $config['database'],
+        return [
+            'driver' => $driver,
+            'database' => $config['database'],
+            'backup_directory' => storage_path('app/'.self::DIRECTORY),
+            'backup_format' => in_array($driver, ['mysql', 'mariadb', 'pgsql'], true) ? '.sql.gz' : '.sqlite',
+            'dump_binary' => $dumpBinary,
+            'restore_binary' => $restoreBinary,
+            'dump_binary_found' => (bool) $dumpBinary,
+            'restore_binary_found' => (bool) $restoreBinary,
+            'dump_env_name' => $dumpEnvName,
+            'restore_env_name' => $restoreEnvName,
+            'uses_native_dump' => (bool) $dumpBinary,
+            'fallback_mode' => in_array($driver, ['mysql', 'mariadb'], true) && ! $dumpBinary ? 'php_pdo' : null,
         ];
+    }
 
-        $this->runProcess($command, ['MYSQL_PWD' => (string) $config['password']], 1800);
+    private function dumpMysql(string $absolutePath, array $config): void
+    {
+        $sqlPath = $this->temporarySqlPath($absolutePath);
+        $binary = $this->findBinary(env('DB_BACKUP_MYSQLDUMP_PATH'), 'mysqldump', 'DB_BACKUP_MYSQLDUMP_PATH');
+        try {
+            if (! $binary) {
+                $this->dumpMysqlWithPdo($sqlPath);
+                $this->gzipFile($sqlPath, $absolutePath);
+
+                return;
+            }
+
+            $command = [
+                $binary,
+                '--single-transaction',
+                '--quick',
+                '--routines',
+                '--triggers',
+                '--events',
+                '--hex-blob',
+                '--default-character-set=utf8mb4',
+                '--host='.$config['host'],
+                '--port='.(string) $config['port'],
+                '--user='.$config['username'],
+                '--result-file='.$sqlPath,
+                $config['database'],
+            ];
+
+            $this->runProcess($command, ['MYSQL_PWD' => (string) $config['password']], 1800);
+            $this->gzipFile($sqlPath, $absolutePath);
+        } finally {
+            File::delete($sqlPath);
+        }
     }
 
     private function restoreMysql(string $absolutePath, array $config): void
     {
         $binary = $this->findBinary(env('DB_BACKUP_MYSQL_PATH'), 'mysql', 'DB_BACKUP_MYSQL_PATH');
+        $restorePath = $this->gunzipToTemporarySqlIfNeeded($absolutePath);
         if (! $binary) {
-            $this->restoreSqlWithPdo($absolutePath);
+            $this->restoreSqlWithPdo($restorePath);
+            if ($restorePath !== $absolutePath) {
+                File::delete($restorePath);
+            }
 
             return;
         }
 
-        $safePath = str_replace('\\', '/', $absolutePath);
+        $safePath = str_replace('\\', '/', $restorePath);
         $command = [
             $binary,
             '--default-character-set=utf8mb4',
@@ -257,11 +311,18 @@ class DatabaseBackupService
             '--execute=source '.$safePath,
         ];
 
-        $this->runProcess($command, ['MYSQL_PWD' => (string) $config['password']], 1800);
+        try {
+            $this->runProcess($command, ['MYSQL_PWD' => (string) $config['password']], 1800);
+        } finally {
+            if ($restorePath !== $absolutePath) {
+                File::delete($restorePath);
+            }
+        }
     }
 
     private function dumpPostgres(string $absolutePath, array $config): void
     {
+        $sqlPath = $this->temporarySqlPath($absolutePath);
         $binary = $this->resolveBinary(env('DB_BACKUP_PG_DUMP_PATH'), 'pg_dump', 'DB_BACKUP_PG_DUMP_PATH');
         $command = [
             $binary,
@@ -270,15 +331,21 @@ class DatabaseBackupService
             '--host='.$config['host'],
             '--port='.(string) $config['port'],
             '--username='.$config['username'],
-            '--file='.$absolutePath,
+            '--file='.$sqlPath,
             $config['database'],
         ];
 
-        $this->runProcess($command, ['PGPASSWORD' => (string) $config['password']], 1800);
+        try {
+            $this->runProcess($command, ['PGPASSWORD' => (string) $config['password']], 1800);
+            $this->gzipFile($sqlPath, $absolutePath);
+        } finally {
+            File::delete($sqlPath);
+        }
     }
 
     private function restorePostgres(string $absolutePath, array $config): void
     {
+        $restorePath = $this->gunzipToTemporarySqlIfNeeded($absolutePath);
         $binary = $this->resolveBinary(env('DB_BACKUP_PSQL_PATH'), 'psql', 'DB_BACKUP_PSQL_PATH');
         $command = [
             $binary,
@@ -286,10 +353,16 @@ class DatabaseBackupService
             '--port='.(string) $config['port'],
             '--username='.$config['username'],
             '--dbname='.$config['database'],
-            '--file='.$absolutePath,
+            '--file='.$restorePath,
         ];
 
-        $this->runProcess($command, ['PGPASSWORD' => (string) $config['password']], 1800);
+        try {
+            $this->runProcess($command, ['PGPASSWORD' => (string) $config['password']], 1800);
+        } finally {
+            if ($restorePath !== $absolutePath) {
+                File::delete($restorePath);
+            }
+        }
     }
 
     private function dumpMysqlWithPdo(string $absolutePath): void
@@ -323,7 +396,7 @@ class DatabaseBackupService
                 $rowArray = (array) $row;
                 $batch[] = '('.implode(', ', array_map(fn ($value) => $this->quoteValue($pdo, $value), array_values($rowArray))).')';
 
-                if (count($batch) >= 100) {
+                if (count($batch) >= 1000) {
                     $this->writeInsertBatch($handle, $table, array_keys($rowArray), $batch);
                     $batch = [];
                 }
@@ -493,7 +566,7 @@ class DatabaseBackupService
             return $defaultBinary;
         }
 
-        return null;
+        return $this->findCommonWindowsBinary($defaultBinary);
     }
 
     private function binaryExists(string $binary): bool
@@ -507,6 +580,91 @@ class DatabaseBackupService
         $process->run();
 
         return $process->isSuccessful();
+    }
+
+    private function findCommonWindowsBinary(string $binary): ?string
+    {
+        if (strtoupper(substr(PHP_OS, 0, 3)) !== 'WIN') {
+            return null;
+        }
+
+        $exe = Str::endsWith(Str::lower($binary), '.exe') ? $binary : $binary.'.exe';
+        $candidates = [
+            'C:/Program Files/MySQL/MySQL Server 8.0/bin/'.$exe,
+            'C:/Program Files/MySQL/MySQL Server 8.4/bin/'.$exe,
+            'C:/Program Files/MariaDB 10.11/bin/'.$exe,
+            'C:/Program Files/MariaDB 11.4/bin/'.$exe,
+            'C:/xampp/mysql/bin/'.$exe,
+            'C:/laragon/bin/mysql/mysql-8.0/bin/'.$exe,
+            'C:/OpenServer/modules/database/MySQL-8.0/bin/'.$exe,
+            'C:/OpenServer/modules/database/MariaDB-10.11/bin/'.$exe,
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (File::exists($candidate)) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private function temporarySqlPath(string $absolutePath): string
+    {
+        return preg_replace('/\.gz$/', '', $absolutePath).'.tmp';
+    }
+
+    private function gzipFile(string $sourcePath, string $targetPath): void
+    {
+        $input = fopen($sourcePath, 'rb');
+        $output = gzopen($targetPath, 'wb6');
+
+        if (! $input || ! $output) {
+            if (is_resource($input)) {
+                fclose($input);
+            }
+            if (is_resource($output)) {
+                gzclose($output);
+            }
+            throw new RuntimeException('Не удалось сжать файл бэкапа');
+        }
+
+        while (! feof($input)) {
+            gzwrite($output, fread($input, 1024 * 1024));
+        }
+
+        fclose($input);
+        gzclose($output);
+    }
+
+    private function gunzipToTemporarySqlIfNeeded(string $absolutePath): string
+    {
+        if (! Str::endsWith($absolutePath, '.gz')) {
+            return $absolutePath;
+        }
+
+        $targetPath = $this->temporarySqlPath($absolutePath);
+        $input = gzopen($absolutePath, 'rb');
+        $output = fopen($targetPath, 'wb');
+
+        if (! $input || ! $output) {
+            if (is_resource($input)) {
+                gzclose($input);
+            }
+            if (is_resource($output)) {
+                fclose($output);
+            }
+            throw new RuntimeException('Не удалось распаковать файл бэкапа');
+        }
+
+        while (! gzeof($input)) {
+            fwrite($output, gzread($input, 1024 * 1024));
+        }
+
+        gzclose($input);
+        fclose($output);
+
+        return $targetPath;
     }
 
     private function normalizeProcessText(string $text): string
@@ -597,7 +755,7 @@ class DatabaseBackupService
     {
         $filename = basename($filename);
 
-        if (! preg_match('/^[a-zA-Z0-9_.-]+\.(sql|sqlite)$/', $filename)) {
+        if (! preg_match('/^[a-zA-Z0-9_.-]+\.(sql|sql\.gz|sqlite)$/', $filename)) {
             throw new RuntimeException('Некорректное имя файла бэкапа');
         }
 
