@@ -84,7 +84,8 @@ class YmlFeedService
                 'brands:id,name',
                 'images:id,good_id,file_path,alt_text,is_main,sort_order',
                 'variations' => function ($q) {
-                    $q->select('id', 'good_id')
+                    $q->select('id', 'good_id', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity', 'is_active')
+                        ->where('is_active', true)
                         ->with('images:id,variation_id,file_path,alt_text,is_main,sort_order');
                 },
             ]);
@@ -191,8 +192,9 @@ class YmlFeedService
             return;
         }
 
-        // Определяем доступность
-        $available = ($good->stock_quantity > 0) ? 'true' : 'false';
+        // Определяем доступность и остаток. Для товаров с вариациями остаток хранится в вариациях.
+        $stock = $this->getOfferStockValue($good);
+        $available = ($stock > 0) ? 'true' : 'false';
 
         fwrite($handle, '            <offer id="' . $good->id . '" available="' . $available . '">' . PHP_EOL);
 
@@ -258,9 +260,47 @@ class YmlFeedService
         }
 
         // Добавляем тэг count (остаток)
-        fwrite($handle, '                <count>' . ($good->stock_quantity ?? 0) . '</count>' . PHP_EOL);
+        fwrite($handle, '                <count>' . $stock . '</count>' . PHP_EOL);
 
         fwrite($handle, '            </offer>' . PHP_EOL);
+    }
+
+    private function getOfferStockValue(ShopGood $good): int
+    {
+        if ($good->relationLoaded('variations') && $good->variations->isNotEmpty()) {
+            return $good->variations
+                ->filter(fn ($variation) => $variation->is_active)
+                ->sum(fn ($variation) => $this->getItemStockValue($variation));
+        }
+
+        return $this->getItemStockValue($good);
+    }
+
+    private function getItemStockValue($item): int
+    {
+        return $this->normalizeNumericStock($item->stock_quantity ?? 0)
+            + $this->normalizeStringStock($item->remote_stock_quantity ?? null)
+            + $this->normalizeStringStock($item->fast_remote_stock_quantity ?? null);
+    }
+
+    private function normalizeNumericStock($value): int
+    {
+        return max(0, (int) $value);
+    }
+
+    private function normalizeStringStock($value): int
+    {
+        $stockValue = trim((string) ($value ?? ''));
+
+        if ($stockValue === '' || $stockValue === '0') {
+            return 0;
+        }
+
+        if (is_numeric($stockValue)) {
+            return max(0, (int) $stockValue);
+        }
+
+        return 10;
     }
 
     private function copyToFrontend($filename)
