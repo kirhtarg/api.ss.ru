@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
@@ -50,9 +51,83 @@ class DatabaseBackupService
         return $backups;
     }
 
-    public function createBackup(?string $name = null, ?string $comment = null, ?int $userId = null): array
+    public function createBackup(?string $name = null, ?string $comment = null, ?int $userId = null, ?string $taskId = null): array
+    {
+        $lock = Cache::lock('database_backup_create', 3600);
+        if (! $lock->get()) {
+            throw new RuntimeException('Создание бэкапа уже выполняется. Дождитесь завершения текущего процесса.');
+        }
+
+        try {
+            return $this->createBackupWithoutLock($name, $comment, $userId, $taskId);
+        } finally {
+            optional($lock)->release();
+        }
+    }
+
+    public function createQueuedBackup(?string $name = null, ?string $comment = null, ?int $userId = null): array
+    {
+        $active = $this->currentTask();
+        if ($active && in_array($active['status'] ?? null, ['queued', 'running'], true)) {
+            return $active;
+        }
+
+        $taskId = (string) Str::uuid();
+        $task = [
+            'id' => $taskId,
+            'status' => 'queued',
+            'progress' => 1,
+            'stage' => 'В очереди',
+            'filename' => null,
+            'message' => 'Задача поставлена в очередь',
+            'name' => $name,
+            'comment' => $comment,
+            'user_id' => $userId,
+            'created_at' => date('Y-m-d H:i:s'),
+            'updated_at' => date('Y-m-d H:i:s'),
+        ];
+
+        $this->putTaskStatus($taskId, $task);
+        Cache::put('database_backup_current_task', $taskId, now()->addHours(24));
+        \App\Jobs\CreateDatabaseBackupJob::dispatch($taskId, $name, $comment, $userId);
+
+        return $task;
+    }
+
+    public function currentTask(): ?array
+    {
+        $taskId = Cache::get('database_backup_current_task');
+        if (! $taskId) {
+            return null;
+        }
+
+        return $this->taskStatus((string) $taskId);
+    }
+
+    public function taskStatus(string $taskId): ?array
+    {
+        $task = Cache::get($this->taskCacheKey($taskId));
+        return is_array($task) ? $task : null;
+    }
+
+    public function putTaskStatus(string $taskId, array $data): void
+    {
+        $current = $this->taskStatus($taskId) ?? [];
+        $status = array_merge($current, $data, [
+            'id' => $taskId,
+            'updated_at' => date('Y-m-d H:i:s'),
+        ]);
+
+        Cache::put($this->taskCacheKey($taskId), $status, now()->addHours(24));
+        if (in_array($status['status'] ?? null, ['queued', 'running'], true)) {
+            Cache::put('database_backup_current_task', $taskId, now()->addHours(24));
+        }
+    }
+
+    private function createBackupWithoutLock(?string $name = null, ?string $comment = null, ?int $userId = null, ?string $taskId = null): array
     {
         $this->ensureDirectoryExists();
+        $this->updateTask($taskId, 'running', 5, 'Подготовка');
 
         $config = $this->connectionConfig();
         $extension = match ($config['driver']) {
@@ -68,14 +143,36 @@ class DatabaseBackupService
         );
 
         $relativePath = self::DIRECTORY.'/'.$filename;
+        $temporaryRelativePath = $relativePath.'.part';
         $absolutePath = Storage::disk(self::DISK)->path($relativePath);
+        $temporaryAbsolutePath = Storage::disk(self::DISK)->path($temporaryRelativePath);
 
-        match ($config['driver']) {
-            'mysql', 'mariadb' => $this->dumpMysql($absolutePath, $config),
-            'pgsql' => $this->dumpPostgres($absolutePath, $config),
-            'sqlite' => $this->dumpSqlite($absolutePath, $config),
-            default => throw new RuntimeException("Драйвер {$config['driver']} не поддерживается для бэкапа"),
-        };
+        Storage::disk(self::DISK)->delete($temporaryRelativePath);
+
+        try {
+            $this->updateTask($taskId, 'running', 10, 'Создание дампа');
+            match ($config['driver']) {
+                'mysql', 'mariadb' => $this->dumpMysql($temporaryAbsolutePath, $config),
+                'pgsql' => $this->dumpPostgres($temporaryAbsolutePath, $config),
+                'sqlite' => $this->dumpSqlite($temporaryAbsolutePath, $config),
+                default => throw new RuntimeException("Драйвер {$config['driver']} не поддерживается для бэкапа"),
+            };
+
+            if (! Storage::disk(self::DISK)->exists($temporaryRelativePath)) {
+                throw new RuntimeException('Файл дампа не был создан');
+            }
+
+            $this->updateTask($taskId, 'running', 92, 'Проверка дампа');
+            $this->validateBackupFile($temporaryAbsolutePath);
+
+            Storage::disk(self::DISK)->move($temporaryRelativePath, $relativePath);
+        } catch (\Throwable $e) {
+            Storage::disk(self::DISK)->delete($temporaryRelativePath);
+            File::delete($temporaryAbsolutePath);
+            File::delete($this->temporarySqlPath($temporaryAbsolutePath));
+
+            throw $e;
+        }
 
         $metadata = [
             'filename' => $filename,
@@ -88,9 +185,16 @@ class DatabaseBackupService
             'auto_delete_at' => $this->calculateAutoDeleteAt(date('Y-m-d H:i:s')),
             'size' => Storage::disk(self::DISK)->size($relativePath),
             'size_human' => $this->formatBytes(Storage::disk(self::DISK)->size($relativePath)),
+            'verified_at' => date('Y-m-d H:i:s'),
+            'verification' => 'ok',
         ];
 
         $this->writeMetadata($filename, $metadata);
+        $this->updateTask($taskId, 'completed', 100, 'Готово', [
+            'filename' => $filename,
+            'backup' => $metadata,
+            'message' => 'Бэкап успешно создан и проверен',
+        ]);
 
         return $metadata;
     }
@@ -121,6 +225,8 @@ class DatabaseBackupService
                 break;
             }
         }
+
+        $this->appendUsersToActionLogs($items);
 
         return $items;
     }
@@ -249,7 +355,68 @@ class DatabaseBackupService
             'restore_env_name' => $restoreEnvName,
             'uses_native_dump' => (bool) $dumpBinary,
             'fallback_mode' => in_array($driver, ['mysql', 'mariadb'], true) && ! $dumpBinary ? 'php_pdo' : null,
+            'current_task' => $this->currentTask(),
         ];
+    }
+
+    private function taskCacheKey(string $taskId): string
+    {
+        return 'database_backup_task:'.$taskId;
+    }
+
+    private function appendUsersToActionLogs(array &$items): void
+    {
+        $userIds = array_values(array_unique(array_filter(array_map(
+            fn ($item) => $item['user_id'] ?? null,
+            $items
+        ))));
+
+        if ($userIds === []) {
+            return;
+        }
+
+        try {
+            $users = DB::table('users')
+                ->whereIn('id', $userIds)
+                ->select('id', 'name', 'first_name', 'last_name', 'email')
+                ->get()
+                ->keyBy('id');
+
+            foreach ($items as &$item) {
+                $userId = $item['user_id'] ?? null;
+                if (! $userId || ! isset($users[$userId])) {
+                    continue;
+                }
+
+                $user = $users[$userId];
+                $name = trim((string) ($user->name ?? ''));
+                if ($name === '') {
+                    $name = trim((string) ($user->first_name ?? '').' '.(string) ($user->last_name ?? ''));
+                }
+                if ($name === '') {
+                    $name = (string) ($user->email ?? '');
+                }
+
+                $item['user_name'] = $name !== '' ? $name : null;
+                $item['user_label'] = ($name !== '' ? $name : 'Пользователь').' ('.$userId.')';
+            }
+            unset($item);
+        } catch (\Throwable) {
+            return;
+        }
+    }
+
+    private function updateTask(?string $taskId, string $status, int $progress, string $stage, array $extra = []): void
+    {
+        if (! $taskId) {
+            return;
+        }
+
+        $this->putTaskStatus($taskId, array_merge([
+            'status' => $status,
+            'progress' => max(0, min(100, $progress)),
+            'stage' => $stage,
+        ], $extra));
     }
 
     private function dumpMysql(string $absolutePath, array $config): void
@@ -259,6 +426,7 @@ class DatabaseBackupService
         try {
             if (! $binary) {
                 $this->dumpMysqlWithPdo($sqlPath);
+                $this->updateCurrentRunningTask(75, 'Сжатие дампа');
                 $this->gzipFile($sqlPath, $absolutePath);
 
                 return;
@@ -281,6 +449,7 @@ class DatabaseBackupService
             ];
 
             $this->runProcess($command, ['MYSQL_PWD' => (string) $config['password']], 1800);
+            $this->updateCurrentRunningTask(75, 'Сжатие дампа');
             $this->gzipFile($sqlPath, $absolutePath);
         } finally {
             File::delete($sqlPath);
@@ -337,6 +506,7 @@ class DatabaseBackupService
 
         try {
             $this->runProcess($command, ['PGPASSWORD' => (string) $config['password']], 1800);
+            $this->updateCurrentRunningTask(75, 'Сжатие дампа');
             $this->gzipFile($sqlPath, $absolutePath);
         } finally {
             File::delete($sqlPath);
@@ -378,7 +548,10 @@ class DatabaseBackupService
         fwrite($handle, "-- Generated at: ".date('Y-m-d H:i:s')."\n\n");
         fwrite($handle, "SET FOREIGN_KEY_CHECKS=0;\n\n");
 
-        foreach ($this->mysqlTables() as $table) {
+        $tables = $this->mysqlTables();
+        $tableCount = max(1, count($tables));
+        foreach ($tables as $tableIndex => $table) {
+            $this->updateCurrentRunningTask(10 + (int) floor(($tableIndex / $tableCount) * 60), 'Экспорт таблицы '.$table);
             $quotedTable = $this->quoteIdentifier($table);
             $createRows = DB::select("SHOW CREATE TABLE {$quotedTable}");
             $createRow = (array) ($createRows[0] ?? []);
@@ -411,6 +584,18 @@ class DatabaseBackupService
 
         fwrite($handle, "SET FOREIGN_KEY_CHECKS=1;\n");
         fclose($handle);
+    }
+
+    private function updateCurrentRunningTask(int $progress, string $stage): void
+    {
+        $taskId = Cache::get('database_backup_current_task');
+        if (! $taskId) {
+            return;
+        }
+        $task = $this->taskStatus((string) $taskId);
+        if (($task['status'] ?? null) === 'running') {
+            $this->updateTask((string) $taskId, 'running', $progress, $stage);
+        }
     }
 
     private function restoreSqlWithPdo(string $absolutePath): void
@@ -635,6 +820,44 @@ class DatabaseBackupService
 
         fclose($input);
         gzclose($output);
+    }
+
+    private function validateBackupFile(string $absolutePath): void
+    {
+        if (! File::exists($absolutePath) || File::size($absolutePath) <= 0) {
+            throw new RuntimeException('Проверка дампа не пройдена: файл пустой или не создан');
+        }
+
+        $handle = fopen($absolutePath, 'rb');
+        $signature = $handle ? fread($handle, 2) : '';
+        if (is_resource($handle)) {
+            fclose($handle);
+        }
+
+        $isGzip = $signature === "\x1f\x8b";
+        if (! $isGzip) {
+            return;
+        }
+
+        $gz = gzopen($absolutePath, 'rb');
+        if (! $gz) {
+            throw new RuntimeException('Проверка дампа не пройдена: gzip-архив не открывается');
+        }
+
+        $bytesRead = 0;
+        while (! gzeof($gz)) {
+            $chunk = gzread($gz, 1024 * 1024);
+            if ($chunk === false) {
+                gzclose($gz);
+                throw new RuntimeException('Проверка дампа не пройдена: ошибка чтения gzip-архива');
+            }
+            $bytesRead += strlen($chunk);
+        }
+        gzclose($gz);
+
+        if ($bytesRead <= 0) {
+            throw new RuntimeException('Проверка дампа не пройдена: gzip-архив не содержит SQL-данных');
+        }
     }
 
     private function gunzipToTemporarySqlIfNeeded(string $absolutePath): string

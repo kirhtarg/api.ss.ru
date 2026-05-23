@@ -43,23 +43,35 @@ class DatabaseBackupController extends Controller
         ]);
 
         try {
-            $backup = $this->backupService->createBackup(
+            $task = $this->backupService->createQueuedBackup(
                 $validated['name'] ?? null,
                 $validated['comment'] ?? null,
                 $request->user()?->id
             );
-            $this->backupService->logAction('manual_create', $backup['filename'] ?? null, $request->user()?->id, [
-                'size' => $backup['size'] ?? null,
-                'auto_delete_at' => $backup['auto_delete_at'] ?? null,
-            ]);
         } catch (\Throwable $e) {
-            return $this->errorResponse('Ошибка создания бэкапа: '.$e->getMessage());
+            return $this->errorResponse('Ошибка постановки бэкапа в очередь: '.$e->getMessage());
         }
 
         return response()->json([
             'success' => true,
-            'message' => 'Бэкап базы данных создан',
-            'data' => $backup,
+            'message' => 'Создание бэкапа поставлено в очередь',
+            'data' => $task,
+        ], 202);
+    }
+
+    public function currentTask(): JsonResponse
+    {
+        return response()->json([
+            'success' => true,
+            'data' => $this->backupService->currentTask(),
+        ]);
+    }
+
+    public function taskStatus(string $taskId): JsonResponse
+    {
+        return response()->json([
+            'success' => true,
+            'data' => $this->backupService->taskStatus($taskId),
         ]);
     }
 

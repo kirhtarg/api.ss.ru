@@ -1538,6 +1538,8 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/schedule', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'schedule']);
             Route::post('/schedule', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'updateSchedule']);
             Route::get('/logs', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'logs']);
+            Route::get('/task/current', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'currentTask']);
+            Route::get('/task/{taskId}', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'taskStatus']);
             Route::get('/{filename}/download', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'download']);
             Route::post('/{filename}/restore', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'restore']);
             Route::delete('/{filename}', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'destroy']);
