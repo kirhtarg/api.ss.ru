@@ -156,6 +156,8 @@ class EmailNotificationService
                 // Определяем шаблон в зависимости от типа события
                 $view = match ($eventType) {
                     'order_created' => 'emails.order-notification',
+                    'payment_received' => 'emails.payment-notification',
+                    'payment_failed' => 'emails.payment-notification',
                     'cancellation_request' => 'emails.cancellation-request-notification',
                     'order_cancelled' => 'emails.order-cancelled-notification',
                     'preorder_created' => 'emails.preorder-notification',
@@ -188,6 +190,7 @@ class EmailNotificationService
                 $viewData['preorderPhoneLink'] = $this->formatPhoneForEmailHtml($viewData['preorder']->customer_phone);
             }
             $viewData['siteInfo'] = $siteInfo;
+            $viewData['eventType'] = $eventType;
 
             if (! $view) {
                 // Если шаблон не найден, используем обычный текст

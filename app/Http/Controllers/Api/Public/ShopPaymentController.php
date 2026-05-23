@@ -59,6 +59,7 @@ class ShopPaymentController extends Controller
             $status = 'fail';
         }
         $orderNumber = $request->get('order_number');
+        $trustTbankReturnAsPayment = false;
 
         // Возврат с Т‑Банка (eacq / Долями) по SuccessURL / FailURL
         if ($paymentType && str_starts_with($paymentType, 'tbank_')) {
@@ -77,24 +78,9 @@ class ShopPaymentController extends Controller
 
             if ($order) {
                 if ($status === 'success') {
-                    $paidStatusId = ShopPaymentStatus::where('name', 'paid')->value('id');
-                    if ($paidStatusId) {
-                        $order->update([
-                            'payment_status_id' => $paidStatusId,
-                            'payed' => true,
-                        ]);
-                    }
-                    if ($order->wasChanged('payed')) {
-                        try {
-                            app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
-                        } catch (\Exception $e) {
-                            \Log::error('T-Bank return: failed to send order_created notification', [
-                                'order_id' => $order->id ?? null,
-                                'error' => $e->getMessage(),
-                            ]);
-                        }
-                    }
-                    $q = 'id='.$order->id.'&status=tbank_success';
+                    // SuccessURL/FailURL - это возврат пользователя из платежной формы, а не финансовое уведомление.
+                    // Оплату подтверждаем только webhook'ом Т-Банка со статусом CONFIRMED/SETTLED.
+                    $q = 'id='.$order->id.'&status=tbank_processing';
                     if (! empty($rawStatus)) {
                         $q .= '&raw_status='.urlencode((string) $rawStatus);
                     }
@@ -136,7 +122,7 @@ class ShopPaymentController extends Controller
             }
 
             // Если заказ не найден, пытаемся создать из черновика в кэше (eacq — одноэтапная оплата)
-            if ($status === 'success' && $orderNumber) {
+            if ($trustTbankReturnAsPayment && $status === 'success' && $orderNumber) {
                 $draft = Cache::get('payment:init:tbank_eacq:order:'.$orderNumber);
                 if ($draft && is_array($draft)) {
                     $order = $this->createOrderFromPayload(
@@ -190,7 +176,7 @@ class ShopPaymentController extends Controller
             }
 
             // Если до сюда дошли, попробуем создать заказ из черновика по альтернативным ключам
-            if ($status === 'success') {
+            if ($trustTbankReturnAsPayment && $status === 'success') {
                 $paymentIdParam = $request->get('PaymentId')
                     ?? $request->get('paymentId')
                     ?? $request->get('payment_id')
@@ -474,6 +460,32 @@ class ShopPaymentController extends Controller
         // Если все ок, обрабатываем
         $event = $request->input('event');
         $object = $request->input('object');
+        $metadata = is_array($object) ? ($object['metadata'] ?? []) : [];
+        $paymentIdForTest = is_array($object) ? ($object['id'] ?? null) : null;
+        $testId = ! empty($metadata['is_test']) && ! empty($metadata['test_id'])
+            ? $metadata['test_id']
+            : ($paymentIdForTest ? Cache::get('payment:test:yookassa:payment:'.$paymentIdForTest) : null);
+
+        if ($testId) {
+            $testData = Cache::get('payment:test:yookassa:'.$testId, []);
+            $testData = array_merge($testData, [
+                'webhook_received' => true,
+                'webhook_received_at' => now()->toDateTimeString(),
+                'webhook_event' => $event,
+                'webhook_status' => is_array($object) ? ($object['status'] ?? null) : null,
+                'webhook_payload' => $request->all(),
+                'webhook_headers' => $request->headers->all(),
+            ]);
+            Cache::put('payment:test:yookassa:'.$testId, $testData, now()->addHours(4));
+
+            Log::info('Yookassa test webhook recorded', [
+                'test_id' => $testId,
+                'payment_id' => $paymentIdForTest,
+                'event' => $event,
+            ]);
+
+            return response()->json([], 200);
+        }
 
         if ($event === 'payment.succeeded' && $object['status'] === 'succeeded') {
             $paymentId = $object['id'];
@@ -507,6 +519,7 @@ class ShopPaymentController extends Controller
                             } catch (\Exception $e) {
                                 Log::error('Yookassa Webhook: failed to send notification (tx path)', ['order_id' => $order->id, 'error' => $e->getMessage()]);
                             }
+                            $this->notifyPaymentSuccessFromWebhook($order, $transaction, $object, 'Ю-Касса');
                         }
                     }
                 } else {
@@ -528,6 +541,11 @@ class ShopPaymentController extends Controller
                         } catch (\Exception $e) {
                             Log::error('Yookassa Webhook: failed to send notification (metadata path)', ['order_id' => $order->id, 'error' => $e->getMessage()]);
                         }
+                        $transaction = ShopPaymentTransaction::where('order_id', $order->id)
+                            ->where('transaction_id', $paymentId)
+                            ->latest()
+                            ->first();
+                        $this->notifyPaymentSuccessFromWebhook($order, $transaction, $object, 'Ю-Касса');
                     }
                 }
             } else {
@@ -550,7 +568,7 @@ class ShopPaymentController extends Controller
                                 'payed' => true,
                             ]);
                         }
-                        ShopPaymentTransaction::create([
+                        $transaction = ShopPaymentTransaction::create([
                             'order_id' => $order->id,
                             'payment_method_id' => $draft['payment_method_id'] ?? null,
                             'amount' => $draft['amount'] ?? 0,
@@ -566,6 +584,7 @@ class ShopPaymentController extends Controller
                         } catch (\Exception $e) {
                             Log::error('Yookassa Webhook: failed to send notification (cache path)', ['order_id' => $order->id, 'error' => $e->getMessage()]);
                         }
+                        $this->notifyPaymentSuccessFromWebhook($order, $transaction, $object, 'Ю-Касса');
                     } else {
                         Log::error('Yookassa Webhook: failed to create order from cache');
                     }
@@ -580,6 +599,19 @@ class ShopPaymentController extends Controller
                 $transaction = ShopPaymentTransaction::where('id', $txIdFromMeta)->first();
                 if ($transaction) {
                     $transaction->update(['status' => 'cancelled', 'response_data' => $request->all()]);
+                    $order = $transaction->order;
+                    if ($order) {
+                        $cancelledStatusId = ShopPaymentStatus::where('name', 'cancelled')->value('id')
+                            ?? ShopPaymentStatus::where('name', 'canceled')->value('id')
+                            ?? ShopPaymentStatus::where('name', 'failed')->value('id');
+                        if ($cancelledStatusId) {
+                            $order->update([
+                                'payment_status_id' => $cancelledStatusId,
+                                'payed' => false,
+                            ]);
+                        }
+                        $this->notifyPaymentFailedFromWebhook($order, $transaction, $object, 'Ю-Касса');
+                    }
                 }
             } elseif ($orderId) {
                 $order = ShopOrder::find($orderId);
@@ -592,6 +624,11 @@ class ShopPaymentController extends Controller
                         ]);
                         Log::info('Yookassa: Order '.$orderId.' payment cancelled.');
                     }
+                    $transaction = ShopPaymentTransaction::where('order_id', $order->id)
+                        ->where('transaction_id', $object['id'] ?? null)
+                        ->latest()
+                        ->first();
+                    $this->notifyPaymentFailedFromWebhook($order, $transaction, $object, 'Ю-Касса');
                 }
             }
         }
@@ -2708,6 +2745,43 @@ class ShopPaymentController extends Controller
         $webhookData = $request->all();
         Log::info('Received T-Bank webhook notification', ['data' => $webhookData]);
 
+        $testId = null;
+        if (! empty($webhookData['OrderId'])) {
+            $testId = Cache::get('payment:test:tbank:order:'.$webhookData['OrderId']);
+        }
+        if (! $testId && ! empty($webhookData['PaymentId'])) {
+            $testId = Cache::get('payment:test:tbank:payment:'.$webhookData['PaymentId']);
+        }
+        if ($testId) {
+            $testData = Cache::get('payment:test:tbank:'.$testId, []);
+            $settings = $testData['settings'] ?? [];
+            $tbankService = new TbankPaymentService($settings);
+            if (! $tbankService->verifyWebhook($webhookData, $request)) {
+                Log::warning('T-Bank test webhook verification failed.', ['test_id' => $testId]);
+
+                return response('Invalid signature or token', 400);
+            }
+
+            $newStatus = $tbankService->processWebhookStatus($webhookData);
+            $testData = array_merge($testData, [
+                'webhook_received' => true,
+                'webhook_received_at' => now()->toDateTimeString(),
+                'webhook_status' => $newStatus,
+                'webhook_payload' => $webhookData,
+                'webhook_headers' => $request->headers->all(),
+            ]);
+            Cache::put('payment:test:tbank:'.$testId, $testData, now()->addHours(4));
+
+            Log::info('T-Bank test webhook recorded', [
+                'test_id' => $testId,
+                'order_id' => $webhookData['OrderId'] ?? null,
+                'payment_id' => $webhookData['PaymentId'] ?? null,
+                'status' => $newStatus,
+            ]);
+
+            return response('OK', 200);
+        }
+
         // Перехват вебхуков от Долями Партнерского API, отправленных на старый URL
         if (isset($webhookData['id']) && !isset($webhookData['OrderId']) && !isset($webhookData['PaymentId'])) {
             Log::info('T-Bank Webhook: Redirecting to Dolyame Partner webhook due to payload format.');
@@ -2791,6 +2865,9 @@ class ShopPaymentController extends Controller
                                 'error' => $e->getMessage(),
                             ]);
                         }
+                        $this->notifyPaymentSuccessFromWebhook($order, $transaction, $webhookData, 'Т-Банк');
+                    } elseif (in_array($newStatus, ['failed', 'cancelled'], true)) {
+                        $this->notifyPaymentFailedFromWebhook($order, $transaction, $webhookData, 'Т-Банк');
                     }
                     if (! empty($draft['order_number'])) {
                         Cache::forget('payment:init:tbank_eacq:order:'.$draft['order_number']);
@@ -2856,6 +2933,10 @@ class ShopPaymentController extends Controller
                             'request_data' => $draft,
                             'response_data' => $webhookData,
                         ]);
+                        $transaction = ShopPaymentTransaction::where('order_id', $order->id)
+                            ->where('transaction_id', $paymentId)
+                            ->latest()
+                            ->first();
                         Cache::forget($cacheKey);
                     }
                 }
@@ -2923,6 +3004,9 @@ class ShopPaymentController extends Controller
                     'error' => $e->getMessage(),
                 ]);
             }
+            $this->notifyPaymentSuccessFromWebhook($order, $transaction, $webhookData, 'Т-Банк');
+        } elseif (in_array($newStatus, ['failed', 'cancelled'], true)) {
+            $this->notifyPaymentFailedFromWebhook($order, $transaction, $webhookData, 'Т-Банк');
         }
 
         return response('OK', 200);
@@ -3077,7 +3161,7 @@ class ShopPaymentController extends Controller
                 if ($transaction) {
                     $transaction->update(['status' => 'paid', 'response_data' => $commitResponse['response'] ?? null]);
                 } else {
-                     \App\Models\ShopPaymentTransaction::create([
+                     $transaction = \App\Models\ShopPaymentTransaction::create([
                         'order_id' => $order->id,
                         'payment_method_id' => $paymentMethod->id ?? null,
                         'amount' => $order->total_amount,
@@ -3095,9 +3179,11 @@ class ShopPaymentController extends Controller
                         'error' => $e->getMessage(),
                     ]);
                 }
+                $this->notifyPaymentSuccessFromWebhook($order, $transaction, $commitResponse['response'] ?? $infoResponse['response'] ?? [], 'Долями');
 
             } else {
                 \Log::error('Dolyame webhook: commit failed', ['response' => $commitResponse]);
+                $this->notifyPaymentFailedFromWebhook($order, null, $commitResponse['response'] ?? $commitResponse ?? [], 'Долями');
             }
         } elseif ($actualStatus === 'completed' || $actualStatus === 'committed') {
              $paidStatusId = \App\Models\ShopPaymentStatus::where('name', 'paid')->value('id');
@@ -3111,6 +3197,11 @@ class ShopPaymentController extends Controller
                  } catch (\Exception $e) {
                      \Log::error('Dolyame webhook: failed to send notification (completed)', ['order_id' => $order->id, 'error' => $e->getMessage()]);
                  }
+                 $transaction = \App\Models\ShopPaymentTransaction::where('order_id', $order->id)
+                     ->whereIn('status', ['pending', 'paid'])
+                     ->latest()
+                     ->first();
+                 $this->notifyPaymentSuccessFromWebhook($order, $transaction, $infoResponse['response'] ?? [], 'Долями');
              }
         } elseif ($actualStatus === 'rejected' || $actualStatus === 'canceled') {
             $failedStatusId = \App\Models\ShopPaymentStatus::where('name', 'canceled')->value('id') 
@@ -3129,6 +3220,7 @@ class ShopPaymentController extends Controller
                     'response_data' => $infoResponse['response'] ?? null
                 ]);
             }
+            $this->notifyPaymentFailedFromWebhook($order, $transaction ?? null, $infoResponse['response'] ?? [], 'Долями');
         }
 
         return response('Webhook processed', 200);
@@ -3356,6 +3448,42 @@ class ShopPaymentController extends Controller
         return $orderData;
     }
 
+    protected function notifyPaymentSuccessFromWebhook(ShopOrder $order, $transaction = null, array $payload = [], ?string $provider = null): void
+    {
+        if ($provider) {
+            $payload = ['provider' => $provider] + $payload;
+        }
+
+        try {
+            app(\App\Services\NotificationService::class)->notifyPaymentReceived($order, $transaction, $payload);
+        } catch (\Exception $e) {
+            Log::error('Payment webhook: failed to send payment_received notification', [
+                'order_id' => $order->id ?? null,
+                'transaction_id' => $transaction->id ?? null,
+                'provider' => $provider,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    protected function notifyPaymentFailedFromWebhook(ShopOrder $order, $transaction = null, array $payload = [], ?string $provider = null): void
+    {
+        if ($provider) {
+            $payload = ['provider' => $provider] + $payload;
+        }
+
+        try {
+            app(\App\Services\NotificationService::class)->notifyPaymentFailed($order, $transaction, $payload);
+        } catch (\Exception $e) {
+            Log::error('Payment webhook: failed to send payment_failed notification', [
+                'order_id' => $order->id ?? null,
+                'transaction_id' => $transaction->id ?? null,
+                'provider' => $provider,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
     /**
      * Webhook для Dolyame Partner API (минимальная заглушка для тестов).
      * Логирует событие и возвращает 200 OK.
@@ -3427,6 +3555,10 @@ class ShopPaymentController extends Controller
         // Формат 2: YooKassa-style — event=payment.succeeded, object.status=succeeded
         $isYookassaSuccess = $event === 'payment.succeeded'
             && isset($object['status']) && $object['status'] === 'succeeded';
+        $isYandexPayFailure = $eventType === 'PAYMENT_STATUS_UPDATED'
+            && in_array($yandexOrder['paymentStatus'] ?? '', ['FAILED', 'CANCELLED', 'CANCELED', 'EXPIRED', 'VOIDED'], true);
+        $isYookassaFailure = $event === 'payment.canceled'
+            || (isset($object['status']) && in_array($object['status'], ['canceled', 'cancelled', 'failed'], true));
 
         if ($isYandexPaySuccess || $isYookassaSuccess) {
             // Извлекаем ID платежа в зависимости от формата
@@ -3465,6 +3597,11 @@ class ShopPaymentController extends Controller
             if ($order) {
                 if ($order->payed) {
                     Log::info('Yandex Pay Webhook: Order '.$order->id.' is already marked as paid. Ignoring.');
+                    $transaction = ShopPaymentTransaction::where('order_id', $order->id)
+                        ->where('transaction_id', $yandexPaymentId)
+                        ->latest()
+                        ->first();
+                    $this->notifyPaymentSuccessFromWebhook($order, $transaction, $request->all(), 'Яндекс Пэй');
 
                     return response()->json(['status' => 'ok']);
                 }
@@ -3476,10 +3613,10 @@ class ShopPaymentController extends Controller
                         'payed' => true,
                     ]);
 
-                    ShopPaymentTransaction::create([
+                    $transaction = ShopPaymentTransaction::create([
                         'order_id' => $order->id,
                         'payment_method_id' => $order->payment_method_id,
-                        'amount' => $object['amount']['value'] ?? $order->total_amount,
+                        'amount' => $object['amount']['value'] ?? $yandexOrder['amount']['value'] ?? $order->total_amount,
                         'transaction_id' => $yandexPaymentId,
                         'status' => 'paid',
                         'response_data' => $request->all(),
@@ -3495,11 +3632,65 @@ class ShopPaymentController extends Controller
                             'error' => $e->getMessage(),
                         ]);
                     }
+                    $this->notifyPaymentSuccessFromWebhook($order, $transaction, $request->all(), 'Яндекс Пэй');
                 } else {
                     Log::error('Yandex Pay Webhook: "paid" payment status not found in database.');
                 }
             } else {
                 Log::warning('Yandex Pay Webhook: Order not found for yandex_pay_order_id: '.$yandexPaymentId.' or metadata order_id: '.($orderId ?? 'null'));
+            }
+        } elseif ($isYandexPayFailure || $isYookassaFailure) {
+            $yandexPaymentId = $yandexOrder['paymentId'] ?? $yandexOrder['orderId'] ?? $object['id'] ?? null;
+            $yandexOrderId = $yandexOrder['orderId'] ?? $object['id'] ?? null;
+            $orderId = $metadata['order_id'] ?? null;
+            $order = $orderId ? ShopOrder::find($orderId) : null;
+
+            if (! $order && $yandexOrderId) {
+                $order = ShopOrder::where('order_number', $yandexOrderId)->first();
+            }
+            if (! $order && $yandexPaymentId) {
+                $order = ShopOrder::where('yandex_pay_order_id', $yandexPaymentId)->first();
+            }
+
+            if ($order) {
+                $failedStatus = ShopPaymentStatus::where('name', 'failed')->first()
+                    ?? ShopPaymentStatus::where('name', 'cancelled')->first()
+                    ?? ShopPaymentStatus::where('name', 'canceled')->first();
+                if ($failedStatus) {
+                    $order->update([
+                        'payment_status_id' => $failedStatus->id,
+                        'payed' => false,
+                    ]);
+                }
+
+                $transaction = ShopPaymentTransaction::where('order_id', $order->id)
+                    ->where('transaction_id', $yandexPaymentId)
+                    ->latest()
+                    ->first();
+                if ($transaction) {
+                    $transaction->update([
+                        'status' => 'failed',
+                        'response_data' => $request->all(),
+                        'processed_at' => now(),
+                    ]);
+                } else {
+                    $transaction = ShopPaymentTransaction::create([
+                        'order_id' => $order->id,
+                        'payment_method_id' => $order->payment_method_id,
+                        'amount' => $object['amount']['value'] ?? $yandexOrder['amount']['value'] ?? $order->total_amount,
+                        'transaction_id' => $yandexPaymentId,
+                        'status' => 'failed',
+                        'response_data' => $request->all(),
+                    ]);
+                }
+
+                $this->notifyPaymentFailedFromWebhook($order, $transaction, $request->all(), 'Яндекс Пэй');
+            } else {
+                Log::warning('Yandex Pay Webhook: failed payment event received, but order not found.', [
+                    'payment_id' => $yandexPaymentId,
+                    'order_id' => $orderId,
+                    'yandex_order_id' => $yandexOrderId,
+                ]);
             }
         }
 

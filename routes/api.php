@@ -2335,6 +2335,9 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/{id}/dolyame-test/order', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'createDolyameTestOrder']);
                 Route::post('/{id}/dolyame-test/status/{orderNumber}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'getDolyameTestOrderStatus']);
                 Route::post('/{id}/dolyame-test/refund', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'refundDolyameTestOrder']);
+                Route::post('/{id}/yookassa-test/payment', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'createYookassaTestPayment']);
+                Route::post('/{id}/tbank-test/payment', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'createTbankEacqTestPayment']);
+                Route::get('/payment-test/{provider}/{testId}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'getPaymentTestWebhookStatus']);
                 Route::get('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'show']);
                 Route::post('/', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'store']);
                 Route::put('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'update']);
@@ -3616,6 +3619,9 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/{id}/dolyame-test/order', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'createDolyameTestOrder']);
                 Route::post('/{id}/dolyame-test/status/{orderNumber}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'getDolyameTestOrderStatus']);
                 Route::post('/{id}/dolyame-test/refund', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'refundDolyameTestOrder']);
+                Route::post('/{id}/yookassa-test/payment', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'createYookassaTestPayment']);
+                Route::post('/{id}/tbank-test/payment', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'createTbankEacqTestPayment']);
+                Route::get('/payment-test/{provider}/{testId}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'getPaymentTestWebhookStatus']);
                 Route::get('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'show']);
                 Route::post('/', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'store']);
                 Route::put('/{id}', [\App\Http\Controllers\Api\Admin\ShopPaymentController::class, 'update']);

@@ -19,7 +19,7 @@
             background-color: #ffffff;
         }
         .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
             padding: 30px 20px;
             text-align: center;
             color: white;
@@ -73,7 +73,7 @@
             margin: 0 0 15px 0;
             font-size: 18px;
             color: #333;
-            border-bottom: 2px solid #667eea;
+            border-bottom: 2px solid #2563eb;
             padding-bottom: 10px;
         }
         .info-row {
@@ -96,7 +96,7 @@
             text-align: right;
         }
         .highlight {
-            color: #667eea;
+            color: #2563eb;
             font-weight: 600;
         }
         .status-badge {
@@ -130,7 +130,7 @@
             display: inline-block;
             margin-top: 15px;
             padding: 12px 30px;
-            background-color: #667eea;
+            background-color: #2563eb;
             color: white;
             text-decoration: none;
             border-radius: 5px;
@@ -138,7 +138,7 @@
             font-size: 14px;
         }
         .footer a:hover {
-            background-color: #5568d3;
+            background-color: #1d4ed8;
         }
         @media (max-width: 600px) {
             .content {
@@ -294,7 +294,7 @@
                 </div>
                 @endif
                 
-                <div class="info-row" style="border-top: 2px solid #667eea; margin-top: 5px; padding-top: 15px;">
+                <div class="info-row" style="border-top: 2px solid #2563eb; margin-top: 5px; padding-top: 15px;">
                     <span class="info-label" style="font-size: 16px;">Итого к оплате:</span>
                     <span class="info-value highlight" style="font-size: 20px; font-weight: 700;">
                         {{ number_format($order->total_amount, 0, ',', ' ') }} ₽

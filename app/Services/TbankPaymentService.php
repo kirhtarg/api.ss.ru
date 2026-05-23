@@ -450,7 +450,7 @@ class TbankPaymentService
             if ($mode) {
                 $disableVerify = true;
             }
-            $http = Http::timeout(30)->retry(2, 1000)->withOptions([
+            $http = Http::timeout(30)->retry(2, 1000, null, false)->withOptions([
                 'verify' => $disableVerify ? false : ($caBundle ?: $verify),
                 'curl' => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
                 'connect_timeout' => 10,
@@ -459,6 +459,17 @@ class TbankPaymentService
             Log::info('T-Bank Acquiring: Sending payment request.', ['url' => $apiUrl, 'payload' => $payload]);
 
             $response = $http->post($apiUrl, $payload);
+            if ($response->status() === 403 && str_contains($apiUrl, 'rest-api-test.tinkoff.ru')) {
+                $fallbackApiUrl = 'https://securepay.tinkoff.ru/v2/Init';
+                Log::warning('T-Bank Acquiring: test endpoint returned 403, retrying securepay endpoint.', [
+                    'url' => $apiUrl,
+                    'fallback_url' => $fallbackApiUrl,
+                    'response_body_raw' => $response->body(),
+                ]);
+
+                $response = $http->post($fallbackApiUrl, $payload);
+                $apiUrl = $fallbackApiUrl;
+            }
             $responseData = $response->json();
             $rawBody = $response->body();
 
@@ -473,7 +484,9 @@ class TbankPaymentService
                     'response_data' => $responseData,
                 ];
             } else {
-                $errorMessage = $responseData['Message'] ?? 'Unknown T-Bank API error';
+                $errorMessage = $responseData['Message']
+                    ?? $responseData['Details']
+                    ?? ($response->status() === 403 ? 'T-Bank вернул 403 Forbidden. Проверьте API URL тестовой среды или доступ сервера к шлюзу.' : 'Unknown T-Bank API error');
                 Log::error('T-Bank API Error during payment initiation for order '.$order->id.': '.$errorMessage, [
                     'response_status' => $response->status(),
                     'response_body' => $responseData,
@@ -484,7 +497,10 @@ class TbankPaymentService
                 return [
                     'success' => false,
                     'message' => $errorMessage,
+                    'http_status' => $response->status(),
+                    'raw_body' => $rawBody,
                     'response_data' => $responseData,
+                    'request_data' => $payload,
                 ];
             }
         } catch (ConnectionException $e) {
@@ -511,7 +527,8 @@ class TbankPaymentService
 
             return [
                 'success' => false,
-                'message' => 'Exception during payment processing',
+                'message' => 'Exception during payment processing: '.$e->getMessage(),
+                'raw_body' => $rawBody,
             ];
         }
     }

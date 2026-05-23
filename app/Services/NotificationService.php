@@ -126,27 +126,40 @@ class NotificationService
      */
     public function notifyOrderCreated(ShopOrder $order): void
     {
-        // Атомарно помечаем заказ как уведомлённый через UPDATE с условием.
-        // Если два запроса приходят одновременно (вебхук + SuccessURL),
-        // только один получит affected=1 и отправит уведомление.
-        $affected = DB::table('shop_orders')
-            ->where('id', $order->id)
-            ->where(function ($q) {
-                $q->whereNull('metadata')
-                    ->orWhereRaw("JSON_EXTRACT(metadata, '$.order_created_notified') IS NULL")
-                    ->orWhereRaw("JSON_EXTRACT(metadata, '$.order_created_notified') = false");
-            })
-            ->update(['metadata' => DB::raw("JSON_SET(COALESCE(metadata, '{}'), '$.order_created_notified', true)")]);
-
-        if ($affected === 0) {
+        if (! $this->markOrderNotificationSent($order, 'order_created_notified')) {
             return;
         }
-
-        $order->refresh();
 
         $this->sendNotification('order_created', [
             'order' => $order,
         ]);
+    }
+
+    protected function markOrderNotificationSent(ShopOrder $order, string $metadataKey): bool
+    {
+        if (! preg_match('/^[a-z0-9_]+$/', $metadataKey)) {
+            return false;
+        }
+
+        // Атомарно помечаем заказ как уведомлённый через UPDATE с условием.
+        // Если два запроса приходят одновременно, только один отправит уведомление.
+        $jsonPath = '$.'.$metadataKey;
+        $affected = DB::table('shop_orders')
+            ->where('id', $order->id)
+            ->where(function ($q) use ($jsonPath) {
+                $q->whereNull('metadata')
+                    ->orWhereRaw("JSON_EXTRACT(metadata, ?) IS NULL", [$jsonPath])
+                    ->orWhereRaw("JSON_EXTRACT(metadata, ?) = false", [$jsonPath]);
+            })
+            ->update(['metadata' => DB::raw("JSON_SET(COALESCE(metadata, '{}'), '{$jsonPath}', true)")]);
+
+        if ($affected === 0) {
+            return false;
+        }
+
+        $order->refresh();
+
+        return true;
     }
 
     /**
@@ -228,8 +241,8 @@ class NotificationService
         try {
             $subject = $this->getEmailSubject($eventType, $data);
 
-            // Для уведомлений о заказе, предзаказе, заявке на отмену, отмене заказа и сообщениях на сайте используем HTML шаблоны
-            if (in_array($eventType, ['order_created', 'cancellation_request', 'order_cancelled', 'preorder_created', 'site_message'])) {
+            // Для важных админских уведомлений используем HTML-шаблоны с разным цветовым статусом.
+            if (in_array($eventType, ['order_created', 'payment_received', 'payment_failed', 'cancellation_request', 'order_cancelled', 'preorder_created', 'site_message'])) {
                 $result = $this->emailService->sendHtmlViaChannel($channel, $subject, $eventType, $data);
                 if (! $result['success']) {
                     Log::error("Failed to send HTML email via channel {$channel->id}", [
@@ -304,6 +317,8 @@ class NotificationService
     {
         return match ($eventType) {
             'order_created' => "Новый заказ #{$data['order']->order_number}",
+            'payment_received' => "Оплата заказа #{$data['order']->order_number} получена",
+            'payment_failed' => "Неудачная оплата заказа #{$data['order']->order_number}",
             'cancellation_request' => "Заявка на отмену заказа #{$data['order']->order_number}",
             'order_cancelled' => "Заказ #{$data['order']->order_number} отменен",
             'preorder_created' => 'Новый предзаказ товара',
@@ -323,6 +338,8 @@ class NotificationService
     {
         return match ($eventType) {
             'order_created' => $this->formatOrderCreatedEmail($data['order']),
+            'payment_received' => $this->formatPaymentReceivedEmail($data['order'], $data['transaction'] ?? null, $data['payment_object'] ?? []),
+            'payment_failed' => $this->formatPaymentFailedEmail($data['order'], $data['transaction'] ?? null, $data['payment_object'] ?? []),
             'cancellation_request' => $this->formatCancellationRequestEmail($data['order']),
             'order_cancelled' => $this->formatOrderCancelledEmail($data['order']),
             'preorder_created' => $this->formatPreorderCreatedEmail($data['preorder']),
@@ -342,7 +359,8 @@ class NotificationService
             'order_cancelled' => $this->formatOrderCancelledTelegram($data['order']),
             'preorder_created' => $this->formatPreorderCreatedTelegram($data['preorder']),
             'site_message' => $this->formatSiteMessageTelegram($data['message']),
-            'payment_received' => $this->formatPaymentReceivedTelegram($data['order'], $data['transaction'], $data['payment_object']),
+            'payment_received' => $this->formatPaymentReceivedTelegram($data['order'], $data['transaction'] ?? null, $data['payment_object'] ?? []),
+            'payment_failed' => $this->formatPaymentFailedTelegram($data['order'], $data['transaction'] ?? null, $data['payment_object'] ?? []),
             default => "Уведомление о событии: {$eventType}"
         };
     }
@@ -465,14 +483,135 @@ class NotificationService
         $message .= "👤 <b>Клиент:</b> {$order->customer_name}\n";
         $message .= "📧 <b>Email:</b> {$order->customer_email}\n";
         $message .= '📞 <b>Телефон:</b> '.$this->formatPhoneForTelegram($order->customer_phone)."\n\n";
-        $message .= '💰 <b>Сумма оплаты:</b> '.number_format((float)($paymentObject['amount']['value'] ?? $order->total_amount), 0, ',', ' ')." ₽\n";
-        $message .= '💳 <b>Способ оплаты:</b> '.($paymentObject['payment_method'] ?? $order->payment_method ?? 'Неизвестен')."\n";
-        $message .= '🆔 <b>ID платежа:</b> '.($paymentObject['id'] ?? 'Неизвестен')."\n\n";
+        $message .= '💰 <b>Сумма оплаты:</b> '.number_format($this->extractPaymentAmount($order, $transaction, $paymentObject), 0, ',', ' ')." ₽\n";
+        $message .= '💳 <b>Способ оплаты:</b> '.$this->extractPaymentProvider($order, $paymentObject)."\n";
+        $message .= '🆔 <b>ID платежа:</b> '.$this->extractPaymentId($transaction, $paymentObject)."\n\n";
+
+        $itemsList = $this->formatOrderItems($order, true);
+        if (! empty($itemsList)) {
+            $message .= "🛒 <b>Состав заказа:</b>\n";
+            $message .= $itemsList."\n\n";
+        }
 
         $message .= "✅ <b>Заказ готов к обработке!</b>\n";
         $message .= '📦 Можно приступать к сборке и отправке товара.';
 
         return $message;
+    }
+
+    protected function formatPaymentFailedTelegram(ShopOrder $order, $transaction, array $paymentObject): string
+    {
+        $message = "⚠️ <b>Оплата заказа не прошла</b>\n\n";
+        $message .= "📋 <b>Заказ #{$order->order_number}</b>\n";
+        $message .= '📅 <b>Дата события:</b> '.now()->format('d.m.Y H:i')."\n";
+        $message .= "👤 <b>Клиент:</b> {$order->customer_name}\n";
+        $message .= "📧 <b>Email:</b> {$order->customer_email}\n";
+        $message .= '📞 <b>Телефон:</b> '.$this->formatPhoneForTelegram($order->customer_phone)."\n\n";
+        $message .= '💰 <b>Сумма:</b> '.number_format($this->extractPaymentAmount($order, $transaction, $paymentObject), 0, ',', ' ')." ₽\n";
+        $message .= '💳 <b>Способ оплаты:</b> '.$this->extractPaymentProvider($order, $paymentObject)."\n";
+        $message .= '🆔 <b>ID платежа:</b> '.$this->extractPaymentId($transaction, $paymentObject)."\n";
+        $message .= '📌 <b>Статус:</b> '.($paymentObject['status'] ?? $paymentObject['paymentStatus'] ?? $paymentObject['payment_status'] ?? 'failed')."\n\n";
+
+        $itemsList = $this->formatOrderItems($order, true);
+        if (! empty($itemsList)) {
+            $message .= "🛒 <b>Состав заказа:</b>\n";
+            $message .= $itemsList."\n\n";
+        }
+
+        $message .= 'Проверьте заказ и при необходимости свяжитесь с клиентом.';
+
+        return $message;
+    }
+
+    protected function formatPaymentReceivedEmail(ShopOrder $order, $transaction, array $paymentObject): string
+    {
+        $message = "Заказ оплачен\n\n";
+        $message .= "Номер заказа: #{$order->order_number}\n";
+        $message .= "Дата оплаты: ".now()->format('d.m.Y H:i')."\n";
+        $message .= "Клиент: {$order->customer_name}\n";
+        $message .= "Email: {$order->customer_email}\n";
+        $message .= 'Телефон: '.$this->formatPhoneForEmail($order->customer_phone)."\n\n";
+        $message .= 'Сумма оплаты: '.number_format($this->extractPaymentAmount($order, $transaction, $paymentObject), 0, ',', ' ')." ₽\n";
+        $message .= 'Способ оплаты: '.$this->extractPaymentProvider($order, $paymentObject)."\n";
+        $message .= 'ID платежа: '.$this->extractPaymentId($transaction, $paymentObject)."\n\n";
+
+        $itemsList = $this->formatOrderItems($order, false);
+        if (! empty($itemsList)) {
+            $message .= "Состав заказа:\n";
+            $message .= $itemsList."\n\n";
+        }
+
+        $message .= "Заказ готов к обработке.";
+
+        return $message;
+    }
+
+    protected function formatPaymentFailedEmail(ShopOrder $order, $transaction, array $paymentObject): string
+    {
+        $message = "Оплата заказа не прошла\n\n";
+        $message .= "Номер заказа: #{$order->order_number}\n";
+        $message .= "Дата события: ".now()->format('d.m.Y H:i')."\n";
+        $message .= "Клиент: {$order->customer_name}\n";
+        $message .= "Email: {$order->customer_email}\n";
+        $message .= 'Телефон: '.$this->formatPhoneForEmail($order->customer_phone)."\n\n";
+        $message .= 'Сумма: '.number_format($this->extractPaymentAmount($order, $transaction, $paymentObject), 0, ',', ' ')." ₽\n";
+        $message .= 'Способ оплаты: '.$this->extractPaymentProvider($order, $paymentObject)."\n";
+        $message .= 'ID платежа: '.$this->extractPaymentId($transaction, $paymentObject)."\n";
+        $message .= 'Статус: '.($paymentObject['status'] ?? $paymentObject['paymentStatus'] ?? $paymentObject['payment_status'] ?? 'failed')."\n\n";
+
+        $itemsList = $this->formatOrderItems($order, false);
+        if (! empty($itemsList)) {
+            $message .= "Состав заказа:\n";
+            $message .= $itemsList."\n\n";
+        }
+
+        $message .= "Проверьте заказ и при необходимости свяжитесь с клиентом.";
+
+        return $message;
+    }
+
+    protected function extractPaymentAmount(ShopOrder $order, $transaction, array $paymentObject): float
+    {
+        $amountData = $paymentObject['amount'] ?? null;
+        $amount = null;
+
+        if (is_array($amountData)) {
+            $amount = $amountData['value'] ?? $amountData['Value'] ?? null;
+        } elseif (is_numeric($amountData)) {
+            $amount = $amountData;
+        }
+
+        $amount = $amount
+            ?? $paymentObject['Amount']
+            ?? ($transaction->amount ?? null)
+            ?? $order->total_amount;
+
+        if (is_numeric($amount) && (float) $amount > 1000 && isset($paymentObject['PaymentId'])) {
+            return ((float) $amount) / 100;
+        }
+
+        return (float) $amount;
+    }
+
+    protected function extractPaymentProvider(ShopOrder $order, array $paymentObject): string
+    {
+        return $paymentObject['provider']
+            ?? $paymentObject['payment_method']
+            ?? $paymentObject['paymentMethod']
+            ?? $order->payment_method
+            ?? 'Неизвестен';
+    }
+
+    protected function extractPaymentId($transaction, array $paymentObject): string
+    {
+        return (string) (
+            $paymentObject['id']
+            ?? $paymentObject['paymentId']
+            ?? $paymentObject['payment_id']
+            ?? $paymentObject['PaymentId']
+            ?? ($transaction->transaction_id ?? null)
+            ?? 'Неизвестен'
+        );
     }
 
     /**
@@ -935,9 +1074,26 @@ class NotificationService
     /**
      * Уведомление об успешной оплате заказа
      */
-    public function notifyPaymentReceived(ShopOrder $order, $transaction, array $paymentObject): void
+    public function notifyPaymentReceived(ShopOrder $order, $transaction = null, array $paymentObject = []): void
     {
+        if (! $this->markOrderNotificationSent($order, 'payment_received_notified')) {
+            return;
+        }
+
         $this->sendNotification('payment_received', [
+            'order' => $order,
+            'transaction' => $transaction,
+            'payment_object' => $paymentObject,
+        ]);
+    }
+
+    public function notifyPaymentFailed(ShopOrder $order, $transaction = null, array $paymentObject = []): void
+    {
+        if (! $this->markOrderNotificationSent($order, 'payment_failed_notified')) {
+            return;
+        }
+
+        $this->sendNotification('payment_failed', [
             'order' => $order,
             'transaction' => $transaction,
             'payment_object' => $paymentObject,

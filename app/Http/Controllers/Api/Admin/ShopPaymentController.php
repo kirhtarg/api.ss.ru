@@ -9,9 +9,13 @@ use App\Models\ShopPaymentMethod;
 use App\Models\ShopPaymentStatus;
 use App\Models\ShopPaymentTransaction;
 use App\Services\DolyamePartnerService;
+use App\Services\TbankPaymentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 
 class ShopPaymentController extends Controller
 {
@@ -620,6 +624,219 @@ class ShopPaymentController extends Controller
         }
     }
 
+    public function createYookassaTestPayment(Request $request, int $id): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'amount' => 'nullable|numeric|min:1|max:100000',
+            'settings' => 'nullable|array',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        try {
+            $paymentMethod = ShopPaymentMethod::findOrFail($id);
+            if ($paymentMethod->type !== 'yookassa') {
+                return response()->json(['success' => false, 'message' => 'Диагностика доступна только для Ю-Касса'], 422);
+            }
+
+            $settings = array_replace(
+                $this->normalizePaymentSettings($paymentMethod->settings),
+                $request->get('settings', [])
+            );
+            $shopId = $settings['shop_id'] ?? null;
+            $secretKey = $settings['secret_key'] ?? null;
+            if (empty($shopId) || empty($secretKey)) {
+                return response()->json(['success' => false, 'message' => 'ЮКасса: отсутствует shop_id/secret_key'], 422);
+            }
+
+            $testId = (string) Str::uuid();
+            $orderNumber = $this->generatePaymentTestOrderNumber('YKT');
+            $amount = number_format((float) ($request->get('amount') ?: 10), 2, '.', '');
+            $payload = [
+                'amount' => ['value' => $amount, 'currency' => $settings['currency'] ?? 'RUB'],
+                'capture' => true,
+                'description' => 'Тестовая оплата ЮКасса '.$orderNumber,
+                'confirmation' => [
+                    'type' => 'redirect',
+                    'return_url' => config('app.frontend_url').'/checkout?payment=yookassa_test_return',
+                ],
+                'metadata' => [
+                    'is_test' => true,
+                    'test_id' => $testId,
+                    'order_number' => $orderNumber,
+                    'payment_method_id' => $paymentMethod->id,
+                ],
+            ];
+
+            $proxy = env('HTTP_CLIENT_PROXY');
+            $verify = config('services.tbank.verify_ssl', true);
+            $caBundle = config('services.tbank.ca_bundle_path');
+            $response = Http::timeout(30)->retry(2, 1000, null, false)->withOptions([
+                'connect_timeout' => 10,
+                'proxy' => $proxy ?: null,
+                'verify' => app()->environment('production') ? ($caBundle ?: $verify) : false,
+                'curl' => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
+            ])->withHeaders([
+                'Idempotence-Key' => 'test_'.$testId,
+                'Content-Type' => 'application/json',
+            ])->withBasicAuth($shopId, $secretKey)
+                ->post('https://api.yookassa.ru/v3/payments', $payload);
+
+            $responseData = $response->json();
+            $rawBody = $response->body();
+            $paymentId = $responseData['id'] ?? null;
+            $testData = [
+                'test_id' => $testId,
+                'order_number' => $orderNumber,
+                'payment_method_id' => $paymentMethod->id,
+                'provider' => 'yookassa',
+                'amount' => $amount,
+                'payment_id' => $paymentId,
+                'payment_url' => $responseData['confirmation']['confirmation_url'] ?? null,
+                'request_payload' => $payload,
+                'server_response' => $responseData,
+                'server_response_raw' => $rawBody,
+                'http_status' => $response->status(),
+                'webhook_url' => url('/api/webhooks/yookassa'),
+                'created_at' => now()->toDateTimeString(),
+                'webhook_received' => false,
+            ];
+
+            Cache::put('payment:test:yookassa:'.$testId, $testData, now()->addHours(4));
+            if ($paymentId) {
+                Cache::put('payment:test:yookassa:payment:'.$paymentId, $testId, now()->addHours(4));
+            }
+
+            return response()->json([
+                'success' => $response->successful() && ! empty($testData['payment_url']),
+                'message' => $response->successful()
+                    ? 'Тестовый платеж ЮКасса создан без заказа в системе'
+                    : ($responseData['description'] ?? $responseData['message'] ?? 'ЮКасса вернула ошибку'),
+                'test_id' => $testId,
+                'data' => $testData,
+            ], $response->successful() ? 200 : 422);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка создания тестового платежа ЮКасса',
+                'error' => $e->getMessage(),
+            ], 422);
+        }
+    }
+
+    public function createTbankEacqTestPayment(Request $request, int $id): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'amount' => 'nullable|numeric|min:1|max:100000',
+            'settings' => 'nullable|array',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        try {
+            $paymentMethod = ShopPaymentMethod::findOrFail($id);
+            if ($paymentMethod->type !== 'tbank_eacq') {
+                return response()->json(['success' => false, 'message' => 'Диагностика доступна только для Т-Банк e-acq'], 422);
+            }
+
+            $settings = array_replace(
+                $this->normalizePaymentSettings($paymentMethod->settings),
+                $request->get('settings', [])
+            );
+            if (empty($settings['terminal_key']) || empty($settings['terminal_password'])) {
+                return response()->json(['success' => false, 'message' => 'Т-Банк: отсутствует TerminalKey/Password'], 422);
+            }
+
+            $testId = (string) Str::uuid();
+            $orderNumber = $this->generatePaymentTestOrderNumber('TBT');
+            $amount = round((float) ($request->get('amount') ?: 10), 2);
+            $orderStub = (object) [
+                'id' => 0,
+                'order_number' => $orderNumber,
+                'total_amount' => $amount,
+                'customer_email' => 'test@skateandsnow.ru',
+                'customer_phone' => '+79999999999',
+                'user_id' => null,
+                'delivery_cost' => 0,
+                'items' => [[
+                    'name' => 'Тестовый товар Т-Банк',
+                    'quantity' => 1,
+                    'final_price' => $amount,
+                    'price' => $amount,
+                ]],
+            ];
+
+            $result = (new TbankPaymentService($settings))->initiatePayment($orderStub);
+            $paymentId = $result['transaction_id'] ?? null;
+            $testData = [
+                'test_id' => $testId,
+                'order_number' => $orderNumber,
+                'payment_method_id' => $paymentMethod->id,
+                'provider' => 'tbank_eacq',
+                'amount' => $amount,
+                'payment_id' => $paymentId,
+                'payment_url' => $result['payment_url'] ?? null,
+                'request_payload' => $result['request_data'] ?? null,
+                'server_response' => $result['response_data'] ?? $result,
+                'webhook_url' => url('/api/webhooks/tbank'),
+                'settings' => $settings,
+                'created_at' => now()->toDateTimeString(),
+                'webhook_received' => false,
+            ];
+
+            Cache::put('payment:test:tbank:'.$testId, $testData, now()->addHours(4));
+            Cache::put('payment:test:tbank:order:'.$orderNumber, $testId, now()->addHours(4));
+            if ($paymentId) {
+                Cache::put('payment:test:tbank:payment:'.$paymentId, $testId, now()->addHours(4));
+            }
+            $responseTestData = $testData;
+            unset($responseTestData['settings']);
+
+            return response()->json([
+                'success' => ! empty($result['success']),
+                'message' => ! empty($result['success']) ? 'Тестовый платеж Т-Банк создан без заказа в системе' : ($result['message'] ?? 'Т-Банк вернул ошибку'),
+                'test_id' => $testId,
+                'data' => $responseTestData,
+            ], ! empty($result['success']) ? 200 : 422);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка создания тестового платежа Т-Банк',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function getPaymentTestWebhookStatus(string $provider, string $testId): JsonResponse
+    {
+        if (! in_array($provider, ['yookassa', 'tbank'], true)) {
+            return response()->json(['success' => false, 'message' => 'Неизвестный провайдер'], 422);
+        }
+
+        $data = Cache::get('payment:test:'.$provider.':'.$testId);
+        if (is_array($data)) {
+            unset($data['settings']);
+        }
+
+        return response()->json([
+            'success' => true,
+            'received' => (bool) ($data['webhook_received'] ?? false),
+            'data' => $data,
+        ]);
+    }
+
     protected function normalizePaymentSettings($settings): array
     {
         if (is_array($settings)) {
@@ -672,6 +889,15 @@ class ShopPaymentController extends Controller
     {
         do {
             $orderNumber = 'SST'.now()->format('ymdHis').random_int(100, 999);
+        } while (ShopOrder::where('order_number', $orderNumber)->exists());
+
+        return $orderNumber;
+    }
+
+    protected function generatePaymentTestOrderNumber(string $prefix): string
+    {
+        do {
+            $orderNumber = $prefix.now()->format('ymdHis').random_int(100, 999);
         } while (ShopOrder::where('order_number', $orderNumber)->exists());
 
         return $orderNumber;

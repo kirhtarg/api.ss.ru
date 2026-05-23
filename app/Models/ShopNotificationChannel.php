@@ -67,9 +67,17 @@ class ShopNotificationChannel extends Model
      */
     public static function getChannelsForEvent(string $eventType): \Illuminate\Database\Eloquent\Collection
     {
+        $eventTypes = [$eventType];
+
+        // Старые установки знают только базовые события в shop_notification_events.
+        // Платёжные уведомления отправляем в те же каналы, где включены уведомления о заказах.
+        if (in_array($eventType, ['payment_received', 'payment_failed'], true)) {
+            $eventTypes[] = 'order_created';
+        }
+
         return static::active()
-            ->whereHas('events', function ($query) use ($eventType) {
-                $query->where('event_type', $eventType)
+            ->whereHas('events', function ($query) use ($eventTypes) {
+                $query->whereIn('event_type', $eventTypes)
                     ->where('is_enabled', true);
             })
             ->get();
