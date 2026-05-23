@@ -658,6 +658,13 @@ class ShopPaymentController extends Controller
             $testId = (string) Str::uuid();
             $orderNumber = $this->generatePaymentTestOrderNumber('YKT');
             $amount = number_format((float) ($request->get('amount') ?: 10), 2, '.', '');
+            $customerEmail = $settings['test_customer_email'] ?? $settings['receipt_email'] ?? 'test@skateandsnow.ru';
+            $customerPhone = $settings['test_customer_phone'] ?? $settings['receipt_phone'] ?? '+79999999999';
+            $taxSystemCode = $this->normalizeYookassaTaxSystemCode($settings['tax_system_code'] ?? $settings['taxation'] ?? null);
+            $vatCode = (int) ($settings['vat_code'] ?? $settings['item_vat_code'] ?? 1);
+            if ($vatCode < 1 || $vatCode > 6) {
+                $vatCode = 1;
+            }
             $payload = [
                 'amount' => ['value' => $amount, 'currency' => $settings['currency'] ?? 'RUB'],
                 'capture' => true,
@@ -672,7 +679,27 @@ class ShopPaymentController extends Controller
                     'order_number' => $orderNumber,
                     'payment_method_id' => $paymentMethod->id,
                 ],
+                'receipt' => [
+                    'customer' => [
+                        'email' => $customerEmail,
+                        'phone' => $customerPhone,
+                    ],
+                    'items' => [[
+                        'description' => 'Тестовый товар ЮКасса',
+                        'quantity' => '1.00',
+                        'amount' => [
+                            'value' => $amount,
+                            'currency' => $settings['currency'] ?? 'RUB',
+                        ],
+                        'vat_code' => $vatCode,
+                        'payment_subject' => $settings['payment_subject'] ?? 'commodity',
+                        'payment_mode' => $settings['payment_mode'] ?? 'full_payment',
+                    ]],
+                ],
             ];
+            if ($taxSystemCode !== null) {
+                $payload['receipt']['tax_system_code'] = $taxSystemCode;
+            }
 
             $proxy = env('HTTP_CLIENT_PROXY');
             $verify = config('services.tbank.verify_ssl', true);
@@ -849,6 +876,31 @@ class ShopPaymentController extends Controller
         }
 
         return [];
+    }
+
+    protected function normalizeYookassaTaxSystemCode($value): ?int
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (is_numeric($value)) {
+            $code = (int) $value;
+
+            return ($code >= 1 && $code <= 6) ? $code : null;
+        }
+
+        $map = [
+            'osn' => 1,
+            'general' => 1,
+            'usn_income' => 2,
+            'usn_income_outcome' => 3,
+            'envd' => 4,
+            'esn' => 5,
+            'patent' => 6,
+        ];
+
+        return $map[(string) $value] ?? null;
     }
 
     protected function normalizeDolyamePartnerSettings(array $settings): array
