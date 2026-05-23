@@ -259,9 +259,6 @@ class YmlFeedService
             fwrite($handle, '                <description><![CDATA[' . $description . ']]></description>' . PHP_EOL);
         }
 
-        // Добавляем тэг count (остаток)
-        fwrite($handle, '                <count>' . $stock . '</count>' . PHP_EOL);
-
         fwrite($handle, '            </offer>' . PHP_EOL);
     }
 
