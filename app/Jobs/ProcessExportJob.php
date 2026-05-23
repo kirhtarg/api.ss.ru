@@ -632,6 +632,21 @@ class ProcessExportJob implements ShouldQueue
                         ->orWhere('demping_price', '=', 0);
                 });
             }
+            elseif ($value === 'greater_than_base') {
+                $query->where(function ($q) {
+                    $q->where(function ($mainQ) {
+                        $mainQ->whereNotNull('price')
+                            ->whereNotNull('demping_price')
+                            ->where('demping_price', '>', 0)
+                            ->whereColumn('demping_price', '>', 'price');
+                    })->orWhereHas('variations', function ($varQ) {
+                        $varQ->whereNotNull('price')
+                            ->whereNotNull('demping_price')
+                            ->where('demping_price', '>', 0)
+                            ->whereColumn('shop_good_variations.demping_price', '>', 'shop_good_variations.price');
+                    });
+                });
+            }
         }
 
         // Фильтр по наличию акционной цены
@@ -663,6 +678,21 @@ class ProcessExportJob implements ShouldQueue
                         }
                         );
                     });
+            }
+            elseif ($value === 'greater_than_base') {
+                $query->where(function ($q) {
+                    $q->where(function ($mainQ) {
+                        $mainQ->whereNotNull('price')
+                            ->whereNotNull('sale_price')
+                            ->where('sale_price', '>', 0)
+                            ->whereColumn('sale_price', '>', 'price');
+                    })->orWhereHas('variations', function ($varQ) {
+                        $varQ->whereNotNull('price')
+                            ->whereNotNull('sale_price')
+                            ->where('sale_price', '>', 0)
+                            ->whereColumn('shop_good_variations.sale_price', '>', 'shop_good_variations.price');
+                    });
+                });
             }
         }
 

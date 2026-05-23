@@ -1931,6 +1931,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 // Получение и удаление характеристик (должно быть перед /{id})
                 Route::get('/properties-for-remove', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getPropertiesForRemove']);
                 Route::post('/bulk-remove-properties', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'bulkRemoveProperties']);
+                Route::get('/invalid-prices/stats', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getInvalidPricesStats']);
+                Route::post('/invalid-prices/cleanup', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'cleanupInvalidPrices']);
 
                 Route::get('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'show']);
                 Route::post('/', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'store']);

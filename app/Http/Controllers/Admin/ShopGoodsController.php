@@ -477,6 +477,20 @@ class ShopGoodsController extends Controller
                     $q->whereNull('demping_price')
                         ->orWhere('demping_price', '=', 0);
                 });
+            } elseif ($hasDempingPrice === 'greater_than_base') {
+                $query->where(function ($q) {
+                    $q->where(function ($mainQ) {
+                        $mainQ->whereNotNull('price')
+                            ->whereNotNull('demping_price')
+                            ->where('demping_price', '>', 0)
+                            ->whereColumn('demping_price', '>', 'price');
+                    })->orWhereHas('variations', function ($varQ) {
+                        $varQ->whereNotNull('price')
+                            ->whereNotNull('demping_price')
+                            ->where('demping_price', '>', 0)
+                            ->whereColumn('shop_good_variations.demping_price', '>', 'shop_good_variations.price');
+                    });
+                });
             }
         }
 
@@ -524,6 +538,20 @@ class ShopGoodsController extends Controller
                             $varQ->whereNotNull('sale_price')
                                 ->where('sale_price', '>', 0);
                         });
+                });
+            } elseif ($hasSalePrice === 'greater_than_base') {
+                $query->where(function ($q) {
+                    $q->where(function ($mainQ) {
+                        $mainQ->whereNotNull('price')
+                            ->whereNotNull('sale_price')
+                            ->where('sale_price', '>', 0)
+                            ->whereColumn('sale_price', '>', 'price');
+                    })->orWhereHas('variations', function ($varQ) {
+                        $varQ->whereNotNull('price')
+                            ->whereNotNull('sale_price')
+                            ->where('sale_price', '>', 0)
+                            ->whereColumn('shop_good_variations.sale_price', '>', 'shop_good_variations.price');
+                    });
                 });
             }
         }
@@ -3939,8 +3967,22 @@ class ShopGoodsController extends Controller
 
         // Фильтр по демпинговой цене
         if ($request->filled('has_demping_price')) {
-            $hasDempingPrice = $request->boolean('has_demping_price');
-            if ($hasDempingPrice) {
+            $hasDempingPrice = $request->get('has_demping_price');
+            if ($hasDempingPrice === 'greater_than_base') {
+                $query->where(function ($q) {
+                    $q->where(function ($mainQ) {
+                        $mainQ->whereNotNull('price')
+                            ->whereNotNull('demping_price')
+                            ->where('demping_price', '>', 0)
+                            ->whereColumn('demping_price', '>', 'price');
+                    })->orWhereHas('variations', function ($varQ) {
+                        $varQ->whereNotNull('price')
+                            ->whereNotNull('demping_price')
+                            ->where('demping_price', '>', 0)
+                            ->whereColumn('shop_good_variations.demping_price', '>', 'shop_good_variations.price');
+                    });
+                });
+            } elseif ($request->boolean('has_demping_price')) {
                 $query->whereNotNull('demping_price');
             } else {
                 $query->whereNull('demping_price');
@@ -3949,8 +3991,22 @@ class ShopGoodsController extends Controller
 
         // Фильтр по акционной цене
         if ($request->filled('has_sale_price')) {
-            $hasSalePrice = $request->boolean('has_sale_price');
-            if ($hasSalePrice) {
+            $hasSalePrice = $request->get('has_sale_price');
+            if ($hasSalePrice === 'greater_than_base') {
+                $query->where(function ($q) {
+                    $q->where(function ($mainQ) {
+                        $mainQ->whereNotNull('price')
+                            ->whereNotNull('sale_price')
+                            ->where('sale_price', '>', 0)
+                            ->whereColumn('sale_price', '>', 'price');
+                    })->orWhereHas('variations', function ($varQ) {
+                        $varQ->whereNotNull('price')
+                            ->whereNotNull('sale_price')
+                            ->where('sale_price', '>', 0)
+                            ->whereColumn('shop_good_variations.sale_price', '>', 'shop_good_variations.price');
+                    });
+                });
+            } elseif ($request->boolean('has_sale_price')) {
                 $query->whereNotNull('sale_price');
             } else {
                 $query->whereNull('sale_price');
@@ -4156,6 +4212,132 @@ class ShopGoodsController extends Controller
                 });
             }
         }
+    }
+
+    public function getInvalidPricesStats(): JsonResponse
+    {
+        try {
+            return response()->json([
+                'success' => true,
+                'data' => $this->buildInvalidPricesStats(),
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка проверки цен: '.$e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function cleanupInvalidPrices(Request $request): JsonResponse
+    {
+        $type = (string) $request->input('type', '');
+        $allowedTypes = [
+            'goods_sale_price',
+            'goods_demping_price',
+            'variations_sale_price',
+            'variations_demping_price',
+            'all',
+        ];
+
+        if (! in_array($type, $allowedTypes, true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Некорректный тип очистки',
+            ], 422);
+        }
+
+        try {
+            $cleaned = 0;
+
+            DB::transaction(function () use ($type, &$cleaned) {
+                if ($type === 'goods_sale_price' || $type === 'all') {
+                    $cleaned += $this->invalidGoodsSalePriceQuery()->update(['sale_price' => 0]);
+                }
+
+                if ($type === 'goods_demping_price' || $type === 'all') {
+                    $cleaned += $this->invalidGoodsDempingPriceQuery()->update([
+                        'demping_price' => 0,
+                        'show_demping' => false,
+                    ]);
+                }
+
+                if ($type === 'variations_sale_price' || $type === 'all') {
+                    $cleaned += $this->invalidVariationSalePriceQuery()->update(['sale_price' => 0]);
+                }
+
+                if ($type === 'variations_demping_price' || $type === 'all') {
+                    $cleaned += $this->invalidVariationDempingPriceQuery()->update([
+                        'demping_price' => 0,
+                        'show_demping' => false,
+                    ]);
+                }
+            });
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Некорректные цены обнулены',
+                'data' => [
+                    'cleaned' => $cleaned,
+                    'stats' => $this->buildInvalidPricesStats(),
+                ],
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка обнуления цен: '.$e->getMessage(),
+            ], 500);
+        }
+    }
+
+    private function buildInvalidPricesStats(): array
+    {
+        return [
+            'goods' => [
+                'sale_price' => $this->invalidGoodsSalePriceQuery()->count(),
+                'demping_price' => $this->invalidGoodsDempingPriceQuery()->count(),
+            ],
+            'variations' => [
+                'sale_price' => $this->invalidVariationSalePriceQuery()->count(),
+                'demping_price' => $this->invalidVariationDempingPriceQuery()->count(),
+            ],
+        ];
+    }
+
+    private function invalidGoodsSalePriceQuery()
+    {
+        return ShopGood::query()
+            ->whereNotNull('price')
+            ->whereNotNull('sale_price')
+            ->where('sale_price', '>', 0)
+            ->whereColumn('sale_price', '>', 'price');
+    }
+
+    private function invalidGoodsDempingPriceQuery()
+    {
+        return ShopGood::query()
+            ->whereNotNull('price')
+            ->whereNotNull('demping_price')
+            ->where('demping_price', '>', 0)
+            ->whereColumn('demping_price', '>', 'price');
+    }
+
+    private function invalidVariationSalePriceQuery()
+    {
+        return ShopGoodVariation::query()
+            ->whereNotNull('price')
+            ->whereNotNull('sale_price')
+            ->where('sale_price', '>', 0)
+            ->whereColumn('sale_price', '>', 'price');
+    }
+
+    private function invalidVariationDempingPriceQuery()
+    {
+        return ShopGoodVariation::query()
+            ->whereNotNull('price')
+            ->whereNotNull('demping_price')
+            ->where('demping_price', '>', 0)
+            ->whereColumn('demping_price', '>', 'price');
     }
 
     /**
