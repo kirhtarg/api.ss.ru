@@ -1159,6 +1159,7 @@ class ShopPaymentController extends Controller
             'description' => 'Оплата заказа №'.$order->order_number,
             'confirmation' => ['type' => 'redirect', 'return_url' => $returnUrl],
             'metadata' => ['order_id' => $order->id],
+            'receipt' => $this->buildYookassaReceiptFromOrder($order, $settings),
         ];
         try {
             $proxy = env('HTTP_CLIENT_PROXY');
@@ -1170,7 +1171,7 @@ class ShopPaymentController extends Controller
                 'curl' => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
             ];
             $options['verify'] = $caBundle ?: $verify;
-            $http = \Illuminate\Support\Facades\Http::timeout(30)->retry(2, 1000)->withOptions($options)->withHeaders([
+            $http = \Illuminate\Support\Facades\Http::timeout(30)->retry(2, 1000, null, false)->withOptions($options)->withHeaders([
                 'Idempotence-Key' => uniqid('yk_', true),
                 'Content-Type' => 'application/json',
             ])->withBasicAuth($shopId, $secretKey);
@@ -1450,6 +1451,7 @@ class ShopPaymentController extends Controller
             'description' => 'Оплата заказа №'.$orderNumber,
             'confirmation' => ['type' => 'redirect', 'return_url' => $returnUrl],
             'metadata' => ['order_number' => $orderNumber],
+            'receipt' => $this->buildYookassaReceiptFromOrderData($orderNumber, $orderData, $settings),
         ];
         try {
             $proxy = env('HTTP_CLIENT_PROXY');
@@ -1461,7 +1463,7 @@ class ShopPaymentController extends Controller
                 $disableVerify = true;
             }
             $options['verify'] = $disableVerify ? false : ($caBundle ?: $verify);
-            $http = \Illuminate\Support\Facades\Http::timeout(30)->retry(2, 1000)->withOptions($options)->withHeaders([
+            $http = \Illuminate\Support\Facades\Http::timeout(30)->retry(2, 1000, null, false)->withOptions($options)->withHeaders([
                 'Idempotence-Key' => uniqid('yk_', true),
                 'Content-Type' => 'application/json',
             ])->withBasicAuth($shopId, $secretKey);
@@ -3387,6 +3389,265 @@ class ShopPaymentController extends Controller
         }
 
         return [];
+    }
+
+    protected function buildYookassaReceiptFromOrder(ShopOrder $order, array $settings): array
+    {
+        $items = [];
+        try {
+            $items = method_exists($order, 'getItemsWithDetails') ? $order->getItemsWithDetails() : [];
+        } catch (\Exception $e) {
+            Log::warning('YooKassa receipt: failed to enrich order items', [
+                'order_id' => $order->id ?? null,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        if (empty($items)) {
+            $rawItems = is_string($order->items ?? null) ? json_decode($order->items, true) : ($order->items ?? []);
+            $items = is_array($rawItems) ? $rawItems : [];
+        }
+
+        return $this->buildYookassaReceipt(
+            $items,
+            (float) ($order->total_amount ?? 0),
+            (float) ($order->delivery_cost ?? 0),
+            $order->customer_email ?? null,
+            $order->customer_phone ?? null,
+            $settings,
+            'Оплата заказа №'.($order->order_number ?? $order->id)
+        );
+    }
+
+    protected function buildYookassaReceiptFromOrderData(string $orderNumber, array $orderData, array $settings): array
+    {
+        return $this->buildYookassaReceipt(
+            is_array($orderData['items'] ?? null) ? $orderData['items'] : [],
+            (float) ($orderData['total_amount'] ?? 0),
+            (float) ($orderData['delivery_cost'] ?? 0),
+            $orderData['customer_email'] ?? null,
+            $orderData['customer_phone'] ?? null,
+            $settings,
+            'Оплата заказа №'.$orderNumber
+        );
+    }
+
+    protected function buildYookassaReceipt(array $sourceItems, float $targetAmount, float $deliveryCost, ?string $customerEmail, ?string $customerPhone, array $settings, string $fallbackDescription): array
+    {
+        $customer = [];
+        $customerEmail = trim((string) $customerEmail);
+        if ($customerEmail !== '') {
+            $customer['email'] = $customerEmail;
+        }
+
+        $normalizedPhone = $this->normalizeYookassaCustomerPhone($customerPhone);
+        if ($normalizedPhone) {
+            $customer['phone'] = $normalizedPhone;
+        }
+
+        if (empty($customer)) {
+            $fallbackEmail = trim((string) ($settings['receipt_email'] ?? $settings['test_customer_email'] ?? 'test@skateandsnow.ru'));
+            if ($fallbackEmail !== '') {
+                $customer['email'] = $fallbackEmail;
+            }
+        }
+
+        $receipt = [
+            'customer' => $customer,
+            'items' => $this->buildYookassaReceiptItems($sourceItems, $targetAmount, $deliveryCost, $settings, $fallbackDescription),
+        ];
+
+        $taxSystemCode = $this->normalizeYookassaTaxSystemCode($settings['tax_system_code'] ?? $settings['taxation'] ?? null);
+        if ($taxSystemCode !== null) {
+            $receipt['tax_system_code'] = $taxSystemCode;
+        }
+
+        return $receipt;
+    }
+
+    protected function buildYookassaReceiptItems(array $sourceItems, float $targetAmount, float $deliveryCost, array $settings, string $fallbackDescription): array
+    {
+        $lines = [];
+        foreach ($sourceItems as $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+
+            $quantity = max(1, (int) ($item['quantity'] ?? $item['qty'] ?? 1));
+            $lineAmount = $this->extractYookassaItemAmount($item, $quantity);
+            if ($lineAmount <= 0) {
+                continue;
+            }
+
+            $name = $this->normalizeYookassaReceiptDescription(
+                $item['good_name']
+                ?? $item['product_name']
+                ?? $item['name']
+                ?? $item['title']
+                ?? $fallbackDescription
+            );
+
+            $variationName = trim((string) ($item['variation_name'] ?? ''));
+            if ($variationName !== '' && stripos($name, $variationName) === false) {
+                $name = $this->normalizeYookassaReceiptDescription($name.' '.$variationName);
+            }
+            if ($quantity > 1) {
+                $name = $this->normalizeYookassaReceiptDescription($name.' x '.$quantity.' шт.');
+            }
+
+            $lines[] = [
+                'description' => $name,
+                'amount' => round($lineAmount, 2),
+                'payment_subject' => $settings['payment_subject'] ?? 'commodity',
+            ];
+        }
+
+        $itemsTotal = array_sum(array_column($lines, 'amount'));
+        if ($deliveryCost > 0 && abs(($itemsTotal + $deliveryCost) - $targetAmount) < abs($itemsTotal - $targetAmount)) {
+            $lines[] = [
+                'description' => 'Доставка',
+                'amount' => round($deliveryCost, 2),
+                'payment_subject' => 'service',
+            ];
+            $itemsTotal += $deliveryCost;
+        }
+
+        if ($targetAmount <= 0) {
+            $targetAmount = max(0.01, $itemsTotal);
+        }
+
+        if (empty($lines) || $itemsTotal <= 0) {
+            $lines = [[
+                'description' => $this->normalizeYookassaReceiptDescription($fallbackDescription),
+                'amount' => round($targetAmount, 2),
+                'payment_subject' => $settings['payment_subject'] ?? 'commodity',
+            ]];
+            $itemsTotal = $targetAmount;
+        }
+
+        if ((count($lines) * 0.01) > $targetAmount) {
+            $lines = [[
+                'description' => $this->normalizeYookassaReceiptDescription($fallbackDescription),
+                'amount' => round($targetAmount, 2),
+                'payment_subject' => $settings['payment_subject'] ?? 'commodity',
+            ]];
+            $itemsTotal = $targetAmount;
+        }
+
+        $receiptItems = [];
+        $running = 0.0;
+        $lastIndex = count($lines) - 1;
+        foreach ($lines as $index => $line) {
+            if ($index === $lastIndex) {
+                $lineAmount = round($targetAmount - $running, 2);
+            } else {
+                $lineAmount = floor((($line['amount'] / $itemsTotal) * $targetAmount) * 100) / 100;
+                $lineAmount = max(0.01, $lineAmount);
+                $running += $lineAmount;
+            }
+
+            if ($lineAmount <= 0) {
+                continue;
+            }
+
+            $receiptItems[] = [
+                'description' => $line['description'],
+                'quantity' => '1.00',
+                'amount' => [
+                    'value' => $this->formatYookassaReceiptAmount($lineAmount),
+                    'currency' => $settings['currency'] ?? 'RUB',
+                ],
+                'vat_code' => $this->normalizeYookassaVatCode($settings['vat_code'] ?? $settings['item_vat_code'] ?? 1),
+                'payment_subject' => $line['payment_subject'] ?? ($settings['payment_subject'] ?? 'commodity'),
+                'payment_mode' => $settings['payment_mode'] ?? 'full_payment',
+            ];
+        }
+
+        if (empty($receiptItems)) {
+            $receiptItems[] = [
+                'description' => $this->normalizeYookassaReceiptDescription($fallbackDescription),
+                'quantity' => '1.00',
+                'amount' => [
+                    'value' => $this->formatYookassaReceiptAmount(max(0.01, $targetAmount)),
+                    'currency' => $settings['currency'] ?? 'RUB',
+                ],
+                'vat_code' => $this->normalizeYookassaVatCode($settings['vat_code'] ?? $settings['item_vat_code'] ?? 1),
+                'payment_subject' => $settings['payment_subject'] ?? 'commodity',
+                'payment_mode' => $settings['payment_mode'] ?? 'full_payment',
+            ];
+        }
+
+        return $receiptItems;
+    }
+
+    protected function extractYookassaItemAmount(array $item, int $quantity): float
+    {
+        foreach (['total', 'total_price', 'line_total', 'amount'] as $field) {
+            if (isset($item[$field]) && is_numeric($item[$field])) {
+                return (float) $item[$field];
+            }
+        }
+
+        $price = $item['final_price'] ?? $item['price'] ?? $item['sale_price'] ?? $item['base_price'] ?? 0;
+        return (float) $price * $quantity;
+    }
+
+    protected function normalizeYookassaReceiptDescription($description): string
+    {
+        $description = trim(preg_replace('/\s+/u', ' ', (string) $description));
+        if ($description === '') {
+            $description = 'Товар';
+        }
+
+        return mb_substr($description, 0, 128);
+    }
+
+    protected function normalizeYookassaCustomerPhone(?string $phone): ?string
+    {
+        $digits = preg_replace('/\D+/', '', (string) $phone);
+        if ($digits === '') {
+            return null;
+        }
+        if (strlen($digits) === 11 && $digits[0] === '8') {
+            $digits = '7'.substr($digits, 1);
+        }
+        if (strlen($digits) === 10) {
+            $digits = '7'.$digits;
+        }
+
+        return strlen($digits) >= 10 ? '+'.$digits : null;
+    }
+
+    protected function normalizeYookassaTaxSystemCode($value): ?int
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if (is_numeric($value)) {
+            $code = (int) $value;
+            return $code >= 1 && $code <= 6 ? $code : null;
+        }
+
+        return [
+            'osn' => 1,
+            'general' => 1,
+            'usn_income' => 2,
+            'usn_income_outcome' => 3,
+            'envd' => 4,
+            'esn' => 5,
+            'patent' => 6,
+        ][(string) $value] ?? null;
+    }
+
+    protected function normalizeYookassaVatCode($value): int
+    {
+        $code = is_numeric($value) ? (int) $value : 1;
+        return $code >= 1 && $code <= 6 ? $code : 1;
+    }
+
+    protected function formatYookassaReceiptAmount(float $amount): string
+    {
+        return number_format(max(0.01, round($amount, 2)), 2, '.', '');
     }
 
     /**
