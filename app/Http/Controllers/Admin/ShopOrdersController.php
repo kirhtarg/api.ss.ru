@@ -3601,14 +3601,6 @@ class ShopOrdersController extends Controller
                 ], 400);
             }
 
-            // Проверяем, что способ оплаты активен
-            if (!$paymentMethod->is_active) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Способ оплаты неактивен',
-                ], 400);
-            }
-
             $oldPaymentUrl = $order->payment_url;
 
             // Создаем транзакцию для нового платежа
