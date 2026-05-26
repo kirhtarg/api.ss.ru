@@ -342,15 +342,20 @@ class ShopPaymentController extends Controller
             return response()->json(['success' => true, 'is_paid' => true, 'status' => 'paid']);
         }
 
-        $yandexOrderId = $order->yandex_pay_order_id;
+        $yandexOrderId = $order->yandex_pay_order_id ?: $order->order_number;
         if (! $yandexOrderId) {
             return response()->json(['success' => true, 'is_paid' => false, 'status' => 'pending']);
         }
 
-        $paymentMethod = ShopPaymentMethod::where('type', 'yandex_pay')
-            ->orWhere('type', 'yandex_split')
-            ->where('is_active', true)
-            ->first();
+        $paymentMethod = $order->payment_method_id
+            ? ShopPaymentMethod::find($order->payment_method_id)
+            : null;
+
+        if (! $paymentMethod || ! in_array($paymentMethod->type, ['yandex_pay', 'yandex_split'], true)) {
+            $paymentMethod = ShopPaymentMethod::whereIn('type', ['yandex_pay', 'yandex_split'])
+                ->where('is_active', true)
+                ->first();
+        }
 
         if (! $paymentMethod) {
             return response()->json(['success' => false, 'message' => 'Payment method not found'], 404);
@@ -395,13 +400,37 @@ class ShopPaymentController extends Controller
                         $order->update([
                             'payment_status_id' => $paidStatus->id,
                             'payed' => true,
+                            'yandex_pay_order_id' => $yandexOrderId,
                         ]);
                         Log::info('Yandex Pay verify: order '.$order->id.' marked as paid (status='.$paymentStatus.')');
-                        try {
-                            app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
-                        } catch (\Exception $e) {
-                            Log::error('Yandex Pay verify: failed to send notification', ['order_id' => $order->id, 'error' => $e->getMessage()]);
+
+                        $transaction = ShopPaymentTransaction::where('order_id', $order->id)
+                            ->where('transaction_id', $yandexOrderId)
+                            ->latest()
+                            ->first();
+
+                        if (! $transaction) {
+                            $transaction = ShopPaymentTransaction::create([
+                                'order_id' => $order->id,
+                                'payment_method_id' => $order->payment_method_id,
+                                'amount' => $order->total_amount,
+                                'transaction_id' => $yandexOrderId,
+                                'status' => 'paid',
+                                'response_data' => $data,
+                            ]);
+                        } else {
+                            $transaction->update([
+                                'status' => 'paid',
+                                'response_data' => $data,
+                            ]);
                         }
+
+                        $this->notifyPaymentSuccessFromWebhook($order, $transaction, [
+                            'provider' => 'Яндекс Пэй',
+                            'status' => $paymentStatus,
+                            'id' => $yandexOrderId,
+                            'verify_response' => $data,
+                        ], 'Яндекс Пэй');
                     }
 
                     return response()->json(['success' => true, 'is_paid' => true, 'status' => 'paid']);
@@ -1745,10 +1774,10 @@ class ShopPaymentController extends Controller
                     $yandexOrderId = $data['id'] ?? ($data['orderId'] ?? null);
                 } elseif (isset($data['data']) && is_array($data['data']) && ! empty($data['data']['paymentUrl'])) {
                     $paymentUrl = $data['data']['paymentUrl'];
-                    $yandexOrderId = $data['data']['orderId'] ?? $data['data']['id'] ?? ($data['id'] ?? null);
+                    $yandexOrderId = $data['data']['orderId'] ?? $data['data']['id'] ?? ($data['id'] ?? null) ?? ($payload['orderId'] ?? null);
                 } elseif (isset($data['paymentUrl'])) {
                     $paymentUrl = $data['paymentUrl'];
-                    $yandexOrderId = $data['orderId'] ?? $data['id'] ?? null;
+                    $yandexOrderId = $data['orderId'] ?? $data['id'] ?? ($payload['orderId'] ?? null);
                 }
 
                 if ($paymentUrl) {

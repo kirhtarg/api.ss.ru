@@ -33,7 +33,7 @@ class ShopTagsController extends Controller
         $sortBy = $request->get('sort_by', 'sort_order');
         $sortDirection = $request->get('sort_direction', 'asc');
 
-        if (in_array($sortBy, ['name', 'created_at', 'sort_order', 'extra_discount_percent'])) {
+        if (in_array($sortBy, ['name', 'created_at', 'sort_order', 'extra_discount_percent', 'increased_bonus_percent'])) {
             $query->orderBy($sortBy, $sortDirection);
         }
 
@@ -78,6 +78,7 @@ class ShopTagsController extends Controller
             'disables_bonuses' => 'boolean',
             'disables_registered_discount' => 'boolean',
             'extra_discount_percent' => 'nullable|numeric|min:0|max:100',
+            'increased_bonus_percent' => 'nullable|numeric|min:0|max:100',
         ]);
 
         if ($validator->fails()) {
@@ -113,6 +114,7 @@ class ShopTagsController extends Controller
             'disables_bonuses' => 'boolean',
             'disables_registered_discount' => 'boolean',
             'extra_discount_percent' => 'nullable|numeric|min:0|max:100',
+            'increased_bonus_percent' => 'nullable|numeric|min:0|max:100',
         ]);
 
         if ($validator->fails()) {
@@ -159,6 +161,7 @@ class ShopTagsController extends Controller
             'disables_bonuses',
             'disables_registered_discount',
             'extra_discount_percent',
+            'increased_bonus_percent',
         ]);
 
         return response()->json([

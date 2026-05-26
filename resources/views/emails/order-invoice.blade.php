@@ -272,10 +272,10 @@
             @if($contacts)
                 <p><strong>Юридическое лицо:</strong> {{ $contacts['legal_name'] ?? 'Не указано' }}</p>
                 <p><strong>Юридический адрес:</strong> {{ $contacts['legal_address'] ?? 'Не указано' }}</p>
-                @if($contacts['inn'])
+                @if(!empty($contacts['inn']))
                     <p><strong>ИНН:</strong> {{ $contacts['inn'] }}</p>
                 @endif
-                @if($contacts['ogrn'])
+                @if(!empty($contacts['ogrn']))
                     <p><strong>ОГРН:</strong> {{ $contacts['ogrn'] }}</p>
                 @endif
             @else

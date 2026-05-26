@@ -3724,6 +3724,347 @@ class ShopOrdersController extends Controller
     }
 
     /**
+     * Создать новую оплату для заказа с возможностью сменить способ оплаты и сумму.
+     */
+    public function createPaymentLink(Request $request, $orderId): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'payment_method_id' => 'required|integer|exists:shop_payment_methods,id',
+            'items' => 'sometimes|array',
+            'items.*.quantity' => 'sometimes|numeric|min:0',
+            'items.*.price' => 'sometimes|numeric|min:0',
+            'items.*.total' => 'sometimes|numeric|min:0',
+            'subtotal' => 'sometimes|numeric|min:0',
+            'sale_discount_amount' => 'sometimes|numeric|min:0',
+            'registered_user_discount_amount' => 'sometimes|numeric|min:0',
+            'promo_code_discount_amount' => 'sometimes|numeric|min:0',
+            'birthday_discount_amount' => 'sometimes|numeric|min:0',
+            'bonus_points_to_use' => 'sometimes|integer|min:0',
+            'order_bonus_points' => 'sometimes|integer|min:0',
+            'delivery_cost' => 'sometimes|numeric|min:0',
+            'overtax_amount' => 'sometimes|numeric|min:0',
+            'overtax_text' => 'sometimes|nullable|string|max:255',
+            'total_amount' => 'sometimes|numeric|min:0',
+            'send_email' => 'sometimes|boolean',
+            'comment' => 'sometimes|nullable|string|max:1000',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        try {
+            $order = ShopOrder::with(['status', 'user', 'paymentMethod', 'deliveryMethod', 'manager'])->findOrFail($orderId);
+
+            if ($order->payed) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Заказ уже оплачен',
+                ], 400);
+            }
+
+            $paymentMethod = \App\Models\ShopPaymentMethod::findOrFail($request->integer('payment_method_id'));
+            $oldPaymentMethod = $order->payment_method;
+            $oldPaymentUrl = $order->payment_url;
+            $oldTotalAmount = (float) $order->total_amount;
+
+            $this->applyPaymentLinkOrderChanges($order, $request, $paymentMethod);
+
+            $sendEmail = $request->boolean('send_email', true);
+            $transaction = null;
+            $newPaymentUrl = null;
+            $resultData = null;
+            $message = 'Способ оплаты заказа обновлен';
+
+            if (in_array($paymentMethod->type, ['cash', 'card', 'transfer', 'test_bank'], true)) {
+                $order->update([
+                    'payment_url' => null,
+                    'yandex_pay_order_id' => null,
+                    'yookassa_payment_id' => null,
+                ]);
+
+                $message = $paymentMethod->type === 'transfer'
+                    ? 'Для заказа выбран счет на оплату'
+                    : 'Для заказа выбрана оплата при получении';
+
+                if ($sendEmail) {
+                    $emailResult = $this->sendPaymentMethodChangedEmail($order, $paymentMethod, null);
+                    if (!$emailResult['success']) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => $emailResult['message'] ?? 'Способ оплаты обновлен, но письмо клиенту не отправлено',
+                            'data' => [
+                                'payment_url' => null,
+                                'transaction_id' => null,
+                                'order' => $this->formatOrderForResponse($order->fresh(['status', 'user', 'paymentMethod', 'deliveryMethod', 'manager'])),
+                            ],
+                        ], 500);
+                    }
+                }
+            } else {
+                $transaction = ShopPaymentTransaction::create([
+                    'order_id' => $order->id,
+                    'payment_method_id' => $paymentMethod->id,
+                    'status' => 'pending',
+                    'amount' => $order->total_amount,
+                    'request_data' => [
+                        'created_from_admin' => true,
+                        'changed_payment_method' => true,
+                        'original_order_id' => $order->id,
+                        'old_payment_method' => $oldPaymentMethod,
+                        'old_payment_url' => $oldPaymentUrl,
+                    ],
+                ]);
+
+                $result = match ($paymentMethod->type) {
+                    'yookassa' => $this->regenerateYooKassaPayment($paymentMethod, $transaction, $order),
+                    'yandex_pay', 'yandex_split' => $this->regenerateYandexPayPayment($paymentMethod, $transaction, $order),
+                    'tbank_eacq' => $this->regenerateTbankEacqPayment($paymentMethod, $transaction, $order),
+                    'tbank_dolyame' => $this->regenerateTbankDolyamePayment($paymentMethod, $transaction, $order),
+                    default => null,
+                };
+
+                if (!$result) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Создание ссылок для этого типа оплаты не поддерживается',
+                    ], 400);
+                }
+
+                $resultData = json_decode($result->getContent(), true);
+                if (!$resultData || empty($resultData['success'])) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => $resultData['message'] ?? 'Не удалось создать платежную ссылку',
+                    ], $result->getStatusCode() >= 400 ? $result->getStatusCode() : 500);
+                }
+
+                $newPaymentUrl = $resultData['payment_url'] ?? $resultData['data']['payment_url'] ?? null;
+                if (!$this->isExternalPaymentUrl($newPaymentUrl)) {
+                    $transaction->update([
+                        'status' => 'failed',
+                        'error_message' => 'Платежная система вернула некорректную ссылку на оплату',
+                        'response_data' => $resultData,
+                    ]);
+
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Платежная система вернула некорректную ссылку на оплату',
+                    ], 500);
+                }
+
+                if ($sendEmail) {
+                    $emailResult = $this->sendPaymentMethodChangedEmail($order, $paymentMethod, $newPaymentUrl);
+                    if (!$emailResult['success']) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => $emailResult['message'] ?? 'Платеж создан, но письмо клиенту не отправлено',
+                            'data' => [
+                                'payment_url' => $newPaymentUrl,
+                                'transaction_id' => $transaction->id,
+                                'order' => $this->formatOrderForResponse($order->fresh(['status', 'user', 'paymentMethod', 'deliveryMethod', 'manager'])),
+                            ],
+                        ], 500);
+                    }
+                }
+
+                $message = 'Платежная ссылка успешно создана';
+            }
+
+            $comment = trim((string) $request->input('comment', ''));
+            ShopOrderLog::create([
+                'entity_id' => $order->id,
+                'section' => ShopOrderLog::SECTION_ORDERS,
+                'action' => 'create_payment_link',
+                'user_id' => $request->user()->id ?? null,
+                'old_value' => $oldPaymentUrl,
+                'new_value' => $newPaymentUrl,
+                'comment' => trim('Смена способа оплаты: '.($oldPaymentMethod ?: 'не указан').' -> '.$paymentMethod->name.'. Сумма: '.$oldTotalAmount.' -> '.$order->total_amount.'. '.$comment),
+            ]);
+
+            $order = $order->fresh(['status', 'user', 'paymentMethod', 'deliveryMethod', 'manager']);
+
+            return response()->json([
+                'success' => true,
+                'message' => $message,
+                'data' => [
+                    'payment_url' => $newPaymentUrl,
+                    'transaction_id' => $transaction?->id,
+                    'order' => $this->formatOrderForResponse($order),
+                    'provider_response' => $resultData,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Create payment link failed', [
+                'order_id' => $orderId,
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка создания платежной ссылки: '.$e->getMessage(),
+            ], 500);
+        }
+    }
+
+    private function applyPaymentLinkOrderChanges(ShopOrder $order, Request $request, $paymentMethod): void
+    {
+        if ($request->has('items')) {
+            $items = collect($request->input('items', []))
+                ->map(function ($item, $index) {
+                    $quantity = max(0, (float) ($item['quantity'] ?? 0));
+                    $price = max(0, (float) ($item['price'] ?? $item['final_price'] ?? $item['unit_price'] ?? 0));
+                    $total = array_key_exists('total', $item)
+                        ? max(0, (float) $item['total'])
+                        : $price * $quantity;
+
+                    return array_merge($item, [
+                        'id' => $item['id'] ?? ($item['good_id'] ?? $index),
+                        'quantity' => $quantity,
+                        'price' => $price,
+                        'final_price' => $price,
+                        'unit_price' => $price,
+                        'total' => round($total, 2),
+                    ]);
+                })
+                ->filter(fn ($item) => (float) ($item['quantity'] ?? 0) > 0)
+                ->values()
+                ->all();
+
+            $order->items = $items;
+            $order->total_quantity = collect($items)->sum(fn ($item) => (float) ($item['quantity'] ?? 0));
+            $order->subtotal = $request->has('subtotal')
+                ? (float) $request->input('subtotal')
+                : collect($items)->sum(fn ($item) => (float) ($item['total'] ?? 0));
+        } elseif ($request->has('subtotal')) {
+            $order->subtotal = (float) $request->input('subtotal');
+        }
+
+        foreach ([
+            'sale_discount_amount',
+            'registered_user_discount_amount',
+            'promo_code_discount_amount',
+            'birthday_discount_amount',
+            'delivery_cost',
+            'overtax_amount',
+        ] as $field) {
+            if ($request->has($field)) {
+                $order->{$field} = (float) $request->input($field);
+            }
+        }
+
+        foreach (['bonus_points_to_use', 'order_bonus_points'] as $field) {
+            if ($request->has($field)) {
+                $order->{$field} = max(0, (int) $request->input($field));
+            }
+        }
+
+        if ($request->has('overtax_text')) {
+            $order->overtax_text = $request->input('overtax_text');
+        }
+
+        $order->use_bonus_points = (int) ($order->bonus_points_to_use ?? 0) > 0;
+        $order->total_discount_amount =
+            (float) ($order->sale_discount_amount ?? 0) +
+            (float) ($order->registered_user_discount_amount ?? 0) +
+            (float) ($order->promo_code_discount_amount ?? 0) +
+            (float) ($order->birthday_discount_amount ?? 0) +
+            (float) ($order->bonus_points_to_use ?? 0);
+        $order->discount_amount = $order->total_discount_amount;
+
+        $computedTotal = (float) ($order->subtotal ?? 0)
+            - (float) ($order->registered_user_discount_amount ?? 0)
+            - (float) ($order->promo_code_discount_amount ?? 0)
+            - (float) ($order->birthday_discount_amount ?? 0)
+            - (float) ($order->bonus_points_to_use ?? 0)
+            + (float) ($order->overtax_amount ?? 0);
+
+        $order->total_amount = $request->has('total_amount')
+            ? (float) $request->input('total_amount')
+            : max(0, $computedTotal);
+
+        $order->payment_method_id = $paymentMethod->id;
+        $order->payment_method = $paymentMethod->name;
+        $order->payment_url = null;
+        $order->yandex_pay_order_id = null;
+        $order->yookassa_payment_id = null;
+        $order->pay_agree = true;
+
+        $pendingPaymentStatusId = \App\Models\ShopPaymentStatus::whereIn('name', ['pending', 'awaiting_payment', 'unpaid'])->value('id');
+        if ($pendingPaymentStatusId) {
+            $order->payment_status_id = $pendingPaymentStatusId;
+        }
+
+        $order->save();
+    }
+
+    private function sendPaymentMethodChangedEmail(ShopOrder $order, $paymentMethod, ?string $paymentUrl): array
+    {
+        if (!$order->customer_email) {
+            return ['success' => false, 'message' => 'У клиента не указан email'];
+        }
+
+        $isOnlinePayment = in_array($paymentMethod->type ?? '', ['yookassa', 'yandex_pay', 'yandex_split', 'tbank_eacq', 'tbank_dolyame'], true);
+        if ($isOnlinePayment && !$this->isExternalPaymentUrl($paymentUrl)) {
+            return ['success' => false, 'message' => 'Некорректная платежная ссылка'];
+        }
+
+        try {
+            $contacts = \App\Models\Contact::where('is_main', 1)->first();
+            $siteInfo = \App\Models\Setting::where('key', 'site_info')->first();
+            $siteInfo = $siteInfo ? json_decode($siteInfo->value, true) : [];
+
+            \Illuminate\Support\Facades\Mail::to($order->customer_email)->send(
+                new \App\Mail\PaymentMethodChangedMail(
+                    $order->fresh(['paymentMethod']),
+                    $paymentMethod,
+                    $paymentUrl,
+                    $contacts,
+                    $siteInfo
+                )
+            );
+
+            Log::info('Payment method changed email sent', [
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+                'email' => $order->customer_email,
+                'payment_method_id' => $paymentMethod->id ?? null,
+            ]);
+
+            return ['success' => true, 'message' => 'Письмо о смене способа оплаты отправлено'];
+        } catch (\Exception $e) {
+            Log::error('Payment method changed email failed', [
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+                'email' => $order->customer_email,
+                'error' => $e->getMessage(),
+            ]);
+
+            return ['success' => false, 'message' => 'Ошибка отправки письма о смене способа оплаты: '.$e->getMessage()];
+        }
+    }
+
+    private function sendOrderInvoiceEmail(ShopOrder $order): void
+    {
+        if (!$order->customer_email) {
+            throw new \Exception('У клиента не указан email');
+        }
+
+        $contacts = \App\Models\Contact::where('is_main', 1)->first();
+        $siteInfo = \App\Models\Setting::where('key', 'site_info')->first();
+        $siteInfo = $siteInfo ? json_decode($siteInfo->value, true) : [];
+
+        \Illuminate\Support\Facades\Mail::to($order->customer_email)->send(
+            new \App\Mail\OrderInvoiceMail($order->fresh(), $contacts, $siteInfo)
+        );
+    }
+
+    /**
      * Отправка email с текущей платежной ссылкой клиенту
      */
     public function sendPaymentLinkEmail(Request $request, $orderId): JsonResponse

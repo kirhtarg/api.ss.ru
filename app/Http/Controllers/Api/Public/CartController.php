@@ -1056,6 +1056,7 @@ class CartController extends Controller
                             'disables_bonuses' => (bool) $tag->disables_bonuses,
                             'disables_registered_discount' => (bool) $tag->disables_registered_discount,
                             'extra_discount_percent' => (float) $tag->extra_discount_percent,
+                            'increased_bonus_percent' => (float) $tag->increased_bonus_percent,
                         ];
                     })->values()->toArray() : [],
                 ]);
@@ -1391,7 +1392,7 @@ class CartController extends Controller
         $query = ShopCartItem::active()->with([
             'good' => function ($query) {
                 $query->select('id', 'name', 'slug', 'sku', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity', 'demping_price', 'show_demping', 'price', 'sale_price', 'is_preorder')
-                    ->with('tags:id,name,slug,color,disables_bonuses,disables_registered_discount,extra_discount_percent');
+                    ->with('tags:id,name,slug,color,disables_bonuses,disables_registered_discount,extra_discount_percent,increased_bonus_percent');
             },
             'variation' => function ($query) {
                 $query->select('id', 'good_id', 'name', 'sku', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity', 'demping_price', 'show_demping', 'price', 'sale_price');

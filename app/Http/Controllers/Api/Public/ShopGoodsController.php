@@ -652,7 +652,7 @@ class ShopGoodsController extends Controller
                     $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug', 'shop_brands.logo');
                 },
                 'tags' => function ($query) {
-                    $query->select('shop_tags.id', 'shop_tags.name', 'shop_tags.color', 'shop_tags.slug', 'shop_tags.disables_bonuses', 'shop_tags.disables_registered_discount', 'shop_tags.extra_discount_percent');
+                    $query->select('shop_tags.id', 'shop_tags.name', 'shop_tags.color', 'shop_tags.slug', 'shop_tags.disables_bonuses', 'shop_tags.disables_registered_discount', 'shop_tags.extra_discount_percent', 'shop_tags.increased_bonus_percent');
                 },
                 'label' => function ($query) {
                     $query->select('shop_labels.id', 'shop_labels.name', 'shop_labels.color');
@@ -1304,7 +1304,7 @@ class ShopGoodsController extends Controller
                     $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug', 'shop_brands.logo');
                 },
                 'tags' => function ($query) {
-                    $query->select('shop_tags.id', 'shop_tags.name', 'shop_tags.color', 'shop_tags.slug', 'shop_tags.disables_bonuses', 'shop_tags.disables_registered_discount', 'shop_tags.extra_discount_percent');
+                    $query->select('shop_tags.id', 'shop_tags.name', 'shop_tags.color', 'shop_tags.slug', 'shop_tags.disables_bonuses', 'shop_tags.disables_registered_discount', 'shop_tags.extra_discount_percent', 'shop_tags.increased_bonus_percent');
                 },
             ])
                 ->whereIn('id', $goodIds)
@@ -1559,7 +1559,7 @@ class ShopGoodsController extends Controller
                     $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug', 'shop_brands.logo');
                 },
                 'tags' => function ($query) {
-                    $query->select('shop_tags.id', 'shop_tags.name', 'shop_tags.color', 'shop_tags.slug', 'shop_tags.disables_bonuses', 'shop_tags.disables_registered_discount', 'shop_tags.extra_discount_percent');
+                    $query->select('shop_tags.id', 'shop_tags.name', 'shop_tags.color', 'shop_tags.slug', 'shop_tags.disables_bonuses', 'shop_tags.disables_registered_discount', 'shop_tags.extra_discount_percent', 'shop_tags.increased_bonus_percent');
                 },
                 'label' => function ($query) {
                     $query->select('id', 'name', 'color');
@@ -1691,7 +1691,7 @@ class ShopGoodsController extends Controller
                     $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug', 'shop_brands.logo');
                 },
                 'tags' => function ($query) {
-                    $query->select('shop_tags.id', 'shop_tags.name', 'shop_tags.color', 'shop_tags.slug', 'shop_tags.disables_bonuses', 'shop_tags.disables_registered_discount', 'shop_tags.extra_discount_percent');
+                    $query->select('shop_tags.id', 'shop_tags.name', 'shop_tags.color', 'shop_tags.slug', 'shop_tags.disables_bonuses', 'shop_tags.disables_registered_discount', 'shop_tags.extra_discount_percent', 'shop_tags.increased_bonus_percent');
                 },
                 'label' => function ($query) {
                     $query->select('id', 'name', 'color');
@@ -1947,7 +1947,7 @@ class ShopGoodsController extends Controller
                     $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug', 'shop_brands.logo');
                 },
                 'tags' => function ($query) {
-                    $query->select('shop_tags.id', 'shop_tags.name', 'shop_tags.color', 'shop_tags.slug', 'shop_tags.disables_bonuses', 'shop_tags.disables_registered_discount', 'shop_tags.extra_discount_percent');
+                    $query->select('shop_tags.id', 'shop_tags.name', 'shop_tags.color', 'shop_tags.slug', 'shop_tags.disables_bonuses', 'shop_tags.disables_registered_discount', 'shop_tags.extra_discount_percent', 'shop_tags.increased_bonus_percent');
                 },
                 'label' => function ($query) {
                     $query->select('shop_labels.id', 'shop_labels.name', 'shop_labels.color');

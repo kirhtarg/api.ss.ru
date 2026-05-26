@@ -488,7 +488,7 @@ class ProcessExportJob implements ShouldQueue
         // Фильтр по категории (одиночный)
         if (isset($filters['category_id']) && !empty($filters['category_id'])) {
             $query->whereHas('categories', function ($q) use ($filters) {
-                $q->where('categories.id', $filters['category_id']);
+                $q->where('shop_categories.id', $filters['category_id']);
             });
         }
 
@@ -522,6 +522,31 @@ class ProcessExportJob implements ShouldQueue
         // Лейблы - поле label_id
         if (isset($filters['labels']) && is_array($filters['labels']) && !empty($filters['labels'])) {
             $query->whereIn('label_id', $filters['labels']);
+        }
+
+        if (isset($filters['exclude_categories']) && is_array($filters['exclude_categories']) && !empty($filters['exclude_categories'])) {
+            $query->whereDoesntHave('categories', function ($q) use ($filters) {
+                $q->whereIn('shop_categories.id', $filters['exclude_categories']);
+            });
+        }
+
+        if (isset($filters['exclude_brands']) && is_array($filters['exclude_brands']) && !empty($filters['exclude_brands'])) {
+            $query->whereDoesntHave('brands', function ($q) use ($filters) {
+                $q->whereIn('shop_brands.id', $filters['exclude_brands']);
+            });
+        }
+
+        if (isset($filters['exclude_tags']) && is_array($filters['exclude_tags']) && !empty($filters['exclude_tags'])) {
+            $query->whereDoesntHave('tags', function ($q) use ($filters) {
+                $q->whereIn('shop_tags.id', $filters['exclude_tags']);
+            });
+        }
+
+        if (isset($filters['exclude_labels']) && is_array($filters['exclude_labels']) && !empty($filters['exclude_labels'])) {
+            $query->where(function ($q) use ($filters) {
+                $q->whereNull('label_id')
+                    ->orWhereNotIn('label_id', $filters['exclude_labels']);
+            });
         }
 
         // Фильтр по поставщику (текстовое поле)
@@ -986,6 +1011,25 @@ class ProcessExportJob implements ShouldQueue
 
     private function normalizeExportFilterAliases(array $filters): array
     {
+        foreach ([
+            'categories',
+            'brands',
+            'tags',
+            'labels',
+            'exclude_categories',
+            'exclude_brands',
+            'exclude_tags',
+            'exclude_labels',
+            'suppliers',
+            'unlinked_suppliers',
+            'variation_attribute_names',
+            'exclude_variation_attribute_names',
+        ] as $arrayFilterKey) {
+            if (isset($filters[$arrayFilterKey]) && ! is_array($filters[$arrayFilterKey])) {
+                $filters[$arrayFilterKey] = [$filters[$arrayFilterKey]];
+            }
+        }
+
         if (!empty($filters['remote_stock_variations_not_empty']) || !empty($filters['remote_stock_goods_not_empty'])) {
             $filters['remote_stock_quantity_not_empty'] = '1';
         } elseif (!empty($filters['remote_stock_variations_empty']) || !empty($filters['remote_stock_goods_empty'])) {

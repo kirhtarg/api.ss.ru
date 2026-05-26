@@ -10,12 +10,17 @@
     $transaction = $transaction ?? null;
     $amountData = is_array($paymentObject['amount'] ?? null) ? ($paymentObject['amount']['value'] ?? $paymentObject['amount']['Value'] ?? null) : ($paymentObject['amount'] ?? null);
     $amount = $amountData ?? ($paymentObject['Amount'] ?? ($transaction->amount ?? $order->total_amount));
-    if (is_numeric($amount) && (float) $amount > 1000 && isset($paymentObject['PaymentId'])) {
-        $amount = ((float) $amount) / 100;
-    }
     $paymentId = $paymentObject['id'] ?? $paymentObject['paymentId'] ?? $paymentObject['payment_id'] ?? $paymentObject['PaymentId'] ?? ($transaction->transaction_id ?? 'Неизвестен');
     $paymentProvider = $paymentObject['provider'] ?? $paymentObject['payment_method'] ?? $paymentObject['paymentMethod'] ?? ($order->payment_method ?? 'Неизвестен');
     $paymentStatus = $paymentObject['status'] ?? $paymentObject['paymentStatus'] ?? $paymentObject['payment_status'] ?? ($isSuccess ? 'paid' : 'failed');
+    $providerNormalized = mb_strtolower((string) $paymentProvider);
+    $isMinorUnitAmount = isset($paymentObject['PaymentId'])
+        || str_contains($providerNormalized, 'т-банк')
+        || str_contains($providerNormalized, 't-bank')
+        || str_contains($providerNormalized, 'tbank');
+    if (is_numeric($amount) && $isMinorUnitAmount) {
+        $amount = ((float) $amount) / 100;
+    }
     $itemsList = method_exists($order, 'getItemsWithDetails') ? $order->getItemsWithDetails() : [];
 @endphp
 <!DOCTYPE html>

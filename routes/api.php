@@ -915,6 +915,22 @@ Route::middleware(['cors', 'throttle:public'])->group(function () {
     });
     Route::get('/public/shop/dellin/tariffs', [App\Http\Controllers\Api\Public\ShopDellinController::class, 'getTariffs']);
 
+    // Маршруты Почты России для магазина
+    Route::options('/public/shop/russianpost/settings/active', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/russianpost/settings/active', [App\Http\Controllers\Api\Public\ShopRussianPostController::class, 'getActiveSettings']);
+
+    Route::options('/public/shop/russianpost/offices', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/russianpost/offices', [App\Http\Controllers\Api\Public\ShopRussianPostController::class, 'getOffices']);
+
+    Route::options('/public/shop/russianpost/tariffs', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/russianpost/tariffs', [App\Http\Controllers\Api\Public\ShopRussianPostController::class, 'getTariffs']);
+
     // Order details API
     Route::options('/public/order/details', function () {
         return response()->json([], 200);
@@ -2265,6 +2281,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::put('/{id}/items/{itemId}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateItem']);
                 Route::delete('/{id}/items/{itemId}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'removeItem']);
                 Route::post('/{id}/regenerate-payment-link', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'regeneratePaymentLink']);
+                Route::post('/{id}/create-payment-link', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'createPaymentLink']);
                 Route::post('/{id}/send-payment-link-email', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'sendPaymentLinkEmail']);
                 // Общие роуты с {id} должны быть в конце
                 Route::get('/{id}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'show']);
@@ -2394,6 +2411,12 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::delete('/settings/{id}', [\App\Http\Controllers\Api\Admin\ShopDpdSettingsController::class, 'destroy']);
                 Route::post('/settings/{id}/activate', [\App\Http\Controllers\Api\Admin\ShopDpdSettingsController::class, 'activate']);
                 Route::post('/validate-credentials', [\App\Http\Controllers\Api\Admin\ShopDpdSettingsController::class, 'validateCredentials']);
+            });
+
+            Route::prefix('carrier-delivery/{carrier}')->group(function () {
+                Route::get('/settings', [\App\Http\Controllers\Api\Admin\ShopCarrierDeliverySettingsController::class, 'show']);
+                Route::post('/settings', [\App\Http\Controllers\Api\Admin\ShopCarrierDeliverySettingsController::class, 'save']);
+                Route::post('/validate-credentials', [\App\Http\Controllers\Api\Admin\ShopCarrierDeliverySettingsController::class, 'validateCredentials']);
             });
         });
 

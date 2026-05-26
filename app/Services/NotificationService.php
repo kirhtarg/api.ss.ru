@@ -588,11 +588,24 @@ class NotificationService
             ?? ($transaction->amount ?? null)
             ?? $order->total_amount;
 
-        if (is_numeric($amount) && (float) $amount > 1000 && isset($paymentObject['PaymentId'])) {
+        if (is_numeric($amount) && $this->isMinorUnitPaymentAmount($paymentObject)) {
             return ((float) $amount) / 100;
         }
 
         return (float) $amount;
+    }
+
+    protected function isMinorUnitPaymentAmount(array $paymentObject): bool
+    {
+        if (isset($paymentObject['PaymentId'])) {
+            return true;
+        }
+
+        $provider = mb_strtolower((string) ($paymentObject['provider'] ?? $paymentObject['payment_method'] ?? $paymentObject['paymentMethod'] ?? ''));
+
+        return str_contains($provider, 'т-банк')
+            || str_contains($provider, 't-bank')
+            || str_contains($provider, 'tbank');
     }
 
     protected function extractPaymentProvider(ShopOrder $order, array $paymentObject): string

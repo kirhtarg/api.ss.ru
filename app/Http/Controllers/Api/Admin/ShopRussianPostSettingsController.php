@@ -275,20 +275,27 @@ class ShopRussianPostSettingsController extends Controller
                 'Accept' => 'application/json;charset=UTF-8',
             ];
 
-            $response = Http::withOptions([
-                'verify' => true,
-                'timeout' => 30,
-            ])->withHeaders($headers)->get('https://otpravka-api.pochta.ru/1.0/user/balance');
+            $response = null;
+            foreach (['https://otpravka-api.pochta.ru/1.0/settings', 'https://otpravka-api.pochta.ru/1.0/user-shipping-points'] as $url) {
+                $response = Http::withOptions([
+                    'verify' => true,
+                    'timeout' => 30,
+                ])->withHeaders($headers)->get($url);
+
+                if ($response->successful() || ! str_contains($response->body(), 'namespace or mask or method not found')) {
+                    break;
+                }
+            }
 
             // Если запрос успешен, учетные данные валидны
-            if ($response->successful()) {
+            if ($response && $response->successful()) {
                 return [
                     'valid' => true,
                 ];
             }
 
             // Если ошибка авторизации, учетные данные невалидны
-            if ($response->status() === 401 || $response->status() === 403) {
+            if ($response && ($response->status() === 401 || $response->status() === 403)) {
                 return [
                     'valid' => false,
                     'error' => 'Неверные учетные данные',
@@ -296,8 +303,10 @@ class ShopRussianPostSettingsController extends Controller
             }
 
             // Другие ошибки
-            $errorData = $response->json();
-            $errorMessage = $errorData['error'] ?? $errorData['message'] ?? 'Ошибка проверки учетных данных';
+            $errorData = $response ? $response->json() : null;
+            $errorMessage = is_array($errorData)
+                ? ($errorData['error'] ?? $errorData['message'] ?? $response->body())
+                : ($response ? $response->body() : 'Ошибка проверки учетных данных');
 
             return [
                 'valid' => false,

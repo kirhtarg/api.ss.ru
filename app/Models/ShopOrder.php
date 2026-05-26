@@ -162,7 +162,7 @@ class ShopOrder extends Model
                     $itemTags = DB::table('shop_tags')
                         ->join('shop_good_tags', 'shop_good_tags.shop_tag_id', '=', 'shop_tags.id')
                         ->where('shop_good_tags.shop_good_id', (int) $goodId)
-                        ->select('shop_tags.id', 'shop_tags.name', 'shop_tags.slug', 'shop_tags.color', 'shop_tags.disables_bonuses', 'shop_tags.disables_registered_discount', 'shop_tags.extra_discount_percent')
+                        ->select('shop_tags.id', 'shop_tags.name', 'shop_tags.slug', 'shop_tags.color', 'shop_tags.disables_bonuses', 'shop_tags.disables_registered_discount', 'shop_tags.extra_discount_percent', 'shop_tags.increased_bonus_percent')
                         ->get()
                         ->map(fn ($tag) => (array) $tag)
                         ->toArray();

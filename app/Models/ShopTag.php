@@ -20,6 +20,7 @@ class ShopTag extends Model
         'disables_bonuses',
         'disables_registered_discount',
         'extra_discount_percent',
+        'increased_bonus_percent',
     ];
 
     protected $casts = [
@@ -28,6 +29,7 @@ class ShopTag extends Model
         'disables_bonuses' => 'boolean',
         'disables_registered_discount' => 'boolean',
         'extra_discount_percent' => 'decimal:2',
+        'increased_bonus_percent' => 'decimal:2',
     ];
 
     protected static function boot()
