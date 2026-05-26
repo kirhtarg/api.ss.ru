@@ -45,23 +45,23 @@ class ShopRussianPostController extends Controller
 
         try {
             $settings = $this->getSettingsOrFail();
-            $query = trim($request->query('address') ?: $request->query('city'));
-            $response = Http::withOptions($this->httpOptions())
-                ->withHeaders($this->headers($settings))
-                ->get('https://otpravka-api.pochta.ru/postoffice/1.0/by-address', [
-                    'address' => $query,
-                    'top' => 30,
-                ]);
+            $city = trim((string) $request->query('city'));
+            $address = trim((string) $request->query('address', ''));
+            $codes = [];
 
-            if (! $response->successful()) {
-                throw new \RuntimeException($this->extractError($response));
+            if ($address !== '') {
+                $codes = $this->getOfficeCodesByAddress($settings, $address, 50);
             }
 
-            $data = $response->json();
-            $items = is_array($data)
-                ? ($data['postoffices'] ?? $data['offices'] ?? $data['data'] ?? $data)
-                : [];
-            $offices = array_values(array_filter(array_map(fn ($item) => $this->mapOffice($item), $items)));
+            if (empty($codes)) {
+                $codes = $this->getOfficeCodesBySettlement($settings, $city);
+            }
+
+            if (empty($codes)) {
+                $codes = $this->getOfficeCodesByAddress($settings, $city, 50);
+            }
+
+            $offices = $this->loadOfficeDetails($settings, $codes);
 
             return response()->json([
                 'success' => true,
@@ -238,6 +238,139 @@ class ShopRussianPostController extends Controller
         ])));
     }
 
+    private function getOfficeCodesBySettlement(ShopRussianPostSettings $settings, string $city): array
+    {
+        $parts = $this->parseSettlement($city);
+        $params = array_filter([
+            'settlement' => $parts['settlement'],
+            'region' => $parts['region'],
+            'district' => $parts['district'],
+        ]);
+
+        $response = Http::withOptions($this->httpOptions())
+            ->withHeaders($this->headers($settings))
+            ->get('https://otpravka-api.pochta.ru/postoffice/1.0/settlement.offices.codes', $params);
+
+        if (! $response->successful()) {
+            Log::warning('RussianPost settlement offices warning: '.$this->extractError($response), ['city' => $city]);
+
+            return [];
+        }
+
+        $codes = $this->normalizeOfficeCodes($response->json());
+
+        if (empty($codes) && $parts['settlement'] !== $city) {
+            $response = Http::withOptions($this->httpOptions())
+                ->withHeaders($this->headers($settings))
+                ->get('https://otpravka-api.pochta.ru/postoffice/1.0/settlement.offices.codes', [
+                    'settlement' => $city,
+                ]);
+
+            if ($response->successful()) {
+                $codes = $this->normalizeOfficeCodes($response->json());
+            }
+        }
+
+        return $codes;
+    }
+
+    private function getOfficeCodesByAddress(ShopRussianPostSettings $settings, string $address, int $top = 50): array
+    {
+        $response = Http::withOptions($this->httpOptions())
+            ->withHeaders($this->headers($settings))
+            ->get('https://otpravka-api.pochta.ru/postoffice/1.0/by-address', [
+                'address' => $address,
+                'top' => $top,
+            ]);
+
+        if (! $response->successful()) {
+            Log::warning('RussianPost address offices warning: '.$this->extractError($response), ['address' => $address]);
+
+            return [];
+        }
+
+        return $this->normalizeOfficeCodes($response->json());
+    }
+
+    private function loadOfficeDetails(ShopRussianPostSettings $settings, array $codes): array
+    {
+        $codes = array_slice(array_values(array_unique(array_filter($codes))), 0, 50);
+        $offices = [];
+
+        foreach ($codes as $code) {
+            $response = Http::withOptions($this->httpOptions())
+                ->withHeaders($this->headers($settings))
+                ->get('https://otpravka-api.pochta.ru/postoffice/1.0/'.rawurlencode((string) $code), [
+                    'filter-by-office-type' => 'true',
+                ]);
+
+            if (! $response->successful()) {
+                Log::warning('RussianPost office details warning: '.$this->extractError($response), ['postal_code' => $code]);
+                continue;
+            }
+
+            $office = $this->mapOffice($response->json());
+            if ($office) {
+                $offices[] = $office;
+            }
+        }
+
+        return $offices;
+    }
+
+    private function normalizeOfficeCodes($data): array
+    {
+        if (! is_array($data)) {
+            return [];
+        }
+
+        $items = $data['postoffices'] ?? $data['offices'] ?? $data['data'] ?? $data;
+        if (! is_array($items)) {
+            return [];
+        }
+
+        $codes = [];
+        foreach ($items as $item) {
+            $code = is_array($item)
+                ? ($item['postal-code'] ?? $item['index'] ?? $item['postal_code'] ?? null)
+                : $item;
+
+            $code = preg_replace('/\D+/', '', (string) $code);
+            if ($code !== '') {
+                $codes[] = $code;
+            }
+        }
+
+        return array_values(array_unique($codes));
+    }
+
+    private function parseSettlement(string $city): array
+    {
+        $parts = array_values(array_filter(array_map('trim', preg_split('/,/', $city))));
+        $settlement = $parts[0] ?? $city;
+        $region = $parts[1] ?? null;
+        $district = null;
+
+        $settlement = preg_replace('/^(г\.?|город)\s+/iu', '', trim($settlement));
+        $settlement = trim((string) $settlement);
+
+        if ($region) {
+            $region = preg_replace('/\s+(обл\.?|область|край|респ\.?|республика|АО|автономный округ)$/iu', '', trim($region));
+            $region = trim((string) $region);
+        }
+
+        if (isset($parts[2])) {
+            $district = preg_replace('/\s+(р-н|район)$/iu', '', trim($parts[2]));
+            $district = trim((string) $district);
+        }
+
+        return [
+            'settlement' => $settlement ?: $city,
+            'region' => $region ?: null,
+            'district' => $district ?: null,
+        ];
+    }
+
     private function mapOffice($item): ?array
     {
         if (! is_array($item)) {
@@ -254,11 +387,22 @@ class ShopRussianPostController extends Controller
             'postal_code' => (string) $postalCode,
             'name' => $item['name'] ?? 'Отделение Почты России',
             'address' => $item['address-source'] ?? $item['address'] ?? $item['full-address'] ?? '',
-            'latitude' => $item['latitude'] ?? $item['lat'] ?? null,
-            'longitude' => $item['longitude'] ?? $item['lon'] ?? $item['lng'] ?? null,
+            'latitude' => $this->normalizeCoordinate($item['latitude'] ?? $item['lat'] ?? null),
+            'longitude' => $this->normalizeCoordinate($item['longitude'] ?? $item['lon'] ?? $item['lng'] ?? null),
             'work_time' => $item['schedule'] ?? $item['working-hours'] ?? null,
             'raw' => $item,
         ];
+    }
+
+    private function normalizeCoordinate($value): ?float
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        $value = str_replace(',', '.', (string) $value);
+
+        return is_numeric($value) ? (float) $value : null;
     }
 
     private function calculateCargo($cartItems, ShopRussianPostSettings $settings): array
