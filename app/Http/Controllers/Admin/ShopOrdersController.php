@@ -3756,7 +3756,23 @@ class ShopOrdersController extends Controller
             }
 
             // Отправляем email с текущей ссылкой
-            $this->sendNewPaymentLinkEmail($order, $order->payment_url);
+            $emailResult = $this->sendNewPaymentLinkEmail($order, $order->payment_url);
+            if (! $emailResult['success']) {
+                \App\Models\ShopOrderLog::create([
+                    'entity_id' => $order->id,
+                    'section' => 'orders',
+                    'action' => 'send_payment_link_email_failed',
+                    'user_id' => $request->user()->id ?? null,
+                    'old_value' => null,
+                    'new_value' => $order->payment_url,
+                    'comment' => 'Ошибка отправки email с платежной ссылкой: '.($emailResult['message'] ?? 'Неизвестная ошибка'),
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => $emailResult['message'] ?? 'Ошибка отправки email с платежной ссылкой',
+                ], 500);
+            }
 
             // Добавляем запись в лог заказа
             \App\Models\ShopOrderLog::create([
@@ -4196,10 +4212,22 @@ class ShopOrdersController extends Controller
     /**
      * Отправка email с новой платежной ссылкой клиенту
      */
-    private function sendNewPaymentLinkEmail($order, $newPaymentUrl)
+    private function sendNewPaymentLinkEmail($order, $newPaymentUrl): array
     {
         if (!$this->isExternalPaymentUrl($newPaymentUrl) || !$order->customer_email) {
-            return;
+            $message = !$order->customer_email
+                ? 'У клиента не указан email'
+                : 'Некорректная платежная ссылка';
+
+            \Log::warning('Payment link email skipped', [
+                'order_id' => $order->id ?? null,
+                'order_number' => $order->order_number ?? null,
+                'email' => $order->customer_email ?? null,
+                'payment_url' => $newPaymentUrl,
+                'message' => $message,
+            ]);
+
+            return ['success' => false, 'message' => $message];
         }
 
         try {
@@ -4219,8 +4247,23 @@ class ShopOrdersController extends Controller
                     ->subject("Новая ссылка для оплаты заказа №{$order->order_number} - {$siteName}");
             });
 
+            \Log::info('Payment link email sent', [
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+                'email' => $order->customer_email,
+                'payment_url' => $newPaymentUrl,
+            ]);
+
+            return ['success' => true];
         } catch (\Exception $e) {
-            // Silent fail for email sending
+            \Log::error('Payment link email send failed: '.$e->getMessage(), [
+                'order_id' => $order->id ?? null,
+                'order_number' => $order->order_number ?? null,
+                'email' => $order->customer_email ?? null,
+                'payment_url' => $newPaymentUrl,
+            ]);
+
+            return ['success' => false, 'message' => 'Ошибка отправки email: '.$e->getMessage()];
         }
     }
 

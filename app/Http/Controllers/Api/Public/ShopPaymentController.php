@@ -11,6 +11,7 @@ use App\Models\ShopPaymentMethod;
 use App\Models\ShopOrderLog;
 use App\Models\ShopPaymentStatus; // Добавляем использование нового сервиса
 use App\Models\ShopPaymentTransaction;
+use App\Services\CustomerOrderEmailService;
 use App\Services\TbankPaymentService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -3715,6 +3716,10 @@ class ShopPaymentController extends Controller
             $payload = ['provider' => $provider] + $payload;
         }
 
+        $this->logPaymentWebhookStatus($order, $transaction, $payload, $provider, true);
+
+        app(CustomerOrderEmailService::class)->sendOrderConfirmation($order);
+
         try {
             app(\App\Services\NotificationService::class)->notifyPaymentReceived($order, $transaction, $payload);
         } catch (\Exception $e) {
@@ -3733,6 +3738,8 @@ class ShopPaymentController extends Controller
             $payload = ['provider' => $provider] + $payload;
         }
 
+        $this->logPaymentWebhookStatus($order, $transaction, $payload, $provider, false);
+
         try {
             app(\App\Services\NotificationService::class)->notifyPaymentFailed($order, $transaction, $payload);
         } catch (\Exception $e) {
@@ -3743,6 +3750,73 @@ class ShopPaymentController extends Controller
                 'error' => $e->getMessage(),
             ]);
         }
+    }
+
+    protected function logPaymentWebhookStatus(ShopOrder $order, $transaction = null, array $payload = [], ?string $provider = null, bool $success = false): void
+    {
+        try {
+            $status = $this->extractPaymentWebhookStatus($payload);
+            $paymentId = $this->extractPaymentWebhookId($payload);
+            $providerLabel = $provider ?: ($payload['provider'] ?? 'Платежная система');
+            $action = $success ? 'Webhook оплаты: успешно' : 'Webhook оплаты: ошибка/отмена';
+
+            $commentParts = ["Провайдер: {$providerLabel}"];
+            if ($status) {
+                $commentParts[] = "Статус: {$status}";
+            }
+            if ($paymentId) {
+                $commentParts[] = "ID платежа: {$paymentId}";
+            }
+            if ($transaction && isset($transaction->id)) {
+                $commentParts[] = "Транзакция: {$transaction->id}";
+            }
+
+            ShopOrderLog::createLog($order->id, $action, [
+                'action_color' => '#FFFFFF',
+                'action_bg_color' => $success ? '#16A34A' : '#DC2626',
+                'section' => ShopOrderLog::SECTION_PAYMENT,
+                'comment' => implode("\n", $commentParts),
+                'info' => $order->order_number ? "Заказ № {$order->order_number}" : null,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Payment webhook: failed to write order log', [
+                'order_id' => $order->id ?? null,
+                'transaction_id' => $transaction->id ?? null,
+                'provider' => $provider,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    protected function extractPaymentWebhookStatus(array $payload): ?string
+    {
+        if (isset($payload['object']) && is_array($payload['object'])) {
+            return $payload['object']['status'] ?? $payload['event'] ?? null;
+        }
+
+        if (isset($payload['order']) && is_array($payload['order'])) {
+            return $payload['order']['paymentStatus'] ?? $payload['order']['status'] ?? $payload['eventType'] ?? null;
+        }
+
+        return $payload['Status']
+            ?? $payload['status']
+            ?? $payload['payment_status']
+            ?? $payload['event']
+            ?? $payload['eventType']
+            ?? null;
+    }
+
+    protected function extractPaymentWebhookId(array $payload): ?string
+    {
+        if (isset($payload['object']) && is_array($payload['object'])) {
+            return $payload['object']['id'] ?? null;
+        }
+
+        if (isset($payload['order']) && is_array($payload['order'])) {
+            return $payload['order']['paymentId'] ?? $payload['order']['orderId'] ?? null;
+        }
+
+        return isset($payload['PaymentId']) ? (string) $payload['PaymentId'] : ($payload['payment_id'] ?? $payload['id'] ?? null);
     }
 
     /**

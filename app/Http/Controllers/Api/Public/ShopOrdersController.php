@@ -7,6 +7,7 @@ use App\Models\ShopOrder;
 use App\Models\ShopGood;
 use App\Models\ShopGoodVariation;
 use App\Models\ShopOrderLog;
+use App\Services\CustomerOrderEmailService;
 use App\Services\OrderCalculationService;
 use App\Services\NotificationService;
 use Illuminate\Http\JsonResponse;
@@ -188,6 +189,8 @@ class ShopOrdersController extends Controller
             } catch (\Exception $e) {
                 Log::error('Ошибка отправки уведомления о новом заказе: '.$e->getMessage());
             }
+
+            app(CustomerOrderEmailService::class)->sendOrderConfirmation($order);
 
             return response()->json([
                 'success' => true,

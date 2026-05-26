@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
-use App\Mail\OrderInvoiceMail;
 use App\Models\Contact;
 use App\Models\Setting;
 use App\Models\ShopCartItem;
@@ -14,6 +13,7 @@ use App\Models\ShopOrderLog;
 use App\Models\ShopPaymentMethod;
 use App\Models\ShopPreorder;
 use App\Models\User;
+use App\Services\CustomerOrderEmailService;
 use App\Services\NotificationService;
 use App\Services\TelegramService;
 use Illuminate\Http\JsonResponse;
@@ -1253,19 +1253,7 @@ class CartController extends Controller
                 Log::error('Notification error: '.$e->getMessage());
             }
 
-            // Отправляем email с накладной
-            try {
-                $contacts = $this->getShopContacts();
-                $siteInfo = \App\Services\SiteInfoService::getSiteInfoForEmail();
-
-                // Обогащаем данные товаров названиями
-                $enrichedOrder = $this->enrichOrderItems($order);
-
-                Mail::to($order->customer_email)->send(new OrderInvoiceMail($enrichedOrder, $contacts, $siteInfo));
-            } catch (\Exception $e) {
-                // Логируем ошибку, но не прерываем создание заказа
-                Log::error('Email notification error: '.$e->getMessage());
-            }
+            app(CustomerOrderEmailService::class)->sendOrderConfirmation($order);
 
             // Проверяем настройку two_stage_pay
             $twoStagePay = \App\Models\Setting::where('key', 'two_stage_pay')->first();

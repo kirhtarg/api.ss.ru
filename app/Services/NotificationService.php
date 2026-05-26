@@ -133,6 +133,8 @@ class NotificationService
         $this->sendNotification('order_created', [
             'order' => $order,
         ]);
+
+        app(CustomerOrderEmailService::class)->sendOrderConfirmation($order);
     }
 
     protected function markOrderNotificationSent(ShopOrder $order, string $metadataKey): bool
