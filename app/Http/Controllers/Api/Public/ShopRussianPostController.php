@@ -47,21 +47,33 @@ class ShopRussianPostController extends Controller
             $settings = $this->getSettingsOrFail();
             $city = trim((string) $request->query('city'));
             $address = trim((string) $request->query('address', ''));
+            $normalizedCity = $this->normalizeCityName($city);
             $codes = [];
+            $offices = [];
 
-            if ($address !== '') {
+            $cityCenter = $this->getKnownCityCenter($normalizedCity);
+            if ($cityCenter) {
+                $offices = $this->getOfficesNearby(
+                    $settings,
+                    $cityCenter['latitude'],
+                    $cityCenter['longitude'],
+                    $this->getOfficeRadiusKm($normalizedCity)
+                );
+            }
+
+            if (empty($offices) && $address !== '') {
                 $codes = $this->getOfficeCodesByAddress($settings, $address, 50);
             }
 
-            if (empty($codes)) {
+            if (empty($offices) && empty($codes)) {
                 $codes = $this->getOfficeCodesBySettlement($settings, $city);
             }
 
-            if (empty($codes)) {
+            if (empty($offices) && empty($codes)) {
                 $codes = $this->getOfficeCodesByAddress($settings, $city, 50);
             }
 
-            $offices = $this->loadOfficeDetails($settings, $codes);
+            $offices = $this->mergeOffices($offices, $this->loadOfficeDetails($settings, $codes));
 
             return response()->json([
                 'success' => true,
@@ -292,6 +304,39 @@ class ShopRussianPostController extends Controller
         return $this->normalizeOfficeCodes($response->json());
     }
 
+    private function getOfficesNearby(ShopRussianPostSettings $settings, float $latitude, float $longitude, int $radiusKm): array
+    {
+        $response = Http::withOptions($this->httpOptions())
+            ->withHeaders($this->headers($settings))
+            ->get('https://otpravka-api.pochta.ru/postoffice/1.0/nearby', [
+                'latitude' => $latitude,
+                'longitude' => $longitude,
+                'top' => 100,
+                'search-radius' => $radiusKm,
+                'filter-by-office-type' => 'true',
+                'hide-private' => 'true',
+                'hide-temporary-closed' => 'true',
+                'hide-not-available' => 'true',
+            ]);
+
+        if (! $response->successful()) {
+            Log::warning('RussianPost nearby offices warning: '.$this->extractError($response), [
+                'latitude' => $latitude,
+                'longitude' => $longitude,
+                'radius' => $radiusKm,
+            ]);
+
+            return [];
+        }
+
+        $items = $response->json();
+        if (! is_array($items)) {
+            return [];
+        }
+
+        return array_values(array_filter(array_map(fn ($item) => $this->mapOffice($item), $items)));
+    }
+
     private function loadOfficeDetails(ShopRussianPostSettings $settings, array $codes): array
     {
         $codes = array_slice(array_values(array_unique(array_filter($codes))), 0, 50);
@@ -316,6 +361,36 @@ class ShopRussianPostController extends Controller
         }
 
         return $offices;
+    }
+
+    private function mergeOffices(array ...$groups): array
+    {
+        $merged = [];
+
+        foreach ($groups as $offices) {
+            foreach ($offices as $office) {
+                if (! is_array($office)) {
+                    continue;
+                }
+
+                $key = (string) ($office['postal_code'] ?? $office['id'] ?? '');
+                if ($key === '') {
+                    continue;
+                }
+
+                if (! isset($merged[$key])) {
+                    $merged[$key] = $office;
+                    continue;
+                }
+
+                $merged[$key] = array_merge(
+                    $merged[$key],
+                    array_filter($office, fn ($value) => $value !== null && $value !== '')
+                );
+            }
+        }
+
+        return array_values($merged);
     }
 
     private function normalizeOfficeCodes($data): array
@@ -369,6 +444,101 @@ class ShopRussianPostController extends Controller
             'region' => $region ?: null,
             'district' => $district ?: null,
         ];
+    }
+
+    private function getKnownCityCenter(string $normalizedCity): ?array
+    {
+        if ($this->isMoscowRegionQuery($normalizedCity)) {
+            return ['latitude' => 55.7558, 'longitude' => 37.6176];
+        }
+
+        if ($this->isSaintPetersburgQuery($normalizedCity)) {
+            return ['latitude' => 59.9311, 'longitude' => 30.3609];
+        }
+
+        return null;
+    }
+
+    private function getOfficeRadiusKm(string $normalizedCity): int
+    {
+        if ($this->isMoscowRegionQuery($normalizedCity)) {
+            return 140;
+        }
+
+        if ($this->isSaintPetersburgQuery($normalizedCity)) {
+            return 45;
+        }
+
+        return 80;
+    }
+
+    private function isSaintPetersburgQuery(string $normalizedCity): bool
+    {
+        return in_array($normalizedCity, [
+            'санкт петербург',
+            'санкт-петербург',
+            'спб',
+            'петербург',
+        ], true);
+    }
+
+    private function isMoscowRegionQuery(string $normalizedCity): bool
+    {
+        if ($normalizedCity === 'москва' || $normalizedCity === 'moscow') {
+            return true;
+        }
+
+        $moscowRegionCities = [
+            'химки',
+            'балашиха',
+            'мытищи',
+            'люберцы',
+            'красногорск',
+            'одинцово',
+            'долгопрудный',
+            'реутов',
+            'видное',
+            'королев',
+            'подольск',
+            'домодедово',
+            'щелково',
+            'лобня',
+            'зеленоград',
+            'котельники',
+            'дзержинский',
+            'ивантеевка',
+            'пушкино',
+            'электросталь',
+            'ногинск',
+            'серпухов',
+            'коломна',
+            'воскресенск',
+            'раменское',
+            'жуковский',
+            'фрязино',
+            'дедовск',
+            'истра',
+            'клин',
+            'дмитров',
+            'чехов',
+            'наро фоминск',
+            'наро-фоминск',
+            'сергиев посад',
+            'орехово зуево',
+            'орехово-зуево',
+        ];
+
+        return in_array($normalizedCity, $moscowRegionCities, true);
+    }
+
+    private function normalizeCityName(string $city): string
+    {
+        $city = mb_strtolower(trim($city));
+        $city = preg_replace('/\b(г|город|обл|область|край|респ|республика|ао)\.?\b/u', '', $city);
+        $city = preg_replace('/[^а-яёa-z0-9\- ]/u', ' ', $city);
+        $city = preg_replace('/\s+/u', ' ', $city);
+
+        return trim((string) $city);
     }
 
     private function mapOffice($item): ?array
