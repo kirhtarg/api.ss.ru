@@ -3609,6 +3609,8 @@ class ShopOrdersController extends Controller
                 ], 400);
             }
 
+            $oldPaymentUrl = $order->payment_url;
+
             // Создаем транзакцию для нового платежа
             $transaction = ShopPaymentTransaction::create([
                 'order_id' => $order->id,
@@ -3672,12 +3674,26 @@ class ShopOrdersController extends Controller
             if (!$resultData || !isset($resultData['success']) || !$resultData['success']) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Не удалось создать новый платеж',
+                    'message' => $resultData['message'] ?? 'Не удалось создать новый платеж',
+                ], 500);
+            }
+
+            $newPaymentUrl = $resultData['payment_url'] ?? $resultData['data']['payment_url'] ?? null;
+            if (!$this->isExternalPaymentUrl($newPaymentUrl)) {
+                $transaction->update([
+                    'status' => 'failed',
+                    'error_message' => 'Платежная система вернула некорректную ссылку на оплату',
+                    'response_data' => $resultData,
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Платежная система вернула некорректную ссылку на оплату',
                 ], 500);
             }
 
             // Отправляем email с новой ссылкой клиенту
-            $this->sendNewPaymentLinkEmail($order, $resultData['payment_url'] ?? $resultData['data']['payment_url'] ?? null);
+            $this->sendNewPaymentLinkEmail($order, $newPaymentUrl);
 
             // Добавляем запись в лог заказа
             \App\Models\ShopOrderLog::create([
@@ -3685,8 +3701,8 @@ class ShopOrdersController extends Controller
                 'section' => 'orders',
                 'action' => 'regenerate_payment_link',
                 'user_id' => $request->user()->id ?? null,
-                'old_value' => $order->payment_url,
-                'new_value' => $resultData['payment_url'] ?? $resultData['data']['payment_url'] ?? null,
+                'old_value' => $oldPaymentUrl,
+                'new_value' => $newPaymentUrl,
                 'comment' => 'Перегенерация платежной ссылки',
             ]);
 
@@ -3694,7 +3710,7 @@ class ShopOrdersController extends Controller
                 'success' => true,
                 'message' => 'Платежная ссылка успешно перегенерирована',
                 'data' => [
-                    'payment_url' => $resultData['payment_url'] ?? $resultData['data']['payment_url'] ?? null,
+                    'payment_url' => $newPaymentUrl,
                     'transaction_id' => $resultData['transaction_id'] ?? $resultData['data']['transaction_id'] ?? null,
                 ],
             ]);
@@ -3710,6 +3726,7 @@ class ShopOrdersController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => $userMessage,
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
@@ -3807,20 +3824,35 @@ class ShopOrdersController extends Controller
                 'description' => 'Заказ №' . $order->order_number,
                 'metadata' => [
                     'transaction_id' => $transaction->id,
+                    'order_id' => $order->id,
                     'order_number' => $order->order_number,
                     'regenerated' => true,
                 ],
             ];
 
+            $paymentController = new \App\Http\Controllers\Api\Public\ShopPaymentController;
+            $paymentData['receipt'] = $paymentController->buildYookassaReceiptFromOrder($order, $settings);
+
             try {
+                $proxy = env('HTTP_CLIENT_PROXY');
+                $verify = config('services.tbank.verify_ssl', true);
+                $caBundle = config('services.tbank.ca_bundle_path');
+                $disableVerify = app()->environment('production') ? false : (($settings['mode'] ?? 'test') !== 'live');
+                $options = [
+                    'connect_timeout' => 10,
+                    'proxy' => $proxy ?: null,
+                    'curl' => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
+                    'verify' => $disableVerify ? false : ($caBundle ?: $verify),
+                ];
+
                 $response = \Illuminate\Support\Facades\Http::withBasicAuth($settings['shop_id'], $settings['secret_key'])
                     ->withHeaders([
                         'Content-Type' => 'application/json',
                         'Idempotence-Key' => uniqid('regenerate_', true),
                     ])
-                    ->timeout(30) // Увеличиваем timeout до 30 секунд
-                    ->retry(2, 100) // Повторяем запрос 2 раза с задержкой 100мс
-                    ->withOptions(['verify' => false]) // Отключаем SSL верификацию для локальной разработки
+                    ->timeout(30)
+                    ->retry(2, 1000, null, false)
+                    ->withOptions($options)
                     ->post($apiUrl, $paymentData);
             } catch (\Illuminate\Http\Client\ConnectionException $e) {
                 throw new \Exception('Ошибка подключения к YooKassa API: ' . $e->getMessage());
@@ -3872,9 +3904,21 @@ class ShopOrdersController extends Controller
                     'yookassa_payment_id' => $yookassaPaymentId,
                 ]);
             } else {
+                $responseData = $response->json();
+                $errorMessage = $responseData['description']
+                    ?? $responseData['message']
+                    ?? $response->body()
+                    ?? 'Ошибка создания платежа в YooKassa';
+
+                $transaction->update([
+                    'status' => 'failed',
+                    'error_message' => $errorMessage,
+                    'response_data' => $responseData ?: ['raw_body' => $response->body()],
+                ]);
+
                 return response()->json([
                     'success' => false,
-                    'message' => 'Ошибка создания платежа в YooKassa',
+                    'message' => 'Ошибка создания платежа в YooKassa: ' . $errorMessage,
                 ], 500);
             }
 
@@ -4162,7 +4206,7 @@ class ShopOrdersController extends Controller
      */
     private function sendNewPaymentLinkEmail($order, $newPaymentUrl)
     {
-        if (!$newPaymentUrl || !$order->customer_email) {
+        if (!$this->isExternalPaymentUrl($newPaymentUrl) || !$order->customer_email) {
             return;
         }
 
@@ -4186,6 +4230,21 @@ class ShopOrdersController extends Controller
         } catch (\Exception $e) {
             // Silent fail for email sending
         }
+    }
+
+    private function isExternalPaymentUrl(?string $url): bool
+    {
+        $url = trim((string) $url);
+        if ($url === '' || !filter_var($url, FILTER_VALIDATE_URL)) {
+            return false;
+        }
+
+        $path = parse_url($url, PHP_URL_PATH) ?: '';
+        if (str_contains($path, '/admin/shop/orders/') || str_contains($path, '/regenerate-payment-link')) {
+            return false;
+        }
+
+        return true;
     }
 
     /**

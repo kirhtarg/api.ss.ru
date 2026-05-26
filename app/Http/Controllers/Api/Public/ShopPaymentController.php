@@ -3391,7 +3391,7 @@ class ShopPaymentController extends Controller
         return [];
     }
 
-    protected function buildYookassaReceiptFromOrder(ShopOrder $order, array $settings): array
+    public function buildYookassaReceiptFromOrder(ShopOrder $order, array $settings): array
     {
         $items = [];
         try {
