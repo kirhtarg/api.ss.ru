@@ -809,8 +809,22 @@ Route::middleware(['cors', 'throttle:public'])->group(function () {
     Route::get('/yandex-pay/status/{orderId}', [App\Http\Controllers\Api\YandexPayController::class, 'checkPaymentStatus']);
 
     // Webhook для Яндекс Пэй
+    Route::options('/webhooks/yandex-pay', function () {
+        return response()->json([], 200);
+    });
     Route::post('/webhooks/yandex-pay', [\App\Http\Controllers\Api\Public\ShopPaymentController::class, 'yandexPayWebhook']);
+    Route::options('/webhooks/yandex-pay/v1/webhook', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/webhooks/yandex-pay/v1/webhook', [\App\Http\Controllers\Api\Public\ShopPaymentController::class, 'yandexPayWebhook']);
+    Route::options('/webhooks/yandex-split', function () {
+        return response()->json([], 200);
+    });
     Route::post('/webhooks/yandex-split', [\App\Http\Controllers\Api\Public\ShopPaymentController::class, 'yandexPayWebhook']);
+    Route::options('/webhooks/yandex-split/v1/webhook', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/webhooks/yandex-split/v1/webhook', [\App\Http\Controllers\Api\Public\ShopPaymentController::class, 'yandexPayWebhook']);
 
     // Проверка статуса платежа
     Route::options('/public/shop/payment/check-status', function () {

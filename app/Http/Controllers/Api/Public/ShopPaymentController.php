@@ -3861,21 +3861,24 @@ class ShopPaymentController extends Controller
 
     public function yandexPayWebhook(Request $request)
     {
+        $payload = $this->normalizeYandexPayWebhookPayload($request);
+
         Log::info('Yandex Pay Webhook received', [
             'method' => $request->method(),
             'url' => $request->fullUrl(),
             'headers' => $request->headers->all(),
-            'payload' => $request->all()
+            'payload' => $payload,
+            'raw_body_present' => $request->getContent() !== '',
         ]);
 
-        $event = $request->input('event');
-        $eventType = $request->input('eventType'); // Yandex Pay Merchant API format
-        $object = $request->input('object');
-        $yandexOrder = $request->input('order'); // Yandex Pay Merchant API format
+        $event = $payload['event'] ?? null;
+        $eventType = $payload['eventType'] ?? $event; // Yandex Pay Merchant API format
+        $object = $payload['object'] ?? [];
+        $yandexOrder = $payload['order'] ?? []; // Yandex Pay Merchant API format
 
         // Извлекаем metadata. Yandex Pay Merchant API v1 вкладывает её в order.metadata.
         // YooKassa кладёт её в object.metadata или в корень.
-        $metadataRaw = $request->input('metadata')
+        $metadataRaw = ($payload['metadata'] ?? null)
             ?? ($yandexOrder['metadata'] ?? null)
             ?? ($object['metadata'] ?? null);
         $metadata = is_string($metadataRaw) ? json_decode($metadataRaw, true) : $metadataRaw;
@@ -3897,7 +3900,7 @@ class ShopPaymentController extends Controller
                 'method' => $request->method(),
                 'url' => $request->fullUrl(),
                 'headers' => $request->headers->all(),
-                'payload' => $request->all(),
+                'payload' => $payload,
                 'metadata' => $metadata,
                 'order_id' => $webhookOrderId,
                 'event' => $event,
@@ -3914,12 +3917,13 @@ class ShopPaymentController extends Controller
 
         // Определяем, является ли это успешным платежом
         // Формат 1: Yandex Pay Merchant API v1 — eventType=PAYMENT_STATUS_UPDATED, order.paymentStatus=CAPTURED
-        $isYandexPaySuccess = $eventType === 'PAYMENT_STATUS_UPDATED'
+        $isYandexStatusEvent = in_array($eventType, ['PAYMENT_STATUS_UPDATED', 'ORDER_STATUS_UPDATED'], true);
+        $isYandexPaySuccess = $isYandexStatusEvent
             && in_array($yandexOrder['paymentStatus'] ?? '', ['CAPTURED', 'AUTHORIZED']);
         // Формат 2: YooKassa-style — event=payment.succeeded, object.status=succeeded
         $isYookassaSuccess = $event === 'payment.succeeded'
             && isset($object['status']) && $object['status'] === 'succeeded';
-        $isYandexPayFailure = $eventType === 'PAYMENT_STATUS_UPDATED'
+        $isYandexPayFailure = $isYandexStatusEvent
             && in_array($yandexOrder['paymentStatus'] ?? '', ['FAILED', 'CANCELLED', 'CANCELED', 'EXPIRED', 'VOIDED'], true);
         $isYookassaFailure = $event === 'payment.canceled'
             || (isset($object['status']) && in_array($object['status'], ['canceled', 'cancelled', 'failed'], true));
@@ -3965,7 +3969,7 @@ class ShopPaymentController extends Controller
                         ->where('transaction_id', $yandexPaymentId)
                         ->latest()
                         ->first();
-                    $this->notifyPaymentSuccessFromWebhook($order, $transaction, $request->all(), 'Яндекс Пэй');
+                    $this->notifyPaymentSuccessFromWebhook($order, $transaction, $payload, 'Яндекс Пэй');
 
                     return response()->json(['status' => 'ok']);
                 }
@@ -3983,7 +3987,7 @@ class ShopPaymentController extends Controller
                         'amount' => $object['amount']['value'] ?? $yandexOrder['amount']['value'] ?? $order->total_amount,
                         'transaction_id' => $yandexPaymentId,
                         'status' => 'paid',
-                        'response_data' => $request->all(),
+                        'response_data' => $payload,
                     ]);
 
                     Log::info('Yandex Pay Webhook: Order '.$order->id.' payment succeeded and status updated.');
@@ -3996,7 +4000,7 @@ class ShopPaymentController extends Controller
                             'error' => $e->getMessage(),
                         ]);
                     }
-                    $this->notifyPaymentSuccessFromWebhook($order, $transaction, $request->all(), 'Яндекс Пэй');
+                    $this->notifyPaymentSuccessFromWebhook($order, $transaction, $payload, 'Яндекс Пэй');
                 } else {
                     Log::error('Yandex Pay Webhook: "paid" payment status not found in database.');
                 }
@@ -4034,7 +4038,7 @@ class ShopPaymentController extends Controller
                 if ($transaction) {
                     $transaction->update([
                         'status' => 'failed',
-                        'response_data' => $request->all(),
+                        'response_data' => $payload,
                         'processed_at' => now(),
                     ]);
                 } else {
@@ -4044,11 +4048,11 @@ class ShopPaymentController extends Controller
                         'amount' => $object['amount']['value'] ?? $yandexOrder['amount']['value'] ?? $order->total_amount,
                         'transaction_id' => $yandexPaymentId,
                         'status' => 'failed',
-                        'response_data' => $request->all(),
+                        'response_data' => $payload,
                     ]);
                 }
 
-                $this->notifyPaymentFailedFromWebhook($order, $transaction, $request->all(), 'Яндекс Пэй');
+                $this->notifyPaymentFailedFromWebhook($order, $transaction, $payload, 'Яндекс Пэй');
             } else {
                 Log::warning('Yandex Pay Webhook: failed payment event received, but order not found.', [
                     'payment_id' => $yandexPaymentId,
@@ -4059,5 +4063,51 @@ class ShopPaymentController extends Controller
         }
 
         return response()->json(['status' => 'ok']);
+    }
+
+    private function normalizeYandexPayWebhookPayload(Request $request): array
+    {
+        $jsonPayload = $request->all();
+        if (! empty($jsonPayload)) {
+            return $jsonPayload;
+        }
+
+        $rawBody = trim((string) $request->getContent());
+        if ($rawBody === '') {
+            return [];
+        }
+
+        $decodedJson = json_decode($rawBody, true);
+        if (is_array($decodedJson)) {
+            return $decodedJson;
+        }
+
+        $jwtPayload = $this->decodeYandexPayJwtPayload($rawBody);
+        if (is_array($jwtPayload)) {
+            $jwtPayload['_raw_jwt'] = $rawBody;
+
+            return $jwtPayload;
+        }
+
+        return ['_raw_body' => $rawBody];
+    }
+
+    private function decodeYandexPayJwtPayload(string $jwt): ?array
+    {
+        $parts = explode('.', $jwt);
+        if (count($parts) < 2) {
+            return null;
+        }
+
+        $payload = $parts[1];
+        $payload .= str_repeat('=', (4 - strlen($payload) % 4) % 4);
+        $decoded = base64_decode(strtr($payload, '-_', '+/'), true);
+        if ($decoded === false) {
+            return null;
+        }
+
+        $data = json_decode($decoded, true);
+
+        return is_array($data) ? $data : null;
     }
 }

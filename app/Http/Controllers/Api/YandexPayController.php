@@ -686,6 +686,16 @@ class YandexPayController extends Controller
                 'request_payload' => $orderData,
                 'server_response' => $responseData,
             ], now()->addHours(2));
+            Cache::put("yandex_pay_test_order:{$testId}", [
+                'test_id' => $testId,
+                'order_number' => $orderNumber,
+                'payment_method_id' => $request->payment_method_id,
+                'amount' => $amountString,
+                'callback_url' => $callbackUrl,
+                'created_at' => now()->toDateTimeString(),
+                'request_payload' => $orderData,
+                'server_response' => $responseData,
+            ], now()->addHours(2));
 
             return response()->json([
                 'success' => true,
