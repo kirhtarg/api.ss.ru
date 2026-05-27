@@ -7,6 +7,7 @@ use App\Models\ShopGood;
 use App\Models\ShopRussianPostSettings;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -49,6 +50,15 @@ class ShopRussianPostController extends Controller
             $address = trim((string) $request->query('address', ''));
             $cityParts = $this->parseSettlement($city);
             $normalizedCity = $this->normalizeCityName($cityParts['settlement']);
+            $cacheKey = 'russianpost_offices_'.md5($normalizedCity.'|'.$address);
+
+            if ($address === '' && Cache::has($cacheKey)) {
+                return response()->json([
+                    'success' => true,
+                    'data' => Cache::get($cacheKey),
+                ]);
+            }
+
             $codes = [];
             $offices = [];
 
@@ -69,6 +79,10 @@ class ShopRussianPostController extends Controller
                 $this->loadOfficeDetails($settings, $codes)
             );
             $offices = $this->filterOfficesByCity($offices, $normalizedCity);
+
+            if ($address === '') {
+                Cache::put($cacheKey, $offices, now()->addHours(12));
+            }
 
             return response()->json([
                 'success' => true,
@@ -324,21 +338,29 @@ class ShopRussianPostController extends Controller
         $codes = array_values(array_unique(array_filter($codes)));
         $offices = [];
 
-        foreach ($codes as $code) {
-            $response = Http::withOptions($this->httpOptions())
-                ->withHeaders($this->headers($settings))
-                ->get('https://otpravka-api.pochta.ru/postoffice/1.0/'.rawurlencode((string) $code), [
-                    'filter-by-office-type' => 'true',
-                ]);
+        foreach (array_chunk($codes, 40) as $chunk) {
+            $responses = Http::pool(function ($pool) use ($settings, $chunk) {
+                return array_map(function ($code) use ($pool, $settings) {
+                    return $pool
+                        ->withOptions($this->httpOptions())
+                        ->withHeaders($this->headers($settings))
+                        ->get('https://otpravka-api.pochta.ru/postoffice/1.0/'.rawurlencode((string) $code), [
+                            'filter-by-office-type' => 'true',
+                        ]);
+                }, $chunk);
+            });
 
-            if (! $response->successful()) {
-                Log::warning('RussianPost office details warning: '.$this->extractError($response), ['postal_code' => $code]);
-                continue;
-            }
+            foreach ($responses as $index => $response) {
+                $code = $chunk[$index] ?? null;
+                if (! $response->successful()) {
+                    Log::warning('RussianPost office details warning: '.$this->extractError($response), ['postal_code' => $code]);
+                    continue;
+                }
 
-            $office = $this->mapOffice($response->json());
-            if ($office) {
-                $offices[] = $office;
+                $office = $this->mapOffice($response->json());
+                if ($office) {
+                    $offices[] = $office;
+                }
             }
         }
 
