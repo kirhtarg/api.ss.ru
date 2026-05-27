@@ -52,7 +52,7 @@ class ShopRussianPostController extends Controller
             $top = max(1, min(50, (int) $request->query('top', 10)));
             $cityParts = $this->parseSettlement($city);
             $normalizedCity = $this->normalizeCityName($cityParts['settlement']);
-            $cacheKey = 'russianpost_offices_v3_'.md5($normalizedCity.'|'.$address);
+            $cacheKey = 'russianpost_offices_v4_'.md5($normalizedCity.'|'.$address.'|'.$top);
             $debug = [
                 'city' => $city,
                 'address' => $address,
@@ -65,7 +65,7 @@ class ShopRussianPostController extends Controller
                 'offices_count' => 0,
             ];
 
-            if ($address === '' && Cache::has($cacheKey)) {
+            if (Cache::has($cacheKey)) {
                 $cachedOffices = Cache::get($cacheKey);
                 if (! empty($cachedOffices)) {
                     return response()->json([
@@ -99,6 +99,22 @@ class ShopRussianPostController extends Controller
                 $shouldFilterOfficesByCity = false;
                 $debug['codes_source'] = 'address';
                 $debug['post_response'] = $addressOffices['debug'] ?? null;
+
+                if (($addressOffices['limit_exceeded'] ?? false) && Cache::has($cacheKey.'_last_success')) {
+                    $cachedOffices = Cache::get($cacheKey.'_last_success');
+                    if (! empty($cachedOffices)) {
+                        return response()->json([
+                            'success' => true,
+                            'data' => $cachedOffices,
+                            'debug' => [
+                                ...$debug,
+                                'cache_hit' => true,
+                                'cache_reason' => 'russianpost_token_limit_exceeded',
+                                'offices_count' => count($cachedOffices),
+                            ],
+                        ]);
+                    }
+                }
             }
 
             if ($address === '' && empty($codes)) {
@@ -141,8 +157,9 @@ class ShopRussianPostController extends Controller
                 $debug['offices_count'] = count($offices);
             }
 
-            if ($address === '' && ! empty($offices)) {
+            if (! empty($offices)) {
                 Cache::put($cacheKey, $offices, now()->addHours(12));
+                Cache::put($cacheKey.'_last_success', $offices, now()->addDays(7));
             }
 
             return response()->json([
@@ -216,16 +233,24 @@ class ShopRussianPostController extends Controller
                 $payload['courier'] = true;
             }
 
-            $response = Http::withOptions($this->httpOptions())
-                ->withHeaders($this->headers($settings))
-                ->post('https://otpravka-api.pochta.ru/1.0/tariff', $payload);
+            $publicTariff = $this->calculatePublicTariff($settings, $indexTo, $cargo);
+            $data = $publicTariff['response'];
+            $cost = $publicTariff['cost'];
+            $tariffSource = 'public_tariff';
 
-            if (! $response->successful()) {
-                throw new \RuntimeException($this->extractError($response));
+            if ($cost === null) {
+                $response = Http::withOptions($this->httpOptions())
+                    ->withHeaders($this->headers($settings))
+                    ->post('https://otpravka-api.pochta.ru/1.0/tariff', $payload);
+
+                if (! $response->successful()) {
+                    throw new \RuntimeException($this->extractError($response));
+                }
+
+                $data = $response->json() ?: [];
+                $cost = $this->extractTariffCost($data);
+                $tariffSource = 'otpravka_api_fallback';
             }
-
-            $data = $response->json() ?: [];
-            $cost = $this->extractTariffCost($data);
 
             if ($cost === null) {
                 return response()->json([
@@ -249,6 +274,7 @@ class ShopRussianPostController extends Controller
                     'period' => $this->extractPeriod($data),
                 ]],
                 'meta' => [
+                    'tariff_source' => $tariffSource,
                     'request_payload' => $payload,
                     'server_response' => $data,
                 ],
@@ -273,6 +299,61 @@ class ShopRussianPostController extends Controller
         }
 
         return $settings;
+    }
+
+    private function calculatePublicTariff(ShopRussianPostSettings $settings, string $indexTo, array $cargo): array
+    {
+        $indexFrom = preg_replace('/\D+/', '', (string) $settings->sender_postal_code);
+        $indexTo = preg_replace('/\D+/', '', $indexTo);
+        $weight = (int) max(1, round($cargo['weight'] * 1000));
+
+        if ($indexFrom === '' || $indexTo === '') {
+            return [
+                'cost' => null,
+                'response' => [
+                    'error' => 'Не заполнены индексы отправителя или получателя',
+                ],
+            ];
+        }
+
+        $cacheKey = 'russianpost_public_tariff_v1_'.md5($indexFrom.'|'.$indexTo.'|'.$weight);
+        if (Cache::has($cacheKey)) {
+            return Cache::get($cacheKey);
+        }
+
+        $response = Http::withOptions([
+            'verify' => filter_var(config('services.russianpost.verify_ssl', true), FILTER_VALIDATE_BOOLEAN),
+            'timeout' => 20,
+        ])->get('https://tariff.russianpost.ru/tariff/v1/calculate', [
+            'json' => '',
+            'object' => 23030,
+            'from' => $indexFrom,
+            'to' => $indexTo,
+            'weight' => $weight,
+        ]);
+
+        if (! $response->successful()) {
+            return [
+                'cost' => null,
+                'response' => [
+                    'status' => $response->status(),
+                    'body' => mb_substr($response->body(), 0, 1000),
+                ],
+            ];
+        }
+
+        $data = $response->json() ?: [];
+        $cost = $this->extractPublicTariffCost($data);
+        $result = [
+            'cost' => $cost,
+            'response' => $data,
+        ];
+
+        if ($cost !== null) {
+            Cache::put($cacheKey, $result, now()->addHours(6));
+        }
+
+        return $result;
     }
 
     private function headers(ShopRussianPostSettings $settings): array
@@ -574,6 +655,10 @@ class ShopRussianPostController extends Controller
             'codes' => [],
             'offices' => [],
             'debug' => $debugAttempts,
+            'limit_exceeded' => collect($debugAttempts)->contains(function ($attempt) {
+                return (int) ($attempt['status'] ?? 0) === 509
+                    || str_contains((string) ($attempt['body'] ?? ''), 'Token requests limit exceeded');
+            }),
         ];
     }
 
@@ -919,6 +1004,30 @@ class ShopRussianPostController extends Controller
         foreach (['total-rate', 'total-rate-with-vat', 'ground-rate', 'avia-rate'] as $key) {
             if (isset($data[$key]) && is_numeric($data[$key])) {
                 return round(((float) $data[$key]) / 100, 2);
+            }
+        }
+
+        return null;
+    }
+
+    private function extractPublicTariffCost(array $data): ?float
+    {
+        if (! empty($data['errors']) || ! empty($data['error'])) {
+            return null;
+        }
+
+        foreach (['paynds', 'paymoneynds', 'pay', 'paymoney'] as $key) {
+            if (isset($data[$key]) && is_numeric($data[$key])) {
+                return round(((float) $data[$key]) / 100, 2);
+            }
+        }
+
+        foreach (['ground', 'avia'] as $section) {
+            if (isset($data[$section]['valnds']) && is_numeric($data[$section]['valnds'])) {
+                return round(((float) $data[$section]['valnds']) / 100, 2);
+            }
+            if (isset($data[$section]['val']) && is_numeric($data[$section]['val'])) {
+                return round(((float) $data[$section]['val']) / 100, 2);
             }
         }
 
