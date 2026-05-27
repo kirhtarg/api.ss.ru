@@ -71,24 +71,30 @@ class ShopRussianPostController extends Controller
 
             $codes = [];
             $offices = [];
+            $shouldFilterOfficesByCity = false;
 
             if (empty($offices) && $address !== '') {
                 $codes = $this->getOfficeCodesByAddress($settings, $address, 50);
+                $shouldFilterOfficesByCity = true;
             }
 
             if (empty($codes)) {
                 $codes = $this->getOfficeCodesBySettlement($settings, $city);
+                $shouldFilterOfficesByCity = false;
             }
 
             if (empty($offices) && empty($codes)) {
                 $codes = $this->getOfficeCodesByAddress($settings, $city, 1000);
+                $shouldFilterOfficesByCity = true;
             }
 
             $offices = $this->mergeOffices(
                 $offices,
                 $this->loadOfficeDetails($settings, $codes)
             );
-            $offices = $this->filterOfficesByCity($offices, $normalizedCity);
+            if ($shouldFilterOfficesByCity) {
+                $offices = $this->filterOfficesByCity($offices, $normalizedCity);
+            }
 
             if ($address === '' && ! empty($offices)) {
                 Cache::put($cacheKey, $offices, now()->addHours(12));
