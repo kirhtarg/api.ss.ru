@@ -86,7 +86,7 @@ class ShopRussianPostSettingsController extends Controller
         $validator = Validator::make($request->all(), [
             'api_token' => 'required|string|max:255',
             'login' => 'required|string|max:255',
-            'password' => 'nullable|string|max:255',
+            'password' => 'required|string|max:255',
             'sender_company' => 'nullable|string|max:255',
             'sender_name' => 'nullable|string|max:255',
             'sender_phone' => 'nullable|string|max:255',
@@ -143,7 +143,7 @@ class ShopRussianPostSettingsController extends Controller
         $validator = Validator::make($request->all(), [
             'api_token' => 'sometimes|string|max:255',
             'login' => 'sometimes|string|max:255',
-            'password' => 'nullable|string|max:255',
+            'password' => 'sometimes|required|string|max:255',
             'sender_company' => 'nullable|string|max:255',
             'sender_name' => 'nullable|string|max:255',
             'sender_phone' => 'nullable|string|max:255',
@@ -237,7 +237,7 @@ class ShopRussianPostSettingsController extends Controller
         $validator = Validator::make($request->all(), [
             'api_token' => 'required|string',
             'login' => 'required|string',
-            'password' => 'nullable|string',
+            'password' => 'required|string',
         ]);
 
         if ($validator->fails()) {
@@ -268,9 +268,14 @@ class ShopRussianPostSettingsController extends Controller
         try {
             // API Почты России: проверяем учетные данные через запрос к API
             // Используем простой запрос для проверки валидности
+            $userAuthorizationKey = trim((string) $password);
+            if (str_starts_with(mb_strtolower($userAuthorizationKey), 'basic ')) {
+                $userAuthorizationKey = trim(mb_substr($userAuthorizationKey, 6));
+            }
+
             $headers = [
                 'Authorization' => 'AccessToken '.$apiToken,
-                'X-User-Authorization' => 'Basic '.base64_encode($login.':'.($password ?? '')),
+                'X-User-Authorization' => 'Basic '.$userAuthorizationKey,
                 'Content-Type' => 'application/json',
                 'Accept' => 'application/json;charset=UTF-8',
             ];

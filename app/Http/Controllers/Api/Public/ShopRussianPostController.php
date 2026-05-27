@@ -42,8 +42,6 @@ class ShopRussianPostController extends Controller
         $request->validate([
             'city' => 'required|string|min:2|max:255',
             'address' => 'nullable|string|max:255',
-            'latitude' => 'nullable|numeric',
-            'longitude' => 'nullable|numeric',
             'top' => 'nullable|integer|min:1|max:50',
         ]);
 
@@ -51,8 +49,6 @@ class ShopRussianPostController extends Controller
             $settings = $this->getSettingsOrFail();
             $city = trim((string) $request->query('city'));
             $address = trim((string) $request->query('address', ''));
-            $latitude = $request->query('latitude');
-            $longitude = $request->query('longitude');
             $top = max(1, min(50, (int) $request->query('top', 10)));
             $cityParts = $this->parseSettlement($city);
             $normalizedCity = $this->normalizeCityName($cityParts['settlement']);
@@ -60,8 +56,6 @@ class ShopRussianPostController extends Controller
             $debug = [
                 'city' => $city,
                 'address' => $address,
-                'latitude' => $latitude,
-                'longitude' => $longitude,
                 'settlement' => $cityParts['settlement'],
                 'normalized_city' => $normalizedCity,
                 'codes_source' => null,
@@ -98,19 +92,13 @@ class ShopRussianPostController extends Controller
             $offices = [];
             $shouldFilterOfficesByCity = false;
 
-            if ($address !== '' && is_numeric($latitude) && is_numeric($longitude)) {
-                $offices = $this->getOfficesNearbyByCoordinates($settings, (float) $latitude, (float) $longitude, $top);
-                $shouldFilterOfficesByCity = false;
-                $debug['codes_source'] = 'coordinates';
-                $debug['details_count'] = count($offices);
-            }
-
-            if (empty($offices) && $address !== '') {
+            if ($address !== '') {
                 $addressOffices = $this->getOfficesByAddress($settings, $address, $top);
                 $codes = $addressOffices['codes'];
                 $offices = $addressOffices['offices'];
                 $shouldFilterOfficesByCity = false;
-                $debug['codes_source'] = $debug['codes_source'] ?: 'address';
+                $debug['codes_source'] = 'address';
+                $debug['post_response'] = $addressOffices['debug'] ?? null;
             }
 
             if ($address === '' && empty($codes)) {
@@ -280,7 +268,7 @@ class ShopRussianPostController extends Controller
     {
         $settings = ShopRussianPostSettings::getActive();
 
-        if (! $settings || ! $settings->api_token || ! $settings->login || ! $settings->sender_postal_code) {
+        if (! $settings || ! $settings->api_token || ! $settings->login || ! $settings->password || ! $settings->sender_postal_code) {
             throw new \RuntimeException('Активные настройки Почты России заполнены не полностью');
         }
 
@@ -289,9 +277,14 @@ class ShopRussianPostController extends Controller
 
     private function headers(ShopRussianPostSettings $settings): array
     {
+        $userAuthorizationKey = trim((string) $settings->password);
+        if (str_starts_with(mb_strtolower($userAuthorizationKey), 'basic ')) {
+            $userAuthorizationKey = trim(mb_substr($userAuthorizationKey, 6));
+        }
+
         return [
             'Authorization' => 'AccessToken '.$settings->api_token,
-            'X-User-Authorization' => 'Basic '.base64_encode($settings->login.':'.($settings->password ?? '')),
+            'X-User-Authorization' => 'Basic '.$userAuthorizationKey,
             'Content-Type' => 'application/json',
             'Accept' => 'application/json;charset=UTF-8',
         ];
@@ -447,34 +440,6 @@ class ShopRussianPostController extends Controller
         return $offices;
     }
 
-    private function getOfficesNearbyByCoordinates(ShopRussianPostSettings $settings, float $latitude, float $longitude, int $top = 10): array
-    {
-        $response = Http::withOptions($this->httpOptions())
-            ->withHeaders($this->headers($settings))
-            ->get('https://otpravka-api.pochta.ru/postoffice/1.0/nearby.details', [
-                'latitude' => $latitude,
-                'longitude' => $longitude,
-                'top' => $top,
-                'search-radius' => 20,
-                'filter-by-office-type' => 'false',
-                'hide-private' => 'false',
-                'hide-temporary-closed' => 'true',
-                'hide-not-available' => 'true',
-                'full-address-only' => 'true',
-            ]);
-
-        if (! $response->successful()) {
-            Log::warning('RussianPost nearby details warning: '.$this->extractError($response), [
-                'latitude' => $latitude,
-                'longitude' => $longitude,
-            ]);
-
-            return [];
-        }
-
-        return $this->normalizeOffices($response->json());
-    }
-
     private function getKnownCitySearchPoints(string $normalizedCity): array
     {
         return match ($normalizedCity) {
@@ -537,6 +502,10 @@ class ShopRussianPostController extends Controller
             return [
                 'codes' => [],
                 'offices' => [],
+                'debug' => [
+                    'status' => $response->status(),
+                    'body' => mb_substr($response->body(), 0, 1000),
+                ],
             ];
         }
 
@@ -545,6 +514,10 @@ class ShopRussianPostController extends Controller
         return [
             'codes' => $this->normalizeOfficeCodes($data),
             'offices' => $this->normalizeOffices($data),
+            'debug' => [
+                'status' => $response->status(),
+                'body' => $data,
+            ],
         ];
     }
 
