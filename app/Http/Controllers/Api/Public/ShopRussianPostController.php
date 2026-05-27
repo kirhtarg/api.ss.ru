@@ -61,18 +61,14 @@ class ShopRussianPostController extends Controller
             }
 
             if (empty($offices) && empty($codes)) {
-                $codes = $this->getOfficeCodesByAddress($settings, $city, 50);
+                $codes = $this->getOfficeCodesByAddress($settings, $city, 1000);
             }
 
             $offices = $this->mergeOffices(
                 $offices,
-                $this->loadOfficeDetails($settings, $codes, $this->getOfficeDetailsLimit($normalizedCity))
+                $this->loadOfficeDetails($settings, $codes)
             );
             $offices = $this->filterOfficesByCity($offices, $normalizedCity);
-
-            if (empty($offices)) {
-                $offices = $this->getDadataOfficesByCity($cityParts['settlement'], $normalizedCity);
-            }
 
             return response()->json([
                 'success' => true,
@@ -323,9 +319,9 @@ class ShopRussianPostController extends Controller
         return $this->normalizeOfficeCodes($response->json());
     }
 
-    private function loadOfficeDetails(ShopRussianPostSettings $settings, array $codes, int $limit = 50): array
+    private function loadOfficeDetails(ShopRussianPostSettings $settings, array $codes): array
     {
-        $codes = array_slice(array_values(array_unique(array_filter($codes))), 0, $limit);
+        $codes = array_values(array_unique(array_filter($codes)));
         $offices = [];
 
         foreach ($codes as $code) {
@@ -347,74 +343,6 @@ class ShopRussianPostController extends Controller
         }
 
         return $offices;
-    }
-
-    private function getDadataOfficesByCity(string $city, string $normalizedCity): array
-    {
-        $apiKey = config('services.dadata.api_key') ?: env('DADATA_API_KEY');
-        if (! $apiKey) {
-            return [];
-        }
-
-        $response = Http::withOptions($this->httpOptions())
-            ->withHeaders([
-                'Authorization' => 'Token '.$apiKey,
-                'Accept' => 'application/json',
-                'Content-Type' => 'application/json',
-            ])
-            ->post('https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/postal_office', [
-                'query' => $city,
-                'count' => $this->getOfficeDetailsLimit($normalizedCity),
-            ]);
-
-        if (! $response->successful()) {
-            Log::warning('RussianPost DaData offices warning: '.$this->extractError($response), ['city' => $city]);
-
-            return [];
-        }
-
-        $suggestions = $response->json('suggestions') ?? [];
-        if (! is_array($suggestions)) {
-            return [];
-        }
-
-        $offices = array_values(array_filter(array_map(fn ($item) => $this->mapDadataOffice($item), $suggestions)));
-
-        return $this->filterOfficesByCity($this->mergeOffices($offices), $normalizedCity);
-    }
-
-    private function mapDadataOffice($item): ?array
-    {
-        if (! is_array($item)) {
-            return null;
-        }
-
-        $data = $item['data'] ?? [];
-        if (! is_array($data)) {
-            $data = [];
-        }
-
-        $postalCode = $data['postal_code'] ?? $data['index'] ?? null;
-        if (! $postalCode) {
-            return null;
-        }
-
-        $address = $item['unrestricted_value']
-            ?? $item['value']
-            ?? $data['address_str']
-            ?? $data['address']
-            ?? '';
-
-        return [
-            'id' => (string) $postalCode,
-            'postal_code' => (string) $postalCode,
-            'name' => $data['name'] ?? 'Отделение Почты России',
-            'address' => $address,
-            'latitude' => $this->normalizeCoordinate($data['geo_lat'] ?? $data['latitude'] ?? null),
-            'longitude' => $this->normalizeCoordinate($data['geo_lon'] ?? $data['longitude'] ?? null),
-            'work_time' => $data['schedule'] ?? null,
-            'raw' => $item,
-        ];
     }
 
     private function mergeOffices(array ...$groups): array
@@ -500,19 +428,6 @@ class ShopRussianPostController extends Controller
         ];
     }
 
-    private function getOfficeDetailsLimit(string $normalizedCity): int
-    {
-        if ($this->isMoscowCityQuery($normalizedCity)) {
-            return 300;
-        }
-
-        if ($this->isSaintPetersburgQuery($normalizedCity)) {
-            return 150;
-        }
-
-        return 100;
-    }
-
     private function filterOfficesByCity(array $offices, string $normalizedCity): array
     {
         $cityNeedle = $this->normalizeSettlementNeedle($normalizedCity);
@@ -551,21 +466,6 @@ class ShopRussianPostController extends Controller
         return (bool) preg_match('/(?:^|[\s\-])'.preg_quote($needle, '/').'(?:$|[\s\-])/u', $haystack);
     }
 
-    private function isMoscowCityQuery(string $normalizedCity): bool
-    {
-        return $normalizedCity === 'москва' || $normalizedCity === 'moscow';
-    }
-
-    private function isSaintPetersburgQuery(string $normalizedCity): bool
-    {
-        return in_array($normalizedCity, [
-            'санкт петербург',
-            'санкт-петербург',
-            'спб',
-            'петербург',
-        ], true);
-    }
-
     private function normalizeCityName(string $city): string
     {
         $city = mb_strtolower(trim($city));
@@ -592,11 +492,65 @@ class ShopRussianPostController extends Controller
             'postal_code' => (string) $postalCode,
             'name' => $item['name'] ?? 'Отделение Почты России',
             'address' => $item['address-source'] ?? $item['address'] ?? $item['full-address'] ?? '',
-            'latitude' => $this->normalizeCoordinate($item['latitude'] ?? $item['lat'] ?? null),
-            'longitude' => $this->normalizeCoordinate($item['longitude'] ?? $item['lon'] ?? $item['lng'] ?? null),
+            'latitude' => $this->extractOfficeLatitude($item),
+            'longitude' => $this->extractOfficeLongitude($item),
             'work_time' => $item['schedule'] ?? $item['working-hours'] ?? null,
             'raw' => $item,
         ];
+    }
+
+    private function extractOfficeLatitude(array $item): ?float
+    {
+        return $this->normalizeCoordinate(
+            $item['latitude']
+            ?? $item['lat']
+            ?? $item['geo-lat']
+            ?? $item['geo_lat']
+            ?? $item['coordinates']['latitude']
+            ?? $item['coordinates']['lat']
+            ?? $item['coordinates']['latitude-decimal']
+            ?? $item['address']['latitude']
+            ?? $item['address']['lat']
+            ?? $item['address']['geo-lat']
+            ?? $item['address']['geo_lat']
+            ?? $item['gps-coordinates']['latitude']
+            ?? $item['gps-coordinates']['lat']
+            ?? $item['geo-position']['latitude']
+            ?? $item['geo-position']['lat']
+            ?? $item['gps']['latitude']
+            ?? $item['gps']['lat']
+            ?? null
+        );
+    }
+
+    private function extractOfficeLongitude(array $item): ?float
+    {
+        return $this->normalizeCoordinate(
+            $item['longitude']
+            ?? $item['lon']
+            ?? $item['lng']
+            ?? $item['geo-lon']
+            ?? $item['geo_lon']
+            ?? $item['coordinates']['longitude']
+            ?? $item['coordinates']['lon']
+            ?? $item['coordinates']['lng']
+            ?? $item['coordinates']['longitude-decimal']
+            ?? $item['address']['longitude']
+            ?? $item['address']['lon']
+            ?? $item['address']['lng']
+            ?? $item['address']['geo-lon']
+            ?? $item['address']['geo_lon']
+            ?? $item['gps-coordinates']['longitude']
+            ?? $item['gps-coordinates']['lon']
+            ?? $item['gps-coordinates']['lng']
+            ?? $item['geo-position']['longitude']
+            ?? $item['geo-position']['lon']
+            ?? $item['geo-position']['lng']
+            ?? $item['gps']['longitude']
+            ?? $item['gps']['lon']
+            ?? $item['gps']['lng']
+            ?? null
+        );
     }
 
     private function normalizeCoordinate($value): ?float
