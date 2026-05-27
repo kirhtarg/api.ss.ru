@@ -281,6 +281,7 @@ class ShopRussianPostController extends Controller
         $rawParts = array_values(array_filter(array_map('trim', preg_split('/,/', $city))));
         $rawRegion = $rawParts[1] ?? null;
         $settlement = $parts['settlement'];
+        $rawSettlement = $rawParts[0] ?? $city;
         $normalizedSettlement = $this->normalizeSettlementNeedle($this->normalizeCityName($settlement));
         $paramVariants = [
             array_filter([
@@ -294,10 +295,25 @@ class ShopRussianPostController extends Controller
                 'district' => $parts['district'],
             ]),
             ['settlement' => $settlement],
+            ['settlement' => $rawSettlement],
         ];
 
         if ($normalizedSettlement !== '' && $normalizedSettlement !== $this->normalizeCityName($settlement)) {
             $paramVariants[] = ['settlement' => $normalizedSettlement];
+        }
+
+        if ($this->isFederalCity($normalizedSettlement)) {
+            $paramVariants[] = [
+                'settlement' => $settlement,
+                'region' => $settlement,
+            ];
+            $paramVariants[] = [
+                'region' => $settlement,
+            ];
+            $paramVariants[] = [
+                'settlement' => $rawSettlement,
+                'region' => $settlement,
+            ];
         }
 
         $codes = [];
@@ -329,6 +345,19 @@ class ShopRussianPostController extends Controller
         }
 
         return array_values(array_unique($codes));
+    }
+
+    private function isFederalCity(string $normalizedCity): bool
+    {
+        return in_array($normalizedCity, [
+            'москва',
+            'moscow',
+            'санкт петербург',
+            'санкт-петербург',
+            'спб',
+            'петербург',
+            'севастополь',
+        ], true);
     }
 
     private function getOfficeCodesByAddress(ShopRussianPostSettings $settings, string $address, int $top = 50): array
