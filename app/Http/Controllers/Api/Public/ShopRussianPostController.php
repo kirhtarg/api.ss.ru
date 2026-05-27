@@ -50,13 +50,23 @@ class ShopRussianPostController extends Controller
             $address = trim((string) $request->query('address', ''));
             $cityParts = $this->parseSettlement($city);
             $normalizedCity = $this->normalizeCityName($cityParts['settlement']);
-            $cacheKey = 'russianpost_offices_'.md5($normalizedCity.'|'.$address);
+            $cacheKey = 'russianpost_offices_v2_'.md5($normalizedCity.'|'.$address);
 
             if ($address === '' && Cache::has($cacheKey)) {
-                return response()->json([
-                    'success' => true,
-                    'data' => Cache::get($cacheKey),
-                ]);
+                $cachedOffices = Cache::get($cacheKey);
+                if (! empty($cachedOffices)) {
+                    return response()->json([
+                        'success' => true,
+                        'data' => $cachedOffices,
+                    ]);
+                }
+
+                Cache::forget($cacheKey);
+            }
+
+            $legacyCacheKey = 'russianpost_offices_'.md5($normalizedCity.'|'.$address);
+            if ($address === '') {
+                Cache::forget($legacyCacheKey);
             }
 
             $codes = [];
@@ -80,7 +90,7 @@ class ShopRussianPostController extends Controller
             );
             $offices = $this->filterOfficesByCity($offices, $normalizedCity);
 
-            if ($address === '') {
+            if ($address === '' && ! empty($offices)) {
                 Cache::put($cacheKey, $offices, now()->addHours(12));
             }
 
