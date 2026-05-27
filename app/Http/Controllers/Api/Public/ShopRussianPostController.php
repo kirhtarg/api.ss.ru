@@ -406,7 +406,7 @@ class ShopRussianPostController extends Controller
                     'longitude' => $center['longitude'],
                     'top' => $pageSize,
                     'offset' => $offset,
-                    'search-radius' => $this->getNearbyOfficeRadiusKm($normalizedCity),
+                    'search-radius' => $this->getNearbyOfficeRadiusMeters($normalizedCity),
                     'hide-private' => 'true',
                 ]);
 
@@ -443,12 +443,12 @@ class ShopRussianPostController extends Controller
         };
     }
 
-    private function getNearbyOfficeRadiusKm(string $normalizedCity): int
+    private function getNearbyOfficeRadiusMeters(string $normalizedCity): int
     {
         return match ($normalizedCity) {
-            'москва', 'moscow' => 35,
-            'санкт петербург', 'санкт-петербург', 'спб', 'петербург' => 30,
-            default => 20,
+            'москва', 'moscow' => 35000,
+            'санкт петербург', 'санкт-петербург', 'спб', 'петербург' => 30000,
+            default => 20000,
         };
     }
 
