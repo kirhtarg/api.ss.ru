@@ -397,6 +397,7 @@ class ShopRussianPostController extends Controller
         $offices = [];
         $pageSize = 100;
         $limit = $this->getNearbyOfficeLimit($normalizedCity);
+        $radius = $this->getNearbyOfficeRadiusMeters($normalizedCity);
 
         for ($offset = 0; $offset < $limit; $offset += $pageSize) {
             $response = Http::withOptions($this->httpOptions())
@@ -406,7 +407,7 @@ class ShopRussianPostController extends Controller
                     'longitude' => $center['longitude'],
                     'top' => $pageSize,
                     'offset' => $offset,
-                    'search-radius' => $this->getNearbyOfficeRadiusMeters($normalizedCity),
+                    'search-radius' => $radius,
                     'hide-private' => 'true',
                 ]);
 
@@ -427,6 +428,42 @@ class ShopRussianPostController extends Controller
             $offices = $this->mergeOffices($offices, $mapped);
 
             if (count($items) < $pageSize) {
+                break;
+            }
+        }
+
+        if (! empty($offices)) {
+            return $offices;
+        }
+
+        foreach ([$radius, (int) round($radius / 1000)] as $radiusVariant) {
+            $response = Http::withOptions($this->httpOptions())
+                ->withHeaders($this->headers($settings))
+                ->get('https://otpravka-api.pochta.ru/postoffice/1.0/nearby', [
+                    'latitude' => $center['latitude'],
+                    'longitude' => $center['longitude'],
+                    'top' => $limit,
+                    'search-radius' => $radiusVariant,
+                    'hide-private' => 'true',
+                ]);
+
+            if (! $response->successful()) {
+                Log::warning('RussianPost nearby fallback offices warning: '.$this->extractError($response), [
+                    'city' => $normalizedCity,
+                    'radius' => $radiusVariant,
+                ]);
+                continue;
+            }
+
+            $items = $response->json();
+            if (! is_array($items) || empty($items)) {
+                continue;
+            }
+
+            $mapped = array_values(array_filter(array_map(fn ($item) => $this->mapOffice($item), $items)));
+            $offices = $this->mergeOffices($offices, $mapped);
+
+            if (! empty($offices)) {
                 break;
             }
         }
