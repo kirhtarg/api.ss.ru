@@ -70,6 +70,10 @@ class ShopRussianPostController extends Controller
             );
             $offices = $this->filterOfficesByCity($offices, $normalizedCity);
 
+            if (empty($offices)) {
+                $offices = $this->getDadataOfficesByCity($cityParts['settlement'], $normalizedCity);
+            }
+
             return response()->json([
                 'success' => true,
                 'data' => $offices,
@@ -248,37 +252,57 @@ class ShopRussianPostController extends Controller
     private function getOfficeCodesBySettlement(ShopRussianPostSettings $settings, string $city): array
     {
         $parts = $this->parseSettlement($city);
-        $params = array_filter([
-            'settlement' => $parts['settlement'],
-            'region' => $parts['region'],
-            'district' => $parts['district'],
-        ]);
+        $rawParts = array_values(array_filter(array_map('trim', preg_split('/,/', $city))));
+        $rawRegion = $rawParts[1] ?? null;
+        $settlement = $parts['settlement'];
+        $normalizedSettlement = $this->normalizeSettlementNeedle($this->normalizeCityName($settlement));
+        $paramVariants = [
+            array_filter([
+                'settlement' => $settlement,
+                'region' => $parts['region'],
+                'district' => $parts['district'],
+            ]),
+            array_filter([
+                'settlement' => $settlement,
+                'region' => $rawRegion,
+                'district' => $parts['district'],
+            ]),
+            ['settlement' => $settlement],
+        ];
 
-        $response = Http::withOptions($this->httpOptions())
-            ->withHeaders($this->headers($settings))
-            ->get('https://otpravka-api.pochta.ru/postoffice/1.0/settlement.offices.codes', $params);
-
-        if (! $response->successful()) {
-            Log::warning('RussianPost settlement offices warning: '.$this->extractError($response), ['city' => $city]);
-
-            return [];
+        if ($normalizedSettlement !== '' && $normalizedSettlement !== $this->normalizeCityName($settlement)) {
+            $paramVariants[] = ['settlement' => $normalizedSettlement];
         }
 
-        $codes = $this->normalizeOfficeCodes($response->json());
+        $codes = [];
+        $usedVariants = [];
+        foreach ($paramVariants as $params) {
+            $paramsKey = json_encode($params, JSON_UNESCAPED_UNICODE);
+            if (! $params || isset($usedVariants[$paramsKey])) {
+                continue;
+            }
+            $usedVariants[$paramsKey] = true;
 
-        if (empty($codes) && $parts['settlement'] !== $city) {
             $response = Http::withOptions($this->httpOptions())
                 ->withHeaders($this->headers($settings))
-                ->get('https://otpravka-api.pochta.ru/postoffice/1.0/settlement.offices.codes', [
-                    'settlement' => $city,
+                ->get('https://otpravka-api.pochta.ru/postoffice/1.0/settlement.offices.codes', $params);
+
+            if (! $response->successful()) {
+                Log::warning('RussianPost settlement offices warning: '.$this->extractError($response), [
+                    'city' => $city,
+                    'params' => $params,
                 ]);
 
-            if ($response->successful()) {
-                $codes = $this->normalizeOfficeCodes($response->json());
+                continue;
+            }
+
+            $codes = array_merge($codes, $this->normalizeOfficeCodes($response->json()));
+            if (! empty($codes)) {
+                break;
             }
         }
 
-        return $codes;
+        return array_values(array_unique($codes));
     }
 
     private function getOfficeCodesByAddress(ShopRussianPostSettings $settings, string $address, int $top = 50): array
@@ -323,6 +347,74 @@ class ShopRussianPostController extends Controller
         }
 
         return $offices;
+    }
+
+    private function getDadataOfficesByCity(string $city, string $normalizedCity): array
+    {
+        $apiKey = config('services.dadata.api_key') ?: env('DADATA_API_KEY');
+        if (! $apiKey) {
+            return [];
+        }
+
+        $response = Http::withOptions($this->httpOptions())
+            ->withHeaders([
+                'Authorization' => 'Token '.$apiKey,
+                'Accept' => 'application/json',
+                'Content-Type' => 'application/json',
+            ])
+            ->post('https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/postal_office', [
+                'query' => $city,
+                'count' => $this->getOfficeDetailsLimit($normalizedCity),
+            ]);
+
+        if (! $response->successful()) {
+            Log::warning('RussianPost DaData offices warning: '.$this->extractError($response), ['city' => $city]);
+
+            return [];
+        }
+
+        $suggestions = $response->json('suggestions') ?? [];
+        if (! is_array($suggestions)) {
+            return [];
+        }
+
+        $offices = array_values(array_filter(array_map(fn ($item) => $this->mapDadataOffice($item), $suggestions)));
+
+        return $this->filterOfficesByCity($this->mergeOffices($offices), $normalizedCity);
+    }
+
+    private function mapDadataOffice($item): ?array
+    {
+        if (! is_array($item)) {
+            return null;
+        }
+
+        $data = $item['data'] ?? [];
+        if (! is_array($data)) {
+            $data = [];
+        }
+
+        $postalCode = $data['postal_code'] ?? $data['index'] ?? null;
+        if (! $postalCode) {
+            return null;
+        }
+
+        $address = $item['unrestricted_value']
+            ?? $item['value']
+            ?? $data['address_str']
+            ?? $data['address']
+            ?? '';
+
+        return [
+            'id' => (string) $postalCode,
+            'postal_code' => (string) $postalCode,
+            'name' => $data['name'] ?? 'Отделение Почты России',
+            'address' => $address,
+            'latitude' => $this->normalizeCoordinate($data['geo_lat'] ?? $data['latitude'] ?? null),
+            'longitude' => $this->normalizeCoordinate($data['geo_lon'] ?? $data['longitude'] ?? null),
+            'work_time' => $data['schedule'] ?? null,
+            'raw' => $item,
+        ];
     }
 
     private function mergeOffices(array ...$groups): array
