@@ -51,6 +51,16 @@ class ShopRussianPostController extends Controller
             $cityParts = $this->parseSettlement($city);
             $normalizedCity = $this->normalizeCityName($cityParts['settlement']);
             $cacheKey = 'russianpost_offices_v2_'.md5($normalizedCity.'|'.$address);
+            $debug = [
+                'city' => $city,
+                'settlement' => $cityParts['settlement'],
+                'normalized_city' => $normalizedCity,
+                'codes_source' => null,
+                'codes_count' => 0,
+                'details_count' => 0,
+                'filtered' => false,
+                'offices_count' => 0,
+            ];
 
             if ($address === '' && Cache::has($cacheKey)) {
                 $cachedOffices = Cache::get($cacheKey);
@@ -58,6 +68,11 @@ class ShopRussianPostController extends Controller
                     return response()->json([
                         'success' => true,
                         'data' => $cachedOffices,
+                        'debug' => [
+                            ...$debug,
+                            'cache_hit' => true,
+                            'offices_count' => count($cachedOffices),
+                        ],
                     ]);
                 }
 
@@ -76,24 +91,38 @@ class ShopRussianPostController extends Controller
             if (empty($offices) && $address !== '') {
                 $codes = $this->getOfficeCodesByAddress($settings, $address, 50);
                 $shouldFilterOfficesByCity = true;
+                $debug['codes_source'] = 'address';
             }
 
             if (empty($codes)) {
                 $codes = $this->getOfficeCodesBySettlement($settings, $city);
                 $shouldFilterOfficesByCity = false;
+                $debug['codes_source'] = 'settlement';
             }
 
             if (empty($offices) && empty($codes)) {
                 $codes = $this->getOfficeCodesByAddress($settings, $city, 1000);
                 $shouldFilterOfficesByCity = true;
+                $debug['codes_source'] = 'city_address';
             }
+            $debug['codes_count'] = count($codes);
 
+            $details = $this->loadOfficeDetails($settings, $codes);
+            $debug['details_count'] = count($details);
             $offices = $this->mergeOffices(
                 $offices,
-                $this->loadOfficeDetails($settings, $codes)
+                $details
             );
             if ($shouldFilterOfficesByCity) {
                 $offices = $this->filterOfficesByCity($offices, $normalizedCity);
+                $debug['filtered'] = true;
+            }
+            $debug['offices_count'] = count($offices);
+
+            if (empty($offices) && ! empty($codes)) {
+                $offices = $this->buildOfficeStubsFromCodes($codes);
+                $debug['used_code_stubs'] = true;
+                $debug['offices_count'] = count($offices);
             }
 
             if ($address === '' && ! empty($offices)) {
@@ -103,6 +132,7 @@ class ShopRussianPostController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $offices,
+                'debug' => $debug,
             ]);
         } catch (\Throwable $e) {
             Log::error('RussianPost offices error: '.$e->getMessage());
@@ -389,9 +419,7 @@ class ShopRussianPostController extends Controller
                     return $pool
                         ->withOptions($this->httpOptions())
                         ->withHeaders($this->headers($settings))
-                        ->get('https://otpravka-api.pochta.ru/postoffice/1.0/'.rawurlencode((string) $code), [
-                            'filter-by-office-type' => 'true',
-                        ]);
+                        ->get('https://otpravka-api.pochta.ru/postoffice/1.0/'.rawurlencode((string) $code));
                 }, $chunk);
             });
 
@@ -410,6 +438,24 @@ class ShopRussianPostController extends Controller
         }
 
         return $offices;
+    }
+
+    private function buildOfficeStubsFromCodes(array $codes): array
+    {
+        return array_map(function ($code) {
+            $code = (string) $code;
+
+            return [
+                'id' => $code,
+                'postal_code' => $code,
+                'name' => 'Отделение Почты России',
+                'address' => 'Индекс отделения: '.$code,
+                'latitude' => null,
+                'longitude' => null,
+                'work_time' => null,
+                'raw' => ['postal-code' => $code],
+            ];
+        }, array_values(array_unique(array_filter($codes))));
     }
 
     private function mergeOffices(array ...$groups): array
