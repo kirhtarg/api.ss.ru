@@ -277,17 +277,37 @@ class ShopRussianPostController extends Controller
 
     private function headers(ShopRussianPostSettings $settings): array
     {
-        $userAuthorizationKey = trim((string) $settings->password);
-        if (str_starts_with(mb_strtolower($userAuthorizationKey), 'basic ')) {
-            $userAuthorizationKey = trim(mb_substr($userAuthorizationKey, 6));
-        }
-
         return [
             'Authorization' => 'AccessToken '.$settings->api_token,
-            'X-User-Authorization' => 'Basic '.$userAuthorizationKey,
+            'X-User-Authorization' => $this->buildUserAuthorizationHeader($settings),
             'Content-Type' => 'application/json',
             'Accept' => 'application/json;charset=UTF-8',
         ];
+    }
+
+    private function buildUserAuthorizationHeader(ShopRussianPostSettings $settings, bool $forceLoginPassword = false): string
+    {
+        $value = trim((string) $settings->password);
+        if (str_starts_with(mb_strtolower($value), 'basic ')) {
+            $value = trim(mb_substr($value, 6));
+        }
+
+        if ($forceLoginPassword || ! $this->looksLikeBase64UserKey($value)) {
+            $value = base64_encode($settings->login.':'.((string) $settings->password));
+        }
+
+        return 'Basic '.$value;
+    }
+
+    private function looksLikeBase64UserKey(string $value): bool
+    {
+        if ($value === '' || ! preg_match('/^[A-Za-z0-9+\/=]+$/', $value)) {
+            return false;
+        }
+
+        $decoded = base64_decode($value, true);
+
+        return is_string($decoded) && str_contains($decoded, ':');
     }
 
     private function httpOptions(): array
@@ -489,35 +509,71 @@ class ShopRussianPostController extends Controller
 
     private function getOfficesByAddress(ShopRussianPostSettings $settings, string $address, int $top = 50): array
     {
-        $response = Http::withOptions($this->httpOptions())
-            ->withHeaders($this->headers($settings))
-            ->get('https://otpravka-api.pochta.ru/postoffice/1.0/by-address', [
-                'address' => $address,
-                'top' => $top,
-            ]);
+        $attempts = [
+            [
+                'auth_mode' => $this->looksLikeBase64UserKey(trim((string) $settings->password)) ? 'stored_user_key' : 'login_password',
+                'headers' => $this->headers($settings),
+            ],
+        ];
 
-        if (! $response->successful()) {
-            Log::warning('RussianPost address offices warning: '.$this->extractError($response), ['address' => $address]);
-
-            return [
-                'codes' => [],
-                'offices' => [],
-                'debug' => [
-                    'status' => $response->status(),
-                    'body' => mb_substr($response->body(), 0, 1000),
+        if ($this->looksLikeBase64UserKey(trim((string) $settings->password))) {
+            $attempts[] = [
+                'auth_mode' => 'login_password_fallback',
+                'headers' => [
+                    ...$this->headers($settings),
+                    'X-User-Authorization' => $this->buildUserAuthorizationHeader($settings, true),
                 ],
             ];
         }
 
-        $data = $response->json();
+        $debugAttempts = [];
+        foreach ($attempts as $attempt) {
+            $response = Http::withOptions($this->httpOptions())
+                ->withHeaders($attempt['headers'])
+                ->get('https://otpravka-api.pochta.ru/postoffice/1.0/by-address', [
+                    'address' => $address,
+                    'top' => $top,
+                ]);
 
-        return [
-            'codes' => $this->normalizeOfficeCodes($data),
-            'offices' => $this->normalizeOffices($data),
-            'debug' => [
+            if (! $response->successful()) {
+                Log::warning('RussianPost address offices warning: '.$this->extractError($response), [
+                    'address' => $address,
+                    'auth_mode' => $attempt['auth_mode'],
+                ]);
+
+                $debugAttempts[] = [
+                    'auth_mode' => $attempt['auth_mode'],
+                    'status' => $response->status(),
+                    'body' => mb_substr($response->body(), 0, 1000),
+                ];
+
+                continue;
+            }
+
+            $data = $response->json();
+            $codes = $this->normalizeOfficeCodes($data);
+            $offices = $this->normalizeOffices($data);
+            $debugAttempts[] = [
+                'auth_mode' => $attempt['auth_mode'],
                 'status' => $response->status(),
                 'body' => $data,
-            ],
+                'codes_count' => count($codes),
+                'offices_count' => count($offices),
+            ];
+
+            if (! empty($codes) || ! empty($offices)) {
+                return [
+                    'codes' => $codes,
+                    'offices' => $offices,
+                    'debug' => $debugAttempts,
+                ];
+            }
+        }
+
+        return [
+            'codes' => [],
+            'offices' => [],
+            'debug' => $debugAttempts,
         ];
     }
 

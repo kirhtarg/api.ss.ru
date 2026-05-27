@@ -268,14 +268,9 @@ class ShopRussianPostSettingsController extends Controller
         try {
             // API Почты России: проверяем учетные данные через запрос к API
             // Используем простой запрос для проверки валидности
-            $userAuthorizationKey = trim((string) $password);
-            if (str_starts_with(mb_strtolower($userAuthorizationKey), 'basic ')) {
-                $userAuthorizationKey = trim(mb_substr($userAuthorizationKey, 6));
-            }
-
             $headers = [
                 'Authorization' => 'AccessToken '.$apiToken,
-                'X-User-Authorization' => 'Basic '.$userAuthorizationKey,
+                'X-User-Authorization' => $this->buildUserAuthorizationHeader($login, (string) $password),
                 'Content-Type' => 'application/json',
                 'Accept' => 'application/json;charset=UTF-8',
             ];
@@ -340,5 +335,30 @@ class ShopRussianPostSettingsController extends Controller
                 'error' => null,
             ];
         }
+    }
+
+    private function buildUserAuthorizationHeader(string $login, string $passwordOrKey): string
+    {
+        $value = trim($passwordOrKey);
+        if (str_starts_with(mb_strtolower($value), 'basic ')) {
+            $value = trim(mb_substr($value, 6));
+        }
+
+        if (! $this->looksLikeBase64UserKey($value)) {
+            $value = base64_encode($login.':'.$passwordOrKey);
+        }
+
+        return 'Basic '.$value;
+    }
+
+    private function looksLikeBase64UserKey(string $value): bool
+    {
+        if ($value === '' || ! preg_match('/^[A-Za-z0-9+\/=]+$/', $value)) {
+            return false;
+        }
+
+        $decoded = base64_decode($value, true);
+
+        return is_string($decoded) && str_contains($decoded, ':');
     }
 }
