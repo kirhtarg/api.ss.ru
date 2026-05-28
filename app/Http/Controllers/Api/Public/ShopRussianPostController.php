@@ -49,10 +49,11 @@ class ShopRussianPostController extends Controller
             $settings = $this->getSettingsOrFail();
             $city = trim((string) $request->query('city'));
             $address = trim((string) $request->query('address', ''));
-            $top = max(1, min(50, (int) $request->query('top', 10)));
+            $top = max(1, min(10, (int) $request->query('top', 10)));
             $cityParts = $this->parseSettlement($city);
             $normalizedCity = $this->normalizeCityName($cityParts['settlement']);
             $cacheKey = 'russianpost_offices_v4_'.md5($normalizedCity.'|'.$address.'|'.$top);
+            $limitCacheKey = 'russianpost_offices_limit_v1_'.md5($normalizedCity.'|'.$address);
             $debug = [
                 'city' => $city,
                 'address' => $address,
@@ -82,72 +83,74 @@ class ShopRussianPostController extends Controller
                 Cache::forget($cacheKey);
             }
 
-            $legacyCacheKey = 'russianpost_offices_'.md5($normalizedCity.'|'.$address);
             if ($address === '') {
-                Cache::forget($legacyCacheKey);
-                Cache::forget('russianpost_offices_v2_'.md5($normalizedCity.'|'.$address));
+                return response()->json([
+                    'success' => true,
+                    'data' => [],
+                    'debug' => [
+                        ...$debug,
+                        'no_api_request' => true,
+                        'reason' => 'exact_address_required',
+                    ],
+                ]);
+            }
+
+            if (Cache::has($limitCacheKey)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Почта России временно ограничила запросы API. Попробуйте повторить позже.',
+                    'data' => [],
+                    'debug' => [
+                        ...$debug,
+                        'limit_cache_hit' => true,
+                    ],
+                ], 429);
             }
 
             $codes = [];
             $offices = [];
-            $shouldFilterOfficesByCity = false;
 
-            if ($address !== '') {
-                $addressOffices = $this->getOfficesByAddress($settings, $address, $top);
-                $codes = $addressOffices['codes'];
-                $offices = $addressOffices['offices'];
-                $shouldFilterOfficesByCity = false;
-                $debug['codes_source'] = 'address';
-                $debug['post_response'] = $addressOffices['debug'] ?? null;
+            $addressOffices = $this->getOfficesByAddress($settings, $address, $top);
+            $codes = $addressOffices['codes'];
+            $offices = $addressOffices['offices'];
+            $debug['codes_source'] = 'address';
+            $debug['post_response'] = $addressOffices['debug'] ?? null;
 
-                if (($addressOffices['limit_exceeded'] ?? false) && Cache::has($cacheKey.'_last_success')) {
-                    $cachedOffices = Cache::get($cacheKey.'_last_success');
-                    if (! empty($cachedOffices)) {
-                        return response()->json([
-                            'success' => true,
-                            'data' => $cachedOffices,
-                            'debug' => [
-                                ...$debug,
-                                'cache_hit' => true,
-                                'cache_reason' => 'russianpost_token_limit_exceeded',
-                                'offices_count' => count($cachedOffices),
-                            ],
-                        ]);
-                    }
+            if (($addressOffices['limit_exceeded'] ?? false) && Cache::has($cacheKey.'_last_success')) {
+                $cachedOffices = Cache::get($cacheKey.'_last_success');
+                if (! empty($cachedOffices)) {
+                    return response()->json([
+                        'success' => true,
+                        'data' => $cachedOffices,
+                        'debug' => [
+                            ...$debug,
+                            'cache_hit' => true,
+                            'cache_reason' => 'russianpost_token_limit_exceeded',
+                            'offices_count' => count($cachedOffices),
+                        ],
+                    ]);
                 }
             }
 
-            if ($address === '' && empty($codes)) {
-                $codes = $this->getOfficeCodesBySettlement($settings, $city);
-                $shouldFilterOfficesByCity = false;
-                $debug['codes_source'] = 'settlement';
-            }
+            if ($addressOffices['limit_exceeded'] ?? false) {
+                Cache::put($limitCacheKey, true, now()->addMinutes(5));
 
-            if ($address === '' && empty($offices) && empty($codes)) {
-                $codes = $this->getOfficeCodesByAddress($settings, $city, 1000);
-                $shouldFilterOfficesByCity = true;
-                $debug['codes_source'] = 'city_address';
-            }
-
-            if ($address === '' && empty($codes)) {
-                $offices = $this->getOfficesNearbyByCity($settings, $normalizedCity);
-                $shouldFilterOfficesByCity = true;
-                $debug['codes_source'] = 'nearby_city';
-                $debug['details_count'] = count($offices);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Почта России вернула Token requests limit exceeded. Запросы к API временно остановлены, чтобы не расходовать лимит дальше.',
+                    'data' => [],
+                    'debug' => $debug,
+                ], 429);
             }
             $debug['codes_count'] = count($codes);
 
             if (! empty($codes)) {
-                $details = $this->loadOfficeDetails($settings, $codes);
+                $details = $this->loadOfficeDetails($settings, array_slice($codes, 0, $top));
                 $debug['details_count'] = count($details);
                 $offices = $this->mergeOffices(
                     $offices,
                     $details
                 );
-            }
-            if ($shouldFilterOfficesByCity) {
-                $offices = $this->filterOfficesByCity($offices, $normalizedCity);
-                $debug['filtered'] = true;
             }
             $debug['offices_count'] = count($offices);
 
@@ -401,6 +404,11 @@ class ShopRussianPostController extends Controller
 
     private function normalizeAddressIndex(ShopRussianPostSettings $settings, string $address): string
     {
+        $cacheKey = 'russianpost_address_index_v1_'.md5($address);
+        if (Cache::has($cacheKey)) {
+            return (string) Cache::get($cacheKey);
+        }
+
         $response = Http::withOptions($this->httpOptions())
             ->withHeaders($this->headers($settings))
             ->post('https://otpravka-api.pochta.ru/1.0/clean/address', [[
@@ -415,7 +423,12 @@ class ShopRussianPostController extends Controller
         $data = $response->json();
         $item = is_array($data) ? ($data[0] ?? []) : [];
 
-        return preg_replace('/\D+/', '', (string) ($item['index'] ?? $item['postal-code'] ?? ''));
+        $index = preg_replace('/\D+/', '', (string) ($item['index'] ?? $item['postal-code'] ?? ''));
+        if ($index !== '') {
+            Cache::put($cacheKey, $index, now()->addDays(7));
+        }
+
+        return $index;
     }
 
     private function buildAddress(Request $request): string
@@ -425,162 +438,6 @@ class ShopRussianPostController extends Controller
             $request->query('street'),
             $request->query('house') ? 'д. '.$request->query('house') : null,
         ])));
-    }
-
-    private function getOfficeCodesBySettlement(ShopRussianPostSettings $settings, string $city): array
-    {
-        $parts = $this->parseSettlement($city);
-        $rawParts = array_values(array_filter(array_map('trim', preg_split('/,/', $city))));
-        $rawRegion = $rawParts[1] ?? null;
-        $settlement = $parts['settlement'];
-        $rawSettlement = $rawParts[0] ?? $city;
-        $normalizedSettlement = $this->normalizeSettlementNeedle($this->normalizeCityName($settlement));
-        $paramVariants = [
-            array_filter([
-                'settlement' => $settlement,
-                'region' => $parts['region'],
-                'district' => $parts['district'],
-            ]),
-            array_filter([
-                'settlement' => $settlement,
-                'region' => $rawRegion,
-                'district' => $parts['district'],
-            ]),
-            ['settlement' => $settlement],
-            ['settlement' => $rawSettlement],
-        ];
-
-        if ($normalizedSettlement !== '' && $normalizedSettlement !== $this->normalizeCityName($settlement)) {
-            $paramVariants[] = ['settlement' => $normalizedSettlement];
-        }
-
-        if ($this->isFederalCity($normalizedSettlement)) {
-            $paramVariants[] = [
-                'settlement' => $settlement,
-                'region' => $settlement,
-            ];
-            $paramVariants[] = [
-                'region' => $settlement,
-            ];
-            $paramVariants[] = [
-                'settlement' => $rawSettlement,
-                'region' => $settlement,
-            ];
-        }
-
-        $codes = [];
-        $usedVariants = [];
-        foreach ($paramVariants as $params) {
-            $paramsKey = json_encode($params, JSON_UNESCAPED_UNICODE);
-            if (! $params || isset($usedVariants[$paramsKey])) {
-                continue;
-            }
-            $usedVariants[$paramsKey] = true;
-
-            $response = Http::withOptions($this->httpOptions())
-                ->withHeaders($this->headers($settings))
-                ->get('https://otpravka-api.pochta.ru/postoffice/1.0/settlement.offices.codes', $params);
-
-            if (! $response->successful()) {
-                Log::warning('RussianPost settlement offices warning: '.$this->extractError($response), [
-                    'city' => $city,
-                    'params' => $params,
-                ]);
-
-                continue;
-            }
-
-            $codes = array_merge($codes, $this->normalizeOfficeCodes($response->json()));
-            if (! empty($codes)) {
-                break;
-            }
-        }
-
-        return array_values(array_unique($codes));
-    }
-
-    private function getOfficesNearbyByCity(ShopRussianPostSettings $settings, string $normalizedCity): array
-    {
-        $points = $this->getKnownCitySearchPoints($normalizedCity);
-        if (empty($points)) {
-            return [];
-        }
-
-        $offices = [];
-        $radius = $this->getNearbyOfficeRadiusKm($normalizedCity);
-
-        foreach ($points as $point) {
-            $response = Http::withOptions($this->httpOptions())
-                ->withHeaders($this->headers($settings))
-                ->get('https://otpravka-api.pochta.ru/postoffice/1.0/nearby', [
-                    'latitude' => $point['latitude'],
-                    'longitude' => $point['longitude'],
-                    'top' => 100,
-                    'search-radius' => $radius,
-                    'filter-by-office-type' => 'false',
-                    'hide-private' => 'false',
-                ]);
-
-            if (! $response->successful()) {
-                Log::warning('RussianPost nearby offices warning: '.$this->extractError($response), [
-                    'city' => $normalizedCity,
-                    'point' => $point,
-                ]);
-                continue;
-            }
-
-            $items = $response->json();
-            if (! is_array($items) || empty($items)) {
-                continue;
-            }
-
-            $mapped = array_values(array_filter(array_map(fn ($item) => $this->mapOffice($item), $items)));
-            $offices = $this->mergeOffices($offices, $mapped);
-        }
-
-        return $offices;
-    }
-
-    private function getKnownCitySearchPoints(string $normalizedCity): array
-    {
-        return match ($normalizedCity) {
-            'москва', 'moscow' => [
-                ['latitude' => 55.7558, 'longitude' => 37.6176],
-                ['latitude' => 55.8623, 'longitude' => 37.6050],
-                ['latitude' => 55.6428, 'longitude' => 37.6204],
-                ['latitude' => 55.7539, 'longitude' => 37.4100],
-                ['latitude' => 55.7520, 'longitude' => 37.8500],
-            ],
-            'санкт петербург', 'санкт-петербург', 'спб', 'петербург' => [
-                ['latitude' => 59.9311, 'longitude' => 30.3609],
-                ['latitude' => 60.0050, 'longitude' => 30.3000],
-                ['latitude' => 59.8500, 'longitude' => 30.3200],
-                ['latitude' => 59.9300, 'longitude' => 30.5200],
-            ],
-            default => [],
-        };
-    }
-
-    private function getNearbyOfficeRadiusKm(string $normalizedCity): int
-    {
-        return match ($normalizedCity) {
-            'москва', 'moscow' => 18,
-            'санкт петербург', 'санкт-петербург', 'спб', 'петербург' => 18,
-            default => 15,
-        };
-    }
-
-    private function isFederalCity(string $normalizedCity): bool
-    {
-        return in_array($normalizedCity, [
-            'москва',
-            'moscow',
-            'санкт петербург',
-            'санкт-петербург',
-            'спб',
-            'петербург',
-            'севастополь',
-        ], true);
     }
 
     private function getOfficeCodesByAddress(ShopRussianPostSettings $settings, string $address, int $top = 50): array
@@ -807,44 +664,6 @@ class ShopRussianPostController extends Controller
             'region' => $region ?: null,
             'district' => $district ?: null,
         ];
-    }
-
-    private function filterOfficesByCity(array $offices, string $normalizedCity): array
-    {
-        $cityNeedle = $this->normalizeSettlementNeedle($normalizedCity);
-        if ($cityNeedle === '') {
-            return $offices;
-        }
-
-        $filtered = array_values(array_filter($offices, function (array $office) use ($cityNeedle) {
-            $address = $this->normalizeCityName((string) ($office['address'] ?? ''));
-            $name = $this->normalizeCityName((string) ($office['name'] ?? ''));
-
-            return $this->containsCityToken($address, $cityNeedle)
-                || $this->containsCityToken($name, $cityNeedle);
-        }));
-
-        return $filtered;
-    }
-
-    private function normalizeSettlementNeedle(string $normalizedCity): string
-    {
-        $city = preg_replace('/\b(п|пос|поселок|посёлок|с|село|д|деревня|рп|рабочий поселок|рабочий посёлок)\.?\b/u', '', $normalizedCity);
-        $city = str_replace('-', ' ', (string) $city);
-        $city = preg_replace('/\s+/u', ' ', (string) $city);
-
-        return trim((string) $city);
-    }
-
-    private function containsCityToken(string $haystack, string $needle): bool
-    {
-        if ($needle === '') {
-            return true;
-        }
-
-        $haystack = str_replace('-', ' ', $haystack);
-
-        return (bool) preg_match('/(?:^|[\s\-])'.preg_quote($needle, '/').'(?:$|[\s\-])/u', $haystack);
     }
 
     private function normalizeCityName(string $city): string

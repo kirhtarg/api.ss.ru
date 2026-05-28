@@ -895,25 +895,26 @@ class BulkGoodsImportController extends Controller
                             $updateResult = $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation, $supplierStockFields, $nameTrimSymbol, $attachImagesTo, $searchByFieldInVariations, $skipImagesOnUpdateIfExists);
                             $results['imagesDownloaded'] += $updateResult['imageStats']['downloaded'];
                             $results['imagesFailed'] += $updateResult['imageStats']['failed'];
+                            $safeGoodDataForVariationUpdate = $this->removeBlankValuesForPartialUpdate($goodData);
 
                             // Для логики "Изменить вариацию" также обновляем остатки сопоставленных вариаций
                             // Важно: используем $vid в цикле, чтобы не перезаписать $variationId (нужен для variationIds ниже)
-                            if (isset($goodData['variation_ids']) && is_array($goodData['variation_ids'])) {
-                                foreach ($goodData['variation_ids'] as $vid) {
+                            if (isset($safeGoodDataForVariationUpdate['variation_ids']) && is_array($safeGoodDataForVariationUpdate['variation_ids'])) {
+                                foreach ($safeGoodDataForVariationUpdate['variation_ids'] as $vid) {
                                     $variation = ShopGoodVariation::where('id', $vid)
                                         ->where('good_id', $existingGood->id)
                                         ->first();
 
                                     if ($variation) {
                                         // Обновляем остатки вариации данными из товара с конвертацией типов
-                                        if (isset($goodData['stock_quantity']) && !in_array('stock_quantity', $immutableFields)) {
-                                            $variation->stock_quantity = is_numeric($goodData['stock_quantity']) ? (float) $goodData['stock_quantity'] : 0;
+                                        if (isset($safeGoodDataForVariationUpdate['stock_quantity']) && !in_array('stock_quantity', $immutableFields)) {
+                                            $variation->stock_quantity = is_numeric($safeGoodDataForVariationUpdate['stock_quantity']) ? (float) $safeGoodDataForVariationUpdate['stock_quantity'] : 0;
                                         }
-                                        if (isset($goodData['remote_stock_quantity']) && !in_array('remote_stock_quantity', $immutableFields)) {
-                                            $variation->remote_stock_quantity = $goodData['remote_stock_quantity'] !== null && is_numeric($goodData['remote_stock_quantity']) ? (string) $goodData['remote_stock_quantity'] : $goodData['remote_stock_quantity'];
+                                        if (isset($safeGoodDataForVariationUpdate['remote_stock_quantity']) && !in_array('remote_stock_quantity', $immutableFields)) {
+                                            $variation->remote_stock_quantity = $safeGoodDataForVariationUpdate['remote_stock_quantity'] !== null && is_numeric($safeGoodDataForVariationUpdate['remote_stock_quantity']) ? (string) $safeGoodDataForVariationUpdate['remote_stock_quantity'] : $safeGoodDataForVariationUpdate['remote_stock_quantity'];
                                         }
-                                        if (isset($goodData['fast_remote_stock_quantity']) && !in_array('fast_remote_stock_quantity', $immutableFields)) {
-                                            $variation->fast_remote_stock_quantity = $goodData['fast_remote_stock_quantity'] !== null && is_numeric($goodData['fast_remote_stock_quantity']) ? (string) $goodData['fast_remote_stock_quantity'] : $goodData['fast_remote_stock_quantity'];
+                                        if (isset($safeGoodDataForVariationUpdate['fast_remote_stock_quantity']) && !in_array('fast_remote_stock_quantity', $immutableFields)) {
+                                            $variation->fast_remote_stock_quantity = $safeGoodDataForVariationUpdate['fast_remote_stock_quantity'] !== null && is_numeric($safeGoodDataForVariationUpdate['fast_remote_stock_quantity']) ? (string) $safeGoodDataForVariationUpdate['fast_remote_stock_quantity'] : $safeGoodDataForVariationUpdate['fast_remote_stock_quantity'];
                                         }
 
                                         $variation->save();
@@ -1422,26 +1423,27 @@ class BulkGoodsImportController extends Controller
                             $updateResult = $this->updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory, $useDefaultCategory, $immutableFields, $searchByNameInVariations, $hasVariation, $supplierStockFields, $nameTrimSymbol, $attachImagesToVariation, $searchByFieldInVariations, $skipImagesOnUpdateIfExists, $naming);
                             $results['imagesDownloaded'] += $updateResult['imageStats']['downloaded'];
                             $results['imagesFailed'] += $updateResult['imageStats']['failed'];
+                            $safeGoodDataForVariationUpdate = $this->removeBlankValuesForPartialUpdate($goodData);
 
                             // Для логики "Изменить вариацию" также обновляем остатки сопоставленных вариаций
-                            if (isset($goodData['variation_ids']) && is_array($goodData['variation_ids'])) {
-                                foreach ($goodData['variation_ids'] as $vid) {
+                            if (isset($safeGoodDataForVariationUpdate['variation_ids']) && is_array($safeGoodDataForVariationUpdate['variation_ids'])) {
+                                foreach ($safeGoodDataForVariationUpdate['variation_ids'] as $vid) {
                                     $variation = ShopGoodVariation::where('id', $vid)
                                         ->where('good_id', $existingGood->id)
                                         ->first();
 
                                     if ($variation) {
                                         // Обновляем остатки вариации данными из товара с конвертацией типов
-                                        if (isset($goodData['stock_quantity']) && !in_array('stock_quantity', $immutableFields)) {
-                                            $variation->stock_quantity = is_numeric($goodData['stock_quantity']) ? (float) $goodData['stock_quantity'] : 0;
+                                        if (isset($safeGoodDataForVariationUpdate['stock_quantity']) && !in_array('stock_quantity', $immutableFields)) {
+                                            $variation->stock_quantity = is_numeric($safeGoodDataForVariationUpdate['stock_quantity']) ? (float) $safeGoodDataForVariationUpdate['stock_quantity'] : 0;
                                         }
 
-                                        if (isset($goodData['remote_stock_quantity']) && !in_array('remote_stock_quantity', $immutableFields)) {
-                                            $variation->remote_stock_quantity = $goodData['remote_stock_quantity'] !== null && is_numeric($goodData['remote_stock_quantity']) ? (string) $goodData['remote_stock_quantity'] : $goodData['remote_stock_quantity'];
+                                        if (isset($safeGoodDataForVariationUpdate['remote_stock_quantity']) && !in_array('remote_stock_quantity', $immutableFields)) {
+                                            $variation->remote_stock_quantity = $safeGoodDataForVariationUpdate['remote_stock_quantity'] !== null && is_numeric($safeGoodDataForVariationUpdate['remote_stock_quantity']) ? (string) $safeGoodDataForVariationUpdate['remote_stock_quantity'] : $safeGoodDataForVariationUpdate['remote_stock_quantity'];
                                         }
 
-                                        if (isset($goodData['fast_remote_stock_quantity']) && !in_array('fast_remote_stock_quantity', $immutableFields)) {
-                                            $variation->fast_remote_stock_quantity = $goodData['fast_remote_stock_quantity'] !== null && is_numeric($goodData['fast_remote_stock_quantity']) ? (string) $goodData['fast_remote_stock_quantity'] : $goodData['fast_remote_stock_quantity'];
+                                        if (isset($safeGoodDataForVariationUpdate['fast_remote_stock_quantity']) && !in_array('fast_remote_stock_quantity', $immutableFields)) {
+                                            $variation->fast_remote_stock_quantity = $safeGoodDataForVariationUpdate['fast_remote_stock_quantity'] !== null && is_numeric($safeGoodDataForVariationUpdate['fast_remote_stock_quantity']) ? (string) $safeGoodDataForVariationUpdate['fast_remote_stock_quantity'] : $safeGoodDataForVariationUpdate['fast_remote_stock_quantity'];
                                         }
 
                                         $variation->save();
@@ -2207,6 +2209,7 @@ class BulkGoodsImportController extends Controller
     private function updateGood($existingGood, $goodData, $autoCreateCategories, $autoCreateBrands, $defaultCategory = null, $useDefaultCategory = false, $immutableFields = [], $searchByNameInVariations = false, $hasVariation = false, $supplierStockFields = null, $nameTrimSymbol = null, $attachImagesToVariation = null, $searchByFieldInVariations = null, $skipImagesIfExistsOnUpdate = false, $naming = 'hash')
     {
         $imageStats = ['downloaded' => 0, 'failed' => 0];
+        $goodData = $this->removeBlankValuesForPartialUpdate($goodData);
 
         // Обновляем все поля из goodData, которые переданы в импорте
         // Это позволяет обновлять все поля, отмеченные для импорта, а не только те, это используются для поиска
@@ -2632,6 +2635,37 @@ class BulkGoodsImportController extends Controller
         }
 
         return ['good' => $existingGood, 'imageStats' => $imageStats];
+    }
+
+    /**
+     * При обновлении существующих товаров пустые значения из файла не должны очищать
+     * уже заполненные поля товара. Явное значение 0/false оставляем: это валидные данные.
+     */
+    private function removeBlankValuesForPartialUpdate(array $data): array
+    {
+        foreach ($data as $key => $value) {
+            if (is_array($value)) {
+                $value = $this->removeBlankValuesForPartialUpdate($value);
+                if ($value === []) {
+                    unset($data[$key]);
+                    continue;
+                }
+
+                $data[$key] = $value;
+                continue;
+            }
+
+            if ($value === null) {
+                unset($data[$key]);
+                continue;
+            }
+
+            if (is_string($value) && trim($value) === '') {
+                unset($data[$key]);
+            }
+        }
+
+        return $data;
     }
 
     private function processCategories($categories, $autoCreate)
@@ -4332,6 +4366,8 @@ class BulkGoodsImportController extends Controller
      */
     private function updateVariationFromGoodData($variation, $goodData, $searchByNameInVariations = false)
     {
+        $goodData = $this->removeBlankValuesForPartialUpdate($goodData);
+
         // Обновляем цену
         if (isset($goodData['price'])) {
             $priceModification = $goodData["price_modification"] ?? null;

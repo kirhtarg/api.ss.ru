@@ -197,7 +197,10 @@ class AvitoFeedService
         if (!$goods) {
             $goods = ShopGood::where('is_active', true)
                 ->where('is_show', true)
+                ->with('variations')
                 ->get();
+        } else {
+            $goods->loadMissing('variations');
         }
 
         $xml = new \SimpleXMLElement('<?xml version="1.0" encoding="utf-8"?><items></items>');
@@ -208,7 +211,7 @@ class AvitoFeedService
             $item = $xml->addChild('item');
             // ID должен совпадать с Id в основном фиде
             $item->addChild('id', "g_{$good->id}");
-            $item->addChild('stock', $this->getStockValue($good));
+            $item->addChild('stock', $this->getFeedStockValue($good));
         }
 
         return $xml->asXML();
@@ -406,7 +409,7 @@ class AvitoFeedService
         $this->addChildSafe($ad, 'Price', $price);
 
         // Остатки
-        $stockValue = $this->getStockValue($good);
+        $stockValue = $this->getFeedStockValue($good);
         $this->addChildSafe($ad, 'Stock', $stockValue);
         $this->addDeliveryDimensions($ad, $good);
 
@@ -604,6 +607,21 @@ class AvitoFeedService
     }
 
     /**
+     * Остаток объявления Авито. Так как вариации не выгружаются отдельными объявлениями,
+     * для товара с вариациями передаем суммарный остаток активных вариаций.
+     */
+    private function getFeedStockValue(ShopGood $good): int
+    {
+        if ($good->relationLoaded('variations') && $good->variations && $good->variations->isNotEmpty()) {
+            return (int) $good->variations
+                ->filter(fn($variation) => $variation->is_active)
+                ->sum(fn($variation) => $this->getStockValue($variation));
+        }
+
+        return $this->getStockValue($good);
+    }
+
+    /**
      * Проверка наличия товара или вариации
      */
     private function isInStock($item)
@@ -716,16 +734,7 @@ class AvitoFeedService
     {
         $desc = $this->cleanHtml($good->description ?? '');
         $brief = $this->cleanHtml($good->short_description ?? '');
-        
-        $fullDesc = '';
-        if ($brief) {
-            $fullDesc .= $brief;
-            if ($desc) {
-                $fullDesc .= "<br>" . $desc;
-            }
-        } else {
-            $fullDesc = $desc;
-        }
+        $fullDesc = $this->hasVisibleText($desc) ? $desc : $brief;
 
         // 1. Название товара
         $result = "<strong>" . $good->name . "</strong><br>";
@@ -798,6 +807,18 @@ class AvitoFeedService
         return $result;
     }
 
+    private function hasVisibleText($html): bool
+    {
+        if (empty($html)) {
+            return false;
+        }
+
+        $text = html_entity_decode(strip_tags((string) $html), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $text = preg_replace('/\s+/u', '', $text);
+
+        return $text !== '';
+    }
+
     protected function addCData(\SimpleXMLElement $node, $name, $value)
     {
         $child = $node->addChild($name);
@@ -821,12 +842,16 @@ class AvitoFeedService
         // Специальная обработка для структуры <div class="title">...</div><div class="val">...</div>
         $html = preg_replace('/<\/div>\s*<div[^>]*class="val"[^>]*>/i', ': ', $html);
 
+        // Сохраняем визуальный интервал между абзацами: <p>...</p><p>...</p> => текст<br><br>текст
+        $html = preg_replace('/<p\b[^>]*>/i', '', $html);
+        $html = preg_replace('/<\/p>/i', '<br><br>', $html);
+
         // Заменяем закрывающие теги блочных элементов на <br>
-        $blockTags = ['</div>', '</tr>', '</td>', '</li>', '</p>', '</h1>', '2>', '</h3>', '</h4>', '</h5>', '</h6>'];
+        $blockTags = ['</div>', '</tr>', '</td>', '</li>', '</h1>', '</h2>', '</h3>', '</h4>', '</h5>', '</h6>'];
         $html = str_ireplace($blockTags, '<br>', $html);
 
         // Оставляем только разрешенные Авито теги
-        $allowedTags = '<p><br><strong><em><ul><ol><li>';
+        $allowedTags = '<br><strong><b><em><i><ul><ol><li>';
         $cleaned = strip_tags($html, $allowedTags);
 
         // Убираем лишние пробелы и табуляции
