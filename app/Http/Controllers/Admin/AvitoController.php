@@ -132,6 +132,12 @@ class AvitoController extends Controller
             'avito_model_external_url' => 'nullable|string',
         ]);
 
+        foreach (['avito_description_before', 'avito_description_after'] as $descriptionKey) {
+            if (array_key_exists($descriptionKey, $settings)) {
+                $settings[$descriptionKey] = $this->sanitizeDescriptionWrapperHtml($settings[$descriptionKey] ?? '');
+            }
+        }
+
         foreach ($settings as $key => $value) {
             Setting::updateOrCreate(
                 ['key' => $key],
@@ -140,6 +146,36 @@ class AvitoController extends Controller
         }
 
         return response()->json(['success' => true]);
+    }
+
+    private function sanitizeDescriptionWrapperHtml(?string $html): string
+    {
+        if ($html === null || trim($html) === '') {
+            return '';
+        }
+
+        $html = htmlspecialchars_decode($html, ENT_QUOTES | ENT_HTML5);
+
+        // Убираем служебные inline-стили редактора/браузера, включая CSS-переменные Tailwind.
+        $html = preg_replace('/\s(?:style|class|id|data-[\w-]+)\s*=\s*"[^"]*"/iu', '', $html);
+        $html = preg_replace("/\s(?:style|class|id|data-[\w-]+)\s*=\s*'[^']*'/iu", '', $html);
+        $html = preg_replace('/\s(?:style|class|id|data-[\w-]+)\s*=\s*[^\s>]+/iu', '', $html);
+
+        // Span обычно появляется только как техническая обертка форматирования.
+        $html = preg_replace('/<span\b[^>]*>/iu', '', $html);
+        $html = preg_replace('/<\/span>/iu', '', $html);
+
+        // Сохраняем только теги, которые допустимы для описания и нормально обрабатываются фидом.
+        $html = strip_tags($html, '<br><b><strong><i><em><ul><ol><li><div><p>');
+
+        $html = preg_replace('/<p\b[^>]*>/iu', '<div>', $html);
+        $html = preg_replace('/<\/p>/iu', '</div>', $html);
+        $html = preg_replace('/<div>\s*(?:<br\s*\/?>)?\s*<\/div>/iu', '<br>', $html);
+        $html = preg_replace('/(?:<br\s*\/?>\s*){3,}/iu', '<br><br>', $html);
+        $html = preg_replace('/^(?:\s|<br\s*\/?>)+/iu', '', $html);
+        $html = preg_replace('/(?:\s|<br\s*\/?>)+$/iu', '', $html);
+
+        return trim($html);
     }
 
     /**

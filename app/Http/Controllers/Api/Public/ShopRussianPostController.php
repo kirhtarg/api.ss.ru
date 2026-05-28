@@ -424,7 +424,7 @@ class ShopRussianPostController extends Controller
         $data = $response->json();
         $item = is_array($data) ? ($data[0] ?? []) : [];
 
-        $index = preg_replace('/\D+/', '', (string) ($item['index'] ?? $item['postal-code'] ?? ''));
+        $index = preg_replace('/\D+/', '', $this->firstScalarValue($item['index'] ?? null, $item['postal-code'] ?? null) ?? '');
         if ($index !== '') {
             Cache::put($cacheKey, $index, now()->addDays(7));
         }
@@ -515,7 +515,7 @@ class ShopRussianPostController extends Controller
             'debug' => $debugAttempts,
             'limit_exceeded' => collect($debugAttempts)->contains(function ($attempt) {
                 return (int) ($attempt['status'] ?? 0) === 509
-                    || str_contains((string) ($attempt['body'] ?? ''), 'Token requests limit exceeded');
+                    || str_contains($this->stringValue($attempt['body'] ?? ''), 'Token requests limit exceeded');
             }),
         ];
     }
@@ -614,10 +614,18 @@ class ShopRussianPostController extends Controller
         $codes = [];
         foreach ($items as $item) {
             $code = is_array($item)
-                ? ($item['postal-code'] ?? $item['postoffice-code'] ?? $item['post-office-code'] ?? $item['postofficeCode'] ?? $item['postalCode'] ?? $item['index'] ?? $item['postal_code'] ?? null)
+                ? $this->firstScalarValue(
+                    $item['postal-code'] ?? null,
+                    $item['postoffice-code'] ?? null,
+                    $item['post-office-code'] ?? null,
+                    $item['postofficeCode'] ?? null,
+                    $item['postalCode'] ?? null,
+                    $item['index'] ?? null,
+                    $item['postal_code'] ?? null
+                )
                 : $item;
 
-            $code = preg_replace('/\D+/', '', (string) $code);
+            $code = preg_replace('/\D+/', '', $this->stringValue($code));
             if ($code !== '') {
                 $codes[] = $code;
             }
@@ -683,19 +691,39 @@ class ShopRussianPostController extends Controller
             return null;
         }
 
-        $postalCode = $item['postal-code'] ?? $item['postoffice-code'] ?? $item['post-office-code'] ?? $item['postofficeCode'] ?? $item['postalCode'] ?? $item['index'] ?? $item['postal_code'] ?? null;
+        $postalCode = $this->firstScalarValue(
+            $item['postal-code'] ?? null,
+            $item['postoffice-code'] ?? null,
+            $item['post-office-code'] ?? null,
+            $item['postofficeCode'] ?? null,
+            $item['postalCode'] ?? null,
+            $item['index'] ?? null,
+            $item['postal_code'] ?? null
+        );
         if (! $postalCode) {
             return null;
         }
 
         return [
-            'id' => (string) $postalCode,
-            'postal_code' => (string) $postalCode,
-            'name' => $item['name'] ?? $item['postoffice-name'] ?? $item['post-office-name'] ?? 'Отделение Почты России',
-            'address' => $item['address-source'] ?? $item['address'] ?? $item['full-address'] ?? $item['fullAddress'] ?? $item['address-string'] ?? '',
+            'id' => $this->stringValue($postalCode),
+            'postal_code' => $this->stringValue($postalCode),
+            'name' => $this->firstScalarValue(
+                $item['name'] ?? null,
+                $item['postoffice-name'] ?? null,
+                $item['post-office-name'] ?? null,
+                'Отделение Почты России'
+            ),
+            'address' => $this->firstScalarValue(
+                $item['address-source'] ?? null,
+                $item['address'] ?? null,
+                $item['full-address'] ?? null,
+                $item['fullAddress'] ?? null,
+                $item['address-string'] ?? null,
+                ''
+            ),
             'latitude' => $this->extractOfficeLatitude($item),
             'longitude' => $this->extractOfficeLongitude($item),
-            'work_time' => $item['schedule'] ?? $item['working-hours'] ?? null,
+            'work_time' => $this->firstScalarValue($item['schedule'] ?? null, $item['working-hours'] ?? null),
             'raw' => $item,
         ];
     }
@@ -760,9 +788,43 @@ class ShopRussianPostController extends Controller
             return null;
         }
 
-        $value = str_replace(',', '.', (string) $value);
+        $value = str_replace(',', '.', $this->stringValue($value));
 
         return is_numeric($value) ? (float) $value : null;
+    }
+
+    private function firstScalarValue(...$values): ?string
+    {
+        foreach ($values as $value) {
+            $normalized = $this->stringValue($value);
+            if ($normalized !== '') {
+                return $normalized;
+            }
+        }
+
+        return null;
+    }
+
+    private function stringValue($value): string
+    {
+        if ($value === null) {
+            return '';
+        }
+
+        if (is_scalar($value)) {
+            return trim((string) $value);
+        }
+
+        if (is_array($value)) {
+            foreach ($value as $nestedValue) {
+                $normalized = $this->stringValue($nestedValue);
+                if ($normalized !== '') {
+                    return $normalized;
+                }
+            }
+        }
+
+        return '';
     }
 
     private function calculateCargo($cartItems, ShopRussianPostSettings $settings): array
@@ -870,7 +932,8 @@ class ShopRussianPostController extends Controller
     {
         $data = $response->json();
         if (is_array($data)) {
-            return $data['error'] ?? $data['message'] ?? $data['desc'] ?? $response->body();
+            return $this->firstScalarValue($data['error'] ?? null, $data['message'] ?? null, $data['desc'] ?? null)
+                ?? ($response->body() ?: 'Ошибка API Почты России');
         }
 
         return $response->body() ?: 'Ошибка API Почты России';
