@@ -650,16 +650,13 @@ class NotificationService
             }
 
             $quantity = $item['quantity'] ?? 1;
-            // Показываем базовую цену (до акционных скидок)
-            $basePrice = isset($item['base_price']) && (float) $item['base_price'] > 0
-                ? (float) $item['base_price']
-                : (float) ($item['price'] ?? 0);
-            $baseTotal = $basePrice * $quantity;
+            $unitPrice = (float) ($item['final_price'] ?? $item['unit_price'] ?? $item['price'] ?? 0);
+            $lineTotal = (float) ($item['total'] ?? ($unitPrice * $quantity));
 
             if ($forTelegram) {
-                $formattedItems[] = "• <b>{$itemName}</b> - {$quantity} шт. × ".number_format($basePrice, 0, ',', ' ').' ₽ = '.number_format($baseTotal, 0, ',', ' ').' ₽';
+                $formattedItems[] = "• <b>{$itemName}</b> - {$quantity} шт. × ".number_format($unitPrice, 0, ',', ' ').' ₽ = '.number_format($lineTotal, 0, ',', ' ').' ₽';
             } else {
-                $formattedItems[] = "• {$itemName} - {$quantity} шт. × ".number_format($basePrice, 0, ',', ' ').' ₽ = '.number_format($baseTotal, 0, ',', ' ').' ₽';
+                $formattedItems[] = "• {$itemName} - {$quantity} шт. × ".number_format($unitPrice, 0, ',', ' ').' ₽ = '.number_format($lineTotal, 0, ',', ' ').' ₽';
             }
         }
 

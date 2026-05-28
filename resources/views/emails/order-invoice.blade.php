@@ -317,8 +317,16 @@
                 </tr>
             </thead>
             <tbody>
-                @if($order->items && count($order->items) > 0)
-                    @foreach($order->items as $index => $item)
+                @php
+                    $orderItems = method_exists($order, 'getItemsWithDetails') ? $order->getItemsWithDetails() : ($order->items ?? []);
+                @endphp
+                @if($orderItems && count($orderItems) > 0)
+                    @foreach($orderItems as $index => $item)
+                        @php
+                            $quantity = (float) ($item['quantity'] ?? 1);
+                            $itemPrice = (float) ($item['final_price'] ?? $item['unit_price'] ?? $item['price'] ?? 0);
+                            $itemTotal = (float) ($item['total'] ?? ($itemPrice * $quantity));
+                        @endphp
                         <tr>
                             <td class="text-center">{{ $index + 1 }}</td>
                             <td>
@@ -349,9 +357,9 @@
                                     <div style="font-size: 11px; color: #666; margin-top: 2px;">Арт: {{ $sku }}</div>
                                 @endif
                             </td>
-                            <td class="text-center">{{ $item['quantity'] ?? 1 }}</td>
-                            <td class="text-right">{{ number_format($item['price'] ?? 0, 0, ',', ' ') }} ₽</td>
-                            <td class="text-right">{{ number_format($item['total'] ?? 0, 0, ',', ' ') }} ₽</td>
+                            <td class="text-center">{{ $quantity }}</td>
+                            <td class="text-right">{{ number_format($itemPrice, 0, ',', ' ') }} ₽</td>
+                            <td class="text-right">{{ number_format($itemTotal, 0, ',', ' ') }} ₽</td>
                         </tr>
                     @endforeach
                 @else

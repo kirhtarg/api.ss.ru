@@ -28,6 +28,7 @@ class ShopRussianPostSettings extends Model
         'default_length',
         'default_width',
         'default_height',
+        'cash_on_delivery_enabled',
         'is_active',
     ];
 
@@ -36,6 +37,7 @@ class ShopRussianPostSettings extends Model
         'default_length' => 'decimal:2',
         'default_width' => 'decimal:2',
         'default_height' => 'decimal:2',
+        'cash_on_delivery_enabled' => 'boolean',
         'is_active' => 'boolean',
     ];
 

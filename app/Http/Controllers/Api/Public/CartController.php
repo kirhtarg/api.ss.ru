@@ -465,6 +465,10 @@ class CartController extends Controller
                 if ($variationId) {
                     $existingItem->variation_name = $this->formatVariationProperties($variation);
                 }
+                $currentImage = $this->getGoodImage($good, $variationId);
+                if ($currentImage) {
+                    $existingItem->good_image = $currentImage;
+                }
                 // Поля stock_quantity и remote_stock_quantity не сохраняются в таблице shop_cart_items
                 // Они используются только на фронтенде для отображения остатков
                 $existingItem->save();
@@ -968,7 +972,17 @@ class CartController extends Controller
             $finalItems = [];
             $recalculatedSubtotal = 0;
             $recalculatedRegularSubtotal = 0; // Сумма базовых цен
+            $registeredDiscountBaseSubtotal = 0;
             $recalculatedTotalQuantity = 0;
+            $registeredDiscountPercent = $customerId ? (float) (Setting::where('key', 'discount_reg')->value('value') ?? 0) : 0;
+            $discountToDTextValue = Setting::where('key', 'discount_to_d_text')->value('value');
+            $registeredDiscountForSaleAllowed = ! (
+                $discountToDTextValue === null ||
+                $discountToDTextValue === '' ||
+                $discountToDTextValue === '0' ||
+                $discountToDTextValue === 0 ||
+                $discountToDTextValue === false
+            );
 
             foreach ($rawItems as $item) {
                 $goodId = $item['good_id'] ?? null;
@@ -1003,6 +1017,10 @@ class CartController extends Controller
 
                 $tagDiscount = $this->getGoodTagDiscount($good);
                 $tagDiscountPercent = $tagDiscount['percent'];
+                $tags = $good->relationLoaded('tags') ? $good->tags : $good->tags()->get();
+                $hasTagExtraDiscount = $tagDiscountPercent > 0;
+                $hasNoBonusTag = $tags->contains(fn ($tag) => (bool) ($tag->disables_bonuses ?? false));
+                $hasNoRegisteredDiscountTag = $tags->contains(fn ($tag) => (bool) ($tag->disables_registered_discount ?? false));
 
                 // Если у тега есть скидка, она считается от базовой цены и игнорирует акцию/демпинг.
                 $finalPrice = $dbPrice;
@@ -1019,6 +1037,17 @@ class CartController extends Controller
 
                 $itemTotal = $finalPrice * $quantity;
                 $discountAmount = max(0, ($dbPrice - $finalPrice) * $quantity);
+                $hasDiscountPrice = $hasTagExtraDiscount || $showDemping || ($dbSalePrice && $dbSalePrice > 0 && $dbSalePrice < $dbPrice);
+                $canApplyRegisteredDiscount = $customerId
+                    && $registeredDiscountPercent > 0
+                    && ! $showDemping
+                    && ! $hasNoBonusTag
+                    && ! $hasNoRegisteredDiscountTag
+                    && ($registeredDiscountForSaleAllowed || ! $hasDiscountPrice);
+
+                if ($canApplyRegisteredDiscount) {
+                    $registeredDiscountBaseSubtotal += \App\Helpers\PriceHelper::roundPrice((float) $finalPrice) * $quantity;
+                }
 
                 // Гарантированно получаем и сохраняем параметры вариации
                 $variationName = null;
@@ -1047,7 +1076,7 @@ class CartController extends Controller
                     'discount_amount' => $discountAmount,
                     'tag_discount_percent' => $tagDiscountPercent,
                     'tag_discount_name' => $tagDiscount['name'],
-                    'tags' => $good->tags ? $good->tags->map(function ($tag) {
+                    'tags' => $tags ? $tags->map(function ($tag) {
                         return [
                             'id' => $tag->id,
                             'name' => $tag->name,
@@ -1070,7 +1099,35 @@ class CartController extends Controller
             // Пересчитываем общую сумму
             $deliveryCost = $request->get('delivery_cost', 0);
             $overtaxAmount = (float) $request->get('overtax_amount', 0) + (float) $request->get('payment_surcharge_amount', 0);
-            $totalDiscount = $isCertificateOrder ? 0 : $request->get('total_discount_amount', 0);
+            $saleDiscountAmount = $isCertificateOrder
+                ? 0
+                : \App\Helpers\PriceHelper::roundPrice(max(0, $recalculatedRegularSubtotal - $recalculatedSubtotal));
+            $registeredUserDiscountAmount = $isCertificateOrder
+                ? 0
+                : $this->roundDiscount($registeredDiscountBaseSubtotal * ($registeredDiscountPercent / 100));
+            $promoCodeDiscountAmount = $isCertificateOrder ? 0 : (float) $request->get('promo_code_discount_amount', 0);
+            $birthdayDiscountAmount = $isCertificateOrder ? 0 : (float) $request->get('birthday_discount_amount', 0);
+            $totalDiscount = $isCertificateOrder
+                ? 0
+                : \App\Helpers\PriceHelper::roundPrice($saleDiscountAmount + $registeredUserDiscountAmount + $promoCodeDiscountAmount + $birthdayDiscountAmount);
+
+            $clientSaleDiscountAmount = (float) $request->get('sale_discount_amount', 0);
+            $clientRegisteredDiscountAmount = (float) $request->get('registered_user_discount_amount', 0);
+            if (! $isCertificateOrder && (
+                abs($saleDiscountAmount - $clientSaleDiscountAmount) > 0.01 ||
+                abs($registeredUserDiscountAmount - $clientRegisteredDiscountAmount) > 0.01
+            )) {
+                Log::warning('Скидки заказа пересчитаны сервером при создании заказа', [
+                    'order_number' => $orderNumber,
+                    'customer_id' => $customerId,
+                    'client_sale_discount_amount' => $clientSaleDiscountAmount,
+                    'server_sale_discount_amount' => $saleDiscountAmount,
+                    'client_registered_user_discount_amount' => $clientRegisteredDiscountAmount,
+                    'server_registered_user_discount_amount' => $registeredUserDiscountAmount,
+                    'client_total_discount_amount' => (float) $request->get('total_discount_amount', 0),
+                    'server_total_discount_amount' => $totalDiscount,
+                ]);
+            }
 
             // РАСЧЕТ ИТОГА: 
             // Суть бага была в том, что recalculatedSubtotal УЖЕ включал акционную скидку, 
@@ -1101,10 +1158,10 @@ class CartController extends Controller
                 'items' => $finalItems, // Используем проверенные товары
                 'subtotal' => $finalSubtotal, // Используем пересчитанную сумму
                 'discount_amount' => $totalDiscount,
-                'sale_discount_amount' => $isCertificateOrder ? 0 : $request->get('sale_discount_amount', 0),
-                'registered_user_discount_amount' => $isCertificateOrder ? 0 : $request->get('registered_user_discount_amount', 0),
-                'promo_code_discount_amount' => $isCertificateOrder ? 0 : $request->get('promo_code_discount_amount', 0),
-                'birthday_discount_amount' => $isCertificateOrder ? 0 : $request->get('birthday_discount_amount', 0),
+                'sale_discount_amount' => $saleDiscountAmount,
+                'registered_user_discount_amount' => $registeredUserDiscountAmount,
+                'promo_code_discount_amount' => $promoCodeDiscountAmount,
+                'birthday_discount_amount' => $birthdayDiscountAmount,
                 'total_discount_amount' => $totalDiscount,
                 'promo_code' => $isCertificateOrder ? null : $request->get('promo_code'),
                 'certificate_code' => $certificateData['certificate_code'],
@@ -1320,9 +1377,10 @@ class CartController extends Controller
     {
         // Если есть вариация, ищем её изображения
         if ($variationId) {
-            $variationImage = \App\Models\ShopGoodImage::whereNull('good_id')
-                ->where('variation_id', $variationId)
-                ->where('is_main', true)
+            $variationImage = \App\Models\ShopGoodImage::where('variation_id', $variationId)
+                ->orderByDesc('is_main')
+                ->orderBy('sort_order')
+                ->orderBy('id')
                 ->first();
 
             if ($variationImage) {
@@ -1382,6 +1440,19 @@ class CartController extends Controller
 
         $discount = $basePrice * (min(max($percent, 0), 100) / 100);
         return max(\App\Helpers\PriceHelper::roundPrice($basePrice - $discount), 0.01);
+    }
+
+    private function roundDiscount(float $discount): float
+    {
+        if ($discount <= 0) {
+            return 0;
+        }
+
+        if (\App\Helpers\PriceHelper::isRound10Enabled()) {
+            return floor($discount / 10) * 10;
+        }
+
+        return \App\Helpers\PriceHelper::roundPrice($discount);
     }
 
     /**
@@ -1534,6 +1605,8 @@ class CartController extends Controller
             $freshFastRemoteStock = '';
 
             $freshAttributes = []; // Характеристики для фронтенда
+            $freshImage = $item->good_image;
+            $freshVariationImage = null;
 
             if ($item->variation_id && $item->relationLoaded('variation') && $item->variation) {
                 $freshRegularPrice = $item->variation->price;
@@ -1572,6 +1645,16 @@ class CartController extends Controller
                 $freshFastRemoteStock = $item->good->fast_remote_stock_quantity ?? '';
             }
 
+            if ($item->relationLoaded('good') && $item->good) {
+                $currentImage = $this->getGoodImage($item->good, $item->variation_id);
+                if ($currentImage) {
+                    $freshImage = $currentImage;
+                    if ($item->variation_id) {
+                        $freshVariationImage = $currentImage;
+                    }
+                }
+            }
+
             // Используем актуальные цены, если они доступны, иначе из корзины
             $regularPrice = $freshRegularPrice !== null ? \App\Helpers\PriceHelper::roundPrice($freshRegularPrice) : \App\Helpers\PriceHelper::roundPrice($item->price);
             $salePrice = $freshSalePrice !== null ? \App\Helpers\PriceHelper::roundPrice($freshSalePrice) : ($item->sale_price ? \App\Helpers\PriceHelper::roundPrice($item->sale_price) : null);
@@ -1606,7 +1689,8 @@ class CartController extends Controller
                 'variation_name' => $variationName,
                 'attributes' => $freshAttributes, // Характеристики для чекаута
                 'good_sku' => $item->good_sku,
-                'good_image' => $item->good_image,
+                'good_image' => $freshImage,
+                'variation_image' => $freshVariationImage,
                 'good_slug' => $item->good ? $item->good->slug : '',
                 'stock_quantity' => $freshStockQuantity,
                 'remote_stock_quantity' => $freshRemoteStock,

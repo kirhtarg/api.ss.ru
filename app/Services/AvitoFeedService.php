@@ -6,6 +6,7 @@ use App\Models\ShopGood;
 use App\Models\ShopCategory;
 use App\Models\Setting;
 use App\Models\Contact;
+use App\Models\ShopSupplier;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 
@@ -28,6 +29,7 @@ class AvitoFeedService
     protected $currentCategoryModels = [];
     protected $currentHierarchy = [];
     protected $globalHierarchy = [];
+    protected ?array $supplierLookupMap = null;
     
     protected $lastBrand = null;
     protected $lastModel = null;
@@ -500,25 +502,12 @@ class AvitoFeedService
 
         // Добавляем способы доставки (ПВЗ, Курьер и т.д.)
         $deliveryOptionsStr = '';
-        $supplier = $good->shopSupplier;
-
-        // Если у основного товара нет поставщика, пробуем найти его в вариациях
-        if (!$supplier && $good->variations->isNotEmpty()) {
-            foreach ($good->variations as $variation) {
-                if ($variation->shopSupplier) {
-                    $supplier = $variation->shopSupplier;
-                    break;
-                }
-            }
-        } elseif ($supplier) {
-            $source = 'main';
-        }
+        $supplier = $this->resolveGoodSupplierForAvitoDelivery($good);
 
         if ($supplier && !empty($supplier->avito_delivery_options)) {
-            $deliveryOptionsStr = $supplier->avito_delivery_options;
+            $deliveryOptionsStr = trim($supplier->avito_delivery_options);
         } elseif (!empty($this->defaultDelivery)) {
-            $deliveryOptionsStr = $this->defaultDelivery;
-            $source = 'default';
+            $deliveryOptionsStr = trim($this->defaultDelivery);
         }
 
         if (!empty($deliveryOptionsStr)) {
@@ -1281,5 +1270,63 @@ class AvitoFeedService
         }
 
         return false;
+    }
+
+    /**
+     * Для товаров с вариациями доставка Avito берется по первой вариации с поставщиком.
+     * Для товаров без вариаций используется поставщик основного товара.
+     */
+    private function resolveGoodSupplierForAvitoDelivery(ShopGood $good): ?ShopSupplier
+    {
+        if ($good->variations->isNotEmpty()) {
+            foreach ($good->variations as $variation) {
+                $variationSupplier = $this->resolveSupplierByName($variation->supplier ?? '');
+                if ($variationSupplier) {
+                    return $variationSupplier;
+                }
+            }
+        }
+
+        return $this->resolveSupplierByName($good->supplier ?? '') ?: $good->shopSupplier;
+    }
+
+    private function resolveSupplierByName(string $supplierName): ?ShopSupplier
+    {
+        $supplierName = $this->normalizeSupplierName($supplierName);
+        if ($supplierName === '') {
+            return null;
+        }
+
+        return $this->getSupplierLookupMap()[$supplierName] ?? null;
+    }
+
+    private function getSupplierLookupMap(): array
+    {
+        if ($this->supplierLookupMap !== null) {
+            return $this->supplierLookupMap;
+        }
+
+        $this->supplierLookupMap = [];
+
+        foreach (ShopSupplier::query()->get() as $supplier) {
+            $keys = [
+                $this->normalizeSupplierName($supplier->name ?? ''),
+                $this->normalizeSupplierName($supplier->slug ?? ''),
+                (string) $supplier->id,
+            ];
+
+            foreach (array_filter(array_unique($keys)) as $key) {
+                if (!isset($this->supplierLookupMap[$key])) {
+                    $this->supplierLookupMap[$key] = $supplier;
+                }
+            }
+        }
+
+        return $this->supplierLookupMap;
+    }
+
+    private function normalizeSupplierName(string $name): string
+    {
+        return mb_strtolower(preg_replace('/\s+/u', ' ', trim($name)) ?? '');
     }
 }

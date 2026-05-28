@@ -211,8 +211,9 @@
             </thead>
             <tbody>
                 @php
-                    // Преобразуем items в массив, если это строка (JSON)
-                    $orderItems = $order->items;
+                    $orderItems = method_exists($order, 'getItemsWithDetails')
+                        ? $order->getItemsWithDetails()
+                        : $order->items;
                     if (is_string($orderItems)) {
                         $orderItems = json_decode($orderItems, true);
                     }
@@ -222,6 +223,11 @@
                 @endphp
                 @if(!empty($orderItems))
                     @foreach($orderItems as $index => $item)
+                        @php
+                            $quantity = (float) ($item['quantity'] ?? 1);
+                            $itemPrice = (float) ($item['final_price'] ?? $item['unit_price'] ?? $item['price'] ?? 0);
+                            $itemTotal = (float) ($item['total'] ?? ($itemPrice * $quantity));
+                        @endphp
                         <tr>
                             <td class="text-center">{{ $index + 1 }}</td>
                             <td>
@@ -238,9 +244,9 @@
                                     <div style="font-size: 11px; color: #888;">Арт: {{ $sku }}</div>
                                 @endif
                             </td>
-                            <td class="text-center">{{ $item['quantity'] ?? 1 }}</td>
-                            <td class="text-right">{{ number_format($item['price'] ?? 0, 0, ',', ' ') }} ₽</td>
-                            <td class="text-right">{{ number_format($item['total'] ?? ($item['price'] ?? 0) * ($item['quantity'] ?? 1), 0, ',', ' ') }} ₽</td>
+                            <td class="text-center">{{ $quantity }}</td>
+                            <td class="text-right">{{ number_format($itemPrice, 0, ',', ' ') }} ₽</td>
+                            <td class="text-right">{{ number_format($itemTotal, 0, ',', ' ') }} ₽</td>
                         </tr>
                     @endforeach
                 @else
@@ -287,4 +293,3 @@
     </div>
 </body>
 </html>
-

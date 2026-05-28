@@ -228,7 +228,10 @@
         </table>
 
         <!-- Состав заказа -->
-        @if($order->items && is_array($order->items) && count($order->items) > 0)
+        @php
+            $orderItems = method_exists($order, 'getItemsWithDetails') ? $order->getItemsWithDetails() : ($order->items ?? []);
+        @endphp
+        @if($orderItems && is_array($orderItems) && count($orderItems) > 0)
         <h3 style="margin: 30px 0 15px 0; color: #333;">Состав заказа</h3>
         <div class="order-details">
             <table>
@@ -241,7 +244,12 @@
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach($order->items as $item)
+                    @foreach($orderItems as $item)
+                    @php
+                        $quantity = (float) ($item['quantity'] ?? 1);
+                        $itemPrice = (float) ($item['final_price'] ?? $item['unit_price'] ?? $item['price'] ?? 0);
+                        $itemTotal = (float) ($item['total'] ?? ($itemPrice * $quantity));
+                    @endphp
                     <tr>
                         <td>
                             {{ $item['good_name'] ?? $item['name'] ?? 'Товар' }}
@@ -249,9 +257,9 @@
                                 <br><small style="color: #666;">{{ $item['variation_name'] }}</small>
                             @endif
                         </td>
-                        <td>{{ $item['quantity'] ?? 1 }} шт.</td>
-                        <td class="text-right">{{ number_format($item['price'] ?? 0, 0, ',', ' ') }} ₽</td>
-                        <td class="text-right">{{ number_format($item['total'] ?? 0, 0, ',', ' ') }} ₽</td>
+                        <td>{{ $quantity }} шт.</td>
+                        <td class="text-right">{{ number_format($itemPrice, 0, ',', ' ') }} ₽</td>
+                        <td class="text-right">{{ number_format($itemTotal, 0, ',', ' ') }} ₽</td>
                     </tr>
                     @endforeach
 

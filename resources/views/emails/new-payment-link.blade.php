@@ -156,7 +156,9 @@
                 </thead>
                 <tbody>
                     @php
-                        $orderItems = $order->items;
+                        $orderItems = method_exists($order, 'getItemsWithDetails')
+                            ? $order->getItemsWithDetails()
+                            : $order->items;
                         if (is_string($orderItems)) {
                             $orderItems = json_decode($orderItems, true);
                         }
@@ -165,6 +167,11 @@
                         }
                     @endphp
                     @foreach($orderItems as $item)
+                        @php
+                            $quantity = (float) ($item['quantity'] ?? 1);
+                            $itemPrice = (float) ($item['final_price'] ?? $item['unit_price'] ?? $item['price'] ?? 0);
+                            $itemTotal = (float) ($item['total'] ?? ($itemPrice * $quantity));
+                        @endphp
                         <tr>
                             <td style="padding: 8px; border: 1px solid #ddd;">
                                 @php
@@ -180,9 +187,9 @@
                                     <div style="font-size: 11px; color: #888;">Арт: {{ $sku }}</div>
                                 @endif
                             </td>
-                            <td style="padding: 8px; text-align: center; border: 1px solid #ddd;">{{ $item['quantity'] ?? 1 }}</td>
-                            <td style="padding: 8px; text-align: right; border: 1px solid #ddd;">{{ number_format($item['price'] ?? 0, 0, ',', ' ') }} ₽</td>
-                            <td style="padding: 8px; text-align: right; border: 1px solid #ddd;">{{ number_format($item['total'] ?? ($item['price'] ?? 0) * ($item['quantity'] ?? 1), 0, ',', ' ') }} ₽</td>
+                            <td style="padding: 8px; text-align: center; border: 1px solid #ddd;">{{ $quantity }}</td>
+                            <td style="padding: 8px; text-align: right; border: 1px solid #ddd;">{{ number_format($itemPrice, 0, ',', ' ') }} ₽</td>
+                            <td style="padding: 8px; text-align: right; border: 1px solid #ddd;">{{ number_format($itemTotal, 0, ',', ' ') }} ₽</td>
                         </tr>
                     @endforeach
                 </tbody>

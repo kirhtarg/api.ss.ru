@@ -102,6 +102,7 @@ class ShopRussianPostSettingsController extends Controller
             'default_length' => 'nullable|numeric|min:1|max:1000',
             'default_width' => 'nullable|numeric|min:1|max:1000',
             'default_height' => 'nullable|numeric|min:1|max:1000',
+            'cash_on_delivery_enabled' => 'boolean',
             'is_active' => 'boolean',
         ]);
 
@@ -159,6 +160,7 @@ class ShopRussianPostSettingsController extends Controller
             'default_length' => 'nullable|numeric|min:1|max:1000',
             'default_width' => 'nullable|numeric|min:1|max:1000',
             'default_height' => 'nullable|numeric|min:1|max:1000',
+            'cash_on_delivery_enabled' => 'boolean',
             'is_active' => 'boolean',
         ]);
 

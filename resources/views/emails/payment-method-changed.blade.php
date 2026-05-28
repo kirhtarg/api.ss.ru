@@ -334,7 +334,7 @@
                                 @php
                                     $itemName = $item['good_name'] ?? $item['name'] ?? 'Товар';
                                     $quantity = (float) ($item['quantity'] ?? 1);
-                                    $price = (float) ($item['price'] ?? $item['final_price'] ?? $item['unit_price'] ?? 0);
+                                    $price = (float) ($item['final_price'] ?? $item['unit_price'] ?? $item['price'] ?? 0);
                                     $total = (float) ($item['total'] ?? ($price * $quantity));
                                 @endphp
                                 <div class="item">
