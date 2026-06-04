@@ -2277,6 +2277,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::put('/{id}/is-active', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateIsActive']);
                 Route::put('/{id}/comment', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateComment']);
                 Route::put('/{id}/delivery-status', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateDeliveryStatus']);
+                Route::put('/{id}/delivery', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'changeDelivery']);
                 // OPTIONS для CORS preflight
                 Route::options('/{id}/finish', function () {
                     return response('', 200)
@@ -2291,6 +2292,10 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('/{id}/cdek/barcode/download', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'downloadCdekBarcode']);
                 Route::get('/{id}/cdek/waybill', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'getCdekWaybill']);
                 Route::get('/{id}/cdek/waybill/download', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'downloadCdekWaybill']);
+                Route::post('/{id}/dellin/order', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'createDellinOrder']);
+                Route::put('/{id}/dellin/status', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateDellinStatus']);
+                Route::post('/{id}/russianpost/order', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'createRussianPostOrder']);
+                Route::put('/{id}/russianpost/status', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateRussianPostStatus']);
                 Route::post('/{id}/items', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'addItem']);
                 Route::put('/{id}/items/{itemId}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateItem']);
                 Route::delete('/{id}/items/{itemId}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'removeItem']);

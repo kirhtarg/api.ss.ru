@@ -34,6 +34,7 @@ class ShopRussianPostController extends Controller
                 'default_width' => (float) ($settings->default_width ?? 10),
                 'default_height' => (float) ($settings->default_height ?? 10),
                 'cash_on_delivery_enabled' => (bool) $settings->cash_on_delivery_enabled,
+                'create_order_in_account' => (bool) $settings->create_order_in_account,
             ],
         ]);
     }

@@ -514,6 +514,11 @@ class NotificationService
         $message .= '🆔 <b>ID платежа:</b> '.$this->extractPaymentId($transaction, $paymentObject)."\n";
         $message .= '📌 <b>Статус:</b> '.($paymentObject['status'] ?? $paymentObject['paymentStatus'] ?? $paymentObject['payment_status'] ?? 'failed')."\n\n";
 
+        $failureReason = $this->extractPaymentFailureReason($transaction, $paymentObject);
+        if ($failureReason) {
+            $message .= '❗ <b>Причина:</b> '.htmlspecialchars($failureReason, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')."\n\n";
+        }
+
         $itemsList = $this->formatOrderItems($order, true);
         if (! empty($itemsList)) {
             $message .= "🛒 <b>Состав заказа:</b>\n";
@@ -560,6 +565,11 @@ class NotificationService
         $message .= 'Способ оплаты: '.$this->extractPaymentProvider($order, $paymentObject)."\n";
         $message .= 'ID платежа: '.$this->extractPaymentId($transaction, $paymentObject)."\n";
         $message .= 'Статус: '.($paymentObject['status'] ?? $paymentObject['paymentStatus'] ?? $paymentObject['payment_status'] ?? 'failed')."\n\n";
+
+        $failureReason = $this->extractPaymentFailureReason($transaction, $paymentObject);
+        if ($failureReason) {
+            $message .= "Причина: {$failureReason}\n\n";
+        }
 
         $itemsList = $this->formatOrderItems($order, false);
         if (! empty($itemsList)) {
@@ -627,6 +637,140 @@ class NotificationService
             ?? ($transaction->transaction_id ?? null)
             ?? 'Неизвестен'
         );
+    }
+
+    protected function extractPaymentFailureReason($transaction, array $paymentObject): ?string
+    {
+        $responseData = [];
+        if ($transaction && isset($transaction->response_data)) {
+            $responseData = is_array($transaction->response_data)
+                ? $transaction->response_data
+                : (json_decode((string) $transaction->response_data, true) ?: []);
+        }
+
+        $reason = $this->firstPaymentFailureString([
+            $transaction->error_message ?? null,
+            $paymentObject['failure_reason'] ?? null,
+            $paymentObject['reason'] ?? null,
+            $paymentObject['reasonCode'] ?? null,
+            $paymentObject['code'] ?? null,
+            $paymentObject['message'] ?? null,
+            $paymentObject['Message'] ?? null,
+            $paymentObject['description'] ?? null,
+            $paymentObject['Description'] ?? null,
+            $paymentObject['details'] ?? null,
+            $paymentObject['Details'] ?? null,
+            $paymentObject['error'] ?? null,
+            $paymentObject['Error'] ?? null,
+            $paymentObject['ErrorCode'] ?? null,
+            $paymentObject['errorMessage'] ?? null,
+            $paymentObject['order']['reason'] ?? null,
+            $paymentObject['order']['reasonCode'] ?? null,
+            $paymentObject['order']['code'] ?? null,
+            $paymentObject['order']['message'] ?? null,
+            $paymentObject['order']['description'] ?? null,
+            $paymentObject['order']['paymentError'] ?? null,
+            $paymentObject['object']['cancellation_details']['reason'] ?? null,
+            $paymentObject['object']['reason'] ?? null,
+            $paymentObject['object']['reasonCode'] ?? null,
+            $paymentObject['object']['message'] ?? null,
+            $paymentObject['object']['description'] ?? null,
+            $paymentObject['details']['reason'] ?? null,
+            $paymentObject['details']['reasonCode'] ?? null,
+            $paymentObject['details']['message'] ?? null,
+            $paymentObject['details']['description'] ?? null,
+            $paymentObject['yandex_order_details']['data']['reason'] ?? null,
+            $paymentObject['yandex_order_details']['data']['message'] ?? null,
+            $paymentObject['yandex_order_details']['data']['description'] ?? null,
+            $paymentObject['yandex_order_details']['data']['data']['reason'] ?? null,
+            $paymentObject['yandex_order_details']['data']['data']['message'] ?? null,
+            $paymentObject['yandex_order_details']['data']['data']['description'] ?? null,
+            $paymentObject['yandex_order_details']['data']['data']['order']['reason'] ?? null,
+            $paymentObject['yandex_order_details']['data']['data']['order']['reasonCode'] ?? null,
+            $paymentObject['yandex_order_details']['data']['data']['order']['message'] ?? null,
+            $paymentObject['yandex_order_details']['data']['data']['order']['description'] ?? null,
+            $paymentObject['yandex_order_details']['data']['data']['order']['paymentError'] ?? null,
+            $responseData['failure_reason'] ?? null,
+            $responseData['reason'] ?? null,
+            $responseData['reasonCode'] ?? null,
+            $responseData['message'] ?? null,
+            $responseData['Message'] ?? null,
+            $responseData['description'] ?? null,
+            $responseData['Description'] ?? null,
+            $responseData['Details'] ?? null,
+            $responseData['ErrorCode'] ?? null,
+            $responseData['order']['reason'] ?? null,
+            $responseData['object']['cancellation_details']['reason'] ?? null,
+            $responseData['yandex_order_details']['data']['data']['order']['reason'] ?? null,
+            $responseData['yandex_order_details']['data']['data']['order']['message'] ?? null,
+            $responseData['yandex_order_details']['data']['data']['order']['description'] ?? null,
+            $responseData['yandex_order_details']['data']['data']['order']['paymentError'] ?? null,
+        ]);
+
+        if (! $reason) {
+            foreach ([$paymentObject, $responseData] as $source) {
+                $operations = $source['yandex_order_details']['data']['data']['operations'] ?? [];
+                if (! is_array($operations)) {
+                    continue;
+                }
+
+                foreach ($operations as $operation) {
+                    if (! is_array($operation)) {
+                        continue;
+                    }
+
+                    $operationStatus = $operation['status'] ?? null;
+                    if ($operationStatus && ! in_array($operationStatus, ['FAIL', 'FAILED'], true)) {
+                        continue;
+                    }
+
+                    $reason = $this->firstPaymentFailureString([
+                        $operation['reason'] ?? null,
+                        $operation['reasonCode'] ?? null,
+                        $operation['message'] ?? null,
+                        $operation['description'] ?? null,
+                        $operation['error'] ?? null,
+                    ]);
+
+                    if ($reason) {
+                        break 2;
+                    }
+                }
+            }
+        }
+
+        return $reason ? mb_substr($reason, 0, 500) : null;
+    }
+
+    protected function firstPaymentFailureString(array $values): ?string
+    {
+        foreach ($values as $value) {
+            if (is_string($value) && trim($value) !== '') {
+                return trim($value);
+            }
+
+            if (is_numeric($value)) {
+                return (string) $value;
+            }
+
+            if (is_array($value)) {
+                $nested = $this->firstPaymentFailureString([
+                    $value['reason'] ?? null,
+                    $value['reasonCode'] ?? null,
+                    $value['code'] ?? null,
+                    $value['message'] ?? null,
+                    $value['description'] ?? null,
+                    $value['error'] ?? null,
+                    $value['errorMessage'] ?? null,
+                ]);
+
+                if ($nested) {
+                    return $nested;
+                }
+            }
+        }
+
+        return null;
     }
 
     /**

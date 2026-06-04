@@ -37,6 +37,8 @@ class ShopOrderLog extends Model
 
     const SECTION_PAYMENT = 'payment';
 
+    const SECTION_DELIVERY = 'delivery';
+
     const SECTION_USER = 'user';
 
     // Отключаем updated_at, так как логи не редактируются

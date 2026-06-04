@@ -380,13 +380,19 @@ class ShopGoodsController extends Controller
             $includeVariations = $request->boolean('supplier_empty_include_variations', false);
 
             if ($includeVariations) {
-                // Чсключаем товары с поставщиками Ч товары с вариациями с поставщиками
                 $query->where(function ($q) {
-                    $q->whereNull('supplier')
-                        ->orWhere('supplier', '');
-                })->whereDoesntHave('variations', function ($varQ) {
-                    $varQ->whereNotNull('supplier')
-                        ->where('supplier', '!=', '');
+                    $q->whereHas('variations', function ($varQ) {
+                        $varQ->where(function ($supplierQ) {
+                            $supplierQ->whereNull('supplier')
+                                ->orWhere('supplier', '');
+                        });
+                    })->orWhere(function ($noVarQ) {
+                        $noVarQ->whereDoesntHave('variations')
+                            ->where(function ($supplierQ) {
+                                $supplierQ->whereNull('supplier')
+                                    ->orWhere('supplier', '');
+                            });
+                    });
                 });
             } else {
                 // Только товары без поставщика в основном товаре
@@ -2761,7 +2767,7 @@ class ShopGoodsController extends Controller
         $validator = Validator::make($rawJsonData, [
             'ids' => $idsRules,
             'ids.*' => $idsItemRule,
-            'action' => 'required|in:activate,deactivate,delete,delete_without_supplier,delete_without_images,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_fast_remote_stock,update_price,update_sale_price,update_demping_price,toggle_show_demping,toggle_fields,update_label,remove_after_symbol,replace_text,update_dimensions,enable_preorder,disable_preorder,clear_by_tags,clear_by_suppliers,delete_images,delete_zero_stock_no_media',
+            'action' => 'required|in:activate,deactivate,delete,delete_without_supplier,delete_without_images,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_fast_remote_stock,update_price,update_sale_price,update_demping_price,toggle_show_demping,toggle_fields,update_label,remove_after_symbol,replace_text,update_dimensions,enable_preorder,disable_preorder,clear_by_tags,clear_by_suppliers,delete_images,delete_non_main_images,delete_zero_stock_no_media',
             'data' => 'nullable|array',
             'data.field' => 'nullable|in:name,description,short_description',
             'data.mode' => 'nullable|in:exact,start_end',
@@ -2769,6 +2775,7 @@ class ShopGoodsController extends Controller
             'data.variation_ids' => 'nullable|array',
             'data.variation_ids.*' => 'exists:shop_good_variations,id',
             'data.delete_good_if_all_variations_removed' => 'nullable|boolean',
+            'data.dry_run' => 'nullable|boolean',
             'data.show_demping' => 'nullable|boolean',
             'data.is_sale' => 'nullable|boolean',
             'data.is_new' => 'nullable|boolean',
@@ -2935,6 +2942,64 @@ class ShopGoodsController extends Controller
                     'variations_deleted' => $totalVariationsDeleted,
                     'variations_deleted_by_supplier' => $variationsDeletedBySupplier,
                     'variations_deleted_by_good' => $variationsDeletedByGood,
+                ]);
+            }
+
+            if ($action === 'delete_non_main_images') {
+                $variationIds = ShopGoodVariation::whereIn('good_id', $ids)->pluck('id')->toArray();
+
+                $imagesQuery = ShopGoodImage::query()
+                    ->where(function ($query) use ($ids, $variationIds) {
+                        $query->where(function ($goodsQ) use ($ids) {
+                            $goodsQ->whereIn('good_id', $ids)
+                                ->whereNull('variation_id');
+                        });
+
+                        if (! empty($variationIds)) {
+                            $query->orWhereIn('variation_id', $variationIds);
+                        }
+                    })
+                    ->where(function ($query) {
+                        $query->where('is_main', false)
+                            ->orWhereNull('is_main');
+                    });
+
+                $imagesToDelete = $imagesQuery->get(['id', 'good_id', 'variation_id']);
+                $deletedImagesCount = $imagesToDelete->count();
+                $deletedGoodImagesCount = $imagesToDelete->whereNull('variation_id')->count();
+                $deletedVariationImagesCount = $deletedImagesCount - $deletedGoodImagesCount;
+
+                if (! empty($data['dry_run'])) {
+                    DB::commit();
+
+                    return response()->json([
+                        'success' => true,
+                        'message' => "Найдено изображений без отметки главное: {$deletedImagesCount}",
+                        'dry_run' => true,
+                        'images_count' => $deletedImagesCount,
+                        'good_images_count' => $deletedGoodImagesCount,
+                        'variation_images_count' => $deletedVariationImagesCount,
+                    ]);
+                }
+
+                if ($deletedImagesCount > 0) {
+                    ShopGoodImage::whereIn('id', $imagesToDelete->pluck('id')->all())->delete();
+                }
+
+                foreach (ShopGood::whereIn('id', $ids)->get() as $good) {
+                    $this->logAudit($good, 'bulk_delete_non_main_images', null, [
+                        'deleted_images_count' => $deletedImagesCount,
+                    ]);
+                }
+
+                DB::commit();
+
+                return response()->json([
+                    'success' => true,
+                    'message' => "Удалено изображений без отметки главное: {$deletedImagesCount}",
+                    'deleted_images_count' => $deletedImagesCount,
+                    'deleted_good_images_count' => $deletedGoodImagesCount,
+                    'deleted_variation_images_count' => $deletedVariationImagesCount,
                 ]);
             }
 

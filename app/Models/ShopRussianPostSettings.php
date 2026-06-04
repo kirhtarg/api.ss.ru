@@ -29,6 +29,7 @@ class ShopRussianPostSettings extends Model
         'default_width',
         'default_height',
         'cash_on_delivery_enabled',
+        'create_order_in_account',
         'is_active',
     ];
 
@@ -38,6 +39,7 @@ class ShopRussianPostSettings extends Model
         'default_width' => 'decimal:2',
         'default_height' => 'decimal:2',
         'cash_on_delivery_enabled' => 'boolean',
+        'create_order_in_account' => 'boolean',
         'is_active' => 'boolean',
     ];
 

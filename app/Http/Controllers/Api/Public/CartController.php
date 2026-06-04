@@ -2,9 +2,11 @@
 
 namespace App\Http\Controllers\Api\Public;
 
+use App\Http\Controllers\Admin\ShopOrdersController;
 use App\Http\Controllers\Controller;
 use App\Models\Contact;
 use App\Models\Setting;
+use App\Models\ShopDellinSettings;
 use App\Models\ShopCartItem;
 use App\Models\ShopGood;
 use App\Models\ShopGoodVariation;
@@ -12,6 +14,7 @@ use App\Models\ShopOrder;
 use App\Models\ShopOrderLog;
 use App\Models\ShopPaymentMethod;
 use App\Models\ShopPreorder;
+use App\Models\ShopRussianPostSettings;
 use App\Models\User;
 use App\Services\CustomerOrderEmailService;
 use App\Services\NotificationService;
@@ -1197,6 +1200,11 @@ class CartController extends Controller
                     'dellin_delivery_type' => $request->get('dellin_delivery_type'),
                     'dellin_terminal_id' => $request->get('dellin_terminal_id'),
                     'dellin_delivery_address' => $request->get('dellin_delivery_address'),
+                    'russianpost_tariff_code' => $request->get('russianpost_tariff_code'),
+                    'russianpost_delivery_type' => $request->get('russianpost_delivery_type'),
+                    'russianpost_office_id' => $request->get('russianpost_office_id'),
+                    'russianpost_postal_code' => $request->get('russianpost_postal_code'),
+                    'russianpost_delivery_address' => $request->get('russianpost_delivery_address'),
                 ],
             ];
 
@@ -1209,6 +1217,7 @@ class CartController extends Controller
                 $userName = $customerUser ? $customerUser->name : null;
             }
             ShopOrderLog::logOrderCreated($order->id, $userName ?? $request->get('customer_name', 'Покупатель'), ShopOrderLog::SECTION_ORDERS, $order->order_number);
+            $this->createExternalDeliveryOrderIfEnabled($order);
 
             // Создаем запись об использовании промокода, если он был применен
             if (! $isCertificateOrder && $request->get('promo_code_id')) {
@@ -2049,6 +2058,67 @@ class CartController extends Controller
         $enrichedOrder->items = $enrichedItems;
 
         return $enrichedOrder;
+    }
+
+    private function createExternalDeliveryOrderIfEnabled(ShopOrder $order): void
+    {
+        try {
+            $metadata = is_array($order->metadata) ? $order->metadata : [];
+            $shippingMethod = mb_strtolower((string) ($order->shipping_method ?? ''));
+
+            $isDellin = ! empty($metadata['dellin_delivery_type'])
+                || str_contains($shippingMethod, 'делов')
+                || str_contains($shippingMethod, 'dellin');
+
+            $isRussianPost = ! empty($metadata['russianpost_delivery_type'])
+                || str_contains($shippingMethod, 'почт')
+                || str_contains($shippingMethod, 'russianpost');
+
+            if ($isDellin) {
+                $settings = ShopDellinSettings::getActive();
+                if (! $settings?->create_order_in_account) {
+                    return;
+                }
+
+                $response = app(ShopOrdersController::class)->createDellinOrder(new Request(), $order->id);
+                $data = $response->getData(true);
+                if (! ($data['success'] ?? false)) {
+                    $this->logExternalDeliveryCreationError($order, 'Деловые линии', $data['message'] ?? 'Заявка не создана');
+                }
+
+                return;
+            }
+
+            if ($isRussianPost) {
+                $settings = ShopRussianPostSettings::getActive();
+                if (! $settings?->create_order_in_account) {
+                    return;
+                }
+
+                $response = app(ShopOrdersController::class)->createRussianPostOrder(new Request(), $order->id);
+                $data = $response->getData(true);
+                if (! ($data['success'] ?? false)) {
+                    $this->logExternalDeliveryCreationError($order, 'Почта России', $data['message'] ?? 'Отправление не создано');
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::error('Ошибка автоматического создания заявки доставки: '.$e->getMessage(), [
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+            ]);
+            $this->logExternalDeliveryCreationError($order, 'Доставка', $e->getMessage());
+        }
+    }
+
+    private function logExternalDeliveryCreationError(ShopOrder $order, string $provider, string $message): void
+    {
+        ShopOrderLog::createLog($order->id, "Ошибка создания заявки {$provider}", [
+            'action_color' => '#FFFFFF',
+            'action_bg_color' => '#DC2626',
+            'section' => ShopOrderLog::SECTION_DELIVERY,
+            'comment' => $message,
+            'info' => "Заказ № {$order->order_number}",
+        ]);
     }
 
     /**

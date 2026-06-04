@@ -13,6 +13,78 @@
     $paymentId = $paymentObject['id'] ?? $paymentObject['paymentId'] ?? $paymentObject['payment_id'] ?? $paymentObject['PaymentId'] ?? ($transaction->transaction_id ?? 'Неизвестен');
     $paymentProvider = $paymentObject['provider'] ?? $paymentObject['payment_method'] ?? $paymentObject['paymentMethod'] ?? ($order->payment_method ?? 'Неизвестен');
     $paymentStatus = $paymentObject['status'] ?? $paymentObject['paymentStatus'] ?? $paymentObject['payment_status'] ?? ($isSuccess ? 'paid' : 'failed');
+    $failureCandidates = [
+        $transaction->error_message ?? null,
+        $paymentObject['failure_reason'] ?? null,
+        $paymentObject['reason'] ?? null,
+        $paymentObject['reasonCode'] ?? null,
+        $paymentObject['code'] ?? null,
+        $paymentObject['message'] ?? null,
+        $paymentObject['Message'] ?? null,
+        $paymentObject['description'] ?? null,
+        $paymentObject['Description'] ?? null,
+        $paymentObject['details'] ?? null,
+        $paymentObject['Details'] ?? null,
+        $paymentObject['error'] ?? null,
+        $paymentObject['Error'] ?? null,
+        $paymentObject['ErrorCode'] ?? null,
+        $paymentObject['errorMessage'] ?? null,
+        $paymentObject['order']['reason'] ?? null,
+        $paymentObject['order']['reasonCode'] ?? null,
+        $paymentObject['order']['code'] ?? null,
+        $paymentObject['order']['message'] ?? null,
+        $paymentObject['order']['description'] ?? null,
+        $paymentObject['order']['paymentError'] ?? null,
+        $paymentObject['object']['cancellation_details']['reason'] ?? null,
+        $paymentObject['object']['reason'] ?? null,
+        $paymentObject['object']['reasonCode'] ?? null,
+        $paymentObject['object']['message'] ?? null,
+        $paymentObject['object']['description'] ?? null,
+        $paymentObject['yandex_order_details']['data']['data']['order']['reason'] ?? null,
+        $paymentObject['yandex_order_details']['data']['data']['order']['reasonCode'] ?? null,
+        $paymentObject['yandex_order_details']['data']['data']['order']['message'] ?? null,
+        $paymentObject['yandex_order_details']['data']['data']['order']['description'] ?? null,
+        $paymentObject['yandex_order_details']['data']['data']['order']['paymentError'] ?? null,
+    ];
+    $failureReason = null;
+    foreach ($failureCandidates as $candidate) {
+        if (is_string($candidate) && trim($candidate) !== '') {
+            $failureReason = mb_substr(trim($candidate), 0, 500);
+            break;
+        }
+        if (is_numeric($candidate)) {
+            $failureReason = (string) $candidate;
+            break;
+        }
+        if (is_array($candidate)) {
+            foreach (['reason', 'reasonCode', 'code', 'message', 'description', 'error', 'errorMessage'] as $key) {
+                if (isset($candidate[$key]) && is_scalar($candidate[$key]) && trim((string) $candidate[$key]) !== '') {
+                    $failureReason = mb_substr(trim((string) $candidate[$key]), 0, 500);
+                    break 2;
+                }
+            }
+        }
+    }
+    if (!$failureReason) {
+        $operations = $paymentObject['yandex_order_details']['data']['data']['operations'] ?? [];
+        if (is_array($operations)) {
+            foreach ($operations as $operation) {
+                if (!is_array($operation)) {
+                    continue;
+                }
+                $operationStatus = $operation['status'] ?? null;
+                if ($operationStatus && !in_array($operationStatus, ['FAIL', 'FAILED'], true)) {
+                    continue;
+                }
+                foreach (['reason', 'reasonCode', 'code', 'message', 'description', 'error', 'errorMessage'] as $key) {
+                    if (isset($operation[$key]) && is_scalar($operation[$key]) && trim((string) $operation[$key]) !== '') {
+                        $failureReason = mb_substr(trim((string) $operation[$key]), 0, 500);
+                        break 2;
+                    }
+                }
+            }
+        }
+    }
     $providerNormalized = mb_strtolower((string) $paymentProvider);
     $isMinorUnitAmount = isset($paymentObject['PaymentId'])
         || str_contains($providerNormalized, 'т-банк')
@@ -220,6 +292,12 @@
                     <span class="info-label">Статус провайдера:</span>
                     <span class="info-value">{{ $paymentStatus }}</span>
                 </div>
+                @if(!$isSuccess && $failureReason)
+                    <div class="info-row">
+                        <span class="info-label">Причина:</span>
+                        <span class="info-value">{{ $failureReason }}</span>
+                    </div>
+                @endif
             </div>
 
             <div class="order-card">

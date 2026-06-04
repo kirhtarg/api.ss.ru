@@ -843,6 +843,10 @@ class AvitoFeedService
         $allowedTags = '<br><strong><b><em><i><ul><ol><li>';
         $cleaned = strip_tags($html, $allowedTags);
 
+        // Avito не воспринимает <b>, поэтому приводим жирное начертание к <strong>.
+        $cleaned = preg_replace('/<\s*b\b[^>]*>/i', '<strong>', $cleaned);
+        $cleaned = preg_replace('/<\s*\/\s*b\s*>/i', '</strong>', $cleaned);
+
         // Убираем лишние пробелы и табуляции
         $cleaned = preg_replace('/[ \t]+/', ' ', $cleaned);
         

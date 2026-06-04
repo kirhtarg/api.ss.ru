@@ -9,7 +9,9 @@ use App\Models\ShopOrder;
 use App\Models\ShopOrderLog;
 use App\Models\ShopOrderLogIcon;
 use App\Models\ShopOrderStatus;
+use App\Models\ShopDellinSettings;
 use App\Models\ShopPaymentTransaction;
+use App\Models\ShopRussianPostSettings;
 use App\Models\UserBonus;
 use App\Models\UserBonusTransaction;
 use App\Services\CdekService;
@@ -293,6 +295,9 @@ class ShopOrdersController extends Controller
                     ] : null,
                     'shipping_address' => $order->shipping_address,
                     'cdek_order_uuid' => $order->cdek_order_uuid,
+                    'dellin_order_id' => $order->dellin_order_id,
+                    'russianpost_order_id' => $order->russianpost_order_id,
+                    'russianpost_barcode' => $order->russianpost_barcode,
                     'delivery_status' => $order->delivery_status ? json_decode($order->delivery_status, true) : null,
                     'notes' => $order->notes,
                     'comment' => $order->comment,
@@ -2100,6 +2105,9 @@ class ShopOrdersController extends Controller
             'shipping_method' => $order->shipping_method,
             'shipping_address' => $order->shipping_address,
             'cdek_order_uuid' => $order->cdek_order_uuid,
+            'dellin_order_id' => $order->dellin_order_id,
+            'russianpost_order_id' => $order->russianpost_order_id,
+            'russianpost_barcode' => $order->russianpost_barcode,
             'delivery_tracking_data' => is_string($order->delivery_status) ? json_decode($order->delivery_status, true) : $order->delivery_status,
             'notes' => $order->notes,
             'comment' => $order->comment,
@@ -2417,6 +2425,626 @@ class ShopOrdersController extends Controller
                 'message' => 'Ошибка скачивания накладной: ' . $e->getMessage(),
             ], 500);
         }
+    }
+
+    public function changeDelivery(Request $request, $id): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'shipping_method_id' => 'nullable|integer|exists:shop_delivery_methods,id',
+            'shipping_method' => 'required|string|max:255',
+            'shipping_address' => 'nullable|string|max:2000',
+            'delivery_cost' => 'nullable|numeric|min:0',
+            'metadata' => 'nullable|array',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        try {
+            $order = ShopOrder::findOrFail($id);
+            $oldMethod = $order->shipping_method;
+            $oldAddress = $order->shipping_address;
+            $oldCost = (float) ($order->delivery_cost ?? 0);
+            $metadata = is_array($order->metadata) ? $order->metadata : [];
+            $metadata = array_merge($metadata, $request->get('metadata', []));
+
+            $order->update([
+                'shipping_method_id' => $request->get('shipping_method_id'),
+                'shipping_method' => $request->get('shipping_method'),
+                'shipping_address' => $request->get('shipping_address'),
+                'delivery_cost' => $request->has('delivery_cost') ? (float) $request->get('delivery_cost') : $oldCost,
+                'metadata' => $metadata,
+                'dellin_order_id' => null,
+                'russianpost_order_id' => null,
+                'russianpost_barcode' => null,
+                'delivery_status' => null,
+            ]);
+
+            ShopOrderLog::createLog($order->id, 'Доставка изменена', [
+                'action_color' => '#FFFFFF',
+                'action_bg_color' => '#0EA5E9',
+                'section' => ShopOrderLog::SECTION_DELIVERY,
+                'comment' => implode("\n", array_filter([
+                    "Было: {$oldMethod}".($oldAddress ? " / {$oldAddress}" : ''),
+                    'Стало: '.$request->get('shipping_method').($request->get('shipping_address') ? ' / '.$request->get('shipping_address') : ''),
+                    $request->has('delivery_cost') ? 'Стоимость: '.number_format((float) $request->get('delivery_cost'), 0, ',', ' ').' ₽' : null,
+                ])),
+                'info' => "Заказ № {$order->order_number}",
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Доставка заказа обновлена',
+                'data' => $this->formatOrderForResponse($order->fresh(['status', 'user', 'paymentMethod', 'deliveryMethod', 'manager'])),
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Ошибка смены доставки заказа: '.$e->getMessage(), ['order_id' => $id]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка смены доставки: '.$e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function createDellinOrder(Request $request, $id): JsonResponse
+    {
+        try {
+            $order = ShopOrder::findOrFail($id);
+            $settings = ShopDellinSettings::getActive();
+
+            if (! $settings || ! $settings->appkey) {
+                return response()->json(['success' => false, 'message' => 'Активные настройки Деловых линий не заполнены'], 400);
+            }
+
+            if ($order->dellin_order_id) {
+                return response()->json(['success' => true, 'message' => 'Заявка Деловых линий уже создана', 'data' => ['dellin_order_id' => $order->dellin_order_id]]);
+            }
+
+            $metadata = is_array($order->metadata) ? $order->metadata : [];
+            $deliveryType = $metadata['dellin_delivery_type'] ?? null;
+            $terminalId = $metadata['dellin_terminal_id'] ?? null;
+            $deliveryAddress = $metadata['dellin_delivery_address'] ?? $order->shipping_address;
+
+            if (! $deliveryType || ($deliveryType === 'terminal' && ! $terminalId) || ($deliveryType === 'address' && ! $deliveryAddress)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Недостаточно данных для создания заявки Деловых линий: проверьте тип доставки, терминал или адрес получателя.',
+                ], 422);
+            }
+
+            $payload = $this->buildDellinOrderPayload($order, $settings, $deliveryType, $terminalId, $deliveryAddress);
+            $response = Http::withOptions([
+                'verify' => $this->getDellinVerifyOption(),
+                'timeout' => 30,
+            ])->post('https://api.dellin.ru/v2/request.json', $payload);
+            $data = $response->json() ?: [];
+
+            if (! $response->successful() || isset($data['errors'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $this->extractExternalDeliveryError($data, 'Деловые линии не приняли заявку'),
+                    'data' => ['request_payload' => $payload, 'server_response' => $data],
+                ], 422);
+            }
+
+            $externalId = $data['data']['requestID'] ?? $data['data']['orderID'] ?? $data['requestID'] ?? $data['orderID'] ?? null;
+            $barcode = $data['data']['barcode'] ?? $data['barcode'] ?? null;
+            if (! $externalId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Деловые линии приняли запрос, но не вернули номер заявки',
+                    'data' => ['request_payload' => $payload, 'server_response' => $data],
+                ], 422);
+            }
+
+            $metadata = is_array($order->metadata) ? $order->metadata : [];
+            if ($barcode) {
+                $metadata['dellin_barcode'] = (string) $barcode;
+            }
+            $metadata['dellin_request_payload'] = $payload;
+
+            $order->update([
+                'dellin_order_id' => (string) $externalId,
+                'metadata' => $metadata,
+                'delivery_status' => json_encode(['code' => 'CREATED', 'name' => 'Заявка создана в Деловых линиях'], JSON_UNESCAPED_UNICODE),
+            ]);
+
+            ShopOrderLog::createLog($order->id, 'Заявка Деловых линий создана', [
+                'action_color' => '#FFFFFF',
+                'action_bg_color' => '#16A34A',
+                'section' => ShopOrderLog::SECTION_DELIVERY,
+                'comment' => trim('ID заявки: '.$externalId.($barcode ? "\nШтрихкод: {$barcode}" : '')),
+                'info' => "Заказ № {$order->order_number}",
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Заявка Деловых линий создана',
+                'data' => [
+                    'dellin_order_id' => $externalId,
+                    'barcode' => $barcode,
+                    'delivery_status' => ['code' => 'CREATED', 'name' => 'Заявка создана в Деловых линиях'],
+                    'server_response' => $data,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Ошибка создания заявки Деловых линий: '.$e->getMessage(), ['order_id' => $id]);
+
+            return response()->json(['success' => false, 'message' => 'Ошибка создания заявки Деловых линий: '.$e->getMessage()], 500);
+        }
+    }
+
+    public function updateDellinStatus(Request $request, $id): JsonResponse
+    {
+        try {
+            $order = ShopOrder::findOrFail($id);
+            if (! $order->dellin_order_id) {
+                return response()->json(['success' => false, 'message' => 'У заказа нет ID заявки Деловых линий'], 400);
+            }
+
+            $settings = ShopDellinSettings::getActive();
+            if (! $settings || ! $settings->appkey) {
+                return response()->json(['success' => false, 'message' => 'Активные настройки Деловых линий не заполнены'], 400);
+            }
+
+            $metadata = is_array($order->metadata) ? $order->metadata : [];
+            $payload = [
+                'appkey' => $settings->appkey,
+                'docIds' => [(string) $order->dellin_order_id],
+            ];
+
+            if ($settings->auth_type !== 'appkey') {
+                $sessionId = $this->getDellinSessionId($settings);
+                if ($sessionId) {
+                    $payload['sessionID'] = $sessionId;
+                }
+            }
+
+            $response = Http::withOptions([
+                'verify' => $this->getDellinVerifyOption(),
+                'timeout' => 30,
+            ])->post('https://api.dellin.ru/v3/orders/statuses_history.json', $payload);
+            $data = $response->json() ?: [];
+
+            if (! $response->successful() || isset($data['errors'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $this->extractExternalDeliveryError($data, 'Деловые линии не вернули статус заявки'),
+                    'data' => ['request_payload' => $payload, 'server_response' => $data],
+                ], 422);
+            }
+
+            $history = $data['data']['statusHistory'][$order->dellin_order_id]
+                ?? $data['data']['statusHistory'][(string) $order->dellin_order_id]
+                ?? [];
+            $last = $this->extractDellinLastStatusItem($history);
+
+            if (empty($last) || ! ($last['state'] ?? $last['State'] ?? null)) {
+                $ordersData = $this->fetchDellinOrderJournal($settings, $order);
+                $last = $ordersData['order'] ?? $last;
+                if (! empty($ordersData['payload'])) {
+                    $data['orders_journal_request'] = $ordersData['payload'];
+                }
+                if (! empty($ordersData['response'])) {
+                    $data['orders_journal_response'] = $ordersData['response'];
+                }
+            }
+
+            $status = [
+                'code' => $last['state'] ?? $last['State'] ?? 'UNKNOWN',
+                'name' => $last['stateName'] ?? $last['StateName'] ?? 'Статус Деловых линий не найден',
+                'date' => $last['stateDate'] ?? $last['StateDate'] ?? $last['orderedAt'] ?? null,
+                'detailed_status' => $last['detailedStatus'] ?? $last['DetailedStatus'] ?? null,
+                'detailed_status_name' => $last['detailedStatusRus'] ?? $last['DetailedStatusRus'] ?? null,
+                'progress_percent' => $last['progressPercent'] ?? null,
+                'external_id' => $order->dellin_order_id,
+            ];
+            $order->update(['delivery_status' => json_encode($status, JSON_UNESCAPED_UNICODE)]);
+
+            ShopOrderLog::createLog($order->id, 'Статус Деловых линий обновлен', [
+                'action_color' => '#FFFFFF',
+                'action_bg_color' => '#2563EB',
+                'section' => ShopOrderLog::SECTION_DELIVERY,
+                'comment' => trim(($status['name'] ?? '').($status['detailed_status_name'] ? ' / '.$status['detailed_status_name'] : '')),
+                'info' => "Заказ № {$order->order_number}",
+            ]);
+
+            return response()->json(['success' => true, 'message' => 'Статус доставки обновлен', 'data' => ['delivery_status' => $status, 'server_response' => $data]]);
+        } catch (\Throwable $e) {
+            return response()->json(['success' => false, 'message' => 'Ошибка проверки статуса Деловых линий: '.$e->getMessage()], 500);
+        }
+    }
+
+    public function createRussianPostOrder(Request $request, $id): JsonResponse
+    {
+        try {
+            $order = ShopOrder::findOrFail($id);
+            $settings = ShopRussianPostSettings::getActive();
+
+            if (! $settings || ! $settings->api_token || ! $settings->login || ! $settings->password || ! $settings->sender_postal_code) {
+                return response()->json(['success' => false, 'message' => 'Активные настройки Почты России заполнены не полностью'], 400);
+            }
+
+            if ($order->russianpost_order_id || $order->russianpost_barcode) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Отправление Почты России уже создано',
+                    'data' => ['russianpost_order_id' => $order->russianpost_order_id, 'barcode' => $order->russianpost_barcode],
+                ]);
+            }
+
+            $metadata = is_array($order->metadata) ? $order->metadata : [];
+            $postalCode = preg_replace('/\D+/', '', (string) ($metadata['russianpost_postal_code'] ?? ''));
+            if ($postalCode === '') {
+                return response()->json(['success' => false, 'message' => 'Для создания отправления Почты России не указан индекс получателя/ОПС'], 422);
+            }
+
+            $payload = [$this->buildRussianPostOrderPayload($order, $settings, $postalCode)];
+            $response = Http::withOptions([
+                'verify' => filter_var(config('services.russianpost.verify_ssl', true), FILTER_VALIDATE_BOOLEAN),
+                'timeout' => 30,
+            ])->withHeaders($this->russianPostHeaders($settings))->put('https://otpravka-api.pochta.ru/1.0/user/backlog', $payload);
+            $data = $response->json() ?: [];
+
+            if (! $response->successful()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $this->extractExternalDeliveryError($data, $response->body() ?: 'Почта России не приняла отправление'),
+                    'data' => ['request_payload' => $payload, 'server_response' => $data],
+                ], 422);
+            }
+
+            $item = is_array($data) && array_is_list($data) ? ($data[0] ?? []) : $data;
+            $barcode = $item['barcode'] ?? $item['barcode-item'] ?? $item['id'] ?? null;
+            $externalId = $item['id'] ?? $item['external-id'] ?? $barcode;
+
+            $order->update([
+                'russianpost_order_id' => $externalId ? (string) $externalId : null,
+                'russianpost_barcode' => $barcode ? (string) $barcode : null,
+                'delivery_status' => json_encode(['code' => 'CREATED', 'name' => 'Отправление создано в Почте России'], JSON_UNESCAPED_UNICODE),
+            ]);
+
+            ShopOrderLog::createLog($order->id, 'Отправление Почты России создано', [
+                'action_color' => '#FFFFFF',
+                'action_bg_color' => '#16A34A',
+                'section' => ShopOrderLog::SECTION_DELIVERY,
+                'comment' => implode("\n", array_filter(['ID: '.$externalId, 'ШПИ: '.$barcode])),
+                'info' => "Заказ № {$order->order_number}",
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Отправление Почты России создано',
+                'data' => [
+                    'russianpost_order_id' => $externalId,
+                    'barcode' => $barcode,
+                    'delivery_status' => ['code' => 'CREATED', 'name' => 'Отправление создано в Почте России'],
+                    'server_response' => $data,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Ошибка создания отправления Почты России: '.$e->getMessage(), ['order_id' => $id]);
+
+            return response()->json(['success' => false, 'message' => 'Ошибка создания отправления Почты России: '.$e->getMessage()], 500);
+        }
+    }
+
+    public function updateRussianPostStatus(Request $request, $id): JsonResponse
+    {
+        try {
+            $order = ShopOrder::findOrFail($id);
+            if (! $order->russianpost_barcode && ! $order->russianpost_order_id) {
+                return response()->json(['success' => false, 'message' => 'У заказа нет ID отправления Почты России'], 400);
+            }
+
+            $status = ['code' => 'CREATED', 'name' => 'Отправление создано/ожидает обработки Почтой России', 'barcode' => $order->russianpost_barcode];
+            $order->update(['delivery_status' => json_encode($status, JSON_UNESCAPED_UNICODE)]);
+
+            return response()->json(['success' => true, 'message' => 'Статус доставки обновлен', 'data' => ['delivery_status' => $status]]);
+        } catch (\Throwable $e) {
+            return response()->json(['success' => false, 'message' => 'Ошибка проверки статуса Почты России: '.$e->getMessage()], 500);
+        }
+    }
+
+    private function buildDellinOrderPayload(ShopOrder $order, ShopDellinSettings $settings, string $deliveryType, ?string $terminalId, ?string $deliveryAddress): array
+    {
+        $cargo = $this->calculateOrderDeliveryCargo($order, $settings);
+        $metadata = is_array($order->metadata) ? $order->metadata : [];
+        $senderTerminal = $metadata['dellin_sender_terminal_id'] ?? null;
+
+        $payload = [
+            'appkey' => $settings->appkey,
+            'inOrder' => true,
+            'delivery' => [
+                'deliveryType' => ['type' => 'auto'],
+                'derival' => [
+                    'produceDate' => now()->addDay()->format('Y-m-d'),
+                    'variant' => $senderTerminal ? 'terminal' : 'address',
+                ],
+                'arrival' => [
+                    'variant' => $deliveryType === 'terminal' ? 'terminal' : 'address',
+                ],
+            ],
+            'cargo' => $cargo,
+            'members' => [
+                'requester' => [
+                    'role' => 'sender',
+                    'uid' => null,
+                ],
+                'sender' => [
+                    'counteragent' => [
+                        'name' => $settings->sender_company ?: $settings->sender_name,
+                        'inn' => $settings->sender_inn,
+                    ],
+                    'contact' => [
+                        'name' => $settings->sender_name,
+                        'phone' => $settings->sender_phone,
+                        'email' => $settings->sender_email,
+                    ],
+                ],
+                'receiver' => [
+                    'counteragent' => [
+                        'name' => $order->customer_name,
+                    ],
+                    'contact' => [
+                        'name' => $order->customer_name,
+                        'phone' => $order->customer_phone,
+                        'email' => $order->customer_email,
+                    ],
+                ],
+            ],
+            'payment' => [
+                'type' => 'noncash',
+                'primaryPayer' => 'sender',
+            ],
+        ];
+
+        if ($settings->auth_type !== 'appkey') {
+            $sessionId = $this->getDellinSessionId($settings);
+            if ($sessionId) {
+                $payload['sessionID'] = $sessionId;
+            }
+        }
+
+        if ($senderTerminal) {
+            $payload['delivery']['derival']['terminalID'] = (string) $senderTerminal;
+        } else {
+            $payload['delivery']['derival']['address'] = [
+                'search' => trim(implode(', ', array_filter([
+                    $settings->sender_city,
+                    $settings->sender_street,
+                    $settings->sender_house ? 'д. '.$settings->sender_house : null,
+                ]))),
+            ];
+        }
+
+        if ($deliveryType === 'terminal') {
+            $payload['delivery']['arrival']['terminalID'] = (string) $terminalId;
+        } else {
+            $payload['delivery']['arrival']['address'] = ['search' => $deliveryAddress];
+            $payload['delivery']['arrival']['time'] = [
+                'worktimeStart' => '09:00',
+                'worktimeEnd' => '18:00',
+            ];
+        }
+
+        return $payload;
+    }
+
+    private function buildRussianPostOrderPayload(ShopOrder $order, ShopRussianPostSettings $settings, string $postalCode): array
+    {
+        $cargo = $this->calculateOrderDeliveryCargo($order, $settings);
+        [$surname, $givenName, $middleName] = $this->splitCustomerName($order->customer_name);
+
+        return [
+            'address-type-to' => 'DEFAULT',
+            'given-name' => $givenName,
+            'surname' => $surname,
+            'middle-name' => $middleName,
+            'index-to' => $postalCode,
+            'mail-category' => 'ORDINARY',
+            'mail-type' => 'ONLINE_PARCEL',
+            'mass' => (int) max(1, round($cargo['totalWeight'] * 1000)),
+            'order-num' => $order->order_number,
+            'tel-address' => preg_replace('/\D+/', '', (string) $order->customer_phone),
+            'dimension' => [
+                'length' => (int) max(1, round($cargo['length'] * 100)),
+                'width' => (int) max(1, round($cargo['width'] * 100)),
+                'height' => (int) max(1, round($cargo['height'] * 100)),
+            ],
+            'fragile' => false,
+            'completeness-checking' => false,
+            'sms-notice-recipient' => 0,
+        ];
+    }
+
+    private function calculateOrderDeliveryCargo(ShopOrder $order, $settings): array
+    {
+        $items = $order->getItemsWithDetails();
+        $weight = 0.0;
+        $length = 0.0;
+        $width = 0.0;
+        $height = 0.0;
+
+        foreach ($items as $item) {
+            $quantity = max(1, (int) ($item['quantity'] ?? 1));
+            $itemWeight = (float) ($item['weight'] ?? $settings->default_weight ?? 0.5);
+            $weight += $itemWeight * $quantity;
+            $length = max($length, (float) ($item['length'] ?? $settings->default_length ?? 10));
+            $width = max($width, (float) ($item['width'] ?? $settings->default_width ?? 10));
+            $height += ((float) ($item['height'] ?? $settings->default_height ?? 10)) * $quantity;
+        }
+
+        $weight = $weight > 0 ? $weight : (float) ($settings->default_weight ?? 0.5);
+        $length = $length > 0 ? $length : (float) ($settings->default_length ?? 10);
+        $width = $width > 0 ? $width : (float) ($settings->default_width ?? 10);
+        $height = $height > 0 ? $height : (float) ($settings->default_height ?? 10);
+
+        return [
+            'quantity' => max(1, (int) ($order->total_quantity ?? count($items) ?: 1)),
+            'length' => $length / 100,
+            'width' => $width / 100,
+            'height' => $height / 100,
+            'weight' => $weight,
+            'totalVolume' => max(0.001, ($length / 100) * ($width / 100) * ($height / 100)),
+            'totalWeight' => $weight,
+            'hazardClass' => 0,
+            'insurance' => [
+                'statedValue' => max(1, (float) ($order->subtotal ?? $order->total_amount ?? 1)),
+                'term' => true,
+            ],
+        ];
+    }
+
+    private function splitCustomerName(?string $name): array
+    {
+        $parts = preg_split('/\s+/u', trim((string) $name)) ?: [];
+
+        return [
+            $parts[0] ?? 'Получатель',
+            $parts[1] ?? ($parts[0] ?? 'Получатель'),
+            $parts[2] ?? null,
+        ];
+    }
+
+    private function russianPostHeaders(ShopRussianPostSettings $settings): array
+    {
+        $password = (string) $settings->password;
+        $userAuth = str_starts_with(mb_strtolower(trim($password)), 'basic ')
+            ? trim(mb_substr(trim($password), 6))
+            : base64_encode($settings->login.':'.$password);
+
+        return [
+            'Authorization' => 'AccessToken '.$settings->api_token,
+            'X-User-Authorization' => 'Basic '.$userAuth,
+            'Content-Type' => 'application/json',
+            'Accept' => 'application/json;charset=UTF-8',
+        ];
+    }
+
+    private function getDellinSessionId(ShopDellinSettings $settings): ?string
+    {
+        if ($settings->session_id && $settings->session_expires_at && $settings->session_expires_at->isFuture()) {
+            return $settings->session_id;
+        }
+
+        if ($settings->auth_type === 'pat' && $settings->pat) {
+            $response = Http::withOptions(['verify' => $this->getDellinVerifyOption(), 'timeout' => 30])
+                ->post('https://api.dellin.ru/v4/auth/login.json', [
+                    'appkey' => $settings->appkey,
+                    'pat' => $settings->pat,
+                ]);
+        } elseif ($settings->auth_type === 'login_password' && $settings->login && $settings->password) {
+            $response = Http::withOptions(['verify' => $this->getDellinVerifyOption(), 'timeout' => 30])
+                ->post('https://api.dellin.ru/v3/auth/login.json', [
+                    'appkey' => $settings->appkey,
+                    'login' => $settings->login,
+                    'password' => $settings->password,
+                ]);
+        } else {
+            return null;
+        }
+
+        $data = $response->json() ?: [];
+        $sessionId = $data['data']['sessionID'] ?? null;
+        if ($response->successful() && $sessionId) {
+            $settings->update([
+                'session_id' => $sessionId,
+                'session_expires_at' => now()->addDays(30),
+            ]);
+        }
+
+        return $sessionId;
+    }
+
+    private function extractDellinLastStatusItem($history): array
+    {
+        if (! is_array($history) || empty($history)) {
+            return [];
+        }
+
+        if (isset($history['state']) || isset($history['State']) || isset($history['stateName']) || isset($history['StateName'])) {
+            return $history;
+        }
+
+        $items = array_values($history);
+        $last = end($items);
+
+        return is_array($last) ? $last : [];
+    }
+
+    private function fetchDellinOrderJournal(ShopDellinSettings $settings, ShopOrder $order): array
+    {
+        $sessionId = $this->getDellinSessionId($settings);
+        if (! $sessionId) {
+            return [];
+        }
+
+        $metadata = is_array($order->metadata) ? $order->metadata : [];
+        $payload = [
+            'appkey' => $settings->appkey,
+            'sessionID' => $sessionId,
+        ];
+
+        if ($order->dellin_order_id) {
+            $payload['docIds'] = [(string) $order->dellin_order_id];
+        } elseif (! empty($metadata['dellin_barcode'])) {
+            $payload['barcode'] = (string) $metadata['dellin_barcode'];
+        } else {
+            $payload['orderNumber'] = (string) $order->order_number;
+        }
+
+        $response = Http::withOptions([
+            'verify' => $this->getDellinVerifyOption(),
+            'timeout' => 30,
+        ])->post('https://api.dellin.ru/v3/orders.json', $payload);
+
+        $data = $response->json() ?: [];
+        if (! $response->successful() || isset($data['errors'])) {
+            return [
+                'payload' => $payload,
+                'response' => $data,
+            ];
+        }
+
+        $orders = $data['orders'] ?? $data['data']['orders'] ?? [];
+        $orderData = is_array($orders) ? ($orders[0] ?? []) : [];
+
+        return [
+            'payload' => $payload,
+            'response' => $data,
+            'order' => is_array($orderData) ? $orderData : [],
+        ];
+    }
+
+    private function getDellinVerifyOption()
+    {
+        $caBundle = config('services.dellin.ca_bundle_path');
+        if ($caBundle && file_exists($caBundle)) {
+            return $caBundle;
+        }
+
+        return filter_var(config('services.dellin.verify_ssl', true), FILTER_VALIDATE_BOOLEAN);
+    }
+
+    private function extractExternalDeliveryError($data, string $fallback): string
+    {
+        if (! is_array($data)) {
+            return $fallback;
+        }
+
+        return $data['errors'][0]['detail']
+            ?? $data['errors'][0]['message']
+            ?? $data['error']['message']
+            ?? $data['message']
+            ?? $data['desc']
+            ?? $fallback;
     }
 
     /**

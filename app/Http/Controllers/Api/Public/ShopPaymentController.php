@@ -3767,6 +3767,21 @@ class ShopPaymentController extends Controller
             $payload = ['provider' => $provider] + $payload;
         }
 
+        $failureReason = $this->extractYandexPayFailureReason($payload);
+        if ($transaction && $failureReason && empty($transaction->error_message)) {
+            try {
+                $transaction->update(['error_message' => $failureReason]);
+                $transaction->refresh();
+            } catch (\Throwable $e) {
+                Log::warning('Payment webhook: failed to save failure reason', [
+                    'order_id' => $order->id ?? null,
+                    'transaction_id' => $transaction->id ?? null,
+                    'provider' => $provider,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
         $this->logPaymentWebhookStatus($order, $transaction, $payload, $provider, false);
 
         try {
@@ -3786,6 +3801,7 @@ class ShopPaymentController extends Controller
         try {
             $status = $this->extractPaymentWebhookStatus($payload);
             $paymentId = $this->extractPaymentWebhookId($payload);
+            $failureReason = $success ? null : $this->extractYandexPayFailureReason($payload);
             $providerLabel = $provider ?: ($payload['provider'] ?? 'Платежная система');
             $action = $success ? 'Webhook оплаты: успешно' : 'Webhook оплаты: ошибка/отмена';
 
@@ -3795,6 +3811,9 @@ class ShopPaymentController extends Controller
             }
             if ($paymentId) {
                 $commentParts[] = "ID платежа: {$paymentId}";
+            }
+            if ($failureReason) {
+                $commentParts[] = "Причина: {$failureReason}";
             }
             if ($transaction && isset($transaction->id)) {
                 $commentParts[] = "Транзакция: {$transaction->id}";
@@ -4021,6 +4040,10 @@ class ShopPaymentController extends Controller
             }
 
             if ($order) {
+                $paymentMethod = $order->payment_method_id ? ShopPaymentMethod::find($order->payment_method_id) : null;
+                $payload = $this->enrichYandexPayFailurePayload($payload, $order, $paymentMethod, $yandexOrderId);
+                $failureReason = $this->extractYandexPayFailureReason($payload);
+
                 $failedStatus = ShopPaymentStatus::where('name', 'failed')->first()
                     ?? ShopPaymentStatus::where('name', 'cancelled')->first()
                     ?? ShopPaymentStatus::where('name', 'canceled')->first();
@@ -4038,6 +4061,7 @@ class ShopPaymentController extends Controller
                 if ($transaction) {
                     $transaction->update([
                         'status' => 'failed',
+                        'error_message' => $failureReason,
                         'response_data' => $payload,
                         'processed_at' => now(),
                     ]);
@@ -4048,6 +4072,7 @@ class ShopPaymentController extends Controller
                         'amount' => $object['amount']['value'] ?? $yandexOrder['amount']['value'] ?? $order->total_amount,
                         'transaction_id' => $yandexPaymentId,
                         'status' => 'failed',
+                        'error_message' => $failureReason,
                         'response_data' => $payload,
                     ]);
                 }
@@ -4063,6 +4088,202 @@ class ShopPaymentController extends Controller
         }
 
         return response()->json(['status' => 'ok']);
+    }
+
+    private function enrichYandexPayFailurePayload(array $payload, ShopOrder $order, ?ShopPaymentMethod $paymentMethod, ?string $yandexOrderId): array
+    {
+        if ($this->extractYandexPayFailureReason($payload)) {
+            return $payload;
+        }
+
+        $details = $this->fetchYandexPayOrderDetails($order, $paymentMethod, $yandexOrderId);
+        if (! $details) {
+            return $payload;
+        }
+
+        $payload['yandex_order_details'] = $details;
+
+        $failureReason = $this->extractYandexPayFailureReason($payload);
+        if ($failureReason) {
+            $payload['failure_reason'] = $failureReason;
+        }
+
+        return $payload;
+    }
+
+    private function fetchYandexPayOrderDetails(ShopOrder $order, ?ShopPaymentMethod $paymentMethod, ?string $yandexOrderId): ?array
+    {
+        $yandexOrderId = $yandexOrderId ?: ($order->yandex_pay_order_id ?: $order->order_number);
+        if (! $yandexOrderId) {
+            return null;
+        }
+
+        if (! $paymentMethod || ! in_array($paymentMethod->type, ['yandex_pay', 'yandex_split'], true)) {
+            $paymentMethod = ShopPaymentMethod::whereIn('type', ['yandex_pay', 'yandex_split'])
+                ->where('is_active', true)
+                ->first();
+        }
+
+        if (! $paymentMethod) {
+            return null;
+        }
+
+        $settings = method_exists($paymentMethod, 'getApiSettings')
+            ? $paymentMethod->getApiSettings()
+            : $this->normalizePaymentSettings($paymentMethod->settings ?? []);
+
+        $secretKey = $settings['secret_key'] ?? null;
+        if (! $secretKey) {
+            return null;
+        }
+
+        $apiUrl = (($settings['mode'] ?? 'test') !== 'live')
+            ? 'https://sandbox.pay.yandex.ru/api/merchant/v1'
+            : 'https://pay.yandex.ru/api/merchant/v1';
+
+        try {
+            $response = \Illuminate\Support\Facades\Http::timeout(15)->withHeaders([
+                'Authorization' => 'Api-Key '.$secretKey,
+                'Content-Type' => 'application/json',
+                'X-Request-Id' => uniqid('yp_fail_details_', true),
+            ])->get($apiUrl.'/orders/'.$yandexOrderId);
+
+            $data = $response->json();
+
+            Log::info('Yandex Pay failed order details response', [
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+                'yandex_order_id' => $yandexOrderId,
+                'http_status' => $response->status(),
+                'response' => $data,
+            ]);
+
+            return [
+                'http_status' => $response->status(),
+                'successful' => $response->successful(),
+                'data' => $data,
+            ];
+        } catch (\Throwable $e) {
+            Log::warning('Yandex Pay failed order details request error', [
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+                'yandex_order_id' => $yandexOrderId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
+    private function extractYandexPayFailureReason(array $payload): ?string
+    {
+        $reason = $this->firstStringValue([
+            $payload['failure_reason'] ?? null,
+            $payload['reason'] ?? null,
+            $payload['reasonCode'] ?? null,
+            $payload['code'] ?? null,
+            $payload['message'] ?? null,
+            $payload['Message'] ?? null,
+            $payload['description'] ?? null,
+            $payload['Description'] ?? null,
+            $payload['details'] ?? null,
+            $payload['Details'] ?? null,
+            $payload['error'] ?? null,
+            $payload['Error'] ?? null,
+            $payload['ErrorCode'] ?? null,
+            $payload['errorMessage'] ?? null,
+            $payload['order']['reason'] ?? null,
+            $payload['order']['reasonCode'] ?? null,
+            $payload['order']['code'] ?? null,
+            $payload['order']['message'] ?? null,
+            $payload['order']['description'] ?? null,
+            $payload['order']['error'] ?? null,
+            $payload['order']['errorMessage'] ?? null,
+            $payload['order']['paymentError'] ?? null,
+            $payload['object']['cancellation_details']['reason'] ?? null,
+            $payload['object']['cancellation_details']['party'] ?? null,
+            $payload['object']['cancellation_details']['description'] ?? null,
+            $payload['object']['reason'] ?? null,
+            $payload['object']['reasonCode'] ?? null,
+            $payload['object']['message'] ?? null,
+            $payload['object']['description'] ?? null,
+            $payload['details']['reason'] ?? null,
+            $payload['details']['reasonCode'] ?? null,
+            $payload['details']['message'] ?? null,
+            $payload['details']['description'] ?? null,
+            $payload['yandex_order_details']['data']['reason'] ?? null,
+            $payload['yandex_order_details']['data']['message'] ?? null,
+            $payload['yandex_order_details']['data']['description'] ?? null,
+            $payload['yandex_order_details']['data']['data']['reason'] ?? null,
+            $payload['yandex_order_details']['data']['data']['message'] ?? null,
+            $payload['yandex_order_details']['data']['data']['description'] ?? null,
+            $payload['yandex_order_details']['data']['data']['order']['reason'] ?? null,
+            $payload['yandex_order_details']['data']['data']['order']['reasonCode'] ?? null,
+            $payload['yandex_order_details']['data']['data']['order']['message'] ?? null,
+            $payload['yandex_order_details']['data']['data']['order']['description'] ?? null,
+            $payload['yandex_order_details']['data']['data']['order']['paymentError'] ?? null,
+        ]);
+
+        if (! $reason) {
+            $operations = $payload['yandex_order_details']['data']['data']['operations'] ?? [];
+            if (is_array($operations)) {
+                foreach ($operations as $operation) {
+                    if (! is_array($operation)) {
+                        continue;
+                    }
+
+                    $operationStatus = $operation['status'] ?? null;
+                    if ($operationStatus && ! in_array($operationStatus, ['FAIL', 'FAILED'], true)) {
+                        continue;
+                    }
+
+                    $reason = $this->firstStringValue([
+                        $operation['reason'] ?? null,
+                        $operation['reasonCode'] ?? null,
+                        $operation['message'] ?? null,
+                        $operation['description'] ?? null,
+                        $operation['error'] ?? null,
+                    ]);
+
+                    if ($reason) {
+                        break;
+                    }
+                }
+            }
+        }
+
+        return $reason ? mb_substr($reason, 0, 500) : null;
+    }
+
+    private function firstStringValue(array $values): ?string
+    {
+        foreach ($values as $value) {
+            if (is_string($value) && trim($value) !== '') {
+                return trim($value);
+            }
+
+            if (is_numeric($value)) {
+                return (string) $value;
+            }
+
+            if (is_array($value)) {
+                $nested = $this->firstStringValue([
+                    $value['reason'] ?? null,
+                    $value['reasonCode'] ?? null,
+                    $value['code'] ?? null,
+                    $value['message'] ?? null,
+                    $value['description'] ?? null,
+                    $value['error'] ?? null,
+                    $value['errorMessage'] ?? null,
+                ]);
+
+                if ($nested) {
+                    return $nested;
+                }
+            }
+        }
+
+        return null;
     }
 
     private function normalizeYandexPayWebhookPayload(Request $request): array
