@@ -84,7 +84,7 @@ class AvitoController extends Controller
 
         $supplier = ShopSupplier::findOrFail($id);
         $supplier->update([
-            'avito_delivery_options' => $validated['delivery_options'] ?? null
+            'avito_delivery_options' => $this->normalizeAvitoDeliveryOptions($validated['delivery_options'] ?? null)
         ]);
 
         return response()->json(['success' => true]);
@@ -138,6 +138,10 @@ class AvitoController extends Controller
             }
         }
 
+        if (array_key_exists('avito_default_delivery', $settings)) {
+            $settings['avito_default_delivery'] = $this->normalizeAvitoDeliveryOptions($settings['avito_default_delivery'] ?? null);
+        }
+
         foreach ($settings as $key => $value) {
             Setting::updateOrCreate(
                 ['key' => $key],
@@ -146,6 +150,25 @@ class AvitoController extends Controller
         }
 
         return response()->json(['success' => true]);
+    }
+
+    private function normalizeAvitoDeliveryOptions(?string $options): ?string
+    {
+        if ($options === null) {
+            return null;
+        }
+
+        $items = array_values(array_filter(array_map('trim', explode(',', $options)), fn ($item) => $item !== ''));
+
+        foreach ($items as $item) {
+            if (mb_strtolower($item) === 'выключена') {
+                return 'Выключена';
+            }
+        }
+
+        $items = array_values(array_unique($items));
+
+        return empty($items) ? null : implode(', ', $items);
     }
 
     private function sanitizeDescriptionWrapperHtml(?string $html): string

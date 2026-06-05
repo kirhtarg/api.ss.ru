@@ -2204,11 +2204,13 @@ class ProcessExportJob implements ShouldQueue
 
             if (!isset($result['error'])) {
                 $xmlContent = $result['content'];
-                // Всегда используем постоянное имя для фида Авито
+                // Храним архивную копию для конкретной записи экспорта и отдельно обновляем постоянный файл фида.
+                $archiveFilePath = 'exports/' . $this->exportFile->filename;
                 $permanentFilename = 'avito.xml';
-                $filePath = 'exports/' . $permanentFilename;
+                $permanentFilePath = 'exports/' . $permanentFilename;
                 
-                Storage::put($filePath, $xmlContent);
+                Storage::put($archiveFilePath, $xmlContent);
+                Storage::put($permanentFilePath, $xmlContent);
                 $fileSize = strlen($xmlContent);
 
                 // Дополнительно генерируем файл с остатками
@@ -2221,8 +2223,7 @@ class ProcessExportJob implements ShouldQueue
 
                 $this->exportFile->update([
                     'status' => 'completed',
-                    'filename' => $permanentFilename,
-                    'file_path' => $filePath,
+                    'file_path' => $archiveFilePath,
                     'file_size' => $fileSize,
                     'total_rows' => $result['count'] ?? $goods->count(),
                     'updated_at' => now(),

@@ -510,13 +510,11 @@ class AvitoFeedService
             $deliveryOptionsStr = trim($this->defaultDelivery);
         }
 
-        if (!empty($deliveryOptionsStr)) {
+        $deliveryOptions = $this->parseAvitoDeliveryOptions($deliveryOptionsStr);
+        if (!empty($deliveryOptions)) {
             $deliveryNode = $ad->addChild('Delivery');
-            $options = array_map('trim', explode(',', $deliveryOptionsStr));
-            foreach ($options as $option) {
-                if (!empty($option)) {
-                    $this->addChildSafe($deliveryNode, 'Option', $option);
-                }
+            foreach ($deliveryOptions as $option) {
+                $this->addChildSafe($deliveryNode, 'Option', $option);
             }
         }
 
@@ -1292,6 +1290,23 @@ class AvitoFeedService
         }
 
         return $this->resolveSupplierByName($good->supplier ?? '') ?: $good->shopSupplier;
+    }
+
+    private function parseAvitoDeliveryOptions(?string $options): array
+    {
+        if ($options === null || trim($options) === '') {
+            return [];
+        }
+
+        $items = array_values(array_filter(array_map('trim', explode(',', $options)), fn ($item) => $item !== ''));
+
+        foreach ($items as $item) {
+            if (mb_strtolower($item) === 'выключена') {
+                return ['Выключена'];
+            }
+        }
+
+        return array_values(array_unique($items));
     }
 
     private function resolveSupplierByName(string $supplierName): ?ShopSupplier

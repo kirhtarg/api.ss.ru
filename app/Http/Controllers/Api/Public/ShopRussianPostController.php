@@ -188,6 +188,7 @@ class ShopRussianPostController extends Controller
         $request->validate([
             'city' => 'required|string|min:2|max:255',
             'delivery_type' => 'required|string|in:address,office',
+            'address' => 'nullable|string|max:255',
             'street' => 'nullable|string|max:255',
             'house' => 'nullable|string|max:50',
             'postal_code' => 'nullable|string|max:20',
@@ -435,6 +436,11 @@ class ShopRussianPostController extends Controller
 
     private function buildAddress(Request $request): string
     {
+        $address = trim((string) $request->query('address', ''));
+        if ($address !== '') {
+            return $address;
+        }
+
         return trim(implode(', ', array_filter([
             $request->query('city'),
             $request->query('street'),
