@@ -35,6 +35,7 @@ class AvitoController extends Controller
 
         // Получаем историю экспортов Авито
         $history = ExportFile::where('format', 'avito_xml')
+            ->whereNotIn('filename', ['avito.xml', 'avito_stocks.xml'])
             ->orderBy('created_at', 'desc')
             ->limit(10)
             ->get();
@@ -325,19 +326,53 @@ class AvitoController extends Controller
     public function getPermanentFeedStatus(Request $request)
     {
         $permanentFilename = 'avito.xml';
-        // Ищем вообще последнюю запись для этого фида (даже если она еще в работе)
+        $permanentFilePath = 'exports/' . $permanentFilename;
         $export = ExportFile::where('filename', $permanentFilename)
             ->latest()
+            ->first();
+        $latestArchiveExport = ExportFile::where('format', 'avito_xml')
+            ->whereNotIn('filename', ['avito.xml', 'avito_stocks.xml'])
+            ->where('status', 'completed')
+            ->latest('updated_at')
             ->first();
 
         $publicUrl = url('/api/public/avito/feed/' . $permanentFilename);
         $stocksUrl = url('/api/public/avito/feed/avito_stocks.xml');
+        $fileExists = Storage::exists($permanentFilePath);
+
+        if ($fileExists) {
+            $fileUpdatedAt = \Carbon\Carbon::createFromTimestamp(Storage::lastModified($permanentFilePath));
+            $shouldSyncExport = !$export || !$export->updated_at || $fileUpdatedAt->greaterThan($export->updated_at);
+
+            if ($shouldSyncExport) {
+                $export = ExportFile::updateOrCreate(
+                    ['filename' => $permanentFilename],
+                    [
+                        'created_by' => $latestArchiveExport?->created_by ?? $export?->created_by,
+                        'original_filename' => 'Основной фид Avito.xml',
+                        'file_path' => $permanentFilePath,
+                        'format' => 'avito_xml',
+                        'status' => 'completed',
+                        'total_rows' => $latestArchiveExport?->total_rows ?? $export?->total_rows ?? 0,
+                        'file_size' => Storage::size($permanentFilePath),
+                        'error_message' => null,
+                        'export_config' => [
+                            'is_avito_permanent' => true,
+                            'source_export_file_id' => $latestArchiveExport?->id,
+                            'source_filename' => $latestArchiveExport?->filename,
+                            'synced_from_file_at' => now()->toDateTimeString(),
+                        ],
+                    ]
+                );
+            }
+        }
 
         return response()->json([
-            'found' => !!$export,
-            'status' => $export ? $export->status : 'none',
-            'updated_at' => $export ? $export->updated_at : null,
-            'file_size' => $export ? $export->file_size : 0,
+            'found' => !!$export || $fileExists,
+            'id' => $export ? $export->id : null,
+            'status' => $export ? $export->status : ($fileExists ? 'completed' : 'none'),
+            'updated_at' => $export ? $export->updated_at : ($fileExists ? date('Y-m-d H:i:s', Storage::lastModified($permanentFilePath)) : null),
+            'file_size' => $export ? $export->file_size : ($fileExists ? Storage::size($permanentFilePath) : 0),
             'total_rows' => $export ? $export->total_rows : 0,
             'public_url' => $publicUrl,
             'stocks_url' => $stocksUrl,

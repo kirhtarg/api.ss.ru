@@ -2228,6 +2228,26 @@ class ProcessExportJob implements ShouldQueue
                     'total_rows' => $result['count'] ?? $goods->count(),
                     'updated_at' => now(),
                 ]);
+
+                ExportFile::updateOrCreate(
+                    ['filename' => $permanentFilename],
+                    [
+                        'created_by' => $this->exportFile->created_by,
+                        'original_filename' => 'Основной фид Avito.xml',
+                        'file_path' => $permanentFilePath,
+                        'format' => 'avito_xml',
+                        'status' => 'completed',
+                        'total_rows' => $result['count'] ?? $goods->count(),
+                        'file_size' => $fileSize,
+                        'error_message' => null,
+                        'export_config' => [
+                            'is_avito_permanent' => true,
+                            'source_export_file_id' => $this->exportFile->id,
+                            'source_filename' => $this->exportFile->filename,
+                            'updated_from_export_at' => now()->toDateTimeString(),
+                        ],
+                    ]
+                );
             }
             else {
                 throw new \Exception('Ошибка при генерации фида Авито: ' . ($result['error'] ?? 'Неизвестная ошибка'));
