@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Public;
 use App\Http\Controllers\Controller;
 use App\Models\ShopTemplate;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Cache;
 
 class ShopTemplateController extends Controller
 {
@@ -47,14 +48,18 @@ class ShopTemplateController extends Controller
     public function getActiveCard(): JsonResponse
     {
         try {
-            $template = ShopTemplate::getActiveCard();
+            $templateData = Cache::remember('public_shop_template_active_card', 300, function () {
+                $template = ShopTemplate::getActiveCard();
 
-            if (! $template) {
-                // Если нет активного шаблона для карточек, возвращаем дефолтный
-                $template = ShopTemplate::getDefault();
-            }
+                if (! $template) {
+                    // Если нет активного шаблона для карточек, возвращаем дефолтный
+                    $template = ShopTemplate::getDefault();
+                }
 
-            if (! $template) {
+                return $template ? $template->getTemplateData() : null;
+            });
+
+            if (! $templateData) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Шаблон для карточек товаров не найден',
@@ -63,7 +68,7 @@ class ShopTemplateController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $template->getTemplateData(),
+                'data' => $templateData,
             ]);
 
         } catch (\Exception $e) {

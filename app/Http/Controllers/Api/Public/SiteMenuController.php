@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\SiteMenuItem;
 use App\Models\SiteTemplate;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Cache;
 
 class SiteMenuController extends Controller
 {
@@ -15,25 +16,26 @@ class SiteMenuController extends Controller
     public function getMenu(): JsonResponse
     {
         try {
-            // Получаем активный шаблон
-            $template = SiteTemplate::getActive();
+            $menuData = Cache::remember('public_site_menu_active', 300, function () {
+                // Получаем активный шаблон
+                $template = SiteTemplate::getActive();
 
-            if (! $template || ! $template->menu_id) {
-                // Возвращаем дефолтное меню
-                return response()->json([
-                    'success' => true,
-                    'data' => $this->getDefaultMenuItems(),
-                ]);
-            }
+                if (! $template || ! $template->menu_id) {
+                    // Возвращаем дефолтное меню
+                    return $this->getDefaultMenuItems();
+                }
 
-            // Получаем пункты меню для активного шаблона
-            $menuItems = SiteMenuItem::getMenuTree($template->menu_id);
+                // Получаем пункты меню для активного шаблона
+                $menuItems = SiteMenuItem::getMenuTree($template->menu_id);
+
+                return $menuItems->map(function ($item) {
+                    return $item->getMenuData();
+                })->values()->all();
+            });
 
             return response()->json([
                 'success' => true,
-                'data' => $menuItems->map(function ($item) {
-                    return $item->getMenuData();
-                }),
+                'data' => $menuData,
             ]);
 
         } catch (\Exception $e) {

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\SiteMenuItem;
 use App\Models\SiteTemplate;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Cache;
 
 class SiteTemplateController extends Controller
 {
@@ -15,14 +16,18 @@ class SiteTemplateController extends Controller
     public function getActive(): JsonResponse
     {
         try {
-            $template = SiteTemplate::getActive();
+            $templateData = Cache::remember('public_site_template_active', 300, function () {
+                $template = SiteTemplate::getActive();
 
-            if (! $template) {
-                // Если нет активного шаблона, возвращаем дефолтный
-                $template = SiteTemplate::getDefault();
-            }
+                if (! $template) {
+                    // Если нет активного шаблона, возвращаем дефолтный
+                    $template = SiteTemplate::getDefault();
+                }
 
-            if (! $template) {
+                return $template ? $template->getTemplateData() : null;
+            });
+
+            if (! $templateData) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Шаблон не найден',
@@ -31,7 +36,7 @@ class SiteTemplateController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $template->getTemplateData(),
+                'data' => $templateData,
             ]);
 
         } catch (\Exception $e) {
@@ -48,14 +53,18 @@ class SiteTemplateController extends Controller
     public function getActiveMain(): JsonResponse
     {
         try {
-            $template = SiteTemplate::getActiveMain();
+            $templateData = Cache::remember('public_site_template_active_main', 300, function () {
+                $template = SiteTemplate::getActiveMain();
 
-            if (! $template) {
-                // Если нет активного шаблона главной страницы, возвращаем дефолтный
-                $template = SiteTemplate::getDefault();
-            }
+                if (! $template) {
+                    // Если нет активного шаблона главной страницы, возвращаем дефолтный
+                    $template = SiteTemplate::getDefault();
+                }
 
-            if (! $template) {
+                return $template ? $template->getTemplateData() : null;
+            });
+
+            if (! $templateData) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Шаблон главной страницы не найден',
@@ -64,7 +73,7 @@ class SiteTemplateController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $template->getTemplateData(),
+                'data' => $templateData,
             ]);
 
         } catch (\Exception $e) {

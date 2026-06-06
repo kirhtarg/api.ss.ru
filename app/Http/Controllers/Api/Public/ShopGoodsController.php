@@ -8,6 +8,7 @@ use App\Models\ShopCategory;
 use App\Models\ShopGood;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -1457,47 +1458,52 @@ class ShopGoodsController extends Controller
     {
         try {
             $limit = max(1, min((int) $request->get('limit', 24), 60));
+            $cacheKey = 'public_shop_goods_main_blocks_'.$limit;
 
-            // Получаем хиты продаж (featured) - показываем напрямую товары с is_featured = true без дополнительных условий
-            $featuredQuery = ShopGood::with(['images' => function ($query) {
-                $query->orderBy('sort_order');
-            }, 'categories', 'brands'])
-                ->featured() // Только товары с is_featured = true
-                ->active() // Только активные товары
-                ->orderBy('created_at', 'desc')
-                ->limit($limit);
-            // Не применяем applyStockFilter - показываем все товары с is_featured = true независимо от настроек показа
-            $featured = $featuredQuery->get();
+            $data = Cache::remember($cacheKey, 60, function () use ($limit) {
+                // Получаем хиты продаж (featured) - показываем напрямую товары с is_featured = true без дополнительных условий
+                $featuredQuery = ShopGood::with(['images' => function ($query) {
+                    $query->orderBy('sort_order');
+                }, 'categories', 'brands'])
+                    ->featured() // Только товары с is_featured = true
+                    ->active() // Только активные товары
+                    ->orderBy('created_at', 'desc')
+                    ->limit($limit);
+                // Не применяем applyStockFilter - показываем все товары с is_featured = true независимо от настроек показа
+                $featured = $featuredQuery->get();
 
-            // Получаем товары со скидками (sale) - показываем напрямую товары с is_sale = true без дополнительных условий
-            $saleQuery = ShopGood::with(['images' => function ($query) {
-                $query->orderBy('sort_order');
-            }, 'categories', 'brands'])
-                ->sale() // Только товары с is_sale = true
-                ->active() // Только активные товары
-                ->orderBy('created_at', 'desc')
-                ->limit($limit);
-            // Не применяем applyStockFilter - показываем все товары с is_sale = true независимо от настроек показа
-            $sale = $saleQuery->get();
+                // Получаем товары со скидками (sale) - показываем напрямую товары с is_sale = true без дополнительных условий
+                $saleQuery = ShopGood::with(['images' => function ($query) {
+                    $query->orderBy('sort_order');
+                }, 'categories', 'brands'])
+                    ->sale() // Только товары с is_sale = true
+                    ->active() // Только активные товары
+                    ->orderBy('created_at', 'desc')
+                    ->limit($limit);
+                // Не применяем applyStockFilter - показываем все товары с is_sale = true независимо от настроек показа
+                $sale = $saleQuery->get();
 
-            // Получаем новинки (new)
-            $newQuery = ShopGood::with(['images' => function ($query) {
-                $query->orderBy('sort_order');
-            }, 'categories', 'brands'])
-                ->new() // Используем scope метод для правильной фильтрации boolean поля
-                ->active() // Используем scope метод для правильной фильтрации boolean поля
-                ->orderBy('created_at', 'desc')
-                ->limit($limit);
-            $this->applyStockFilter($newQuery);
-            $new = $newQuery->get();
+                // Получаем новинки (new)
+                $newQuery = ShopGood::with(['images' => function ($query) {
+                    $query->orderBy('sort_order');
+                }, 'categories', 'brands'])
+                    ->new() // Используем scope метод для правильной фильтрации boolean поля
+                    ->active() // Используем scope метод для правильной фильтрации boolean поля
+                    ->orderBy('created_at', 'desc')
+                    ->limit($limit);
+                $this->applyStockFilter($newQuery);
+                $new = $newQuery->get();
 
-            return response()->json([
-                'success' => true,
-                'data' => [
+                return [
                     'featured' => $featured,
                     'sale' => $sale,
                     'new' => $new,
-                ],
+                ];
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => $data,
             ]);
 
         } catch (\Exception $e) {

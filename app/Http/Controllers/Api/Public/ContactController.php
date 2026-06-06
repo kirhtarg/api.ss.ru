@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Public;
 use App\Http\Controllers\Controller;
 use App\Models\Contact;
 use App\Models\ContactAddress;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 class ContactController extends Controller
@@ -64,70 +65,76 @@ class ContactController extends Controller
     public function headerData()
     {
         try {
-            $contact = Contact::with(['addresses', 'phones', 'socials.socialType'])
-                ->where('is_main', 1)
-                ->first();
+            $headerData = Cache::remember('public_contacts_header_data', 300, function () {
+                $contact = Contact::with(['addresses', 'phones', 'socials.socialType'])
+                    ->where('is_main', 1)
+                    ->first();
 
-            if (! $contact) {
+                if (! $contact) {
+                    return null;
+                }
+
+                // Получаем основные данные
+                $mainAddress = $contact->mainAddress();
+                $mainPhone = $contact->mainPhone();
+
+                // Формируем данные для заголовка в формате, ожидаемом frontend
+                return [
+                    'name' => $contact->name,
+                    'short_name' => $contact->short_name,
+                    'legal_name' => $contact->legal_name,
+                    'inn' => $contact->inn,
+                    'ogrnip' => $contact->ogrnip,
+                    'legal_address' => $contact->legal_address,
+                    'address' => $mainAddress ? [
+                        'id' => $mainAddress->id,
+                        'address' => $mainAddress->address,
+                        'address_short' => $mainAddress->address_short,
+                        'latitude' => $mainAddress->latitude,
+                        'longitude' => $mainAddress->longitude,
+                        'howtogo' => $mainAddress->howtogo,
+                        'work_mode' => $mainAddress->work_mode,
+                        'is_main' => $mainAddress->is_main,
+                        'contact_name' => $mainAddress->contact_name,
+                    ] : null,
+                    'main_phone' => $mainPhone ? [
+                        'id' => $mainPhone->id,
+                        'phone' => $mainPhone->phone_number,
+                        'phone_number' => $mainPhone->phone_number,
+                        'phone_name' => $mainPhone->phone_name,
+                        'is_main' => $mainPhone->is_main,
+                    ] : null,
+                    'phones' => $contact->phones->map(function ($phone) {
+                        return [
+                            'id' => $phone->id,
+                            'phone' => $phone->phone_number,
+                            'phone_number' => $phone->phone_number,
+                            'phone_name' => $phone->phone_name,
+                            'is_main' => $phone->is_main,
+                        ];
+                    })->values()->all(),
+                    'social_networks' => $contact->socials->map(function ($social) {
+                        return [
+                            'id' => $social->id,
+                            'id_contact' => $social->id_contact,
+                            'social_name' => $social->social_name,
+                            'social_url' => $social->social_url,
+                            'social_type' => $social->socialType ? [
+                                'id' => $social->socialType->id,
+                                'social' => $social->socialType->social,
+                                'icon' => $social->socialType->icon,
+                            ] : null,
+                        ];
+                    })->values()->all(),
+                ];
+            });
+
+            if (! $headerData) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Основные контакты не найдены',
                 ], 404);
             }
-
-            // Получаем основные данные
-            $mainAddress = $contact->mainAddress();
-            $mainPhone = $contact->mainPhone();
-
-            // Формируем данные для заголовка в формате, ожидаемом frontend
-            $headerData = [
-                'name' => $contact->name,
-                'short_name' => $contact->short_name,
-                'legal_name' => $contact->legal_name,
-                'inn' => $contact->inn,
-                'ogrnip' => $contact->ogrnip,
-                'legal_address' => $contact->legal_address,
-                'address' => $mainAddress ? [
-                    'id' => $mainAddress->id,
-                    'address' => $mainAddress->address,
-                    'address_short' => $mainAddress->address_short,
-                    'latitude' => $mainAddress->latitude,
-                    'longitude' => $mainAddress->longitude,
-                    'howtogo' => $mainAddress->howtogo,
-                    'work_mode' => $mainAddress->work_mode,
-                    'is_main' => $mainAddress->is_main,
-                    'contact_name' => $mainAddress->contact_name,
-                ] : null,
-                'main_phone' => $mainPhone ? [
-                    'id' => $mainPhone->id,
-                    'phone' => $mainPhone->phone_number,
-                    'phone_number' => $mainPhone->phone_number,
-                    'phone_name' => $mainPhone->phone_name,
-                    'is_main' => $mainPhone->is_main,
-                ] : null,
-                'phones' => $contact->phones->map(function ($phone) {
-                    return [
-                        'id' => $phone->id,
-                        'phone' => $phone->phone_number,
-                        'phone_number' => $phone->phone_number,
-                        'phone_name' => $phone->phone_name,
-                        'is_main' => $phone->is_main,
-                    ];
-                }),
-                'social_networks' => $contact->socials->map(function ($social) {
-                    return [
-                        'id' => $social->id,
-                        'id_contact' => $social->id_contact,
-                        'social_name' => $social->social_name,
-                        'social_url' => $social->social_url,
-                        'social_type' => $social->socialType ? [
-                            'id' => $social->socialType->id,
-                            'social' => $social->socialType->social,
-                            'icon' => $social->socialType->icon,
-                        ] : null,
-                    ];
-                }),
-            ];
 
             return response()->json([
                 'success' => true,
