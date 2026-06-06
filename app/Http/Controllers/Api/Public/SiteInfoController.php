@@ -17,44 +17,39 @@ class SiteInfoController extends Controller
     public function index(): JsonResponse
     {
         try {
-            // Очищаем кэш для этого API
-            Cache::forget('site_info_public');
+            $siteInfo = Cache::remember('site_info_public', 300, function () {
+                $settings = Setting::select('key', 'value', 'type', 'group')
+                    ->where(function ($query) {
+                        $query->whereIn('group', ['general', 'site', 'auth', 'shop'])
+                            ->orWhere('key', 'site_google_font') // Включаем параметр Google Fonts из любой группы
+                            ->orWhere('key', 'yandex_metrika') // Включаем параметр Яндекс.Метрики из любой группы
+                            ->orWhere('key', 'jivo_script') // Включаем параметр скрипта Jivo из любой группы
+                            ->orWhere('key', 'site_favicon') // Включаем параметр favicon из любой группы
+                            ->orWhere('key', 'favicon_type') // Включаем тип favicon
+                            ->orWhere('key', 'favicon_file') // Включаем файл favicon
+                            ->orWhere('key', 'show_counters') // Включаем параметр show_counters из любой группы
+                            ->orWhere('key', 'absent_promocode_percent') // Включаем параметр процента промокода за отсутствие товара
+                            ->orWhere('key', 'absent_promocode_percent_days') // Включаем параметр дней действия промокода
+                            ->orWhere('key', 'suff_support') // Включаем параметр суффиксов для совместимости со старым сайтом
+                            ->orWhere('key', 'over_tax') // Включаем параметр процента наценки
+                            ->orWhere('key', 'over_text'); // Включаем параметр текста наценки
+                    })
+                    ->get();
 
-            // Получаем все настройки с группой general, site, auth и shop без кэширования
-            $settings = Setting::select('key', 'value', 'type', 'group')
-                ->where(function ($query) {
-                    $query->whereIn('group', ['general', 'site', 'auth', 'shop'])
-                        ->orWhere('key', 'site_google_font') // Включаем параметр Google Fonts из любой группы
-                        ->orWhere('key', 'yandex_metrika') // Включаем параметр Яндекс.Метрики из любой группы
-                        ->orWhere('key', 'jivo_script') // Включаем параметр скрипта Jivo из любой группы
-                        ->orWhere('key', 'site_favicon') // Включаем параметр favicon из любой группы
-                        ->orWhere('key', 'favicon_type') // Включаем тип favicon
-                        ->orWhere('key', 'favicon_file') // Включаем файл favicon
-                        ->orWhere('key', 'show_counters') // Включаем параметр show_counters из любой группы
-                        ->orWhere('key', 'absent_promocode_percent') // Включаем параметр процента промокода за отсутствие товара
-                        ->orWhere('key', 'absent_promocode_percent_days') // Включаем параметр дней действия промокода
-                        ->orWhere('key', 'suff_support') // Включаем параметр суффиксов для совместимости со старым сайтом
-                        ->orWhere('key', 'over_tax') // Включаем параметр процента наценки
-                        ->orWhere('key', 'over_text'); // Включаем параметр текста наценки
-                })
-                ->get();
-
-            $siteInfo = [];
-            foreach ($settings as $setting) {
-                if ($setting->key === 'jivo_script' && $setting->value) {
-                    $adjustScript = '<script>(function(){function a(){if(window.innerWidth>1024)return;var b=document.querySelector(".button__QIiE1");if(!b)return;b.style.setProperty("bottom","80px","important");b.style.setProperty("margin-bottom","0px","important")}var c=0,d=60,e=setInterval(function(){a();c++;if(document.querySelector(".button__QIiE1")||c>=d)clearInterval(e)},500);window.addEventListener("resize",a)})();</script>';
-                    $siteInfo[$setting->key] = $adjustScript.$setting->value;
-                } elseif (in_array($setting->key, ['site_logo', 'site_logo_negative', 'site_favicon']) && $setting->value) {
-                    $siteInfo[$setting->key] = $this->getImageUrl($setting->value);
-                } else {
-                    $siteInfo[$setting->key] = $setting->value;
+                $siteInfo = [];
+                foreach ($settings as $setting) {
+                    if ($setting->key === 'jivo_script' && $setting->value) {
+                        $adjustScript = '<script>(function(){function a(){if(window.innerWidth>1024)return;var b=document.querySelector(".button__QIiE1");if(!b)return;b.style.setProperty("bottom","80px","important");b.style.setProperty("margin-bottom","0px","important")}var c=0,d=60,e=setInterval(function(){a();c++;if(document.querySelector(".button__QIiE1")||c>=d)clearInterval(e)},500);window.addEventListener("resize",a)})();</script>';
+                        $siteInfo[$setting->key] = $adjustScript.$setting->value;
+                    } elseif (in_array($setting->key, ['site_logo', 'site_logo_negative', 'site_favicon']) && $setting->value) {
+                        $siteInfo[$setting->key] = $this->getImageUrl($setting->value);
+                    } else {
+                        $siteInfo[$setting->key] = $setting->value;
+                    }
                 }
-            }
 
-            $suffSupportSetting = Setting::where('key', 'suff_support')->first();
-            if ($suffSupportSetting) {
-                $siteInfo['suff_support'] = $suffSupportSetting->value;
-            }
+                return $siteInfo;
+            });
 
             return response()->json([
                 'success' => true,
@@ -83,9 +78,6 @@ class SiteInfoController extends Controller
     public function settings(): JsonResponse
     {
         try {
-            // Очищаем кэш для этого API (как в index())
-            Cache::forget('site_settings_public');
-
             // Используем кэш для уменьшения нагрузки на базу
             $cacheKey = 'site_settings_public';
             $publicSettings = Cache::remember($cacheKey, 3600, function () {

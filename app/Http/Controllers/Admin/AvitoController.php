@@ -293,10 +293,7 @@ class AvitoController extends Controller
             ]);
         }
         catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage()
-            ], 500);
+            return $this->avitoApiErrorResponse($e, 'Ошибка получения дерева категорий Авито');
         }
     }
 
@@ -313,11 +310,19 @@ class AvitoController extends Controller
             ]);
         }
         catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage()
-            ], 500);
+            return $this->avitoApiErrorResponse($e, 'Ошибка обновления дерева категорий Авито');
         }
+    }
+
+    protected function avitoApiErrorResponse(\Exception $e, string $fallbackMessage)
+    {
+        $code = (int)$e->getCode();
+        $status = in_array($code, [400, 401, 403, 404, 422], true) ? 422 : 500;
+
+        return response()->json([
+            'success' => false,
+            'message' => $e->getMessage() ?: $fallbackMessage,
+        ], $status);
     }
 
     /**

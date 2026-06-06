@@ -26,10 +26,11 @@ class AvitoApiService
     public function getAccessToken()
     {
         if (!$this->clientId || !$this->clientSecret) {
-            throw new \Exception('Avito API credentials not configured.');
+            throw new \Exception('Не указаны Client ID и API key Авито в настройках.', 422);
         }
 
         $response = Http::withoutVerifying()
+            ->timeout(30)
             ->asForm()
             ->post($this->baseUrl . '/token', [
             'grant_type' => 'client_credentials',
@@ -38,8 +39,14 @@ class AvitoApiService
         ]);
 
         if ($response->failed()) {
-            Log::error('Avito API Token Error', $response->json());
-            throw new \Exception('Failed to get Avito access token: ' . ($response->json()['error_description'] ?? 'Unknown error'));
+            $payload = $response->json() ?: [];
+            Log::error('Avito API Token Error', [
+                'status' => $response->status(),
+                'response' => $payload ?: $response->body(),
+            ]);
+
+            $message = $payload['error_description'] ?? $payload['message'] ?? $payload['error'] ?? 'Авито отклонил данные авторизации';
+            throw new \Exception('Не удалось авторизоваться в API Авито: ' . $message, $response->status());
         }
 
         return $response->json()['access_token'];
@@ -53,12 +60,19 @@ class AvitoApiService
         $token = $this->getAccessToken();
 
         $response = Http::withoutVerifying()
+            ->timeout(60)
             ->withToken($token)
             ->get($this->baseUrl . '/autoload/v1/user-docs/tree');
 
         if ($response->failed()) {
-            Log::error('Avito API Tree Error', $response->json());
-            throw new \Exception('Failed to fetch Avito category tree.');
+            $payload = $response->json() ?: [];
+            Log::error('Avito API Tree Error', [
+                'status' => $response->status(),
+                'response' => $payload ?: $response->body(),
+            ]);
+
+            $message = $payload['message'] ?? $payload['error_description'] ?? $payload['error'] ?? 'Авито не вернул дерево категорий';
+            throw new \Exception('Не удалось получить дерево категорий Авито: ' . $message, $response->status());
         }
 
         $res = $response->json();

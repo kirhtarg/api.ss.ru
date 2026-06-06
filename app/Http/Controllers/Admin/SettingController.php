@@ -81,6 +81,8 @@ class SettingController extends Controller
                 'image_height' => $request->image_height,
             ]);
 
+            $this->clearPublicSettingsCache();
+
             return response()->json([
                 'success' => true,
                 'message' => 'Настройка успешно создана',
@@ -186,6 +188,7 @@ class SettingController extends Controller
 
             // Обновляем только переданные поля
             $setting->update($updateData);
+            $this->clearPublicSettingsCache();
 
             return response()->json([
                 'success' => true,
@@ -216,6 +219,7 @@ class SettingController extends Controller
             }
 
             $setting->delete();
+            $this->clearPublicSettingsCache();
 
             return response()->json([
                 'success' => true,
@@ -358,6 +362,7 @@ class SettingController extends Controller
             }
 
             $setting->update($updateData);
+            $this->clearPublicSettingsCache();
 
             $message = 'Изображение успешно загружено';
             if ($requestedWidth && $requestedHeight) {
@@ -437,8 +442,7 @@ class SettingController extends Controller
                 $oldFaviconSetting->delete();
             }
 
-            // Очищаем кэш настроек
-            Cache::forget('site_settings');
+            $this->clearPublicSettingsCache();
 
             return response()->json([
                 'success' => true,
@@ -545,6 +549,14 @@ class SettingController extends Controller
         }
     }
 
+    private function clearPublicSettingsCache(): void
+    {
+        Cache::forget('site_settings');
+        Cache::forget('site_info_public');
+        Cache::forget('site_settings_public');
+        Cache::forget('site_seo_settings');
+    }
+
     /**
      * Удалить изображение настройки
      */
@@ -578,6 +590,7 @@ class SettingController extends Controller
 
             // Очищаем значение настройки, но сохраняем размеры
             $setting->update(['value' => null]);
+            $this->clearPublicSettingsCache();
 
             return response()->json([
                 'success' => true,
@@ -659,6 +672,7 @@ class SettingController extends Controller
                 'image_width' => $width,
                 'image_height' => $height,
             ]);
+            $this->clearPublicSettingsCache();
 
             return response()->json([
                 'success' => true,
