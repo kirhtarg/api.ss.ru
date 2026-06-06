@@ -1456,13 +1456,11 @@ class ShopGoodsController extends Controller
     public function getMainBlocks(Request $request): JsonResponse
     {
         try {
-            $limit = $request->get('limit', 10);
+            $limit = max(1, min((int) $request->get('limit', 24), 60));
 
             // Получаем хиты продаж (featured) - показываем напрямую товары с is_featured = true без дополнительных условий
-            $featuredQuery = ShopGood::with(['images', 'variations' => function ($query) {
-                $query->where('is_active', true)->with(['images' => function ($q) {
-                    $q->orderBy('sort_order');
-                }]);
+            $featuredQuery = ShopGood::with(['images' => function ($query) {
+                $query->orderBy('sort_order');
             }, 'categories', 'brands'])
                 ->featured() // Только товары с is_featured = true
                 ->active() // Только активные товары
@@ -1472,10 +1470,8 @@ class ShopGoodsController extends Controller
             $featured = $featuredQuery->get();
 
             // Получаем товары со скидками (sale) - показываем напрямую товары с is_sale = true без дополнительных условий
-            $saleQuery = ShopGood::with(['images', 'variations' => function ($query) {
-                $query->where('is_active', true)->with(['images' => function ($q) {
-                    $q->orderBy('sort_order');
-                }]);
+            $saleQuery = ShopGood::with(['images' => function ($query) {
+                $query->orderBy('sort_order');
             }, 'categories', 'brands'])
                 ->sale() // Только товары с is_sale = true
                 ->active() // Только активные товары
@@ -1485,10 +1481,8 @@ class ShopGoodsController extends Controller
             $sale = $saleQuery->get();
 
             // Получаем новинки (new)
-            $newQuery = ShopGood::with(['images', 'variations' => function ($query) {
-                $query->where('is_active', true)->with(['images' => function ($q) {
-                    $q->orderBy('sort_order');
-                }]);
+            $newQuery = ShopGood::with(['images' => function ($query) {
+                $query->orderBy('sort_order');
             }, 'categories', 'brands'])
                 ->new() // Используем scope метод для правильной фильтрации boolean поля
                 ->active() // Используем scope метод для правильной фильтрации boolean поля
