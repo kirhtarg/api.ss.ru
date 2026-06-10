@@ -58,27 +58,11 @@ class PhoneAuthController extends Controller
                 // Используем код, который вернул SMSProfi
                 $code = $result['data']['code'];
 
-                // Логируем для отладки
-                \Log::info('Phone auth debug', [
-                    'original_phone' => $request->phone,
-                    'normalized_phone' => $phone,
-                    'smsprofi_code' => $code,
-                    'cache_key' => "phone_code_{$phone}",
-                ]);
-
                 // Сохраняем код от SMSProfi в кеше на 5 минут
                 Cache::put("phone_code_{$phone}", $code, 300);
             } else {
                 // Если SMSProfi не вернул код, генерируем свой (fallback)
                 $code = str_pad(random_int(1000, 9999), 4, '0', STR_PAD_LEFT);
-
-                // Логируем для отладки
-                \Log::info('Phone auth debug (fallback)', [
-                    'original_phone' => $request->phone,
-                    'normalized_phone' => $phone,
-                    'generated_code' => $code,
-                    'cache_key' => "phone_code_{$phone}",
-                ]);
 
                 // Сохраняем сгенерированный код в кеше на 5 минут
                 Cache::put("phone_code_{$phone}", $code, 300);
@@ -94,7 +78,7 @@ class PhoneAuthController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => 'Ошибка отправки кода: '.$result['message'],
-                ], 500);
+                ], 503);
             }
 
         } catch (ValidationException $e) {
@@ -128,16 +112,6 @@ class PhoneAuthController extends Controller
 
             // Проверяем код
             $cachedCode = Cache::get("phone_code_{$phone}");
-
-            // Логируем для отладки
-            \Log::info('Verify code debug', [
-                'original_phone' => $request->phone,
-                'normalized_phone' => $phone,
-                'provided_code' => $code,
-                'cached_code' => $cachedCode,
-                'cache_key' => "phone_code_{$phone}",
-                'codes_match' => $cachedCode === $code,
-            ]);
 
             if (! $cachedCode || $cachedCode !== $code) {
                 return response()->json([
@@ -233,14 +207,6 @@ class PhoneAuthController extends Controller
 
             $phone = $this->normalizePhone($request->phone);
             $hasCode = Cache::has("phone_code_{$phone}");
-
-            // Логируем для отладки
-            \Log::info('Check code status debug', [
-                'original_phone' => $request->phone,
-                'normalized_phone' => $phone,
-                'cache_key' => "phone_code_{$phone}",
-                'has_code' => $hasCode,
-            ]);
 
             return response()->json([
                 'success' => true,

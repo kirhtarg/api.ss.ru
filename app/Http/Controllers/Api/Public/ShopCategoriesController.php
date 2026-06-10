@@ -7,6 +7,7 @@ use App\Models\ShopCategory;
 use App\Models\ShopCategoryExtraMenu;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -18,6 +19,14 @@ class ShopCategoriesController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
+            $cacheKey = 'public_shop_categories_index_'.md5(json_encode($request->query()));
+            if (Cache::has($cacheKey)) {
+                return response()->json([
+                    'success' => true,
+                    'data' => Cache::get($cacheKey),
+                ]);
+            }
+
             // Загружаем категории
             $query = ShopCategory::with(['parent', 'children' => function ($query) {
                 $query->where('is_active', true)
@@ -73,13 +82,13 @@ class ShopCategoriesController extends Controller
 
             $categories = $query->get();
 
-            // Проверяем все категории в базе
-            $allCategoriesCount = ShopCategory::where('is_active', true)->count();
-            $mainCategoriesCount = ShopCategory::where('is_active', true)
-                ->where(function ($query) {
-                    $query->whereNull('parent_id')
-                        ->orWhere('parent_id', 0);
-                })->count();
+            $categoryIds = $categories->pluck('id')
+                ->merge($categories->flatMap(fn ($category) => $category->children->pluck('id')))
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+            $productsCounts = $this->getProductsCounts($categoryIds);
 
             // Вычисляем количество товаров для каждой категории и подкатегории
             // И обрабатываем изображения
@@ -95,21 +104,15 @@ class ShopCategoriesController extends Controller
                 }
 
                 // Количество товаров в главной категории
-                $category->products_count = \DB::table('shop_good_categories')
-                    ->join('shop_goods', 'shop_good_categories.good_id', '=', 'shop_goods.id')
-                    ->where('shop_good_categories.category_id', $category->id)
-                    ->where('shop_goods.is_active', true)
-                    ->count();
+                $category->products_count = $productsCounts[$category->id] ?? 0;
 
                 // Количество товаров в подкатегориях
                 foreach ($category->children as $child) {
-                    $child->products_count = \DB::table('shop_good_categories')
-                        ->join('shop_goods', 'shop_good_categories.good_id', '=', 'shop_goods.id')
-                        ->where('shop_good_categories.category_id', $child->id)
-                        ->where('shop_goods.is_active', true)
-                        ->count();
+                    $child->products_count = $productsCounts[$child->id] ?? 0;
                 }
             }
+
+            Cache::put($cacheKey, $categories, now()->addMinutes(10));
 
             return response()->json([
                 'success' => true,
@@ -129,17 +132,37 @@ class ShopCategoriesController extends Controller
     public function show($id): JsonResponse
     {
         try {
+            $cacheKey = 'public_shop_category_show_'.(int) $id;
+            if (Cache::has($cacheKey)) {
+                $cachedCategory = Cache::get($cacheKey);
+                if (! $cachedCategory) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Категория не найдена',
+                    ], 404);
+                }
+
+                return response()->json([
+                    'success' => true,
+                    'data' => $cachedCategory,
+                ]);
+            }
+
             $category = ShopCategory::with('parent')
                 ->where('id', $id)
                 ->where('is_active', true)
                 ->first();
 
             if (! $category) {
+                Cache::put($cacheKey, null, now()->addMinutes(5));
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Категория не найдена',
                 ], 404);
             }
+
+            Cache::put($cacheKey, $category, now()->addMinutes(10));
 
             return response()->json([
                 'success' => true,
@@ -159,12 +182,30 @@ class ShopCategoriesController extends Controller
     public function getCategoryBySlugWithRelations(string $slug): JsonResponse
     {
         try {
+            $cacheKey = 'public_shop_category_slug_relations_'.md5(mb_strtolower($slug));
+            if (Cache::has($cacheKey)) {
+                $cachedData = Cache::get($cacheKey);
+                if (! $cachedData) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Категория не найдена',
+                    ], 404);
+                }
+
+                return response()->json([
+                    'success' => true,
+                    'data' => $cachedData,
+                ]);
+            }
+
             // Получаем основную категорию
             $category = ShopCategory::where('slug', $slug)
                 ->where('is_active', true)
                 ->first();
 
             if (! $category) {
+                Cache::put($cacheKey, null, now()->addMinutes(5));
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Категория не найдена',
@@ -186,29 +227,26 @@ class ShopCategoriesController extends Controller
                     ->first(['id', 'name', 'slug', 'parent_id']);
             }
 
+            $countIds = collect([$category->id])
+                ->merge($subcategories->pluck('id'))
+                ->merge($parentCategory ? [$parentCategory->id] : [])
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+            $productsCounts = $this->getProductsCounts($countIds);
+
             // Вычисляем количество товаров для основной категории
-            $category->products_count = DB::table('shop_good_categories')
-                ->join('shop_goods', 'shop_good_categories.good_id', '=', 'shop_goods.id')
-                ->where('shop_good_categories.category_id', $category->id)
-                ->where('shop_goods.is_active', true)
-                ->count();
+            $category->products_count = $productsCounts[$category->id] ?? 0;
 
             // Вычисляем количество товаров для подкатегорий
             foreach ($subcategories as $subcategory) {
-                $subcategory->products_count = DB::table('shop_good_categories')
-                    ->join('shop_goods', 'shop_good_categories.good_id', '=', 'shop_goods.id')
-                    ->where('shop_good_categories.category_id', $subcategory->id)
-                    ->where('shop_goods.is_active', true)
-                    ->count();
+                $subcategory->products_count = $productsCounts[$subcategory->id] ?? 0;
             }
 
             // Вычисляем количество товаров для родительской категории
             if ($parentCategory) {
-                $parentCategory->products_count = DB::table('shop_good_categories')
-                    ->join('shop_goods', 'shop_good_categories.good_id', '=', 'shop_goods.id')
-                    ->where('shop_good_categories.category_id', $parentCategory->id)
-                    ->where('shop_goods.is_active', true)
-                    ->count();
+                $parentCategory->products_count = $productsCounts[$parentCategory->id] ?? 0;
             }
 
             // Формируем данные для ответа
@@ -248,13 +286,16 @@ class ShopCategoriesController extends Controller
                 ];
             }
 
+            $responseData = [
+                'category' => $categoryData,
+                'subcategories' => $subcategoriesData,
+                'parent_category' => $parentCategoryData,
+            ];
+            Cache::put($cacheKey, $responseData, now()->addMinutes(10));
+
             return response()->json([
                 'success' => true,
-                'data' => [
-                    'category' => $categoryData,
-                    'subcategories' => $subcategoriesData,
-                    'parent_category' => $parentCategoryData,
-                ],
+                'data' => $responseData,
             ]);
         } catch (\Exception $e) {
             return response()->json([
@@ -270,6 +311,16 @@ class ShopCategoriesController extends Controller
     public function getChildren($id): JsonResponse
     {
         try {
+            $cacheKey = 'public_shop_category_children_'.(int) $id;
+            if (Cache::has($cacheKey)) {
+                $cachedChildren = Cache::get($cacheKey);
+
+                return response()->json([
+                    'success' => true,
+                    'data' => $cachedChildren,
+                ]);
+            }
+
             $parentCategory = ShopCategory::where('id', $id)
                 ->where('is_active', true)
                 ->first();
@@ -287,14 +338,14 @@ class ShopCategoriesController extends Controller
                 ->orderBy('name', 'asc')
                 ->get(['id', 'name', 'slug', 'icon', 'description', 'parent_id']);
 
+            $productsCounts = $this->getProductsCounts($children->pluck('id')->all());
+
             // Вычисляем количество товаров для подкатегорий
             foreach ($children as $child) {
-                $child->products_count = DB::table('shop_good_categories')
-                    ->join('shop_goods', 'shop_good_categories.good_id', '=', 'shop_goods.id')
-                    ->where('shop_good_categories.category_id', $child->id)
-                    ->where('shop_goods.is_active', true)
-                    ->count();
+                $child->products_count = $productsCounts[$child->id] ?? 0;
             }
+
+            Cache::put($cacheKey, $children, now()->addMinutes(10));
 
             return response()->json([
                 'success' => true,
@@ -405,6 +456,14 @@ class ShopCategoriesController extends Controller
     public function main(): JsonResponse
     {
         try {
+            $cacheKey = 'public_shop_categories_main';
+            if (Cache::has($cacheKey)) {
+                return response()->json([
+                    'success' => true,
+                    'data' => Cache::get($cacheKey),
+                ]);
+            }
+
             $categories = ShopCategory::where('is_active', true)
                 ->whereNull('parent_id')
                 ->orderBy('sort_order', 'asc')
@@ -423,6 +482,8 @@ class ShopCategoriesController extends Controller
                     'children_count' => $category->children()->where('is_active', true)->count(),
                 ];
             });
+
+            Cache::put($cacheKey, $categories, now()->addMinutes(10));
 
             return response()->json([
                 'success' => true,
@@ -443,13 +504,17 @@ class ShopCategoriesController extends Controller
     public function getExtraMenu($categoryId): JsonResponse
     {
         try {
-            Log::info('getExtraMenu: запрос для категории', ['categoryId' => $categoryId]);
+            $cacheKey = 'public_shop_category_extra_menu_'.(int) $categoryId;
+            if (Cache::has($cacheKey)) {
+                return response()->json([
+                    'success' => true,
+                    'data' => Cache::get($cacheKey),
+                ]);
+            }
 
             $category = ShopCategory::find($categoryId);
 
             if (! $category) {
-                Log::warning('getExtraMenu: категория не найдена', ['categoryId' => $categoryId]);
-
                 return response()->json([
                     'success' => false,
                     'message' => 'Категория не найдена',
@@ -474,15 +539,8 @@ class ShopCategoriesController extends Controller
                 ->where('is_active', true)
                 ->first();
 
-            Log::info('getExtraMenu: результат запроса', [
-                'categoryId' => $categoryId,
-                'extraMenuFound' => $extraMenu !== null,
-                'extraMenuId' => $extraMenu ? $extraMenu->id : null,
-                'sectionsCount' => $extraMenu && $extraMenu->sections ? $extraMenu->sections->count() : 0,
-            ]);
-
             if (! $extraMenu) {
-                Log::info('getExtraMenu: экстра-меню не найдено для категории', ['categoryId' => $categoryId]);
+                Cache::put($cacheKey, null, now()->addMinutes(10));
 
                 return response()->json([
                     'success' => true,
@@ -490,30 +548,7 @@ class ShopCategoriesController extends Controller
                 ]);
             }
 
-            // Логируем структуру данных перед отправкой
-            $sectionsData = $extraMenu->sections->map(function ($section) {
-                return [
-                    'id' => $section->id,
-                    'title' => $section->title,
-                    'items_count' => $section->items ? $section->items->count() : 0,
-                    'items' => $section->items ? $section->items->map(function ($item) {
-                        return [
-                            'id' => $item->id,
-                            'category_id' => $item->category_id,
-                            'category' => $item->category ? [
-                                'id' => $item->category->id,
-                                'name' => $item->category->name,
-                                'slug' => $item->category->slug,
-                            ] : null,
-                        ];
-                    })->toArray() : [],
-                ];
-            })->toArray();
-
-            Log::info('getExtraMenu: структура секций', [
-                'categoryId' => $categoryId,
-                'sections' => $sectionsData,
-            ]);
+            Cache::put($cacheKey, $extraMenu, now()->addMinutes(10));
 
             return response()->json([
                 'success' => true,
@@ -531,5 +566,27 @@ class ShopCategoriesController extends Controller
                 'message' => 'Ошибка при получении экстра-меню: '.$e->getMessage(),
             ], 500);
         }
+    }
+
+    private function getProductsCounts(array $categoryIds): array
+    {
+        $categoryIds = array_values(array_unique(array_filter(array_map('intval', $categoryIds))));
+        if (empty($categoryIds)) {
+            return [];
+        }
+
+        $cacheKey = 'public_shop_category_product_counts_'.md5(implode(',', $categoryIds));
+
+        return Cache::remember($cacheKey, now()->addMinutes(10), function () use ($categoryIds) {
+            return DB::table('shop_good_categories')
+                ->join('shop_goods', 'shop_good_categories.good_id', '=', 'shop_goods.id')
+                ->whereIn('shop_good_categories.category_id', $categoryIds)
+                ->where('shop_goods.is_active', true)
+                ->select('shop_good_categories.category_id', DB::raw('COUNT(*) as products_count'))
+                ->groupBy('shop_good_categories.category_id')
+                ->pluck('products_count', 'category_id')
+                ->map(fn ($count) => (int) $count)
+                ->toArray();
+        });
     }
 }

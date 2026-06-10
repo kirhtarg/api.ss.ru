@@ -506,9 +506,15 @@ class CartController extends Controller
             ]);
 
         } catch (\Exception $e) {
+            Log::error('Cart addToCart error: '.$e->getMessage(), [
+                'good_id' => $request->get('good_id'),
+                'variation_id' => $request->get('variation_id'),
+                'quantity' => $request->get('quantity'),
+            ]);
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка добавления в корзину: '.$e->getMessage(),
+                'message' => 'Ошибка добавления в корзину',
             ], 500);
         }
     }

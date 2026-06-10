@@ -1226,6 +1226,8 @@ class ShopGoodsController extends Controller
             // Преобразуем строку в массив
             $idsArray = is_string($ids) ? explode(',', $ids) : $ids;
             $idsArray = array_filter(array_map('intval', $idsArray));
+            $idsArray = array_values(array_unique($idsArray));
+            sort($idsArray);
 
             if (empty($idsArray)) {
                 return response()->json([
@@ -1234,11 +1236,13 @@ class ShopGoodsController extends Controller
                 ], 400);
             }
 
-            // Получаем значения характеристик
-            $propertyValues = \App\Models\Shop\PropertyValue::whereIn('id', $idsArray)
-                ->where('is_active', true)
-                ->get(['id', 'value'])
-                ->toArray();
+            $cacheKey = 'public_shop_property_values_'.md5(implode(',', $idsArray));
+            $propertyValues = Cache::remember($cacheKey, now()->addMinutes(30), function () use ($idsArray) {
+                return \App\Models\Shop\PropertyValue::whereIn('id', $idsArray)
+                    ->where('is_active', true)
+                    ->get(['id', 'value'])
+                    ->toArray();
+            });
 
             return response()->json([
                 'success' => true,

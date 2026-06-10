@@ -84,9 +84,9 @@ class ShopDellinController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage(),
+                'message' => 'Сервис Деловых линий временно недоступен',
                 'data' => [],
-            ], 500);
+            ], 503);
         }
     }
 
@@ -235,9 +235,9 @@ class ShopDellinController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка расчета Деловых линий: '.$e->getMessage(),
+                'message' => 'Сервис Деловых линий временно недоступен',
                 'data' => [],
-            ], 500);
+            ], 503);
         }
     }
 
