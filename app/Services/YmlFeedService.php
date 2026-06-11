@@ -84,7 +84,18 @@ class YmlFeedService
                 'brands:id,name',
                 'images:id,good_id,file_path,alt_text,is_main,sort_order',
                 'variations' => function ($q) {
-                    $q->select('id', 'good_id', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity', 'is_active')
+                    $q->select(
+                        'id',
+                        'good_id',
+                        'price',
+                        'sale_price',
+                        'demping_price',
+                        'show_demping',
+                        'stock_quantity',
+                        'remote_stock_quantity',
+                        'fast_remote_stock_quantity',
+                        'is_active'
+                    )
                         ->where('is_active', true)
                         ->with('images:id,variation_id,file_path,alt_text,is_main,sort_order');
                 },
@@ -187,8 +198,10 @@ class YmlFeedService
 
     private function writeOfferToHandle($handle, $good): void
     {
-        // Пропускаем товары без цены или имени
-        if (empty($good->price) || empty($good->name)) {
+        $priceData = $this->getOfferPriceData($good);
+
+        // Пропускаем товары без имени или без актуальной положительной цены.
+        if (empty($good->name) || $priceData === null) {
             return;
         }
 
@@ -201,12 +214,12 @@ class YmlFeedService
         $url = $this->getMainSiteUrl() . '/catalog/' . ($good->slug ?? $good->id);
         fwrite($handle, '                <url>' . htmlspecialchars($url) . '</url>' . PHP_EOL);
 
-        // Цена
-        $price = $good->sale_price ?? $good->price;
-        $oldPrice = ($good->sale_price && $good->sale_price < $good->price) ? $good->price : null;
+        // Цена. Для товаров с вариациями выгружаем минимальную актуальную цену активной вариации.
+        $price = $priceData['price'];
+        $oldPrice = $priceData['oldprice'];
 
         fwrite($handle, '                <price>' . $price . '</price>' . PHP_EOL);
-        if ($oldPrice) {
+        if ($oldPrice !== null) {
             fwrite($handle, '                <oldprice>' . $oldPrice . '</oldprice>' . PHP_EOL);
         }
 
@@ -260,6 +273,89 @@ class YmlFeedService
         }
 
         fwrite($handle, '            </offer>' . PHP_EOL);
+    }
+
+    private function getOfferPriceData(ShopGood $good): ?array
+    {
+        $candidates = [];
+
+        if ($good->relationLoaded('variations') && $good->variations->isNotEmpty()) {
+            $activeVariations = $good->variations->filter(fn ($variation) => $variation->is_active);
+            $inStockVariations = $activeVariations->filter(fn ($variation) => $this->getItemStockValue($variation) > 0);
+
+            foreach (($inStockVariations->isNotEmpty() ? $inStockVariations : $activeVariations) as $variation) {
+                $priceData = $this->getItemPriceData($variation);
+                if ($priceData !== null) {
+                    $candidates[] = $priceData;
+                }
+            }
+        }
+
+        if (empty($candidates)) {
+            $priceData = $this->getItemPriceData($good);
+            if ($priceData !== null) {
+                $candidates[] = $priceData;
+            }
+        }
+
+        if (empty($candidates)) {
+            return null;
+        }
+
+        usort($candidates, fn ($a, $b) => $a['numeric_price'] <=> $b['numeric_price']);
+
+        return [
+            'price' => $candidates[0]['price'],
+            'oldprice' => $candidates[0]['oldprice'],
+        ];
+    }
+
+    private function getItemPriceData($item): ?array
+    {
+        $basePrice = $this->positivePrice($item->price ?? null);
+        $salePrice = $this->positivePrice($item->sale_price ?? null);
+        $dempingPrice = $this->positivePrice($item->demping_price ?? null);
+        $showDemping = (bool) ($item->show_demping ?? false);
+
+        $currentPrice = null;
+
+        if ($showDemping && $dempingPrice !== null) {
+            $currentPrice = $dempingPrice;
+        } elseif ($salePrice !== null) {
+            $currentPrice = $salePrice;
+        } else {
+            $currentPrice = $basePrice;
+        }
+
+        if ($currentPrice === null) {
+            return null;
+        }
+
+        $oldPrice = ($basePrice !== null && $basePrice > $currentPrice) ? $basePrice : null;
+
+        return [
+            'numeric_price' => $currentPrice,
+            'price' => $this->formatYmlPrice($currentPrice),
+            'oldprice' => $oldPrice !== null ? $this->formatYmlPrice($oldPrice) : null,
+        ];
+    }
+
+    private function positivePrice($value): ?float
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        $price = (float) str_replace(',', '.', (string) $value);
+
+        return $price > 0 ? $price : null;
+    }
+
+    private function formatYmlPrice(float $price): string
+    {
+        $formatted = number_format($price, 2, '.', '');
+
+        return rtrim(rtrim($formatted, '0'), '.');
     }
 
     private function getOfferStockValue(ShopGood $good): int
