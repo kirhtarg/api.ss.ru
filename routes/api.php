@@ -2032,6 +2032,9 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::post('/export/yml', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'exportYml']);
                     Route::get('/export/yml/status', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getYmlStatus']);
                     Route::post('/export/yml/schedule', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'updateYmlSchedule']);
+                    Route::get('/export/yml/yandex-market/stocks/settings', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getYandexMarketStockSettings']);
+                    Route::post('/export/yml/yandex-market/stocks/settings', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'updateYandexMarketStockSettings']);
+                    Route::post('/export/yml/yandex-market/stocks/sync', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'syncYandexMarketStocks']);
                     Route::post('/import/csv', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'importCsv']);
                     Route::get('/template', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getTemplate']);
                 });

@@ -94,6 +94,10 @@ class YmlFeedService
                         'stock_quantity',
                         'remote_stock_quantity',
                         'fast_remote_stock_quantity',
+                        'weight',
+                        'length',
+                        'width',
+                        'height',
                         'is_active'
                     )
                         ->where('is_active', true)
@@ -208,11 +212,13 @@ class YmlFeedService
         // Определяем доступность и остаток. Для товаров с вариациями остаток хранится в вариациях.
         $stock = $this->getOfferStockValue($good);
         $available = ($stock > 0) ? 'true' : 'false';
+        $logisticsData = $this->getOfferLogisticsData($good, $priceData['item'] ?? null);
 
         fwrite($handle, '            <offer id="' . $good->id . '" available="' . $available . '">' . PHP_EOL);
 
         $url = $this->getMainSiteUrl() . '/catalog/' . ($good->slug ?? $good->id);
         fwrite($handle, '                <url>' . htmlspecialchars($url) . '</url>' . PHP_EOL);
+        fwrite($handle, '                <count>' . $stock . '</count>' . PHP_EOL);
 
         // Цена. Для товаров с вариациями выгружаем минимальную актуальную цену активной вариации.
         $price = $priceData['price'];
@@ -272,6 +278,14 @@ class YmlFeedService
             fwrite($handle, '                <description><![CDATA[' . $description . ']]></description>' . PHP_EOL);
         }
 
+        if ($logisticsData['weight'] !== null) {
+            fwrite($handle, '                <weight>' . $this->formatYmlNumber($logisticsData['weight']) . '</weight>' . PHP_EOL);
+        }
+
+        if ($logisticsData['dimensions'] !== null) {
+            fwrite($handle, '                <dimensions>' . htmlspecialchars($logisticsData['dimensions']) . '</dimensions>' . PHP_EOL);
+        }
+
         fwrite($handle, '            </offer>' . PHP_EOL);
     }
 
@@ -307,6 +321,7 @@ class YmlFeedService
         return [
             'price' => $candidates[0]['price'],
             'oldprice' => $candidates[0]['oldprice'],
+            'item' => $candidates[0]['item'],
         ];
     }
 
@@ -337,6 +352,7 @@ class YmlFeedService
             'numeric_price' => $currentPrice,
             'price' => $this->formatYmlPrice($currentPrice),
             'oldprice' => $oldPrice !== null ? $this->formatYmlPrice($oldPrice) : null,
+            'item' => $item,
         ];
     }
 
@@ -372,8 +388,8 @@ class YmlFeedService
     private function getItemStockValue($item): int
     {
         return $this->normalizeNumericStock($item->stock_quantity ?? 0)
-            + $this->normalizeStringStock($item->remote_stock_quantity ?? null)
-            + $this->normalizeStringStock($item->fast_remote_stock_quantity ?? null);
+            + $this->normalizeRemoteStockPresence($item->remote_stock_quantity ?? null)
+            + $this->normalizeRemoteStockPresence($item->fast_remote_stock_quantity ?? null);
     }
 
     private function normalizeNumericStock($value): int
@@ -381,7 +397,7 @@ class YmlFeedService
         return max(0, (int) $value);
     }
 
-    private function normalizeStringStock($value): int
+    private function normalizeRemoteStockPresence($value): int
     {
         $stockValue = trim((string) ($value ?? ''));
 
@@ -389,11 +405,54 @@ class YmlFeedService
             return 0;
         }
 
-        if (is_numeric($stockValue)) {
-            return max(0, (int) $stockValue);
+        return 10;
+    }
+
+    private function getOfferLogisticsData(ShopGood $good, $preferredItem = null): array
+    {
+        $weight = $this->positiveDimensionValue($preferredItem->weight ?? null)
+            ?? $this->positiveDimensionValue($good->weight ?? null);
+
+        $length = $this->positiveDimensionValue($preferredItem->length ?? null)
+            ?? $this->positiveDimensionValue($preferredItem->depth ?? null)
+            ?? $this->positiveDimensionValue($good->length ?? null)
+            ?? $this->positiveDimensionValue($good->depth ?? null);
+
+        $width = $this->positiveDimensionValue($preferredItem->width ?? null)
+            ?? $this->positiveDimensionValue($good->width ?? null);
+
+        $height = $this->positiveDimensionValue($preferredItem->height ?? null)
+            ?? $this->positiveDimensionValue($good->height ?? null);
+
+        $dimensions = null;
+        if ($length !== null && $width !== null && $height !== null) {
+            $dimensions = implode('/', [
+                $this->formatYmlNumber($length),
+                $this->formatYmlNumber($width),
+                $this->formatYmlNumber($height),
+            ]);
         }
 
-        return 10;
+        return [
+            'weight' => $weight,
+            'dimensions' => $dimensions,
+        ];
+    }
+
+    private function positiveDimensionValue($value): ?float
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        $number = (float) str_replace(',', '.', (string) $value);
+
+        return $number > 0 ? $number : null;
+    }
+
+    private function formatYmlNumber(float $value): string
+    {
+        return rtrim(rtrim(number_format($value, 3, '.', ''), '0'), '.');
     }
 
     private function copyToFrontend($filename)

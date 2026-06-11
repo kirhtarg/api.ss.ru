@@ -190,6 +190,59 @@ class ShopImportExportController extends Controller
         }
     }
 
+    public function getYandexMarketStockSettings(\App\Services\YandexMarketStockService $stockService): JsonResponse
+    {
+        $settings = $stockService->getSettings();
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                ...$settings,
+                'auth_token_masked' => $settings['auth_token'] !== '' ? '********' : '',
+                'auth_token' => '',
+            ],
+        ]);
+    }
+
+    public function updateYandexMarketStockSettings(Request $request, \App\Services\YandexMarketStockService $stockService): JsonResponse
+    {
+        $data = $request->validate([
+            'campaign_id' => 'nullable|string|max:50',
+            'auth_token' => 'nullable|string|max:500',
+            'auth_type' => 'nullable|string|in:api_key,oauth',
+        ]);
+
+        $current = $stockService->getSettings();
+        if (empty($data['auth_token']) && ! empty($current['auth_token'])) {
+            $data['auth_token'] = $current['auth_token'];
+        }
+
+        $settings = $stockService->saveSettings($data);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Настройки Яндекс Маркета сохранены',
+            'data' => [
+                ...$settings,
+                'auth_token_masked' => $settings['auth_token'] !== '' ? '********' : '',
+                'auth_token' => '',
+            ],
+        ]);
+    }
+
+    public function syncYandexMarketStocks(\App\Services\YandexMarketStockService $stockService): JsonResponse
+    {
+        $result = $stockService->syncStocks();
+
+        return response()->json([
+            'success' => (bool) ($result['success'] ?? false),
+            'message' => ($result['success'] ?? false)
+                ? 'Остатки успешно отправлены в Яндекс Маркет'
+                : ($result['message'] ?? 'Ошибка отправки остатков в Яндекс Маркет'),
+            'data' => $result,
+        ], ($result['success'] ?? false) ? 200 : 422);
+    }
+
     /**
      * Генерация Sitemap
      */
