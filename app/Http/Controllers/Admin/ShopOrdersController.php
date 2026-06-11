@@ -2865,8 +2865,9 @@ class ShopOrdersController extends Controller
         $indexFrom = preg_replace('/\D+/', '', (string) $settings->sender_postal_code);
         $postOfficeCode = $this->resolveRussianPostSenderPostOfficeCode($order, $settings);
         $mailDirect = $this->resolveRussianPostMailDirect($order);
+        $address = $this->resolveRussianPostRecipientAddress($order);
 
-        return [
+        return array_filter([
             'address-type-to' => 'DEFAULT',
             'given-name' => $givenName,
             'surname' => $surname,
@@ -2875,6 +2876,12 @@ class ShopOrdersController extends Controller
             'index-to' => $postalCode,
             'postoffice-code' => $postOfficeCode,
             'mail-direct' => $mailDirect,
+            'region-to' => $address['region'] ?? null,
+            'place-to' => $address['place'] ?? null,
+            'street-to' => $address['street'] ?? null,
+            'house-to' => $address['house'] ?? null,
+            'slash-to' => $address['slash'] ?? null,
+            'room-to' => $address['room'] ?? null,
             'mail-category' => 'ORDINARY',
             'mail-type' => 'ONLINE_PARCEL',
             'mass' => (int) max(1, round($cargo['totalWeight'] * 1000)),
@@ -2888,7 +2895,7 @@ class ShopOrdersController extends Controller
             'fragile' => false,
             'completeness-checking' => false,
             'sms-notice-recipient' => 0,
-        ];
+        ], fn ($value) => $value !== null && $value !== '');
     }
 
     private function russianPostResponseHasErrors($data): bool
@@ -2928,6 +2935,134 @@ class ShopOrdersController extends Controller
 
         // 643 = Российская Федерация. Заказы магазина сейчас создаются как внутрироссийские отправления.
         return 643;
+    }
+
+    private function resolveRussianPostRecipientAddress(ShopOrder $order): array
+    {
+        $metadata = is_array($order->metadata) ? $order->metadata : [];
+        $office = is_array($metadata['russianpost_office'] ?? null) ? $metadata['russianpost_office'] : [];
+        $rawOffice = is_array($office['raw'] ?? null) ? $office['raw'] : [];
+        $addressText = trim((string) ($metadata['russianpost_address'] ?? $order->shipping_address ?? ''));
+
+        $address = [
+            'region' => $this->firstNonEmptyScalar(
+                $metadata['russianpost_region'] ?? null,
+                $metadata['region'] ?? null,
+                $rawOffice['region'] ?? null,
+                $rawOffice['region-to'] ?? null
+            ),
+            'place' => $this->firstNonEmptyScalar(
+                $metadata['russianpost_place'] ?? null,
+                $metadata['russianpost_city'] ?? null,
+                $metadata['city'] ?? null,
+                $rawOffice['settlement'] ?? null,
+                $rawOffice['place-to'] ?? null,
+                $rawOffice['place'] ?? null
+            ),
+            'street' => $this->firstNonEmptyScalar($metadata['street'] ?? null, $metadata['russianpost_street'] ?? null),
+            'house' => $this->firstNonEmptyScalar($metadata['house'] ?? null, $metadata['russianpost_house'] ?? null),
+            'slash' => $this->firstNonEmptyScalar($metadata['slash'] ?? null, $metadata['russianpost_slash'] ?? null),
+            'room' => $this->firstNonEmptyScalar($metadata['room'] ?? null, $metadata['apartment'] ?? null, $metadata['russianpost_room'] ?? null),
+        ];
+
+        $parsed = $this->parseRussianPostAddressText($addressText);
+
+        foreach ($parsed as $key => $value) {
+            if (($address[$key] ?? '') === '' && $value !== '') {
+                $address[$key] = $value;
+            }
+        }
+
+        return $address;
+    }
+
+    private function parseRussianPostAddressText(string $address): array
+    {
+        $address = trim(preg_replace('/^Почта\s+России:\s*/iu', '', $address));
+        $address = trim(preg_replace('/^\d{6}\s*,?\s*/', '', $address));
+
+        if ($address === '') {
+            return [];
+        }
+
+        $parts = array_values(array_filter(array_map('trim', explode(',', $address)), fn ($part) => $part !== ''));
+        $result = [
+            'region' => '',
+            'place' => '',
+            'street' => '',
+            'house' => '',
+            'slash' => '',
+            'room' => '',
+        ];
+
+        foreach ($parts as $part) {
+            if ($result['region'] === '' && preg_match('/\b(обл\.?|область|край|респ\.?|республика|ао|автономный округ)\b/iu', $part)) {
+                $result['region'] = $this->normalizeRussianPostAddressPart($part, 'region');
+                continue;
+            }
+
+            if ($result['place'] === '' && preg_match('/\b(г\.?|город|пос\.?|поселок|с\.|село|д\.|деревня|пгт)\b/iu', $part)) {
+                $result['place'] = $this->normalizeRussianPostAddressPart($part, 'place');
+                continue;
+            }
+
+            if ($result['street'] === '' && preg_match('/\b(ул\.?|улица|пр-кт|проспект|пер\.?|переулок|ш\.?|шоссе|наб\.?|набережная)\b/iu', $part)) {
+                $result['street'] = $this->normalizeRussianPostAddressPart($part, 'street');
+                continue;
+            }
+
+            if ($result['house'] === '' && preg_match('/\b(?:д\.?|дом)\s*([0-9а-яa-z\/-]+)/iu', $part, $matches)) {
+                $result['house'] = $matches[1];
+                continue;
+            }
+
+            if ($result['room'] === '' && preg_match('/\b(?:кв\.?|квартира|оф\.?|офис)\s*([0-9а-яa-z\/-]+)/iu', $part, $matches)) {
+                $result['room'] = $matches[1];
+            }
+        }
+
+        if ($result['place'] === '') {
+            foreach ($parts as $part) {
+                if (! preg_match('/\b(ул\.?|улица|д\.?|дом|кв\.?|квартира|оф\.?|офис)\b/iu', $part)) {
+                    $result['place'] = $this->normalizeRussianPostAddressPart($part, 'place');
+                    break;
+                }
+            }
+        }
+
+        if ($result['region'] === '' && $result['place'] !== '') {
+            $result['region'] = $result['place'];
+        }
+
+        return $result;
+    }
+
+    private function normalizeRussianPostAddressPart(string $value, string $type): string
+    {
+        $value = trim($value);
+
+        $patterns = [
+            'region' => '/\b(обл\.?|область|край|респ\.?|республика|ао|автономный округ)\b\.?/iu',
+            'place' => '/\b(г\.?|город|пос\.?|поселок|с\.|село|д\.|деревня|пгт)\b\.?/iu',
+            'street' => '/\b(ул\.?|улица|пр-кт|проспект|пер\.?|переулок|ш\.?|шоссе|наб\.?|набережная)\b\.?/iu',
+        ];
+
+        if (isset($patterns[$type])) {
+            $value = preg_replace($patterns[$type], '', $value);
+        }
+
+        return trim(preg_replace('/\s+/u', ' ', $value), " \t\n\r\0\x0B,.");
+    }
+
+    private function firstNonEmptyScalar(...$values): string
+    {
+        foreach ($values as $value) {
+            if (is_scalar($value) && trim((string) $value) !== '') {
+                return trim((string) $value);
+            }
+        }
+
+        return '';
     }
 
     private function resolveRussianPostPostalCode(ShopOrder $order, Request $request): string
