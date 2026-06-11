@@ -2763,10 +2763,22 @@ class ShopOrdersController extends Controller
                 return response()->json(['success' => false, 'message' => 'У заказа нет ID отправления Почты России'], 400);
             }
 
-            $status = ['code' => 'CREATED', 'name' => 'Отправление создано/ожидает обработки Почтой России', 'barcode' => $order->russianpost_barcode];
+            $status = [
+                'code' => 'CREATED',
+                'name' => 'Отправление создано/ожидает обработки Почтой России',
+                'external_id' => $order->russianpost_order_id,
+                'barcode' => $order->russianpost_barcode,
+            ];
             $order->update(['delivery_status' => json_encode($status, JSON_UNESCAPED_UNICODE)]);
 
-            return response()->json(['success' => true, 'message' => 'Статус доставки обновлен', 'data' => ['delivery_status' => $status]]);
+            return response()->json([
+                'success' => true,
+                'message' => 'Статус доставки обновлен',
+                'data' => [
+                    'delivery_status' => $status,
+                    'order' => $this->formatOrderForResponse($order->fresh(['status', 'user', 'paymentMethod', 'deliveryMethod', 'manager'])),
+                ],
+            ]);
         } catch (\Throwable $e) {
             return response()->json(['success' => false, 'message' => 'Ошибка проверки статуса Почты России: '.$e->getMessage()], 500);
         }
