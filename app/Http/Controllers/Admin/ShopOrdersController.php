@@ -2573,6 +2573,7 @@ class ShopOrdersController extends Controller
                     'dellin_order_id' => $externalId,
                     'barcode' => $barcode,
                     'delivery_status' => ['code' => 'CREATED', 'name' => 'Заявка создана в Деловых линиях'],
+                    'order' => $this->formatOrderForResponse($order->fresh(['status', 'user', 'paymentMethod', 'deliveryMethod', 'manager'])),
                     'server_response' => $data,
                 ],
             ]);

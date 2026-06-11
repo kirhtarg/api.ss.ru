@@ -679,6 +679,8 @@ class ShopCdekController extends Controller
             $order->surcharge_type = $validatedData['surcharge_type'] ?? null;
             $order->save();
 
+            $validatedData['packages'] = $this->buildCdekPackagesFromOrder($order, $validatedData['packages']);
+
             $cdekOrderData = $this->cdekService->createOrder($validatedData);
 
             if (isset($cdekOrderData['entity']['uuid'])) {
@@ -698,6 +700,120 @@ class ShopCdekController extends Controller
                 'message' => 'Ошибка создания заказа СДЭК: '.$e->getMessage(),
             ], 500);
         }
+    }
+
+    private function buildCdekPackagesFromOrder($order, array $fallbackPackages): array
+    {
+        $items = method_exists($order, 'getItemsWithDetails')
+            ? $order->getItemsWithDetails()
+            : (is_array($order->items) ? $order->items : json_decode($order->items, true));
+        $items = is_array($items) ? $items : [];
+
+        if (empty($items)) {
+            return $fallbackPackages;
+        }
+
+        $fallbackByKey = [];
+        foreach ($fallbackPackages as $package) {
+            $number = (string) ($package['number'] ?? '');
+            if ($number !== '') {
+                $fallbackByKey[$number] = $package;
+            }
+        }
+
+        return array_values(array_map(function ($item, $index) use ($fallbackPackages, $fallbackByKey) {
+            $quantity = max(1, (int) ($item['quantity'] ?? 1));
+            $goodId = $item['good_id'] ?? null;
+            $variationId = $item['variation_id'] ?? null;
+            $number = 'PKG_'.$goodId.'_'.($variationId ?: 'default');
+            $fallback = $fallbackByKey[$number] ?? $fallbackPackages[$index] ?? [];
+            $dimensions = $this->resolveCdekItemDimensions($item);
+            $weightGrams = (int) max(1, round($dimensions['weight'] * 1000));
+            $length = (int) max(1, round($dimensions['length']));
+            $width = (int) max(1, round($dimensions['width']));
+            $height = (int) max(1, round($dimensions['height']));
+            $cost = $fallback['cost'] ?? (float) ($item['total'] ?? ((float) ($item['price'] ?? 0) * $quantity));
+            $packageItems = $fallback['items'] ?? [[
+                'name' => $item['good_name'] ?? 'Товар',
+                'ware_key' => $item['variation_sku'] ?? $item['good_sku'] ?? $number,
+                'cost' => $cost,
+                'amount' => $quantity,
+            ]];
+            $packageItems = array_map(function ($packageItem) use ($weightGrams, $quantity) {
+                $packageItem['weight'] = $weightGrams;
+                $packageItem['amount'] = $packageItem['amount'] ?? $quantity;
+
+                return $packageItem;
+            }, is_array($packageItems) ? $packageItems : []);
+
+            return [
+                'number' => $fallback['number'] ?? $number,
+                'weight' => $weightGrams * $quantity,
+                'length' => $length,
+                'width' => $width,
+                'height' => $height,
+                'comment' => $fallback['comment'] ?? trim(($item['good_name'] ?? 'Товар').(! empty($item['variation_name']) ? ' - '.$item['variation_name'] : '')),
+                'cost' => $cost,
+                'items' => $packageItems,
+            ];
+        }, $items, array_keys($items)));
+    }
+
+    private function resolveCdekItemDimensions(array $item): array
+    {
+        $weight = null;
+        $length = null;
+        $width = null;
+        $height = null;
+
+        $variation = null;
+        if (! empty($item['variation_id'])) {
+            $variation = \App\Models\ShopGoodVariation::find($item['variation_id']);
+        }
+
+        if ($variation) {
+            $weight = $this->positiveFloat($variation->weight ?? null);
+            $length = $this->positiveFloat($variation->length ?? $variation->depth ?? null);
+            $width = $this->positiveFloat($variation->width ?? null);
+            $height = $this->positiveFloat($variation->height ?? null);
+        }
+
+        $good = null;
+        if (! empty($item['good_id'])) {
+            $good = \App\Models\ShopGood::find($item['good_id']);
+        }
+
+        if ($good) {
+            $weight = $weight ?: $this->positiveFloat($good->weight ?? null);
+            $length = $length ?: $this->positiveFloat($good->length ?? $good->depth ?? null);
+            $width = $width ?: $this->positiveFloat($good->width ?? null);
+            $height = $height ?: $this->positiveFloat($good->height ?? null);
+        }
+
+        $weight = $weight ?: $this->positiveFloat($item['weight'] ?? null);
+        $length = $length ?: $this->positiveFloat($item['length'] ?? $item['depth'] ?? null);
+        $width = $width ?: $this->positiveFloat($item['width'] ?? null);
+        $height = $height ?: $this->positiveFloat($item['height'] ?? null);
+
+        $settings = \App\Models\ShopCdekSettings::getActive();
+
+        return [
+            'weight' => $weight ?: (float) ($settings->default_weight ?? 1),
+            'length' => $length ?: (float) ($settings->default_length ?? 10),
+            'width' => $width ?: (float) ($settings->default_width ?? 10),
+            'height' => $height ?: (float) ($settings->default_height ?? 10),
+        ];
+    }
+
+    private function positiveFloat($value): ?float
+    {
+        if (! is_numeric($value)) {
+            return null;
+        }
+
+        $value = (float) $value;
+
+        return $value > 0 ? $value : null;
     }
 
     /**
