@@ -2698,7 +2698,7 @@ class ShopOrdersController extends Controller
             ])->withHeaders($this->russianPostHeaders($settings))->put('https://otpravka-api.pochta.ru/1.0/user/backlog', $payload);
             $data = $response->json() ?: [];
 
-            if (! $response->successful()) {
+            if (! $response->successful() || $this->russianPostResponseHasErrors($data)) {
                 return response()->json([
                     'success' => false,
                     'message' => $this->extractExternalDeliveryError($data, $response->body() ?: 'Почта России не приняла отправление'),
@@ -2862,13 +2862,19 @@ class ShopOrdersController extends Controller
     {
         $cargo = $this->calculateOrderDeliveryCargo($order, $settings);
         [$surname, $givenName, $middleName] = $this->splitCustomerName($order->customer_name);
+        $indexFrom = preg_replace('/\D+/', '', (string) $settings->sender_postal_code);
+        $postOfficeCode = $this->resolveRussianPostSenderPostOfficeCode($order, $settings);
+        $mailDirect = $this->resolveRussianPostMailDirect($order);
 
         return [
             'address-type-to' => 'DEFAULT',
             'given-name' => $givenName,
             'surname' => $surname,
             'middle-name' => $middleName,
+            'index-from' => $indexFrom,
             'index-to' => $postalCode,
+            'postoffice-code' => $postOfficeCode,
+            'mail-direct' => $mailDirect,
             'mail-category' => 'ORDINARY',
             'mail-type' => 'ONLINE_PARCEL',
             'mass' => (int) max(1, round($cargo['totalWeight'] * 1000)),
@@ -2883,6 +2889,45 @@ class ShopOrdersController extends Controller
             'completeness-checking' => false,
             'sms-notice-recipient' => 0,
         ];
+    }
+
+    private function russianPostResponseHasErrors($data): bool
+    {
+        return is_array($data) && ! empty($data['errors']);
+    }
+
+    private function resolveRussianPostSenderPostOfficeCode(ShopOrder $order, ShopRussianPostSettings $settings): string
+    {
+        $metadata = is_array($order->metadata) ? $order->metadata : [];
+        $candidates = [
+            $metadata['russianpost_sender_postoffice_code'] ?? null,
+            $metadata['russianpost_postoffice_code'] ?? null,
+            $metadata['russianpost_tariff']['postoffice-code'] ?? null,
+            $metadata['russianpost_tariff']['postoffice_code'] ?? null,
+            $settings->sender_postal_code,
+        ];
+
+        foreach ($candidates as $candidate) {
+            $code = $this->extractRussianPostPostalCode($candidate);
+            if ($code !== '') {
+                return $code;
+            }
+        }
+
+        return '';
+    }
+
+    private function resolveRussianPostMailDirect(ShopOrder $order): int
+    {
+        $metadata = is_array($order->metadata) ? $order->metadata : [];
+        $value = $metadata['russianpost_mail_direct'] ?? $metadata['russianpost_tariff']['mail-direct'] ?? null;
+
+        if (is_numeric($value) && (int) $value > 0) {
+            return (int) $value;
+        }
+
+        // 643 = Российская Федерация. Заказы магазина сейчас создаются как внутрироссийские отправления.
+        return 643;
     }
 
     private function resolveRussianPostPostalCode(ShopOrder $order, Request $request): string
