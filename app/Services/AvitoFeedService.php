@@ -561,22 +561,30 @@ class AvitoFeedService
     private function getMinPrice(ShopGood $good)
     {
         $prices = [];
-        
-        // Цена самого товара (только если есть в наличии)
+
+        if ($good->relationLoaded('variations') && $good->variations && $good->variations->isNotEmpty()) {
+            $activeVariations = $good->variations->filter(fn($variation) => $variation->is_active);
+            $inStockVariations = $activeVariations->filter(fn($variation) => $this->isInStock($variation));
+
+            foreach (($inStockVariations->isNotEmpty() ? $inStockVariations : $activeVariations) as $variation) {
+                $prices[] = $this->calculateFinalPrice($variation);
+            }
+
+            $prices = array_filter($prices, fn($p) => $p > 0);
+
+            if (!empty($prices)) {
+                return min($prices);
+            }
+        }
+
+        // Цена самого товара используется только для товаров без валидных цен вариаций.
         if ($this->isInStock($good)) {
             $prices[] = $this->calculateFinalPrice($good);
         }
 
-        // Цены активных вариаций (только если есть в наличии)
-        foreach ($good->variations as $v) {
-            if ($v->is_active && $this->isInStock($v)) {
-                $prices[] = $this->calculateFinalPrice($v);
-            }
-        }
-
         $prices = array_filter($prices, fn($p) => $p > 0);
-        
-        // Если ничего нет в наличии, возвращаем базовую цену товара как fallback
+
+        // Если ничего нет в наличии, возвращаем цену товара как fallback.
         return !empty($prices) ? min($prices) : $this->calculateFinalPrice($good);
     }
 

@@ -1428,9 +1428,17 @@ class ProcessExportJob implements ShouldQueue
             case 'price':
                 return $isArray ? ($variation['price'] ?? $good['price'] ?? 0) : ($variation->price ?? $good->price);
             case 'sale_price':
-                return $isArray ? ($variation['sale_price'] ?? $good['sale_price'] ?? 0) : ($variation->sale_price ?? $good->sale_price);
+                if ($variation) {
+                    return $isArray ? ($variation['sale_price'] ?? '') : ($variation->sale_price ?? '');
+                }
+
+                return $isArray ? ($good['sale_price'] ?? 0) : $good->sale_price;
             case 'demping_price':
-                return $isArray ? ($variation['demping_price'] ?? $good['demping_price'] ?? 0) : ($variation->demping_price ?? $good->demping_price);
+                if ($variation) {
+                    return $isArray ? ($variation['demping_price'] ?? '') : ($variation->demping_price ?? '');
+                }
+
+                return $isArray ? ($good['demping_price'] ?? 0) : $good->demping_price;
             case 'stock_quantity':
                 return $isArray ? ($variation['stock_quantity'] ?? $good['stock_quantity'] ?? 0) : ($variation->stock_quantity ?? $good->stock_quantity);
             case 'remote_stock':
