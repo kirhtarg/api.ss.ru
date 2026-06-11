@@ -3,8 +3,8 @@
 namespace App\Services;
 
 use App\Models\Setting;
-use App\Models\ShopGood;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 
 class YandexMarketStockService
 {
@@ -69,7 +69,12 @@ class YandexMarketStockService
         $errors = [];
         $updatedAt = now()->toIso8601String();
 
-        foreach ($this->stockPayloadChunks($updatedAt) as $skus) {
+        $feedPath = $this->getFeedPath();
+        if (! $feedPath) {
+            return $this->fail('Файл goods_feed.xml не найден. Сначала сгенерируйте YML-фид.');
+        }
+
+        foreach ($this->stockPayloadChunksFromFeed($feedPath, $updatedAt) as $skus) {
             if (empty($skus)) {
                 continue;
             }
@@ -100,77 +105,81 @@ class YandexMarketStockService
             'synced_at' => now()->toDateTimeString(),
         ];
 
+        if ($requests === 0 && empty($errors)) {
+            $result['success'] = false;
+            $result['message'] = 'В goods_feed.xml не найдено offer с тегом count.';
+        }
+
         $this->saveSetting('yandex_market_stocks_last_sync_at', 'Последняя отправка остатков в Яндекс Маркет', $result['synced_at'], 'string');
         $this->saveSetting('yandex_market_stocks_last_sync_result', 'Результат последней отправки остатков в Яндекс Маркет', json_encode($result, JSON_UNESCAPED_UNICODE), 'json');
 
         return $result;
     }
 
-    private function stockPayloadChunks(string $updatedAt): \Generator
+    private function getFeedPath(): ?string
     {
+        $relativePath = 'exports/goods_feed.xml';
+
+        if (Storage::disk('public')->exists($relativePath)) {
+            return Storage::disk('public')->path($relativePath);
+        }
+
+        return null;
+    }
+
+    private function stockPayloadChunksFromFeed(string $feedPath, string $updatedAt): \Generator
+    {
+        $reader = new \XMLReader();
+        if (! $reader->open($feedPath, null, LIBXML_NONET | LIBXML_COMPACT)) {
+            throw new \RuntimeException('Не удалось открыть goods_feed.xml для чтения.');
+        }
+
         $buffer = [];
 
-        ShopGood::active()
-            ->select('id', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity')
-            ->with([
-                'variations' => function ($query) {
-                    $query->select(
-                        'id',
-                        'good_id',
-                        'stock_quantity',
-                        'remote_stock_quantity',
-                        'fast_remote_stock_quantity',
-                        'is_active'
-                    )->where('is_active', true);
-                },
-            ])
-            ->chunk(500, function ($goods) use (&$buffer, $updatedAt) {
-                foreach ($goods as $good) {
-                    $buffer[] = [
-                        'sku' => (string) $good->id,
-                        'items' => [
-                            [
-                                'count' => $this->getOfferStockValue($good),
-                                'updatedAt' => $updatedAt,
-                            ],
-                        ],
-                    ];
+        try {
+            while ($reader->read()) {
+                if ($reader->nodeType !== \XMLReader::ELEMENT || $reader->name !== 'offer') {
+                    continue;
                 }
-            });
 
-        foreach (array_chunk($buffer, self::BATCH_SIZE) as $chunk) {
-            yield $chunk;
+                $sku = trim((string) $reader->getAttribute('id'));
+                if ($sku === '') {
+                    continue;
+                }
+
+                $offerXml = $reader->readOuterXML();
+                if ($offerXml === '') {
+                    continue;
+                }
+
+                $offer = @simplexml_load_string($offerXml);
+                if (! $offer || ! isset($offer->count)) {
+                    continue;
+                }
+
+                $count = max(0, (int) trim((string) $offer->count));
+                $buffer[] = [
+                    'sku' => $sku,
+                    'items' => [
+                        [
+                            'count' => $count,
+                            'updatedAt' => $updatedAt,
+                        ],
+                    ],
+                ];
+
+                if (count($buffer) >= self::BATCH_SIZE) {
+                    yield $buffer;
+                    $buffer = [];
+                }
+            }
+        } finally {
+            $reader->close();
         }
-    }
 
-    private function getOfferStockValue(ShopGood $good): int
-    {
-        if ($good->relationLoaded('variations') && $good->variations->isNotEmpty()) {
-            return $good->variations
-                ->filter(fn ($variation) => $variation->is_active)
-                ->sum(fn ($variation) => $this->getItemStockValue($variation));
+        if (! empty($buffer)) {
+            yield $buffer;
         }
-
-        return $this->getItemStockValue($good);
-    }
-
-    private function getItemStockValue($item): int
-    {
-        return $this->normalizeNumericStock($item->stock_quantity ?? 0)
-            + $this->normalizeRemoteStockPresence($item->remote_stock_quantity ?? null)
-            + $this->normalizeRemoteStockPresence($item->fast_remote_stock_quantity ?? null);
-    }
-
-    private function normalizeNumericStock($value): int
-    {
-        return max(0, (int) $value);
-    }
-
-    private function normalizeRemoteStockPresence($value): int
-    {
-        $stockValue = trim((string) ($value ?? ''));
-
-        return ($stockValue === '' || $stockValue === '0') ? 0 : 10;
     }
 
     private function saveSetting(string $key, string $name, $value, string $type): void
