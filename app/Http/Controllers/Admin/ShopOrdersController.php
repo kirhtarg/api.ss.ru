@@ -28,6 +28,9 @@ use App\Services\OrderCalculationService;
 
 class ShopOrdersController extends Controller
 {
+    private const DELLIN_RUSSIA_COUNTRY_UID = '0x8f51001438c4d49511dbd774581edb7a';
+    private const DELLIN_PERSON_FORM_UID = '0xAB91FEEA04F6D4AD48DF42161B6C2E7A';
+
     protected $calculationService;
 
     public function __construct(OrderCalculationService $calculationService)
@@ -2789,6 +2792,18 @@ class ShopOrdersController extends Controller
         $cargo = $this->calculateOrderDeliveryCargo($order, $settings);
         $metadata = is_array($order->metadata) ? $order->metadata : [];
         $senderTerminal = $metadata['dellin_sender_terminal_id'] ?? null;
+        $senderPhone = $this->formatDellinPhoneNumber($settings->sender_phone);
+        $senderReceiptPhone = $this->formatDellinReceiptPhone($settings->sender_phone);
+        $receiverPhone = $this->formatDellinPhoneNumber($order->customer_phone);
+        $receiverReceiptPhone = $this->formatDellinReceiptPhone($order->customer_phone);
+        $senderEmail = trim((string) $settings->sender_email);
+        $receiverEmail = trim((string) $order->customer_email);
+        $senderAddress = trim(implode(', ', array_filter([
+            $settings->sender_city,
+            $settings->sender_street,
+            $settings->sender_house ? 'д. '.$settings->sender_house : null,
+            $settings->sender_flat ? 'оф. '.$settings->sender_flat : null,
+        ])));
 
         $payload = [
             'appkey' => $settings->appkey,
@@ -2798,36 +2813,77 @@ class ShopOrdersController extends Controller
                 'derival' => [
                     'produceDate' => now()->addDay()->format('Y-m-d'),
                     'variant' => $senderTerminal ? 'terminal' : 'address',
+                    'payer' => 'sender',
+                    'time' => [
+                        'worktimeStart' => '09:00',
+                        'worktimeEnd' => '18:00',
+                    ],
                 ],
                 'arrival' => [
                     'variant' => $deliveryType === 'terminal' ? 'terminal' : 'address',
+                    'payer' => 'sender',
                 ],
             ],
-            'cargo' => $cargo,
+            'cargo' => array_merge($cargo, [
+                'freightName' => 'Спортивные товары',
+            ]),
             'members' => [
                 'requester' => [
                     'role' => 'sender',
-                    'uid' => null,
+                    'email' => $senderEmail ?: $receiverEmail,
                 ],
                 'sender' => [
                     'counteragent' => [
+                        'customForm' => $this->buildDellinCustomForm($settings->sender_company ?: $settings->sender_name, true),
                         'name' => $settings->sender_company ?: $settings->sender_name,
                         'inn' => $settings->sender_inn,
+                        'juridicalAddress' => $senderAddress !== '' ? ['search' => $senderAddress] : null,
+                        'save' => false,
                     ],
-                    'contact' => [
-                        'name' => $settings->sender_name,
-                        'phone' => $settings->sender_phone,
-                        'email' => $settings->sender_email,
+                    'contactPersons' => [
+                        [
+                            'name' => $settings->sender_name ?: $settings->sender_company,
+                            'save' => false,
+                        ],
+                    ],
+                    'phoneNumbers' => [
+                        [
+                            'number' => $senderPhone,
+                            'save' => false,
+                        ],
+                    ],
+                    'email' => $senderEmail,
+                    'dataForReceipt' => [
+                        'send' => (bool) ($senderReceiptPhone || $senderEmail),
+                        'phone' => $senderReceiptPhone ?: null,
+                        'email' => $senderEmail ?: null,
                     ],
                 ],
                 'receiver' => [
                     'counteragent' => [
+                        'form' => self::DELLIN_PERSON_FORM_UID,
+                        'isAnonym' => true,
+                        'phone' => $receiverPhone,
                         'name' => $order->customer_name,
+                        'save' => false,
                     ],
-                    'contact' => [
-                        'name' => $order->customer_name,
-                        'phone' => $order->customer_phone,
-                        'email' => $order->customer_email,
+                    'contactPersons' => [
+                        [
+                            'name' => $order->customer_name ?: 'Получатель',
+                            'save' => false,
+                        ],
+                    ],
+                    'phoneNumbers' => [
+                        [
+                            'number' => $receiverPhone,
+                            'save' => false,
+                        ],
+                    ],
+                    'email' => $receiverEmail,
+                    'dataForReceipt' => [
+                        'send' => (bool) ($receiverReceiptPhone || $receiverEmail),
+                        'phone' => $receiverReceiptPhone ?: null,
+                        'email' => $receiverEmail ?: null,
                     ],
                 ],
             ],
@@ -2848,11 +2904,7 @@ class ShopOrdersController extends Controller
             $payload['delivery']['derival']['terminalID'] = (string) $senderTerminal;
         } else {
             $payload['delivery']['derival']['address'] = [
-                'search' => trim(implode(', ', array_filter([
-                    $settings->sender_city,
-                    $settings->sender_street,
-                    $settings->sender_house ? 'д. '.$settings->sender_house : null,
-                ]))),
+                'search' => $senderAddress,
             ];
         }
 
@@ -2866,7 +2918,66 @@ class ShopOrdersController extends Controller
             ];
         }
 
-        return $payload;
+        return $this->filterDellinPayload($payload);
+    }
+
+    private function buildDellinCustomForm(?string $name, bool $juridical): array
+    {
+        $normalized = mb_strtoupper(trim((string) $name));
+        $formName = 'ФЛ';
+
+        if ($juridical) {
+            $formName = str_starts_with($normalized, 'ИП ') || $normalized === 'ИП' ? 'ИП' : 'ООО';
+        }
+
+        return [
+            'formName' => $formName,
+            'countryUID' => self::DELLIN_RUSSIA_COUNTRY_UID,
+            'juridical' => $juridical,
+        ];
+    }
+
+    private function formatDellinPhoneNumber(?string $phone): string
+    {
+        $digits = preg_replace('/\D+/', '', (string) $phone);
+
+        if (strlen($digits) === 10) {
+            return '7'.$digits;
+        }
+
+        if (strlen($digits) === 11 && $digits[0] === '8') {
+            return '7'.substr($digits, 1);
+        }
+
+        return $digits;
+    }
+
+    private function formatDellinReceiptPhone(?string $phone): string
+    {
+        $digits = $this->formatDellinPhoneNumber($phone);
+
+        if (preg_match('/^79\d{9}$/', $digits)) {
+            return '+'.$digits;
+        }
+
+        return '';
+    }
+
+    private function filterDellinPayload($value)
+    {
+        if (is_array($value)) {
+            $filtered = [];
+            foreach ($value as $key => $item) {
+                $cleanItem = $this->filterDellinPayload($item);
+                if ($cleanItem !== null && $cleanItem !== '' && $cleanItem !== []) {
+                    $filtered[$key] = $cleanItem;
+                }
+            }
+
+            return $filtered;
+        }
+
+        return $value;
     }
 
     private function buildRussianPostOrderPayload(ShopOrder $order, ShopRussianPostSettings $settings, string $postalCode): array
@@ -3414,6 +3525,25 @@ class ShopOrdersController extends Controller
     {
         if (! is_array($data)) {
             return $fallback;
+        }
+
+        if (! empty($data['errors']) && is_array($data['errors'])) {
+            $messages = [];
+            foreach (array_slice($data['errors'], 0, 5) as $error) {
+                if (! is_array($error)) {
+                    continue;
+                }
+                $fields = isset($error['fields']) && is_array($error['fields'])
+                    ? implode(', ', $error['fields'])
+                    : '';
+                $detail = $error['detail'] ?? $error['message'] ?? $error['title'] ?? '';
+                $messages[] = trim(($fields ? $fields.': ' : '').$detail);
+            }
+
+            $messages = array_values(array_filter($messages));
+            if ($messages) {
+                return implode('; ', $messages);
+            }
         }
 
         return $data['errors'][0]['detail']
