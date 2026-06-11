@@ -1443,19 +1443,6 @@ class ShopOrdersController extends Controller
 
             $cdekData = $statusResult['data'];
 
-            // Логируем структуру ответа для отладки
-            Log::info('CDEK order status response', [
-                'order_id' => $order->id,
-                'cdek_uuid' => $order->cdek_order_uuid,
-                'response_structure' => [
-                    'has_entity' => isset($cdekData['entity']),
-                    'has_statuses' => isset($cdekData['statuses']),
-                    'has_entity_statuses' => isset($cdekData['entity']['statuses']),
-                    'has_entity_tariff_code' => isset($cdekData['entity']['tariff_code']),
-                    'has_tariff_code' => isset($cdekData['tariff_code']),
-                ],
-            ]);
-
             // Извлекаем статус доставки
             $deliveryStatus = [];
             $tariffCode = null;
@@ -1467,11 +1454,6 @@ class ShopOrdersController extends Controller
             } elseif (isset($cdekData['tariff_code'])) {
                 $tariffCode = $cdekData['tariff_code'];
             }
-
-            Log::info('CDEK tariff extracted', [
-                'order_id' => $order->id,
-                'tariff_code' => $tariffCode,
-            ]);
 
             // Получаем название тарифа из настроек СДЭК
             if ($tariffCode) {
@@ -1487,14 +1469,6 @@ class ShopOrdersController extends Controller
                         }
                     }
                 }
-            }
-
-            // Логируем все статусы для диагностики
-            if (isset($cdekData['entity']['statuses'])) {
-                Log::info('CDEK all statuses', [
-                    'order_id' => $order->id,
-                    'statuses' => $cdekData['entity']['statuses'],
-                ]);
             }
 
             // Извлекаем статус доставки (проверяем разные возможные места в ответе)
@@ -1536,30 +1510,12 @@ class ShopOrdersController extends Controller
                 }
             }
 
-            Log::info('CDEK delivery status before save', [
-                'order_id' => $order->id,
-                'delivery_status' => $deliveryStatus,
-                'tariff_code' => $tariffCode,
-                'tariff_name' => $tariffName,
-            ]);
-
             // Сохраняем статус в заказ
             $order->delivery_status = json_encode($deliveryStatus, JSON_UNESCAPED_UNICODE);
             $order->save();
 
             // Обновляем заказ из БД для получения актуальных данных
             $order->refresh();
-
-            // Проверяем, что данные сохранились
-            $savedStatus = json_decode($order->delivery_status, true);
-
-            Log::info('CDEK delivery status saved', [
-                'order_id' => $order->id,
-                'delivery_status' => $deliveryStatus,
-                'saved_status' => $savedStatus,
-                'has_tariff_code' => isset($savedStatus['tariff_code']),
-                'has_tariff_name' => isset($savedStatus['tariff_name']),
-            ]);
 
             return response()->json([
                 'success' => true,
