@@ -39,8 +39,27 @@ class SiteInfoService
             $siteInfo['site_logo'] = $siteInfo['site_logo'] ?? null;
             $siteInfo['site_color1'] = $siteInfo['site_color1'] ?? '#1a1a1a';
             $siteInfo['site_color2'] = $siteInfo['site_color2'] ?? '#b8860b';
+            $siteInfo['site_logo'] = self::absoluteAssetUrl($siteInfo['site_logo'], $siteInfo['main_site']);
+            $siteInfo['logo_url'] = $siteInfo['site_logo'];
 
             return $siteInfo;
         });
+    }
+
+    private static function absoluteAssetUrl(?string $path, ?string $mainSite): ?string
+    {
+        $path = trim((string) $path);
+
+        if ($path === '') {
+            return null;
+        }
+
+        if (str_starts_with($path, 'http://') || str_starts_with($path, 'https://')) {
+            return $path;
+        }
+
+        $baseUrl = rtrim((string) ($mainSite ?: config('app.frontend_url', env('FRONTEND_URL', config('app.url')))), '/');
+
+        return $baseUrl.'/'.ltrim($path, '/');
     }
 }

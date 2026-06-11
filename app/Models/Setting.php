@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Cache;
 
 class Setting extends Model
 {
@@ -22,6 +23,21 @@ class Setting extends Model
         'image_width' => 'integer',
         'image_height' => 'integer',
     ];
+
+    protected static function booted(): void
+    {
+        static::saved(fn () => self::clearSettingsCaches());
+        static::deleted(fn () => self::clearSettingsCaches());
+    }
+
+    private static function clearSettingsCaches(): void
+    {
+        Cache::forget('site_settings');
+        Cache::forget('site_info_public');
+        Cache::forget('site_settings_public');
+        Cache::forget('site_seo_settings');
+        Cache::forget('site_info_for_email');
+    }
 
     // Мутатор для правильной обработки типов данных
     public function setValueAttribute($value)

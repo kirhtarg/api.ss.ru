@@ -555,6 +555,7 @@ class SettingController extends Controller
         Cache::forget('site_info_public');
         Cache::forget('site_settings_public');
         Cache::forget('site_seo_settings');
+        Cache::forget('site_info_for_email');
     }
 
     /**

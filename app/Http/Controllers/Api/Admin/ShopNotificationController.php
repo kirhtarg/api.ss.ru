@@ -5,8 +5,12 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\ShopNotificationChannel;
 use App\Models\ShopNotificationEvent;
+use App\Models\ShopOrder;
+use App\Models\ShopPreorder;
+use App\Models\SiteMessage;
 use App\Services\EmailNotificationService;
 use App\Services\TelegramService;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -445,6 +449,7 @@ class ShopNotificationController extends Controller
         try {
             $validator = Validator::make($request->all(), [
                 'email' => 'required|email',
+                'event_type' => 'nullable|in:order_created,payment_received,payment_failed,cancellation_request,order_cancelled,preorder_created,site_message,callback,found_cheaper',
             ]);
 
             if ($validator->fails()) {
@@ -455,39 +460,15 @@ class ShopNotificationController extends Controller
                 ], 422);
             }
 
-            // Получаем информацию о сайте для тестового сообщения
-            $siteName = config('app.name', 'Магазин');
-            $siteUrl = config('app.url', '');
-
-            // Пытаемся получить название сайта из настроек
-            try {
-                $siteNameSetting = \App\Models\Setting::where('key', 'site_name')->first();
-                if ($siteNameSetting && $siteNameSetting->value) {
-                    $siteName = $siteNameSetting->value;
-                }
-            } catch (\Exception $e) {
-                // Игнорируем ошибки получения настроек
-            }
-
-            // Получаем URL фронтенда
-            try {
-                $frontendUrl = config('app.frontend_url', env('FRONTEND_URL', ''));
-                if ($frontendUrl) {
-                    $siteUrl = $frontendUrl;
-                }
-            } catch (\Exception $e) {
-                // Игнорируем ошибки
-            }
-
-            $subject = "Тестовое сообщение - Оповещения магазина {$siteName}";
-            $message = "Это тестовое сообщение для проверки отправки email уведомлений.\n\n";
-            $message .= "Магазин: {$siteName}\n";
-            if ($siteUrl) {
-                $message .= "Сайт: {$siteUrl}\n";
-            }
-            $message .= "\nЕсли вы получили это сообщение, значит канал оповещений настроен правильно!";
-
-            $result = $this->emailService->send($request->email, $subject, $message);
+            $template = $request->input('event_type', 'order_created');
+            $eventType = in_array($template, ['callback', 'found_cheaper'], true) ? 'site_message' : $template;
+            $subject = $this->getTestEmailSubject($template);
+            $result = $this->emailService->sendHtml(
+                $request->email,
+                $subject,
+                $eventType,
+                $this->buildTestEmailData($template)
+            );
 
             if ($result['success']) {
                 return response()->json([
@@ -519,6 +500,133 @@ class ShopNotificationController extends Controller
                 'message' => 'Ошибка тестирования отправки email: '.$e->getMessage(),
             ], 500);
         }
+    }
+
+    private function buildTestEmailData(string $template): array
+    {
+        if ($template === 'preorder_created') {
+            return ['preorder' => $this->makeTestPreorder()];
+        }
+
+        if (in_array($template, ['site_message', 'callback', 'found_cheaper'], true)) {
+            return ['message' => $this->makeTestSiteMessage($template)];
+        }
+
+        $data = ['order' => $this->makeTestOrder()];
+
+        if (in_array($template, ['payment_received', 'payment_failed'], true)) {
+            $data['transaction'] = (object) [
+                'id' => 'test-payment-'.now()->format('YmdHis'),
+                'amount' => 12990,
+                'status' => $template === 'payment_received' ? 'CONFIRMED' : 'REJECTED',
+                'created_at' => now(),
+            ];
+            $data['payment_object'] = [
+                'Status' => $template === 'payment_received' ? 'CONFIRMED' : 'REJECTED',
+                'PaymentId' => 'test-payment-'.now()->format('YmdHis'),
+                'Amount' => 1299000,
+                'ErrorCode' => $template === 'payment_failed' ? 'TEST_ERROR' : null,
+                'Message' => $template === 'payment_failed' ? 'Тестовая ошибка оплаты' : null,
+            ];
+        }
+
+        return $data;
+    }
+
+    private function makeTestOrder(): ShopOrder
+    {
+        $order = new ShopOrder([
+            'order_number' => 'TEST-'.now()->format('Ymd-His'),
+            'customer_name' => 'Тестовый покупатель',
+            'customer_email' => 'customer@example.com',
+            'customer_phone' => '+7 900 000-00-00',
+            'items' => [
+                [
+                    'good_name' => 'Тестовый товар',
+                    'variation_name' => 'Размер M',
+                    'quantity' => 1,
+                    'price' => 12990,
+                    'total' => 12990,
+                ],
+            ],
+            'subtotal' => 12990,
+            'total_amount' => 12990,
+            'total_quantity' => 1,
+            'sale_discount_amount' => 0,
+            'registered_user_discount_amount' => 0,
+            'promo_code_discount_amount' => 0,
+            'birthday_discount_amount' => 0,
+            'bonus_points_to_use' => 0,
+            'delivery_cost' => 0,
+            'payment_method' => 'Тестовая оплата',
+            'shipping_method' => 'Тестовая доставка',
+            'shipping_address' => 'г. Санкт-Петербург, тестовый адрес',
+            'notes' => 'Это тестовое письмо из админки.',
+            'payed' => true,
+            'metadata' => [],
+        ]);
+
+        $order->created_at = Carbon::now();
+
+        return $order;
+    }
+
+    private function makeTestPreorder(): ShopPreorder
+    {
+        $preorder = new ShopPreorder([
+            'good_name' => 'Тестовый товар для предзаказа',
+            'variation_name' => 'Цвет синий',
+            'good_sku' => 'TEST-SKU',
+            'quantity' => 1,
+            'price' => 12990,
+            'total' => 12990,
+            'customer_name' => 'Тестовый покупатель',
+            'customer_email' => 'customer@example.com',
+            'customer_phone' => '+7 900 000-00-00',
+            'notes' => 'Это тестовое письмо из админки.',
+        ]);
+
+        $preorder->created_at = Carbon::now();
+
+        return $preorder;
+    }
+
+    private function makeTestSiteMessage(string $template): SiteMessage
+    {
+        $type = match ($template) {
+            'callback' => 'callback',
+            'found_cheaper' => 'found_cheaper',
+            default => 'message',
+        };
+
+        $message = new SiteMessage([
+            'name' => 'Тестовый клиент',
+            'phone' => '+7 900 000-00-00',
+            'email' => 'customer@example.com',
+            'message' => 'Это тестовое уведомление из админки.',
+            'type' => $type,
+            'good_link' => $type === 'found_cheaper' ? 'https://example.com/test-good' : null,
+            'good_price' => $type === 'found_cheaper' ? 11990 : null,
+        ]);
+
+        $message->created_at = Carbon::now();
+
+        return $message;
+    }
+
+    private function getTestEmailSubject(string $template): string
+    {
+        return match ($template) {
+            'payment_received' => 'Тест: успешная оплата заказа',
+            'payment_failed' => 'Тест: неудачная оплата заказа',
+            'cancellation_request' => 'Тест: заявка на отмену заказа',
+            'order_cancelled' => 'Тест: заказ отменён',
+            'preorder_created' => 'Тест: новый предзаказ',
+            'callback' => 'Тест: запрос обратного звонка',
+            'found_cheaper' => 'Тест: нашёл дешевле',
+            'site_message' => 'Тест: сообщение на сайте',
+            default => 'Тест: новый заказ',
+        };
     }
 
     /**
