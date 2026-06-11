@@ -2722,7 +2722,6 @@ class ShopOrdersController extends Controller
             }
 
             $externalId = $externalId ?: $barcode;
-            $barcode = $barcode ?: $externalId;
 
             $order->update([
                 'russianpost_order_id' => $externalId ? (string) $externalId : null,
@@ -3113,6 +3112,10 @@ class ShopOrdersController extends Controller
             'orderId',
             'shipment-id',
             'shipmentId',
+            'result-id',
+            'resultId',
+            'result-ids',
+            'resultIds',
         ];
 
         $barcode = $this->findScalarByKeys($data, $barcodeKeys);
@@ -3135,8 +3138,11 @@ class ShopOrdersController extends Controller
         }
 
         foreach ($keys as $key) {
-            if (array_key_exists($key, $data) && $this->isNonEmptyScalar($data[$key])) {
-                return $data[$key];
+            if (array_key_exists($key, $data)) {
+                $found = $this->findFirstNonEmptyScalar($data[$key]);
+                if ($found !== null) {
+                    return $found;
+                }
             }
         }
 
@@ -3146,6 +3152,30 @@ class ShopOrdersController extends Controller
                 if ($found !== null) {
                     return $found;
                 }
+            }
+        }
+
+        return null;
+    }
+
+    private function findFirstNonEmptyScalar($value)
+    {
+        if ($this->isNonEmptyScalar($value)) {
+            return $value;
+        }
+
+        if (is_object($value)) {
+            $value = (array) $value;
+        }
+
+        if (! is_array($value)) {
+            return null;
+        }
+
+        foreach ($value as $item) {
+            $found = $this->findFirstNonEmptyScalar($item);
+            if ($found !== null) {
+                return $found;
             }
         }
 
