@@ -2706,9 +2706,23 @@ class ShopOrdersController extends Controller
                 ], 422);
             }
 
-            $item = is_array($data) && array_is_list($data) ? ($data[0] ?? []) : $data;
-            $barcode = $item['barcode'] ?? $item['barcode-item'] ?? $item['id'] ?? null;
-            $externalId = $item['id'] ?? $item['external-id'] ?? $barcode;
+            [$externalId, $barcode] = $this->extractRussianPostCreationIdentifiers($data);
+
+            if (! $externalId && ! $barcode) {
+                Log::warning('Почта России приняла отправление, но не вернула ID/ШПИ', [
+                    'order_id' => $order->id,
+                    'response' => $data,
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Почта России приняла запрос, но не вернула ID отправления/ШПИ. Проверьте отправление в личном кабинете Почты России.',
+                    'data' => ['request_payload' => $payload, 'server_response' => $data],
+                ], 422);
+            }
+
+            $externalId = $externalId ?: $barcode;
+            $barcode = $barcode ?: $externalId;
 
             $order->update([
                 'russianpost_order_id' => $externalId ? (string) $externalId : null,
@@ -2731,6 +2745,7 @@ class ShopOrdersController extends Controller
                     'russianpost_order_id' => $externalId,
                     'barcode' => $barcode,
                     'delivery_status' => ['code' => 'CREATED', 'name' => 'Отправление создано в Почте России'],
+                    'order' => $this->formatOrderForResponse($order->fresh(['status', 'user', 'paymentMethod', 'deliveryMethod', 'manager'])),
                     'server_response' => $data,
                 ],
             ]);
@@ -2896,6 +2911,70 @@ class ShopOrdersController extends Controller
         }
 
         return '';
+    }
+
+    private function extractRussianPostCreationIdentifiers($data): array
+    {
+        $barcodeKeys = [
+            'barcode',
+            'barcode-item',
+            'barcodeItem',
+            'mail-id',
+            'mailId',
+            'tracking-number',
+            'trackingNumber',
+            'tracking',
+        ];
+        $idKeys = [
+            'id',
+            'external-id',
+            'externalId',
+            'order-id',
+            'orderId',
+            'shipment-id',
+            'shipmentId',
+        ];
+
+        $barcode = $this->findScalarByKeys($data, $barcodeKeys);
+        $externalId = $this->findScalarByKeys($data, $idKeys);
+
+        return [
+            $externalId !== null ? (string) $externalId : null,
+            $barcode !== null ? (string) $barcode : null,
+        ];
+    }
+
+    private function findScalarByKeys($data, array $keys)
+    {
+        if (is_object($data)) {
+            $data = (array) $data;
+        }
+
+        if (! is_array($data)) {
+            return null;
+        }
+
+        foreach ($keys as $key) {
+            if (array_key_exists($key, $data) && $this->isNonEmptyScalar($data[$key])) {
+                return $data[$key];
+            }
+        }
+
+        foreach ($data as $value) {
+            if (is_array($value) || is_object($value)) {
+                $found = $this->findScalarByKeys($value, $keys);
+                if ($found !== null) {
+                    return $found;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function isNonEmptyScalar($value): bool
+    {
+        return is_scalar($value) && trim((string) $value) !== '';
     }
 
     private function extractRussianPostPostalCode($value): string
