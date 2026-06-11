@@ -514,6 +514,8 @@ class CdekService
                 'from_location' => [
                     'address' => $this->getSenderAddress(),
                     'code' => $this->getSenderCityCode(),
+                    'postal_code' => $this->settings->sender_postal_code ?: null,
+                    'country_code' => $this->settings->sender_country_code ?: 'RU',
                 ],
                 'packages' => array_map(function ($package) use ($orderData, $isCashOnDelivery) {
 
@@ -861,7 +863,42 @@ class CdekService
      */
     private function getSenderCityCode()
     {
-        return $this->settings->sender_city_code ?? '';
+        if (! $this->settings) {
+            return '';
+        }
+
+        $cityName = trim((string) ($this->settings->sender_city ?? ''));
+        if ($cityName !== '') {
+            $cacheKey = 'cdek_sender_city_code_'.md5(mb_strtolower($cityName));
+            $cachedCode = cache()->get($cacheKey);
+            if ($cachedCode) {
+                return (int) $cachedCode;
+            }
+
+            try {
+                $cities = $this->getCities($cityName);
+                if (is_array($cities) && ! empty($cities)) {
+                    $normalizedCity = mb_strtolower($cityName);
+                    $city = collect($cities)->first(function ($item) use ($normalizedCity) {
+                        $name = mb_strtolower((string) ($item['city'] ?? $item['name'] ?? ''));
+                        return $name === $normalizedCity;
+                    }) ?? $cities[0];
+
+                    if (! empty($city['code'])) {
+                        cache()->put($cacheKey, (int) $city['code'], 86400);
+
+                        return (int) $city['code'];
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::warning('CdekService: failed to resolve sender city code', [
+                    'sender_city' => $cityName,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        return $this->settings->sender_city_code ? (int) $this->settings->sender_city_code : '';
     }
 
     /**

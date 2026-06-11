@@ -250,24 +250,24 @@ class ShopOrder extends Model
                         ->first();
 
                     if ($variationDimensions) {
-                        $weight = $variationDimensions->weight;
-                        $length = $variationDimensions->length;
-                        $width = $variationDimensions->width;
-                        $height = $variationDimensions->height;
+                        $weight = $this->positiveDimensionValue($variationDimensions->weight ?? null);
+                        $length = $this->positiveDimensionValue($variationDimensions->length ?? null);
+                        $width = $this->positiveDimensionValue($variationDimensions->width ?? null);
+                        $height = $this->positiveDimensionValue($variationDimensions->height ?? null);
                     }
                 }
 
-                if ($goodId && ($weight === null && $length === null && $width === null && $height === null)) {
+                if ($goodId && ($weight === null || $length === null || $width === null || $height === null)) {
                     $goodDimensions = DB::table('shop_goods')
                         ->select('weight', 'depth', 'width', 'height')
                         ->where('id', (int) $goodId)
                         ->first();
 
                     if ($goodDimensions) {
-                        $weight = $goodDimensions->weight;
-                        $length = $goodDimensions->depth;
-                        $width = $goodDimensions->width;
-                        $height = $goodDimensions->height;
+                        $weight = $weight ?: $this->positiveDimensionValue($goodDimensions->weight ?? null);
+                        $length = $length ?: $this->positiveDimensionValue($goodDimensions->depth ?? null);
+                        $width = $width ?: $this->positiveDimensionValue($goodDimensions->width ?? null);
+                        $height = $height ?: $this->positiveDimensionValue($goodDimensions->height ?? null);
                     }
                 }
             } catch (\Exception $e) {
@@ -298,14 +298,25 @@ class ShopOrder extends Model
                 'tags' => $itemTags,
                 'bonus_points' => $item['bonus_points'] ?? 0,
                 'total' => $total,
-                'weight' => isset($item['weight']) ? $item['weight'] : ($weight !== null ? (float) $weight : null),
-                'length' => isset($item['length']) ? $item['length'] : ($length !== null ? (float) $length : null),
-                'width' => isset($item['width']) ? $item['width'] : ($width !== null ? (float) $width : null),
-                'height' => isset($item['height']) ? $item['height'] : ($height !== null ? (float) $height : null),
+                'weight' => $this->positiveDimensionValue($item['weight'] ?? null) ?? ($weight !== null ? (float) $weight : null),
+                'length' => $this->positiveDimensionValue($item['length'] ?? $item['depth'] ?? null) ?? ($length !== null ? (float) $length : null),
+                'width' => $this->positiveDimensionValue($item['width'] ?? null) ?? ($width !== null ? (float) $width : null),
+                'height' => $this->positiveDimensionValue($item['height'] ?? null) ?? ($height !== null ? (float) $height : null),
             ];
 
             return $result;
         }, $items);
+    }
+
+    private function positiveDimensionValue($value): ?float
+    {
+        if (! is_numeric($value)) {
+            return null;
+        }
+
+        $value = (float) $value;
+
+        return $value > 0 ? $value : null;
     }
 
     private function getGoodInfo($goodId)
