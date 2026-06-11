@@ -2983,7 +2983,7 @@ class ShopOrdersController extends Controller
 
     private function buildRussianPostOrderPayload(ShopOrder $order, ShopRussianPostSettings $settings, string $postalCode): array
     {
-        $cargo = $this->calculateOrderDeliveryCargo($order, $settings);
+        $cargo = $this->calculateRussianPostOrderCargo($order, $settings);
         [$surname, $givenName, $middleName] = $this->splitCustomerName($order->customer_name);
         $indexFrom = preg_replace('/\D+/', '', (string) $settings->sender_postal_code);
         $postOfficeCode = $this->resolveRussianPostSenderPostOfficeCode($order, $settings);
@@ -3007,13 +3007,13 @@ class ShopOrdersController extends Controller
             'room-to' => $address['room'] ?? null,
             'mail-category' => 'ORDINARY',
             'mail-type' => 'ONLINE_PARCEL',
-            'mass' => (int) max(1, round($cargo['totalWeight'] * 1000)),
+            'mass' => (int) max(1, round($cargo['weight'] * 1000)),
             'order-num' => $order->order_number,
             'tel-address' => preg_replace('/\D+/', '', (string) $order->customer_phone),
             'dimension' => [
-                'length' => (int) max(1, round($cargo['length'] * 100)),
-                'width' => (int) max(1, round($cargo['width'] * 100)),
-                'height' => (int) max(1, round($cargo['height'] * 100)),
+                'length' => (int) max(1, round($cargo['length'])),
+                'width' => (int) max(1, round($cargo['width'])),
+                'height' => (int) max(1, round($cargo['height'])),
             ],
             'fragile' => false,
             'completeness-checking' => false,
@@ -3034,6 +3034,7 @@ class ShopOrdersController extends Controller
             $metadata['russianpost_postoffice_code'] ?? null,
             $metadata['russianpost_tariff']['postoffice-code'] ?? null,
             $metadata['russianpost_tariff']['postoffice_code'] ?? null,
+            $settings->sender_postoffice_code ?? null,
             $settings->sender_postal_code,
         ];
 
@@ -3389,6 +3390,40 @@ class ShopOrdersController extends Controller
                 'term' => true,
             ],
         ];
+    }
+
+    private function calculateRussianPostOrderCargo(ShopOrder $order, ShopRussianPostSettings $settings): array
+    {
+        $items = $order->getItemsWithDetails();
+        $weight = 0.0;
+        $length = 0.0;
+        $width = 0.0;
+        $height = 0.0;
+
+        foreach ($items as $item) {
+            $quantity = max(1, (int) ($item['quantity'] ?? 1));
+            $itemWeight = $this->positiveDeliveryNumber($item['weight'] ?? null) ?? (float) ($settings->default_weight ?? 0.5);
+            $itemLength = $this->positiveDeliveryNumber($item['length'] ?? ($item['depth'] ?? null)) ?? (float) ($settings->default_length ?? 10);
+            $itemWidth = $this->positiveDeliveryNumber($item['width'] ?? null) ?? (float) ($settings->default_width ?? 10);
+            $itemHeight = $this->positiveDeliveryNumber($item['height'] ?? null) ?? (float) ($settings->default_height ?? 10);
+
+            $weight += $itemWeight * $quantity;
+            $length = max($length, $itemLength);
+            $width = max($width, $itemWidth);
+            $height += $itemHeight * $quantity;
+        }
+
+        return [
+            'weight' => $weight > 0 ? $weight : (float) ($settings->default_weight ?? 0.5),
+            'length' => $length > 0 ? $length : (float) ($settings->default_length ?? 10),
+            'width' => $width > 0 ? $width : (float) ($settings->default_width ?? 10),
+            'height' => $height > 0 ? $height : (float) ($settings->default_height ?? 10),
+        ];
+    }
+
+    private function positiveDeliveryNumber($value): ?float
+    {
+        return is_numeric($value) && (float) $value > 0 ? (float) $value : null;
     }
 
     private function splitCustomerName(?string $name): array

@@ -24,6 +24,7 @@ class ShopRussianPostSettings extends Model
         'sender_house',
         'sender_flat',
         'sender_postal_code',
+        'sender_postoffice_code',
         'default_weight',
         'default_length',
         'default_width',
