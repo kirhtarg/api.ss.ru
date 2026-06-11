@@ -2680,9 +2680,15 @@ class ShopOrdersController extends Controller
             }
 
             $metadata = is_array($order->metadata) ? $order->metadata : [];
-            $postalCode = preg_replace('/\D+/', '', (string) ($metadata['russianpost_postal_code'] ?? ''));
+            $postalCode = $this->resolveRussianPostPostalCode($order, $request);
             if ($postalCode === '') {
                 return response()->json(['success' => false, 'message' => 'Для создания отправления Почты России не указан индекс получателя/ОПС'], 422);
+            }
+
+            if (($metadata['russianpost_postal_code'] ?? null) !== $postalCode) {
+                $metadata['russianpost_postal_code'] = $postalCode;
+                $order->metadata = $metadata;
+                $order->save();
             }
 
             $payload = [$this->buildRussianPostOrderPayload($order, $settings, $postalCode)];
@@ -2862,6 +2868,76 @@ class ShopOrdersController extends Controller
             'completeness-checking' => false,
             'sms-notice-recipient' => 0,
         ];
+    }
+
+    private function resolveRussianPostPostalCode(ShopOrder $order, Request $request): string
+    {
+        $metadata = is_array($order->metadata) ? $order->metadata : [];
+
+        $candidates = [
+            $request->input('postal_code'),
+            $request->input('russianpost_postal_code'),
+            $metadata['russianpost_postal_code'] ?? null,
+            $metadata['russianpost_office']['postal_code'] ?? null,
+            $metadata['russianpost_office']['id'] ?? null,
+            $metadata['russianpost_office']['raw']['postal-code'] ?? null,
+            $metadata['russianpost_office'] ?? null,
+            $metadata['russianpost_tariff']['postal_code'] ?? null,
+            $metadata['russianpost_tariff'] ?? null,
+            $metadata['russianpost_address'] ?? null,
+            $order->shipping_address,
+        ];
+
+        foreach ($candidates as $candidate) {
+            $postalCode = $this->extractRussianPostPostalCode($candidate);
+            if ($postalCode !== '') {
+                return $postalCode;
+            }
+        }
+
+        return '';
+    }
+
+    private function extractRussianPostPostalCode($value): string
+    {
+        if ($value === null) {
+            return '';
+        }
+
+        if (is_array($value)) {
+            foreach (['postal_code', 'postal-code', 'postalCode', 'index', 'id', 'code'] as $key) {
+                if (array_key_exists($key, $value)) {
+                    $postalCode = $this->extractRussianPostPostalCode($value[$key]);
+                    if ($postalCode !== '') {
+                        return $postalCode;
+                    }
+                }
+            }
+
+            foreach ($value as $item) {
+                $postalCode = $this->extractRussianPostPostalCode($item);
+                if ($postalCode !== '') {
+                    return $postalCode;
+                }
+            }
+
+            return '';
+        }
+
+        if (is_object($value)) {
+            return $this->extractRussianPostPostalCode((array) $value);
+        }
+
+        $text = trim((string) $value);
+        if ($text === '') {
+            return '';
+        }
+
+        if (preg_match('/(?<!\d)(\d{6})(?!\d)/', $text, $matches)) {
+            return $matches[1];
+        }
+
+        return '';
     }
 
     private function calculateOrderDeliveryCargo(ShopOrder $order, $settings): array
