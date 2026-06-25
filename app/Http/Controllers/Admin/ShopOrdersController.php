@@ -758,6 +758,10 @@ class ShopOrdersController extends Controller
                 'is_restore' => 'sometimes|boolean',
                 'take_to_work' => 'sometimes|boolean',
                 'comment' => 'nullable|string|max:2000',
+                'restore_items' => 'sometimes|array',
+                'restore_items.*.good_id' => 'required_with:restore_items|integer',
+                'restore_items.*.variation_id' => 'nullable|integer',
+                'restore_items.*.quantity' => 'required_with:restore_items|integer|min:0',
             ]);
 
             if ($validator->fails()) {
@@ -783,7 +787,10 @@ class ShopOrdersController extends Controller
 
             // Если новый статус - отмена заказа, возвращаем товары на склад и бонусы пользователю
             if ($newStatus->is_cancelled) {
-                $this->restoreOrderItemsToStock($order);
+                $this->restoreOrderItemsToStock(
+                    $order,
+                    $request->has('restore_items') ? $request->input('restore_items', []) : null
+                );
                 $this->restoreUserBonuses($order);
                 // Снимаем отметку о заявке на отмену при установке статуса отмены
                 if ($order->cancellation_request) {
@@ -1041,7 +1048,7 @@ class ShopOrdersController extends Controller
      * Возврат товаров заказа на склад при отмене
      * Обновляет stock_quantity в таблицах shop_goods или shop_good_variations
      */
-    private function restoreOrderItemsToStock(ShopOrder $order): void
+    private function restoreOrderItemsToStock(ShopOrder $order, ?array $restoreItems = null): void
     {
         try {
             $items = is_string($order->items) ? json_decode($order->items, true) : $order->items;
@@ -1054,12 +1061,41 @@ class ShopOrdersController extends Controller
                 return;
             }
 
+            $restoreQuantities = null;
+            if (is_array($restoreItems)) {
+                $restoreQuantities = [];
+
+                foreach ($restoreItems as $restoreItem) {
+                    $goodId = $restoreItem['good_id'] ?? null;
+                    if (!$goodId) {
+                        continue;
+                    }
+
+                    $variationId = $restoreItem['variation_id'] ?? null;
+                    $key = $this->buildOrderItemStockKey($goodId, $variationId);
+                    $restoreQuantities[$key] = max(0, (int) ($restoreItem['quantity'] ?? 0));
+                }
+            }
+
             foreach ($items as $item) {
                 $goodId = $item['good_id'] ?? null;
                 $variationId = $item['variation_id'] ?? null;
                 $quantity = (int) ($item['quantity'] ?? 0);
 
-                if (!$goodId || $quantity <= 0) {
+                if (!$goodId) {
+                    continue;
+                }
+
+                if ($restoreQuantities !== null) {
+                    $key = $this->buildOrderItemStockKey($goodId, $variationId);
+                    if (!array_key_exists($key, $restoreQuantities)) {
+                        continue;
+                    }
+
+                    $quantity = $restoreQuantities[$key];
+                }
+
+                if ($quantity <= 0) {
                     continue;
                 }
 
@@ -1105,6 +1141,11 @@ class ShopOrdersController extends Controller
                 'error' => $e->getTraceAsString(),
             ]);
         }
+    }
+
+    private function buildOrderItemStockKey($goodId, $variationId = null): string
+    {
+        return (int) $goodId . ':' . ($variationId ? (int) $variationId : 'main');
     }
 
     /**

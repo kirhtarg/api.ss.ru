@@ -9,6 +9,7 @@ use App\Models\ShopGoodProperty;
 use App\Models\ShopGoodVariation;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 
@@ -914,7 +915,7 @@ class ShopGoodVariationsController extends Controller
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
-                'message' => 'РћС€РёР±РєР° РІР°Р»РёРґР°С†РёРё',
+                'message' => 'Ошибка валидации',
                 'errors' => $validator->errors(),
             ], 422);
         }
@@ -996,7 +997,7 @@ class ShopGoodVariationsController extends Controller
 
                         return response()->json([
                             'success' => false,
-                            'message' => 'РўР°РєР°СЏ РІР°СЂРёР°С†РёСЏ СѓР¶Рµ СЃСѓС‰РµСЃС‚РІСѓРµС‚: '.$combination,
+                            'message' => 'Такая вариация уже существует: '.$combination,
                         ], 422);
                     }
                 }
@@ -1037,16 +1038,31 @@ class ShopGoodVariationsController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Р’Р°СЂРёР°С†РёСЏ СѓСЃРїРµС€РЅРѕ СЃРѕР·РґР°РЅР°',
+                'message' => 'Вариация успешно создана',
                 'data' => $variation,
             ], 201);
 
+        } catch (QueryException $e) {
+            DB::rollBack();
+
+            $message = $e->getMessage();
+            if ($e->getCode() === '23000' && str_contains($message, 'shop_good_variations') && str_contains($message, 'sku')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Вариации могут иметь одинаковые артикулы, но в базе данных остался уникальный индекс на SKU вариаций. Выполните миграции и повторите создание.',
+                ], 422);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка создания вариации: '.$message,
+            ], 500);
         } catch (\Exception $e) {
             DB::rollBack();
 
             return response()->json([
                 'success' => false,
-                'message' => 'РћС€РёР±РєР° СЃРѕР·РґР°РЅРёСЏ РІР°СЂРёР°С†РёРё: '.$e->getMessage(),
+                'message' => 'Ошибка создания вариации: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -2492,9 +2508,16 @@ class ShopGoodVariationsController extends Controller
      */
     public function getVariationIdsByGoods(Request $request): JsonResponse
     {
+        if ($request->get('selection_mode') === 'filters') {
+            $goodIds = $this->resolveGoodsIdsFromSelectionFilters($request);
+            $request->merge(['good_ids' => $goodIds]);
+        }
+
+        $goodIdsItemRule = $request->get('selection_mode') === 'filters' ? 'integer' : 'exists:shop_goods,id';
+
         $validator = Validator::make($request->all(), [
             'good_ids' => 'required|array',
-            'good_ids.*' => 'exists:shop_goods,id',
+            'good_ids.*' => $goodIdsItemRule,
         ]);
 
         if ($validator->fails()) {
@@ -2538,9 +2561,16 @@ class ShopGoodVariationsController extends Controller
      */
     public function findZeroStockNoMediaVariations(Request $request): JsonResponse
     {
+        if ($request->get('selection_mode') === 'filters') {
+            $goodIds = $this->resolveGoodsIdsFromSelectionFilters($request);
+            $request->merge(['good_ids' => $goodIds]);
+        }
+
+        $goodIdsItemRule = $request->get('selection_mode') === 'filters' ? 'integer' : 'exists:shop_goods,id';
+
         $validator = Validator::make($request->all(), [
             'good_ids' => 'required|array',
-            'good_ids.*' => 'exists:shop_goods,id',
+            'good_ids.*' => $goodIdsItemRule,
         ]);
 
         if ($validator->fails()) {

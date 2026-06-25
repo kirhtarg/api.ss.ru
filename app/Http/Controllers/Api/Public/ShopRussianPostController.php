@@ -227,6 +227,10 @@ class ShopRussianPostController extends Controller
                 ]);
             }
 
+            if (! $resolvedOffice) {
+                $resolvedOffice = $this->resolveOfficeByPostalCode($settings, $indexTo);
+            }
+
             $cargo = $this->calculateCargo($cartItems, $settings);
             $payload = [
                 'index-from' => preg_replace('/\D+/', '', (string) $settings->sender_postal_code),
@@ -508,6 +512,28 @@ class ShopRussianPostController extends Controller
         }
 
         return null;
+    }
+
+    private function resolveOfficeByPostalCode(ShopRussianPostSettings $settings, string $postalCode): ?array
+    {
+        $postalCode = preg_replace('/\D+/', '', $postalCode);
+        if ($postalCode === '') {
+            return null;
+        }
+
+        $cacheKey = 'russianpost_office_by_postal_code_v1_'.$postalCode;
+        if (Cache::has($cacheKey)) {
+            return Cache::get($cacheKey);
+        }
+
+        $offices = $this->loadOfficeDetails($settings, [$postalCode]);
+        $office = $offices[0] ?? ($this->buildOfficeStubsFromCodes([$postalCode])[0] ?? null);
+
+        if ($office) {
+            Cache::put($cacheKey, $office, now()->addDays(7));
+        }
+
+        return $office;
     }
 
     private function pickPrimaryOffice(array $offices): ?array
