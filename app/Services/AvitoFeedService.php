@@ -727,9 +727,10 @@ class AvitoFeedService
 
     protected function formatDescription($good)
     {
-        $desc = $this->cleanHtml($good->description ?? '');
-        $brief = $this->cleanHtml($good->short_description ?? '');
-        $fullDesc = $this->hasVisibleText($desc) ? $desc : $brief;
+        $descriptionSource = $this->hasVisibleText($good->description ?? '')
+            ? ($good->description ?? '')
+            : ($good->short_description ?? '');
+        $fullDesc = $this->cleanHtml($descriptionSource);
 
         // 1. Название товара
         $result = "<strong>" . $good->name . "</strong><br>";

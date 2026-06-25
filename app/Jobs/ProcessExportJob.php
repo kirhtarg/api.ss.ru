@@ -1464,7 +1464,11 @@ class ProcessExportJob implements ShouldQueue
             case 'width':
             case 'height':
             case 'length':
-                return $this->getDimensionValueForExport($good, $variation, $field);
+                return $this->applyDimensionMultiplier(
+                    $field,
+                    $this->getDimensionValueForExport($good, $variation, $field),
+                    $config
+                );
             case 'category':
             case 'categories':
                 if ($isArray) {
@@ -1647,6 +1651,33 @@ class ProcessExportJob implements ShouldQueue
         }
 
         return '';
+    }
+
+    protected function applyDimensionMultiplier(string $field, $value, array $config)
+    {
+        if ($value === '' || $value === null) {
+            return '';
+        }
+
+        if (!is_numeric(str_replace(',', '.', (string) $value))) {
+            return $value;
+        }
+
+        $multipliers = $config['dimension_multipliers'] ?? [];
+        $multiplier = $this->normalizeDimensionMultiplier($multipliers[$field] ?? 1);
+
+        return (float) str_replace(',', '.', (string) $value) * $multiplier;
+    }
+
+    protected function normalizeDimensionMultiplier($value): float
+    {
+        if ($value === null || $value === '') {
+            return 1.0;
+        }
+
+        $numeric = (float) str_replace(',', '.', (string) $value);
+
+        return $numeric > 0 ? $numeric : 1.0;
     }
 
     protected function getFullStockValue($item): int
