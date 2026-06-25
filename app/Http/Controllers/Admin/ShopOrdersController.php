@@ -2723,12 +2723,16 @@ class ShopOrdersController extends Controller
                 return response()->json(['success' => false, 'message' => 'У заказа нет ID отправления Почты России'], 400);
             }
 
-            $status = [
-                'code' => 'CREATED',
-                'name' => 'Отправление создано/ожидает обработки Почтой России',
-                'external_id' => $order->russianpost_order_id,
-                'barcode' => $order->russianpost_barcode,
-            ];
+            $status = $order->russianpost_barcode
+                ? $this->fetchRussianPostTrackingStatus($order)
+                : [
+                    'code' => 'CREATED',
+                    'name' => 'Отправление создано, ШПИ пока не получен',
+                    'external_id' => $order->russianpost_order_id,
+                    'barcode' => null,
+                    'tracking_available' => false,
+                ];
+
             $order->update(['delivery_status' => json_encode($status, JSON_UNESCAPED_UNICODE)]);
 
             return response()->json([
@@ -2736,12 +2740,183 @@ class ShopOrdersController extends Controller
                 'message' => 'Статус доставки обновлен',
                 'data' => [
                     'delivery_status' => $status,
+                    'russianpost_order_id' => $order->russianpost_order_id,
+                    'barcode' => $order->russianpost_barcode,
                     'order' => $this->formatOrderForResponse($order->fresh(['status', 'user', 'paymentMethod', 'deliveryMethod', 'manager'])),
                 ],
             ]);
         } catch (\Throwable $e) {
             return response()->json(['success' => false, 'message' => 'Ошибка проверки статуса Почты России: '.$e->getMessage()], 500);
         }
+    }
+
+    private function fetchRussianPostTrackingStatus(ShopOrder $order): array
+    {
+        $settings = ShopRussianPostSettings::getActive();
+        if (! $settings || ! $settings->login || ! $settings->password) {
+            throw new \RuntimeException('Активные настройки Почты России заполнены не полностью');
+        }
+
+        [$login, $password] = $this->russianPostTrackingCredentials($settings);
+        $barcode = preg_replace('/\s+/', '', (string) $order->russianpost_barcode);
+        $payload = $this->buildRussianPostTrackingSoapPayload($barcode, $login, $password);
+
+        $response = Http::withOptions([
+            'verify' => filter_var(config('services.russianpost.verify_ssl', true), FILTER_VALIDATE_BOOLEAN),
+            'timeout' => 30,
+        ])->withHeaders([
+            'Content-Type' => 'text/xml; charset=utf-8',
+            'Accept' => 'text/xml, application/xml',
+            'SOAPAction' => 'getOperationHistory',
+        ])->withBody($payload, 'text/xml; charset=utf-8')->post('https://tracking.russianpost.ru/fc');
+
+        if (! $response->successful()) {
+            throw new \RuntimeException($this->extractRussianPostTrackingError($response->body()) ?: 'Почта России не вернула историю отправления');
+        }
+
+        $trackingError = $this->extractRussianPostTrackingError($response->body());
+        if ($trackingError) {
+            throw new \RuntimeException($trackingError);
+        }
+
+        $history = $this->parseRussianPostTrackingHistory($response->body());
+        if (empty($history)) {
+            return [
+                'code' => 'NO_HISTORY',
+                'name' => 'История отправления пока не найдена',
+                'external_id' => $order->russianpost_order_id,
+                'barcode' => $barcode,
+                'tracking_available' => true,
+                'history' => [],
+            ];
+        }
+
+        $last = end($history) ?: [];
+        $operation = trim(implode(' / ', array_filter([
+            $last['operation_type'] ?? null,
+            $last['operation_attribute'] ?? null,
+        ])));
+
+        return [
+            'code' => $last['operation_type'] ?? 'TRACKING',
+            'name' => $operation ?: 'Статус Почты России обновлен',
+            'date' => $last['date'] ?? null,
+            'city' => $last['city'] ?? null,
+            'office_index' => $last['office_index'] ?? null,
+            'external_id' => $order->russianpost_order_id,
+            'barcode' => $barcode,
+            'tracking_available' => true,
+            'history' => $history,
+        ];
+    }
+
+    private function russianPostTrackingCredentials(ShopRussianPostSettings $settings): array
+    {
+        $login = (string) $settings->login;
+        $password = trim((string) $settings->password);
+        $value = str_starts_with(mb_strtolower($password), 'basic ')
+            ? trim(mb_substr($password, 6))
+            : $password;
+
+        $decoded = base64_decode($value, true);
+        if ($decoded !== false && str_contains($decoded, ':')) {
+            [$decodedLogin, $decodedPassword] = explode(':', $decoded, 2);
+            return [$decodedLogin ?: $login, $decodedPassword];
+        }
+
+        return [$login, $password];
+    }
+
+    private function buildRussianPostTrackingSoapPayload(string $barcode, string $login, string $password): string
+    {
+        $barcode = htmlspecialchars($barcode, ENT_XML1 | ENT_COMPAT, 'UTF-8');
+        $login = htmlspecialchars($login, ENT_XML1 | ENT_COMPAT, 'UTF-8');
+        $password = htmlspecialchars($password, ENT_XML1 | ENT_COMPAT, 'UTF-8');
+
+        return <<<XML
+<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:oper="http://russianpost.org/operationhistory" xmlns:data="http://russianpost.org/operationhistory/data">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <oper:getOperationHistory>
+      <data:OperationHistoryRequest>
+        <data:Barcode>{$barcode}</data:Barcode>
+        <data:MessageType>0</data:MessageType>
+        <data:Language>RUS</data:Language>
+      </data:OperationHistoryRequest>
+      <data:AuthorizationHeader soapenv:mustUnderstand="1">
+        <data:login>{$login}</data:login>
+        <data:password>{$password}</data:password>
+      </data:AuthorizationHeader>
+    </oper:getOperationHistory>
+  </soapenv:Body>
+</soapenv:Envelope>
+XML;
+    }
+
+    private function parseRussianPostTrackingHistory(string $xml): array
+    {
+        $prev = libxml_use_internal_errors(true);
+        $root = simplexml_load_string($xml);
+        libxml_clear_errors();
+        libxml_use_internal_errors($prev);
+
+        if (! $root) {
+            return [];
+        }
+
+        $records = $root->xpath('//*[local-name()="historyRecord"]') ?: [];
+        $history = [];
+
+        foreach ($records as $record) {
+            $history[] = [
+                'date' => $this->xmlFindText($record, 'OperationParameters', 'OperationDate'),
+                'operation_type' => $this->xmlFindText($record, 'OperationParameters', 'OperType', 'Name'),
+                'operation_attribute' => $this->xmlFindText($record, 'OperationParameters', 'OperAttr', 'Name'),
+                'city' => $this->xmlFindText($record, 'AddressParameters', 'OperationAddress', 'Description'),
+                'office_index' => $this->xmlFindText($record, 'AddressParameters', 'OperationAddress', 'Index'),
+            ];
+        }
+
+        usort($history, function ($a, $b) {
+            return strtotime((string) ($a['date'] ?? '')) <=> strtotime((string) ($b['date'] ?? ''));
+        });
+
+        return $history;
+    }
+
+    private function extractRussianPostTrackingError(string $xml): ?string
+    {
+        if ($xml === '') {
+            return null;
+        }
+
+        $prev = libxml_use_internal_errors(true);
+        $root = simplexml_load_string($xml);
+        libxml_clear_errors();
+        libxml_use_internal_errors($prev);
+
+        if (! $root) {
+            return null;
+        }
+
+        return $this->xmlFindText($root, 'faultstring')
+            ?: $this->xmlFindText($root, 'Message');
+    }
+
+    private function xmlFindText(\SimpleXMLElement $node, string ...$path): ?string
+    {
+        $current = $node;
+        foreach ($path as $name) {
+            $found = $current->xpath('./*[local-name()="'.$name.'"]');
+            if (! $found || ! isset($found[0])) {
+                return null;
+            }
+            $current = $found[0];
+        }
+
+        $value = trim((string) $current);
+        return $value !== '' ? $value : null;
     }
 
     private function buildDellinOrderPayload(ShopOrder $order, ShopDellinSettings $settings, string $deliveryType, ?string $terminalId, ?string $deliveryAddress): array

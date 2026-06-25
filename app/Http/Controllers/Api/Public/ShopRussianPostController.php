@@ -204,9 +204,19 @@ class ShopRussianPostController extends Controller
 
             $deliveryType = $request->query('delivery_type');
             $indexTo = preg_replace('/\D+/', '', (string) $request->query('postal_code', ''));
+            $resolvedOffice = null;
+            $resolvedAddress = $this->buildAddress($request);
 
             if ($indexTo === '' && $deliveryType === 'address') {
-                $indexTo = $this->normalizeAddressIndex($settings, $this->buildAddress($request));
+                $indexTo = $this->normalizeAddressIndex($settings, $resolvedAddress);
+
+                if ($indexTo === '') {
+                    $fallbackOffice = $this->resolveCityOffice($settings, (string) $request->query('city'), $resolvedAddress);
+                    if ($fallbackOffice) {
+                        $resolvedOffice = $fallbackOffice;
+                        $indexTo = preg_replace('/\D+/', '', (string) ($fallbackOffice['postal_code'] ?? $fallbackOffice['id'] ?? ''));
+                    }
+                }
             }
 
             if ($indexTo === '') {
@@ -272,17 +282,23 @@ class ShopRussianPostController extends Controller
                 'data' => [[
                     'code' => 'russianpost_'.$deliveryType,
                     'name' => $deliveryType === 'address' ? 'Почта России до адреса' : 'Почта России до отделения',
-                    'description' => $deliveryType === 'address' ? $this->buildAddress($request) : 'Индекс отделения: '.$indexTo,
+                    'description' => $deliveryType === 'address' ? $resolvedAddress : 'Индекс отделения: '.$indexTo,
                     'cost' => $cost,
                     'cost_value' => $cost,
                     'type' => $deliveryType,
                     'postal_code' => $indexTo,
+                    'resolved_postal_code' => $indexTo,
+                    'resolved_address' => $resolvedAddress,
+                    'resolved_office' => $resolvedOffice,
                     'period' => $this->extractPeriod($data),
                 ]],
                 'meta' => [
                     'tariff_source' => $tariffSource,
                     'request_payload' => $payload,
                     'server_response' => $data,
+                    'resolved_postal_code' => $indexTo,
+                    'resolved_address' => $resolvedAddress,
+                    'resolved_office' => $resolvedOffice,
                 ],
             ]);
         } catch (\Throwable $e) {
@@ -446,6 +462,69 @@ class ShopRussianPostController extends Controller
             $request->query('street'),
             $request->query('house') ? 'д. '.$request->query('house') : null,
         ])));
+    }
+
+    private function resolveCityOffice(ShopRussianPostSettings $settings, string $city, string $address = ''): ?array
+    {
+        $city = trim($city);
+        if ($city === '') {
+            return null;
+        }
+
+        $cacheKey = 'russianpost_city_office_v1_'.md5($city.'|'.$address);
+        if (Cache::has($cacheKey)) {
+            return Cache::get($cacheKey);
+        }
+
+        $queries = array_values(array_unique(array_filter([
+            $address,
+            $city.', главпочтамт',
+            $city.', центральное отделение',
+            $city,
+        ])));
+
+        foreach ($queries as $query) {
+            $result = $this->getOfficesByAddress($settings, $query, 10);
+            $offices = $result['offices'] ?? [];
+            $codes = $result['codes'] ?? [];
+
+            if (! empty($offices)) {
+                $office = $this->pickPrimaryOffice($offices);
+                Cache::put($cacheKey, $office, now()->addDays(7));
+                return $office;
+            }
+
+            if (! empty($codes)) {
+                $details = $this->loadOfficeDetails($settings, array_slice($codes, 0, 10));
+                $office = ! empty($details)
+                    ? $this->pickPrimaryOffice($details)
+                    : ($this->buildOfficeStubsFromCodes($codes)[0] ?? null);
+
+                if ($office) {
+                    Cache::put($cacheKey, $office, now()->addDays(7));
+                    return $office;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function pickPrimaryOffice(array $offices): ?array
+    {
+        if (empty($offices)) {
+            return null;
+        }
+
+        usort($offices, function ($a, $b) {
+            $aText = mb_strtolower(($a['name'] ?? '').' '.($a['address'] ?? ''));
+            $bText = mb_strtolower(($b['name'] ?? '').' '.($b['address'] ?? ''));
+            $aScore = (str_contains($aText, 'главпочтамт') ? 0 : 10) + (str_contains($aText, 'централь') ? 0 : 1);
+            $bScore = (str_contains($bText, 'главпочтамт') ? 0 : 10) + (str_contains($bText, 'централь') ? 0 : 1);
+            return $aScore <=> $bScore;
+        });
+
+        return $offices[0] ?? null;
     }
 
     private function getOfficeCodesByAddress(ShopRussianPostSettings $settings, string $address, int $top = 50): array
