@@ -46,7 +46,7 @@ class ShopGoodsController extends Controller
             'label:id,name,color',
             'properties:id,name,slug',
             'images:id,good_id,file_path,alt_text,is_main,sort_order',
-            'variations:id,good_id,name,sku,price,sale_price,demping_price,show_demping,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,is_active,supplier',
+            'variations:id,good_id,name,sku,price,sale_price,demping_price,show_demping,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,weight,length,width,height,is_active,supplier',
             'variations.images:id,variation_id,file_path,alt_text,is_main,sort_order',
         ])->withCount('variations');
 
@@ -1310,6 +1310,17 @@ class ShopGoodsController extends Controller
             // ТОЛЬКО ПОДСЧ§ЕТ СТЧ ОК - без загрузки данных
             $goodsIdsQuery = clone $query;
             $goodsIdsQuery->select('shop_goods.id')->distinct();
+
+            if ($request->boolean('aggregate_variations', false)) {
+                $goodsCount = (clone $goodsIdsQuery)->count();
+
+                return response()->json([
+                    'success' => true,
+                    'count' => (int) $goodsCount,
+                    'goods_count' => (int) $goodsCount,
+                    'variations_count' => 0,
+                ]);
+            }
 
             $goodsWithoutVariations = DB::table('shop_goods')
                 ->whereIn('shop_goods.id', clone $goodsIdsQuery)

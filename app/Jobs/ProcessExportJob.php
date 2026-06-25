@@ -266,7 +266,7 @@ class ProcessExportJob implements ShouldQueue
         $variationRelation = function ($variationQuery) use ($filters) {
             $variationQuery->select([
                 'id', 'good_id', 'name', 'sku', 'price', 'sale_price', 'demping_price', 'show_demping',
-                'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity', 'is_active', 'supplier',
+                'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity', 'weight', 'length', 'width', 'height', 'is_active', 'supplier',
             ]);
 
             if ($this->hasExportVariationRowFilters($filters)) {
@@ -1342,7 +1342,12 @@ class ProcessExportJob implements ShouldQueue
         foreach ($goods as $good) {
             $hasVariations = $good->variations && $good->variations->count() > 0;
 
-            if ($hasVariations) {
+            if (!empty($config['aggregate_variations'])) {
+                $row = $this->createExportRow($good, $config, $rowCounter);
+                $exportRows[] = $row;
+                $rowCounter++;
+            }
+            elseif ($hasVariations) {
                 // Создаем строку для каждой вариации
                 foreach ($good->variations as $variation) {
                     $row = $this->createExportRow($good, $config, $rowCounter, $variation);
@@ -1426,6 +1431,9 @@ class ProcessExportJob implements ShouldQueue
             case 'short_description':
                 return $isArray ? ($good['short_description'] ?? '') : $good->short_description;
             case 'price':
+                if (!empty($config['aggregate_variations'])) {
+                    return $this->getAggregatedMinVariationPrice($good);
+                }
                 return $isArray ? ($variation['price'] ?? $good['price'] ?? 0) : ($variation->price ?? $good->price);
             case 'sale_price':
                 if ($variation) {
@@ -1441,11 +1449,22 @@ class ProcessExportJob implements ShouldQueue
                 return $isArray ? ($good['demping_price'] ?? 0) : $good->demping_price;
             case 'stock_quantity':
                 return $isArray ? ($variation['stock_quantity'] ?? $good['stock_quantity'] ?? 0) : ($variation->stock_quantity ?? $good->stock_quantity);
+            case 'full_stock':
+                if (!empty($config['aggregate_variations'])) {
+                    return $this->getAggregatedFullStockValue($good);
+                }
+
+                return $this->getFullStockValue($variation ?: $good);
             case 'remote_stock':
             case 'remote_stock_quantity':
                 return $isArray ? ($variation['remote_stock_quantity'] ?? $good['remote_stock_quantity'] ?? '') : ($variation->remote_stock_quantity ?? $good->remote_stock_quantity);
             case 'fast_remote_stock_quantity':
                 return $isArray ? ($variation['fast_remote_stock_quantity'] ?? $good['fast_remote_stock_quantity'] ?? '') : ($variation->fast_remote_stock_quantity ?? $good->fast_remote_stock_quantity);
+            case 'weight':
+            case 'width':
+            case 'height':
+            case 'length':
+                return $this->getDimensionValueForExport($good, $variation, $field);
             case 'category':
             case 'categories':
                 if ($isArray) {
@@ -1491,8 +1510,18 @@ class ProcessExportJob implements ShouldQueue
                 return $this->formatGoodProperties($good);
             case 'images':
             case 'related_images':
+                if (!empty($config['aggregate_variations'])) {
+                    return implode(', ', array_slice($this->getAggregatedImageUrls($good, 10), 1));
+                }
+
                 return $this->formatGoodImages($good, $variation);
             case 'main_image':
+                if (!empty($config['aggregate_variations'])) {
+                    $urls = $this->getAggregatedImageUrls($good, 10);
+
+                    return $urls[0] ?? '';
+                }
+
                 $baseUrl = config('app.frontend_url', env('FRONTEND_URL', ''));
                 $mainImg = null;
 
@@ -1585,6 +1614,178 @@ class ProcessExportJob implements ShouldQueue
 
                 return '';
         }
+    }
+
+    /**
+     * Получить габарит или вес для экспорта.
+     * Для вариаций сначала берем значение вариации, затем fallback на основной товар.
+     * У основного товара длина исторически хранится в depth, поэтому поддерживаем оба ключа.
+     */
+    protected function getDimensionValueForExport($good, $variation, string $field)
+    {
+        $readValue = function ($source, string $key) {
+            if (!$source) {
+                return null;
+            }
+
+            if (is_array($source)) {
+                return array_key_exists($key, $source) && $source[$key] !== null ? $source[$key] : null;
+            }
+
+            return isset($source->{$key}) ? $source->{$key} : null;
+        };
+
+        $keys = $field === 'length' ? ['length', 'depth'] : [$field];
+
+        foreach ([$variation, $good] as $source) {
+            foreach ($keys as $key) {
+                $value = $readValue($source, $key);
+                if ($value !== null) {
+                    return $value;
+                }
+            }
+        }
+
+        return '';
+    }
+
+    protected function getFullStockValue($item): int
+    {
+        if (!$item) {
+            return 0;
+        }
+
+        $stock = max(0, (int) $this->readExportValue($item, 'stock_quantity', 0));
+
+        return $stock
+            + ($this->hasRemoteStockValue($this->readExportValue($item, 'remote_stock_quantity')) ? 10 : 0)
+            + ($this->hasRemoteStockValue($this->readExportValue($item, 'fast_remote_stock_quantity')) ? 10 : 0);
+    }
+
+    protected function getAggregatedFullStockValue($good): int
+    {
+        $variations = $this->getExportCollection($this->readExportValue($good, 'variations', []));
+        if ($variations->isNotEmpty()) {
+            return (int) $variations
+                ->filter(fn ($variation) => $this->readExportValue($variation, 'is_active', true) !== false)
+                ->sum(fn ($variation) => $this->getFullStockValue($variation));
+        }
+
+        return $this->getFullStockValue($good);
+    }
+
+    protected function getAggregatedMinVariationPrice($good)
+    {
+        $variations = $this->getExportCollection($this->readExportValue($good, 'variations', []))
+            ->filter(fn ($variation) => $this->readExportValue($variation, 'is_active', true) !== false);
+
+        if ($variations->isEmpty()) {
+            return $this->readExportValue($good, 'price', '');
+        }
+
+        $inStockVariations = $variations->filter(fn ($variation) => $this->getFullStockValue($variation) > 0);
+        $sourceVariations = $inStockVariations->isNotEmpty() ? $inStockVariations : $variations;
+        $prices = $sourceVariations
+            ->map(fn ($variation) => $this->calculateFinalExportPrice($variation))
+            ->filter(fn ($price) => $price > 0)
+            ->values();
+
+        return $prices->isNotEmpty() ? $prices->min() : $this->readExportValue($good, 'price', '');
+    }
+
+    protected function calculateFinalExportPrice($item): float
+    {
+        $price = (float) $this->readExportValue($item, 'price', 0);
+        $salePrice = (float) $this->readExportValue($item, 'sale_price', 0);
+        $dempingPrice = (float) $this->readExportValue($item, 'demping_price', 0);
+
+        if ($this->readExportValue($item, 'show_demping', false) && $dempingPrice > 0) {
+            return $dempingPrice;
+        }
+
+        if ($salePrice > 0) {
+            return $salePrice;
+        }
+
+        return $price;
+    }
+
+    protected function getAggregatedImageUrls($good, int $limit = 10): array
+    {
+        $baseUrl = config('app.frontend_url', env('FRONTEND_URL', ''));
+        $urls = [];
+        $pushImage = function ($image) use (&$urls, $baseUrl, $limit) {
+            if (count($urls) >= $limit) {
+                return;
+            }
+
+            $path = $this->readExportValue($image, 'file_path', $this->readExportValue($image, 'url', ''));
+            if (!$path) {
+                return;
+            }
+
+            $url = str_starts_with($path, 'http://') || str_starts_with($path, 'https://')
+                ? $path
+                : rtrim($baseUrl, '/') . '/' . ltrim($path, '/');
+
+            if (!in_array($url, $urls, true)) {
+                $urls[] = $url;
+            }
+        };
+
+        $variations = $this->getExportCollection($this->readExportValue($good, 'variations', []))
+            ->filter(fn ($variation) => $this->readExportValue($variation, 'is_active', true) !== false);
+
+        foreach ($variations as $variation) {
+            $images = $this->getExportCollection($this->readExportValue($variation, 'images', []))
+                ->sortByDesc(fn ($image) => (int) (bool) $this->readExportValue($image, 'is_main', false));
+
+            foreach ($images as $image) {
+                $pushImage($image);
+            }
+        }
+
+        $goodImages = $this->getExportCollection($this->readExportValue($good, 'images', []))
+            ->sortByDesc(fn ($image) => (int) (bool) $this->readExportValue($image, 'is_main', false));
+
+        foreach ($goodImages as $image) {
+            $pushImage($image);
+        }
+
+        return $urls;
+    }
+
+    protected function hasRemoteStockValue($value): bool
+    {
+        $normalized = trim((string) ($value ?? ''));
+
+        return $normalized !== '' && $normalized !== '0';
+    }
+
+    protected function readExportValue($source, string $key, $default = null)
+    {
+        if (!$source) {
+            return $default;
+        }
+
+        if (is_array($source)) {
+            return array_key_exists($key, $source) ? $source[$key] : $default;
+        }
+
+        return isset($source->{$key}) ? $source->{$key} : $default;
+    }
+
+    protected function getExportCollection($value)
+    {
+        if ($value instanceof \Illuminate\Support\Collection) {
+            return $value;
+        }
+
+        if (is_array($value)) {
+            return collect($value);
+        }
+
+        return collect();
     }
 
     /**
