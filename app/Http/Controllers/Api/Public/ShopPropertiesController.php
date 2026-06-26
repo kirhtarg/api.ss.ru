@@ -301,6 +301,141 @@ class ShopPropertiesController extends Controller
             });
         }
 
+        $this->applyPropertyFilters($query, $request);
+        $this->applyAttributeFilters($query, $request);
+        $this->applyStockFilter($query, $request->get('stock_filter'));
+
         return $query;
+    }
+
+    private function applyPropertyFilters($query, Request $request): void
+    {
+        $properties = $request->input('properties', []);
+        if (! is_array($properties) || empty($properties)) {
+            return;
+        }
+
+        foreach ($properties as $propertyId => $values) {
+            $values = is_array($values) ? array_filter($values) : array_filter([$values]);
+            if (empty($values)) {
+                continue;
+            }
+
+            $valueIds = \App\Models\Shop\PropertyValue::where('property_id', $propertyId)
+                ->whereIn('value', $values)
+                ->pluck('id')
+                ->toArray();
+
+            if (empty($valueIds)) {
+                $query->whereRaw('1 = 0');
+                continue;
+            }
+
+            $query->whereHas('properties', function ($q) use ($propertyId, $valueIds) {
+                $q->where('shop_properties.id', $propertyId)
+                    ->whereIn('shop_good_properties.shop_property_value_id', $valueIds);
+            });
+        }
+    }
+
+    private function applyAttributeFilters($query, Request $request): void
+    {
+        $attributes = $request->input('attributes', []);
+        if (! is_array($attributes) || empty($attributes)) {
+            return;
+        }
+
+        foreach ($attributes as $attributeId => $values) {
+            $values = is_array($values) ? array_filter($values) : array_filter([$values]);
+            if (empty($values)) {
+                continue;
+            }
+
+            $query->whereHas('variations', function ($q) use ($attributeId, $values) {
+                $q->where('is_active', true)
+                    ->whereHas('attributeValues', function ($avQ) use ($attributeId, $values) {
+                        $avQ->where('attribute_id', $attributeId)
+                            ->whereIn('value', $values);
+                    });
+            });
+        }
+    }
+
+    private function applyStockFilter($query, $stockFilter): void
+    {
+        if (! $stockFilter || $stockFilter === 'all') {
+            return;
+        }
+
+        if ($stockFilter === 'preorder') {
+            $query->where(function ($q) {
+                $q->where('is_preorder', true)
+                    ->orWhere('is_preorder', 1);
+            });
+            return;
+        }
+
+        if ($stockFilter === 'in_stock' || $stockFilter === 'with_stock') {
+            $query->where(function ($mainQuery) {
+                $mainQuery->where(function ($noVariationsQuery) {
+                    $noVariationsQuery->whereDoesntHave('variations')
+                        ->where(function ($stockQuery) {
+                            $this->applyStockPresentCondition($stockQuery);
+                        });
+                })->orWhereHas('variations', function ($variationQuery) {
+                    $variationQuery->where('is_active', true)
+                        ->where(function ($stockQuery) {
+                            $this->applyStockPresentCondition($stockQuery);
+                        });
+                });
+            });
+            return;
+        }
+
+        if ($stockFilter === 'out_of_stock') {
+            $query->whereDoesntHave('variations', function ($variationQuery) {
+                $variationQuery->where('is_active', true)
+                    ->where(function ($stockQuery) {
+                        $this->applyStockPresentCondition($stockQuery);
+                    });
+            })->where(function ($stockQuery) {
+                $this->applyStockEmptyCondition($stockQuery);
+            });
+        }
+    }
+
+    private function applyStockPresentCondition($query): void
+    {
+        $query->where('stock_quantity', '>', 0)
+            ->orWhere(function ($remoteQuery) {
+                $remoteQuery->whereNotNull('remote_stock_quantity')
+                    ->where('remote_stock_quantity', '!=', '0')
+                    ->where('remote_stock_quantity', '!=', '')
+                    ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+            })
+            ->orWhere(function ($fastRemoteQuery) {
+                $fastRemoteQuery->whereNotNull('fast_remote_stock_quantity')
+                    ->where('fast_remote_stock_quantity', '!=', '0')
+                    ->where('fast_remote_stock_quantity', '!=', '')
+                    ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
+            });
+    }
+
+    private function applyStockEmptyCondition($query): void
+    {
+        $query->where(function ($stockQuery) {
+            $stockQuery->whereNull('stock_quantity')
+                ->orWhere('stock_quantity', '<=', 0);
+        })->where(function ($remoteQuery) {
+            $remoteQuery->whereNull('remote_stock_quantity')
+                ->orWhere('remote_stock_quantity', '=', '0')
+                ->orWhere('remote_stock_quantity', '=', '')
+                ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
+        })->where(function ($fastRemoteQuery) {
+            $fastRemoteQuery->whereNull('fast_remote_stock_quantity')
+                ->orWhere('fast_remote_stock_quantity', '=', '0')
+                ->orWhere('fast_remote_stock_quantity', '=', '')
+                ->orWhereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) = 0');
+        });
     }
 }
