@@ -66,13 +66,12 @@ class ShopYandexDeliveryController extends Controller
             ]);
         } catch (\Throwable $e) {
             Log::error('Yandex Delivery pickup points error: '.$e->getMessage());
-            $status = $this->isClientApiError($e) ? 200 : 503;
 
             return response()->json([
                 'success' => false,
                 'message' => 'Не удалось загрузить ПВЗ Яндекс Доставки: '.$e->getMessage(),
                 'data' => [],
-            ], $status);
+            ]);
         }
     }
 
@@ -133,13 +132,12 @@ class ShopYandexDeliveryController extends Controller
             ]);
         } catch (\Throwable $e) {
             Log::error('Yandex Delivery tariffs error: '.$e->getMessage());
-            $status = $this->isClientApiError($e) ? 200 : 503;
 
             return response()->json([
                 'success' => false,
                 'message' => 'Не удалось рассчитать Яндекс Доставку: '.$e->getMessage(),
                 'data' => [],
-            ], $status);
+            ]);
         }
     }
 
@@ -211,7 +209,7 @@ class ShopYandexDeliveryController extends Controller
 
     private function isClientApiError(\Throwable $e): bool
     {
-        return in_array((int) $e->getCode(), [400, 404, 409, 422], true);
+        return in_array((int) $e->getCode(), [400, 401, 403, 404, 409, 422], true);
     }
 
     private function normalizeBaseUrl(string $apiUrl): string
