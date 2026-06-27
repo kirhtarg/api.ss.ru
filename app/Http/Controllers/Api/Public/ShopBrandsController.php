@@ -41,14 +41,22 @@ class ShopBrandsController extends Controller
 
             // Используем оптимизированный запрос через DB::table для лучшей производительности
             $brandsQuery = DB::table('shop_brands')
-                ->select('shop_brands.id', 'shop_brands.name')
+                ->select(
+                    'shop_brands.id',
+                    'shop_brands.name',
+                    DB::raw('COUNT(DISTINCT shop_goods.id) as products_count')
+                )
                 ->where('shop_brands.is_active', true)
-                ->distinct();
+                ->groupBy('shop_brands.id', 'shop_brands.name');
 
             // Применяем фильтр по товарам через join
             $brandsQuery->join('shop_good_brands', 'shop_brands.id', '=', 'shop_good_brands.brand_id')
                 ->join('shop_goods', 'shop_good_brands.good_id', '=', 'shop_goods.id')
                 ->where('shop_goods.is_active', true);
+
+            if ($request->boolean('mobile')) {
+                $brandsQuery->whereNotNull('shop_goods.slug')->where('shop_goods.slug', '<>', '');
+            }
 
             // Фильтр по категориям (только если указаны категории)
             if (! empty($categoryIds)) {
@@ -89,6 +97,8 @@ class ShopBrandsController extends Controller
                 return [
                     'id' => (int) $brand->id,
                     'name' => $brand->name,
+                    'count' => (int) $brand->products_count,
+                    'products_count' => (int) $brand->products_count,
                 ];
             })->unique('id')->values();
 
@@ -116,6 +126,10 @@ class ShopBrandsController extends Controller
         }
 
         $goodsQuery = ShopGood::where('is_active', true);
+
+        if ($request->boolean('mobile')) {
+            $goodsQuery->whereNotNull('slug')->where('slug', '<>', '');
+        }
 
         if (! empty($categoryIds)) {
             $goodsQuery->whereHas('categories', function ($query) use ($categoryIds) {
@@ -503,5 +517,13 @@ class ShopBrandsController extends Controller
         return '/images/'.$cleanPath;
     }
 }
+
+
+
+
+
+
+
+
 
 

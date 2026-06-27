@@ -228,6 +228,7 @@ class SliderController extends Controller
             'mobile_target_type' => 'nullable|in:page,category,product,external',
             'mobile_target_id' => 'nullable|integer',
             'mobile_link' => 'nullable|string|max:500',
+            'is_active' => 'nullable|boolean',
             'sort_order' => 'nullable|integer',
         ]);
 
@@ -453,6 +454,7 @@ class SliderController extends Controller
             'mobile_target_type' => 'nullable|in:page,category,product,external',
             'mobile_target_id' => 'nullable|integer',
             'mobile_link' => 'nullable|string|max:500',
+            'is_active' => 'nullable|boolean',
             'sort_order' => 'nullable|integer',
             'is_active' => 'nullable|boolean',
         ]);

@@ -108,6 +108,10 @@ class ShopVariationAttributesController extends Controller
     {
         $query = ShopGood::where('is_active', true);
 
+        if ($request->boolean('mobile')) {
+            $query->whereNotNull('slug')->where('slug', '<>', '');
+        }
+
         // Фильтр по категориям
         if ($request->filled('categories')) {
             $categoryIds = is_array($request->categories)
@@ -287,3 +291,6 @@ class ShopVariationAttributesController extends Controller
         });
     }
 }
+
+
+

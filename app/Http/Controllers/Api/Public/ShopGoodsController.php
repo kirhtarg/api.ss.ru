@@ -661,6 +661,10 @@ class ShopGoodsController extends Controller
             ])
                 ->where('is_active', true);
 
+            if ($request->boolean('mobile')) {
+                $query->whereNotNull('slug')->where('slug', '<>', '');
+            }
+
             // Переменная для хранения расширенных категорий для проверки товаров
             $allCategoryIds = [];
 
@@ -1092,7 +1096,8 @@ class ShopGoodsController extends Controller
             }
 
             // Пагинация
-            $perPage = $request->input('limit', 20);
+            $perPage = (int) $request->input('per_page', $request->input('limit', 20));
+            $perPage = max(1, min($perPage, 120));
             $goods = $query->paginate($perPage);
 
             // Получаем информацию о пользователе для проверки избранного
@@ -2461,3 +2466,5 @@ class ShopGoodsController extends Controller
         ];
     }
 }
+
+
