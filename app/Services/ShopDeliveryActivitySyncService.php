@@ -79,11 +79,29 @@ class ShopDeliveryActivitySyncService
         $types = $this->carrierTypes[$carrier] ?? [$carrier];
         $primaryType = $types[0] ?? $carrier;
 
-        return ShopDeliveryMethod::whereIn('type', $types)
+        return ShopDeliveryMethod::where(function ($query) use ($types, $carrier) {
+                $query->whereIn('type', $types)
+                    ->orWhere('type', 'like', '%'.$carrier.'%')
+                    ->orWhere('name', 'like', '%'.$this->carrierNamePattern($carrier).'%')
+                    ->orWhere('settings->path', 'like', '%'.$carrier.'%');
+            })
             ->orderByRaw('CASE WHEN type = ? THEN 0 ELSE 1 END', [$primaryType])
             ->orderBy('sort_order')
             ->orderBy('id')
             ->first();
+    }
+
+    private function carrierNamePattern(string $carrier): string
+    {
+        return match ($carrier) {
+            'cdek' => 'СДЭК',
+            'dellin' => 'Деловые',
+            'russianpost' => 'Почта',
+            'dpd' => 'DPD',
+            'yandex' => 'Яндекс',
+            'ozon' => 'Ozon',
+            default => $carrier,
+        };
     }
 
     private function getExistingSettings(string $carrier): ?Model

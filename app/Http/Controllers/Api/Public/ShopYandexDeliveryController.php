@@ -12,6 +12,30 @@ use Illuminate\Support\Facades\Log;
 
 class ShopYandexDeliveryController extends Controller
 {
+    public function getActiveSettings(): JsonResponse
+    {
+        try {
+            $settings = $this->getSettingsOrFail();
+            $settingsData = is_array($settings->settings) ? $settings->settings : [];
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'api_mode' => $settingsData['api_mode'] ?? 'other_day',
+                    'is_express' => $this->isExpressMode($settings),
+                    'has_warehouse' => trim((string) $settings->warehouse_id) !== '',
+                    'sender_city' => $settings->sender_city,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'data' => null,
+            ], 422);
+        }
+    }
+
     public function getPickupPoints(Request $request): JsonResponse
     {
         try {
@@ -22,6 +46,14 @@ class ShopYandexDeliveryController extends Controller
             ]);
 
             $settings = $this->getSettingsOrFail();
+            if ($this->isExpressMode($settings)) {
+                return response()->json([
+                    'success' => true,
+                    'data' => [],
+                    'message' => 'Для режима Яндекс Экспресс доставка до ПВЗ не используется. Доступна доставка от адреса отправителя до адреса получателя.',
+                ]);
+            }
+
             $rawCity = trim((string) $request->query('city'));
             $city = $this->normalizeSettlementName($rawCity);
             $location = $this->detectLocation($settings, $city, $request->query('latitude'), $request->query('longitude'));
@@ -103,6 +135,10 @@ class ShopYandexDeliveryController extends Controller
             ]);
 
             $settings = $this->getSettingsOrFail();
+            if ($this->isExpressMode($settings)) {
+                return $this->getExpressTariffs($request, $settings);
+            }
+
             $city = $this->normalizeSettlementName((string) $request->query('city'));
             $deliveryType = $request->query('delivery_type') === 'pvz' ? 'pickup_point' : $request->query('delivery_type');
             $cartItems = $request->query('cart_items', []);
@@ -210,6 +246,219 @@ class ShopYandexDeliveryController extends Controller
         }
 
         return $response->json() ?: [];
+    }
+
+    private function yandexExpressRequest(ShopCarrierDeliverySettings $settings, string $method, string $path, array $payload = [], array $query = []): array
+    {
+        $baseUrl = $this->normalizeExpressBaseUrl((string) $settings->api_url);
+        $url = $baseUrl.$path;
+        $request = Http::withToken((string) $settings->api_token)
+            ->withHeaders(['Accept-Language' => 'ru'])
+            ->acceptJson()
+            ->asJson()
+            ->timeout(30);
+
+        $response = strtolower($method) === 'get'
+            ? $request->get($url, $query ?: $payload)
+            : $request->post($url.($query ? '?'.http_build_query($query) : ''), $payload);
+
+        if (! $response->successful()) {
+            $message = $response->json('message')
+                ?? $response->json('error')
+                ?? $response->json('error_description')
+                ?? $response->body()
+                ?: 'API Яндекс Экспресс вернул ошибку';
+            Log::warning('Yandex Express Delivery API error', [
+                'url' => $url,
+                'status' => $response->status(),
+                'payload' => $payload,
+                'query' => $query,
+                'response' => $response->json() ?: $response->body(),
+            ]);
+            throw new \RuntimeException(is_string($message) ? $message : json_encode($message, JSON_UNESCAPED_UNICODE), $response->status());
+        }
+
+        return $response->json() ?: [];
+    }
+
+    private function getExpressTariffs(Request $request, ShopCarrierDeliverySettings $settings): JsonResponse
+    {
+        $city = $this->normalizeSettlementName((string) $request->query('city'));
+        $cartItems = $request->query('cart_items', []);
+        if (is_string($cartItems)) {
+            $cartItems = json_decode($cartItems, true) ?: [];
+        }
+
+        $recipientAddress = $this->buildAddress($city, (string) $request->query('street', ''), (string) $request->query('house', ''), (string) $request->query('address', ''));
+        if ($recipientAddress === '') {
+            throw new \RuntimeException('Для расчета Яндекс Экспресс укажите адрес получателя');
+        }
+
+        $payload = $this->buildExpressOfferPayload($settings, $recipientAddress, $city, $cartItems);
+        $response = $this->yandexExpressRequest($settings, 'post', '/offers/calculate', $payload);
+        $tariffs = $this->normalizeExpressOffers($response);
+
+        return response()->json([
+            'success' => true,
+            'data' => $tariffs,
+            'meta' => [
+                'request_payload' => $payload,
+                'raw' => $response,
+            ],
+        ]);
+    }
+
+    private function buildExpressOfferPayload(ShopCarrierDeliverySettings $settings, string $recipientAddress, string $recipientCity, array $cartItems): array
+    {
+        $sourceAddress = $this->buildAddress(
+            $this->normalizeSettlementName((string) $settings->sender_city),
+            (string) $settings->sender_street,
+            (string) $settings->sender_house,
+            ''
+        );
+
+        if ($sourceAddress === '') {
+            throw new \RuntimeException('В настройках Яндекс Доставки укажите адрес отправителя');
+        }
+
+        $settingsData = is_array($settings->settings) ? $settings->settings : [];
+
+        return [
+            'items' => $this->buildExpressItems($cartItems, $settings),
+            'route_points' => [
+                $this->buildExpressRoutePoint(1, $sourceAddress, (string) $settings->sender_city),
+                $this->buildExpressRoutePoint(2, $recipientAddress, $recipientCity),
+            ],
+            'requirements' => array_filter([
+                'taxi_classes' => [$settingsData['express_taxi_class'] ?? 'express'],
+                'skip_door_to_door' => false,
+                'pro_courier' => (bool) ($settingsData['express_pro_courier'] ?? false),
+            ], fn ($value) => $value !== null && $value !== ''),
+        ];
+    }
+
+    private function buildExpressItems(array $cartItems, ShopCarrierDeliverySettings $settings): array
+    {
+        $defaultWeight = max(0.01, (float) ($settings->default_weight ?? 0.5));
+        $defaultLength = max(1, (float) ($settings->default_length ?? 10));
+        $defaultWidth = max(1, (float) ($settings->default_width ?? 10));
+        $defaultHeight = max(1, (float) ($settings->default_height ?? 10));
+        $items = [];
+
+        foreach ($cartItems as $index => $item) {
+            $items[] = [
+                'size' => [
+                    'length' => round(max(1, (float) ($item['length'] ?? $defaultLength)) / 100, 3),
+                    'width' => round(max(1, (float) ($item['width'] ?? $defaultWidth)) / 100, 3),
+                    'height' => round(max(1, (float) ($item['height'] ?? $defaultHeight)) / 100, 3),
+                ],
+                'weight' => max(0.01, (float) ($item['weight'] ?? $defaultWeight)),
+                'quantity' => max(1, (int) ($item['quantity'] ?? 1)),
+                'pickup_point' => 1,
+                'dropoff_point' => 2,
+                'age_restricted' => false,
+            ];
+        }
+
+        return $items ?: [[
+            'size' => [
+                'length' => round($defaultLength / 100, 3),
+                'width' => round($defaultWidth / 100, 3),
+                'height' => round($defaultHeight / 100, 3),
+            ],
+            'weight' => $defaultWeight,
+            'quantity' => 1,
+            'pickup_point' => 1,
+            'dropoff_point' => 2,
+            'age_restricted' => false,
+        ]];
+    }
+
+    private function buildExpressRoutePoint(int $id, string $address, string $city): array
+    {
+        return array_filter([
+            'id' => $id,
+            'fullname' => $address,
+            'country' => 'Россия',
+            'city' => $this->normalizeSettlementName($city),
+        ], fn ($value) => $value !== null && $value !== '');
+    }
+
+    private function normalizeExpressOffers(array $response): array
+    {
+        $offers = $response['offers'] ?? [];
+
+        return array_values(array_filter(array_map(function ($offer, $index) {
+            if (! is_array($offer)) {
+                return null;
+            }
+            $price = $offer['price']['total_price_with_vat'] ?? $offer['price']['total_price'] ?? null;
+            if (! is_numeric($price)) {
+                return null;
+            }
+
+            return [
+                'code' => 'yandex_express_'.($offer['taxi_class'] ?? $index),
+                'name' => $this->expressTaxiClassName((string) ($offer['taxi_class'] ?? 'express')),
+                'description' => $offer['description'] ?? 'Доставка от адреса отправителя до адреса получателя',
+                'cost' => round((float) $price, 2),
+                'cost_value' => round((float) $price, 2),
+                'type' => 'address',
+                'period' => $this->formatExpressOfferPeriod($offer),
+                'raw' => $offer,
+            ];
+        }, $offers, array_keys($offers))));
+    }
+
+    private function expressTaxiClassName(string $taxiClass): string
+    {
+        return match ($taxiClass) {
+            'courier' => 'Яндекс Курьер',
+            'cargo' => 'Яндекс Грузовой',
+            'sdd_multislot' => 'Яндекс В течение дня',
+            default => 'Яндекс Экспресс',
+        };
+    }
+
+    private function formatExpressOfferPeriod(array $offer): ?string
+    {
+        $pickup = $offer['pickup_interval'] ?? [];
+        $delivery = $offer['delivery_interval'] ?? [];
+        $from = $pickup['from'] ?? null;
+        $to = $delivery['to'] ?? null;
+
+        return $from && $to ? $from.' - '.$to : null;
+    }
+
+    private function isExpressMode(ShopCarrierDeliverySettings $settings): bool
+    {
+        $settingsData = is_array($settings->settings) ? $settings->settings : [];
+
+        return ($settingsData['api_mode'] ?? 'other_day') === 'express';
+    }
+
+    private function normalizeExpressBaseUrl(string $apiUrl): string
+    {
+        $default = 'https://b2b.taxi.yandex.net/b2b/cargo/integration/v2';
+        $apiUrl = trim($apiUrl);
+        if ($apiUrl === '' || str_contains($apiUrl, '/api/b2b/platform')) {
+            return $default;
+        }
+        $apiUrl = rtrim($apiUrl, '/');
+
+        foreach ([
+            '/offers/calculate',
+            '/claims/create',
+            '/claims/accept',
+            '/claims/info',
+            '/claims/cancel',
+        ] as $methodPath) {
+            if (str_ends_with($apiUrl, $methodPath)) {
+                return substr($apiUrl, 0, -strlen($methodPath));
+            }
+        }
+
+        return $apiUrl;
     }
 
     private function yandexRequestVariants(ShopCarrierDeliverySettings $settings, string $method, string $path, array $payloadVariants): array

@@ -946,6 +946,11 @@ Route::middleware(['cors', 'throttle:public'])->group(function () {
     Route::get('/public/shop/russianpost/tariffs', [App\Http\Controllers\Api\Public\ShopRussianPostController::class, 'getTariffs']);
 
     // Маршруты Яндекс Доставки для магазина
+    Route::options('/public/shop/yandex/settings/active', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/yandex/settings/active', [App\Http\Controllers\Api\Public\ShopYandexDeliveryController::class, 'getActiveSettings']);
+
     Route::options('/public/shop/yandex/pickup-points', function () {
         return response()->json([], 200);
     });

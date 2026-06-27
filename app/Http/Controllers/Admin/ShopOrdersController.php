@@ -2808,8 +2808,12 @@ class ShopOrdersController extends Controller
             $order = ShopOrder::findOrFail($id);
             $settings = ShopCarrierDeliverySettings::getActive('yandex');
 
-            if (! $settings || ! $settings->api_token || ! $settings->warehouse_id) {
+            if (! $settings || ! $settings->api_token) {
                 return response()->json(['success' => false, 'message' => 'Активные настройки Яндекс Доставки заполнены не полностью'], 400);
+            }
+
+            if (! $this->isYandexExpressMode($settings) && ! $settings->warehouse_id) {
+                return response()->json(['success' => false, 'message' => 'Для режима Яндекс Доставка по России укажите ID склада / platform_station_id'], 400);
             }
 
             $metadata = is_array($order->metadata) ? $order->metadata : [];
@@ -2819,6 +2823,10 @@ class ShopOrdersController extends Controller
                     'message' => 'Заявка Яндекс Доставки уже создана',
                     'data' => ['yandex_request_id' => $metadata['yandex_request_id']],
                 ]);
+            }
+
+            if ($this->isYandexExpressMode($settings)) {
+                return $this->createYandexExpressDeliveryOrder($order, $settings);
             }
 
             $payload = $this->buildYandexDeliveryOrderPayload($order, $settings);
@@ -2889,15 +2897,17 @@ class ShopOrdersController extends Controller
                 return response()->json(['success' => false, 'message' => 'Активные настройки Яндекс Доставки не заполнены'], 400);
             }
 
-            $response = $this->sendYandexDeliveryRequest($settings, 'get', '/request/info', [
-                'request_id' => $requestId,
-                'slim' => true,
-            ]);
+            $response = $this->isYandexExpressMode($settings)
+                ? $this->sendYandexExpressDeliveryRequest($settings, 'post', '/claims/info', [], ['claim_id' => $requestId])
+                : $this->sendYandexDeliveryRequest($settings, 'get', '/request/info', [
+                    'request_id' => $requestId,
+                    'slim' => true,
+                ]);
 
             $state = $response['state'] ?? $response['request']['state'] ?? [];
             $status = [
                 'code' => $state['status'] ?? $response['status'] ?? 'UNKNOWN',
-                'name' => $state['description'] ?? $state['status'] ?? 'Статус Яндекс Доставки обновлен',
+                'name' => $state['description'] ?? $state['status'] ?? $this->getYandexDeliveryStatusName((string) ($response['status'] ?? '')),
                 'date' => $state['timestamp_utc'] ?? null,
                 'reason' => $state['reason'] ?? null,
                 'external_id' => $requestId,
@@ -3013,6 +3023,183 @@ class ShopOrdersController extends Controller
             'particular_items_refuse' => false,
             'forbid_unboxing' => false,
         ];
+    }
+
+    private function createYandexExpressDeliveryOrder(ShopOrder $order, ShopCarrierDeliverySettings $settings): JsonResponse
+    {
+        $metadata = is_array($order->metadata) ? $order->metadata : [];
+        $payload = $this->buildYandexExpressDeliveryOrderPayload($order, $settings);
+        $requestId = (string) \Illuminate\Support\Str::uuid();
+        $response = $this->sendYandexExpressDeliveryRequest($settings, 'post', '/claims/create', $payload, ['request_id' => $requestId]);
+        $claimId = $response['id'] ?? null;
+
+        if (! $claimId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Яндекс Экспресс принял ответ без ID заявки. Проверьте ответ API.',
+                'data' => ['request_payload' => $payload, 'server_response' => $response],
+            ], 422);
+        }
+
+        if (($response['status'] ?? '') === 'ready_for_approval') {
+            $acceptResponse = $this->sendYandexExpressDeliveryRequest($settings, 'post', '/claims/accept', [
+                'version' => (int) ($response['version'] ?? 1),
+            ], ['claim_id' => $claimId]);
+            $response['accept_response'] = $acceptResponse;
+        }
+
+        $metadata['yandex_request_id'] = (string) $claimId;
+        $metadata['yandex_request_payload'] = $payload;
+        $metadata['yandex_request_response'] = $response;
+        $metadata['yandex_express_request_id'] = $requestId;
+
+        $statusCode = $response['accept_response']['status'] ?? $response['status'] ?? 'CREATED';
+        $status = [
+            'code' => $statusCode,
+            'name' => $this->getYandexDeliveryStatusName((string) $statusCode),
+            'external_id' => (string) $claimId,
+        ];
+
+        $order->update([
+            'metadata' => $metadata,
+            'delivery_status' => json_encode($status, JSON_UNESCAPED_UNICODE),
+        ]);
+
+        ShopOrderLog::createLog($order->id, 'Заявка Яндекс Экспресс создана', [
+            'action_color' => '#FFFFFF',
+            'action_bg_color' => '#16A34A',
+            'section' => ShopOrderLog::SECTION_DELIVERY,
+            'comment' => 'ID заявки: '.$claimId,
+            'info' => "Заказ № {$order->order_number}",
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Заявка Яндекс Экспресс создана',
+            'data' => [
+                'yandex_request_id' => $claimId,
+                'delivery_status' => $status,
+                'order' => $this->formatOrderForResponse($order->fresh(['status', 'user', 'paymentMethod', 'deliveryMethod', 'manager'])),
+                'server_response' => $response,
+            ],
+        ]);
+    }
+
+    private function buildYandexExpressDeliveryOrderPayload(ShopOrder $order, ShopCarrierDeliverySettings $settings): array
+    {
+        $metadata = is_array($order->metadata) ? $order->metadata : [];
+        $settingsData = is_array($settings->settings) ? $settings->settings : [];
+        $address = trim((string) ($metadata['yandex_delivery_address'] ?? $order->shipping_address ?? ''));
+        if ($address === '') {
+            throw new \RuntimeException('Для создания заявки Яндекс Экспресс не указан адрес получателя');
+        }
+
+        $sourceAddress = trim(implode(', ', array_filter([
+            $settings->sender_city,
+            $settings->sender_street,
+            $settings->sender_house ? 'д. '.$settings->sender_house : null,
+        ])));
+        if ($sourceAddress === '') {
+            throw new \RuntimeException('В настройках Яндекс Доставки укажите адрес отправителя');
+        }
+
+        $cargo = $this->buildYandexExpressDeliveryCargo($order, $settings);
+        $offerPayload = $metadata['yandex_delivery_tariff']['raw']['payload']
+            ?? $metadata['yandex_delivery_metadata']['tariff']['raw']['payload']
+            ?? null;
+
+        return array_filter([
+            'items' => $cargo['items'],
+            'route_points' => [
+                $this->buildYandexExpressClaimPoint(1, 'source', 1, $sourceAddress, (string) $settings->sender_city, 'Склад', (string) ($settingsData['sender_phone'] ?? $order->customer_phone)),
+                $this->buildYandexExpressClaimPoint(2, 'destination', 2, $address, (string) ($metadata['yandex_delivery_city'] ?? ''), (string) $order->customer_name, (string) $order->customer_phone, (string) $order->customer_email),
+            ],
+            'emergency_contact' => [
+                'name' => 'Склад',
+                'phone' => $this->normalizeYandexDeliveryPhone((string) ($settingsData['sender_phone'] ?? $order->customer_phone)),
+            ],
+            'client_requirements' => [
+                'taxi_class' => $settingsData['express_taxi_class'] ?? 'express',
+                'pro_courier' => (bool) ($settingsData['express_pro_courier'] ?? false),
+            ],
+            'skip_door_to_door' => false,
+            'skip_client_notify' => false,
+            'skip_emergency_notify' => false,
+            'skip_act' => false,
+            'optional_return' => false,
+            'comment' => trim((string) ($order->comment ?? '')) ?: null,
+            'auto_accept' => true,
+            'offer_payload' => $offerPayload,
+        ], fn ($value) => $value !== null && $value !== '');
+    }
+
+    private function buildYandexExpressDeliveryCargo(ShopOrder $order, ShopCarrierDeliverySettings $settings): array
+    {
+        $defaultWeight = max(0.01, (float) ($settings->default_weight ?? 0.5));
+        $defaultLength = max(1, (float) ($settings->default_length ?? 10));
+        $defaultWidth = max(1, (float) ($settings->default_width ?? 10));
+        $defaultHeight = max(1, (float) ($settings->default_height ?? 10));
+        $items = is_array($order->items) ? $order->items : (json_decode((string) $order->items, true) ?: []);
+        $result = [];
+
+        foreach ($items as $index => $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+            $price = max(0, (float) ($item['price'] ?? $item['final_price'] ?? 0));
+            $result[] = [
+                'extra_id' => (string) ($item['sku'] ?? $item['article'] ?? $item['good_id'] ?? $index),
+                'pickup_point' => 1,
+                'dropoff_point' => 2,
+                'title' => mb_substr((string) ($item['name'] ?? $item['good_name'] ?? 'Товар'), 0, 255),
+                'size' => [
+                    'length' => round(max(1, (float) ($item['length'] ?? $defaultLength)) / 100, 3),
+                    'width' => round(max(1, (float) ($item['width'] ?? $defaultWidth)) / 100, 3),
+                    'height' => round(max(1, (float) ($item['height'] ?? $defaultHeight)) / 100, 3),
+                ],
+                'weight' => max(0.01, (float) ($item['weight'] ?? $defaultWeight)),
+                'cost_value' => number_format($price, 2, '.', ''),
+                'cost_currency' => 'RUB',
+                'quantity' => max(1, (int) ($item['quantity'] ?? 1)),
+                'age_restricted' => false,
+            ];
+        }
+
+        return ['items' => $result ?: [[
+            'pickup_point' => 1,
+            'dropoff_point' => 2,
+            'title' => 'Заказ '.$order->order_number,
+            'size' => [
+                'length' => round($defaultLength / 100, 3),
+                'width' => round($defaultWidth / 100, 3),
+                'height' => round($defaultHeight / 100, 3),
+            ],
+            'weight' => $defaultWeight,
+            'cost_value' => number_format((float) $order->total_amount, 2, '.', ''),
+            'cost_currency' => 'RUB',
+            'quantity' => 1,
+            'age_restricted' => false,
+        ]]];
+    }
+
+    private function buildYandexExpressClaimPoint(int $pointId, string $type, int $visitOrder, string $address, string $city, string $contactName, string $phone, string $email = ''): array
+    {
+        return array_filter([
+            'point_id' => $pointId,
+            'visit_order' => $visitOrder,
+            'contact' => array_filter([
+                'name' => $contactName ?: 'Контакт',
+                'phone' => $this->normalizeYandexDeliveryPhone($phone),
+                'email' => $email ?: null,
+            ]),
+            'address' => array_filter([
+                'fullname' => $address,
+                'country' => 'Россия',
+                'city' => $this->normalizeYandexDeliverySettlementName($city),
+            ]),
+            'type' => $type,
+            'skip_confirmation' => false,
+        ]);
     }
 
     private function buildYandexDeliveryCargo(ShopOrder $order, ShopCarrierDeliverySettings $settings): array
@@ -3131,6 +3318,39 @@ class ShopOrdersController extends Controller
         return $response->json() ?: [];
     }
 
+    private function sendYandexExpressDeliveryRequest(ShopCarrierDeliverySettings $settings, string $method, string $path, array $payload = [], array $query = []): array
+    {
+        $baseUrl = $this->normalizeYandexExpressDeliveryBaseUrl((string) $settings->api_url);
+        $url = $baseUrl.$path;
+        $request = Http::withToken((string) $settings->api_token)
+            ->withHeaders(['Accept-Language' => 'ru'])
+            ->acceptJson()
+            ->asJson()
+            ->timeout(30);
+
+        $response = strtolower($method) === 'get'
+            ? $request->get($url, $query ?: $payload)
+            : $request->post($url.($query ? '?'.http_build_query($query) : ''), $payload);
+
+        if (! $response->successful()) {
+            $message = $response->json('message')
+                ?? $response->json('error')
+                ?? $response->json('error_description')
+                ?? $response->body()
+                ?: 'API Яндекс Экспресс вернул ошибку';
+            Log::warning('Yandex Express Delivery order API error', [
+                'url' => $url,
+                'status' => $response->status(),
+                'payload' => $payload,
+                'query' => $query,
+                'response' => $response->json() ?: $response->body(),
+            ]);
+            throw new \RuntimeException(is_string($message) ? $message : json_encode($message, JSON_UNESCAPED_UNICODE), $response->status());
+        }
+
+        return $response->json() ?: [];
+    }
+
     private function normalizeYandexDeliveryBaseUrl(string $apiUrl): string
     {
         $apiUrl = trim($apiUrl) ?: 'https://b2b-authproxy.taxi.yandex.net/api/b2b/platform';
@@ -3152,6 +3372,69 @@ class ShopOrdersController extends Controller
         }
 
         return $apiUrl;
+    }
+
+    private function normalizeYandexExpressDeliveryBaseUrl(string $apiUrl): string
+    {
+        $default = 'https://b2b.taxi.yandex.net/b2b/cargo/integration/v2';
+        $apiUrl = trim($apiUrl);
+        if ($apiUrl === '' || str_contains($apiUrl, '/api/b2b/platform')) {
+            return $default;
+        }
+        $apiUrl = rtrim($apiUrl, '/');
+
+        foreach ([
+            '/offers/calculate',
+            '/claims/create',
+            '/claims/accept',
+            '/claims/info',
+            '/claims/cancel',
+        ] as $methodPath) {
+            if (str_ends_with($apiUrl, $methodPath)) {
+                return substr($apiUrl, 0, -strlen($methodPath));
+            }
+        }
+
+        return $apiUrl;
+    }
+
+    private function isYandexExpressMode(ShopCarrierDeliverySettings $settings): bool
+    {
+        $settingsData = is_array($settings->settings) ? $settings->settings : [];
+
+        return ($settingsData['api_mode'] ?? 'other_day') === 'express';
+    }
+
+    private function normalizeYandexDeliverySettlementName(string $city): string
+    {
+        $city = trim(preg_replace('/\s+/u', ' ', $city));
+        $city = preg_replace('/^(г|город|д|деревня|пос|поселок|посёлок|пгт|с|село)\.?\s+/iu', '', $city);
+
+        return trim($city);
+    }
+
+    private function getYandexDeliveryStatusName(string $status): string
+    {
+        return match ($status) {
+            'new' => 'Заявка создана',
+            'estimating' => 'Оценка заявки',
+            'estimating_failed' => 'Оценка не прошла',
+            'ready_for_approval' => 'Ожидает подтверждения',
+            'accepted' => 'Заявка подтверждена',
+            'performer_lookup' => 'Поиск исполнителя',
+            'performer_found' => 'Исполнитель найден',
+            'performer_not_found' => 'Исполнитель не найден',
+            'pickup_arrived' => 'Курьер прибыл на забор',
+            'pickuped' => 'Заказ забран',
+            'delivery_arrived' => 'Курьер прибыл к получателю',
+            'delivered', 'delivered_finish' => 'Доставлено',
+            'returning' => 'Возврат',
+            'returned', 'returned_finish' => 'Возвращено',
+            'failed' => 'Ошибка доставки',
+            'cancelled' => 'Отменено',
+            'cancelled_with_payment' => 'Отменено с оплатой',
+            default => $status ?: 'Статус Яндекс Доставки обновлен',
+        };
     }
 
     private function normalizeYandexDeliveryPhone(string $phone): string

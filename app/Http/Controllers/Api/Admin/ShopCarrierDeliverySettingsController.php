@@ -131,7 +131,12 @@ class ShopCarrierDeliverySettingsController extends Controller
 
     private function validateYandexCredentials(Request $request): JsonResponse
     {
-        $apiBaseUrl = $this->normalizeYandexApiBaseUrl((string) $request->get('api_url', ''));
+        $settingsData = $request->get('settings', []);
+        $settingsData = is_array($settingsData) ? $settingsData : [];
+        $apiMode = ($settingsData['api_mode'] ?? 'other_day') === 'express' ? 'express' : 'other_day';
+        $apiBaseUrl = $apiMode === 'express'
+            ? $this->normalizeYandexExpressApiBaseUrl((string) $request->get('api_url', ''))
+            : $this->normalizeYandexApiBaseUrl((string) $request->get('api_url', ''));
         $apiToken = trim((string) $request->get('api_token', ''));
 
         if ($apiToken === '') {
@@ -140,6 +145,10 @@ class ShopCarrierDeliverySettingsController extends Controller
                 'message' => 'Укажите API токен Яндекс Доставки.',
                 'data' => ['valid' => false],
             ], 422);
+        }
+
+        if ($apiMode === 'express') {
+            return $this->validateYandexExpressCredentials($apiBaseUrl, $apiToken);
         }
 
         try {
@@ -200,6 +209,46 @@ class ShopCarrierDeliverySettingsController extends Controller
         }
     }
 
+    private function validateYandexExpressCredentials(string $apiBaseUrl, string $apiToken): JsonResponse
+    {
+        try {
+            $probeClaimId = '00000000000000000000000000000000';
+            $url = $apiBaseUrl.'/claims/info?claim_id='.$probeClaimId;
+            $response = Http::withToken($apiToken)
+                ->withHeaders(['Accept-Language' => 'ru'])
+                ->acceptJson()
+                ->asJson()
+                ->timeout(20)
+                ->post($url, []);
+
+            $body = $response->json();
+            $message = $body['message'] ?? $body['error'] ?? $response->body();
+            $isAuthError = in_array($response->status(), [401, 403], true)
+                || stripos((string) $message, 'not authorized') !== false
+                || stripos((string) $message, 'unauthorized') !== false;
+            $valid = $response->successful() || (in_array($response->status(), [400, 404, 422], true) && ! $isAuthError);
+
+            return response()->json([
+                'success' => $valid,
+                'message' => $valid
+                    ? 'Доступ к API Яндекс Экспресс подтвержден'
+                    : ($message ?: 'API Яндекс Экспресс вернул ошибку авторизации'),
+                'data' => [
+                    'valid' => $valid,
+                    'status' => $response->status(),
+                    'url' => $url,
+                    'response' => $body,
+                ],
+            ], $valid ? 200 : 422);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка проверки API Яндекс Экспресс: '.$e->getMessage(),
+                'data' => ['valid' => false],
+            ], 422);
+        }
+    }
+
     private function normalizeYandexApiBaseUrl(string $apiUrl): string
     {
         $default = 'https://b2b-authproxy.taxi.yandex.net/api/b2b/platform';
@@ -220,6 +269,32 @@ class ShopCarrierDeliverySettingsController extends Controller
             '/offers/confirm',
             '/request/create',
             '/warehouses/list',
+        ] as $methodPath) {
+            if (str_ends_with($apiUrl, $methodPath)) {
+                return substr($apiUrl, 0, -strlen($methodPath));
+            }
+        }
+
+        return $apiUrl;
+    }
+
+    private function normalizeYandexExpressApiBaseUrl(string $apiUrl): string
+    {
+        $default = 'https://b2b.taxi.yandex.net/b2b/cargo/integration/v2';
+        $apiUrl = trim($apiUrl);
+
+        if ($apiUrl === '' || str_contains($apiUrl, '/api/b2b/platform')) {
+            return $default;
+        }
+
+        $apiUrl = rtrim($apiUrl, '/');
+
+        foreach ([
+            '/offers/calculate',
+            '/claims/create',
+            '/claims/accept',
+            '/claims/info',
+            '/claims/cancel',
         ] as $methodPath) {
             if (str_ends_with($apiUrl, $methodPath)) {
                 return substr($apiUrl, 0, -strlen($methodPath));

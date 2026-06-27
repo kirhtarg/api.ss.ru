@@ -41,7 +41,8 @@ class ShopCarrierDeliverySettings extends Model
 
     public static function getActive(string $carrier): ?self
     {
-        if (ShopDeliveryMethod::where('type', $carrier)->where('is_active', false)->exists()) {
+        $methodActive = app(\App\Services\ShopDeliveryActivitySyncService::class)->getMethodActive($carrier);
+        if ($methodActive === false) {
             return null;
         }
 
