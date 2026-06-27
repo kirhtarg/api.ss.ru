@@ -15,7 +15,13 @@ class ShopPreordersController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = ShopPreorder::with(['good.categories', 'good.brands', 'good.tags', 'variation', 'user']);
+        $query = ShopPreorder::with([
+            'good.categories',
+            'good.brands',
+            'good.tags',
+            'variation.attributeValues.attribute',
+            'user',
+        ]);
 
         // Фильтр по статусу
         if ($request->has('status') && $request->status !== '') {
@@ -66,20 +72,36 @@ class ShopPreordersController extends Controller
         $preorders->getCollection()->transform(function ($preorder) use ($logsCount) {
             $stockQuantity = 0;
             $remoteStockQuantity = null;
+            $fastRemoteStockQuantity = null;
 
             // Если есть вариация, берем остатки из вариации
             if ($preorder->variation_id && $preorder->variation) {
                 $stockQuantity = $preorder->variation->stock_quantity ?? 0;
                 $remoteStockQuantity = $preorder->variation->remote_stock_quantity ?? null;
+                $fastRemoteStockQuantity = $preorder->variation->fast_remote_stock_quantity ?? null;
             }
             // Иначе берем остатки из основного товара
             elseif ($preorder->good) {
                 $stockQuantity = $preorder->good->stock_quantity ?? 0;
                 $remoteStockQuantity = $preorder->good->remote_stock_quantity ?? null;
+                $fastRemoteStockQuantity = $preorder->good->fast_remote_stock_quantity ?? null;
             }
 
             $preorder->stock_quantity = $stockQuantity;
             $preorder->remote_stock_quantity = $remoteStockQuantity;
+            $preorder->fast_remote_stock_quantity = $fastRemoteStockQuantity;
+            $preorder->variation_attributes = [];
+
+            if ($preorder->variation) {
+                $preorder->variation_attributes = $preorder->variation->attributeValues->map(function ($attributeValue) {
+                    return [
+                        'attribute_name' => $attributeValue->attribute->name ?? 'Вариация',
+                        'value' => $attributeValue->value ?? '',
+                    ];
+                })->filter(function ($item) {
+                    return trim((string) $item['value']) !== '';
+                })->values();
+            }
 
             // Добавляем количество логов
             $preorder->logs_count = $logsCount[$preorder->id] ?? 0;
