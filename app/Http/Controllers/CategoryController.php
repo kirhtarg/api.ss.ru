@@ -6,6 +6,7 @@ use App\Models\Shop\Property;
 use App\Models\ShopCategory;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
@@ -176,6 +177,7 @@ class CategoryController extends Controller
                 'name' => 'required|string|max:255',
                 'description' => 'nullable|string',
                 'image' => 'nullable|string',
+                'mobile_image' => 'nullable|string',
                 'icon' => 'nullable|string|max:255',
                 'slug' => 'nullable|string|max:255|unique:shop_categories,slug',
                 'is_active' => 'boolean',
@@ -218,6 +220,7 @@ class CategoryController extends Controller
             }
 
             $category = ShopCategory::create($data);
+            $this->clearPublicCategoryCache($category);
 
             // Загружаем связанные данные для ответа
             $category->load('parent');
@@ -254,6 +257,7 @@ class CategoryController extends Controller
                 'name' => 'sometimes|required|string|max:255',
                 'description' => 'nullable|string',
                 'image' => 'nullable|string',
+                'mobile_image' => 'nullable|string',
                 'icon' => 'nullable|string|max:255',
                 'slug' => 'nullable|string|max:255|unique:shop_categories,slug,'.$id,
                 'is_active' => 'boolean',
@@ -296,6 +300,7 @@ class CategoryController extends Controller
             }
 
             $category->update($data);
+            $this->clearPublicCategoryCache($category);
 
             // Загружаем связанные данные для ответа
             $category->load('parent');
@@ -337,6 +342,7 @@ class CategoryController extends Controller
             }
 
             $category->delete();
+            $this->clearPublicCategoryCache($category);
 
             return response()->json([
                 'success' => true,
@@ -426,6 +432,27 @@ class CategoryController extends Controller
                 'success' => false,
                 'message' => 'Ошибка при загрузке изображения: '.$e->getMessage(),
             ], 500);
+        }
+    }
+
+    private function clearPublicCategoryCache(?ShopCategory $category = null): void
+    {
+        Cache::forget('public_shop_categories_index_'.md5(json_encode([])));
+        Cache::forget('public_shop_categories_index_'.md5(json_encode(['in_catalog' => '1'])));
+        Cache::forget('public_shop_categories_index_'.md5(json_encode(['in_catalog' => 1])));
+        Cache::forget('public_shop_categories_main');
+        Cache::forget('public_shop_categories_main_with_extra_menu');
+
+        if (! $category) {
+            return;
+        }
+
+        Cache::forget('public_shop_category_show_'.(int) $category->id);
+        Cache::forget('public_shop_category_slug_relations_'.md5(mb_strtolower((string) $category->slug)));
+        Cache::forget('public_shop_category_children_'.(int) $category->id);
+
+        if ($category->parent_id) {
+            Cache::forget('public_shop_category_children_'.(int) $category->parent_id);
         }
     }
 

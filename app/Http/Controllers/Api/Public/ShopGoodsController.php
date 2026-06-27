@@ -647,7 +647,7 @@ class ShopGoodsController extends Controller
                         ->withPivot(['shop_property_value_id']);
                 },
                 'categories' => function ($query) {
-                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug', 'shop_categories.image', 'shop_categories.icon');
+                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug', 'shop_categories.image', 'shop_categories.mobile_image', 'shop_categories.icon');
                 },
                 'brands' => function ($query) {
                     $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug', 'shop_brands.logo');
@@ -1303,7 +1303,7 @@ class ShopGoodsController extends Controller
                         })());
                 },
                 'categories' => function ($query) {
-                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug', 'shop_categories.image', 'shop_categories.icon');
+                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug', 'shop_categories.image', 'shop_categories.mobile_image', 'shop_categories.icon');
                 },
                 'brands' => function ($query) {
                     $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug', 'shop_brands.logo');
@@ -1557,7 +1557,7 @@ class ShopGoodsController extends Controller
                         })());
                 },
                 'categories' => function ($query) {
-                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug', 'shop_categories.image', 'shop_categories.icon');
+                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug', 'shop_categories.image', 'shop_categories.mobile_image', 'shop_categories.icon');
                 },
                 'brands' => function ($query) {
                     $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug', 'shop_brands.logo');
@@ -1689,7 +1689,7 @@ class ShopGoodsController extends Controller
                         })());
                 },
                 'categories' => function ($query) {
-                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug', 'shop_categories.image', 'shop_categories.icon');
+                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug', 'shop_categories.image', 'shop_categories.mobile_image', 'shop_categories.icon');
                 },
                 'brands' => function ($query) {
                     $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug', 'shop_brands.logo');
@@ -1945,7 +1945,7 @@ class ShopGoodsController extends Controller
                     $query->select('shop_properties.id', 'shop_properties.name', 'shop_properties.slug', 'shop_good_properties.shop_property_value_id');
                 },
                 'categories' => function ($query) {
-                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug', 'shop_categories.image', 'shop_categories.icon');
+                    $query->select('shop_categories.id', 'shop_categories.name', 'shop_categories.slug', 'shop_categories.image', 'shop_categories.mobile_image', 'shop_categories.icon');
                 },
                 'brands' => function ($query) {
                     $query->select('shop_brands.id', 'shop_brands.name', 'shop_brands.slug', 'shop_brands.logo');

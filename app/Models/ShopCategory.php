@@ -16,6 +16,7 @@ class ShopCategory extends Model
         'name',
         'description',
         'image',
+        'mobile_image',
         'icon',
         'slug',
         'is_active',
