@@ -61,7 +61,7 @@ class ShopCategoryController extends Controller
                         $category->mobile_image = $this->getImageUrl($category->mobile_image);
                     }
 
-                    $childrenData = \DB::select('SELECT id, name, slug, image, mobile_image, icon, is_active, sort_order FROM shop_categories WHERE parent_id = ? AND is_active = 1 ORDER BY sort_order ASC, name ASC', [$category->id]);
+                    $childrenData = \DB::select('SELECT id, name, slug, image, mobile_image, icon, is_active, sort_order, in_catalog FROM shop_categories WHERE parent_id = ? AND is_active = 1 ORDER BY sort_order ASC, name ASC', [$category->id]);
 
                     // Преобразуем в коллекцию Eloquent моделей
                     $children = collect($childrenData)->map(function ($item) {
@@ -74,6 +74,7 @@ class ShopCategoryController extends Controller
                         $child->icon = $item->icon;
                         $child->is_active = $item->is_active;
                         $child->sort_order = $item->sort_order;
+                        $child->in_catalog = $item->in_catalog;
 
                         return $child;
                     });
