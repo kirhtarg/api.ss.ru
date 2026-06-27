@@ -20,12 +20,15 @@ class YandexAuthController extends Controller
     /**
      * Перенаправление на Yandex OAuth
      */
-    public function redirectToYandex()
+    public function redirectToYandex(Request $request)
     {
         try {
             // Проверяем, что сессии настроены
             if (! session()->isStarted()) {
                 session()->start();
+            }
+            if ($request->boolean('mobile')) {
+                session(['mobile_oauth_yandex' => true]);
             }
 
             // Используем прямой URL для Yandex OAuth
@@ -334,8 +337,9 @@ class YandexAuthController extends Controller
             $permissions = $this->getUserPermissions($user);
 
             // Перенаправляем на фронтенд с токеном
-            $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
-            $redirectUrl = $frontendUrl.'/auth/yandex/callback?token='.$token.'&user='.base64_encode(json_encode([
+            $frontendUrl = session()->pull('mobile_oauth_yandex') ? 'skateandsnow://' : config('app.frontend_url', 'http://localhost:3000');
+            $redirectPath = str_starts_with($frontendUrl, 'skateandsnow://') ? 'auth/yandex/callback' : '/auth/yandex/callback';
+            $redirectUrl = (str_starts_with($frontendUrl, 'skateandsnow://') ? $frontendUrl : rtrim($frontendUrl, '/')).$redirectPath.'?token='.$token.'&user='.base64_encode(json_encode([
                 'id' => $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
@@ -526,3 +530,9 @@ class YandexAuthController extends Controller
         }
     }
 }
+
+
+
+
+
+

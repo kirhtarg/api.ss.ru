@@ -19,13 +19,15 @@ class GoogleAuthController extends Controller
     /**
      * Перенаправление на Google OAuth
      */
-    public function redirectToGoogle()
+    public function redirectToGoogle(Request $request)
     {
         try {
             // Проверяем, что сессии настроены
             if (! session()->isStarted()) {
                 session()->start();
             }
+
+            if ($request->boolean('mobile')) { session(['mobile_oauth_google' => true]); }
 
             return Socialite::driver('google')
                 ->scopes(['openid', 'profile', 'email'])
@@ -160,8 +162,9 @@ class GoogleAuthController extends Controller
             $permissions = $this->getUserPermissions($user);
 
             // Перенаправляем на фронтенд с токеном
-            $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
-            $redirectUrl = $frontendUrl.'/auth/google/callback?token='.$token.'&user='.base64_encode(json_encode([
+            $frontendUrl = session()->pull('mobile_oauth_google') ? 'skateandsnow://' : config('app.frontend_url', 'http://localhost:3000');
+            $redirectPath = str_starts_with($frontendUrl, 'skateandsnow://') ? 'auth/google/callback' : '/auth/google/callback';
+            $redirectUrl = (str_starts_with($frontendUrl, 'skateandsnow://') ? $frontendUrl : rtrim($frontendUrl, '/')).$redirectPath.'?token='.$token.'&user='.base64_encode(json_encode([
                 'id' => $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
@@ -243,3 +246,8 @@ class GoogleAuthController extends Controller
         }
     }
 }
+
+
+
+
+

@@ -19,12 +19,15 @@ class VkAuthController extends Controller
     /**
      * Перенаправление на VK OAuth
      */
-    public function redirectToVk()
+    public function redirectToVk(Request $request)
     {
         try {
             // Проверяем, что сессии настроены
             if (! session()->isStarted()) {
                 session()->start();
+            }
+            if ($request->boolean('mobile')) {
+                session(['mobile_oauth_vk' => true]);
             }
 
             // Логируем конфигурацию VK
@@ -269,8 +272,9 @@ class VkAuthController extends Controller
             $permissions = $this->getUserPermissions($user);
 
             // Перенаправляем на фронтенд с токеном
-            $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
-            $redirectUrl = $frontendUrl.'/auth/vk/callback?token='.$token.'&user='.base64_encode(json_encode([
+            $frontendUrl = session()->pull('mobile_oauth_vk') ? 'skateandsnow://' : config('app.frontend_url', 'http://localhost:3000');
+            $redirectPath = str_starts_with($frontendUrl, 'skateandsnow://') ? 'auth/vk/callback' : '/auth/vk/callback';
+            $redirectUrl = (str_starts_with($frontendUrl, 'skateandsnow://') ? $frontendUrl : rtrim($frontendUrl, '/')).$redirectPath.'?token='.$token.'&user='.base64_encode(json_encode([
                 'id' => $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
@@ -871,3 +875,9 @@ class VkAuthController extends Controller
         }
     }
 }
+
+
+
+
+
+
