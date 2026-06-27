@@ -23,6 +23,7 @@ class ShopYandexDeliveryController extends Controller
                 'data' => [
                     'api_mode' => $settingsData['api_mode'] ?? 'other_day',
                     'is_express' => $this->isExpressMode($settings),
+                    'express_delivery_city' => $settingsData['express_delivery_city'] ?? null,
                     'has_warehouse' => trim((string) $settings->warehouse_id) !== '',
                     'sender_city' => $settings->sender_city,
                 ],
@@ -283,7 +284,11 @@ class ShopYandexDeliveryController extends Controller
 
     private function getExpressTariffs(Request $request, ShopCarrierDeliverySettings $settings): JsonResponse
     {
-        $city = $this->normalizeSettlementName((string) $request->query('city'));
+        $settingsData = is_array($settings->settings) ? $settings->settings : [];
+        $city = $this->normalizeSettlementName((string) ($settingsData['express_delivery_city'] ?? $request->query('city')));
+        if ($city === '') {
+            throw new \RuntimeException('В настройках Яндекс Экспресс не указан город доставки');
+        }
         $cartItems = $request->query('cart_items', []);
         if (is_string($cartItems)) {
             $cartItems = json_decode($cartItems, true) ?: [];

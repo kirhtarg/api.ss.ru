@@ -67,6 +67,15 @@ class ShopCarrierDeliverySettingsController extends Controller
 
         $validated = $validator->validated();
         $settingsData = $this->normalizeSettingsPayload($request->input('settings'), $carrier);
+        if ($carrier === 'yandex' && ($settingsData['api_mode'] ?? 'other_day') === 'express' && trim((string) ($settingsData['express_delivery_city'] ?? '')) === '') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Для режима Яндекс Экспресс обязательно укажите город доставки.',
+                'errors' => [
+                    'settings.express_delivery_city' => ['Для режима Яндекс Экспресс обязательно укажите город доставки.'],
+                ],
+            ], 422);
+        }
         $validated['settings'] = $settingsData;
 
         $settings = ShopCarrierDeliverySettings::updateOrCreate(
@@ -232,6 +241,7 @@ class ShopCarrierDeliverySettingsController extends Controller
             if (array_key_exists('sender_phone', $settings)) {
                 $settings['sender_phone'] = trim((string) $settings['sender_phone']);
             }
+            $settings['express_delivery_city'] = trim((string) ($settings['express_delivery_city'] ?? ''));
         }
 
         return $settings;
