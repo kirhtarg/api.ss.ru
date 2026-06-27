@@ -54,7 +54,14 @@ class ShopCategoryController extends Controller
 
                 // Загружаем подкатегории для каждой главной категории через SQL
                 foreach ($mainCategories as $category) {
-                    $childrenData = \DB::select('SELECT id, name, slug, icon, is_active, sort_order FROM shop_categories WHERE parent_id = ? AND is_active = 1 ORDER BY sort_order ASC, name ASC', [$category->id]);
+                    if ($category->image) {
+                        $category->image = $this->getImageUrl($category->image);
+                    }
+                    if ($category->mobile_image) {
+                        $category->mobile_image = $this->getImageUrl($category->mobile_image);
+                    }
+
+                    $childrenData = \DB::select('SELECT id, name, slug, image, mobile_image, icon, is_active, sort_order FROM shop_categories WHERE parent_id = ? AND is_active = 1 ORDER BY sort_order ASC, name ASC', [$category->id]);
 
                     // Преобразуем в коллекцию Eloquent моделей
                     $children = collect($childrenData)->map(function ($item) {
@@ -62,6 +69,8 @@ class ShopCategoryController extends Controller
                         $child->id = $item->id;
                         $child->name = $item->name;
                         $child->slug = $item->slug;
+                        $child->image = $this->getImageUrl($item->image);
+                        $child->mobile_image = $this->getImageUrl($item->mobile_image);
                         $child->icon = $item->icon;
                         $child->is_active = $item->is_active;
                         $child->sort_order = $item->sort_order;
@@ -96,5 +105,24 @@ class ShopCategoryController extends Controller
                 'message' => 'Ошибка загрузки категорий: '.$e->getMessage(),
             ], 500);
         }
+    }
+
+    private function getImageUrl($filePath)
+    {
+        if (! $filePath) {
+            return null;
+        }
+
+        if (preg_match('/https?:\/\/[^\/]+(.*)/', $filePath, $matches)) {
+            $filePath = $matches[1];
+        }
+
+        $filePath = ltrim($filePath, '/');
+
+        if (str_starts_with($filePath, 'images/')) {
+            return '/'.$filePath;
+        }
+
+        return '/images/'.$filePath;
     }
 }

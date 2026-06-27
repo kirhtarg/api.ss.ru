@@ -1928,6 +1928,8 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::delete('/{id}', [\App\Http\Controllers\CategoryController::class, 'destroy']);
             Route::post('/{id}/image', [\App\Http\Controllers\ImageUploadController::class, 'uploadCategoryImage']);
             Route::delete('/{id}/image', [\App\Http\Controllers\ImageUploadController::class, 'deleteCategoryImage']);
+            Route::post('/{id}/mobile-image', [\App\Http\Controllers\ImageUploadController::class, 'uploadCategoryMobileImage']);
+            Route::delete('/{id}/mobile-image', [\App\Http\Controllers\ImageUploadController::class, 'deleteCategoryMobileImage']);
             Route::post('/{id}/figure-image', [\App\Http\Controllers\ImageUploadController::class, 'uploadCategoryFigureImage']);
             Route::delete('/{id}/figure-image', [\App\Http\Controllers\ImageUploadController::class, 'deleteCategoryFigureImage']);
             Route::post('/temp/image', [\App\Http\Controllers\ImageUploadController::class, 'uploadTempImage']);

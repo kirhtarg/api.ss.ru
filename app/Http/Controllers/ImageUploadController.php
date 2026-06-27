@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
@@ -85,6 +86,7 @@ class ImageUploadController extends Controller
 
             // Обновляем категорию
             $category->update(['image' => $imagePath]);
+            $this->clearPublicCategoryCache($category);
             Log::info('Категория обновлена с новым изображением');
 
             // Возвращаем путь относительно корня фронтенда
@@ -106,6 +108,14 @@ class ImageUploadController extends Controller
                 'message' => 'Ошибка загрузки изображения: '.$e->getMessage(),
             ], 500);
         }
+    }
+
+    /**
+     * Загрузка отдельного изображения категории для мобильного приложения
+     */
+    public function uploadCategoryMobileImage(Request $request, $categoryId)
+    {
+        return $this->uploadCategoryImageToField($request, $categoryId, 'mobile_image', 'мобильного изображения категории');
     }
 
     /**
@@ -239,6 +249,7 @@ class ImageUploadController extends Controller
 
             // Обновляем категорию
             $category->update(['in_figure_img' => $imagePath]);
+            $this->clearPublicCategoryCache($category);
 
             // Возвращаем путь относительно корня фронтенда
             $relativePath = '/'.$imagePath;
@@ -508,6 +519,65 @@ class ImageUploadController extends Controller
         }
     }
 
+    private function uploadCategoryImageToField(Request $request, $categoryId, string $field, string $label)
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:5120',
+                'image_url' => 'nullable|url',
+                'width' => 'nullable|integer|min:1|max:2000',
+                'height' => 'nullable|integer|min:1|max:2000',
+                'maintainAspectRatio' => 'boolean',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации',
+                    'errors' => $validator->errors(),
+                ], 422);
+            }
+
+            $category = \App\Models\ShopCategory::find($categoryId);
+            if (! $category) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Категория не найдена',
+                ], 404);
+            }
+
+            $imagePath = null;
+            if ($request->hasFile('image')) {
+                $imagePath = $this->processUploadedImage($request->file('image'), $request);
+            } elseif ($request->has('image_url')) {
+                $imagePath = $this->processImageFromUrl($request->image_url, $request);
+            }
+
+            if (! $imagePath) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не удалось обработать изображение',
+                ], 400);
+            }
+
+            $category->update([$field => $imagePath]);
+            $this->clearPublicCategoryCache($category);
+
+            return response()->json([
+                'success' => true,
+                'message' => ucfirst($label).' успешно загружено',
+                'image_url' => '/'.$imagePath,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Ошибка загрузки '.$label.': '.$e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка загрузки изображения: '.$e->getMessage(),
+            ], 500);
+        }
+    }
+
     /**
      * Удаление изображения категории
      */
@@ -563,6 +633,7 @@ class ImageUploadController extends Controller
             // Очищаем поле image в базе данных
             $category->image = null;
             $category->save();
+            $this->clearPublicCategoryCache($category);
 
             Log::info('Изображение успешно удалено для категории: '.$categoryId);
 
@@ -578,6 +649,78 @@ class ImageUploadController extends Controller
                 'success' => false,
                 'message' => 'Ошибка удаления изображения: '.$e->getMessage(),
             ], 500);
+        }
+    }
+
+    /**
+     * Удаление отдельного изображения категории для мобильного приложения
+     */
+    public function deleteCategoryMobileImage(Request $request, $categoryId)
+    {
+        return $this->deleteCategoryImageField($categoryId, 'mobile_image', 'мобильного изображения категории');
+    }
+
+    private function deleteCategoryImageField($categoryId, string $field, string $label)
+    {
+        try {
+            $category = \App\Models\ShopCategory::find($categoryId);
+            if (! $category) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Категория не найдена',
+                ], 404);
+            }
+
+            $currentImage = $category->{$field};
+            if (! $currentImage) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'У категории нет изображения',
+                ]);
+            }
+
+            $imagePathToDelete = ltrim((string) $currentImage, '/');
+            $fullPath = frontend_public_path().'/'.$imagePathToDelete;
+
+            if (file_exists($fullPath)) {
+                unlink($fullPath);
+            }
+
+            $category->{$field} = null;
+            $category->save();
+            $this->clearPublicCategoryCache($category);
+
+            return response()->json([
+                'success' => true,
+                'message' => ucfirst($label).' успешно удалено',
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Ошибка удаления '.$label.': '.$e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка удаления изображения: '.$e->getMessage(),
+            ], 500);
+        }
+    }
+
+    private function clearPublicCategoryCache(?\App\Models\ShopCategory $category = null): void
+    {
+        Cache::forget('public_shop_categories_index_'.md5(json_encode([])));
+        Cache::forget('public_shop_categories_index_'.md5(json_encode(['in_catalog' => '1'])));
+        Cache::forget('public_shop_categories_main');
+        Cache::forget('public_shop_categories_main_with_extra_menu');
+
+        if (! $category) {
+            return;
+        }
+
+        Cache::forget('public_shop_category_show_'.(int) $category->id);
+        Cache::forget('public_shop_category_slug_relations_'.md5(mb_strtolower((string) $category->slug)));
+        Cache::forget('public_shop_category_children_'.(int) $category->id);
+
+        if ($category->parent_id) {
+            Cache::forget('public_shop_category_children_'.(int) $category->parent_id);
         }
     }
 
@@ -636,6 +779,7 @@ class ImageUploadController extends Controller
             // Очищаем поле in_figure_img в базе данных
             $category->in_figure_img = null;
             $category->save();
+            $this->clearPublicCategoryCache($category);
 
             Log::info('Изображение фигуры успешно удалено для категории: '.$categoryId);
 
