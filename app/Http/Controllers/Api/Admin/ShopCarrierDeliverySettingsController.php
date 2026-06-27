@@ -79,6 +79,14 @@ class ShopCarrierDeliverySettingsController extends Controller
             return $access;
         }
 
+        if (! in_array($carrier, $this->allowedCarriers, true)) {
+            return response()->json(['success' => false, 'message' => 'Неизвестная служба доставки'], 404);
+        }
+
+        if ($carrier === 'yandex') {
+            return $this->validateYandexCredentials($request);
+        }
+
         $apiUrl = trim((string) $request->get('api_url', ''));
         $apiToken = trim((string) $request->get('api_token', ''));
 
@@ -111,6 +119,78 @@ class ShopCarrierDeliverySettingsController extends Controller
                 'data' => ['valid' => false],
             ], 422);
         }
+    }
+
+    private function validateYandexCredentials(Request $request): JsonResponse
+    {
+        $apiBaseUrl = $this->normalizeYandexApiBaseUrl((string) $request->get('api_url', ''));
+        $apiToken = trim((string) $request->get('api_token', ''));
+
+        if ($apiToken === '') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Укажите API токен Яндекс Доставки.',
+                'data' => ['valid' => false],
+            ], 422);
+        }
+
+        try {
+            $url = $apiBaseUrl.'/merchant/info';
+            $response = Http::withToken($apiToken)
+                ->acceptJson()
+                ->timeout(20)
+                ->get($url);
+
+            $message = $response->successful()
+                ? 'Доступ к API Яндекс Доставки подтвержден'
+                : ($response->json('message') ?? $response->json('error') ?? $response->body() ?: 'API Яндекс Доставки вернул ошибку');
+
+            return response()->json([
+                'success' => $response->successful(),
+                'message' => $message,
+                'data' => [
+                    'valid' => $response->successful(),
+                    'status' => $response->status(),
+                    'url' => $url,
+                    'response' => $response->json(),
+                ],
+            ], $response->successful() ? 200 : 422);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка проверки API Яндекс Доставки: '.$e->getMessage(),
+                'data' => ['valid' => false],
+            ], 422);
+        }
+    }
+
+    private function normalizeYandexApiBaseUrl(string $apiUrl): string
+    {
+        $default = 'https://b2b-authproxy.taxi.yandex.net/api/b2b/platform';
+        $apiUrl = trim($apiUrl);
+
+        if ($apiUrl === '') {
+            return $default;
+        }
+
+        $apiUrl = rtrim($apiUrl, '/');
+
+        foreach ([
+            '/merchant/info',
+            '/pricing-calculator',
+            '/location/detect',
+            '/pickup-points/list',
+            '/offers/create',
+            '/offers/confirm',
+            '/request/create',
+            '/warehouses/list',
+        ] as $methodPath) {
+            if (str_ends_with($apiUrl, $methodPath)) {
+                return substr($apiUrl, 0, -strlen($methodPath));
+            }
+        }
+
+        return $apiUrl;
     }
 
     private function checkAccess(Request $request): ?JsonResponse

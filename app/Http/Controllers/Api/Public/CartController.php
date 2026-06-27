@@ -1211,6 +1211,11 @@ class CartController extends Controller
                     'russianpost_office_id' => $request->get('russianpost_office_id'),
                     'russianpost_postal_code' => $request->get('russianpost_postal_code'),
                     'russianpost_delivery_address' => $request->get('russianpost_delivery_address'),
+                    'yandex_delivery_tariff_code' => $request->get('yandex_delivery_tariff_code'),
+                    'yandex_delivery_type' => $request->get('yandex_delivery_type'),
+                    'yandex_pickup_point_id' => $request->get('yandex_pickup_point_id'),
+                    'yandex_delivery_address' => $request->get('yandex_delivery_address'),
+                    'yandex_delivery_metadata' => $request->get('yandex_delivery_metadata'),
                 ],
             ];
 
