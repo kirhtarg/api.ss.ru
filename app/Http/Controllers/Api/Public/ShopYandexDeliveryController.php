@@ -12,6 +12,8 @@ use Illuminate\Support\Facades\Log;
 
 class ShopYandexDeliveryController extends Controller
 {
+    private ?array $lastYandexApiError = null;
+
     public function getActiveSettings(): JsonResponse
     {
         try {
@@ -111,11 +113,13 @@ class ShopYandexDeliveryController extends Controller
             ]);
         } catch (\Throwable $e) {
             Log::error('Yandex Delivery pickup points error: '.$e->getMessage());
+            $details = $this->buildYandexOtherDayErrorDetails($e, 'pickup_points');
 
             return response()->json([
                 'success' => false,
                 'message' => 'Не удалось загрузить ПВЗ Яндекс Доставки: '.$e->getMessage(),
                 'data' => [],
+                'details' => $details,
             ]);
         }
     }
@@ -192,11 +196,15 @@ class ShopYandexDeliveryController extends Controller
             ]);
         } catch (\Throwable $e) {
             Log::error('Yandex Delivery tariffs error: '.$e->getMessage());
+            $details = $this->isExpressMode($settings ?? new ShopCarrierDeliverySettings())
+                ? null
+                : $this->buildYandexOtherDayErrorDetails($e, 'pricing');
 
             return response()->json([
                 'success' => false,
                 'message' => 'Не удалось рассчитать Яндекс Доставку: '.$e->getMessage(),
                 'data' => [],
+                'details' => $details,
             ]);
         }
     }
@@ -220,6 +228,7 @@ class ShopYandexDeliveryController extends Controller
     {
         $baseUrl = $this->normalizeBaseUrl((string) $settings->api_url);
         $url = $baseUrl.$path;
+        $this->lastYandexApiError = null;
         $request = Http::withToken((string) $settings->api_token)
             ->acceptJson()
             ->asJson()
@@ -230,6 +239,7 @@ class ShopYandexDeliveryController extends Controller
             : $request->post($url, $payload);
 
         if (! $response->successful()) {
+            $responseBody = $response->json() ?: $response->body();
             $message = $response->json('message')
                 ?? $response->json('error')
                 ?? $response->json('error_description')
@@ -237,11 +247,19 @@ class ShopYandexDeliveryController extends Controller
                 ?? $response->json('details')
                 ?? $response->body()
                 ?: 'API Яндекс Доставки вернул ошибку';
+            $this->lastYandexApiError = [
+                'mode' => 'other_day',
+                'method' => strtoupper($method).' '.$path,
+                'url' => $url,
+                'status' => $response->status(),
+                'request_payload' => $payload,
+                'response' => $responseBody,
+            ];
             Log::warning('Yandex Delivery API error', [
                 'url' => $url,
                 'status' => $response->status(),
                 'payload' => $payload,
-                'response' => $response->json() ?: $response->body(),
+                'response' => $responseBody,
             ]);
             throw new \RuntimeException(is_string($message) ? $message : json_encode($message, JSON_UNESCAPED_UNICODE), $response->status());
         }
@@ -505,6 +523,45 @@ class ShopYandexDeliveryController extends Controller
     private function isClientApiError(\Throwable $e): bool
     {
         return in_array((int) $e->getCode(), [400, 401, 403, 404, 409, 422], true);
+    }
+
+    private function buildYandexOtherDayErrorDetails(\Throwable $e, string $operation): array
+    {
+        $apiError = $this->lastYandexApiError ?: [];
+        $status = (int) ($apiError['status'] ?? $e->getCode());
+        $suggestions = [
+            'В настройках метода должен быть выбран режим "Доставка по России (склад / ПВЗ)", а не "Экспресс".',
+            'API URL должен быть https://b2b-authproxy.taxi.yandex.net/api/b2b/platform или пустым, чтобы сервер подставил этот URL автоматически.',
+            'В поле "ID склада / platform_station_id" должен быть указан ID склада, созданного в личном кабинете Яндекс Доставки.',
+            'У API-токена в кабинете должны быть права на API Доставки по России: location/detect, pickup-points/list, pricing-calculator.',
+        ];
+
+        if (in_array($status, [401, 403], true) || str_contains(mb_strtolower($e->getMessage()), 'access denied') || str_contains(mb_strtolower($e->getMessage()), 'not authorized')) {
+            array_unshift($suggestions, 'Яндекс отклонил доступ. Проверьте, что токен выпущен именно для этого кабинета/merchant_id и для него включен доступ к API Доставки по России.');
+        }
+
+        if ($operation === 'pricing') {
+            $suggestions[] = 'Для расчета до адреса Яндекс требует полный адрес получателя: город, улица и дом.';
+            $suggestions[] = 'Для расчета до ПВЗ сначала должен быть выбран ПВЗ, а в запрос уйдет его platform_station_id.';
+            $suggestions[] = 'Габариты отправления передаются в сантиметрах, вес в граммах; если у товара они пустые, используются значения по умолчанию из настроек.';
+        }
+
+        if ($operation === 'pickup_points') {
+            $suggestions[] = 'Если ПВЗ не загружаются, сначала проверьте метод location/detect: он должен вернуть geo_id для выбранного города.';
+            $suggestions[] = 'После geo_id сервер запрашивает pickup-points/list. Если этот метод запрещен, Яндекс вернет 401/403 или текст Not authorized request.';
+        }
+
+        return array_filter([
+            'mode' => 'other_day',
+            'operation' => $operation,
+            'method' => $apiError['method'] ?? null,
+            'url' => $apiError['url'] ?? null,
+            'status' => $status ?: null,
+            'message' => $e->getMessage(),
+            'request_payload' => $apiError['request_payload'] ?? null,
+            'response' => $apiError['response'] ?? null,
+            'suggestions' => $suggestions,
+        ], fn ($value) => $value !== null && $value !== '');
     }
 
     private function normalizeBaseUrl(string $apiUrl): string

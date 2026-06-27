@@ -186,17 +186,20 @@ class ShopCarrierDeliverySettingsController extends Controller
 
                     return response()->json([
                         'success' => false,
-                        'message' => 'Доступ к merchant/info есть, но методы доставки недоступны: '.$detectMessage,
-                        'data' => [
-                            'valid' => false,
-                            'merchant_status' => $response->status(),
-                            'delivery_method_status' => $detectResponse->status(),
-                            'merchant_url' => $url,
-                            'delivery_method_url' => $apiBaseUrl.'/location/detect',
-                            'response' => $detectResponse->json(),
-                        ],
-                    ], 422);
-                }
+                    'message' => 'Доступ к merchant/info есть, но методы доставки недоступны: '.$detectMessage,
+                    'data' => [
+                        'valid' => false,
+                        'mode' => 'other_day',
+                        'checked_method' => 'POST /location/detect',
+                        'merchant_status' => $response->status(),
+                        'delivery_method_status' => $detectResponse->status(),
+                        'merchant_url' => $url,
+                        'delivery_method_url' => $apiBaseUrl.'/location/detect',
+                        'response' => $detectResponse->json(),
+                        'suggestions' => $this->yandexOtherDayAccessSuggestions('location/detect', $detectResponse->status(), (string) $detectMessage),
+                    ],
+                ], 422);
+            }
             }
 
             $message = $response->successful()
@@ -208,18 +211,50 @@ class ShopCarrierDeliverySettingsController extends Controller
                 'message' => $message,
                 'data' => [
                     'valid' => $response->successful(),
+                    'mode' => 'other_day',
+                    'checked_method' => $response->successful() ? 'GET /merchant/info + POST /location/detect' : 'GET /merchant/info',
                     'status' => $response->status(),
                     'url' => $url,
                     'response' => $response->json(),
+                    'suggestions' => $response->successful() ? [] : $this->yandexOtherDayAccessSuggestions('merchant/info', $response->status(), (string) $message),
                 ],
             ], $response->successful() ? 200 : 422);
         } catch (\Throwable $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка проверки API Яндекс Доставки: '.$e->getMessage(),
-                'data' => ['valid' => false],
+                'data' => [
+                    'valid' => false,
+                    'mode' => 'other_day',
+                    'suggestions' => $this->yandexOtherDayAccessSuggestions('connection', 0, $e->getMessage()),
+                ],
             ], 422);
         }
+    }
+
+    private function yandexOtherDayAccessSuggestions(string $method, int $status, string $message): array
+    {
+        $suggestions = [
+            'Для режима "Доставка по России" в личном кабинете Яндекс Доставки должен быть подключен API Доставки по России.',
+            'Токен должен быть выпущен для того же Merchant ID / Cabinet ID, который указан в настройках.',
+            'В настройках сайта должен быть указан ID склада / platform_station_id, созданный в кабинете Яндекса.',
+            'Базовый URL должен быть https://b2b-authproxy.taxi.yandex.net/api/b2b/platform или поле можно оставить пустым.',
+        ];
+
+        $lowerMessage = mb_strtolower($message);
+        if (in_array($status, [401, 403], true) || str_contains($lowerMessage, 'access denied') || str_contains($lowerMessage, 'not authorized')) {
+            array_unshift($suggestions, 'Яндекс отклонил авторизацию для метода '.$method.'. Проверьте права токена на этот метод или запросите у поддержки Яндекса включение доступа.');
+        }
+
+        if ($method === 'location/detect') {
+            $suggestions[] = 'Метод location/detect нужен для определения geo_id города перед загрузкой ПВЗ.';
+        }
+
+        if ($method === 'merchant/info') {
+            $suggestions[] = 'Если merchant/info недоступен, проблема в токене, кабинете или базовом URL, расчет доставки дальше работать не сможет.';
+        }
+
+        return $suggestions;
     }
 
     private function normalizeSettingsPayload(mixed $settings, string $carrier): array
@@ -310,21 +345,23 @@ class ShopCarrierDeliverySettingsController extends Controller
                 || stripos((string) $message, 'not authorized') !== false
                 || stripos((string) $message, 'unauthorized') !== false;
             $isAccessDenied = stripos((string) $message, 'access denied') !== false;
-            $isAuthError = $isAuthError && ! $isAccessDenied;
-            $valid = $response->successful() || $isAccessDenied || (in_array($response->status(), [400, 404, 422], true) && ! $isAuthError);
+            $valid = $response->successful() || (in_array($response->status(), [400, 404, 422], true) && ! $isAuthError && ! $isAccessDenied);
             $successMessage = $response->successful()
                 ? 'Доступ к API Яндекс Экспресс подтвержден, тестовый расчет доступен'
-                : ($isAccessDenied
-                    ? 'Токен принят API Яндекс Доставки. Для полноценного тестового расчета проверьте в Яндексе, что для кабинета подключен Cargo/Express API.'
-                    : 'Доступ к API Яндекс Экспресс подтвержден, но тестовый расчет вернул проверяемую ошибку: '.$message);
+                : 'Доступ к API Яндекс Экспресс подтвержден, но тестовый расчет вернул проверяемую ошибку: '.$message;
+            $errorMessage = $isAccessDenied
+                ? 'Нет доступа к Express/Cargo API Яндекс Доставки: метод offers/calculate вернул отказ. Нужно подключить Cargo/Express API для этого кабинета/токена у Яндекса.'
+                : ($message ?: 'API Яндекс Экспресс вернул ошибку авторизации');
 
             return response()->json([
                 'success' => $valid,
                 'message' => $valid
                     ? $successMessage
-                    : ($message ?: 'API Яндекс Экспресс вернул ошибку авторизации'),
+                    : $errorMessage,
                 'data' => [
                     'valid' => $valid,
+                    'mode' => 'express',
+                    'checked_method' => 'POST /offers/calculate',
                     'status' => $response->status(),
                     'url' => $url,
                     'request_payload' => $payload,
