@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Contact;
 use App\Models\Setting;
 use App\Models\ShopDellinSettings;
+use App\Models\ShopCarrierDeliverySettings;
 use App\Models\ShopCartItem;
 use App\Models\ShopGood;
 use App\Models\ShopGoodVariation;
@@ -2086,6 +2087,10 @@ class CartController extends Controller
                 || str_contains($shippingMethod, 'почт')
                 || str_contains($shippingMethod, 'russianpost');
 
+            $isYandexDelivery = ! empty($metadata['yandex_delivery_type'])
+                || (str_contains($shippingMethod, 'яндекс') && ! str_contains($shippingMethod, 'пэй'))
+                || str_contains($shippingMethod, 'yandex');
+
             if ($isDellin) {
                 $settings = app(ShopDeliveryActivitySyncService::class)->getMethodActive('dellin') === false
                     ? null
@@ -2115,6 +2120,24 @@ class CartController extends Controller
                 $data = $response->getData(true);
                 if (! ($data['success'] ?? false)) {
                     $this->logExternalDeliveryCreationError($order, 'Почта России', $data['message'] ?? 'Отправление не создано');
+                }
+
+                return;
+            }
+
+            if ($isYandexDelivery) {
+                $settings = app(ShopDeliveryActivitySyncService::class)->getMethodActive('yandex') === false
+                    ? null
+                    : ShopCarrierDeliverySettings::getActive('yandex');
+                $carrierSettings = is_array($settings?->settings) ? $settings->settings : [];
+                if (! $settings || ($carrierSettings['disable_order_creation'] ?? false)) {
+                    return;
+                }
+
+                $response = app(ShopOrdersController::class)->createYandexDeliveryOrder(new Request(), $order->id);
+                $data = $response->getData(true);
+                if (! ($data['success'] ?? false)) {
+                    $this->logExternalDeliveryCreationError($order, 'Яндекс Доставка', $data['message'] ?? 'Заявка не создана');
                 }
             }
         } catch (\Throwable $e) {

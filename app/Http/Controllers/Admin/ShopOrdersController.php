@@ -9,6 +9,7 @@ use App\Models\ShopOrder;
 use App\Models\ShopOrderLog;
 use App\Models\ShopOrderLogIcon;
 use App\Models\ShopOrderStatus;
+use App\Models\ShopCarrierDeliverySettings;
 use App\Models\ShopDellinSettings;
 use App\Models\ShopPaymentTransaction;
 use App\Models\ShopRussianPostSettings;
@@ -2451,6 +2452,16 @@ class ShopOrdersController extends Controller
             $oldAddress = $order->shipping_address;
             $oldCost = (float) ($order->delivery_cost ?? 0);
             $metadata = is_array($order->metadata) ? $order->metadata : [];
+            foreach ([
+                'yandex_request_id',
+                'yandex_request_payload',
+                'yandex_request_response',
+                'yandex_status_response',
+                'yandex_sharing_url',
+                'yandex_courier_order_id',
+            ] as $key) {
+                unset($metadata[$key]);
+            }
             $metadata = array_merge($metadata, $request->get('metadata', []));
 
             $order->update([
@@ -2789,6 +2800,382 @@ class ShopOrdersController extends Controller
         } catch (\Throwable $e) {
             return response()->json(['success' => false, 'message' => 'Ошибка проверки статуса Почты России: '.$e->getMessage()], 500);
         }
+    }
+
+    public function createYandexDeliveryOrder(Request $request, $id): JsonResponse
+    {
+        try {
+            $order = ShopOrder::findOrFail($id);
+            $settings = ShopCarrierDeliverySettings::getActive('yandex');
+
+            if (! $settings || ! $settings->api_token || ! $settings->warehouse_id) {
+                return response()->json(['success' => false, 'message' => 'Активные настройки Яндекс Доставки заполнены не полностью'], 400);
+            }
+
+            $metadata = is_array($order->metadata) ? $order->metadata : [];
+            if (! empty($metadata['yandex_request_id'])) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Заявка Яндекс Доставки уже создана',
+                    'data' => ['yandex_request_id' => $metadata['yandex_request_id']],
+                ]);
+            }
+
+            $payload = $this->buildYandexDeliveryOrderPayload($order, $settings);
+            $response = $this->sendYandexDeliveryRequest($settings, 'post', '/request/create', $payload);
+
+            $requestId = $response['request_id'] ?? $response['id'] ?? $response['request']['id'] ?? null;
+            if (! $requestId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Яндекс Доставка приняла ответ без request_id. Проверьте ответ API.',
+                    'data' => ['request_payload' => $payload, 'server_response' => $response],
+                ], 422);
+            }
+
+            $metadata['yandex_request_id'] = (string) $requestId;
+            $metadata['yandex_request_payload'] = $payload;
+            $metadata['yandex_request_response'] = $response;
+
+            $status = [
+                'code' => 'CREATED',
+                'name' => 'Заявка создана в Яндекс Доставке',
+                'external_id' => (string) $requestId,
+            ];
+
+            $order->update([
+                'metadata' => $metadata,
+                'delivery_status' => json_encode($status, JSON_UNESCAPED_UNICODE),
+            ]);
+
+            ShopOrderLog::createLog($order->id, 'Заявка Яндекс Доставки создана', [
+                'action_color' => '#FFFFFF',
+                'action_bg_color' => '#16A34A',
+                'section' => ShopOrderLog::SECTION_DELIVERY,
+                'comment' => 'ID заявки: '.$requestId,
+                'info' => "Заказ № {$order->order_number}",
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Заявка Яндекс Доставки создана',
+                'data' => [
+                    'yandex_request_id' => $requestId,
+                    'delivery_status' => $status,
+                    'order' => $this->formatOrderForResponse($order->fresh(['status', 'user', 'paymentMethod', 'deliveryMethod', 'manager'])),
+                    'server_response' => $response,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Ошибка создания заявки Яндекс Доставки: '.$e->getMessage(), ['order_id' => $id]);
+
+            return response()->json(['success' => false, 'message' => 'Ошибка создания заявки Яндекс Доставки: '.$e->getMessage()], 500);
+        }
+    }
+
+    public function updateYandexDeliveryStatus(Request $request, $id): JsonResponse
+    {
+        try {
+            $order = ShopOrder::findOrFail($id);
+            $metadata = is_array($order->metadata) ? $order->metadata : [];
+            $requestId = trim((string) ($metadata['yandex_request_id'] ?? ''));
+
+            if ($requestId === '') {
+                return response()->json(['success' => false, 'message' => 'У заказа нет ID заявки Яндекс Доставки'], 400);
+            }
+
+            $settings = ShopCarrierDeliverySettings::getActive('yandex');
+            if (! $settings || ! $settings->api_token) {
+                return response()->json(['success' => false, 'message' => 'Активные настройки Яндекс Доставки не заполнены'], 400);
+            }
+
+            $response = $this->sendYandexDeliveryRequest($settings, 'get', '/request/info', [
+                'request_id' => $requestId,
+                'slim' => true,
+            ]);
+
+            $state = $response['state'] ?? $response['request']['state'] ?? [];
+            $status = [
+                'code' => $state['status'] ?? $response['status'] ?? 'UNKNOWN',
+                'name' => $state['description'] ?? $state['status'] ?? 'Статус Яндекс Доставки обновлен',
+                'date' => $state['timestamp_utc'] ?? null,
+                'reason' => $state['reason'] ?? null,
+                'external_id' => $requestId,
+                'sharing_url' => $response['sharing_url'] ?? null,
+                'courier_order_id' => $response['courier_order_id'] ?? null,
+            ];
+
+            $metadata['yandex_status_response'] = $response;
+            if (! empty($response['sharing_url'])) {
+                $metadata['yandex_sharing_url'] = $response['sharing_url'];
+            }
+            if (! empty($response['courier_order_id'])) {
+                $metadata['yandex_courier_order_id'] = $response['courier_order_id'];
+            }
+
+            $order->update([
+                'metadata' => $metadata,
+                'delivery_status' => json_encode($status, JSON_UNESCAPED_UNICODE),
+            ]);
+
+            ShopOrderLog::createLog($order->id, 'Статус Яндекс Доставки обновлен', [
+                'action_color' => '#FFFFFF',
+                'action_bg_color' => '#2563EB',
+                'section' => ShopOrderLog::SECTION_DELIVERY,
+                'comment' => trim(($status['name'] ?? '').($status['reason'] ? ' / '.$status['reason'] : '')),
+                'info' => "Заказ № {$order->order_number}",
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Статус Яндекс Доставки обновлен',
+                'data' => [
+                    'delivery_status' => $status,
+                    'yandex_request_id' => $requestId,
+                    'order' => $this->formatOrderForResponse($order->fresh(['status', 'user', 'paymentMethod', 'deliveryMethod', 'manager'])),
+                    'server_response' => $response,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json(['success' => false, 'message' => 'Ошибка проверки статуса Яндекс Доставки: '.$e->getMessage()], 500);
+        }
+    }
+
+    private function buildYandexDeliveryOrderPayload(ShopOrder $order, ShopCarrierDeliverySettings $settings): array
+    {
+        $metadata = is_array($order->metadata) ? $order->metadata : [];
+        $deliveryType = ($metadata['yandex_delivery_type'] ?? '') === 'pickup_point' ? 'pickup_point' : 'address';
+        $pickupPointId = trim((string) ($metadata['yandex_pickup_point_id'] ?? ''));
+        $address = trim((string) ($metadata['yandex_delivery_address'] ?? $order->shipping_address ?? ''));
+
+        if ($deliveryType === 'pickup_point' && $pickupPointId === '') {
+            throw new \RuntimeException('Для создания заявки Яндекс Доставки до ПВЗ не выбран пункт выдачи');
+        }
+
+        if ($deliveryType === 'address' && $address === '') {
+            throw new \RuntimeException('Для создания заявки Яндекс Доставки до адреса не указан адрес получателя');
+        }
+
+        $cargo = $this->buildYandexDeliveryCargo($order, $settings);
+        $recipient = $this->splitYandexDeliveryCustomerName((string) $order->customer_name);
+        $destination = $deliveryType === 'pickup_point'
+            ? [
+                'type' => 'platform_station',
+                'platform_station' => ['platform_id' => $pickupPointId],
+                'custom_location' => null,
+                'interval_utc' => null,
+            ]
+            : [
+                'type' => 'custom_location',
+                'platform_station' => null,
+                'custom_location' => [
+                    'details' => [
+                        'country' => 'Россия',
+                        'locality' => $metadata['yandex_delivery_city'] ?? null,
+                        'full_address' => $address,
+                    ],
+                ],
+                'interval_utc' => null,
+            ];
+
+        return [
+            'info' => array_filter([
+                'operator_request_id' => (string) $order->order_number,
+                'merchant_id' => trim((string) $settings->client_id) ?: null,
+                'comment' => trim((string) ($order->comment ?? '')) ?: null,
+            ], fn ($value) => $value !== null && $value !== ''),
+            'source' => [
+                'platform_station' => [
+                    'platform_id' => (string) $settings->warehouse_id,
+                ],
+            ],
+            'destination' => $destination,
+            'items' => $cargo['items'],
+            'places' => $cargo['places'],
+            'billing_info' => [
+                'payment_method' => $order->payed ? 'already_paid' : 'already_paid',
+                'delivery_cost' => 0,
+                'variable_delivery_cost_for_recipient' => [
+                    [
+                        'min_cost_of_accepted_items' => 1,
+                        'delivery_cost' => 0,
+                    ],
+                ],
+            ],
+            'recipient_info' => array_filter([
+                'first_name' => $recipient['first_name'],
+                'last_name' => $recipient['last_name'],
+                'patronymic' => $recipient['patronymic'],
+                'phone' => $this->normalizeYandexDeliveryPhone((string) $order->customer_phone),
+                'email' => $order->customer_email,
+            ], fn ($value) => $value !== null && $value !== ''),
+            'last_mile_policy' => $deliveryType === 'pickup_point' ? 'self_pickup' : 'time_interval',
+            'particular_items_refuse' => false,
+            'forbid_unboxing' => false,
+        ];
+    }
+
+    private function buildYandexDeliveryCargo(ShopOrder $order, ShopCarrierDeliverySettings $settings): array
+    {
+        $defaultWeight = max(0.01, (float) ($settings->default_weight ?? 0.5));
+        $defaultLength = max(1, (float) ($settings->default_length ?? 10));
+        $defaultWidth = max(1, (float) ($settings->default_width ?? 10));
+        $defaultHeight = max(1, (float) ($settings->default_height ?? 10));
+        $items = is_array($order->items) ? $order->items : (json_decode((string) $order->items, true) ?: []);
+        $resourceItems = [];
+        $totalWeight = 0.0;
+        $maxLength = 0.0;
+        $maxWidth = 0.0;
+        $totalHeight = 0.0;
+
+        foreach ($items as $index => $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+
+            $quantity = max(1, (int) ($item['quantity'] ?? 1));
+            $weight = max(0.01, (float) ($item['weight'] ?? $defaultWeight));
+            $length = max(1, (float) ($item['length'] ?? $defaultLength));
+            $width = max(1, (float) ($item['width'] ?? $defaultWidth));
+            $height = max(1, (float) ($item['height'] ?? $defaultHeight));
+            $unitPrice = max(0, (float) ($item['price'] ?? $item['final_price'] ?? 0));
+
+            $totalWeight += $weight * $quantity;
+            $maxLength = max($maxLength, $length);
+            $maxWidth = max($maxWidth, $width);
+            $totalHeight += $height * $quantity;
+
+            $resourceItems[] = [
+                'count' => $quantity,
+                'name' => mb_substr((string) ($item['name'] ?? $item['good_name'] ?? 'Товар'), 0, 255),
+                'article' => mb_substr((string) ($item['sku'] ?? $item['article'] ?? $item['good_id'] ?? $index), 0, 100),
+                'billing_details' => [
+                    'unit_price' => (int) round($unitPrice * 100),
+                    'assessed_unit_price' => (int) round($unitPrice * 100),
+                ],
+                'physical_dims' => [
+                    'dx' => (int) ceil($length),
+                    'dy' => (int) ceil($height),
+                    'dz' => (int) ceil($width),
+                ],
+                'place_barcode' => 'SS-'.$order->id,
+                'fitting' => false,
+            ];
+        }
+
+        if (! $resourceItems) {
+            $resourceItems[] = [
+                'count' => 1,
+                'name' => 'Заказ '.$order->order_number,
+                'article' => (string) $order->order_number,
+                'billing_details' => [
+                    'unit_price' => (int) round((float) $order->total_amount * 100),
+                    'assessed_unit_price' => (int) round((float) $order->total_amount * 100),
+                ],
+                'physical_dims' => [
+                    'dx' => (int) ceil($defaultLength),
+                    'dy' => (int) ceil($defaultHeight),
+                    'dz' => (int) ceil($defaultWidth),
+                ],
+                'place_barcode' => 'SS-'.$order->id,
+                'fitting' => false,
+            ];
+            $totalWeight = $defaultWeight;
+            $maxLength = $defaultLength;
+            $maxWidth = $defaultWidth;
+            $totalHeight = $defaultHeight;
+        }
+
+        return [
+            'items' => $resourceItems,
+            'places' => [[
+                'physical_dims' => [
+                    'weight_gross' => max(1, (int) round(max(0.01, $totalWeight) * 1000)),
+                    'dx' => (int) ceil(max(1, $maxLength)),
+                    'dy' => (int) ceil(max(1, $totalHeight)),
+                    'dz' => (int) ceil(max(1, $maxWidth)),
+                ],
+                'barcode' => 'SS-'.$order->id,
+            ]],
+        ];
+    }
+
+    private function sendYandexDeliveryRequest(ShopCarrierDeliverySettings $settings, string $method, string $path, array $payload = []): array
+    {
+        $baseUrl = $this->normalizeYandexDeliveryBaseUrl((string) $settings->api_url);
+        $url = $baseUrl.$path;
+        $request = Http::withToken((string) $settings->api_token)
+            ->acceptJson()
+            ->asJson()
+            ->timeout(30);
+
+        $response = strtolower($method) === 'get'
+            ? $request->get($url, $payload)
+            : $request->post($url, $payload);
+
+        if (! $response->successful()) {
+            $message = $response->json('message')
+                ?? $response->json('error')
+                ?? $response->json('error_description')
+                ?? $response->body()
+                ?: 'API Яндекс Доставки вернул ошибку';
+            Log::warning('Yandex Delivery order API error', [
+                'url' => $url,
+                'status' => $response->status(),
+                'payload' => $payload,
+                'response' => $response->json() ?: $response->body(),
+            ]);
+            throw new \RuntimeException(is_string($message) ? $message : json_encode($message, JSON_UNESCAPED_UNICODE), $response->status());
+        }
+
+        return $response->json() ?: [];
+    }
+
+    private function normalizeYandexDeliveryBaseUrl(string $apiUrl): string
+    {
+        $apiUrl = trim($apiUrl) ?: 'https://b2b-authproxy.taxi.yandex.net/api/b2b/platform';
+        $apiUrl = rtrim($apiUrl, '/');
+
+        foreach ([
+            '/merchant/info',
+            '/pricing-calculator',
+            '/location/detect',
+            '/pickup-points/list',
+            '/offers/create',
+            '/offers/confirm',
+            '/request/create',
+            '/request/info',
+        ] as $methodPath) {
+            if (str_ends_with($apiUrl, $methodPath)) {
+                return substr($apiUrl, 0, -strlen($methodPath));
+            }
+        }
+
+        return $apiUrl;
+    }
+
+    private function normalizeYandexDeliveryPhone(string $phone): string
+    {
+        $digits = preg_replace('/\D+/', '', $phone);
+        if (strlen($digits) === 11 && str_starts_with($digits, '8')) {
+            $digits = '7'.substr($digits, 1);
+        }
+        if (strlen($digits) === 10) {
+            $digits = '7'.$digits;
+        }
+
+        return $digits ? '+'.$digits : $phone;
+    }
+
+    private function splitYandexDeliveryCustomerName(string $name): array
+    {
+        $parts = preg_split('/\s+/u', trim($name), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+
+        return [
+            'last_name' => $parts[0] ?? '',
+            'first_name' => $parts[1] ?? ($parts[0] ?? 'Покупатель'),
+            'patronymic' => $parts[2] ?? '',
+        ];
     }
 
     private function fetchRussianPostTrackingStatus(ShopOrder $order): array

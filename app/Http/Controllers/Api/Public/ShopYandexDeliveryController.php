@@ -110,24 +110,35 @@ class ShopYandexDeliveryController extends Controller
                 $cartItems = json_decode($cartItems, true) ?: [];
             }
 
-            $location = $this->detectLocation($settings, $city, $request->query('latitude'), $request->query('longitude'));
             $cargo = $this->calculateCargo($cartItems, $settings);
             $recipientAddress = $this->buildAddress($city, (string) $request->query('street', ''), (string) $request->query('house', ''), (string) $request->query('address', ''));
             $pickupPointId = trim((string) $request->query('pickup_point_id', ''));
 
+            if (! trim((string) $settings->warehouse_id)) {
+                throw new \RuntimeException('В настройках Яндекс Доставки не указан ID склада отправления / platform_station_id');
+            }
+
+            if ($deliveryType === 'pickup_point' && $pickupPointId === '') {
+                throw new \RuntimeException('Для расчета доставки до ПВЗ выберите пункт выдачи Яндекс Доставки');
+            }
+
+            if ($deliveryType === 'address' && $recipientAddress === '') {
+                throw new \RuntimeException('Для расчета доставки до адреса укажите город, улицу и дом');
+            }
+
             $payload = [
-                'platform_station_id' => $settings->warehouse_id ?: null,
-                'delivery_type' => $deliveryType,
-                'location' => $location,
-                'destination' => array_filter([
-                    'address' => $recipientAddress,
-                    'geo_id' => $location['geo_id'] ?? null,
-                    'pickup_point_id' => $deliveryType === 'pickup_point' ? $pickupPointId : null,
-                ], fn ($value) => $value !== null && $value !== ''),
-                'items' => $cargo['items'],
+                'source' => [
+                    'platform_station_id' => (string) $settings->warehouse_id,
+                ],
+                'destination' => $deliveryType === 'pickup_point'
+                    ? ['platform_station_id' => $pickupPointId]
+                    : ['address' => $recipientAddress],
+                'tariff' => $deliveryType === 'pickup_point' ? 'self_pickup' : 'time_interval',
+                'total_weight' => $cargo['total_weight_grams'],
+                'total_assessed_price' => $cargo['total_assessed_price_kopecks'],
+                'client_price' => 0,
+                'payment_method' => 'already_paid',
                 'places' => $cargo['places'],
-                'dimensions' => $cargo['dimensions'],
-                'weight' => $cargo['weight'],
             ];
 
             $response = $this->yandexRequest($settings, 'post', '/pricing-calculator', $payload);
@@ -137,8 +148,8 @@ class ShopYandexDeliveryController extends Controller
                 'success' => true,
                 'data' => $tariffs,
                 'meta' => [
-                    'location' => $location,
                     'cargo' => $cargo,
+                    'request_payload' => $payload,
                     'raw' => $response,
                 ],
             ]);
@@ -378,7 +389,8 @@ class ShopYandexDeliveryController extends Controller
         $defaultWidth = max(1, (float) ($settings->default_width ?? 10));
         $defaultHeight = max(1, (float) ($settings->default_height ?? 10));
 
-        $totalWeight = 0;
+        $totalWeight = 0.0;
+        $totalAssessedPrice = 0.0;
         $maxLength = 0;
         $maxWidth = 0;
         $totalHeight = 0;
@@ -390,8 +402,10 @@ class ShopYandexDeliveryController extends Controller
             $length = max(1, (float) ($item['length'] ?? $defaultLength));
             $width = max(1, (float) ($item['width'] ?? $defaultWidth));
             $height = max(1, (float) ($item['height'] ?? $defaultHeight));
+            $price = max(0, (float) ($item['price'] ?? $item['total'] ?? $item['amount'] ?? 0));
 
             $totalWeight += $weight * $quantity;
+            $totalAssessedPrice += $price * $quantity;
             $maxLength = max($maxLength, $length);
             $maxWidth = max($maxWidth, $width);
             $totalHeight += $height * $quantity;
@@ -426,15 +440,22 @@ class ShopYandexDeliveryController extends Controller
             'height' => max(1, $totalHeight),
         ];
 
+        $weightGrams = max(1, (int) round(max(0.01, $totalWeight) * 1000));
+
         return [
             'items' => $items,
             'places' => [[
-                'physical_dims' => $dimensions,
-                'dimensions' => $dimensions,
-                'weight' => max(0.01, $totalWeight),
+                'physical_dims' => [
+                    'weight_gross' => $weightGrams,
+                    'dx' => (int) ceil($dimensions['length']),
+                    'dy' => (int) ceil($dimensions['height']),
+                    'dz' => (int) ceil($dimensions['width']),
+                ],
             ]],
             'dimensions' => $dimensions,
             'weight' => max(0.01, $totalWeight),
+            'total_weight_grams' => $weightGrams,
+            'total_assessed_price_kopecks' => (int) round($totalAssessedPrice * 100),
         ];
     }
 
@@ -503,6 +524,22 @@ class ShopYandexDeliveryController extends Controller
 
     private function normalizeTariffs(array $response, string $deliveryType, string $address, string $pickupPointId): array
     {
+        if (isset($response['pricing_total'])) {
+            $cost = $this->parseYandexMoney((string) $response['pricing_total']);
+
+            return $cost === null ? [] : [[
+                'code' => $deliveryType === 'pickup_point' ? 'yandex_self_pickup' : 'yandex_time_interval',
+                'name' => $deliveryType === 'pickup_point' ? 'До ПВЗ Яндекс Доставки' : 'До адреса Яндекс Доставкой',
+                'description' => $deliveryType === 'pickup_point' ? 'ПВЗ: '.$pickupPointId : $address,
+                'cost' => $cost,
+                'cost_value' => $cost,
+                'type' => $deliveryType,
+                'period' => isset($response['delivery_days']) ? $response['delivery_days'].' дн.' : null,
+                'delivery_days' => $response['delivery_days'] ?? null,
+                'raw' => $response,
+            ]];
+        }
+
         $items = $response['tariffs']
             ?? $response['offers']
             ?? $response['services']
@@ -549,6 +586,9 @@ class ShopYandexDeliveryController extends Controller
             $item['amount'] ?? null,
             $item['tariff']['price'] ?? null,
             $item['pricing']['price'] ?? null,
+            $item['pricing_total'] ?? null,
+            $item['offer_details']['pricing_total'] ?? null,
+            $item['offer_details']['pricing'] ?? null,
             $item['total_price'] ?? null,
             $item['delivery_price'] ?? null,
         ];
@@ -561,8 +601,24 @@ class ShopYandexDeliveryController extends Controller
                 $value = (float) $candidate;
                 return $value > 10000 ? round($value / 100, 2) : round($value, 2);
             }
+
+            if (is_string($candidate)) {
+                $value = $this->parseYandexMoney($candidate);
+                if ($value !== null) {
+                    return $value;
+                }
+            }
         }
 
         return null;
+    }
+
+    private function parseYandexMoney(string $value): ?float
+    {
+        if (! preg_match('/-?\d+(?:[.,]\d+)?/u', $value, $matches)) {
+            return null;
+        }
+
+        return round((float) str_replace(',', '.', $matches[0]), 2);
     }
 }

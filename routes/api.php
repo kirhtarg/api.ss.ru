@@ -2310,6 +2310,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::put('/{id}/dellin/status', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateDellinStatus']);
                 Route::post('/{id}/russianpost/order', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'createRussianPostOrder']);
                 Route::put('/{id}/russianpost/status', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateRussianPostStatus']);
+                Route::post('/{id}/yandex/order', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'createYandexDeliveryOrder']);
+                Route::put('/{id}/yandex/status', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateYandexDeliveryStatus']);
                 Route::post('/{id}/items', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'addItem']);
                 Route::put('/{id}/items/{itemId}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateItem']);
                 Route::delete('/{id}/items/{itemId}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'removeItem']);

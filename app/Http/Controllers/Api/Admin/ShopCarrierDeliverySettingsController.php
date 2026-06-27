@@ -149,8 +149,36 @@ class ShopCarrierDeliverySettingsController extends Controller
                 ->timeout(20)
                 ->get($url);
 
+            if ($response->successful()) {
+                $detectResponse = Http::withToken($apiToken)
+                    ->acceptJson()
+                    ->asJson()
+                    ->timeout(20)
+                    ->post($apiBaseUrl.'/location/detect', ['location' => 'Москва']);
+
+                if (! $detectResponse->successful()) {
+                    $detectMessage = $detectResponse->json('message')
+                        ?? $detectResponse->json('error')
+                        ?? $detectResponse->body()
+                        ?: 'API Яндекс Доставки не разрешил метод location/detect';
+
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Доступ к merchant/info есть, но методы доставки недоступны: '.$detectMessage,
+                        'data' => [
+                            'valid' => false,
+                            'merchant_status' => $response->status(),
+                            'delivery_method_status' => $detectResponse->status(),
+                            'merchant_url' => $url,
+                            'delivery_method_url' => $apiBaseUrl.'/location/detect',
+                            'response' => $detectResponse->json(),
+                        ],
+                    ], 422);
+                }
+            }
+
             $message = $response->successful()
-                ? 'Доступ к API Яндекс Доставки подтвержден'
+                ? 'Доступ к API Яндекс Доставки подтвержден, метод location/detect доступен'
                 : ($response->json('message') ?? $response->json('error') ?? $response->body() ?: 'API Яндекс Доставки вернул ошибку');
 
             return response()->json([
