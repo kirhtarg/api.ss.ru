@@ -65,9 +65,13 @@ class ShopCarrierDeliverySettingsController extends Controller
             return response()->json(['success' => false, 'message' => 'Ошибка валидации', 'errors' => $validator->errors()], 422);
         }
 
+        $validated = $validator->validated();
+        $settingsData = $this->normalizeSettingsPayload($request->input('settings'), $carrier);
+        $validated['settings'] = $settingsData;
+
         $settings = ShopCarrierDeliverySettings::updateOrCreate(
             ['carrier' => $carrier],
-            array_merge($validator->validated(), ['carrier' => $carrier])
+            array_merge($validated, ['carrier' => $carrier])
         );
         if ($request->has('is_active')) {
             app(ShopDeliveryActivitySyncService::class)->applySettingsActiveToMethod($carrier, $request->boolean('is_active'));
@@ -148,7 +152,7 @@ class ShopCarrierDeliverySettingsController extends Controller
         }
 
         if ($apiMode === 'express') {
-            return $this->validateYandexExpressCredentials($apiBaseUrl, $apiToken);
+            return $this->validateYandexExpressCredentials($apiBaseUrl, $apiToken, $request);
         }
 
         try {
@@ -209,17 +213,86 @@ class ShopCarrierDeliverySettingsController extends Controller
         }
     }
 
-    private function validateYandexExpressCredentials(string $apiBaseUrl, string $apiToken): JsonResponse
+    private function normalizeSettingsPayload(mixed $settings, string $carrier): array
+    {
+        if (is_string($settings)) {
+            $decoded = json_decode($settings, true);
+            $settings = is_array($decoded) ? $decoded : [];
+        }
+
+        $settings = is_array($settings) ? $settings : [];
+
+        if ($carrier === 'yandex') {
+            $apiMode = ($settings['api_mode'] ?? 'other_day') === 'express' ? 'express' : 'other_day';
+            $settings['api_mode'] = $apiMode;
+            $settings['disable_order_creation'] = filter_var($settings['disable_order_creation'] ?? false, FILTER_VALIDATE_BOOLEAN);
+            $settings['express_taxi_class'] = trim((string) ($settings['express_taxi_class'] ?? 'express')) ?: 'express';
+            $settings['express_pro_courier'] = filter_var($settings['express_pro_courier'] ?? false, FILTER_VALIDATE_BOOLEAN);
+
+            if (array_key_exists('sender_phone', $settings)) {
+                $settings['sender_phone'] = trim((string) $settings['sender_phone']);
+            }
+        }
+
+        return $settings;
+    }
+
+    private function validateYandexExpressCredentials(string $apiBaseUrl, string $apiToken, Request $request): JsonResponse
     {
         try {
-            $probeClaimId = '00000000000000000000000000000000';
-            $url = $apiBaseUrl.'/claims/info?claim_id='.$probeClaimId;
+            $sourceCity = trim((string) $request->get('sender_city', 'Москва'));
+            $sourceStreet = trim((string) $request->get('sender_street', ''));
+            $sourceHouse = trim((string) $request->get('sender_house', ''));
+            $sourceAddress = trim(implode(', ', array_filter([
+                $sourceCity,
+                $sourceStreet,
+                $sourceHouse !== '' ? 'д. '.$sourceHouse : '',
+            ]))) ?: 'Москва';
+            $settingsData = $request->get('settings', []);
+            $settingsData = is_array($settingsData) ? $settingsData : [];
+            $taxiClass = $settingsData['express_taxi_class'] ?? 'express';
+
+            $url = $apiBaseUrl.'/offers/calculate';
+            $payload = [
+                'items' => [[
+                    'size' => [
+                        'length' => 0.1,
+                        'width' => 0.1,
+                        'height' => 0.1,
+                    ],
+                    'weight' => 0.1,
+                    'quantity' => 1,
+                    'pickup_point' => 1,
+                    'dropoff_point' => 2,
+                    'age_restricted' => false,
+                ]],
+                'route_points' => [
+                    [
+                        'id' => 1,
+                        'fullname' => $sourceAddress,
+                        'country' => 'Россия',
+                        'city' => $sourceCity,
+                    ],
+                    [
+                        'id' => 2,
+                        'fullname' => $sourceAddress,
+                        'country' => 'Россия',
+                        'city' => $sourceCity,
+                    ],
+                ],
+                'requirements' => [
+                    'taxi_classes' => [$taxiClass],
+                    'skip_door_to_door' => false,
+                    'pro_courier' => (bool) ($settingsData['express_pro_courier'] ?? false),
+                ],
+            ];
+
             $response = Http::withToken($apiToken)
                 ->withHeaders(['Accept-Language' => 'ru'])
                 ->acceptJson()
                 ->asJson()
                 ->timeout(20)
-                ->post($url, []);
+                ->post($url, $payload);
 
             $body = $response->json();
             $message = $body['message'] ?? $body['error'] ?? $response->body();
@@ -227,16 +300,20 @@ class ShopCarrierDeliverySettingsController extends Controller
                 || stripos((string) $message, 'not authorized') !== false
                 || stripos((string) $message, 'unauthorized') !== false;
             $valid = $response->successful() || (in_array($response->status(), [400, 404, 422], true) && ! $isAuthError);
+            $successMessage = $response->successful()
+                ? 'Доступ к API Яндекс Экспресс подтвержден, тестовый расчет доступен'
+                : 'Доступ к API Яндекс Экспресс подтвержден, но тестовый расчет вернул проверяемую ошибку: '.$message;
 
             return response()->json([
                 'success' => $valid,
                 'message' => $valid
-                    ? 'Доступ к API Яндекс Экспресс подтвержден'
+                    ? $successMessage
                     : ($message ?: 'API Яндекс Экспресс вернул ошибку авторизации'),
                 'data' => [
                     'valid' => $valid,
                     'status' => $response->status(),
                     'url' => $url,
+                    'request_payload' => $payload,
                     'response' => $body,
                 ],
             ], $valid ? 200 : 422);

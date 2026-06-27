@@ -346,13 +346,20 @@ class ShopYandexDeliveryController extends Controller
         $items = [];
 
         foreach ($cartItems as $index => $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+            $weight = $this->positiveDeliveryNumber($item['weight'] ?? null) ?? $defaultWeight;
+            $length = $this->positiveDeliveryNumber($item['length'] ?? ($item['depth'] ?? null)) ?? $defaultLength;
+            $width = $this->positiveDeliveryNumber($item['width'] ?? null) ?? $defaultWidth;
+            $height = $this->positiveDeliveryNumber($item['height'] ?? null) ?? $defaultHeight;
             $items[] = [
                 'size' => [
-                    'length' => round(max(1, (float) ($item['length'] ?? $defaultLength)) / 100, 3),
-                    'width' => round(max(1, (float) ($item['width'] ?? $defaultWidth)) / 100, 3),
-                    'height' => round(max(1, (float) ($item['height'] ?? $defaultHeight)) / 100, 3),
+                    'length' => round(max(1, $length) / 100, 3),
+                    'width' => round(max(1, $width) / 100, 3),
+                    'height' => round(max(1, $height) / 100, 3),
                 ],
-                'weight' => max(0.01, (float) ($item['weight'] ?? $defaultWeight)),
+                'weight' => max(0.01, $weight),
                 'quantity' => max(1, (int) ($item['quantity'] ?? 1)),
                 'pickup_point' => 1,
                 'dropoff_point' => 2,
@@ -646,11 +653,14 @@ class ShopYandexDeliveryController extends Controller
         $items = [];
 
         foreach ($cartItems as $index => $item) {
+            if (! is_array($item)) {
+                continue;
+            }
             $quantity = max(1, (int) ($item['quantity'] ?? 1));
-            $weight = max(0.01, (float) ($item['weight'] ?? $defaultWeight));
-            $length = max(1, (float) ($item['length'] ?? $defaultLength));
-            $width = max(1, (float) ($item['width'] ?? $defaultWidth));
-            $height = max(1, (float) ($item['height'] ?? $defaultHeight));
+            $weight = max(0.01, $this->positiveDeliveryNumber($item['weight'] ?? null) ?? $defaultWeight);
+            $length = max(1, $this->positiveDeliveryNumber($item['length'] ?? ($item['depth'] ?? null)) ?? $defaultLength);
+            $width = max(1, $this->positiveDeliveryNumber($item['width'] ?? null) ?? $defaultWidth);
+            $height = max(1, $this->positiveDeliveryNumber($item['height'] ?? null) ?? $defaultHeight);
             $price = max(0, (float) ($item['price'] ?? $item['total'] ?? $item['amount'] ?? 0));
 
             $totalWeight += $weight * $quantity;
@@ -719,6 +729,11 @@ class ShopYandexDeliveryController extends Controller
             $street,
             $house !== '' ? 'д. '.$house : '',
         ])));
+    }
+
+    private function positiveDeliveryNumber($value): ?float
+    {
+        return is_numeric($value) && (float) $value > 0 ? (float) $value : null;
     }
 
     private function normalizePickupPoints(array $response): array
