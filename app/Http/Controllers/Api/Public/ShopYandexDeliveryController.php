@@ -22,7 +22,8 @@ class ShopYandexDeliveryController extends Controller
             ]);
 
             $settings = $this->getSettingsOrFail();
-            $city = trim((string) $request->query('city'));
+            $rawCity = trim((string) $request->query('city'));
+            $city = $this->normalizeSettlementName($rawCity);
             $location = $this->detectLocation($settings, $city, $request->query('latitude'), $request->query('longitude'));
 
             if (empty($location['geo_id'])) {
@@ -31,6 +32,8 @@ class ShopYandexDeliveryController extends Controller
                     'message' => 'Яндекс Доставка не смогла определить geo_id для города: '.$city,
                     'data' => [],
                     'meta' => [
+                        'raw_city' => $rawCity,
+                        'normalized_city' => $city,
                         'location' => $location,
                     ],
                 ]);
@@ -61,6 +64,8 @@ class ShopYandexDeliveryController extends Controller
                 'success' => true,
                 'data' => $points,
                 'meta' => [
+                    'raw_city' => $rawCity,
+                    'normalized_city' => $city,
                     'location' => $location,
                 ],
             ]);
@@ -91,7 +96,7 @@ class ShopYandexDeliveryController extends Controller
             ]);
 
             $settings = $this->getSettingsOrFail();
-            $city = trim((string) $request->query('city'));
+            $city = $this->normalizeSettlementName((string) $request->query('city'));
             $deliveryType = $request->query('delivery_type') === 'pvz' ? 'pickup_point' : $request->query('delivery_type');
             $cartItems = $request->query('cart_items', []);
             if (is_string($cartItems)) {
@@ -235,6 +240,8 @@ class ShopYandexDeliveryController extends Controller
 
     private function detectLocation(ShopCarrierDeliverySettings $settings, string $city, mixed $latitude = null, mixed $longitude = null): array
     {
+        $city = $this->normalizeSettlementName($city);
+        $cityWithCountry = str_contains(mb_strtolower($city), 'россия') ? $city : 'Россия, '.$city;
         $locationPayload = array_filter([
             'address' => $city,
             'lat' => is_numeric($latitude) ? (float) $latitude : null,
@@ -244,15 +251,23 @@ class ShopYandexDeliveryController extends Controller
         try {
             $response = $this->yandexRequestVariants($settings, 'post', '/location/detect', [
                 ['address' => $city],
+                ['address' => $cityWithCountry],
                 ['location' => $locationPayload],
                 ['location' => $city],
+                ['location' => $cityWithCountry],
                 ['text' => $city],
+                ['text' => $cityWithCountry],
             ]);
             $location = $response['location'] ?? $response['data']['location'] ?? $response['result'] ?? $response;
 
             return array_filter([
                 'address' => $location['address'] ?? $city,
-                'geo_id' => $location['geo_id'] ?? $location['geoId'] ?? null,
+                'geo_id' => $location['geo_id']
+                    ?? $location['geoId']
+                    ?? $location['geoid']
+                    ?? $location['geo']['id']
+                    ?? $location['id']
+                    ?? null,
                 'lat' => $location['lat'] ?? $location['latitude'] ?? null,
                 'lon' => $location['lon'] ?? $location['longitude'] ?? null,
             ], fn ($value) => $value !== null && $value !== '');
@@ -263,6 +278,14 @@ class ShopYandexDeliveryController extends Controller
 
             return ['address' => $city];
         }
+    }
+
+    private function normalizeSettlementName(string $city): string
+    {
+        $city = trim(preg_replace('/\s+/u', ' ', $city));
+        $city = preg_replace('/^(г|город|д|деревня|пос|поселок|посёлок|пгт|с|село)\.?\s+/iu', '', $city);
+
+        return trim($city);
     }
 
     private function calculateCargo(array $cartItems, ShopCarrierDeliverySettings $settings): array
