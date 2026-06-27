@@ -41,6 +41,10 @@ class ShopCarrierDeliverySettings extends Model
 
     public static function getActive(string $carrier): ?self
     {
+        if (ShopDeliveryMethod::where('type', $carrier)->where('is_active', false)->exists()) {
+            return null;
+        }
+
         return self::where('carrier', $carrier)->where('is_active', true)->first();
     }
 }

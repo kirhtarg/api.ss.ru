@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopDpdSettings;
+use App\Services\ShopDeliveryActivitySyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -48,6 +49,7 @@ class ShopDpdSettingsController extends Controller
         }
 
         $settings = ShopDpdSettings::first();
+        app(ShopDeliveryActivitySyncService::class)->mergeMethodActive('dpd', $settings);
 
         return response()->json([
             'success' => true,
@@ -65,7 +67,9 @@ class ShopDpdSettingsController extends Controller
             return $accessCheck;
         }
 
-        $settings = ShopDpdSettings::getActive();
+        $settings = app(ShopDeliveryActivitySyncService::class)->getMethodActive('dpd') === false
+            ? null
+            : ShopDpdSettings::getActive();
 
         return response()->json([
             'success' => true,
@@ -119,6 +123,10 @@ class ShopDpdSettingsController extends Controller
         } else {
             $settings = ShopDpdSettings::create($request->all());
         }
+        if ($request->has('is_active')) {
+            app(ShopDeliveryActivitySyncService::class)->applySettingsActiveToMethod('dpd', $request->boolean('is_active'));
+        }
+        app(ShopDeliveryActivitySyncService::class)->mergeMethodActive('dpd', $settings);
 
         return response()->json([
             'success' => true,
@@ -169,6 +177,10 @@ class ShopDpdSettingsController extends Controller
         }
 
         $settings->update($request->all());
+        if ($request->has('is_active')) {
+            app(ShopDeliveryActivitySyncService::class)->applySettingsActiveToMethod('dpd', $request->boolean('is_active'));
+        }
+        app(ShopDeliveryActivitySyncService::class)->mergeMethodActive('dpd', $settings);
 
         return response()->json([
             'success' => true,
@@ -214,6 +226,8 @@ class ShopDpdSettingsController extends Controller
             ->update(['is_active' => false]);
 
         $settings->update(['is_active' => true]);
+        app(ShopDeliveryActivitySyncService::class)->applySettingsActiveToMethod('dpd', true);
+        app(ShopDeliveryActivitySyncService::class)->mergeMethodActive('dpd', $settings);
 
         return response()->json([
             'success' => true,

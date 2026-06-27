@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopCarrierDeliverySettings;
+use App\Services\ShopDeliveryActivitySyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -24,14 +25,36 @@ class ShopYandexDeliveryController extends Controller
             $city = trim((string) $request->query('city'));
             $location = $this->detectLocation($settings, $city, $request->query('latitude'), $request->query('longitude'));
 
-            $payload = array_filter([
-                'location' => $location,
-                'city' => $city,
-                'geo_id' => $location['geo_id'] ?? null,
-                'platform_station_id' => $settings->warehouse_id ?: null,
-            ], fn ($value) => $value !== null && $value !== '');
+            if (empty($location['geo_id'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Яндекс Доставка не смогла определить geo_id для города: '.$city,
+                    'data' => [],
+                    'meta' => [
+                        'location' => $location,
+                    ],
+                ]);
+            }
 
-            $response = $this->yandexRequest($settings, 'post', '/pickup-points/list', $payload);
+            $response = $this->yandexRequestVariants($settings, 'post', '/pickup-points/list', [
+                array_filter([
+                    'geo_id' => $location['geo_id'],
+                    'type' => 'pickup_point',
+                ], fn ($value) => $value !== null && $value !== ''),
+                array_filter([
+                    'geo_id' => $location['geo_id'],
+                ], fn ($value) => $value !== null && $value !== ''),
+                array_filter([
+                    'location' => [
+                        'geo_id' => $location['geo_id'],
+                    ],
+                    'type' => 'pickup_point',
+                ], fn ($value) => $value !== null && $value !== ''),
+                array_filter([
+                    'location' => $location,
+                    'city' => $city,
+                ], fn ($value) => $value !== null && $value !== ''),
+            ]);
             $points = $this->normalizePickupPoints($response);
 
             return response()->json([
@@ -43,12 +66,13 @@ class ShopYandexDeliveryController extends Controller
             ]);
         } catch (\Throwable $e) {
             Log::error('Yandex Delivery pickup points error: '.$e->getMessage());
+            $status = $this->isClientApiError($e) ? 200 : 503;
 
             return response()->json([
                 'success' => false,
                 'message' => 'Не удалось загрузить ПВЗ Яндекс Доставки: '.$e->getMessage(),
                 'data' => [],
-            ], 503);
+            ], $status);
         }
     }
 
@@ -109,17 +133,22 @@ class ShopYandexDeliveryController extends Controller
             ]);
         } catch (\Throwable $e) {
             Log::error('Yandex Delivery tariffs error: '.$e->getMessage());
+            $status = $this->isClientApiError($e) ? 200 : 503;
 
             return response()->json([
                 'success' => false,
                 'message' => 'Не удалось рассчитать Яндекс Доставку: '.$e->getMessage(),
                 'data' => [],
-            ], 503);
+            ], $status);
         }
     }
 
     private function getSettingsOrFail(): ShopCarrierDeliverySettings
     {
+        if (app(ShopDeliveryActivitySyncService::class)->getMethodActive('yandex') === false) {
+            throw new \RuntimeException('Способ доставки Яндекс Доставка отключен');
+        }
+
         $settings = ShopCarrierDeliverySettings::getActive('yandex');
 
         if (! $settings || ! $settings->api_token) {
@@ -146,12 +175,43 @@ class ShopYandexDeliveryController extends Controller
             $message = $response->json('message')
                 ?? $response->json('error')
                 ?? $response->json('error_description')
+                ?? $response->json('detail')
+                ?? $response->json('details')
                 ?? $response->body()
                 ?: 'API Яндекс Доставки вернул ошибку';
-            throw new \RuntimeException($message);
+            Log::warning('Yandex Delivery API error', [
+                'url' => $url,
+                'status' => $response->status(),
+                'payload' => $payload,
+                'response' => $response->json() ?: $response->body(),
+            ]);
+            throw new \RuntimeException(is_string($message) ? $message : json_encode($message, JSON_UNESCAPED_UNICODE), $response->status());
         }
 
         return $response->json() ?: [];
+    }
+
+    private function yandexRequestVariants(ShopCarrierDeliverySettings $settings, string $method, string $path, array $payloadVariants): array
+    {
+        $lastError = null;
+
+        foreach ($payloadVariants as $payload) {
+            try {
+                return $this->yandexRequest($settings, $method, $path, $payload);
+            } catch (\Throwable $e) {
+                $lastError = $e;
+                if (! $this->isClientApiError($e)) {
+                    throw $e;
+                }
+            }
+        }
+
+        throw $lastError ?: new \RuntimeException('API Яндекс Доставки вернул ошибку');
+    }
+
+    private function isClientApiError(\Throwable $e): bool
+    {
+        return in_array((int) $e->getCode(), [400, 404, 409, 422], true);
     }
 
     private function normalizeBaseUrl(string $apiUrl): string
@@ -177,16 +237,19 @@ class ShopYandexDeliveryController extends Controller
 
     private function detectLocation(ShopCarrierDeliverySettings $settings, string $city, mixed $latitude = null, mixed $longitude = null): array
     {
-        $payload = [
-            'location' => array_filter([
-                'address' => $city,
-                'lat' => is_numeric($latitude) ? (float) $latitude : null,
-                'lon' => is_numeric($longitude) ? (float) $longitude : null,
-            ], fn ($value) => $value !== null && $value !== ''),
-        ];
+        $locationPayload = array_filter([
+            'address' => $city,
+            'lat' => is_numeric($latitude) ? (float) $latitude : null,
+            'lon' => is_numeric($longitude) ? (float) $longitude : null,
+        ], fn ($value) => $value !== null && $value !== '');
 
         try {
-            $response = $this->yandexRequest($settings, 'post', '/location/detect', $payload);
+            $response = $this->yandexRequestVariants($settings, 'post', '/location/detect', [
+                ['address' => $city],
+                ['location' => $locationPayload],
+                ['location' => $city],
+                ['text' => $city],
+            ]);
             $location = $response['location'] ?? $response['data']['location'] ?? $response['result'] ?? $response;
 
             return array_filter([
@@ -195,7 +258,11 @@ class ShopYandexDeliveryController extends Controller
                 'lat' => $location['lat'] ?? $location['latitude'] ?? null,
                 'lon' => $location['lon'] ?? $location['longitude'] ?? null,
             ], fn ($value) => $value !== null && $value !== '');
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            if (! $this->isClientApiError($e)) {
+                throw $e;
+            }
+
             return ['address' => $city];
         }
     }
@@ -302,6 +369,18 @@ class ShopYandexDeliveryController extends Controller
             $lat = $point['lat'] ?? $point['latitude'] ?? $location['lat'] ?? $location['latitude'] ?? null;
             $lon = $point['lon'] ?? $point['lng'] ?? $point['longitude'] ?? $location['lon'] ?? $location['lng'] ?? $location['longitude'] ?? null;
             $id = $point['id'] ?? $point['pickup_point_id'] ?? $point['code'] ?? $point['station_id'] ?? null;
+            $address = $point['address'] ?? '';
+            if (is_array($address)) {
+                $address = $address['full_address']
+                    ?? $address['full']
+                    ?? $address['formatted']
+                    ?? $address['address']
+                    ?? trim(implode(', ', array_filter([
+                        $address['city'] ?? null,
+                        $address['street'] ?? null,
+                        $address['house'] ?? null,
+                    ])));
+            }
 
             if (! $id) {
                 return null;
@@ -310,7 +389,7 @@ class ShopYandexDeliveryController extends Controller
             return [
                 'id' => (string) $id,
                 'name' => $point['name'] ?? $point['title'] ?? 'ПВЗ Яндекс Доставки',
-                'address' => $point['address']['full_address'] ?? $point['address']['full'] ?? $point['address'] ?? '',
+                'address' => (string) $address,
                 'latitude' => $lat,
                 'longitude' => $lon,
                 'raw' => $point,

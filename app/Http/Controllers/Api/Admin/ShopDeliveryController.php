@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopDeliveryMethod;
+use App\Services\ShopDeliveryActivitySyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -150,6 +151,7 @@ class ShopDeliveryController extends Controller
             }
 
             $deliveryMethod = ShopDeliveryMethod::create($request->all());
+            app(ShopDeliveryActivitySyncService::class)->applyMethodActiveToSettings($deliveryMethod);
 
             return response()->json([
                 'success' => true,
@@ -200,6 +202,7 @@ class ShopDeliveryController extends Controller
             }
 
             $deliveryMethod->update($request->all());
+            app(ShopDeliveryActivitySyncService::class)->applyMethodActiveToSettings($deliveryMethod->fresh());
 
             return response()->json([
                 'success' => true,
@@ -223,6 +226,7 @@ class ShopDeliveryController extends Controller
     {
         try {
             $deliveryMethod = ShopDeliveryMethod::findOrFail($id);
+            app(ShopDeliveryActivitySyncService::class)->applyMethodActiveToSettings(tap($deliveryMethod)->forceFill(['is_active' => false]));
 
             // Нельзя удалить способ по умолчанию, если есть другие активные
             if ($deliveryMethod->is_default) {

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopCdekSettings;
+use App\Services\ShopDeliveryActivitySyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -48,6 +49,7 @@ class ShopCdekSettingsController extends Controller
         }
 
         $settings = ShopCdekSettings::first();
+        app(ShopDeliveryActivitySyncService::class)->mergeMethodActive('cdek', $settings);
 
         return response()->json([
             'success' => true,
@@ -65,7 +67,9 @@ class ShopCdekSettingsController extends Controller
             return $accessCheck;
         }
 
-        $settings = ShopCdekSettings::getActive();
+        $settings = app(ShopDeliveryActivitySyncService::class)->getMethodActive('cdek') === false
+            ? null
+            : ShopCdekSettings::getActive();
 
         return response()->json([
             'success' => true,
@@ -158,6 +162,10 @@ class ShopCdekSettingsController extends Controller
         else {
             $settings = ShopCdekSettings::create($data);
         }
+        if ($request->has('is_active')) {
+            app(ShopDeliveryActivitySyncService::class)->applySettingsActiveToMethod('cdek', $request->boolean('is_active'));
+        }
+        app(ShopDeliveryActivitySyncService::class)->mergeMethodActive('cdek', $settings);
 
         return response()->json([
             'success' => true,
@@ -231,6 +239,10 @@ class ShopCdekSettingsController extends Controller
         }
 
         $settings->update($request->all());
+        if ($request->has('is_active')) {
+            app(ShopDeliveryActivitySyncService::class)->applySettingsActiveToMethod('cdek', $request->boolean('is_active'));
+        }
+        app(ShopDeliveryActivitySyncService::class)->mergeMethodActive('cdek', $settings);
 
         return response()->json([
             'success' => true,
@@ -276,6 +288,8 @@ class ShopCdekSettingsController extends Controller
             ->update(['is_active' => false]);
 
         $settings->update(['is_active' => true]);
+        app(ShopDeliveryActivitySyncService::class)->applySettingsActiveToMethod('cdek', true);
+        app(ShopDeliveryActivitySyncService::class)->mergeMethodActive('cdek', $settings);
 
         return response()->json([
             'success' => true,

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopRussianPostSettings;
+use App\Services\ShopDeliveryActivitySyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -48,6 +49,7 @@ class ShopRussianPostSettingsController extends Controller
         }
 
         $settings = ShopRussianPostSettings::first();
+        app(ShopDeliveryActivitySyncService::class)->mergeMethodActive('russianpost', $settings);
 
         return response()->json([
             'success' => true,
@@ -65,7 +67,9 @@ class ShopRussianPostSettingsController extends Controller
             return $accessCheck;
         }
 
-        $settings = ShopRussianPostSettings::getActive();
+        $settings = app(ShopDeliveryActivitySyncService::class)->getMethodActive('russianpost') === false
+            ? null
+            : ShopRussianPostSettings::getActive();
 
         return response()->json([
             'success' => true,
@@ -123,6 +127,10 @@ class ShopRussianPostSettingsController extends Controller
         } else {
             $settings = ShopRussianPostSettings::create($request->all());
         }
+        if ($request->has('is_active')) {
+            app(ShopDeliveryActivitySyncService::class)->applySettingsActiveToMethod('russianpost', $request->boolean('is_active'));
+        }
+        app(ShopDeliveryActivitySyncService::class)->mergeMethodActive('russianpost', $settings);
 
         return response()->json([
             'success' => true,
@@ -177,6 +185,10 @@ class ShopRussianPostSettingsController extends Controller
         }
 
         $settings->update($request->all());
+        if ($request->has('is_active')) {
+            app(ShopDeliveryActivitySyncService::class)->applySettingsActiveToMethod('russianpost', $request->boolean('is_active'));
+        }
+        app(ShopDeliveryActivitySyncService::class)->mergeMethodActive('russianpost', $settings);
 
         return response()->json([
             'success' => true,
@@ -222,6 +234,8 @@ class ShopRussianPostSettingsController extends Controller
             ->update(['is_active' => false]);
 
         $settings->update(['is_active' => true]);
+        app(ShopDeliveryActivitySyncService::class)->applySettingsActiveToMethod('russianpost', true);
+        app(ShopDeliveryActivitySyncService::class)->mergeMethodActive('russianpost', $settings);
 
         return response()->json([
             'success' => true,

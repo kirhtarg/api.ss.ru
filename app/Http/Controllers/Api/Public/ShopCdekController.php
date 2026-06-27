@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Public;
 use App\Http\Controllers\Controller;
 use App\Models\ShopCdekSettings;
 use App\Services\CdekService;
+use App\Services\ShopDeliveryActivitySyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -250,7 +251,9 @@ class ShopCdekController extends Controller
     public function getActiveSettings(): JsonResponse
     {
         try {
-            $settings = \App\Models\ShopCdekSettings::getActive();
+            $settings = app(ShopDeliveryActivitySyncService::class)->getMethodActive('cdek') === false
+                ? null
+                : \App\Models\ShopCdekSettings::getActive();
 
             if (! $settings) {
                 return response()->json([

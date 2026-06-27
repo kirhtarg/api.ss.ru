@@ -53,6 +53,10 @@ class ShopDellinSettings extends Model
      */
     public static function getActive()
     {
+        if (ShopDeliveryMethod::where('type', 'dellin')->where('is_active', false)->exists()) {
+            return null;
+        }
+
         return self::where('is_active', true)->first();
     }
 }

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Public;
 use App\Http\Controllers\Controller;
 use App\Models\ShopGood;
 use App\Models\ShopRussianPostSettings;
+use App\Services\ShopDeliveryActivitySyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -15,7 +16,9 @@ class ShopRussianPostController extends Controller
 {
     public function getActiveSettings(): JsonResponse
     {
-        $settings = ShopRussianPostSettings::getActive();
+        $settings = app(ShopDeliveryActivitySyncService::class)->getMethodActive('russianpost') === false
+            ? null
+            : ShopRussianPostSettings::getActive();
 
         if (! $settings) {
             return response()->json([

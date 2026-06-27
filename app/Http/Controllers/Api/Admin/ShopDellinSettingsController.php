@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopDellinSettings;
+use App\Services\ShopDeliveryActivitySyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -48,6 +49,7 @@ class ShopDellinSettingsController extends Controller
         }
 
         $settings = ShopDellinSettings::first();
+        app(ShopDeliveryActivitySyncService::class)->mergeMethodActive('dellin', $settings);
 
         return response()->json([
             'success' => true,
@@ -65,7 +67,9 @@ class ShopDellinSettingsController extends Controller
             return $accessCheck;
         }
 
-        $settings = ShopDellinSettings::getActive();
+        $settings = app(ShopDeliveryActivitySyncService::class)->getMethodActive('dellin') === false
+            ? null
+            : ShopDellinSettings::getActive();
 
         return response()->json([
             'success' => true,
@@ -124,6 +128,10 @@ class ShopDellinSettingsController extends Controller
         } else {
             $settings = ShopDellinSettings::create($request->all());
         }
+        if ($request->has('is_active')) {
+            app(ShopDeliveryActivitySyncService::class)->applySettingsActiveToMethod('dellin', $request->boolean('is_active'));
+        }
+        app(ShopDeliveryActivitySyncService::class)->mergeMethodActive('dellin', $settings);
 
         return response()->json([
             'success' => true,
@@ -179,6 +187,10 @@ class ShopDellinSettingsController extends Controller
         }
 
         $settings->update($request->all());
+        if ($request->has('is_active')) {
+            app(ShopDeliveryActivitySyncService::class)->applySettingsActiveToMethod('dellin', $request->boolean('is_active'));
+        }
+        app(ShopDeliveryActivitySyncService::class)->mergeMethodActive('dellin', $settings);
 
         return response()->json([
             'success' => true,
@@ -224,6 +236,8 @@ class ShopDellinSettingsController extends Controller
             ->update(['is_active' => false]);
 
         $settings->update(['is_active' => true]);
+        app(ShopDeliveryActivitySyncService::class)->applySettingsActiveToMethod('dellin', true);
+        app(ShopDeliveryActivitySyncService::class)->mergeMethodActive('dellin', $settings);
 
         return response()->json([
             'success' => true,

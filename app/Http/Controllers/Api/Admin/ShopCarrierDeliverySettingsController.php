@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopCarrierDeliverySettings;
+use App\Services\ShopDeliveryActivitySyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -23,9 +24,12 @@ class ShopCarrierDeliverySettingsController extends Controller
             return response()->json(['success' => false, 'message' => 'Неизвестная служба доставки'], 404);
         }
 
+        $settings = ShopCarrierDeliverySettings::firstOrCreate(['carrier' => $carrier], ['is_active' => false]);
+        app(ShopDeliveryActivitySyncService::class)->mergeMethodActive($carrier, $settings);
+
         return response()->json([
             'success' => true,
-            'data' => ShopCarrierDeliverySettings::firstOrCreate(['carrier' => $carrier], ['is_active' => false]),
+            'data' => $settings,
         ]);
     }
 
@@ -65,6 +69,10 @@ class ShopCarrierDeliverySettingsController extends Controller
             ['carrier' => $carrier],
             array_merge($validator->validated(), ['carrier' => $carrier])
         );
+        if ($request->has('is_active')) {
+            app(ShopDeliveryActivitySyncService::class)->applySettingsActiveToMethod($carrier, $request->boolean('is_active'));
+        }
+        app(ShopDeliveryActivitySyncService::class)->mergeMethodActive($carrier, $settings);
 
         return response()->json([
             'success' => true,

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Public;
 use App\Http\Controllers\Controller;
 use App\Models\ShopDellinSettings;
 use App\Models\ShopGood;
+use App\Services\ShopDeliveryActivitySyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -16,7 +17,9 @@ class ShopDellinController extends Controller
     public function getActiveSettings(): JsonResponse
     {
         try {
-            $settings = ShopDellinSettings::getActive();
+            $settings = app(ShopDeliveryActivitySyncService::class)->getMethodActive('dellin') === false
+                ? null
+                : ShopDellinSettings::getActive();
 
             if (! $settings) {
                 return response()->json([

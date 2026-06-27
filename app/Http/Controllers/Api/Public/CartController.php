@@ -19,6 +19,7 @@ use App\Models\User;
 use App\Services\CustomerOrderEmailService;
 use App\Services\NotificationService;
 use App\Services\TelegramService;
+use App\Services\ShopDeliveryActivitySyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -2086,7 +2087,9 @@ class CartController extends Controller
                 || str_contains($shippingMethod, 'russianpost');
 
             if ($isDellin) {
-                $settings = ShopDellinSettings::getActive();
+                $settings = app(ShopDeliveryActivitySyncService::class)->getMethodActive('dellin') === false
+                    ? null
+                    : ShopDellinSettings::getActive();
                 if (! $settings?->create_order_in_account) {
                     return;
                 }
@@ -2101,7 +2104,9 @@ class CartController extends Controller
             }
 
             if ($isRussianPost) {
-                $settings = ShopRussianPostSettings::getActive();
+                $settings = app(ShopDeliveryActivitySyncService::class)->getMethodActive('russianpost') === false
+                    ? null
+                    : ShopRussianPostSettings::getActive();
                 if (! $settings?->create_order_in_account) {
                     return;
                 }

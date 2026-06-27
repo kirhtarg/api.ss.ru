@@ -49,6 +49,13 @@ class ShopRussianPostSettings extends Model
      */
     public static function getActive()
     {
+        $method = ShopDeliveryMethod::where('type', 'russianpost')->first()
+            ?: ShopDeliveryMethod::whereIn('type', ['post', 'ems'])->orderBy('sort_order')->orderBy('id')->first();
+
+        if ($method && ! $method->is_active) {
+            return null;
+        }
+
         return self::where('is_active', true)->first();
     }
 }
