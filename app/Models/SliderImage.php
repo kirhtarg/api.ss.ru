@@ -14,6 +14,10 @@ class SliderImage extends Model
         'text',
         'link',
         'link_type',
+        'button_text',
+        'mobile_target_type',
+        'mobile_target_id',
+        'mobile_link',
         'is_active',
         'sort_order',
     ];
@@ -56,3 +60,4 @@ class SliderImage extends Model
         return '/images/sliders/'.$this->image_path;
     }
 }
+

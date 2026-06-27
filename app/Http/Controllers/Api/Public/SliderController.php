@@ -40,6 +40,10 @@ class SliderController extends Controller
                                 'text' => $image->text,
                                 'link' => $image->link,
                                 'link_type' => $image->link_type,
+                                'button_text' => $image->button_text,
+                                'mobile_target_type' => $image->mobile_target_type,
+                                'mobile_target_id' => $image->mobile_target_id,
+                                'mobile_link' => $image->mobile_link,
                             ];
                         }),
                     ];
@@ -84,6 +88,10 @@ class SliderController extends Controller
                             'text' => $image->text,
                             'link' => $image->link,
                             'link_type' => $image->link_type,
+                            'button_text' => $image->button_text,
+                            'mobile_target_type' => $image->mobile_target_type,
+                            'mobile_target_id' => $image->mobile_target_id,
+                            'mobile_link' => $image->mobile_link,
                         ];
                     }),
                 ],
@@ -122,3 +130,7 @@ class SliderController extends Controller
         return '/images/'.$filePath;
     }
 }
+
+
+
+

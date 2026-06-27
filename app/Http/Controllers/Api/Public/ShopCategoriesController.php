@@ -32,7 +32,7 @@ class ShopCategoriesController extends Controller
                 $query->where('is_active', true)
                     ->orderBy('sort_order', 'asc')
                     ->orderBy('name', 'asc')
-                    ->select('id', 'name', 'slug', 'image', 'mobile_image', 'icon', 'description', 'parent_id', 'in_catalog');
+                    ->select('id', 'name', 'slug', 'image', 'mobile_image', 'icon', 'description', 'parent_id', 'in_catalog', 'in_figure', 'in_figure_img', 'in_figure_text', 'in_figure', 'in_figure_img', 'in_figure_text');
             }])
                 ->where('is_active', true)
                 ->ordered();
@@ -116,6 +116,9 @@ class ShopCategoriesController extends Controller
                     }
                     if ($child->mobile_image) {
                         $child->mobile_image = $this->getImageUrl($child->mobile_image);
+                    }
+                    if ($child->in_figure_img) {
+                        $child->in_figure_img = $this->getImageUrl($child->in_figure_img);
                     }
                     $child->products_count = $productsCounts[$child->id] ?? 0;
                 }
@@ -233,7 +236,7 @@ class ShopCategoriesController extends Controller
                 ->where('is_active', true)
                 ->orderBy('sort_order', 'asc')
                 ->orderBy('name', 'asc')
-                ->get(['id', 'name', 'slug', 'image', 'mobile_image', 'icon', 'description', 'parent_id', 'in_catalog']);
+                ->get(['id', 'name', 'slug', 'image', 'mobile_image', 'icon', 'description', 'parent_id', 'in_catalog', 'in_figure', 'in_figure_img', 'in_figure_text', 'in_figure', 'in_figure_img', 'in_figure_text']);
 
             // Получаем родительскую категорию, если есть
             $parentCategory = null;
@@ -360,7 +363,7 @@ class ShopCategoriesController extends Controller
                 ->where('is_active', true)
                 ->orderBy('sort_order', 'asc')
                 ->orderBy('name', 'asc')
-                ->get(['id', 'name', 'slug', 'image', 'mobile_image', 'icon', 'description', 'parent_id', 'in_catalog']);
+                ->get(['id', 'name', 'slug', 'image', 'mobile_image', 'icon', 'description', 'parent_id', 'in_catalog', 'in_figure', 'in_figure_img', 'in_figure_text', 'in_figure', 'in_figure_img', 'in_figure_text']);
 
             $productsCounts = $this->getProductsCounts($children->pluck('id')->all());
 
@@ -421,7 +424,7 @@ class ShopCategoriesController extends Controller
                 ->orderBy('parent_id', 'asc')
                 ->orderBy('sort_order', 'asc')
                 ->orderBy('name', 'asc')
-                ->get(['id', 'name', 'slug', 'image', 'mobile_image', 'icon', 'description', 'parent_id', 'in_catalog']);
+                ->get(['id', 'name', 'slug', 'image', 'mobile_image', 'icon', 'description', 'parent_id', 'in_catalog', 'in_figure', 'in_figure_img', 'in_figure_text', 'in_figure', 'in_figure_img', 'in_figure_text']);
 
             // Вычисляем количество товаров для подкатегорий
             foreach ($children as $child) {
@@ -627,3 +630,5 @@ class ShopCategoriesController extends Controller
         });
     }
 }
+
+

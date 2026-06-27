@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Setting;
 use App\Models\ShopBrand;
 use App\Models\ShopCategory;
+use App\Models\ShopGood;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -63,6 +64,7 @@ class ShopBrandsController extends Controller
             // Применяем фильтры по остаткам и цене
             $this->applyStockFilterToQuery($brandsQuery, $settings);
             $this->applyPriceFilterToQuery($brandsQuery, $settings);
+            $this->applySelectedFiltersToQuery($brandsQuery, $request, $categoryIds);
 
             // Поиск по названию бренда
             if ($request->filled('search')) {
@@ -101,6 +103,186 @@ class ShopBrandsController extends Controller
                 'message' => 'Ошибка загрузки брендов: '.$e->getMessage(),
             ], 500);
         }
+    }
+
+    /**
+     * Применить выбранные фасетные фильтры к запросу брендов.
+     * Без этих параметров endpoint работает как раньше, что важно для основного сайта.
+     */
+    private function applySelectedFiltersToQuery($brandsQuery, Request $request, array $categoryIds): void
+    {
+        if (! $this->hasSelectedFilters($request)) {
+            return;
+        }
+
+        $goodsQuery = ShopGood::where('is_active', true);
+
+        if (! empty($categoryIds)) {
+            $goodsQuery->whereHas('categories', function ($query) use ($categoryIds) {
+                $query->whereIn('shop_categories.id', $categoryIds);
+            });
+        }
+
+        if ($request->filled('min_price')) {
+            $goodsQuery->where('price', '>=', (float) $request->get('min_price'));
+        }
+
+        if ($request->filled('max_price')) {
+            $goodsQuery->where('price', '<=', (float) $request->get('max_price'));
+        }
+
+        $this->applyPropertyFilters($goodsQuery, $request);
+        $this->applyAttributeFilters($goodsQuery, $request);
+        $this->applyUserStockFilter($goodsQuery, $request->get('stock_filter'));
+
+        $goodsIds = $goodsQuery->pluck('id')->toArray();
+
+        if (empty($goodsIds)) {
+            $brandsQuery->whereRaw('1 = 0');
+            return;
+        }
+
+        $brandsQuery->whereIn('shop_goods.id', $goodsIds);
+    }
+
+    private function hasSelectedFilters(Request $request): bool
+    {
+        return $request->filled('properties')
+            || $request->filled('attributes')
+            || ($request->filled('stock_filter') && $request->get('stock_filter') !== 'all')
+            || $request->filled('min_price')
+            || $request->filled('max_price');
+    }
+
+    private function applyPropertyFilters($query, Request $request): void
+    {
+        $properties = $request->input('properties', []);
+        if (! is_array($properties) || empty($properties)) {
+            return;
+        }
+
+        foreach ($properties as $propertyId => $values) {
+            $values = is_array($values) ? array_filter($values) : array_filter([$values]);
+            if (empty($values)) {
+                continue;
+            }
+
+            $valueIds = \App\Models\Shop\PropertyValue::where('property_id', $propertyId)
+                ->whereIn('value', $values)
+                ->pluck('id')
+                ->toArray();
+
+            if (empty($valueIds)) {
+                $query->whereRaw('1 = 0');
+                continue;
+            }
+
+            $query->whereHas('properties', function ($propertyQuery) use ($propertyId, $valueIds) {
+                $propertyQuery->where('shop_properties.id', $propertyId)
+                    ->whereIn('shop_good_properties.shop_property_value_id', $valueIds);
+            });
+        }
+    }
+
+    private function applyAttributeFilters($query, Request $request): void
+    {
+        $attributes = $request->input('attributes', []);
+        if (! is_array($attributes) || empty($attributes)) {
+            return;
+        }
+
+        foreach ($attributes as $attributeId => $values) {
+            $values = is_array($values) ? array_filter($values) : array_filter([$values]);
+            if (empty($values)) {
+                continue;
+            }
+
+            $query->whereHas('variations', function ($variationQuery) use ($attributeId, $values) {
+                $variationQuery->where('is_active', true)
+                    ->whereHas('attributeValues', function ($attributeValueQuery) use ($attributeId, $values) {
+                        $attributeValueQuery->where('attribute_id', $attributeId)
+                            ->whereIn('value', $values);
+                    });
+            });
+        }
+    }
+
+    private function applyUserStockFilter($query, $stockFilter): void
+    {
+        if (! $stockFilter || $stockFilter === 'all') {
+            return;
+        }
+
+        if ($stockFilter === 'preorder') {
+            $query->where(function ($preorderQuery) {
+                $preorderQuery->where('is_preorder', true)
+                    ->orWhere('is_preorder', 1);
+            });
+            return;
+        }
+
+        if ($stockFilter === 'in_stock' || $stockFilter === 'with_stock') {
+            $query->where(function ($mainQuery) {
+                $mainQuery->where(function ($noVariationsQuery) {
+                    $noVariationsQuery->whereDoesntHave('variations')
+                        ->where(function ($stockQuery) {
+                            $this->applyStockPresentCondition($stockQuery);
+                        });
+                })->orWhereHas('variations', function ($variationQuery) {
+                    $variationQuery->where('is_active', true)
+                        ->where(function ($stockQuery) {
+                            $this->applyStockPresentCondition($stockQuery);
+                        });
+                });
+            });
+            return;
+        }
+
+        if ($stockFilter === 'out_of_stock') {
+            $query->whereDoesntHave('variations', function ($variationQuery) {
+                $variationQuery->where('is_active', true)
+                    ->where(function ($stockQuery) {
+                        $this->applyStockPresentCondition($stockQuery);
+                    });
+            })->where(function ($stockQuery) {
+                $this->applyStockEmptyCondition($stockQuery);
+            });
+        }
+    }
+
+    private function applyStockPresentCondition($query): void
+    {
+        $query->where('stock_quantity', '>', 0)
+            ->orWhere(function ($remoteQuery) {
+                $remoteQuery->whereNotNull('remote_stock_quantity')
+                    ->where('remote_stock_quantity', '!=', '0')
+                    ->where('remote_stock_quantity', '!=', '')
+                    ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
+            })
+            ->orWhere(function ($fastRemoteQuery) {
+                $fastRemoteQuery->whereNotNull('fast_remote_stock_quantity')
+                    ->where('fast_remote_stock_quantity', '!=', '0')
+                    ->where('fast_remote_stock_quantity', '!=', '')
+                    ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
+            });
+    }
+
+    private function applyStockEmptyCondition($query): void
+    {
+        $query->where(function ($stockQuery) {
+            $stockQuery->whereNull('stock_quantity')
+                ->orWhere('stock_quantity', '<=', 0);
+        })->where(function ($remoteQuery) {
+            $remoteQuery->whereNull('remote_stock_quantity')
+                ->orWhere('remote_stock_quantity', '=', '0')
+                ->orWhere('remote_stock_quantity', '=', '')
+                ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
+        })->where(function ($fastRemoteQuery) {
+            $fastRemoteQuery->whereNull('fast_remote_stock_quantity')
+                ->orWhere('fast_remote_stock_quantity', '=', '0')
+                ->orWhere('fast_remote_stock_quantity', '=', '')
+                ->orWhereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) = 0');
+        });
     }
 
     /**
@@ -321,3 +503,5 @@ class ShopBrandsController extends Controller
         return '/images/'.$cleanPath;
     }
 }
+
+

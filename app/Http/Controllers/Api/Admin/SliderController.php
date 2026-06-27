@@ -224,6 +224,10 @@ class SliderController extends Controller
             'text' => 'nullable|string',
             'link' => 'nullable|string|max:500',
             'link_type' => 'nullable|in:internal,external',
+            'button_text' => 'nullable|string|max:255',
+            'mobile_target_type' => 'nullable|in:page,category,product,external',
+            'mobile_target_id' => 'nullable|integer',
+            'mobile_link' => 'nullable|string|max:500',
             'sort_order' => 'nullable|integer',
         ]);
 
@@ -288,6 +292,10 @@ class SliderController extends Controller
                 'text' => $request->text,
                 'link' => $request->link,
                 'link_type' => $request->link_type ?? 'internal',
+                'button_text' => $request->button_text,
+                'mobile_target_type' => $request->mobile_target_type,
+                'mobile_target_id' => $request->mobile_target_id,
+                'mobile_link' => $request->mobile_link,
                 'sort_order' => $request->sort_order ?? 0,
             ]);
 
@@ -303,6 +311,10 @@ class SliderController extends Controller
                     'text' => $sliderImage->text,
                     'link' => $sliderImage->link,
                     'link_type' => $sliderImage->link_type,
+                    'button_text' => $sliderImage->button_text,
+                    'mobile_target_type' => $sliderImage->mobile_target_type,
+                    'mobile_target_id' => $sliderImage->mobile_target_id,
+                    'mobile_link' => $sliderImage->mobile_link,
                     'is_active' => $sliderImage->is_active,
                     'sort_order' => $sliderImage->sort_order,
                     'created_at' => $sliderImage->created_at,
@@ -437,6 +449,10 @@ class SliderController extends Controller
             'text' => 'nullable|string',
             'link' => 'nullable|string|max:500',
             'link_type' => 'nullable|in:internal,external',
+            'button_text' => 'nullable|string|max:255',
+            'mobile_target_type' => 'nullable|in:page,category,product,external',
+            'mobile_target_id' => 'nullable|integer',
+            'mobile_link' => 'nullable|string|max:500',
             'sort_order' => 'nullable|integer',
             'is_active' => 'nullable|boolean',
         ]);
@@ -496,3 +512,6 @@ class SliderController extends Controller
         }
     }
 }
+
+
+

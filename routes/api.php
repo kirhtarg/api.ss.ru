@@ -465,6 +465,7 @@ Route::put('/admin/shop/goods/{goodId}/variations/{variationId}/attributes', [\A
 Route::middleware(['web'])->group(function () {
     Route::get('/auth/google', [\App\Http\Controllers\Auth\GoogleAuthController::class, 'redirectToGoogle']);
     Route::get('/auth/google/callback', [\App\Http\Controllers\Auth\GoogleAuthController::class, 'handleGoogleCallback']);
+    Route::get('/google/callback', [\App\Http\Controllers\Auth\GoogleAuthController::class, 'handleGoogleCallback']);
     Route::get('/auth/google/url', [\App\Http\Controllers\Auth\GoogleAuthController::class, 'getGoogleAuthUrl']);
 });
 
@@ -4428,3 +4429,4 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/file-info', [\App\Http\Controllers\Api\Public\AvatarUploadController::class, 'getFileInfo']);
     });
 });
+

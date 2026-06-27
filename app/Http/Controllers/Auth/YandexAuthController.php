@@ -337,7 +337,8 @@ class YandexAuthController extends Controller
             $permissions = $this->getUserPermissions($user);
 
             // Перенаправляем на фронтенд с токеном
-            $frontendUrl = session()->pull('mobile_oauth_yandex') ? 'skateandsnow://' : config('app.frontend_url', 'http://localhost:3000');
+            $isMobileOAuth = session()->pull('mobile_oauth_yandex');
+            $frontendUrl = $isMobileOAuth ? 'skateandsnow://' : config('app.frontend_url', 'http://localhost:3000');
             $redirectPath = str_starts_with($frontendUrl, 'skateandsnow://') ? 'auth/yandex/callback' : '/auth/yandex/callback';
             $redirectUrl = (str_starts_with($frontendUrl, 'skateandsnow://') ? $frontendUrl : rtrim($frontendUrl, '/')).$redirectPath.'?token='.$token.'&user='.base64_encode(json_encode([
                 'id' => $user->id,
@@ -349,6 +350,10 @@ class YandexAuthController extends Controller
                 'permissions' => $permissions,
             ])).'&bonus_amount='.$bonusAmount;
 
+            if ($isMobileOAuth) {
+                return $this->mobileOauthResponse($redirectUrl);
+            }
+
             return redirect($redirectUrl);
 
         } catch (\Exception $e) {
@@ -359,6 +364,15 @@ class YandexAuthController extends Controller
 
             return redirect($errorUrl);
         }
+    }
+
+    private function mobileOauthResponse(string $redirectUrl)
+    {
+        $escapedUrl = htmlspecialchars($redirectUrl, ENT_QUOTES, 'UTF-8');
+        $encodedUrl = json_encode($redirectUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+        return response('<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Возврат в приложение</title></head><body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f3f4f6;font-family:Arial,sans-serif;color:#111827"><main style="max-width:320px;padding:24px;text-align:center"><h1 style="font-size:20px;margin:0 0 12px">Возвращаемся в приложение</h1><p style="font-size:14px;line-height:1.5;margin:0 0 20px;color:#4b5563">Если приложение не открылось автоматически, нажмите кнопку ниже.</p><a href="'.$escapedUrl.'" style="display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 18px;border-radius:14px;background:#111827;color:#fff;text-decoration:none;font-weight:700">Открыть приложение</a><script>window.location.replace('.$encodedUrl.');</script></main></body></html>', 200)
+            ->header('Content-Type', 'text/html; charset=UTF-8');
     }
 
     /**
