@@ -170,6 +170,8 @@ class ShopCdekController extends Controller
                                         'country' => 'Россия',
                                         'full_name' => $cityData['city_with_type'] ?? $cityName,
                                         'fias_id' => $cityData['fias_id'] ?? null,
+                                        'latitude' => $cityData['geo_lat'] ?? null,
+                                        'longitude' => $cityData['geo_lon'] ?? null,
                                     ];
                                 } catch (\Exception $e) {
                                     // Игнорируем ошибки для отдельных городов

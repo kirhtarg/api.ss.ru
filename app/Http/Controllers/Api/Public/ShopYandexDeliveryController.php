@@ -27,37 +27,44 @@ class ShopYandexDeliveryController extends Controller
             $location = $this->detectLocation($settings, $city, $request->query('latitude'), $request->query('longitude'));
 
             if (empty($location['geo_id'])) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Яндекс Доставка не смогла определить geo_id для города: '.$city,
-                    'data' => [],
-                    'meta' => [
-                        'raw_city' => $rawCity,
-                        'normalized_city' => $city,
-                        'location' => $location,
-                    ],
-                ]);
+                $location = $this->enrichLocationWithCoordinates($city, $location);
             }
 
-            $response = $this->yandexRequestVariants($settings, 'post', '/pickup-points/list', [
-                array_filter([
+            $pickupPointPayloads = [];
+            if (! empty($location['geo_id'])) {
+                $pickupPointPayloads[] = [
                     'geo_id' => $location['geo_id'],
                     'type' => 'pickup_point',
-                ], fn ($value) => $value !== null && $value !== ''),
-                array_filter([
+                ];
+                $pickupPointPayloads[] = [
                     'geo_id' => $location['geo_id'],
-                ], fn ($value) => $value !== null && $value !== ''),
-                array_filter([
+                ];
+                $pickupPointPayloads[] = [
                     'location' => [
                         'geo_id' => $location['geo_id'],
                     ],
                     'type' => 'pickup_point',
-                ], fn ($value) => $value !== null && $value !== ''),
-                array_filter([
+                ];
+            }
+            $pickupPointPayloads[] = array_filter([
+                    'latitude' => $this->makeCoordinateInterval($location['lat'] ?? null),
+                    'longitude' => $this->makeCoordinateInterval($location['lon'] ?? null),
+                    'type' => 'pickup_point',
+            ], fn ($value) => $value !== null && $value !== '' && $value !== []);
+            $pickupPointPayloads[] = array_filter([
+                    'latitude' => $this->makeCoordinateInterval($location['lat'] ?? null, 0.2),
+                    'longitude' => $this->makeCoordinateInterval($location['lon'] ?? null, 0.2),
+                    'type' => 'pickup_point',
+            ], fn ($value) => $value !== null && $value !== '');
+            $pickupPointPayloads[] = array_filter([
                     'location' => $location,
                     'city' => $city,
-                ], fn ($value) => $value !== null && $value !== ''),
-            ]);
+            ], fn ($value) => $value !== null && $value !== '');
+
+            $response = $this->yandexRequestVariants($settings, 'post', '/pickup-points/list', array_values(array_filter(
+                $pickupPointPayloads,
+                fn ($payload) => is_array($payload) && count($payload) > 1
+            )));
             $points = $this->normalizePickupPoints($response);
 
             return response()->json([
@@ -242,23 +249,17 @@ class ShopYandexDeliveryController extends Controller
     {
         $city = $this->normalizeSettlementName($city);
         $cityWithCountry = str_contains(mb_strtolower($city), 'россия') ? $city : 'Россия, '.$city;
-        $locationPayload = array_filter([
-            'address' => $city,
-            'lat' => is_numeric($latitude) ? (float) $latitude : null,
-            'lon' => is_numeric($longitude) ? (float) $longitude : null,
-        ], fn ($value) => $value !== null && $value !== '');
-
         try {
             $response = $this->yandexRequestVariants($settings, 'post', '/location/detect', [
-                ['address' => $city],
-                ['address' => $cityWithCountry],
-                ['location' => $locationPayload],
                 ['location' => $city],
                 ['location' => $cityWithCountry],
-                ['text' => $city],
-                ['text' => $cityWithCountry],
             ]);
-            $location = $response['location'] ?? $response['data']['location'] ?? $response['result'] ?? $response;
+            $location = $response['variants'][0]
+                ?? $response['data']['variants'][0]
+                ?? $response['location']
+                ?? $response['data']['location']
+                ?? $response['result']
+                ?? $response;
 
             return array_filter([
                 'address' => $location['address'] ?? $city,
@@ -286,6 +287,88 @@ class ShopYandexDeliveryController extends Controller
         $city = preg_replace('/^(г|город|д|деревня|пос|поселок|посёлок|пгт|с|село)\.?\s+/iu', '', $city);
 
         return trim($city);
+    }
+
+    private function makeCoordinateInterval(mixed $value, float $radius = 0.08): ?array
+    {
+        if (! is_numeric($value)) {
+            return null;
+        }
+
+        $coordinate = (float) $value;
+
+        return [
+            'from' => round($coordinate - $radius, 6),
+            'to' => round($coordinate + $radius, 6),
+        ];
+    }
+
+    private function enrichLocationWithCoordinates(string $city, array $location): array
+    {
+        if (! empty($location['lat']) && ! empty($location['lon'])) {
+            return $location;
+        }
+
+        $coordinates = $this->detectCoordinatesByDaData($city);
+        if (! $coordinates) {
+            return $location;
+        }
+
+        return array_filter([
+            ...$location,
+            'address' => $location['address'] ?? $city,
+            'lat' => $coordinates['lat'],
+            'lon' => $coordinates['lon'],
+        ], fn ($value) => $value !== null && $value !== '');
+    }
+
+    private function detectCoordinatesByDaData(string $city): ?array
+    {
+        $apiKey = config('services.dadata.api_key') ?: env('DADATA_API_KEY');
+        if (! $apiKey) {
+            return null;
+        }
+
+        try {
+            $response = Http::withOptions([
+                'verify' => false,
+                'timeout' => 10,
+                'connect_timeout' => 5,
+            ])->withHeaders([
+                'Content-Type' => 'application/json',
+                'Accept' => 'application/json',
+                'Authorization' => 'Token '.$apiKey,
+            ])->post('https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/address', [
+                'query' => $city,
+                'count' => 1,
+                'locations' => [['country' => 'Россия']],
+                'from_bound' => ['value' => 'city'],
+                'to_bound' => ['value' => 'city'],
+            ]);
+
+            if (! $response->successful()) {
+                return null;
+            }
+
+            $data = $response->json('suggestions.0.data');
+            $lat = $data['geo_lat'] ?? null;
+            $lon = $data['geo_lon'] ?? null;
+
+            if (! is_numeric($lat) || ! is_numeric($lon)) {
+                return null;
+            }
+
+            return [
+                'lat' => (float) $lat,
+                'lon' => (float) $lon,
+            ];
+        } catch (\Throwable $e) {
+            Log::warning('Yandex Delivery DaData coordinates fallback failed: '.$e->getMessage(), [
+                'city' => $city,
+            ]);
+
+            return null;
+        }
     }
 
     private function calculateCargo(array $cartItems, ShopCarrierDeliverySettings $settings): array
@@ -386,7 +469,7 @@ class ShopYandexDeliveryController extends Controller
                 return null;
             }
 
-            $location = $point['location'] ?? $point['coordinates'] ?? [];
+            $location = $point['position'] ?? $point['location'] ?? $point['coordinates'] ?? [];
             $lat = $point['lat'] ?? $point['latitude'] ?? $location['lat'] ?? $location['latitude'] ?? null;
             $lon = $point['lon'] ?? $point['lng'] ?? $point['longitude'] ?? $location['lon'] ?? $location['lng'] ?? $location['longitude'] ?? null;
             $id = $point['id'] ?? $point['pickup_point_id'] ?? $point['code'] ?? $point['station_id'] ?? null;
