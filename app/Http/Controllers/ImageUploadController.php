@@ -708,6 +708,7 @@ class ImageUploadController extends Controller
     {
         Cache::forget('public_shop_categories_index_'.md5(json_encode([])));
         Cache::forget('public_shop_categories_index_'.md5(json_encode(['in_catalog' => '1'])));
+        Cache::forget('public_shop_categories_index_'.md5(json_encode(['in_catalog' => 1])));
         Cache::forget('public_shop_categories_main');
         Cache::forget('public_shop_categories_main_with_extra_menu');
 
