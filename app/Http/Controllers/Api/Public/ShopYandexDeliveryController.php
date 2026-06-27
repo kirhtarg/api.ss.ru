@@ -269,6 +269,7 @@ class ShopYandexDeliveryController extends Controller
                 ?? $response->json('error_description')
                 ?? $response->body()
                 ?: 'API Яндекс Экспресс вернул ошибку';
+            $normalizedMessage = $this->normalizeExpressApiErrorMessage($message, $response->status());
             Log::warning('Yandex Express Delivery API error', [
                 'url' => $url,
                 'status' => $response->status(),
@@ -276,7 +277,7 @@ class ShopYandexDeliveryController extends Controller
                 'query' => $query,
                 'response' => $response->json() ?: $response->body(),
             ]);
-            throw new \RuntimeException(is_string($message) ? $message : json_encode($message, JSON_UNESCAPED_UNICODE), $response->status());
+            throw new \RuntimeException($normalizedMessage, $response->status());
         }
 
         return $response->json() ?: [];
@@ -311,6 +312,16 @@ class ShopYandexDeliveryController extends Controller
                 'raw' => $response,
             ],
         ]);
+    }
+
+    private function normalizeExpressApiErrorMessage(mixed $message, int $status): string
+    {
+        $text = is_string($message) ? $message : json_encode($message, JSON_UNESCAPED_UNICODE);
+        if (stripos((string) $text, 'access denied') !== false || in_array($status, [401, 403], true)) {
+            return 'Яндекс Доставка не разрешила расчет Express/Cargo для текущего токена. Проверьте в кабинете Яндекса, что для API-токена подключен Cargo/Express API и разрешен метод offers/calculate.';
+        }
+
+        return $text ?: 'API Яндекс Экспресс вернул ошибку';
     }
 
     private function buildExpressOfferPayload(ShopCarrierDeliverySettings $settings, string $recipientAddress, string $recipientCity, array $cartItems): array

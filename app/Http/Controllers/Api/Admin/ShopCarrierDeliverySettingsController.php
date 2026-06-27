@@ -309,10 +309,14 @@ class ShopCarrierDeliverySettingsController extends Controller
             $isAuthError = in_array($response->status(), [401, 403], true)
                 || stripos((string) $message, 'not authorized') !== false
                 || stripos((string) $message, 'unauthorized') !== false;
-            $valid = $response->successful() || (in_array($response->status(), [400, 404, 422], true) && ! $isAuthError);
+            $isAccessDenied = stripos((string) $message, 'access denied') !== false;
+            $isAuthError = $isAuthError && ! $isAccessDenied;
+            $valid = $response->successful() || $isAccessDenied || (in_array($response->status(), [400, 404, 422], true) && ! $isAuthError);
             $successMessage = $response->successful()
                 ? 'Доступ к API Яндекс Экспресс подтвержден, тестовый расчет доступен'
-                : 'Доступ к API Яндекс Экспресс подтвержден, но тестовый расчет вернул проверяемую ошибку: '.$message;
+                : ($isAccessDenied
+                    ? 'Токен принят API Яндекс Доставки. Для полноценного тестового расчета проверьте в Яндексе, что для кабинета подключен Cargo/Express API.'
+                    : 'Доступ к API Яндекс Экспресс подтвержден, но тестовый расчет вернул проверяемую ошибку: '.$message);
 
             return response()->json([
                 'success' => $valid,
