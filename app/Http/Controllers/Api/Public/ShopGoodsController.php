@@ -740,6 +740,18 @@ class ShopGoodsController extends Controller
                 $query->whereHas('brands', function ($q) use ($request) {
                     $q->where('shop_brands.id', $request->input('brand_id'));
                 });
+            } elseif ($request->filled('brands')) {
+                $brandIds = $request->input('brands');
+                if (! is_array($brandIds)) {
+                    $brandIds = explode(',', (string) $brandIds);
+                }
+                $brandIds = array_values(array_filter(array_map('intval', $brandIds)));
+
+                if (! empty($brandIds)) {
+                    $query->whereHas('brands', function ($q) use ($brandIds) {
+                        $q->whereIn('shop_brands.id', $brandIds);
+                    });
+                }
             }
 
             // Фильтрация по поставщику (текстовое поле)

@@ -2199,7 +2199,23 @@ class ShopGoodVariationsController extends Controller
             return [];
         }
 
-        return array_values(array_unique(array_filter(array_map('intval', $ids), fn ($id) => $id > 0)));
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids), fn ($id) => $id > 0)));
+        $excludedIds = $this->normalizeSelectionExcludedIds($originalRequest->get('excluded_ids', []));
+
+        if (! empty($excludedIds)) {
+            $ids = array_values(array_diff($ids, $excludedIds));
+        }
+
+        return $ids;
+    }
+
+    private function normalizeSelectionExcludedIds($excludedIds): array
+    {
+        if (! is_array($excludedIds)) {
+            $excludedIds = [$excludedIds];
+        }
+
+        return array_values(array_unique(array_filter(array_map('intval', $excludedIds), fn ($id) => $id > 0)));
     }
 
     private function normalizeSelectionFilters(array $filters): array

@@ -120,6 +120,12 @@ class ShopGoodsController extends Controller
                 // $this->applyGoodsFilters($query, $request);
             }
         }
+
+        $excludedIds = $this->normalizeSelectionExcludedIds($request->input('excluded_ids', $request->input('excluded_ids[]', [])));
+        if (! empty($excludedIds)) {
+            $query->whereNotIn('id', $excludedIds);
+        }
+
         if ($request->filled('search')) {
             $search = $request->get('search');
             // Если передан параметр search_only_name_sku, ищем только по названию и артикулу
@@ -2512,7 +2518,23 @@ class ShopGoodsController extends Controller
             return [];
         }
 
-        return array_values(array_unique(array_filter(array_map('intval', $ids), fn ($id) => $id > 0)));
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids), fn ($id) => $id > 0)));
+        $excludedIds = $this->normalizeSelectionExcludedIds($payload['excluded_ids'] ?? []);
+
+        if (! empty($excludedIds)) {
+            $ids = array_values(array_diff($ids, $excludedIds));
+        }
+
+        return $ids;
+    }
+
+    private function normalizeSelectionExcludedIds($excludedIds): array
+    {
+        if (! is_array($excludedIds)) {
+            $excludedIds = [$excludedIds];
+        }
+
+        return array_values(array_unique(array_filter(array_map('intval', $excludedIds), fn ($id) => $id > 0)));
     }
 
     private function normalizeSelectionFilters(array $filters): array
