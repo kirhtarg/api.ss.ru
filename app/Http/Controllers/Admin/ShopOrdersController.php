@@ -5684,7 +5684,7 @@ XML;
                 return response()->json([
                     'success' => false,
                     'message' => $resultData['message'] ?? 'Не удалось создать новый платеж',
-                ], 500);
+                ], $result->getStatusCode() >= 400 ? $result->getStatusCode() : 500);
             }
 
             $newPaymentUrl = $resultData['payment_url'] ?? $resultData['data']['payment_url'] ?? null;
@@ -6458,6 +6458,7 @@ XML;
             $service = new TbankPaymentService($settings);
             $orderStub = new \stdClass;
             $orderStub->id = $order->id;
+            $orderStub->gateway_order_id = $order->id . '-R' . $transaction->id;
             $orderStub->order_number = $order->order_number;
             $orderStub->total_amount = (float) $order->total_amount;
             $orderStub->customer_email = $order->customer_email;
@@ -6465,10 +6466,19 @@ XML;
             $orderStub->user_id = $order->user_id;
             $orderStub->items = $order->items;
             $orderStub->delivery_cost = $order->delivery_cost ?? 0;
+            Log::info('[FIX:tbank-regenerate-payment-link] Regenerating T-Bank payment link.', [
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+                'transaction_id' => $transaction->id,
+                'gateway_order_id' => $orderStub->gateway_order_id,
+                'payment_method_type' => $paymentMethod->type,
+            ]);
+
             $result = $service->initiatePayment($orderStub);
             if (!empty($result['success']) && !empty($result['payment_url'])) {
                 $transaction->update([
                     'transaction_id' => $result['transaction_id'] ?? null,
+                    'request_data' => $result['request_data'] ?? $transaction->request_data,
                     'response_data' => $result['response_data'] ?? null,
                     'status' => 'pending',
                 ]);
@@ -6483,11 +6493,32 @@ XML;
                 ]);
             }
 
+            $transaction->update([
+                'status' => 'failed',
+                'error_message' => $result['message'] ?? 'T‑Bank: не удалось создать платеж',
+                'request_data' => $result['request_data'] ?? $transaction->request_data,
+                'response_data' => $result['response_data'] ?? $result,
+            ]);
+            Log::warning('[FIX:tbank-regenerate-payment-link] T-Bank payment link regeneration failed.', [
+                'order_id' => $order->id,
+                'transaction_id' => $transaction->id,
+                'gateway_order_id' => $orderStub->gateway_order_id,
+                'message' => $result['message'] ?? null,
+                'response' => $result['response_data'] ?? null,
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => $result['message'] ?? 'T‑Bank: не удалось создать платеж',
-            ], 500);
+            ], 502);
         } catch (\Exception $e) {
+            Log::error('[FIX:tbank-regenerate-payment-link] T-Bank payment link regeneration exception.', [
+                'order_id' => $order->id ?? null,
+                'transaction_id' => $transaction->id ?? null,
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка при перегенерации платежа Т‑Банк',
@@ -6511,6 +6542,7 @@ XML;
             $service = new TbankPaymentService(array_merge($settings, ['pay_type' => 'DOLYAMI']));
             $orderStub = new \stdClass;
             $orderStub->id = $order->id;
+            $orderStub->gateway_order_id = $order->id . '-R' . $transaction->id;
             $orderStub->order_number = $order->order_number;
             $orderStub->total_amount = (float) $order->total_amount;
             $orderStub->customer_email = $order->customer_email;
@@ -6518,10 +6550,19 @@ XML;
             $orderStub->user_id = $order->user_id;
             $orderStub->items = $order->items;
             $orderStub->delivery_cost = $order->delivery_cost ?? 0;
+            Log::info('[FIX:tbank-regenerate-payment-link] Regenerating T-Bank Dolyami payment link.', [
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+                'transaction_id' => $transaction->id,
+                'gateway_order_id' => $orderStub->gateway_order_id,
+                'payment_method_type' => $paymentMethod->type,
+            ]);
+
             $result = $service->initiatePayment($orderStub);
             if (!empty($result['success']) && !empty($result['payment_url'])) {
                 $transaction->update([
                     'transaction_id' => $result['transaction_id'] ?? null,
+                    'request_data' => $result['request_data'] ?? $transaction->request_data,
                     'response_data' => $result['response_data'] ?? null,
                     'status' => 'pending',
                 ]);
@@ -6536,11 +6577,32 @@ XML;
                 ]);
             }
 
+            $transaction->update([
+                'status' => 'failed',
+                'error_message' => $result['message'] ?? 'T‑Bank Долями: не удалось создать платеж',
+                'request_data' => $result['request_data'] ?? $transaction->request_data,
+                'response_data' => $result['response_data'] ?? $result,
+            ]);
+            Log::warning('[FIX:tbank-regenerate-payment-link] T-Bank Dolyami payment link regeneration failed.', [
+                'order_id' => $order->id,
+                'transaction_id' => $transaction->id,
+                'gateway_order_id' => $orderStub->gateway_order_id,
+                'message' => $result['message'] ?? null,
+                'response' => $result['response_data'] ?? null,
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => $result['message'] ?? 'T‑Bank Долями: не удалось создать платеж',
-            ], 500);
+            ], 502);
         } catch (\Exception $e) {
+            Log::error('[FIX:tbank-regenerate-payment-link] T-Bank Dolyami payment link regeneration exception.', [
+                'order_id' => $order->id ?? null,
+                'transaction_id' => $transaction->id ?? null,
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка при перегенерации платежа Т‑Банк Долями',

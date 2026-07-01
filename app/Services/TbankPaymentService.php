@@ -390,7 +390,8 @@ class TbankPaymentService
             $customerPhone = $get($order, 'customer_phone', null);
             $userId = $get($order, 'user_id', null);
 
-            $orderIdForGateway = $orderId ?: $orderNumber;
+            $gatewayOrderId = $get($order, 'gateway_order_id', null);
+            $orderIdForGateway = $gatewayOrderId ?: ($orderId ?: $orderNumber);
             $isDolyami = strtoupper($this->settings['pay_type'] ?? '') === 'DOLYAMI';
             $paymentTypeParam = $isDolyami ? 'tbank_dolyame' : 'tbank_eacq';
             $successUrl = url('/api/public/shop/payment/return?payment_type='.$paymentTypeParam.'&status=success&order_number='.urlencode($orderNumber));
@@ -457,6 +458,13 @@ class TbankPaymentService
             ]);
 
             Log::info('T-Bank Acquiring: Sending payment request.', ['url' => $apiUrl, 'payload' => $payload]);
+            if ($gatewayOrderId) {
+                Log::info('[FIX:tbank-regenerate-payment-link] T-Bank Init uses regenerated gateway OrderId.', [
+                    'order_id' => $orderId,
+                    'order_number' => $orderNumber,
+                    'gateway_order_id' => $gatewayOrderId,
+                ]);
+            }
 
             $response = $http->post($apiUrl, $payload);
             if ($response->status() === 403 && str_contains($apiUrl, 'rest-api-test.tinkoff.ru')) {
@@ -813,7 +821,12 @@ class TbankPaymentService
 
         // Fallback для старого API Т-Банка по OrderId (ID заказа в системе)
         if ($this->provider === 'tbank' && isset($webhookData['OrderId'])) {
-            $order = ShopOrder::find($webhookData['OrderId']);
+            $orderId = $webhookData['OrderId'];
+            if (is_string($orderId) && preg_match('/^(\d+)-R\d+$/', $orderId, $matches)) {
+                $orderId = $matches[1];
+            }
+
+            $order = ShopOrder::find($orderId);
             if ($order) {
                 // Ищем последнюю транзакцию в статусе pending для этого заказа
                 return $order->paymentTransactions()->where('status', 'pending')->latest()->first();

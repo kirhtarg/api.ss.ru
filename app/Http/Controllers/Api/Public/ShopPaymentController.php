@@ -3389,7 +3389,12 @@ class ShopPaymentController extends Controller
         }
 
         if ($orderId) {
-            $order = ShopOrder::find($orderId);
+            $lookupOrderId = $orderId;
+            if (is_string($lookupOrderId) && preg_match('/^(\d+)-R\d+$/', $lookupOrderId, $matches)) {
+                $lookupOrderId = $matches[1];
+            }
+
+            $order = ShopOrder::find($lookupOrderId);
             if ($order && $order->paymentMethod) {
                 return $this->normalizePaymentSettings($order->paymentMethod->settings);
             }
