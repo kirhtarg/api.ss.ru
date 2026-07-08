@@ -199,6 +199,7 @@ class ShopCarrierDeliverySettingsController extends Controller
                         'merchant_url' => $checkedUrl,
                         'delivery_method_url' => $detectUrl,
                         'response' => $detectResponse->json(),
+                        'merchant_id' => $merchantQuery['merchant_id'] ?? null,
                         'suggestions' => $this->yandexOtherDayAccessSuggestions('location/detect', $detectResponse->status(), (string) $detectMessage),
                     ],
                 ], 422);
@@ -219,6 +220,7 @@ class ShopCarrierDeliverySettingsController extends Controller
                     'status' => $response->status(),
                     'url' => $checkedUrl,
                     'response' => $response->json(),
+                    'merchant_id' => $merchantQuery['merchant_id'] ?? null,
                     'suggestions' => $response->successful() ? [] : $this->yandexOtherDayAccessSuggestions('merchant/info', $response->status(), (string) $message),
                 ],
             ], $response->successful() ? 200 : 422);
@@ -241,8 +243,11 @@ class ShopCarrierDeliverySettingsController extends Controller
         $settingsData = is_array($settingsData) ? $settingsData : [];
         $merchantId = trim((string) (
             $request->get('merchant_id')
-            ?: $request->get('client_id')
             ?: ($settingsData['merchant_id'] ?? '')
+            ?: ($settingsData['merchantId'] ?? '')
+            ?: ($settingsData['cabinet_id'] ?? '')
+            ?: ($settingsData['client_id'] ?? '')
+            ?: $request->get('client_id')
         ));
 
         return $merchantId !== '' ? ['merchant_id' => $merchantId] : [];
@@ -276,6 +281,14 @@ class ShopCarrierDeliverySettingsController extends Controller
 
         if ($method === 'merchant/info') {
             $suggestions[] = 'Если merchant/info недоступен, проблема в токене, кабинете или базовом URL, расчет доставки дальше работать не сможет.';
+        }
+
+        if (str_contains($lowerMessage, 'unknown merchant_id')) {
+            array_unshift($suggestions, 'Яндекс получил merchant_id, но не нашел такой кабинет. Проверьте, что в поле Merchant ID / Cabinet ID указан именно ID кабинета из Яндекс Доставки, а токен выпущен для этого же кабинета.');
+        }
+
+        if (str_contains($lowerMessage, 'missing merchant_id')) {
+            array_unshift($suggestions, 'Яндекс требует merchant_id в query. Укажите Merchant ID / Cabinet ID в настройках Яндекс Доставки.');
         }
 
         return $suggestions;
@@ -387,7 +400,7 @@ class ShopCarrierDeliverySettingsController extends Controller
                     'mode' => 'express',
                     'checked_method' => 'POST /offers/calculate',
                     'status' => $response->status(),
-                    'url' => $checkedUrl,
+                    'url' => $url,
                     'request_payload' => $payload,
                     'response' => $body,
                 ],
@@ -470,6 +483,9 @@ class ShopCarrierDeliverySettingsController extends Controller
         return null;
     }
 }
+
+
+
 
 
 
