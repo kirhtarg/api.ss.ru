@@ -1470,11 +1470,7 @@ class CartController extends Controller
             return 0;
         }
 
-        if (\App\Helpers\PriceHelper::isRound10Enabled()) {
-            return floor($discount / 10) * 10;
-        }
-
-        return \App\Helpers\PriceHelper::roundPrice($discount);
+        return \App\Helpers\PriceHelper::roundDiscount($discount);
     }
 
     /**
@@ -2316,3 +2312,4 @@ class CartController extends Controller
         }
     }
 }
+

@@ -110,7 +110,7 @@ class ShopBonusSettings extends Model
 
         $percentage = $isSalePrice ? $this->sale_price_percentage : $this->regular_price_percentage;
 
-        return (int) round($orderAmount * ($percentage / 100));
+        return (int) \App\Helpers\PriceHelper::roundDiscount($orderAmount * ($percentage / 100));
     }
 
     /**
@@ -118,7 +118,7 @@ class ShopBonusSettings extends Model
      */
     public function calculateMaxBonusUsage($orderAmount)
     {
-        $maxAmount = (int) round($orderAmount * ($this->max_usage_percentage / 100));
+        $maxAmount = (int) \App\Helpers\PriceHelper::roundDiscount($orderAmount * ($this->max_usage_percentage / 100));
 
         if ($this->max_bonus_amount && $maxAmount > $this->max_bonus_amount) {
             return $this->max_bonus_amount;
@@ -145,3 +145,4 @@ class ShopBonusSettings extends Model
         return $bonusAmount <= $maxUsage;
     }
 }
+

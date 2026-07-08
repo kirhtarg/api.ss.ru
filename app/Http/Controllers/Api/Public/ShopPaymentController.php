@@ -1054,20 +1054,20 @@ class ShopPaymentController extends Controller
             }
 
             // Overwrite client-sent amounts with authoritative server calculation
-            $orderData['total_amount'] = round($finalTotalAmount, 2);
-            $orderData['total_discount_amount'] = round($totalDiscount + $saleDiscountAmount, 2); // Including sale for admin breakdown
-            $orderData['registered_user_discount_amount'] = round($registeredUserDiscountAmount, 2);
-            $orderData['promo_code_discount_amount'] = round($promoCodeDiscountAmount, 2);
-            $orderData['birthday_discount_amount'] = round($birthdayDiscountAmount, 2);
-            $orderData['sale_discount_amount'] = round($saleDiscountAmount, 2);
+            $orderData['total_amount'] = \App\Helpers\PriceHelper::roundPrice($finalTotalAmount);
+            $orderData['total_discount_amount'] = \App\Helpers\PriceHelper::roundDiscount($totalDiscount + $saleDiscountAmount); // Including sale for admin breakdown
+            $orderData['registered_user_discount_amount'] = \App\Helpers\PriceHelper::roundDiscount($registeredUserDiscountAmount);
+            $orderData['promo_code_discount_amount'] = \App\Helpers\PriceHelper::roundDiscount($promoCodeDiscountAmount);
+            $orderData['birthday_discount_amount'] = \App\Helpers\PriceHelper::roundDiscount($birthdayDiscountAmount);
+            $orderData['sale_discount_amount'] = \App\Helpers\PriceHelper::roundDiscount($saleDiscountAmount);
             // In the database, bonus_points_to_use is an integer representing the number of points.
             // The monetary value is what we calculated as bonusPointsDiscountAmount.
             // Let's assume 1 point = 1 RUB for simplicity.
-            $orderData['bonus_points_to_use'] = (int) round($bonusPointsDiscountAmount);
+            $orderData['bonus_points_to_use'] = (int) \App\Helpers\PriceHelper::roundDiscount($bonusPointsDiscountAmount);
             $orderData['use_bonus_points'] = $isCertificateOrder ? false : ($orderData['use_bonus_points'] ?? false);
-            $orderData['order_bonus_points'] = $isCertificateOrder ? 0 : ($orderData['order_bonus_points'] ?? 0);
-            $orderData['delivery_cost'] = round($deliveryCost, 2);
-            $orderData['overtax_amount'] = round($overtaxAmount, 2);
+            $orderData['order_bonus_points'] = $isCertificateOrder ? 0 : (int) \App\Helpers\PriceHelper::roundDiscount((float) ($orderData['order_bonus_points'] ?? 0));
+            $orderData['delivery_cost'] = \App\Helpers\PriceHelper::roundPrice($deliveryCost);
+            $orderData['overtax_amount'] = \App\Helpers\PriceHelper::roundPrice($overtaxAmount);
             if ($isCertificateOrder) {
                 $orderData['promo_code'] = null;
                 $orderData['promo_code_id'] = null;
@@ -4337,3 +4337,4 @@ class ShopPaymentController extends Controller
         return is_array($data) ? $data : null;
     }
 }
+

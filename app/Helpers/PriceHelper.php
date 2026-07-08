@@ -48,6 +48,25 @@ class PriceHelper
     }
 
     /**
+     * Округлить скидку/бонус согласно настройкам.
+     *
+     * При округлении цен до 10 рублей скидки округляются вниз, чтобы скидка
+     * не становилась больше расчетной.
+     */
+    public static function roundDiscount(float $discount): float
+    {
+        if ($discount <= 0) {
+            return 0;
+        }
+
+        if (self::isRound10Enabled()) {
+            return floor($discount / 10) * 10;
+        }
+
+        return self::roundPrice($discount);
+    }
+
+    /**
      * Форматировать цену с правильным количеством знаков после запятой
      */
     public static function formatPrice(float $price, string $separator = ',', string $thousandsSeparator = ' '): string
@@ -57,3 +76,4 @@ class PriceHelper
         return number_format($price, $digits, $separator, $thousandsSeparator);
     }
 }
+
