@@ -235,6 +235,27 @@ class ShopCarrierDeliverySettingsController extends Controller
         }
     }
 
+    private function yandexMerchantQueryFromRequest(Request $request): array
+    {
+        $settingsData = $request->get('settings', []);
+        $settingsData = is_array($settingsData) ? $settingsData : [];
+        $merchantId = trim((string) (
+            $request->get('merchant_id')
+            ?: $request->get('client_id')
+            ?: ($settingsData['merchant_id'] ?? '')
+        ));
+
+        return $merchantId !== '' ? ['merchant_id' => $merchantId] : [];
+    }
+
+    private function appendQueryToUrl(string $url, array $query): string
+    {
+        if ($query === []) {
+            return $url;
+        }
+
+        return $url.(str_contains($url, '?') ? '&' : '?').http_build_query($query);
+    }
     private function yandexOtherDayAccessSuggestions(string $method, int $status, string $message): array
     {
         $suggestions = [
@@ -449,6 +470,8 @@ class ShopCarrierDeliverySettingsController extends Controller
         return null;
     }
 }
+
+
 
 
 
