@@ -455,6 +455,15 @@ class ShopYandexDeliveryController extends Controller
         }, $offers, array_keys($offers))));
     }
 
+    private function formatExpressOfferDescription(string $description): string
+    {
+        return match ($description) {
+            '2_hours_delivery' => 'Доставка примерно за 2 часа',
+            'express_60min_longer' => 'Экспресс-доставка, возможна задержка до 60 минут',
+            '4_hours_delivery' => 'Доставка примерно за 4 часа',
+            default => $description !== '' ? $description : 'Доставка от адреса отправителя до адреса получателя',
+        };
+    }
     private function expressTaxiClassName(string $taxiClass): string
     {
         return match ($taxiClass) {
@@ -979,6 +988,7 @@ class ShopYandexDeliveryController extends Controller
         return round((float) str_replace(',', '.', $matches[0]), 2);
     }
 }
+
 
 
 
