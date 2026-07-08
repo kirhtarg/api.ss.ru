@@ -228,6 +228,8 @@ class ShopYandexDeliveryController extends Controller
     {
         $baseUrl = $this->normalizeBaseUrl((string) $settings->api_url);
         $url = $baseUrl.$path;
+        $query = $this->yandexMerchantQuery($settings);
+        $requestUrl = strtolower($method) === 'get' ? $url : $this->appendQueryToUrl($url, $query);
         $this->lastYandexApiError = null;
         $request = Http::withToken((string) $settings->api_token)
             ->acceptJson()
@@ -235,8 +237,8 @@ class ShopYandexDeliveryController extends Controller
             ->timeout(25);
 
         $response = strtolower($method) === 'get'
-            ? $request->get($url, $payload)
-            : $request->post($url, $payload);
+            ? $request->get($url, array_merge($query, $payload))
+            : $request->post($requestUrl, $payload);
 
         if (! $response->successful()) {
             $responseBody = $response->json() ?: $response->body();
@@ -250,14 +252,16 @@ class ShopYandexDeliveryController extends Controller
             $this->lastYandexApiError = [
                 'mode' => 'other_day',
                 'method' => strtoupper($method).' '.$path,
-                'url' => $url,
+                'url' => $requestUrl,
                 'status' => $response->status(),
+                'query' => $query,
                 'request_payload' => $payload,
                 'response' => $responseBody,
             ];
             Log::warning('Yandex Delivery API error', [
-                'url' => $url,
+                'url' => $requestUrl,
                 'status' => $response->status(),
+                'query' => $query,
                 'payload' => $payload,
                 'response' => $responseBody,
             ]);
@@ -441,7 +445,7 @@ class ShopYandexDeliveryController extends Controller
             return [
                 'code' => 'yandex_express_'.($offer['taxi_class'] ?? $index),
                 'name' => $this->expressTaxiClassName((string) ($offer['taxi_class'] ?? 'express')),
-                'description' => $offer['description'] ?? 'Доставка от адреса отправителя до адреса получателя',
+                'description' => $this->formatExpressOfferDescription((string) ($offer['description'] ?? '')),
                 'cost' => round((float) $price, 2),
                 'cost_value' => round((float) $price, 2),
                 'type' => 'address',
@@ -468,7 +472,23 @@ class ShopYandexDeliveryController extends Controller
         $from = $pickup['from'] ?? null;
         $to = $delivery['to'] ?? null;
 
-        return $from && $to ? $from.' - '.$to : null;
+        if (! $from || ! $to) {
+            return null;
+        }
+
+        try {
+            $timezone = config('app.timezone', 'Europe/Moscow') ?: 'Europe/Moscow';
+            $fromDate = \Carbon\Carbon::parse($from)->timezone($timezone);
+            $toDate = \Carbon\Carbon::parse($to)->timezone($timezone);
+
+            if ($fromDate->isSameDay($toDate)) {
+                return $fromDate->format('d.m H:i').' - '.$toDate->format('H:i');
+            }
+
+            return $fromDate->format('d.m H:i').' - '.$toDate->format('d.m H:i');
+        } catch (\Throwable) {
+            return $from.' - '.$to;
+        }
     }
 
     private function isExpressMode(ShopCarrierDeliverySettings $settings): bool
@@ -959,3 +979,6 @@ class ShopYandexDeliveryController extends Controller
         return round((float) str_replace(',', '.', $matches[0]), 2);
     }
 }
+
+
+

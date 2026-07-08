@@ -3295,14 +3295,16 @@ class ShopOrdersController extends Controller
     {
         $baseUrl = $this->normalizeYandexDeliveryBaseUrl((string) $settings->api_url);
         $url = $baseUrl.$path;
+        $query = $this->yandexDeliveryMerchantQuery($settings);
+        $requestUrl = strtolower($method) === 'get' ? $url : $this->appendQueryToUrl($url, $query);
         $request = Http::withToken((string) $settings->api_token)
             ->acceptJson()
             ->asJson()
             ->timeout(30);
 
         $response = strtolower($method) === 'get'
-            ? $request->get($url, $payload)
-            : $request->post($url, $payload);
+            ? $request->get($url, array_merge($query, $payload))
+            : $request->post($requestUrl, $payload);
 
         if (! $response->successful()) {
             $message = $response->json('message')
@@ -3311,8 +3313,9 @@ class ShopOrdersController extends Controller
                 ?? $response->body()
                 ?: 'API Яндекс Доставки вернул ошибку';
             Log::warning('Yandex Delivery order API error', [
-                'url' => $url,
+                'url' => $requestUrl,
                 'status' => $response->status(),
+                'query' => $query,
                 'payload' => $payload,
                 'response' => $response->json() ?: $response->body(),
             ]);
@@ -3320,6 +3323,23 @@ class ShopOrdersController extends Controller
         }
 
         return $response->json() ?: [];
+    }
+
+    private function yandexDeliveryMerchantQuery(ShopCarrierDeliverySettings $settings): array
+    {
+        $settingsData = is_array($settings->settings) ? $settings->settings : [];
+        $merchantId = trim((string) ($settings->client_id ?: ($settingsData['merchant_id'] ?? '')));
+
+        return $merchantId !== '' ? ['merchant_id' => $merchantId] : [];
+    }
+
+    private function appendQueryToUrl(string $url, array $query): string
+    {
+        if ($query === []) {
+            return $url;
+        }
+
+        return $url.(str_contains($url, '?') ? '&' : '?').http_build_query($query);
     }
 
     private function sendYandexExpressDeliveryRequest(ShopCarrierDeliverySettings $settings, string $method, string $path, array $payload = [], array $query = []): array
@@ -6740,3 +6760,4 @@ XML;
         }
     }
 }
+

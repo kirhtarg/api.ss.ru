@@ -165,18 +165,21 @@ class ShopCarrierDeliverySettingsController extends Controller
         }
 
         try {
+            $merchantQuery = $this->yandexMerchantQueryFromRequest($request);
             $url = $apiBaseUrl.'/merchant/info';
+            $checkedUrl = $this->appendQueryToUrl($url, $merchantQuery);
+            $detectUrl = $this->appendQueryToUrl($apiBaseUrl.'/location/detect', $merchantQuery);
             $response = Http::withToken($apiToken)
                 ->acceptJson()
                 ->timeout(20)
-                ->get($url);
+                ->get($url, $merchantQuery);
 
             if ($response->successful()) {
                 $detectResponse = Http::withToken($apiToken)
                     ->acceptJson()
                     ->asJson()
                     ->timeout(20)
-                    ->post($apiBaseUrl.'/location/detect', ['location' => 'Москва']);
+                    ->post($detectUrl, ['location' => 'Москва']);
 
                 if (! $detectResponse->successful()) {
                     $detectMessage = $detectResponse->json('message')
@@ -193,8 +196,8 @@ class ShopCarrierDeliverySettingsController extends Controller
                         'checked_method' => 'POST /location/detect',
                         'merchant_status' => $response->status(),
                         'delivery_method_status' => $detectResponse->status(),
-                        'merchant_url' => $url,
-                        'delivery_method_url' => $apiBaseUrl.'/location/detect',
+                        'merchant_url' => $checkedUrl,
+                        'delivery_method_url' => $detectUrl,
                         'response' => $detectResponse->json(),
                         'suggestions' => $this->yandexOtherDayAccessSuggestions('location/detect', $detectResponse->status(), (string) $detectMessage),
                     ],
@@ -214,7 +217,7 @@ class ShopCarrierDeliverySettingsController extends Controller
                     'mode' => 'other_day',
                     'checked_method' => $response->successful() ? 'GET /merchant/info + POST /location/detect' : 'GET /merchant/info',
                     'status' => $response->status(),
-                    'url' => $url,
+                    'url' => $checkedUrl,
                     'response' => $response->json(),
                     'suggestions' => $response->successful() ? [] : $this->yandexOtherDayAccessSuggestions('merchant/info', $response->status(), (string) $message),
                 ],
@@ -363,7 +366,7 @@ class ShopCarrierDeliverySettingsController extends Controller
                     'mode' => 'express',
                     'checked_method' => 'POST /offers/calculate',
                     'status' => $response->status(),
-                    'url' => $url,
+                    'url' => $checkedUrl,
                     'request_payload' => $payload,
                     'response' => $body,
                 ],
@@ -446,3 +449,6 @@ class ShopCarrierDeliverySettingsController extends Controller
         return null;
     }
 }
+
+
+

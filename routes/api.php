@@ -621,21 +621,26 @@ Route::middleware(['cors', 'throttle:public'])->group(function () {
         return response()->json([], 200);
     });
     Route::post('/public/shop/goods/details', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getGoodsDetails']);
+    Route::options('/public/shop/goods/slug/{slug}', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/goods/slug/{slug}', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getGoodBySlug']);
 
     Route::options('/public/shop/catalog/resolve/{slug}', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/catalog/resolve/{slug}', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'resolveCatalogSlug']);
 
+    Route::options('/public/shop/goods/{id}/properties', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/goods/{id}/properties', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getGoodProperties']);
+
     Route::options('/public/shop/goods/{id}', function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/goods/{id}', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'show']);
 
-    Route::options('/public/shop/goods/slug/{slug}', function () {
-        return response()->json([], 200);
-    });
-    Route::get('/public/shop/goods/slug/{slug}', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getGoodBySlug']);
 
     Route::options('/public/shop/goods/{id}/images', function () {
         return response()->json([], 200);
@@ -999,6 +1004,10 @@ Route::middleware(['cors', 'throttle:public'])->group(function () {
 
     // Информация о товарах (публичная)
     Route::post('/public/shop/goods/details', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getGoodsDetails']);
+    Route::options('/public/shop/goods/slug/{slug}', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/goods/slug/{slug}', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getGoodBySlug']);
     // Получить данные для чекаута (товары с ценами, бонусами и скидками)
     Route::post('/public/shop/checkout/data', [App\Http\Controllers\Api\Public\ShopGoodsController::class, 'getCheckoutData']);
 
@@ -4429,4 +4438,6 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/file-info', [\App\Http\Controllers\Api\Public\AvatarUploadController::class, 'getFileInfo']);
     });
 });
+
+
 

@@ -1228,6 +1228,115 @@ class ShopGoodsController extends Controller
     /**
      * Получить значения характеристик по их ID
      */
+    public function getGoodProperties(int $id): JsonResponse
+    {
+        try {
+            $propertyRows = collect();
+            $schema = \Illuminate\Support\Facades\Schema::class;
+
+            if ($schema::hasTable('shop_good_properties') && $schema::hasTable('shop_properties')) {
+                $hasPropertyValues = $schema::hasTable('shop_property_values');
+                $hasGoodPropertyValue = $schema::hasColumn('shop_good_properties', 'value');
+                $hasGoodPropertyValueId = $schema::hasColumn('shop_good_properties', 'shop_property_value_id');
+                $hasPropertySlug = $schema::hasColumn('shop_properties', 'slug');
+                $hasPropertySort = $schema::hasColumn('shop_properties', 'sort_order');
+                $hasShowOnSite = $schema::hasColumn('shop_properties', 'show_on_site');
+
+                $valueExpression = $hasPropertyValues && $hasGoodPropertyValueId
+                    ? ($hasGoodPropertyValue ? 'COALESCE(pv.value, gp.value)' : 'pv.value')
+                    : ($hasGoodPropertyValue ? 'gp.value' : "''");
+
+                $query = \Illuminate\Support\Facades\DB::table('shop_good_properties as gp')
+                    ->join('shop_properties as p', 'p.id', '=', 'gp.property_id')
+                    ->where('gp.good_id', $id);
+
+                if ($hasPropertyValues && $hasGoodPropertyValueId) {
+                    $query->leftJoin('shop_property_values as pv', 'pv.id', '=', 'gp.shop_property_value_id');
+                }
+
+                if ($hasShowOnSite) {
+                    $query->where(function ($showQuery) {
+                        $showQuery->where('p.show_on_site', true)
+                            ->orWhere('p.show_on_site', 1)
+                            ->orWhereNull('p.show_on_site');
+                    });
+                }
+
+                $selects = [
+                    'p.id as id',
+                    'p.name as name',
+                    \Illuminate\Support\Facades\DB::raw(($hasPropertySlug ? 'p.slug' : 'NULL').' as slug'),
+                    \Illuminate\Support\Facades\DB::raw(($hasGoodPropertyValueId ? 'gp.shop_property_value_id' : 'NULL').' as value_id'),
+                    \Illuminate\Support\Facades\DB::raw($valueExpression.' as value'),
+                    \Illuminate\Support\Facades\DB::raw(($hasPropertySort ? 'p.sort_order' : '0').' as sort_order'),
+                ];
+
+                $propertyRows = $query
+                    ->select($selects)
+                    ->whereRaw("COALESCE({$valueExpression}, '') <> ''")
+                    ->get()
+                    ->map(function ($property) {
+                        return [
+                            'id' => (int) $property->id,
+                            'name' => $property->name,
+                            'slug' => $property->slug,
+                            'value_id' => $property->value_id ? (int) $property->value_id : null,
+                            'value' => $property->value,
+                            'sort_order' => (int) ($property->sort_order ?? 0),
+                        ];
+                    });
+            }
+
+            $characteristicRows = collect();
+            if ($schema::hasTable('shop_good_characteristics')) {
+                $hasCharacteristicSort = $schema::hasColumn('shop_good_characteristics', 'sort_order');
+                $characteristicRows = \Illuminate\Support\Facades\DB::table('shop_good_characteristics')
+                    ->where('good_id', $id)
+                    ->whereRaw("COALESCE(value, '') <> ''")
+                    ->select(
+                        'name',
+                        'value',
+                        \Illuminate\Support\Facades\DB::raw(($hasCharacteristicSort ? 'sort_order' : '0').' as sort_order')
+                    )
+                    ->get()
+                    ->map(function ($property) {
+                        return [
+                            'id' => null,
+                            'name' => $property->name,
+                            'slug' => null,
+                            'value_id' => null,
+                            'value' => $property->value,
+                            'sort_order' => (int) ($property->sort_order ?? 0),
+                        ];
+                    });
+            }
+
+            $properties = $propertyRows
+                ->concat($characteristicRows)
+                ->filter(fn ($property) => ! empty($property['name']) && ! empty($property['value']))
+                ->unique(fn ($property) => mb_strtolower((string) $property['name']).'|'.mb_strtolower((string) $property['value']))
+                ->sortBy([
+                    ['sort_order', 'asc'],
+                    ['name', 'asc'],
+                ])
+                ->values();
+
+            return response()->json([
+                'success' => true,
+                'data' => $properties,
+            ]);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::warning('Public good properties load failed', [
+                'good_id' => $id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'data' => [],
+            ]);
+        }
+    }
     public function getPropertyValues(Request $request): JsonResponse
     {
         try {
@@ -1370,6 +1479,22 @@ class ShopGoodsController extends Controller
                     $isFavorite = \App\Models\ShopFavorite::where('user_id', $user->id)
                         ->where('good_id', $good->id)
                         ->exists();
+                }
+
+                $propertyValueIds = $good->properties ? $good->properties->pluck('pivot.shop_property_value_id')->unique()->filter()->toArray() : [];
+                $propertyValuesMap = [];
+                if (! empty($propertyValueIds)) {
+                    $propertyValuesMap = \App\Models\Shop\PropertyValue::whereIn('id', $propertyValueIds)
+                        ->pluck('value', 'id')
+                        ->toArray();
+                }
+                if ($good->properties) {
+                    $good->properties->each(function ($prop) use ($propertyValuesMap) {
+                        $valId = $prop->pivot->shop_property_value_id ?? null;
+                        if ($valId && isset($propertyValuesMap[$valId])) {
+                            $prop->value = $propertyValuesMap[$valId];
+                        }
+                    });
                 }
 
                 $goodData = [
@@ -1748,6 +1873,22 @@ class ShopGoodsController extends Controller
                         ->where('good_id', $good->id)
                         ->exists();
                 }
+            }
+
+            $propertyValueIds = $good->properties ? $good->properties->pluck('pivot.shop_property_value_id')->unique()->filter()->toArray() : [];
+            $propertyValuesMap = [];
+            if (! empty($propertyValueIds)) {
+                $propertyValuesMap = \App\Models\Shop\PropertyValue::whereIn('id', $propertyValueIds)
+                    ->pluck('value', 'id')
+                    ->toArray();
+            }
+            if ($good->properties) {
+                $good->properties->each(function ($prop) use ($propertyValuesMap) {
+                    $valId = $prop->pivot->shop_property_value_id ?? null;
+                    if ($valId && isset($propertyValuesMap[$valId])) {
+                        $prop->value = $propertyValuesMap[$valId];
+                    }
+                });
             }
 
             // Добавляем поле is_favorite к товару и нормализуем свойства
@@ -2478,5 +2619,9 @@ class ShopGoodsController extends Controller
         ];
     }
 }
+
+
+
+
 
 
