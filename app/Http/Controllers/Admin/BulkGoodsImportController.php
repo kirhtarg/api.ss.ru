@@ -60,6 +60,38 @@ class BulkGoodsImportController extends Controller
         return $this->normalizeText($text);
     }
 
+    private function normalizeStockSource($source): ?string
+    {
+        $source = trim((string) $source);
+        if ($source === '') {
+            return null;
+        }
+
+        return mb_strtolower($source);
+    }
+
+    private function hasImportedStockField(array $data, array $stockFields): bool
+    {
+        foreach ($stockFields as $field) {
+            if (array_key_exists($field, $data)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function markStockImport($model, ?string $stockSource, ?string $stockImportRunId, array $stockFields, array $data): void
+    {
+        if (!$stockSource || !$stockImportRunId || !$this->hasImportedStockField($data, $stockFields)) {
+            return;
+        }
+
+        $model->stock_source = $stockSource;
+        $model->last_stock_import_run_id = $stockImportRunId;
+        $model->last_stock_import_at = now();
+    }
+
     public function bulkImport(Request $request)
     {
 
@@ -197,6 +229,21 @@ class BulkGoodsImportController extends Controller
             $this->importLogService->logSkippedBatch($skippedRows);
         }
 
+        $stockSource = $this->normalizeStockSource($request->input('stock_source'));
+        $stockImportRunId = $stockSource ? trim((string) $request->input('stock_import_run_id', '')) : null;
+        if ($stockSource && $stockImportRunId === '') {
+            $stockImportRunId = (string) Str::uuid();
+        }
+        $stockFullSync = $stockSource && filter_var($request->input('stock_full_sync', false), FILTER_VALIDATE_BOOLEAN);
+        $stockSyncFinalize = $stockSource && filter_var($request->input('stock_sync_finalize', false), FILTER_VALIDATE_BOOLEAN);
+        $stockSyncFieldsFromRequest = $request->input('stock_sync_fields', []);
+        if (!is_array($stockSyncFieldsFromRequest)) {
+            $stockSyncFieldsFromRequest = [];
+        }
+        $effectiveStockSyncFields = $request->has('stock_sync_fields')
+            ? $stockSyncFieldsFromRequest
+            : (!empty($supplierStockFields) ? array_keys($supplierStockFields) : ['stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity']);
+
         // Валидируем только непустые товары
         $validator = Validator::make([
             'goods' => $goods,
@@ -216,6 +263,26 @@ class BulkGoodsImportController extends Controller
 
         // Проверяем, есть ли товары для обработки после фильтрации
         if (empty($goods)) {
+            if ($stockSource && $stockFullSync && $stockSyncFinalize && $stockImportRunId) {
+                $stockSync = $this->reconcileMissingStockSourceItems($stockSource, $stockImportRunId, $effectiveStockSyncFields);
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Полная синхронизация остатков завершена',
+                    'results' => [
+                        'imported' => 0,
+                        'updated' => 0,
+                        'skipped' => 0,
+                        'failed' => 0,
+                        'errors' => [],
+                        'goodIds' => [],
+                        'newCategories' => [],
+                        'newBrands' => [],
+                        'stockSync' => $stockSync,
+                    ],
+                ]);
+            }
+
             $skippedCount = count($skippedRows);
 
             return response()->json([
@@ -338,6 +405,7 @@ class BulkGoodsImportController extends Controller
             'newBrands' => [],
             'imagesDownloaded' => 0, // Количество загруженных изображений
             'imagesFailed' => 0, // Количество неудачных загрузок изображений
+            'stockSync' => null,
         ];
 
         // Пакетная обработка категорий и брендов
@@ -390,6 +458,12 @@ class BulkGoodsImportController extends Controller
                         if ($trimmed !== '') {
                             $supplierName = $trimmed;
                         }
+                    }
+
+                    if ($stockSource && $stockImportRunId) {
+                        $goodData['_stock_source'] = $stockSource;
+                        $goodData['_stock_import_run_id'] = $stockImportRunId;
+                        $goodData['_stock_sync_fields'] = $effectiveStockSyncFields;
                     }
 
                     $existingGood = null;
@@ -917,6 +991,13 @@ class BulkGoodsImportController extends Controller
                                             $variation->fast_remote_stock_quantity = $safeGoodDataForVariationUpdate['fast_remote_stock_quantity'] !== null && is_numeric($safeGoodDataForVariationUpdate['fast_remote_stock_quantity']) ? (string) $safeGoodDataForVariationUpdate['fast_remote_stock_quantity'] : $safeGoodDataForVariationUpdate['fast_remote_stock_quantity'];
                                         }
 
+                                        $this->markStockImport(
+                                            $variation,
+                                            $goodData['_stock_source'] ?? null,
+                                            $goodData['_stock_import_run_id'] ?? null,
+                                            $goodData['_stock_sync_fields'] ?? ['stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'],
+                                            $safeGoodDataForVariationUpdate
+                                        );
                                         $variation->save();
                                     }
                                 }
@@ -1446,6 +1527,13 @@ class BulkGoodsImportController extends Controller
                                             $variation->fast_remote_stock_quantity = $safeGoodDataForVariationUpdate['fast_remote_stock_quantity'] !== null && is_numeric($safeGoodDataForVariationUpdate['fast_remote_stock_quantity']) ? (string) $safeGoodDataForVariationUpdate['fast_remote_stock_quantity'] : $safeGoodDataForVariationUpdate['fast_remote_stock_quantity'];
                                         }
 
+                                        $this->markStockImport(
+                                            $variation,
+                                            $goodData['_stock_source'] ?? null,
+                                            $goodData['_stock_import_run_id'] ?? null,
+                                            $goodData['_stock_sync_fields'] ?? ['stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'],
+                                            $safeGoodDataForVariationUpdate
+                                        );
                                         $variation->save();
                                     }
                                 }
@@ -1844,6 +1932,10 @@ class BulkGoodsImportController extends Controller
                 }
             }
 
+            if ($stockSource && $stockFullSync && $stockSyncFinalize && $stockImportRunId) {
+                $results['stockSync'] = $this->reconcileMissingStockSourceItems($stockSource, $stockImportRunId, $effectiveStockSyncFields);
+            }
+
             DB::commit();
 
             // Пакетное логирование после успешного коммита
@@ -2089,6 +2181,14 @@ class BulkGoodsImportController extends Controller
             );
 
         }
+
+        $this->markStockImport(
+            $good,
+            $goodData['_stock_source'] ?? null,
+            $goodData['_stock_import_run_id'] ?? null,
+            $goodData['_stock_sync_fields'] ?? ['stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'],
+            $goodData
+        );
 
         $good->save();
 
@@ -2500,6 +2600,14 @@ class BulkGoodsImportController extends Controller
             }
         }
 
+        $this->markStockImport(
+            $existingGood,
+            $goodData['_stock_source'] ?? null,
+            $goodData['_stock_import_run_id'] ?? null,
+            $goodData['_stock_sync_fields'] ?? ['stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'],
+            $goodData
+        );
+
         $existingGood->save();
 
         // Если товар имеет вариации, не обрабатывается конкретная вариация и были обновлены остатки,
@@ -2629,6 +2737,13 @@ class BulkGoodsImportController extends Controller
                     }
                 }
 
+                $this->markStockImport(
+                    $variation,
+                    $goodData['_stock_source'] ?? null,
+                    $goodData['_stock_import_run_id'] ?? null,
+                    $goodData['_stock_sync_fields'] ?? ['stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'],
+                    $goodData
+                );
                 $variation->save();
 
             }
@@ -3884,9 +3999,10 @@ class BulkGoodsImportController extends Controller
                 : $goodData['fast_remote_stock_quantity']
             ) : null;
             $variationSupplier = isset($goodData['supplier_name']) && trim((string) $goodData['supplier_name']) !== '' ? trim((string) $goodData['supplier_name']) : null;
+            $ignoreSupplierForStockSource = !empty($goodData['_stock_source']);
 
             $existing = ShopGoodVariation::where('good_id', $good->id)->where('sku', $sku);
-            if ($variationSupplier) {
+            if ($variationSupplier && !$ignoreSupplierForStockSource) {
                 $existing->where('supplier', $variationSupplier);
             }
             $existing = $existing->first();
@@ -3906,6 +4022,13 @@ class BulkGoodsImportController extends Controller
                 if ($variationSupplier) {
                     $existing->supplier = $variationSupplier;
                 }
+                $this->markStockImport(
+                    $existing,
+                    $goodData['_stock_source'] ?? null,
+                    $goodData['_stock_import_run_id'] ?? null,
+                    $goodData['_stock_sync_fields'] ?? ['stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'],
+                    $goodData
+                );
                 $existing->save();
 
                 return $existing->id;
@@ -3929,6 +4052,11 @@ class BulkGoodsImportController extends Controller
                 'is_active' => true,
                 'sort_order' => $sortOrder,
             ];
+            if (($goodData['_stock_source'] ?? null) && $this->hasImportedStockField($goodData, $goodData['_stock_sync_fields'] ?? ['stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'])) {
+                $toCreate['stock_source'] = $goodData['_stock_source'];
+                $toCreate['last_stock_import_run_id'] = $goodData['_stock_import_run_id'] ?? null;
+                $toCreate['last_stock_import_at'] = now();
+            }
             if (isset($goodData['remote_stock_quantity']) || $variationRemoteStockQuantity !== null) {
                 $toCreate['remote_stock_quantity'] = $variationRemoteStockQuantity;
             }
@@ -4074,9 +4202,10 @@ class BulkGoodsImportController extends Controller
 
             // Получаем поставщика для вариации
             $variationSupplier = isset($goodData['supplier_name']) && trim($goodData['supplier_name']) !== '' ? trim($goodData['supplier_name']) : null;
+            $searchSupplier = !empty($goodData['_stock_source']) ? '__any__' : $variationSupplier;
 
             // Ищем существующую вариацию с такой же комбинацией атрибутов и поставщиком
-            $existingVariation = $this->findVariationByAttributes($good->id, $attributeValueIds, $variationSupplier);
+            $existingVariation = $this->findVariationByAttributes($good->id, $attributeValueIds, $searchSupplier);
 
             if ($existingVariation) {
                 // Вариация существует - обновляем все поля из goodData
@@ -4135,6 +4264,14 @@ class BulkGoodsImportController extends Controller
                 if (isset($goodData['supplier_name']) && trim($goodData['supplier_name']) !== '') {
                     $existingVariation->supplier = trim($goodData['supplier_name']);
                 }
+
+                $this->markStockImport(
+                    $existingVariation,
+                    $goodData['_stock_source'] ?? null,
+                    $goodData['_stock_import_run_id'] ?? null,
+                    $goodData['_stock_sync_fields'] ?? ['stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'],
+                    array_merge($goodData, $variationData)
+                );
 
                 try {
                     $existingVariation->save();
@@ -4209,6 +4346,12 @@ class BulkGoodsImportController extends Controller
 
                     $variationDataToCreate['stock_quantity'] = $variationStockQuantity;
 
+                    if (($goodData['_stock_source'] ?? null) && $this->hasImportedStockField(array_merge($goodData, $variationData), $goodData['_stock_sync_fields'] ?? ['stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'])) {
+                        $variationDataToCreate['stock_source'] = $goodData['_stock_source'];
+                        $variationDataToCreate['last_stock_import_run_id'] = $goodData['_stock_import_run_id'] ?? null;
+                        $variationDataToCreate['last_stock_import_at'] = now();
+                    }
+
                     $variation = ShopGoodVariation::create($variationDataToCreate);
                 } catch (QueryException $e) {
                     // Игнорируем ошибки дублирования SKU для вариаций (дублирование разрешено)
@@ -4282,6 +4425,14 @@ class BulkGoodsImportController extends Controller
                             if (isset($goodData['supplier_name']) && trim($goodData['supplier_name']) !== '') {
                                 $existingVariationBySku->supplier = trim($goodData['supplier_name']);
                             }
+
+                            $this->markStockImport(
+                                $existingVariationBySku,
+                                $goodData['_stock_source'] ?? null,
+                                $goodData['_stock_import_run_id'] ?? null,
+                                $goodData['_stock_sync_fields'] ?? ['stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'],
+                                array_merge($goodData, $variationData)
+                            );
 
                             try {
                                 $existingVariationBySku->save();
@@ -4495,6 +4646,14 @@ class BulkGoodsImportController extends Controller
             }
         }
 
+        $this->markStockImport(
+            $variation,
+            $goodData['_stock_source'] ?? null,
+            $goodData['_stock_import_run_id'] ?? null,
+            $goodData['_stock_sync_fields'] ?? ['stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'],
+            $goodData
+        );
+
         try {
             $variation->save();
         } catch (QueryException $e) {
@@ -4635,10 +4794,14 @@ class BulkGoodsImportController extends Controller
 
         sort($attributeValueIds); // Сортируем для консистентности
 
-        // Сначала ищем вариацию среди вариаций указанного поставщика (если поставщик указан)
+        // Сначала ищем вариацию среди вариаций указанного поставщика (если поставщик указан).
+        // Специальное значение __any__ используется для источников остатков: поставщик не должен
+        // участвовать в поиске, иначе повторный импорт 1С может создавать дубли.
         if ($supplier !== null) {
             $supplierVariations = ShopGoodVariation::where('good_id', $goodId)
-                ->where('supplier', $supplier)
+                ->when($supplier !== '__any__', function ($query) use ($supplier) {
+                    $query->where('supplier', $supplier);
+                })
                 ->get();
 
             foreach ($supplierVariations as $variation) {
@@ -4875,6 +5038,61 @@ class BulkGoodsImportController extends Controller
             'reset_all' => true,
             'updated_goods' => $updatedGoods,
             'updated_variations' => $updatedVariations,
+        ];
+    }
+
+    private function reconcileMissingStockSourceItems(string $stockSource, string $stockImportRunId, array $stockFields): array
+    {
+        $allowedFields = ['stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'];
+        $stockFields = array_values(array_intersect($allowedFields, $stockFields));
+
+        if (empty($stockFields)) {
+            return [
+                'source' => $stockSource,
+                'run_id' => $stockImportRunId,
+                'updated_goods' => 0,
+                'updated_variations' => 0,
+                'fields' => [],
+                'message' => 'Нет выбранных полей остатков для полной синхронизации',
+            ];
+        }
+
+        $updateFields = [
+            'last_stock_import_run_id' => $stockImportRunId,
+            'last_stock_import_at' => now(),
+        ];
+
+        if (in_array('stock_quantity', $stockFields, true)) {
+            $updateFields['stock_quantity'] = 0;
+        }
+        if (in_array('remote_stock_quantity', $stockFields, true)) {
+            $updateFields['remote_stock_quantity'] = null;
+        }
+        if (in_array('fast_remote_stock_quantity', $stockFields, true)) {
+            $updateFields['fast_remote_stock_quantity'] = null;
+        }
+
+        $goodsUpdated = ShopGood::where('stock_source', $stockSource)
+            ->where(function ($query) use ($stockImportRunId) {
+                $query->whereNull('last_stock_import_run_id')
+                    ->orWhere('last_stock_import_run_id', '<>', $stockImportRunId);
+            })
+            ->update($updateFields);
+
+        $variationsUpdated = ShopGoodVariation::where('stock_source', $stockSource)
+            ->where(function ($query) use ($stockImportRunId) {
+                $query->whereNull('last_stock_import_run_id')
+                    ->orWhere('last_stock_import_run_id', '<>', $stockImportRunId);
+            })
+            ->update($updateFields);
+
+        return [
+            'source' => $stockSource,
+            'run_id' => $stockImportRunId,
+            'updated_goods' => $goodsUpdated,
+            'updated_variations' => $variationsUpdated,
+            'fields' => $stockFields,
+            'message' => "Полная синхронизация '{$stockSource}': обнулены отсутствующие позиции ({$goodsUpdated} товаров, {$variationsUpdated} вариаций)",
         ];
     }
 
