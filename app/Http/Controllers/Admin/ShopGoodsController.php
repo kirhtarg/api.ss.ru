@@ -8542,6 +8542,41 @@ class ShopGoodsController extends Controller
     }
 
     /**
+     * Получить список уникальных источников остатков из товаров и вариаций
+     */
+    public function getStockSources(): JsonResponse
+    {
+        try {
+            $sourcesFromGoods = ShopGood::whereNotNull('stock_source')
+                ->where('stock_source', '!=', '')
+                ->distinct()
+                ->pluck('stock_source')
+                ->filter()
+                ->toArray();
+
+            $sourcesFromVariations = ShopGoodVariation::whereNotNull('stock_source')
+                ->where('stock_source', '!=', '')
+                ->distinct()
+                ->pluck('stock_source')
+                ->filter()
+                ->toArray();
+
+            $stockSources = array_unique(array_merge($sourcesFromGoods, $sourcesFromVariations));
+            sort($stockSources);
+
+            return response()->json([
+                'success' => true,
+                'data' => array_values($stockSources),
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения списка источников остатков: '.$e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * Массовое создание вариаций из товаров
      * Преобразует несколько товаров в вариации одного главного товара
      */
