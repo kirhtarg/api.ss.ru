@@ -88,6 +88,8 @@ class DaDataController extends Controller
                             'city' => $suggestion['data']['city'] ?? '',
                             'region' => $suggestion['data']['region'] ?? '',
                             'country' => $suggestion['data']['country'] ?? '',
+                            'geo_lat' => $suggestion['data']['geo_lat'] ?? null,
+                            'geo_lon' => $suggestion['data']['geo_lon'] ?? null,
                             'postal_code' => $suggestion['data']['postal_code'] ?? '',
                         ],
                     ];
@@ -324,6 +326,8 @@ class DaDataController extends Controller
                             'postal_code' => $suggestion['data']['postal_code'] ?? '',
                             'region' => $suggestion['data']['region'] ?? '',
                             'country' => $suggestion['data']['country'] ?? '',
+                            'geo_lat' => $suggestion['data']['geo_lat'] ?? null,
+                            'geo_lon' => $suggestion['data']['geo_lon'] ?? null,
                         ],
                     ];
                 }, $suggestions);
@@ -347,3 +351,5 @@ class DaDataController extends Controller
         }
     }
 }
+
+

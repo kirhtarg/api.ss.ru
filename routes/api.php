@@ -857,6 +857,10 @@ Route::middleware(['cors', 'throttle:public'])->group(function () {
     // Обработка возврата с Ю-Касса
     Route::get('/public/shop/payment/return', [App\Http\Controllers\Api\Public\ShopPaymentController::class, 'handlePaymentReturn']);
 
+    Route::options('/public/address/suggest', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/address/suggest', [App\Http\Controllers\Api\Public\DaDataController::class, 'suggestAddress']);
     // СДЭК интеграция
     Route::options('/public/cdek/cities', function () {
         return response()->json([], 200);
@@ -4438,6 +4442,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/file-info', [\App\Http\Controllers\Api\Public\AvatarUploadController::class, 'getFileInfo']);
     });
 });
+
 
 
 
