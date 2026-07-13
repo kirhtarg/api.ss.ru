@@ -2013,6 +2013,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('/check-slug', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'checkSlug']);
 
                 Route::get('/suppliers', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getSuppliers']);
+                Route::get('/stock-sources', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getStockSources']);
                 Route::get('/categories-stats', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getCategoriesStats']);
                 Route::get('/characteristics/list', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getCharacteristicsList']);
                 Route::post('/categories', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'createCategory']);
@@ -2024,6 +2025,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/bulk-remove-properties', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'bulkRemoveProperties']);
                 Route::get('/invalid-prices/stats', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getInvalidPricesStats']);
                 Route::post('/invalid-prices/cleanup', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'cleanupInvalidPrices']);
+                Route::get('/audit-1c-duplicates', [\App\Http\Controllers\Admin\BulkGoodsImportController::class, 'auditOneCDuplicates']);
+                Route::post('/audit-1c-duplicates/resolve', [\App\Http\Controllers\Admin\BulkGoodsImportController::class, 'resolveOneCDuplicates']);
 
                 Route::get('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'show']);
                 Route::post('/', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'store']);
@@ -4442,7 +4445,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/file-info', [\App\Http\Controllers\Api\Public\AvatarUploadController::class, 'getFileInfo']);
     });
 });
+<<<<<<< HEAD
 
 
 
 
+=======
+>>>>>>> 04c606f270a339d67e19d4e30e5480b992b8dc2a
