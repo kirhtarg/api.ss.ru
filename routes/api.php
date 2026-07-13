@@ -4445,10 +4445,3 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/file-info', [\App\Http\Controllers\Api\Public\AvatarUploadController::class, 'getFileInfo']);
     });
 });
-<<<<<<< HEAD
-
-
-
-
-=======
->>>>>>> 04c606f270a339d67e19d4e30e5480b992b8dc2a
