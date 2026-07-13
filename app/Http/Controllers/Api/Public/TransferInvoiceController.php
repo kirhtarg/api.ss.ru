@@ -161,7 +161,8 @@ class TransferInvoiceController extends Controller
                 }
             }
 
-            // Получаем данные о скидках и доставке из заказа, если он передан
+            // Получаем данные о скидках из заказа, если он передан.
+            // Доставка в банковский счет не включается: она оплачивается отдельно.
             $promoCodeDiscount = 0;
             $bonusDiscount = 0;
             $birthdayDiscount = 0;
@@ -175,11 +176,6 @@ class TransferInvoiceController extends Controller
                 $promoCodeDiscount = (float) ($order->promo_code_discount_amount ?? 0);
                 $bonusDiscount = (float) ($order->bonus_points_to_use ?? 0); // Скидка от списанных бонусов (1 бонус = 1 рубль)
                 $birthdayDiscount = (float) ($order->birthday_discount_amount ?? 0);
-                // Получаем стоимость доставки из заказа
-                $deliveryCost = isset($order->delivery_cost) ? (float) $order->delivery_cost : 0;
-                if ($deliveryCost < 0) {
-                    $deliveryCost = 0;
-                }
             }
 
             // Формируем HTML для счета в зависимости от типа
@@ -1651,7 +1647,6 @@ HTML;
 
             $saleDiscount = 0;
             $registeredUserDiscount = 0;
-            $deliveryCost = 0;
 
             if ($order) {
                 $promoCodeDiscount = $order->promo_code_discount_amount ?? 0;
@@ -1659,10 +1654,6 @@ HTML;
                 $birthdayDiscount = $order->birthday_discount_amount ?? 0;
                 $saleDiscount = (float) ($order->sale_discount_amount ?? 0);
                 $registeredUserDiscount = (float) ($order->registered_user_discount_amount ?? 0);
-                $deliveryCost = (float) ($order->delivery_cost ?? 0);
-                if ($deliveryCost < 0) {
-                    $deliveryCost = 0;
-                }
             }
 
             $data = [
@@ -1685,7 +1676,8 @@ HTML;
                 'birthday_discount_amount' => $birthdayDiscount,
                 'sale_discount_amount' => $saleDiscount,
                 'registered_user_discount_amount' => $registeredUserDiscount,
-                'delivery_cost' => $deliveryCost,
+                // Старые ссылки могут передавать delivery_cost, но счет всегда только на товары.
+                'delivery_cost' => 0,
                 // Параметры наценки
                 'over_tax' => $overTax,
                 'over_text' => $overText,

@@ -89,9 +89,6 @@ class InvoicePdfService
             }
         }
 
-        // Получаем стоимость доставки из данных заказа
-        $deliveryAmount = (float) ($data['delivery_cost'] ?? 0);
-
         // Получаем скидки
         $saleDiscount = (float) ($data['sale_discount_amount'] ?? 0);
         $registeredUserDiscount = (float) ($data['registered_user_discount_amount'] ?? 0);
@@ -118,11 +115,11 @@ class InvoicePdfService
         // Покупатель
         $y = $this->fillCustomer($pdf, $data, $y);
 
-        // Таблица товаров (с доставкой, если есть)
-        $y = $this->fillItemsTable($pdf, $orderItems, $deliveryAmount, $y);
+        // В банковский счет включаются только товары. Доставка оплачивается отдельно.
+        $y = $this->fillItemsTable($pdf, $orderItems, $y);
 
         // Итоги
-        $itemsCount = count($orderItems) + ($deliveryAmount > 0 ? 1 : 0);
+        $itemsCount = count($orderItems);
 
         $y = $this->fillTotals(
             $pdf, $baseTotal, $withVat, $itemsCount, $y,
@@ -373,7 +370,7 @@ class InvoicePdfService
     /**
      * Таблица товаров
      */
-    private function fillItemsTable(TCPDF $pdf, array $orderItems, float $deliveryAmount, float $y): float
+    private function fillItemsTable(TCPDF $pdf, array $orderItems, float $y): float
     {
         $pdf->SetFont('dejavusans', 'B', 9);
         $pdf->SetFillColor(240, 240, 240);
@@ -498,45 +495,6 @@ class InvoicePdfService
 
             $y += $actualRowHeight;
             $itemIndex++;
-        }
-
-        // Добавляем строку доставки, если есть
-        if ($deliveryAmount > 0) {
-            $x = 15;
-            $row = $y;
-
-            $pdf->SetFont('dejavusans', '', 9);
-
-            // №
-            $pdf->SetXY($x, $row);
-            $pdf->Cell($colWidths[0], $rowHeight, $itemIndex + 1, 1, 0, 'C', true);
-            $x += $colWidths[0];
-
-            // Наименование
-            $pdf->SetXY($x, $row);
-            $pdf->Cell($colWidths[1], $rowHeight, 'Доставка', 1, 0, 'L', true);
-            $x += $colWidths[1];
-
-            // Кол-во
-            $pdf->SetXY($x, $row);
-            $pdf->Cell($colWidths[2], $rowHeight, '1', 1, 0, 'C', true);
-            $x += $colWidths[2];
-
-            // Ед
-            $pdf->SetXY($x, $row);
-            $pdf->Cell($colWidths[3], $rowHeight, 'шт', 1, 0, 'C', true);
-            $x += $colWidths[3];
-
-            // Цена
-            $pdf->SetXY($x, $row);
-            $pdf->Cell($colWidths[4], $rowHeight, \App\Helpers\PriceHelper::formatPrice($deliveryAmount), 1, 0, 'R', true);
-            $x += $colWidths[4];
-
-            // Сумма
-            $pdf->SetXY($x, $row);
-            $pdf->Cell($colWidths[5], $rowHeight, \App\Helpers\PriceHelper::formatPrice($deliveryAmount), 1, 0, 'R', true);
-
-            $y += $rowHeight;
         }
 
         return $y + 5;
