@@ -137,4 +137,9 @@ return [
         'ca_bundle_path' => env('DELLIN_CA_BUNDLE', env('HTTP_CLIENT_CA_BUNDLE')),
     ],
 
+    'topsports' => [
+        'verify_ssl' => env('TOPSPORTS_VERIFY_SSL', env('HTTP_CLIENT_VERIFY', true)),
+        'ca_bundle_path' => env('TOPSPORTS_CA_BUNDLE', env('HTTP_CLIENT_CA_BUNDLE')),
+    ],
+
 ];

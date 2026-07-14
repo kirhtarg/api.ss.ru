@@ -21,6 +21,7 @@ use App\Services\CustomerOrderEmailService;
 use App\Services\NotificationService;
 use App\Services\TelegramService;
 use App\Services\ShopDeliveryActivitySyncService;
+use App\Services\DeliveryPackageService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -848,6 +849,9 @@ class CartController extends Controller
                 'order_bonus_points' => 'nullable|integer|min:0',
                 'overtax_amount' => 'nullable|numeric',
                 'overtax_text' => 'nullable|string|max:255',
+                'payment_surcharge_amount' => 'nullable|numeric|min:0',
+                'payment_surcharge_type' => 'nullable|string|max:20',
+                'payment_surcharge_value' => 'nullable|numeric|min:0',
                 'items' => 'required|array',
             ]);
 
@@ -987,6 +991,10 @@ class CartController extends Controller
             $recalculatedTotalQuantity = 0;
             $registeredDiscountPercent = $customerId ? (float) (Setting::where('key', 'discount_reg')->value('value') ?? 0) : 0;
             $discountToDTextValue = Setting::where('key', 'discount_to_d_text')->value('value');
+            $legacyNoBonusTags = collect(explode(',', (string) (Setting::where('key', 'tag_no_bonus')->value('value') ?? '')))
+                ->map(fn ($value) => mb_strtolower(trim($value)))
+                ->filter()
+                ->values();
             $registeredDiscountForSaleAllowed = ! (
                 $discountToDTextValue === null ||
                 $discountToDTextValue === '' ||
@@ -1032,6 +1040,22 @@ class CartController extends Controller
                 $hasTagExtraDiscount = $tagDiscountPercent > 0;
                 $hasNoBonusTag = $tags->contains(fn ($tag) => (bool) ($tag->disables_bonuses ?? false));
                 $hasNoRegisteredDiscountTag = $tags->contains(fn ($tag) => (bool) ($tag->disables_registered_discount ?? false));
+                $hasLegacyNoBonusTag = $legacyNoBonusTags->isNotEmpty() && $tags->contains(function ($tag) use ($legacyNoBonusTags) {
+                    $name = mb_strtolower(trim((string) ($tag->name ?? '')));
+                    $slug = mb_strtolower(trim((string) ($tag->slug ?? '')));
+
+                    return $legacyNoBonusTags->contains($name) || $legacyNoBonusTags->contains($slug);
+                });
+
+                // В заказе фиксируем уже округленные цены единицы товара. Иначе строка
+                // заказа и округленный общий итог расходятся (например, 98991 и 99000).
+                $dbPrice = \App\Helpers\PriceHelper::roundPrice((float) $dbPrice);
+                $dbSalePrice = ($dbSalePrice && $dbSalePrice > 0)
+                    ? \App\Helpers\PriceHelper::roundPrice((float) $dbSalePrice)
+                    : 0;
+                $dbDempingPrice = ($dbDempingPrice && $dbDempingPrice > 0)
+                    ? \App\Helpers\PriceHelper::roundPrice((float) $dbDempingPrice)
+                    : 0;
 
                 // Если у тега есть скидка, она считается от базовой цены и игнорирует акцию/демпинг.
                 $finalPrice = $dbPrice;
@@ -1046,18 +1070,22 @@ class CartController extends Controller
                     $finalPrice = $dbSalePrice;
                 }
 
-                $itemTotal = $finalPrice * $quantity;
-                $discountAmount = max(0, ($dbPrice - $finalPrice) * $quantity);
+                $finalPrice = \App\Helpers\PriceHelper::roundPrice((float) $finalPrice);
+                $itemTotal = \App\Helpers\PriceHelper::roundPrice($finalPrice * $quantity);
+                $discountAmount = \App\Helpers\PriceHelper::roundDiscount(
+                    max(0, ($dbPrice - $finalPrice) * $quantity)
+                );
                 $hasDiscountPrice = $hasTagExtraDiscount || $showDemping || ($dbSalePrice && $dbSalePrice > 0 && $dbSalePrice < $dbPrice);
                 $canApplyRegisteredDiscount = $customerId
                     && $registeredDiscountPercent > 0
                     && ! $showDemping
                     && ! $hasNoBonusTag
+                    && ! $hasLegacyNoBonusTag
                     && ! $hasNoRegisteredDiscountTag
                     && ($registeredDiscountForSaleAllowed || ! $hasDiscountPrice);
 
                 if ($canApplyRegisteredDiscount) {
-                    $registeredDiscountBaseSubtotal += \App\Helpers\PriceHelper::roundPrice((float) $finalPrice) * $quantity;
+                    $registeredDiscountBaseSubtotal += $finalPrice * $quantity;
                 }
 
                 // Гарантированно получаем и сохраняем параметры вариации
@@ -1082,11 +1110,13 @@ class CartController extends Controller
                     'sale_price' => $dbSalePrice,
                     'demping_price' => $dbDempingPrice,
                     'final_price' => $finalPrice,
+                    'unit_price' => $finalPrice,
                     'show_demping' => $showDemping,
                     'total' => $itemTotal,
                     'discount_amount' => $discountAmount,
                     'tag_discount_percent' => $tagDiscountPercent,
                     'tag_discount_name' => $tagDiscount['name'],
+                    '_registered_discount_eligible' => (bool) $canApplyRegisteredDiscount,
                     'tags' => $tags ? $tags->map(function ($tag) {
                         return [
                             'id' => $tag->id,
@@ -1109,13 +1139,16 @@ class CartController extends Controller
 
             // Пересчитываем общую сумму
             $deliveryCost = $request->get('delivery_cost', 0);
-            $overtaxAmount = (float) $request->get('overtax_amount', 0) + (float) $request->get('payment_surcharge_amount', 0);
+            $baseOvertaxAmount = (float) $request->get('overtax_amount', 0);
+            $paymentSurchargeAmount = (float) $request->get('payment_surcharge_amount', 0);
+            $overtaxAmount = $baseOvertaxAmount + $paymentSurchargeAmount;
             $saleDiscountAmount = $isCertificateOrder
                 ? 0
                 : \App\Helpers\PriceHelper::roundPrice(max(0, $recalculatedRegularSubtotal - $recalculatedSubtotal));
             $registeredUserDiscountAmount = $isCertificateOrder
                 ? 0
                 : $this->roundDiscount($registeredDiscountBaseSubtotal * ($registeredDiscountPercent / 100));
+            $finalItems = $this->applyRegisteredDiscountToOrderItems($finalItems, $registeredUserDiscountAmount);
             $promoCodeDiscountAmount = $isCertificateOrder ? 0 : (float) $request->get('promo_code_discount_amount', 0);
             $birthdayDiscountAmount = $isCertificateOrder ? 0 : (float) $request->get('birthday_discount_amount', 0);
             $totalDiscount = $isCertificateOrder
@@ -1145,7 +1178,26 @@ class CartController extends Controller
             // а потом из него вычитался totalDiscount, в котором ТАКЖЕ сидела акционная скидка.
             // Теперь считаем от БАЗОВОЙ суммы (recalculatedRegularSubtotal).
             $finalSubtotal = $isCertificateOrder ? $recalculatedRegularSubtotal : $recalculatedSubtotal;
-            $finalTotalAmount = $recalculatedRegularSubtotal + $overtaxAmount - $totalDiscount;
+            $requestedBonusPoints = (! $isCertificateOrder && $request->boolean('use_bonus_points'))
+                ? max(0, (int) $request->get('bonus_points_to_use', 0))
+                : 0;
+            $availableBonusPoints = 0;
+            if ($customerId && $requestedBonusPoints > 0) {
+                $availableBonusPoints = (int) (\App\Models\UserBonus::where('user_id', $customerId)->value('points') ?? 0);
+            }
+            $maxBonusForOrder = (int) floor(max(0, $recalculatedRegularSubtotal + $overtaxAmount - $totalDiscount));
+            $bonusPointsToUse = min($requestedBonusPoints, $availableBonusPoints, $maxBonusForOrder);
+
+            if ($requestedBonusPoints !== $bonusPointsToUse) {
+                Log::warning('Количество списываемых бонусов скорректировано сервером', [
+                    'order_number' => $orderNumber,
+                    'customer_id' => $customerId,
+                    'requested' => $requestedBonusPoints,
+                    'available' => $availableBonusPoints,
+                    'applied' => $bonusPointsToUse,
+                ]);
+            }
+            $finalTotalAmount = $recalculatedRegularSubtotal + $overtaxAmount - $totalDiscount - $bonusPointsToUse;
             
             if ($finalTotalAmount < 0) {
                 $finalTotalAmount = 0;
@@ -1179,7 +1231,7 @@ class CartController extends Controller
                 'has_certificate' => $isCertificateOrder,
                 'promo_code_id' => $isCertificateOrder ? null : $request->get('promo_code_id'),
                 'use_bonus_points' => $isCertificateOrder ? false : $request->get('use_bonus_points', false),
-                'bonus_points_to_use' => $isCertificateOrder ? 0 : $request->get('bonus_points_to_use', 0),
+                'bonus_points_to_use' => $bonusPointsToUse,
                 'order_bonus_points' => $isCertificateOrder ? 0 : $request->get('order_bonus_points', 0),
                 'overtax_amount' => $overtaxAmount,
                 'overtax_text' => $request->get('overtax_text') ?: ($request->get('payment_surcharge_amount', 0) > 0 ? 'Наценка за способ оплаты' : null),
@@ -1201,6 +1253,15 @@ class CartController extends Controller
                     'delivery_tariff_code' => $request->get('cdek_tariff_code'),
                     'cdek_tariff_code' => $request->get('cdek_tariff_code'),
                     'cdek_delivery_type' => $request->get('cdek_delivery_type'),
+                    'cdek_base_tariff_cost' => $request->get('cdek_base_tariff_cost'),
+                    'cdek_insurance_cost' => $request->get('cdek_insurance_cost'),
+                    'cdek_surcharge_amount' => $request->get('cdek_surcharge_amount'),
+                    'cdek_customer_delivery_cost' => $request->get('cdek_customer_delivery_cost'),
+                    'cdek_delivery_recipient_cost_value' => $request->get('cdek_customer_delivery_cost'),
+                    'cdek_insurance_enabled' => $request->get('cdek_insurance_enabled'),
+                    'cdek_surcharge_enabled' => $request->get('cdek_surcharge_enabled'),
+                    'cdek_surcharge_value' => $request->get('cdek_surcharge_value'),
+                    'cdek_surcharge_type' => $request->get('cdek_surcharge_type'),
                     'cdek_pvz_code' => $request->get('cdek_pvz_code'),
                     'cdek_delivery_address' => $request->get('cdek_delivery_address'),
                     'cdek_packages' => $request->get('cdek_packages'),
@@ -1218,10 +1279,13 @@ class CartController extends Controller
                     'yandex_pickup_point_id' => $request->get('yandex_pickup_point_id'),
                     'yandex_delivery_address' => $request->get('yandex_delivery_address'),
                     'yandex_delivery_metadata' => $request->get('yandex_delivery_metadata'),
+                    'base_overtax_amount' => $baseOvertaxAmount,
+                    'payment_surcharge_amount' => $paymentSurchargeAmount,
                 ],
             ];
 
             $order = ShopOrder::create($orderData);
+            app(DeliveryPackageService::class)->snapshotEstimatedForOrder($order);
 
             // Логируем создание заказа
             $userName = null;
@@ -1260,9 +1324,8 @@ class CartController extends Controller
             }
 
             // Списываем бонусы с баланса пользователя через UserBonus (единое хранилище)
-            if (! $isCertificateOrder && $customerId && $request->get('use_bonus_points') && $request->get('bonus_points_to_use', 0) > 0) {
+            if (! $isCertificateOrder && $customerId && $bonusPointsToUse > 0) {
                 try {
-                    $bonusPointsToUse = (int) $request->get('bonus_points_to_use', 0);
                     $userBonus = \App\Models\UserBonus::getOrCreateForUser($customerId);
 
                     if ($userBonus->points >= $bonusPointsToUse) {
@@ -1359,6 +1422,15 @@ class CartController extends Controller
                 'data' => [
                     'order_id' => $order->id,
                     'order_number' => $order->order_number,
+                    'base_subtotal' => \App\Helpers\PriceHelper::roundPrice($recalculatedRegularSubtotal),
+                    'items_subtotal' => \App\Helpers\PriceHelper::roundPrice($recalculatedSubtotal),
+                    'total_amount' => (float) $order->total_amount,
+                    'delivery_cost' => (float) $order->delivery_cost,
+                    'overtax_amount' => (float) $order->overtax_amount,
+                    'base_overtax_amount' => \App\Helpers\PriceHelper::roundPrice($baseOvertaxAmount),
+                    'payment_surcharge_amount' => \App\Helpers\PriceHelper::roundPrice($paymentSurchargeAmount),
+                    'overtax_text' => $order->overtax_text,
+                    'items' => $order->items,
                     // Скидки
                     'sale_discount_amount' => $order->sale_discount_amount,
                     'registered_user_discount_amount' => $order->registered_user_discount_amount,
@@ -2224,6 +2296,69 @@ class CartController extends Controller
     }
 
     /**
+     * Распределить скидку зарегистрированного по подходящим позициям заказа.
+     * Итог распределения в копейках всегда равен скидке уровня заказа.
+     */
+    private function applyRegisteredDiscountToOrderItems(array $items, float $discountAmount): array
+    {
+        $eligibleIndexes = [];
+        $eligibleBaseCents = 0;
+
+        foreach ($items as $index => &$item) {
+            $quantity = max(1, (int) ($item['quantity'] ?? 1));
+            $unitPrice = max(0, (float) ($item['final_price'] ?? $item['unit_price'] ?? $item['price'] ?? 0));
+            $lineTotalCents = max(0, (int) round($unitPrice * $quantity * 100));
+
+            $item['registered_discount_amount'] = 0;
+            $item['customer_unit_price'] = round($unitPrice, 2);
+            $item['customer_total'] = round($lineTotalCents / 100, 2);
+
+            if (! empty($item['_registered_discount_eligible']) && $lineTotalCents > 0) {
+                $eligibleIndexes[] = $index;
+                $eligibleBaseCents += $lineTotalCents;
+            }
+        }
+        unset($item);
+
+        $remainingDiscountCents = min(
+            max(0, (int) round($discountAmount * 100)),
+            $eligibleBaseCents
+        );
+        $remainingBaseCents = $eligibleBaseCents;
+
+        foreach ($eligibleIndexes as $position => $index) {
+            $quantity = max(1, (int) ($items[$index]['quantity'] ?? 1));
+            $lineTotalCents = max(0, (int) round(
+                (float) ($items[$index]['final_price'] ?? $items[$index]['unit_price'] ?? $items[$index]['price'] ?? 0)
+                * $quantity
+                * 100
+            ));
+            $isLast = $position === array_key_last($eligibleIndexes);
+            $lineDiscountCents = $isLast || $remainingBaseCents <= 0
+                ? $remainingDiscountCents
+                : min(
+                    $remainingDiscountCents,
+                    (int) round($remainingDiscountCents * ($lineTotalCents / $remainingBaseCents))
+                );
+            $customerTotalCents = max(0, $lineTotalCents - $lineDiscountCents);
+
+            $items[$index]['registered_discount_amount'] = round($lineDiscountCents / 100, 2);
+            $items[$index]['customer_total'] = round($customerTotalCents / 100, 2);
+            $items[$index]['customer_unit_price'] = round(($customerTotalCents / 100) / $quantity, 2);
+
+            $remainingDiscountCents -= $lineDiscountCents;
+            $remainingBaseCents -= $lineTotalCents;
+        }
+
+        foreach ($items as &$item) {
+            unset($item['_registered_discount_eligible']);
+        }
+        unset($item);
+
+        return $items;
+    }
+
+    /**
      * Обновление остатка основного товара для заказа с оплатой при получении
      */
     private function updateGoodStockForOrder(int $goodId, int $quantity, int $orderId): void
@@ -2312,4 +2447,3 @@ class CartController extends Controller
         }
     }
 }
-

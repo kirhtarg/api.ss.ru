@@ -37,6 +37,11 @@ class ShopGood extends Model
         'height',
         'depth', // В базе данных поле называется depth, но через accessor доступно как length
         'weight',
+        'shipping_weight',
+        'shipping_length',
+        'shipping_width',
+        'shipping_height',
+        'ships_separately',
         'rating',
         'reviews_count',
         'meta_title',
@@ -63,6 +68,11 @@ class ShopGood extends Model
         'height' => 'decimal:2',
         'depth' => 'decimal:2', // В базе данных поле называется depth, но через accessor доступно как length
         'weight' => 'decimal:2',
+        'shipping_weight' => 'decimal:3',
+        'shipping_length' => 'decimal:2',
+        'shipping_width' => 'decimal:2',
+        'shipping_height' => 'decimal:2',
+        'ships_separately' => 'boolean',
         'rating' => 'decimal:2',
         'reviews_count' => 'integer',
         'is_active' => 'boolean',

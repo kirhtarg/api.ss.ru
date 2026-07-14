@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Helpers\PriceHelper;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
@@ -140,6 +141,11 @@ class ShopOrder extends Model
         return $this->hasMany(ShopOrderLog::class, 'order_id')->orderBy('created_at', 'desc');
     }
 
+    public function packages()
+    {
+        return $this->hasMany(ShopOrderPackage::class, 'order_id')->orderBy('number');
+    }
+
     public function getItemsWithDetails()
     {
         if (! $this->items) {
@@ -154,7 +160,7 @@ class ShopOrder extends Model
 
         $isCertificateOrder = ! empty(trim((string) ($this->certificate_code ?? ''))) || (bool) ($this->has_certificate ?? false);
 
-        return array_map(function ($item) use ($isCertificateOrder) {
+        $resultItems = array_map(function ($item) use ($isCertificateOrder) {
             $goodId = $item['good_id'] ?? null;
             $variationId = $item['variation_id'] ?? null;
 
@@ -222,19 +228,22 @@ class ShopOrder extends Model
             }
 
             $quantity = (int) ($item['quantity'] ?? 1);
-            $storedPrice = (float) ($item['price'] ?? 0);
-            $basePrice = (float) ($item['base_price'] ?? $item['regular_price'] ?? $item['original_price'] ?? $storedPrice);
-            $salePrice = $item['sale_price'] ?? $goodInfo['sale_price'] ?? null;
-            $finalPrice = (float) ($item['final_price'] ?? (($salePrice && $salePrice > 0) ? $salePrice : $storedPrice));
+            $rawStoredPrice = (float) ($item['price'] ?? 0);
+            $storedPrice = PriceHelper::roundPrice($rawStoredPrice);
+            $basePrice = PriceHelper::roundPrice((float) ($item['base_price'] ?? $item['regular_price'] ?? $item['original_price'] ?? $rawStoredPrice));
+            // Цена заказа фиксируется в момент оформления. Текущая sale_price товара
+            // из каталога не должна задним числом менять уже созданный заказ.
+            $salePrice = array_key_exists('sale_price', $item) && (float) $item['sale_price'] > 0
+                ? PriceHelper::roundPrice((float) $item['sale_price'])
+                : null;
+            $finalPrice = PriceHelper::roundPrice((float) ($item['final_price'] ?? $rawStoredPrice));
 
-            $total = $item['total'] ?? 0;
+            $total = PriceHelper::roundPrice($finalPrice * $quantity);
             if ($isCertificateOrder) {
-                $total = $basePrice * $quantity;
+                $total = PriceHelper::roundPrice($basePrice * $quantity);
                 $salePrice = null;
                 $finalPrice = $basePrice;
                 $storedPrice = $basePrice;
-            } elseif ((float) $total == 0.0) {
-                $total = $finalPrice * $quantity;
             }
 
             $weight = null;
@@ -287,17 +296,27 @@ class ShopOrder extends Model
                 'attributes' => $attributes,
                 'quantity' => $quantity,
                 'price' => $finalPrice,
+                'raw_stored_price' => $rawStoredPrice,
                 'stored_price' => $storedPrice,
                 'base_price' => $basePrice,
                 'sale_price' => $salePrice,
                 'final_price' => $finalPrice,
                 'unit_price' => $finalPrice,
+                'customer_unit_price' => array_key_exists('customer_unit_price', $item)
+                    ? (float) $item['customer_unit_price']
+                    : null,
+                'customer_total' => array_key_exists('customer_total', $item)
+                    ? (float) $item['customer_total']
+                    : null,
+                'registered_discount_amount' => (float) ($item['registered_discount_amount'] ?? 0),
                 'discount_amount' => $isCertificateOrder ? 0 : ($item['discount_amount'] ?? 0),
                 'tag_discount_percent' => (float) ($item['tag_discount_percent'] ?? ($tagDiscount['extra_discount_percent'] ?? 0)),
                 'tag_discount_name' => $item['tag_discount_name'] ?? ($tagDiscount['name'] ?? null),
                 'tags' => $itemTags,
                 'bonus_points' => $item['bonus_points'] ?? 0,
                 'total' => $total,
+                'show_demping' => (bool) ($item['show_demping'] ?? false),
+                'demping_price' => isset($item['demping_price']) ? (float) $item['demping_price'] : null,
                 'weight' => $this->positiveDimensionValue($item['weight'] ?? null) ?? ($weight !== null ? (float) $weight : null),
                 'length' => $this->positiveDimensionValue($item['length'] ?? $item['depth'] ?? null) ?? ($length !== null ? (float) $length : null),
                 'width' => $this->positiveDimensionValue($item['width'] ?? null) ?? ($width !== null ? (float) $width : null),
@@ -306,6 +325,79 @@ class ShopOrder extends Model
 
             return $result;
         }, $items);
+
+        return $this->ensureCustomerPrices($resultItems, $isCertificateOrder);
+    }
+
+    private function ensureCustomerPrices(array $items, bool $isCertificateOrder): array
+    {
+        if ($isCertificateOrder || ! $items) {
+            return $items;
+        }
+
+        $hasStoredCustomerPrices = collect($items)->every(
+            fn (array $item) => $item['customer_unit_price'] !== null && $item['customer_total'] !== null
+        );
+        if ($hasStoredCustomerPrices) {
+            return $items;
+        }
+
+        $discountCents = max(0, (int) round((float) ($this->registered_user_discount_amount ?? 0) * 100));
+        $legacyNoBonusTags = collect(explode(',', (string) (Setting::where('key', 'tag_no_bonus')->value('value') ?? '')))
+            ->map(fn ($value) => mb_strtolower(trim($value)))
+            ->filter();
+        $discountToSale = Setting::where('key', 'discount_to_d_text')->value('value');
+        $discountToSaleAllowed = ! in_array($discountToSale, [null, '', 0, '0', false], true);
+        $eligible = [];
+        $eligibleBaseCents = 0;
+
+        foreach ($items as $index => &$item) {
+            $quantity = max(1, (int) ($item['quantity'] ?? 1));
+            $unitPrice = max(0, (float) ($item['final_price'] ?? $item['unit_price'] ?? $item['price'] ?? 0));
+            $lineCents = max(0, (int) round($unitPrice * $quantity * 100));
+            $item['customer_unit_price'] = round($unitPrice, 2);
+            $item['customer_total'] = round($lineCents / 100, 2);
+
+            $tags = collect($item['tags'] ?? []);
+            $blockedByTag = $tags->contains(function ($tag) use ($legacyNoBonusTags) {
+                $tag = (array) $tag;
+                $name = mb_strtolower(trim((string) ($tag['name'] ?? '')));
+                $slug = mb_strtolower(trim((string) ($tag['slug'] ?? '')));
+
+                return (bool) ($tag['disables_bonuses'] ?? false)
+                    || (bool) ($tag['disables_registered_discount'] ?? false)
+                    || $legacyNoBonusTags->contains($name)
+                    || $legacyNoBonusTags->contains($slug);
+            });
+            $hasSalePrice = isset($item['sale_price'])
+                && (float) $item['sale_price'] > 0
+                && (float) $item['sale_price'] < (float) ($item['base_price'] ?? $unitPrice);
+            $isDumping = ! empty($item['show_demping']) && (float) ($item['demping_price'] ?? 0) > 0;
+
+            if (! $blockedByTag && ! $isDumping && ($discountToSaleAllowed || ! $hasSalePrice) && $lineCents > 0) {
+                $eligible[] = $index;
+                $eligibleBaseCents += $lineCents;
+            }
+        }
+        unset($item);
+
+        $remainingDiscount = min($discountCents, $eligibleBaseCents);
+        $remainingBase = $eligibleBaseCents;
+        foreach ($eligible as $position => $index) {
+            $quantity = max(1, (int) ($items[$index]['quantity'] ?? 1));
+            $lineCents = max(0, (int) round((float) $items[$index]['final_price'] * $quantity * 100));
+            $lineDiscount = $position === array_key_last($eligible) || $remainingBase <= 0
+                ? $remainingDiscount
+                : min($remainingDiscount, (int) round($remainingDiscount * ($lineCents / $remainingBase)));
+            $customerTotal = max(0, $lineCents - $lineDiscount);
+            $items[$index]['registered_discount_amount'] = round($lineDiscount / 100, 2);
+            $items[$index]['customer_total'] = round($customerTotal / 100, 2);
+            $items[$index]['customer_unit_price'] = round(($customerTotal / 100) / $quantity, 2);
+            $remainingDiscount -= $lineDiscount;
+            $remainingBase -= $lineCents;
+        }
+
+        return $items;
     }
 
     private function positiveDimensionValue($value): ?float

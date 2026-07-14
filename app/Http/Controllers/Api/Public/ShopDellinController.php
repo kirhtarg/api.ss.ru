@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\ShopDellinSettings;
 use App\Models\ShopGood;
 use App\Services\ShopDeliveryActivitySyncService;
+use App\Services\DeliveryPackageService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -651,57 +652,11 @@ class ShopDellinController extends Controller
 
     private function calculateCargo($cartItems, ShopDellinSettings $settings): array
     {
-        $totalWeight = 0.0;
-        $totalVolume = 0.0;
-        $maxLength = 0.0;
-        $maxWidth = 0.0;
-        $maxHeight = 0.0;
-        $quantityTotal = 0;
+        $service = app(DeliveryPackageService::class);
+        $cargo = $service->dellinCargo($service->fromCartItems((array) $cartItems, $settings));
+        $cargo['insurance'] = ['statedValue' => 1, 'term' => true];
 
-        foreach ((array) $cartItems as $item) {
-            $quantity = max(1, (int) ($item['quantity'] ?? 1));
-            $fields = $this->getItemDeliveryFields($item, $settings);
-
-            $weight = $fields['weight'];
-            $length = $fields['length'];
-            $width = $fields['width'];
-            $height = $fields['height'];
-
-            $totalWeight += $weight * $quantity;
-            $totalVolume += ($length / 100) * ($width / 100) * ($height / 100) * $quantity;
-            $maxLength = max($maxLength, $length / 100);
-            $maxWidth = max($maxWidth, $width / 100);
-            $maxHeight = max($maxHeight, $height / 100);
-            $quantityTotal += $quantity;
-        }
-
-        if ($quantityTotal === 0) {
-            $quantityTotal = 1;
-            $weight = (float) ($settings->default_weight ?? 0.5);
-            $length = (float) ($settings->default_length ?? 10);
-            $width = (float) ($settings->default_width ?? 10);
-            $height = (float) ($settings->default_height ?? 10);
-            $totalWeight = $weight;
-            $totalVolume = ($length / 100) * ($width / 100) * ($height / 100);
-            $maxLength = $length / 100;
-            $maxWidth = $width / 100;
-            $maxHeight = $height / 100;
-        }
-
-        return [
-            'quantity' => $quantityTotal,
-            'length' => max(0.01, round($maxLength, 3)),
-            'width' => max(0.01, round($maxWidth, 3)),
-            'height' => max(0.01, round($maxHeight, 3)),
-            'weight' => max(0.1, round($totalWeight, 3)),
-            'totalVolume' => max(0.001, round($totalVolume, 3)),
-            'totalWeight' => max(0.1, round($totalWeight, 3)),
-            'hazardClass' => 0,
-            'insurance' => [
-                'statedValue' => 1,
-                'term' => true,
-            ],
-        ];
+        return $cargo;
     }
 
     private function getItemDeliveryFields(array $item, ShopDellinSettings $settings): array

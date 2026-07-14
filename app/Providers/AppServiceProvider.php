@@ -2,10 +2,10 @@
 
 namespace App\Providers;
 
-use App\Jobs\AutoFinalizeExportsJob;
 use App\Listeners\SocialiteWasCalledListener;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\ServiceProvider;
 use SocialiteProviders\Manager\SocialiteWasCalled;
 
@@ -30,17 +30,30 @@ class AppServiceProvider extends ServiceProvider
         // Регистрируем VK провайдер для Socialite
         Event::listen(SocialiteWasCalled::class, SocialiteWasCalledListener::class);
 
-        // Запускаем авто-финализацию экспорта (однократный старт, далее джоба сама перепланирует себя)
-        try {
-            if (! app()->runningUnitTests() && ! app()->environment('testing')) {
-                $key = 'auto_finalize_exports_job_started';
-                if (! Cache::get($key)) {
-                    Cache::put($key, 1, now()->addDay());
-                    AutoFinalizeExportsJob::dispatch()->delay(now()->addSeconds(10));
-                }
+        // HTTP-процесс не может надёжно найти Supervisor worker через ps/exec.
+        // Worker сам подтверждает активность через общий cache store.
+        $writeQueueHeartbeat = static function (): void {
+            static $lastHeartbeatAt = 0;
+
+            if (time() - $lastHeartbeatAt < 15) {
+                return;
             }
-        } catch (\Throwable $e) {
-            // ignore
-        }
+
+            $lastHeartbeatAt = time();
+            try {
+                Cache::put('queue_worker_heartbeat', [
+                    'timestamp' => $lastHeartbeatAt,
+                    'connection' => config('queue.default'),
+                    'hostname' => gethostname() ?: null,
+                    'pid' => getmypid(),
+                ], now()->addMinutes(3));
+            } catch (\Throwable $e) {
+                // Ошибка диагностики не должна останавливать обработку очереди.
+            }
+        };
+
+        Queue::looping($writeQueueHeartbeat);
+        Queue::before($writeQueueHeartbeat);
+
     }
 }

@@ -6,17 +6,25 @@ use App\Models\Setting;
 
 class PriceHelper
 {
+    private static ?int $priceRoundDigits = null;
+
+    private static ?bool $round10Enabled = null;
+
     /**
      * Получить количество знаков после запятой для округления цен
      */
     public static function getPriceRoundDigits(): int
     {
-        $setting = Setting::where('key', 'shop_price_round')->first();
-        if ($setting && $setting->value !== null && $setting->value !== '') {
-            return (int) $setting->value;
+        if (self::$priceRoundDigits !== null) {
+            return self::$priceRoundDigits;
         }
 
-        return 2; // По умолчанию 2 знака
+        $setting = Setting::where('key', 'shop_price_round')->first();
+        if ($setting && $setting->value !== null && $setting->value !== '') {
+            return self::$priceRoundDigits = (int) $setting->value;
+        }
+
+        return self::$priceRoundDigits = 2; // По умолчанию 2 знака
     }
 
     /**
@@ -24,9 +32,13 @@ class PriceHelper
      */
     public static function isRound10Enabled(): bool
     {
+        if (self::$round10Enabled !== null) {
+            return self::$round10Enabled;
+        }
+
         $setting = Setting::where('key', 'shop_round10')->first();
 
-        return $setting && ($setting->value == 1 || $setting->value == '1');
+        return self::$round10Enabled = (bool) ($setting && ($setting->value == 1 || $setting->value == '1'));
     }
 
     /**
@@ -76,4 +88,3 @@ class PriceHelper
         return number_format($price, $digits, $separator, $thousandsSeparator);
     }
 }
-

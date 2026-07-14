@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\ShopGood;
 use App\Models\ShopRussianPostSettings;
 use App\Services\ShopDeliveryActivitySyncService;
+use App\Services\DeliveryPackageService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -235,33 +236,34 @@ class ShopRussianPostController extends Controller
             }
 
             $cargo = $this->calculateCargo($cartItems, $settings);
-            $payload = [
-                'index-from' => preg_replace('/\D+/', '', (string) $settings->sender_postal_code),
-                'index-to' => $indexTo,
-                'mail-category' => 'ORDINARY',
-                'mail-type' => 'ONLINE_PARCEL',
-                'mass' => (int) max(1, round($cargo['weight'] * 1000)),
-                'dimension' => [
-                    'length' => (int) max(1, round($cargo['length'])),
-                    'width' => (int) max(1, round($cargo['width'])),
-                    'height' => (int) max(1, round($cargo['height'])),
-                ],
-                'fragile' => false,
-                'inventory' => false,
-                'with-order-of-notice' => false,
-                'with-simple-notice' => false,
-            ];
+            $payloads = array_map(function (array $package) use ($settings, $indexTo, $deliveryType) {
+                $payload = [
+                    'index-from' => preg_replace('/\D+/', '', (string) $settings->sender_postal_code),
+                    'index-to' => $indexTo,
+                    'mail-category' => 'ORDINARY',
+                    'mail-type' => 'ONLINE_PARCEL',
+                    'mass' => (int) max(1, round($package['weight'] * 1000)),
+                    'dimension' => [
+                        'length' => (int) max(1, ceil($package['length'])),
+                        'width' => (int) max(1, ceil($package['width'])),
+                        'height' => (int) max(1, ceil($package['height'])),
+                    ],
+                    'fragile' => false,
+                    'inventory' => false,
+                    'with-order-of-notice' => false,
+                    'with-simple-notice' => false,
+                ];
+                if ($deliveryType === 'address') {
+                    $payload['courier'] = true;
+                }
 
-            if ($deliveryType === 'address') {
-                $payload['courier'] = true;
-            }
+                return $payload;
+            }, $cargo['packages']);
 
-            $publicTariff = $this->calculatePublicTariff($settings, $indexTo, $cargo);
-            $data = $publicTariff['response'];
-            $cost = $publicTariff['cost'];
-            $tariffSource = 'public_tariff';
-
-            if ($cost === null) {
+            $data = [];
+            $cost = 0.0;
+            $tariffSource = 'otpravka_api_dimensions';
+            foreach ($payloads as $payload) {
                 $response = Http::withOptions($this->httpOptions())
                     ->withHeaders($this->headers($settings))
                     ->post('https://otpravka-api.pochta.ru/1.0/tariff', $payload);
@@ -270,9 +272,14 @@ class ShopRussianPostController extends Controller
                     throw new \RuntimeException($this->extractError($response));
                 }
 
-                $data = $response->json() ?: [];
-                $cost = $this->extractTariffCost($data);
-                $tariffSource = 'otpravka_api_fallback';
+                $packageData = $response->json() ?: [];
+                $packageCost = $this->extractTariffCost($packageData);
+                if ($packageCost === null) {
+                    $cost = null;
+                    break;
+                }
+                $cost += $packageCost;
+                $data[] = $packageData;
             }
 
             if ($cost === null) {
@@ -297,12 +304,13 @@ class ShopRussianPostController extends Controller
                     'resolved_postal_code' => $indexTo,
                     'resolved_address' => $resolvedAddress,
                     'resolved_office' => $resolvedOffice,
-                    'period' => $this->extractPeriod($data),
+                    'period' => $this->extractPeriod($data[0] ?? []),
                 ]],
                 'meta' => [
                     'tariff_source' => $tariffSource,
-                    'request_payload' => $payload,
+                    'request_payload' => $payloads,
                     'server_response' => $data,
+                    'packages' => $cargo['packages'],
                     'resolved_postal_code' => $indexTo,
                     'resolved_address' => $resolvedAddress,
                     'resolved_office' => $resolvedOffice,
@@ -944,25 +952,16 @@ class ShopRussianPostController extends Controller
 
     private function calculateCargo($cartItems, ShopRussianPostSettings $settings): array
     {
-        $weight = 0.0;
-        $length = 0.0;
-        $width = 0.0;
-        $height = 0.0;
-
-        foreach ((array) $cartItems as $item) {
-            $quantity = max(1, (int) ($item['quantity'] ?? 1));
-            $fields = $this->getItemDeliveryFields($item, $settings);
-            $weight += $fields['weight'] * $quantity;
-            $length = max($length, $fields['length']);
-            $width = max($width, $fields['width']);
-            $height = max($height, $fields['height']);
-        }
+        $service = app(DeliveryPackageService::class);
+        $packages = $service->fromCartItems((array) $cartItems, $settings);
+        $summary = $service->summary($packages);
 
         return [
-            'weight' => $weight ?: (float) ($settings->default_weight ?? 0.5),
-            'length' => $length ?: (float) ($settings->default_length ?? 10),
-            'width' => $width ?: (float) ($settings->default_width ?? 10),
-            'height' => $height ?: (float) ($settings->default_height ?? 10),
+            'weight' => $summary['total_weight'],
+            'length' => $summary['max_length'],
+            'width' => $summary['max_width'],
+            'height' => $summary['max_height'],
+            'packages' => $packages,
         ];
     }
 

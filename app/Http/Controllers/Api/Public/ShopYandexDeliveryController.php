@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Public;
 use App\Http\Controllers\Controller;
 use App\Models\ShopCarrierDeliverySettings;
 use App\Services\ShopDeliveryActivitySyncService;
+use App\Services\DeliveryPackageService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -742,80 +743,32 @@ class ShopYandexDeliveryController extends Controller
 
     private function calculateCargo(array $cartItems, ShopCarrierDeliverySettings $settings): array
     {
-        $defaultWeight = max(0.01, (float) ($settings->default_weight ?? 0.5));
-        $defaultLength = max(1, (float) ($settings->default_length ?? 10));
-        $defaultWidth = max(1, (float) ($settings->default_width ?? 10));
-        $defaultHeight = max(1, (float) ($settings->default_height ?? 10));
-
-        $totalWeight = 0.0;
-        $totalAssessedPrice = 0.0;
-        $maxLength = 0;
-        $maxWidth = 0;
-        $totalHeight = 0;
-        $items = [];
-
-        foreach ($cartItems as $index => $item) {
-            if (! is_array($item)) {
-                continue;
-            }
-            $quantity = max(1, (int) ($item['quantity'] ?? 1));
-            $weight = max(0.01, $this->positiveDeliveryNumber($item['weight'] ?? null) ?? $defaultWeight);
-            $length = max(1, $this->positiveDeliveryNumber($item['length'] ?? ($item['depth'] ?? null)) ?? $defaultLength);
-            $width = max(1, $this->positiveDeliveryNumber($item['width'] ?? null) ?? $defaultWidth);
-            $height = max(1, $this->positiveDeliveryNumber($item['height'] ?? null) ?? $defaultHeight);
-            $price = max(0, (float) ($item['price'] ?? $item['total'] ?? $item['amount'] ?? 0));
-
-            $totalWeight += $weight * $quantity;
-            $totalAssessedPrice += $price * $quantity;
-            $maxLength = max($maxLength, $length);
-            $maxWidth = max($maxWidth, $width);
-            $totalHeight += $height * $quantity;
-            $items[] = [
-                'id' => (string) ($item['variation_id'] ?? $item['good_id'] ?? $index),
-                'quantity' => $quantity,
-                'size' => [
-                    'length' => $length,
-                    'width' => $width,
-                    'height' => $height,
-                ],
-                'weight' => $weight,
-            ];
-        }
-
-        if (empty($items)) {
-            $items[] = [
-                'id' => 'default',
-                'quantity' => 1,
-                'size' => ['length' => $defaultLength, 'width' => $defaultWidth, 'height' => $defaultHeight],
-                'weight' => $defaultWeight,
-            ];
-            $totalWeight = $defaultWeight;
-            $maxLength = $defaultLength;
-            $maxWidth = $defaultWidth;
-            $totalHeight = $defaultHeight;
-        }
-
-        $dimensions = [
-            'length' => max(1, $maxLength),
-            'width' => max(1, $maxWidth),
-            'height' => max(1, $totalHeight),
-        ];
-
-        $weightGrams = max(1, (int) round(max(0.01, $totalWeight) * 1000));
+        $service = app(DeliveryPackageService::class);
+        $packages = $service->fromCartItems($cartItems, $settings);
+        $summary = $service->summary($packages);
+        $totalAssessedPrice = collect($cartItems)->sum(fn ($item) =>
+            max(0, (float) ($item['price'] ?? $item['total'] ?? $item['amount'] ?? 0))
+            * max(1, (int) ($item['quantity'] ?? 1))
+        );
 
         return [
-            'items' => $items,
-            'places' => [[
+            'items' => $cartItems,
+            'places' => array_map(fn (array $package) => [
                 'physical_dims' => [
-                    'weight_gross' => $weightGrams,
-                    'dx' => (int) ceil($dimensions['length']),
-                    'dy' => (int) ceil($dimensions['height']),
-                    'dz' => (int) ceil($dimensions['width']),
+                    'weight_gross' => max(1, (int) round($package['weight'] * 1000)),
+                    'dx' => (int) ceil($package['length']),
+                    'dy' => (int) ceil($package['height']),
+                    'dz' => (int) ceil($package['width']),
                 ],
-            ]],
-            'dimensions' => $dimensions,
-            'weight' => max(0.01, $totalWeight),
-            'total_weight_grams' => $weightGrams,
+            ], $packages),
+            'packages' => $packages,
+            'dimensions' => [
+                'length' => $summary['max_length'],
+                'width' => $summary['max_width'],
+                'height' => $summary['max_height'],
+            ],
+            'weight' => $summary['total_weight'],
+            'total_weight_grams' => max(1, (int) round($summary['total_weight'] * 1000)),
             'total_assessed_price_kopecks' => (int) round($totalAssessedPrice * 100),
         ];
     }
@@ -988,7 +941,6 @@ class ShopYandexDeliveryController extends Controller
         return round((float) str_replace(',', '.', $matches[0]), 2);
     }
 }
-
 
 
 

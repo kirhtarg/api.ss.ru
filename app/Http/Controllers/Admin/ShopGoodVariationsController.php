@@ -905,6 +905,11 @@ class ShopGoodVariationsController extends Controller
             'length' => 'nullable|numeric|min:0',
             'height' => 'nullable|numeric|min:0',
             'width' => 'nullable|numeric|min:0',
+            'shipping_weight' => 'nullable|numeric|min:0',
+            'shipping_length' => 'nullable|numeric|min:0',
+            'shipping_width' => 'nullable|numeric|min:0',
+            'shipping_height' => 'nullable|numeric|min:0',
+            'ships_separately' => 'nullable|boolean',
             'attributes' => 'required|array',
             'attributes.*.attribute_id' => 'required|integer|exists:shop_variation_attributes,id',
             'attributes.*.value_id' => 'required|integer|exists:shop_variation_attribute_values,id',
@@ -939,6 +944,11 @@ class ShopGoodVariationsController extends Controller
                 'length' => $request->get('length') ?: $good->length,
                 'height' => $request->get('height') ?: $good->height,
                 'width' => $request->get('width') ?: $good->width,
+                'shipping_weight' => $request->get('shipping_weight'),
+                'shipping_length' => $request->get('shipping_length'),
+                'shipping_width' => $request->get('shipping_width'),
+                'shipping_height' => $request->get('shipping_height'),
+                'ships_separately' => $request->has('ships_separately') ? $request->boolean('ships_separately') : null,
                 'is_active' => true,
                 'sort_order' => $good->variations()->max('sort_order') + 1,
             ];
@@ -1132,6 +1142,11 @@ class ShopGoodVariationsController extends Controller
                     'length' => $good->length,
                     'height' => $good->height,
                     'width' => $good->width,
+                    'shipping_weight' => $good->shipping_weight,
+                    'shipping_length' => $good->shipping_length,
+                    'shipping_width' => $good->shipping_width,
+                    'shipping_height' => $good->shipping_height,
+                    'ships_separately' => $good->ships_separately,
                     'stock_quantity' => $baseQty,
                     'is_active' => true,
                     'sort_order' => $nextSortOrder++,
@@ -1202,6 +1217,11 @@ class ShopGoodVariationsController extends Controller
             'length' => 'nullable|numeric|min:0',
             'height' => 'nullable|numeric|min:0',
             'width' => 'nullable|numeric|min:0',
+            'shipping_weight' => 'nullable|numeric|min:0',
+            'shipping_length' => 'nullable|numeric|min:0',
+            'shipping_width' => 'nullable|numeric|min:0',
+            'shipping_height' => 'nullable|numeric|min:0',
+            'ships_separately' => 'nullable|boolean',
             'is_active' => 'boolean',
         ]);
 
@@ -1216,7 +1236,8 @@ class ShopGoodVariationsController extends Controller
         // РџРѕРґРіРѕС‚Р°РІР»РёРІР°РµРј РґР°РЅРЅС‹Рµ РґР»СЏ РѕР±РЅРѕРІР»РµРЅРёСЏ
         $updateData = $request->only([
             'name', 'sku', 'price', 'sale_price', 'stock_quantity', 'weight',
-            'length', 'height', 'width', 'is_active',
+            'length', 'height', 'width', 'shipping_weight', 'shipping_length',
+            'shipping_width', 'shipping_height', 'ships_separately', 'is_active',
         ]);
 
         // РЇРІРЅРѕ РѕР±СЂР°Р±Р°С‚С‹РІР°РµРј remote_stock_quantity - РІСЃРµРіРґР° РѕР±РЅРѕРІР»СЏРµРј, РґР°Р¶Рµ РµСЃР»Рё null

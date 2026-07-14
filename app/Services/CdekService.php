@@ -202,6 +202,16 @@ class CdekService
      */
     public function calculateDelivery($fromCityCode, $toCityCode, $weight = null, $length = null, $width = null, $height = null)
     {
+        return $this->calculateDeliveryForPackages($fromCityCode, $toCityCode, [[
+            'weight' => $weight ?? $this->settings?->default_weight ?? 1,
+            'length' => $length ?? $this->settings?->default_length ?? 30,
+            'width' => $width ?? $this->settings?->default_width ?? 20,
+            'height' => $height ?? $this->settings?->default_height ?? 10,
+        ]]);
+    }
+
+    public function calculateDeliveryForPackages($fromCityCode, $toCityCode, array $packages)
+    {
         if (! $this->settings) {
             Log::warning('CdekService: No active CDEK settings found, using fallback data');
 
@@ -209,9 +219,6 @@ class CdekService
         }
 
         try {
-            $weightKg = (float) ($weight ?? $this->settings->default_weight ?? 1);
-            $weightGrams = (int) round($weightKg * 1000);
-
             $requestData = [
                 'from_location' => [
                     'code' => (int) $fromCityCode,
@@ -219,14 +226,12 @@ class CdekService
                 'to_location' => [
                     'code' => (int) $toCityCode,
                 ],
-                'packages' => [
-                    [
-                        'weight' => $weightGrams,
-                        'length' => (float) ($length ?? $this->settings->default_length ?? 30),
-                        'width' => (float) ($width ?? $this->settings->default_width ?? 20),
-                        'height' => (float) ($height ?? $this->settings->default_height ?? 10),
-                    ],
-                ],
+                'packages' => array_map(fn (array $package) => [
+                    'weight' => max(1, (int) round((float) ($package['weight'] ?? $this->settings->default_weight ?? 1) * 1000)),
+                    'length' => max(1, (int) ceil((float) ($package['length'] ?? $this->settings->default_length ?? 30))),
+                    'width' => max(1, (int) ceil((float) ($package['width'] ?? $this->settings->default_width ?? 20))),
+                    'height' => max(1, (int) ceil((float) ($package['height'] ?? $this->settings->default_height ?? 10))),
+                ], $packages),
                 'tariff_codes' => $this->settings->getActiveTariffCodes(),
             ];
 
@@ -460,6 +465,10 @@ class CdekService
             $declaredBase = isset($orderData['declared_value'])
                 ? (float) $orderData['declared_value']
                 : (float) ($orderData['subtotal'] ?? 0);
+            $packages = $this->allocateDeclaredValueAcrossPackages(
+                $orderData['packages'] ?? [],
+                $declaredBase
+            );
 
             $codAmount = $declaredBase;
             if ($isCashOnDelivery && isset($orderData['delivery_recipient_cost']['value'])) {
@@ -517,7 +526,7 @@ class CdekService
                     'postal_code' => $this->settings->sender_postal_code ?: null,
                     'country_code' => $this->settings->sender_country_code ?: 'RU',
                 ],
-                'packages' => array_map(function ($package) use ($orderData, $isCashOnDelivery) {
+                'packages' => array_map(function ($package) use ($orderData, $isCashOnDelivery, $declaredBase) {
 
                     $declaredPackageCost = $package['cost'] ?? 0;
                     $paymentValue = $isCashOnDelivery ? $declaredPackageCost : 0;
@@ -529,14 +538,15 @@ class CdekService
                         'width' => $package['width'] ?? 10,
                         'height' => $package['height'] ?? 10,
                         'comment' => $package['comment'] ?? '',
-                        'items' => isset($package['items']) ? array_map(function ($item) use ($isCashOnDelivery, $orderData) {
+                        'items' => isset($package['items']) ? array_map(function ($item) use ($isCashOnDelivery, $orderData, $declaredBase) {
                             $itemCost = $item['cost'] ?? 0;
                             $itemPaymentValue = $isCashOnDelivery ? $itemCost : 0;
                             if ($isCashOnDelivery && isset($orderData['delivery_recipient_cost']['value'])) {
                                 $deliveryValue = (float) $orderData['delivery_recipient_cost']['value'];
-                                if ($deliveryValue > 0 && $itemCost > 0 && isset($orderData['subtotal']) && $orderData['subtotal'] > 0) {
-                                    $proportion = $itemCost / (float) $orderData['subtotal'];
-                                    $itemPaymentValue += $deliveryValue * $proportion;
+                                if ($deliveryValue > 0 && $itemCost > 0 && $declaredBase > 0) {
+                                    $amount = max(1, (int) ($item['amount'] ?? 1));
+                                    $lineProportion = ($itemCost * $amount) / $declaredBase;
+                                    $itemPaymentValue += ($deliveryValue * $lineProportion) / $amount;
                                 }
                             }
 
@@ -563,7 +573,7 @@ class CdekService
                             ],
                         ],
                     ];
-                }, $orderData['packages'] ?? []),
+                }, $packages),
                 'services' => $orderData['services'] ?? [],
             ];
 
@@ -1050,6 +1060,44 @@ class CdekService
      * @param  string  $type  Тип формы (по умолчанию tpl_russia)
      * @return array Результат с URL для скачивания или ошибкой
      */
+    private function allocateDeclaredValueAcrossPackages(array $packages, float $declaredValue): array
+    {
+        $locations = [];
+        $totalBaseCents = 0;
+
+        foreach ($packages as $packageIndex => $package) {
+            foreach (($package['items'] ?? []) as $itemIndex => $item) {
+                $amount = max(1, (int) ($item['amount'] ?? 1));
+                $lineBaseCents = max(0, (int) round((float) ($item['cost'] ?? 0) * $amount * 100));
+                $locations[] = [$packageIndex, $itemIndex, $lineBaseCents, $amount];
+                $totalBaseCents += $lineBaseCents;
+            }
+        }
+
+        $remainingTarget = max(0, (int) round($declaredValue * 100));
+        $remainingBase = $totalBaseCents;
+        $lastIndex = array_key_last($locations);
+
+        foreach ($locations as $position => [$packageIndex, $itemIndex, $lineBaseCents, $amount]) {
+            $lineTarget = $position === $lastIndex || $remainingBase <= 0
+                ? $remainingTarget
+                : min($remainingTarget, (int) round($remainingTarget * ($lineBaseCents / $remainingBase)));
+
+            $packages[$packageIndex]['items'][$itemIndex]['cost'] = round(($lineTarget / 100) / $amount, 2);
+            $remainingTarget -= $lineTarget;
+            $remainingBase -= $lineBaseCents;
+        }
+
+        foreach ($packages as &$package) {
+            $package['cost'] = round(collect($package['items'] ?? [])->sum(function ($item) {
+                return (float) ($item['cost'] ?? 0) * max(1, (int) ($item['amount'] ?? 1));
+            }), 2);
+        }
+        unset($package);
+
+        return $packages;
+    }
+
     public function getWaybill($orderUuid, $copyCount = 2, $type = 'tpl_russia')
     {
         try {

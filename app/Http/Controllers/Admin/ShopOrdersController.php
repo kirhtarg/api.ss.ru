@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Helpers\PriceHelper;
 use App\Http\Controllers\Controller;
 use App\Models\ShopGood;
 use App\Models\ShopGoodVariation;
@@ -10,12 +11,14 @@ use App\Models\ShopOrderLog;
 use App\Models\ShopOrderLogIcon;
 use App\Models\ShopOrderStatus;
 use App\Models\ShopCarrierDeliverySettings;
+use App\Models\ShopCdekSettings;
 use App\Models\ShopDellinSettings;
 use App\Models\ShopPaymentTransaction;
 use App\Models\ShopRussianPostSettings;
 use App\Models\UserBonus;
 use App\Models\UserBonusTransaction;
 use App\Services\CdekService;
+use App\Services\DeliveryPackageService;
 use App\Services\TbankPaymentService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -503,28 +506,28 @@ class ShopOrdersController extends Controller
                 $order->shipping_address = $request->get('shipping_address');
             }
             if ($request->has('delivery_cost')) {
-                $order->delivery_cost = (float) $request->get('delivery_cost');
+                $order->delivery_cost = PriceHelper::roundPrice((float) $request->get('delivery_cost'));
             }
 
             // Новые поля скидок
             if ($request->has('sale_discount_amount')) {
-                $order->sale_discount_amount = (float) $request->get('sale_discount_amount');
+                $order->sale_discount_amount = PriceHelper::roundDiscount((float) $request->get('sale_discount_amount'));
             }
             if ($request->has('registered_user_discount_amount')) {
-                $order->registered_user_discount_amount = (float) $request->get('registered_user_discount_amount');
+                $order->registered_user_discount_amount = PriceHelper::roundDiscount((float) $request->get('registered_user_discount_amount'));
             }
             if ($request->has('promo_code_discount_amount')) {
-                $order->promo_code_discount_amount = (float) $request->get('promo_code_discount_amount');
+                $order->promo_code_discount_amount = PriceHelper::roundDiscount((float) $request->get('promo_code_discount_amount'));
             }
             if ($request->has('birthday_discount_amount')) {
-                $order->birthday_discount_amount = (float) $request->get('birthday_discount_amount');
+                $order->birthday_discount_amount = PriceHelper::roundDiscount((float) $request->get('birthday_discount_amount'));
             }
             if ($request->has('bonus_points_to_use')) {
                 $order->bonus_points_to_use = (int) $request->get('bonus_points_to_use');
                 $order->use_bonus_points = $order->bonus_points_to_use > 0;
             }
             if ($request->has('overtax_amount')) {
-                $order->overtax_amount = (float) $request->get('overtax_amount');
+                $order->overtax_amount = PriceHelper::roundPrice((float) $request->get('overtax_amount'));
             }
             if ($request->has('overtax_text')) {
                 $order->overtax_text = $request->get('overtax_text');
@@ -537,15 +540,15 @@ class ShopOrdersController extends Controller
                 ($order->birthday_discount_amount ?? 0) +
                 ($order->bonus_points_to_use ?? 0);
 
-            $order->total_discount_amount = $totalDiscount;
+            $order->total_discount_amount = PriceHelper::roundDiscount($totalDiscount);
             // subtotal уже содержит акционную цену, поэтому из него вычитаем только неакционные скидки
             // delivery_cost не включаем в total_amount — он хранится отдельно (payment = total_amount + delivery_cost)
-            $order->total_amount = ($order->subtotal ?? 0)
+            $order->total_amount = PriceHelper::roundPrice(($order->subtotal ?? 0)
                 - ($order->registered_user_discount_amount ?? 0)
                 - ($order->promo_code_discount_amount ?? 0)
                 - ($order->birthday_discount_amount ?? 0)
                 - ($order->bonus_points_to_use ?? 0)
-                + ($order->overtax_amount ?? 0);
+                + ($order->overtax_amount ?? 0));
 
             if ($request->has('metadata') && is_array($request->get('metadata'))) {
                 $metadata = $order->metadata ?? [];
@@ -1728,12 +1731,20 @@ class ShopOrdersController extends Controller
             $good = \App\Models\ShopGood::findOrFail($goodId);
             $variation = null;
             $variationName = '';
-            $price = $good->sale_price ?? $good->price ?? 0;
+            $basePrice = PriceHelper::roundPrice((float) ($good->price ?? 0));
+            $salePrice = ($good->sale_price ?? 0) > 0
+                ? PriceHelper::roundPrice((float) $good->sale_price)
+                : 0;
+            $price = $salePrice > 0 ? $salePrice : $basePrice;
 
             if ($variationId) {
                 $variation = \App\Models\ShopGoodVariation::where('id', $variationId)->where('good_id', $goodId)->first();
                 if ($variation) {
-                    $price = $variation->sale_price > 0 ? $variation->sale_price : ($variation->price > 0 ? $variation->price : $price);
+                    $basePrice = PriceHelper::roundPrice((float) ($variation->price > 0 ? $variation->price : $basePrice));
+                    $salePrice = $variation->sale_price > 0
+                        ? PriceHelper::roundPrice((float) $variation->sale_price)
+                        : 0;
+                    $price = $salePrice > 0 ? $salePrice : $basePrice;
                     $variationName = $this->formatVariationProperties($variation);
                 }
             }
@@ -1754,7 +1765,11 @@ class ShopOrdersController extends Controller
             if ($existingItemIndex !== null) {
                 // Увеличиваем количество существующего товара
                 $items[$existingItemIndex]['quantity'] = ($items[$existingItemIndex]['quantity'] ?? 1) + $quantity;
-                $items[$existingItemIndex]['total'] = $items[$existingItemIndex]['quantity'] * $price;
+                $items[$existingItemIndex]['price'] = $price;
+                $items[$existingItemIndex]['final_price'] = $price;
+                $items[$existingItemIndex]['base_price'] = $basePrice;
+                $items[$existingItemIndex]['sale_price'] = $salePrice;
+                $items[$existingItemIndex]['total'] = PriceHelper::roundPrice($items[$existingItemIndex]['quantity'] * $price);
             } else {
                 // Добавляем новый товар
                 $newItem = [
@@ -1763,7 +1778,10 @@ class ShopOrdersController extends Controller
                     'good_slug' => $good->slug ?? null,
                     'quantity' => $quantity,
                     'price' => $price,
-                    'total' => $price * $quantity,
+                    'base_price' => $basePrice,
+                    'sale_price' => $salePrice,
+                    'final_price' => $price,
+                    'total' => PriceHelper::roundPrice($price * $quantity),
                 ];
 
                 if ($variation) {
@@ -1894,7 +1912,7 @@ class ShopOrdersController extends Controller
                 ], 422);
             }
 
-            $newPrice = (float) $request->get('price');
+            $newPrice = PriceHelper::roundPrice((float) $request->get('price'));
 
             // Получаем текущие товары заказа
             $items = is_array($order->items) ? $order->items : json_decode($order->items, true);
@@ -1907,7 +1925,8 @@ class ShopOrdersController extends Controller
                 // ВOrders.vue мы передаем itemId, который часто равен good_id
                 if (($item['good_id'] ?? null) == $itemId || ($item['id'] ?? null) == $itemId) {
                     $items[$index]['price'] = $newPrice;
-                    $items[$index]['total'] = $newPrice * ($items[$index]['quantity'] ?? 1);
+                    $items[$index]['final_price'] = $newPrice;
+                    $items[$index]['total'] = PriceHelper::roundPrice($newPrice * ($items[$index]['quantity'] ?? 1));
                     $itemFound = true;
                     break;
                 }
@@ -1957,37 +1976,65 @@ class ShopOrdersController extends Controller
         $baseSubtotal = 0;
         $totalQuantity = 0;
         $discountableSubtotal = 0;
+        $registeredDiscountPercent = $order->user_id
+            ? (float) (\App\Models\Setting::where('key', 'discount_reg')->value('value') ?? 0)
+            : 0;
+        $discountToDTextValue = \App\Models\Setting::where('key', 'discount_to_d_text')->value('value');
+        $registeredDiscountForSaleAllowed = ! in_array($discountToDTextValue, [null, '', '0', 0, false], true);
 
-        foreach ($items as $item) {
-            $itemTotal = $item['total'] ?? 0;
-            $quantity = $item['quantity'] ?? 1;
-            
-            $basePrice = $item['base_price'] ?? $item['price'] ?? 0;
+        foreach ($items as &$item) {
+            $quantity = max(1, (int) ($item['quantity'] ?? 1));
+            $price = PriceHelper::roundPrice((float) ($item['price'] ?? $item['final_price'] ?? 0));
+            $basePrice = PriceHelper::roundPrice((float) ($item['base_price'] ?? $price));
+            $itemTotal = PriceHelper::roundPrice($price * $quantity);
             $itemBaseTotal = $basePrice * $quantity;
+
+            $item['quantity'] = $quantity;
+            $item['price'] = $price;
+            $item['final_price'] = $price;
+            $item['base_price'] = $basePrice;
+            $item['total'] = $itemTotal;
             
             $subtotal += $itemTotal;
             $baseSubtotal += $itemBaseTotal;
             $totalQuantity += $quantity;
             
-            $isSale = $item['is_sale_price'] ?? (($item['sale_price'] ?? 0) > 0);
-            $isDemping = $item['show_demping'] ?? false;
-            
-            if (!$isSale && !$isDemping) {
+            $isSale = (bool) ($item['is_sale_price'] ?? (($item['sale_price'] ?? 0) > 0 && $price < $basePrice));
+            $isDemping = (bool) ($item['show_demping'] ?? false);
+            $tags = collect($item['tags'] ?? []);
+            if ($tags->isEmpty() && ! empty($item['good_id'])) {
+                $good = ShopGood::with('tags')->find($item['good_id']);
+                $tags = $good?->tags ?? collect();
+            }
+            $hasTagDiscount = $tags->contains(fn ($tag) => (float) data_get($tag, 'extra_discount_percent', 0) > 0);
+            $hasNoBonusTag = $tags->contains(fn ($tag) => (bool) data_get($tag, 'disables_bonuses', false));
+            $hasNoRegisteredDiscountTag = $tags->contains(fn ($tag) => (bool) data_get($tag, 'disables_registered_discount', false));
+            $hasDiscountPrice = $isSale || $isDemping || $hasTagDiscount;
+
+            if (! $isDemping
+                && ! $hasNoBonusTag
+                && ! $hasNoRegisteredDiscountTag
+                && ($registeredDiscountForSaleAllowed || ! $hasDiscountPrice)
+            ) {
                 $discountableSubtotal += $itemTotal;
             }
         }
+        unset($item);
 
-        $order->subtotal = $subtotal;
+        $order->items = $items;
+        $order->subtotal = PriceHelper::roundPrice($subtotal);
         $order->total_quantity = $totalQuantity;
-        $order->sale_discount_amount = max(0, $baseSubtotal - $subtotal);
+        $order->sale_discount_amount = PriceHelper::roundDiscount(max(0, $baseSubtotal - $subtotal));
 
         // 1. Скидка зарегистрированного пользователя / День рождения
         if (($order->registered_user_discount_amount ?? 0) > 0) {
-            $order->registered_user_discount_amount = round($discountableSubtotal * 0.05, 2);
+            $order->registered_user_discount_amount = PriceHelper::roundDiscount(
+                $discountableSubtotal * ($registeredDiscountPercent / 100)
+            );
         }
         
         if (($order->birthday_discount_amount ?? 0) > 0) {
-            $order->birthday_discount_amount = round($discountableSubtotal * 0.10, 2);
+            $order->birthday_discount_amount = PriceHelper::roundDiscount($discountableSubtotal * 0.10);
         }
 
         $subtotalAfterUserDiscount = $subtotal - ($order->registered_user_discount_amount ?? 0) - ($order->birthday_discount_amount ?? 0);
@@ -2007,7 +2054,7 @@ class ShopOrdersController extends Controller
                 }
             }
         }
-        $order->promo_code_discount_amount = $promoCodeDiscountAmount;
+        $order->promo_code_discount_amount = PriceHelper::roundDiscount((float) $promoCodeDiscountAmount);
 
         // 3. Бонусы
         $bonusPointsDiscountAmount = 0;
@@ -2046,9 +2093,9 @@ class ShopOrdersController extends Controller
             ($order->promo_code_discount_amount ?? 0) +
             ($order->bonus_points_to_use ?? 0);
 
-        $order->total_discount_amount = $totalDiscount + ($order->sale_discount_amount ?? 0);
+        $order->total_discount_amount = PriceHelper::roundDiscount($totalDiscount + ($order->sale_discount_amount ?? 0));
 
-        $order->total_amount = $subtotal - $totalDiscount + ($order->overtax_amount ?? 0);
+        $order->total_amount = PriceHelper::roundPrice($subtotal - $totalDiscount + ($order->overtax_amount ?? 0));
     }
 
     private function formatOrderForResponse($order)
@@ -2703,7 +2750,11 @@ class ShopOrdersController extends Controller
                 $order->save();
             }
 
-            $payload = [$this->buildRussianPostOrderPayload($order, $settings, $postalCode)];
+            $packages = app(DeliveryPackageService::class)->fromOrder($order, $settings);
+            $payload = array_map(
+                fn (array $package) => $this->buildRussianPostOrderPayload($order, $settings, $postalCode, $package),
+                $packages
+            );
             $response = Http::withOptions([
                 'verify' => filter_var(config('services.russianpost.verify_ssl', true), FILTER_VALIDATE_BOOLEAN),
                 'timeout' => 30,
@@ -2719,6 +2770,10 @@ class ShopOrdersController extends Controller
             }
 
             [$externalId, $barcode] = $this->extractRussianPostCreationIdentifiers($data);
+
+            $metadata = is_array($order->metadata) ? $order->metadata : [];
+            $metadata['russianpost_shipments'] = $data;
+            $order->metadata = $metadata;
 
             if (! $externalId && ! $barcode) {
                 Log::warning('Почта России приняла отправление, но не вернула ID/ШПИ', [
@@ -3208,16 +3263,9 @@ class ShopOrdersController extends Controller
 
     private function buildYandexDeliveryCargo(ShopOrder $order, ShopCarrierDeliverySettings $settings): array
     {
-        $defaultWeight = max(0.01, (float) ($settings->default_weight ?? 0.5));
-        $defaultLength = max(1, (float) ($settings->default_length ?? 10));
-        $defaultWidth = max(1, (float) ($settings->default_width ?? 10));
-        $defaultHeight = max(1, (float) ($settings->default_height ?? 10));
         $items = is_array($order->items) ? $order->items : (json_decode((string) $order->items, true) ?: []);
+        $packages = app(DeliveryPackageService::class)->fromOrder($order, $settings);
         $resourceItems = [];
-        $totalWeight = 0.0;
-        $maxLength = 0.0;
-        $maxWidth = 0.0;
-        $totalHeight = 0.0;
 
         foreach ($items as $index => $item) {
             if (! is_array($item)) {
@@ -3225,16 +3273,11 @@ class ShopOrdersController extends Controller
             }
 
             $quantity = max(1, (int) ($item['quantity'] ?? 1));
-            $weight = max(0.01, $this->positiveDeliveryNumber($item['weight'] ?? null) ?? $defaultWeight);
-            $length = max(1, $this->positiveDeliveryNumber($item['length'] ?? ($item['depth'] ?? null)) ?? $defaultLength);
-            $width = max(1, $this->positiveDeliveryNumber($item['width'] ?? null) ?? $defaultWidth);
-            $height = max(1, $this->positiveDeliveryNumber($item['height'] ?? null) ?? $defaultHeight);
             $unitPrice = max(0, (float) ($item['price'] ?? $item['final_price'] ?? 0));
-
-            $totalWeight += $weight * $quantity;
-            $maxLength = max($maxLength, $length);
-            $maxWidth = max($maxWidth, $width);
-            $totalHeight += $height * $quantity;
+            $package = collect($packages)->first(fn ($candidate) => collect($candidate['items'] ?? [])->contains(
+                fn ($packageItem) => (int) ($packageItem['item_index'] ?? -1) === $index
+            )) ?? $packages[0];
+            $barcode = 'SS-'.$order->id.'-'.$package['number'];
 
             $resourceItems[] = [
                 'count' => $quantity,
@@ -3245,16 +3288,17 @@ class ShopOrdersController extends Controller
                     'assessed_unit_price' => (int) round($unitPrice * 100),
                 ],
                 'physical_dims' => [
-                    'dx' => (int) ceil($length),
-                    'dy' => (int) ceil($height),
-                    'dz' => (int) ceil($width),
+                    'dx' => (int) ceil($package['length']),
+                    'dy' => (int) ceil($package['height']),
+                    'dz' => (int) ceil($package['width']),
                 ],
-                'place_barcode' => 'SS-'.$order->id,
+                'place_barcode' => $barcode,
                 'fitting' => false,
             ];
         }
 
         if (! $resourceItems) {
+            $package = $packages[0];
             $resourceItems[] = [
                 'count' => 1,
                 'name' => 'Заказ '.$order->order_number,
@@ -3264,30 +3308,26 @@ class ShopOrdersController extends Controller
                     'assessed_unit_price' => (int) round((float) $order->total_amount * 100),
                 ],
                 'physical_dims' => [
-                    'dx' => (int) ceil($defaultLength),
-                    'dy' => (int) ceil($defaultHeight),
-                    'dz' => (int) ceil($defaultWidth),
+                    'dx' => (int) ceil($package['length']),
+                    'dy' => (int) ceil($package['height']),
+                    'dz' => (int) ceil($package['width']),
                 ],
-                'place_barcode' => 'SS-'.$order->id,
+                'place_barcode' => 'SS-'.$order->id.'-'.$package['number'],
                 'fitting' => false,
             ];
-            $totalWeight = $defaultWeight;
-            $maxLength = $defaultLength;
-            $maxWidth = $defaultWidth;
-            $totalHeight = $defaultHeight;
         }
 
         return [
             'items' => $resourceItems,
-            'places' => [[
+            'places' => array_map(fn (array $package) => [
                 'physical_dims' => [
-                    'weight_gross' => max(1, (int) round(max(0.01, $totalWeight) * 1000)),
-                    'dx' => (int) ceil(max(1, $maxLength)),
-                    'dy' => (int) ceil(max(1, $totalHeight)),
-                    'dz' => (int) ceil(max(1, $maxWidth)),
+                    'weight_gross' => max(1, (int) round($package['weight'] * 1000)),
+                    'dx' => (int) ceil($package['length']),
+                    'dy' => (int) ceil($package['height']),
+                    'dz' => (int) ceil($package['width']),
                 ],
-                'barcode' => 'SS-'.$order->id,
-            ]],
+                'barcode' => 'SS-'.$order->id.'-'.$package['number'],
+            ], $packages),
         ];
     }
 
@@ -3847,9 +3887,10 @@ XML;
         return $value;
     }
 
-    private function buildRussianPostOrderPayload(ShopOrder $order, ShopRussianPostSettings $settings, string $postalCode): array
+    private function buildRussianPostOrderPayload(ShopOrder $order, ShopRussianPostSettings $settings, string $postalCode, ?array $package = null): array
     {
         $cargo = $this->calculateRussianPostOrderCargo($order, $settings);
+        $package ??= $cargo['packages'][0] ?? $cargo;
         [$surname, $givenName, $middleName] = $this->splitCustomerName($order->customer_name);
         $indexFrom = preg_replace('/\D+/', '', (string) $settings->sender_postal_code);
         $postOfficeCode = $this->resolveRussianPostSenderPostOfficeCode($order, $settings);
@@ -3873,13 +3914,13 @@ XML;
             'room-to' => $address['room'] ?? null,
             'mail-category' => 'ORDINARY',
             'mail-type' => 'ONLINE_PARCEL',
-            'mass' => (int) max(1, round($cargo['weight'] * 1000)),
-            'order-num' => $order->order_number,
+            'mass' => (int) max(1, round($package['weight'] * 1000)),
+            'order-num' => $order->order_number.'-'.($package['number'] ?? 1),
             'tel-address' => preg_replace('/\D+/', '', (string) $order->customer_phone),
             'dimension' => [
-                'length' => (int) max(1, round($cargo['length'])),
-                'width' => (int) max(1, round($cargo['width'])),
-                'height' => (int) max(1, round($cargo['height'])),
+                'length' => (int) max(1, ceil($package['length'])),
+                'width' => (int) max(1, ceil($package['width'])),
+                'height' => (int) max(1, ceil($package['height'])),
             ],
             'fragile' => false,
             'completeness-checking' => false,
@@ -4220,70 +4261,181 @@ XML;
         return '';
     }
 
-    private function calculateOrderDeliveryCargo(ShopOrder $order, $settings): array
+    public function getDeliveryPackages(int $id): JsonResponse
     {
-        $items = $order->getItemsWithDetails();
-        $weight = 0.0;
-        $length = 0.0;
-        $width = 0.0;
-        $height = 0.0;
+        $order = ShopOrder::with('packages')->findOrFail($id);
+        $service = app(DeliveryPackageService::class);
+        $packages = $service->fromOrder($order);
 
-        foreach ($items as $item) {
-            $quantity = max(1, (int) ($item['quantity'] ?? 1));
-            $itemWeight = (float) ($item['weight'] ?? $settings->default_weight ?? 0.5);
-            $weight += $itemWeight * $quantity;
-            $length = max($length, (float) ($item['length'] ?? $settings->default_length ?? 10));
-            $width = max($width, (float) ($item['width'] ?? $settings->default_width ?? 10));
-            $height += ((float) ($item['height'] ?? $settings->default_height ?? 10)) * $quantity;
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'packages' => $packages,
+                'summary' => $service->summary($packages),
+                'is_confirmed' => $order->packages->isNotEmpty()
+                    && $order->packages->every(fn ($package) => $package->confirmed_at !== null),
+                'source' => $order->packages->first()?->source ?? 'estimated',
+                'items' => collect($order->getItemsWithDetails())->values()->map(fn (array $item, int $index) => [
+                    'item_index' => $index,
+                'name' => $item['good_name'] ?? 'Товар',
+                'variation_name' => $item['variation_name'] ?? null,
+                'quantity' => max(1, (int) ($item['quantity'] ?? 1)),
+                'weight' => $item['shipping_weight'] ?? $item['weight'] ?? null,
+                'length' => $item['shipping_length'] ?? $item['length'] ?? $item['depth'] ?? null,
+                'width' => $item['shipping_width'] ?? $item['width'] ?? null,
+                'height' => $item['shipping_height'] ?? $item['height'] ?? null,
+            ])->all(),
+            ],
+        ]);
+    }
+
+    public function calculateCdekTariffs(int $id, Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'city_code' => 'required|integer|min:1',
+        ]);
+
+        $order = ShopOrder::with('packages')->findOrFail($id);
+        $settings = ShopCdekSettings::getActive();
+        if (! $settings) {
+            return response()->json(['success' => false, 'message' => 'Активные настройки СДЭК не найдены'], 404);
         }
 
-        $weight = $weight > 0 ? $weight : (float) ($settings->default_weight ?? 0.5);
-        $length = $length > 0 ? $length : (float) ($settings->default_length ?? 10);
-        $width = $width > 0 ? $width : (float) ($settings->default_width ?? 10);
-        $height = $height > 0 ? $height : (float) ($settings->default_height ?? 10);
+        $packages = app(DeliveryPackageService::class)->fromOrder($order, $settings);
+        $service = app(CdekService::class);
+        $senderCityCode = (int) ($settings->sender_city_code ?: 0);
+        if ($senderCityCode <= 0) {
+            return response()->json(['success' => false, 'message' => 'В настройках СДЭК не указан код города отправителя'], 422);
+        }
 
-        return [
-            'quantity' => max(1, (int) ($order->total_quantity ?? count($items) ?: 1)),
-            'length' => $length / 100,
-            'width' => $width / 100,
-            'height' => $height / 100,
-            'weight' => $weight,
-            'totalVolume' => max(0.001, ($length / 100) * ($width / 100) * ($height / 100)),
-            'totalWeight' => $weight,
-            'hazardClass' => 0,
-            'insurance' => [
-                'statedValue' => max(1, (float) ($order->subtotal ?? $order->total_amount ?? 1)),
-                'term' => true,
+        $calculated = $service->calculateDeliveryForPackages(
+            $senderCityCode,
+            (int) $validated['city_code'],
+            $packages
+        );
+        $configured = is_string($settings->tariffs) ? json_decode($settings->tariffs, true) : $settings->tariffs;
+        $configured = collect($configured ?: [])->filter(fn ($tariff) => $tariff['enabled'] ?? true)->keyBy('tariff_code');
+
+        $calculatedTariffs = collect($calculated ?: [])->filter(function ($tariff) use ($configured) {
+            return $configured->isEmpty() || $configured->has($tariff['tariff_code'] ?? null);
+        })->map(function ($tariff) use ($configured) {
+            $custom = $configured->get($tariff['tariff_code'] ?? null, []);
+            $cost = (float) ($tariff['delivery_sum'] ?? 0);
+
+            return [
+                'code' => $tariff['tariff_code'] ?? null,
+                'name' => $custom['site_name'] ?? $tariff['tariff_name'] ?? 'Тариф СДЭК',
+                'description' => $custom['tariff_description'] ?? $tariff['tariff_description'] ?? '',
+                'cost' => $cost.' ₽',
+                'cost_value' => $cost,
+                'delivery_mode' => $tariff['delivery_mode'] ?? $custom['delivery_mode'] ?? null,
+                'enabled' => true,
+                'available' => true,
+            ];
+        })->keyBy(fn (array $tariff) => (string) $tariff['code']);
+
+        // Не скрываем включенные в настройках тарифы, которые СДЭК не смог
+        // рассчитать для текущего маршрута или упаковки. Их нельзя выбрать,
+        // но администратор видит, почему настройка тарифа отсутствует в выдаче.
+        $configured->each(function (array $tariff, $code) use ($calculatedTariffs) {
+            $key = (string) $code;
+            if ($calculatedTariffs->has($key)) {
+                return;
+            }
+
+            $calculatedTariffs->put($key, [
+                'code' => $tariff['tariff_code'] ?? $code,
+                'name' => $tariff['site_name'] ?? $tariff['tariff_name'] ?? 'Тариф СДЭК',
+                'description' => $tariff['tariff_description'] ?? '',
+                'cost' => null,
+                'cost_value' => null,
+                'delivery_mode' => $tariff['delivery_mode'] ?? null,
+                'enabled' => true,
+                'available' => false,
+                'unavailable_reason' => 'СДЭК не рассчитал этот тариф для текущего маршрута, веса или габаритов.',
+            ]);
+        });
+
+        $tariffs = $calculatedTariffs->values()->all();
+
+        return response()->json([
+            'success' => true,
+            'data' => $tariffs,
+            'meta' => [
+                'packages' => $packages,
+                'summary' => app(DeliveryPackageService::class)->summary($packages),
+                'is_confirmed' => $order->packages->isNotEmpty()
+                    && $order->packages->every(fn ($package) => $package->confirmed_at !== null),
             ],
+        ]);
+    }
+
+    public function updateDeliveryPackages(Request $request, int $id): JsonResponse
+    {
+        $validated = $request->validate([
+            'packages' => 'required|array|min:1|max:100',
+            'packages.*.weight' => 'required|numeric|min:0.001|max:10000',
+            'packages.*.length' => 'required|numeric|min:1|max:10000',
+            'packages.*.width' => 'required|numeric|min:1|max:10000',
+            'packages.*.height' => 'required|numeric|min:1|max:10000',
+            'packages.*.items' => 'nullable|array',
+            'confirmed' => 'nullable|boolean',
+        ]);
+
+        $order = ShopOrder::findOrFail($id);
+        $confirmedAt = ($validated['confirmed'] ?? true) ? now() : null;
+
+        DB::transaction(function () use ($order, $validated, $confirmedAt) {
+            $order->packages()->delete();
+            foreach (array_values($validated['packages']) as $index => $package) {
+                $order->packages()->create([
+                    'number' => $index + 1,
+                    'weight' => $package['weight'],
+                    'length' => $package['length'],
+                    'width' => $package['width'],
+                    'height' => $package['height'],
+                    'source' => 'manual',
+                    'confirmed_at' => $confirmedAt,
+                    'items' => $package['items'] ?? null,
+                ]);
+            }
+        });
+
+        return $this->getDeliveryPackages($order->id);
+    }
+
+    public function resetDeliveryPackages(int $id): JsonResponse
+    {
+        $order = ShopOrder::findOrFail($id);
+        $order->packages()->delete();
+
+        return $this->getDeliveryPackages($order->id);
+    }
+
+    private function calculateOrderDeliveryCargo(ShopOrder $order, $settings): array
+    {
+        $packageService = app(DeliveryPackageService::class);
+        $cargo = $packageService->dellinCargo($packageService->fromOrder($order, $settings));
+        $cargo['insurance'] = [
+            'statedValue' => max(1, (float) ($order->subtotal ?? $order->total_amount ?? 1)),
+            'term' => true,
         ];
+
+        return $cargo;
     }
 
     private function calculateRussianPostOrderCargo(ShopOrder $order, ShopRussianPostSettings $settings): array
     {
-        $items = $order->getItemsWithDetails();
-        $weight = 0.0;
-        $length = 0.0;
-        $width = 0.0;
-        $height = 0.0;
-
-        foreach ($items as $item) {
-            $quantity = max(1, (int) ($item['quantity'] ?? 1));
-            $itemWeight = $this->positiveDeliveryNumber($item['weight'] ?? null) ?? (float) ($settings->default_weight ?? 0.5);
-            $itemLength = $this->positiveDeliveryNumber($item['length'] ?? ($item['depth'] ?? null)) ?? (float) ($settings->default_length ?? 10);
-            $itemWidth = $this->positiveDeliveryNumber($item['width'] ?? null) ?? (float) ($settings->default_width ?? 10);
-            $itemHeight = $this->positiveDeliveryNumber($item['height'] ?? null) ?? (float) ($settings->default_height ?? 10);
-
-            $weight += $itemWeight * $quantity;
-            $length = max($length, $itemLength);
-            $width = max($width, $itemWidth);
-            $height += $itemHeight * $quantity;
-        }
+        $packageService = app(DeliveryPackageService::class);
+        $packages = $packageService->fromOrder($order, $settings);
+        $summary = $packageService->summary($packages);
 
         return [
-            'weight' => $weight > 0 ? $weight : (float) ($settings->default_weight ?? 0.5),
-            'length' => $length > 0 ? $length : (float) ($settings->default_length ?? 10),
-            'width' => $width > 0 ? $width : (float) ($settings->default_width ?? 10),
-            'height' => $height > 0 ? $height : (float) ($settings->default_height ?? 10),
+            'weight' => $summary['total_weight'],
+            'length' => $summary['max_length'],
+            'width' => $summary['max_width'],
+            'height' => $summary['max_height'],
+            'packages' => $packages,
         ];
     }
 
@@ -6760,5 +6912,3 @@ XML;
         }
     }
 }
-
-

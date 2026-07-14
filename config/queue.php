@@ -15,6 +15,8 @@ return [
 
     'default' => env('QUEUE_CONNECTION', 'database'),
 
+    'worker_heartbeat_ttl' => (int) env('QUEUE_WORKER_HEARTBEAT_TTL', 90),
+
     /*
     |--------------------------------------------------------------------------
     | Queue Connections

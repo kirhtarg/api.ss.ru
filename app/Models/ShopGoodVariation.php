@@ -32,6 +32,11 @@ class ShopGoodVariation extends Model
         'length',
         'height',
         'width',
+        'shipping_weight',
+        'shipping_length',
+        'shipping_width',
+        'shipping_height',
+        'ships_separately',
         'is_active',
         'sort_order',
     ];
@@ -47,6 +52,11 @@ class ShopGoodVariation extends Model
         'length' => 'decimal:2',
         'height' => 'decimal:2',
         'width' => 'decimal:2',
+        'shipping_weight' => 'decimal:3',
+        'shipping_length' => 'decimal:2',
+        'shipping_width' => 'decimal:2',
+        'shipping_height' => 'decimal:2',
+        'ships_separately' => 'boolean',
         'is_active' => 'boolean',
         'sort_order' => 'integer',
     ];

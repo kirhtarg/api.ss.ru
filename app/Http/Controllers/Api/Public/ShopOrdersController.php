@@ -10,6 +10,7 @@ use App\Models\ShopOrderLog;
 use App\Services\CustomerOrderEmailService;
 use App\Services\OrderCalculationService;
 use App\Services\NotificationService;
+use App\Services\DeliveryPackageService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -142,8 +143,18 @@ class ShopOrdersController extends Controller
                 'metadata' => [
                     'delivery_cost' => $request->delivery_cost,
                     'bonus_points_used' => $request->bonus_points_used ?? 0,
+                    'cdek_base_tariff_cost' => $request->cdek_base_tariff_cost,
+                    'cdek_insurance_cost' => $request->cdek_insurance_cost,
+                    'cdek_surcharge_amount' => $request->cdek_surcharge_amount,
+                    'cdek_customer_delivery_cost' => $request->cdek_customer_delivery_cost,
+                    'cdek_delivery_recipient_cost_value' => $request->cdek_customer_delivery_cost,
+                    'cdek_insurance_enabled' => $request->cdek_insurance_enabled,
+                    'cdek_surcharge_enabled' => $request->cdek_surcharge_enabled,
+                    'cdek_surcharge_value' => $request->cdek_surcharge_value,
+                    'cdek_surcharge_type' => $request->cdek_surcharge_type,
                 ],
             ]);
+            app(DeliveryPackageService::class)->snapshotEstimatedForOrder($order);
 
             // Создаем запись об использовании промокода, если он был применен
             if ($request->promo_code_id) {

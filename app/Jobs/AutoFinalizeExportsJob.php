@@ -75,10 +75,5 @@ class AutoFinalizeExportsJob implements ShouldQueue
             // ignore
         }
 
-        // Само-переназначение через 60 секунд
-        try {
-            self::dispatch()->delay(now()->addSeconds(60));
-        } catch (\Throwable $e) {
-        }
     }
 }

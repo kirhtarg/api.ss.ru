@@ -2,9 +2,11 @@
 
 namespace App\Http\Controllers\Api\Public;
 
+use App\Helpers\PriceHelper;
 use App\Http\Controllers\Controller;
 use App\Models\ShopCdekSettings;
 use App\Services\CdekService;
+use App\Services\DeliveryPackageService;
 use App\Services\ShopDeliveryActivitySyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -15,9 +17,12 @@ class ShopCdekController extends Controller
 {
     private $cdekService;
 
+    private DeliveryPackageService $packageService;
+
     public function __construct()
     {
         $this->cdekService = new CdekService;
+        $this->packageService = new DeliveryPackageService;
     }
 
     /**
@@ -377,19 +382,16 @@ class ShopCdekController extends Controller
                     $packageDimensions = $this->calculatePackageDimensions($cartItems, $settings);
 
                     // Создаем ключ кэша для расчета доставки с учетом размеров и города
-                    $deliveryCacheKey = 'cdek_delivery_'.md5($senderCityCode.'_'.$cityCode.'_'.$packageDimensions['weight'].'_'.$packageDimensions['length'].'_'.$packageDimensions['width'].'_'.$packageDimensions['height']);
+                    $deliveryCacheKey = 'cdek_delivery_'.md5($senderCityCode.'_'.$cityCode.'_'.json_encode($packageDimensions['packages']));
 
                     // Проверяем кэш
                     $deliveryResult = cache()->get($deliveryCacheKey);
                     if (! $deliveryResult) {
                         // Рассчитываем стоимость через CdekService с реальными размерами
-                        $deliveryResult = $this->cdekService->calculateDelivery(
+                        $deliveryResult = $this->cdekService->calculateDeliveryForPackages(
                             $senderCityCode,
                             $cityCode,
-                            $packageDimensions['weight'],
-                            $packageDimensions['length'],
-                            $packageDimensions['width'],
-                            $packageDimensions['height']
+                            $packageDimensions['packages']
                         );
 
                         // Кэшируем результат на 1 час
@@ -486,6 +488,10 @@ class ShopCdekController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $formattedTariffs,
+                'meta' => isset($packageDimensions) ? [
+                    'packages' => $packageDimensions['packages'],
+                    'summary' => $packageDimensions['summary'],
+                ] : null,
             ]);
         } catch (\Exception $e) {
             Log::error('CDEK Get Tariffs Error: '.$e->getMessage());
@@ -502,93 +508,17 @@ class ShopCdekController extends Controller
      */
     private function calculatePackageDimensions($cartItems, $settings)
     {
-        $totalWeight = 0;
-        $maxLength = 0;
-        $maxWidth = 0;
-        $maxHeight = 0;
+        $packages = $this->packageService->fromCartItems((array) $cartItems, $settings);
+        $summary = $this->packageService->summary($packages);
 
-        foreach ($cartItems as $item) {
-            $quantity = $item['quantity'] ?? 1;
-
-            $itemWeight = isset($item['weight']) ? (float) $item['weight'] : null;
-            $itemLength = isset($item['length']) ? (float) $item['length'] : null;
-            $itemWidth = isset($item['width']) ? (float) $item['width'] : null;
-            $itemHeight = isset($item['height']) ? (float) $item['height'] : null;
-
-            if ($itemWeight !== null && $itemWeight > 0) {
-                $weight = $itemWeight;
-            } else {
-                $weight = null;
-            }
-
-            if ($itemLength !== null && $itemLength > 0) {
-                $length = $itemLength;
-            } else {
-                $length = null;
-            }
-
-            if ($itemWidth !== null && $itemWidth > 0) {
-                $width = $itemWidth;
-            } else {
-                $width = null;
-            }
-
-            if ($itemHeight !== null && $itemHeight > 0) {
-                $height = $itemHeight;
-            } else {
-                $height = null;
-            }
-
-            if (! ($weight !== null && $length !== null && $width !== null && $height !== null)) {
-                $good = null;
-                if (isset($item['good_id'])) {
-                    $good = \App\Models\ShopGood::find($item['good_id']);
-                }
-
-                if ($good) {
-                    if ($weight === null) {
-                        $weight = $good->weight > 0 ? (float) $good->weight : null;
-                    }
-                    if ($length === null) {
-                        $goodLength = $good->length ?? $good->depth ?? null;
-                        $length = $goodLength > 0 ? (float) $goodLength : null;
-                    }
-                    if ($width === null) {
-                        $width = $good->width > 0 ? (float) $good->width : null;
-                    }
-                    if ($height === null) {
-                        $height = $good->height > 0 ? (float) $good->height : null;
-                    }
-                }
-            }
-
-            if ($weight === null || $weight <= 0) {
-                $weight = (float) ($settings->default_weight ?? 0.5);
-            }
-            if ($length === null || $length <= 0) {
-                $length = (float) ($settings->default_length ?? 10);
-            }
-            if ($width === null || $width <= 0) {
-                $width = (float) ($settings->default_width ?? 10);
-            }
-            if ($height === null || $height <= 0) {
-                $height = (float) ($settings->default_height ?? 10);
-            }
-
-            $totalWeight += $weight * $quantity;
-            $maxLength = max($maxLength, $length);
-            $maxWidth = max($maxWidth, $width);
-            $maxHeight = max($maxHeight, $height);
-        }
-
-        $result = [
-            'weight' => $totalWeight,
-            'length' => $maxLength,
-            'width' => $maxWidth,
-            'height' => $maxHeight,
+        return [
+            'weight' => $summary['total_weight'],
+            'length' => $summary['max_length'],
+            'width' => $summary['max_width'],
+            'height' => $summary['max_height'],
+            'packages' => $packages,
+            'summary' => $summary,
         ];
-
-        return $result;
     }
 
     /**
@@ -718,50 +648,40 @@ class ShopCdekController extends Controller
             return $fallbackPackages;
         }
 
-        $fallbackByKey = [];
-        foreach ($fallbackPackages as $package) {
-            $number = (string) ($package['number'] ?? '');
-            if ($number !== '') {
-                $fallbackByKey[$number] = $package;
-            }
-        }
+        $packages = $this->packageService->fromOrder($order, ShopCdekSettings::getActive());
 
-        return array_values(array_map(function ($item, $index) use ($fallbackPackages, $fallbackByKey) {
-            $quantity = max(1, (int) ($item['quantity'] ?? 1));
-            $goodId = $item['good_id'] ?? null;
-            $variationId = $item['variation_id'] ?? null;
-            $number = 'PKG_'.$goodId.'_'.($variationId ?: 'default');
-            $fallback = $fallbackByKey[$number] ?? $fallbackPackages[$index] ?? [];
-            $dimensions = $this->resolveCdekItemDimensions($item);
-            $weightGrams = (int) max(1, round($dimensions['weight'] * 1000));
-            $length = (int) max(1, round($dimensions['length']));
-            $width = (int) max(1, round($dimensions['width']));
-            $height = (int) max(1, round($dimensions['height']));
-            $cost = $fallback['cost'] ?? (float) ($item['total'] ?? ((float) ($item['price'] ?? 0) * $quantity));
-            $packageItems = $fallback['items'] ?? [[
-                'name' => $item['good_name'] ?? 'Товар',
-                'ware_key' => $item['variation_sku'] ?? $item['good_sku'] ?? $number,
-                'cost' => $cost,
-                'amount' => $quantity,
-            ]];
-            $packageItems = array_map(function ($packageItem) use ($weightGrams, $quantity) {
-                $packageItem['weight'] = $weightGrams;
-                $packageItem['amount'] = $packageItem['amount'] ?? $quantity;
+        return array_map(function (array $package) use ($items) {
+            $item = $items[$package['items'][0]['item_index'] ?? 0] ?? [];
+            $number = 'PKG_'.$package['number'];
+            $weight = max(1, (int) round($package['weight'] * 1000));
+            $groupedRefs = collect($package['items'] ?? [])->groupBy('item_index');
+            $totalUnits = collect($package['items'] ?? [])->sum(fn ($ref) => max(1, (int) ($ref['quantity'] ?? 1)));
+            $unitWeightGrams = max(1, (int) round(($package['weight'] / max(1, $totalUnits)) * 1000));
+            $generatedItems = $groupedRefs->map(function ($refs, $itemIndex) use ($items, $number, $unitWeightGrams) {
+                $orderItem = $items[$itemIndex] ?? [];
+                $unitCost = PriceHelper::roundPrice((float) ($orderItem['unit_price'] ?? $orderItem['final_price'] ?? $orderItem['price'] ?? 0));
 
-                return $packageItem;
-            }, is_array($packageItems) ? $packageItems : []);
+                return [
+                    'name' => $orderItem['good_name'] ?? $orderItem['name'] ?? 'Товар',
+                    'ware_key' => $orderItem['variation_sku'] ?? $orderItem['good_sku'] ?? $number.'-'.$itemIndex,
+                    'cost' => $unitCost,
+                    'amount' => $refs->sum(fn ($ref) => max(1, (int) ($ref['quantity'] ?? 1))),
+                    'weight' => $unitWeightGrams,
+                ];
+            })->values()->all();
+            $cost = collect($generatedItems)->sum(fn ($entry) => $entry['cost'] * $entry['amount']);
 
             return [
-                'number' => $fallback['number'] ?? $number,
-                'weight' => $weightGrams * $quantity,
-                'length' => $length,
-                'width' => $width,
-                'height' => $height,
-                'comment' => $fallback['comment'] ?? trim(($item['good_name'] ?? 'Товар').(! empty($item['variation_name']) ? ' - '.$item['variation_name'] : '')),
+                'number' => $number,
+                'weight' => $weight,
+                'length' => max(1, (int) ceil($package['length'])),
+                'width' => max(1, (int) ceil($package['width'])),
+                'height' => max(1, (int) ceil($package['height'])),
+                'comment' => (string) ($item['good_name'] ?? $item['name'] ?? 'Товар'),
                 'cost' => $cost,
-                'items' => $packageItems,
+                'items' => $generatedItems,
             ];
-        }, $items, array_keys($items)));
+        }, $packages);
     }
 
     private function resolveCdekItemDimensions(array $item): array

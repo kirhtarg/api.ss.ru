@@ -1634,57 +1634,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Queue management
         Route::prefix('queue-status')->middleware('role:admin')->group(function () {
-            Route::get('/', function () {
-                $pending = \Illuminate\Support\Facades\DB::table('jobs')->count();
-                $failed = \Illuminate\Support\Facades\DB::table('failed_jobs')->count();
-
-                $workerActive = false;
-                $debugOutput = [];
-                try {
-                    if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-                        $output = [];
-                        exec('wmic process where "name=\'php.exe\'" get commandline 2>&1', $output);
-                        $debugOutput = []; // Debug disabled
-
-                        // Check line by line
-                        foreach ($output as $line) {
-                            if (stripos($line, 'queue:work') !== false || stripos($line, 'queue:listen') !== false) {
-                                $workerActive = true;
-                                break;
-                            }
-                        }
-
-                        // Double check with full string just in case
-                        if (!$workerActive) {
-                            $fullOutput = implode(' ', $output);
-                            if (stripos($fullOutput, 'queue:work') !== false || stripos($fullOutput, 'queue:listen') !== false) {
-                                $workerActive = true;
-                            }
-                        }
-                    } else {
-                        $output = [];
-                        exec('ps aux | grep "queue:work" | grep -v grep', $output);
-                        if (count($output) > 0) {
-                            $workerActive = true;
-                        }
-                    }
-                } catch (\Exception $e) {
-                    \Illuminate\Support\Facades\Log::error('Queue worker check failed: ' . $e->getMessage());
-                }
-
-                $status = $workerActive ? ($pending > 0 ? 'working' : 'idle') : 'inactive';
-
-                return response()->json([
-                    'success' => true,
-                    'data' => [
-                        'pending' => $pending,
-                        'failed' => $failed,
-                        'status' => $status,
-                        'worker_active' => $workerActive,
-                        'debug_output' => $debugOutput, // Temporary debug info
-                    ],
-                ]);
-            });
+            Route::get('/', [\App\Http\Controllers\Admin\QueueStatusController::class, 'index']);
 
             Route::post('/restart', function (\Illuminate\Http\Request $request) {
                 try {
@@ -1701,21 +1651,32 @@ Route::middleware('auth:sanctum')->group(function () {
                     $os = strtoupper(substr(PHP_OS, 0, 3));
                     $artisanPath = base_path('artisan');
                     $phpPath = PHP_BINARY; // Используем тот же PHP, который запустил сервер
+                    \Illuminate\Support\Facades\Cache::forget('queue_worker_heartbeat');
 
                     if ($os === 'WIN') {
                         // Windows: запуск в фоне через start /B
-                        $command = "start /B \"\" \"$phpPath\" \"$artisanPath\" queue:work --tries=3 --timeout=7200 > NUL 2>&1";
+                        $command = "start /B \"\" \"$phpPath\" \"$artisanPath\" queue:work --queue=default,images --sleep=3 --tries=3 --timeout=7200 > NUL 2>&1";
                         pclose(popen($command, 'r'));
                     } else {
                         // Linux/Unix: запуск в фоне через nohup
-                        $command = "nohup \"$phpPath\" \"$artisanPath\" queue:work --tries=3 --timeout=7200 > /dev/null 2>&1 &";
+                        $command = "nohup \"$phpPath\" \"$artisanPath\" queue:work --queue=default,images --sleep=3 --tries=3 --timeout=7200 > /dev/null 2>&1 &";
                         exec($command);
                     }
 
-                    // Даем немного времени на запуск
-                    sleep(1);
+                    // Подтверждаем запуск по heartbeat, а не по отсутствию исключения exec().
+                    sleep(4);
+                    $status = app(\App\Http\Controllers\Admin\QueueStatusController::class)
+                        ->index()
+                        ->getData(true);
+                    if (! ($status['data']['worker_active'] ?? false)) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Worker не запустился из веб-процесса. Запустите его через Supervisor: sudo supervisorctl restart ss-queue-worker:*',
+                            'data' => $status['data'] ?? null,
+                        ], 503);
+                    }
 
-                    return response()->json(['success' => true, 'message' => 'Queue worker started']);
+                    return response()->json(['success' => true, 'message' => 'Worker очереди запущен и передаёт heartbeat.']);
                 } catch (\Exception $e) {
                     return response()->json(['success' => false, 'message' => 'Error starting queue: ' . $e->getMessage()], 500);
                 }
@@ -2043,6 +2004,12 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/merge-variations', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'mergeVariations']);
                 Route::get('/variations/images-count', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getVariationsImagesCount']);
                 Route::post('/check-duplicates', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'checkDuplicates']);
+                Route::get('/import-api/sources', [\App\Http\Controllers\Admin\ShopCsvApiSourceController::class, 'index']);
+                Route::post('/import-api/sources', [\App\Http\Controllers\Admin\ShopCsvApiSourceController::class, 'store']);
+                Route::get('/import-api/sources/{source}', [\App\Http\Controllers\Admin\ShopCsvApiSourceController::class, 'show']);
+                Route::put('/import-api/sources/{source}', [\App\Http\Controllers\Admin\ShopCsvApiSourceController::class, 'update']);
+                Route::delete('/import-api/sources/{source}', [\App\Http\Controllers\Admin\ShopCsvApiSourceController::class, 'destroy']);
+                Route::post('/import-api/topsports/csv', [\App\Http\Controllers\Admin\TopSportsImportController::class, 'downloadCsv']);
                 Route::post('/bulk-import', [\App\Http\Controllers\Admin\BulkGoodsImportController::class, 'bulkImport']);
                 Route::post('/test-reset-supplier-stocks', [\App\Http\Controllers\Admin\BulkGoodsImportController::class, 'testResetSupplierStocks']);
                 Route::post('/test-reset-all-stocks', [\App\Http\Controllers\Admin\BulkGoodsImportController::class, 'testResetAllStocks']);
@@ -2316,6 +2283,10 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::put('/{id}/comment', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateComment']);
                 Route::put('/{id}/delivery-status', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateDeliveryStatus']);
                 Route::put('/{id}/delivery', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'changeDelivery']);
+                Route::get('/{id}/delivery-packages', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'getDeliveryPackages']);
+                Route::get('/{id}/cdek/tariffs', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'calculateCdekTariffs']);
+                Route::put('/{id}/delivery-packages', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateDeliveryPackages']);
+                Route::delete('/{id}/delivery-packages', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'resetDeliveryPackages']);
                 // OPTIONS для CORS preflight
                 Route::options('/{id}/finish', function () {
                     return response('', 200)
