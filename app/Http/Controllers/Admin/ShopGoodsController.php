@@ -8705,11 +8705,7 @@ class ShopGoodsController extends Controller
                 $existingVariation = $this->findVariationByAttributes($mainGoodId, $attributeValues);
                 if ($existingVariation) {
                     $skippedVariations++;
-                    $errors[] = "Товар ID {$sourceGoodId}: вариация с такими атрибутами уже существует";
-                    // Если это не главный товар, удаляем его
-                    if (! $isMainGood) {
-                        $sourceGood->delete();
-                    }
+                    $errors[] = "Товар ID {$sourceGoodId}: вариация с такими атрибутами уже существует; исходный товар сохранен";
 
                     continue;
                 }
