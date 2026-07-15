@@ -1432,21 +1432,27 @@ class ProcessExportJob implements ShouldQueue
                 return $isArray ? ($good['short_description'] ?? '') : $good->short_description;
             case 'price':
                 if (!empty($config['aggregate_variations'])) {
-                    return $this->getAggregatedMinVariationPrice($good);
+                    return $this->applyPriceAdjustment('price', $this->getAggregatedMinVariationPrice($good), $config);
                 }
-                return $isArray ? ($variation['price'] ?? $good['price'] ?? 0) : ($variation->price ?? $good->price);
+                $value = $isArray ? ($variation['price'] ?? $good['price'] ?? 0) : ($variation->price ?? $good->price);
+
+                return $this->applyPriceAdjustment('price', $value, $config);
             case 'sale_price':
                 if ($variation) {
-                    return $isArray ? ($variation['sale_price'] ?? '') : ($variation->sale_price ?? '');
+                    $value = $isArray ? ($variation['sale_price'] ?? '') : ($variation->sale_price ?? '');
+                } else {
+                    $value = $isArray ? ($good['sale_price'] ?? '') : ($good->sale_price ?? '');
                 }
 
-                return $isArray ? ($good['sale_price'] ?? 0) : $good->sale_price;
+                return $this->applyPriceAdjustment('sale_price', $value, $config);
             case 'demping_price':
                 if ($variation) {
-                    return $isArray ? ($variation['demping_price'] ?? '') : ($variation->demping_price ?? '');
+                    $value = $isArray ? ($variation['demping_price'] ?? '') : ($variation->demping_price ?? '');
+                } else {
+                    $value = $isArray ? ($good['demping_price'] ?? '') : ($good->demping_price ?? '');
                 }
 
-                return $isArray ? ($good['demping_price'] ?? 0) : $good->demping_price;
+                return $this->applyPriceAdjustment('demping_price', $value, $config);
             case 'stock_quantity':
                 return $isArray ? ($variation['stock_quantity'] ?? $good['stock_quantity'] ?? 0) : ($variation->stock_quantity ?? $good->stock_quantity);
             case 'full_stock':
@@ -1678,6 +1684,28 @@ class ProcessExportJob implements ShouldQueue
         $numeric = (float) str_replace(',', '.', (string) $value);
 
         return $numeric > 0 ? $numeric : 1.0;
+    }
+
+    protected function applyPriceAdjustment(string $field, $value, array $config)
+    {
+        if ($value === '' || $value === null) {
+            return '';
+        }
+
+        $normalizedValue = str_replace(',', '.', (string) $value);
+        if (!is_numeric($normalizedValue)) {
+            return $value;
+        }
+
+        $adjustment = $config['price_adjustments'][$field] ?? [];
+        $amount = max(0, (float) str_replace(',', '.', (string) ($adjustment['value'] ?? 0)));
+        $mode = ($adjustment['mode'] ?? 'percent') === 'absolute' ? 'absolute' : 'percent';
+        $operation = ($adjustment['operation'] ?? 'add') === 'subtract' ? 'subtract' : 'add';
+        $numericValue = (float) $normalizedValue;
+        $delta = $mode === 'percent' ? $numericValue * $amount / 100 : $amount;
+        $result = $operation === 'subtract' ? $numericValue - $delta : $numericValue + $delta;
+
+        return round(max(0, $result), 2);
     }
 
     protected function getFullStockValue($item): int
@@ -2473,7 +2501,7 @@ class ProcessExportJob implements ShouldQueue
                     ['filename' => $permanentFilename],
                     [
                         'created_by' => $this->exportFile->created_by,
-                        'original_filename' => 'Основной фид Avito.xml',
+                        'original_filename' => 'avito.xml',
                         'file_path' => $permanentFilePath,
                         'format' => 'avito_xml',
                         'status' => 'completed',

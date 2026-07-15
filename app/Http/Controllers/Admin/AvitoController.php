@@ -407,7 +407,7 @@ class AvitoController extends Controller
                     ['filename' => $permanentFilename],
                     [
                         'created_by' => $latestArchiveExport?->created_by ?? $export?->created_by,
-                        'original_filename' => 'Основной фид Avito.xml',
+                        'original_filename' => 'avito.xml',
                         'file_path' => $permanentFilePath,
                         'format' => 'avito_xml',
                         'status' => 'completed',

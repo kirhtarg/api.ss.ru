@@ -99,6 +99,8 @@ class ExportFilesController extends Controller
             $arr['export_config'] = $conf;
             $arr['progress_rows'] = $conf['progress_rows'];
             $arr['rows'] = $conf['total_rows'];
+            $arr['is_protected'] = $this->isProtectedAvitoFeed($file);
+            $arr['public_url'] = $arr['is_protected'] ? $this->getAvitoPublicUrl() : null;
 
             return $arr;
         }, $files->items());
@@ -134,6 +136,8 @@ class ExportFilesController extends Controller
         $arr['export_config'] = $conf;
         $arr['progress_rows'] = $conf['progress_rows'];
         $arr['rows'] = $conf['total_rows'];
+        $arr['is_protected'] = $this->isProtectedAvitoFeed($file);
+        $arr['public_url'] = $arr['is_protected'] ? $this->getAvitoPublicUrl() : null;
         if (($arr['status'] ?? '') === 'processing') {
             $path = $arr['file_path'] ?? null;
             $expectedPath = $path ?: ('modex/'.($arr['filename'] ?? ''));
@@ -358,6 +362,14 @@ class ExportFilesController extends Controller
      */
     public function destroy(ExportFile $exportFile): JsonResponse
     {
+        if ($this->isProtectedAvitoFeed($exportFile)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Постоянный фид Авито защищен от удаления',
+                'public_url' => $this->getAvitoPublicUrl(),
+            ], 422);
+        }
+
         // Удаляем задания очереди, связанные с этим файлом
         $this->cancelQueueJobsForFile($exportFile);
 
@@ -394,7 +406,13 @@ class ExportFilesController extends Controller
         $files = $query->get();
 
         $deletedCount = 0;
+        $protectedCount = 0;
         foreach ($files as $file) {
+            if ($this->isProtectedAvitoFeed($file)) {
+                $protectedCount++;
+                continue;
+            }
+
             // Удаляем задания очереди, связанные с этим файлом
             $this->cancelQueueJobsForFile($file);
             // Удаляем физический файл
@@ -406,9 +424,17 @@ class ExportFilesController extends Controller
             $deletedCount++;
         }
 
+        $message = "Удалено {$deletedCount} файл(ов).";
+        if ($protectedCount > 0 || Storage::exists('exports/avito.xml')) {
+            $message .= ' Постоянный фид Авито сохранен.';
+        }
+
         return response()->json([
             'success' => true,
-            'message' => "Удалено {$deletedCount} файл(ов)",
+            'message' => $message,
+            'deleted_count' => $deletedCount,
+            'protected_count' => $protectedCount,
+            'avito_public_url' => $this->getAvitoPublicUrl(),
         ]);
     }
 
@@ -492,5 +518,19 @@ class ExportFilesController extends Controller
         } catch (\Throwable $e) {
             // Игнорируем ошибки удаления из очереди
         }
+    }
+
+    private function isProtectedAvitoFeed(ExportFile $exportFile): bool
+    {
+        $config = $exportFile->export_config ?? [];
+
+        return ($config['is_avito_permanent'] ?? false) === true
+            || $exportFile->filename === 'avito.xml'
+            || $exportFile->file_path === 'exports/avito.xml';
+    }
+
+    private function getAvitoPublicUrl(): string
+    {
+        return url('/api/public/avito/feed/avito.xml');
     }
 }

@@ -1603,6 +1603,13 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/{exportFile}/complete-test', [\App\Http\Controllers\Admin\ExportFilesController::class, 'completeTest']);
         });
 
+        Route::middleware('role:admin,manager')->prefix('export-templates')->group(function () {
+            Route::get('/', [\App\Http\Controllers\Admin\ExportTemplatesController::class, 'index']);
+            Route::post('/', [\App\Http\Controllers\Admin\ExportTemplatesController::class, 'store']);
+            Route::put('/{exportTemplate}', [\App\Http\Controllers\Admin\ExportTemplatesController::class, 'update']);
+            Route::delete('/{exportTemplate}', [\App\Http\Controllers\Admin\ExportTemplatesController::class, 'destroy']);
+        });
+
         Route::middleware('role:admin')->prefix('database-backups')->group(function () {
             Route::get('/', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'index']);
             Route::post('/', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'store']);
