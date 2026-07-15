@@ -117,7 +117,7 @@ class MobileGameService
     public function products(MobileGame $game): array
     {
         $source = $game->product_source ?: [];
-        $minimum = $game->type === 'memory' ? 15 : 6;
+        $minimum = $game->type === 'memory' ? 10 : 6;
         $limit = min(30, max($minimum, (int) ($source['limit'] ?? 18)));
         $relations = ['images' => fn ($q) => $q->ordered(), 'allImages' => fn ($q) => $q->ordered()];
         $query = ShopGood::query()
