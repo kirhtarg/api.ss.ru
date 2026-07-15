@@ -117,8 +117,13 @@ class MobileGameService
     public function products(MobileGame $game): array
     {
         $source = $game->product_source ?: [];
-        $limit = min(30, max(6, (int) ($source['limit'] ?? 18)));
-        $query = ShopGood::query()->where('is_active', true)->where('is_show', true)->with(['images' => fn ($q) => $q->ordered(), 'allImages' => fn ($q) => $q->ordered()]);
+        $minimum = $game->type === 'memory' ? 15 : 6;
+        $limit = min(30, max($minimum, (int) ($source['limit'] ?? 18)));
+        $relations = ['images' => fn ($q) => $q->ordered(), 'allImages' => fn ($q) => $q->ordered()];
+        $query = ShopGood::query()
+            ->where('is_active', true)
+            ->whereHas('allImages')
+            ->with($relations);
         if (($source['type'] ?? '') === 'category' && ! empty($source['ids'])) {
             $query->whereHas('categories', fn ($q) => $q->whereIn('shop_categories.id', $source['ids']));
         }
@@ -133,8 +138,16 @@ class MobileGameService
         }
 
         $goods = $query->inRandomOrder()->limit($limit)->get();
-        if ($goods->count() < 6) {
-            $goods = ShopGood::query()->where('is_active', true)->where('is_show', true)->with(['images', 'allImages'])->inRandomOrder()->limit($limit)->get();
+        if ($goods->count() < $minimum) {
+            $additional = ShopGood::query()
+                ->where('is_active', true)
+                ->whereHas('allImages')
+                ->whereNotIn('id', $goods->pluck('id'))
+                ->with($relations)
+                ->inRandomOrder()
+                ->limit($limit - $goods->count())
+                ->get();
+            $goods = $goods->concat($additional);
         }
 
         return $goods->map(fn ($good) => ['id' => $good->id, 'name' => $good->name, 'slug' => $good->slug, 'image_url' => ($good->images->first() || $good->allImages->first()) ? route('mobile-games.product-asset', ['good' => $good->id]) : null])->values()->all();
