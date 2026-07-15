@@ -1189,6 +1189,16 @@ Route::middleware(['cors', 'throttle:public'])->group(function () {
         return response()->json([], 200);
     });
     Route::get('/public/sliders/{id}', [App\Http\Controllers\Api\Public\SliderController::class, 'show']);
+    // Игровой центр мобильного приложения
+    Route::get('/public/games', [App\Http\Controllers\Api\Public\MobileGameController::class, 'index']);
+    Route::get('/public/games/leaderboard/overall', [App\Http\Controllers\Api\Public\MobileGameController::class, 'overallLeaderboard']);
+    Route::get('/public/games/{slug}', [App\Http\Controllers\Api\Public\MobileGameController::class, 'show']);
+    Route::get('/public/games/{slug}/leaderboard', [App\Http\Controllers\Api\Public\MobileGameController::class, 'leaderboard']);
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::post('/public/games/{slug}/start', [App\Http\Controllers\Api\Public\MobileGameController::class, 'start']);
+        Route::post('/public/games/sessions/{publicId}/finish', [App\Http\Controllers\Api\Public\MobileGameController::class, 'finish']);
+        Route::get('/public/games-history', [App\Http\Controllers\Api\Public\MobileGameController::class, 'history']);
+    });
 
     // Публичные маршруты для текстовых блоков
     Route::options('/public/site/textblocks/{id}', function () {
@@ -3730,6 +3740,18 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::delete('/{sliderId}/images/{imageId}', [\App\Http\Controllers\Api\Admin\SliderController::class, 'deleteImage']);
             });
 
+            Route::prefix('games')->group(function () {
+                Route::get('/', [\App\Http\Controllers\Api\Admin\MobileGameController::class, 'index']);
+                Route::post('/', [\App\Http\Controllers\Api\Admin\MobileGameController::class, 'store']);
+                Route::put('/{game}', [\App\Http\Controllers\Api\Admin\MobileGameController::class, 'update']);
+                Route::delete('/{game}', [\App\Http\Controllers\Api\Admin\MobileGameController::class, 'destroy']);
+                Route::post('/{game}/image', [\App\Http\Controllers\Api\Admin\MobileGameController::class, 'uploadImage']);
+                Route::post('/{game}/seasons', [\App\Http\Controllers\Api\Admin\MobileGameController::class, 'storeSeason']);
+                Route::put('/seasons/{season}', [\App\Http\Controllers\Api\Admin\MobileGameController::class, 'updateSeason']);
+                Route::post('/seasons/{season}/issue-rewards', [\App\Http\Controllers\Api\Admin\MobileGameController::class, 'issueSeasonRewards']);
+                Route::get('/sessions/list', [\App\Http\Controllers\Api\Admin\MobileGameController::class, 'sessions']);
+                Route::put('/sessions/{session}/review', [\App\Http\Controllers\Api\Admin\MobileGameController::class, 'review']);
+            });
             // Текстовые блоки (доступны админам и пользователям с ролью site)
             Route::prefix('textblocks')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Api\Admin\TextblockController::class, 'index']);
