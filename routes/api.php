@@ -1627,6 +1627,8 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/suggest', [\App\Http\Controllers\Admin\AvitoController::class, 'suggestMapping']);
             Route::post('/tags', [\App\Http\Controllers\Admin\AvitoController::class, 'updateTags']);
             Route::post('/generate', [\App\Http\Controllers\Admin\AvitoController::class, 'generateNow']);
+            Route::get('/audit', [\App\Http\Controllers\Admin\AvitoController::class, 'auditFeed']);
+            Route::get('/audit/items/{id}', [\App\Http\Controllers\Admin\AvitoController::class, 'auditFeedItem']);
             Route::get('/tree', [\App\Http\Controllers\Admin\AvitoController::class, 'getTree']);
             Route::post('/tree/refresh', [\App\Http\Controllers\Admin\AvitoController::class, 'refreshTree']);
             Route::get('/suppliers', [\App\Http\Controllers\Admin\AvitoController::class, 'getSuppliers']);

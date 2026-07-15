@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Services\AvitoApiService;
 use App\Services\AvitoFeedService;
+use App\Services\AvitoFeedAuditService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
@@ -16,6 +17,57 @@ use Illuminate\Support\Facades\Storage;
 
 class AvitoController extends Controller
 {
+    public function auditFeed(Request $request, AvitoFeedAuditService $auditService)
+    {
+        $validated = $request->validate([
+            'query' => 'nullable|string|max:255',
+            'scope' => 'nullable|in:issues,all',
+            'issue' => 'nullable|string|max:100',
+            'limit' => 'nullable|integer|min:1|max:100',
+        ]);
+
+        try {
+            $result = $auditService->audit(Storage::path('exports/avito.xml'), $validated);
+
+            return response()->json([
+                'success' => true,
+                'data' => $result,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Avito feed audit failed', ['message' => $e->getMessage()]);
+
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+    }
+
+    public function auditFeedItem(string $id, AvitoFeedAuditService $auditService)
+    {
+        try {
+            $item = $auditService->findAd(Storage::path('exports/avito.xml'), $id);
+            if (!$item) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Объявление с указанным ID не найдено в постоянном фиде.',
+                ], 404);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $item,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Avito feed item audit failed', ['id' => $id, 'message' => $e->getMessage()]);
+
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+    }
+
     /**
      * Получить текущие настройки и сопоставление категорий
      */
