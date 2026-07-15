@@ -94,10 +94,14 @@ class ExportTemplatesController extends Controller
     private function present(ExportTemplate $template, Request $request): array
     {
         $creator = $template->creator;
-        $creatorName = trim(implode(' ', array_filter([
-            $creator?->first_name,
-            $creator?->last_name,
-        ]))) ?: ($creator?->name ?: $creator?->email);
+        $creatorName = trim((string) $creator?->first_name);
+        if ($creatorName === '') {
+            $fullName = trim((string) $creator?->name);
+            $creatorName = preg_split('/\s+/u', $fullName, 2)[0] ?? '';
+        }
+        if ($creatorName === '') {
+            $creatorName = (string) $creator?->email;
+        }
 
         return array_merge($template->configuration ?? [], [
             'id' => (string) $template->id,
