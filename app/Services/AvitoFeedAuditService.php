@@ -27,9 +27,13 @@ class AvitoFeedAuditService
         $this->assertReadableFile($filePath);
 
         $query = trim((string) ($options['query'] ?? ''));
-        $scope = ($options['scope'] ?? 'issues') === 'all' ? 'all' : 'issues';
+        $scope = (string) ($options['scope'] ?? 'issues');
+        if (!in_array($scope, ['issues', 'clean', 'all'], true)) {
+            $scope = 'issues';
+        }
         $issueFilter = trim((string) ($options['issue'] ?? ''));
-        $limit = min(100, max(1, (int) ($options['limit'] ?? 50)));
+        $severityFilter = trim((string) ($options['severity'] ?? ''));
+        $limit = min(100, max(1, (int) ($options['limit'] ?? 100)));
         $reader = $this->openReader($filePath);
         $items = [];
         $seenIds = [];
@@ -83,7 +87,7 @@ class AvitoFeedAuditService
 
                 $this->updateSummary($summary, $item);
 
-                if (!$this->matchesResult($item, $query, $scope, $issueFilter)) {
+                if (!$this->matchesResult($item, $query, $scope, $issueFilter, $severityFilter)) {
                     continue;
                 }
 
@@ -259,19 +263,36 @@ class AvitoFeedAuditService
         }
     }
 
-    private function matchesResult(array $item, string $query, string $scope, string $issueFilter): bool
+    private function matchesResult(
+        array $item,
+        string $query,
+        string $scope,
+        string $issueFilter,
+        string $severityFilter
+    ): bool
     {
         if ($query !== '') {
             $haystack = implode(' ', [$item['id'], $item['title'], $item['sku'], $item['category']]);
             if (mb_stripos($haystack, $query) === false) {
                 return false;
             }
-        } elseif ($scope === 'issues' && !$item['issues']) {
+        }
+
+        if ($scope === 'issues' && !$item['issues']) {
+            return false;
+        }
+        if ($scope === 'clean' && $item['issues']) {
             return false;
         }
 
         if ($issueFilter !== '') {
-            return in_array($issueFilter, array_column($item['issues'], 'code'), true);
+            if (!in_array($issueFilter, array_column($item['issues'], 'code'), true)) {
+                return false;
+            }
+        }
+
+        if ($severityFilter !== '') {
+            return in_array($severityFilter, array_column($item['issues'], 'severity'), true);
         }
 
         return true;

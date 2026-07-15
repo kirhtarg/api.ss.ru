@@ -21,8 +21,9 @@ class AvitoController extends Controller
     {
         $validated = $request->validate([
             'query' => 'nullable|string|max:255',
-            'scope' => 'nullable|in:issues,all',
+            'scope' => 'nullable|in:issues,clean,all',
             'issue' => 'nullable|string|max:100',
+            'severity' => 'nullable|in:critical,warning',
             'limit' => 'nullable|integer|min:1|max:100',
         ]);
 
