@@ -2331,6 +2331,8 @@ class ProcessExportJob implements ShouldQueue
                 foreach ($data as $dataRow) {
                     if (is_array($dataRow)) {
                         $col = 'A';
+                        $columnIndex = 0;
+                        $configuredFields = array_values($config['fields'] ?? []);
                         foreach ($dataRow as $key => $value) {
                             if (is_array($value) || is_object($value)) {
                                 $value = json_encode($value);
@@ -2338,11 +2340,15 @@ class ProcessExportJob implements ShouldQueue
                             elseif ($value === null) {
                                 $value = '';
                             }
-                            else {
-                                $value = (string)$value;
+
+                            $field = $configuredFields[$columnIndex] ?? null;
+                            if (is_string($field)) {
+                                $field = preg_replace('/__clone_\d+$/', '', $field);
                             }
-                            $sheet->setCellValue($col . $row, $value);
+
+                            $this->setExcelCellValue($sheet, $col . $row, $value, $field);
                             $col++;
+                            $columnIndex++;
                         }
                         $row++;
                     }
@@ -2385,6 +2391,21 @@ class ProcessExportJob implements ShouldQueue
 
             return $content;
         }
+    }
+
+    protected function setExcelCellValue($sheet, string $coordinate, mixed $value, ?string $field): void
+    {
+        $numericFields = [
+            'price', 'sale_price', 'demping_price', 'stock_quantity',
+            'weight', 'width', 'height', 'length', 'counter',
+        ];
+
+        if (in_array($field, $numericFields, true) && is_numeric($value)) {
+            $sheet->setCellValueExplicit($coordinate, (float) $value, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_NUMERIC);
+            return;
+        }
+
+        $sheet->setCellValueExplicit($coordinate, (string) $value, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
     }
 
     /**

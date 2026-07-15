@@ -2468,6 +2468,23 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/settings', [\App\Http\Controllers\Api\Admin\ShopCarrierDeliverySettingsController::class, 'save']);
                 Route::post('/validate-credentials', [\App\Http\Controllers\Api\Admin\ShopCarrierDeliverySettingsController::class, 'validateCredentials']);
             });
+
+            Route::prefix('ozon-seller')->group(function () {
+                Route::get('/settings', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'settings']);
+                Route::post('/settings', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'saveSettings']);
+                Route::post('/test-connection', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'testConnection']);
+                Route::get('/local-categories', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localCategories']);
+                Route::get('/categories', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'ozonCategories']);
+                Route::post('/attributes', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'attributes']);
+                Route::post('/attribute-values', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'attributeValues']);
+                Route::get('/mappings', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'mappings']);
+                Route::post('/mappings', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'saveMapping']);
+                Route::delete('/mappings/{mapping}', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'deleteMapping']);
+                Route::post('/preview', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'preview']);
+                Route::post('/sync', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'startSync']);
+                Route::get('/runs', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'runs']);
+                Route::get('/runs/{run}', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'run']);
+            });
         });
 
         // Users management
