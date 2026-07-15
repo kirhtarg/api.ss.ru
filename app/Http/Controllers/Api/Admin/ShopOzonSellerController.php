@@ -83,7 +83,9 @@ class ShopOzonSellerController extends Controller
 
     public function mappings()
     {
-        $items = ShopOzonCategoryMapping::query()->where('account_id', $this->account()->id)->with('category:id,name')->orderByDesc('id')->get();
+        $account = ShopOzonAccount::query()->first();
+        if (! $account) return response()->json(['success' => true, 'data' => []]);
+        $items = ShopOzonCategoryMapping::query()->where('account_id', $account->id)->with('category:id,name')->orderByDesc('id')->get();
         return response()->json(['success' => true, 'data' => $items]);
     }
 
@@ -131,7 +133,9 @@ class ShopOzonSellerController extends Controller
 
     public function runs()
     {
-        return response()->json(['success' => true, 'data' => ShopOzonSyncRun::where('account_id', $this->account()->id)->latest()->limit(30)->get()]);
+        $account = ShopOzonAccount::query()->first();
+        if (! $account) return response()->json(['success' => true, 'data' => []]);
+        return response()->json(['success' => true, 'data' => ShopOzonSyncRun::where('account_id', $account->id)->latest()->limit(30)->get()]);
     }
 
     public function run(ShopOzonSyncRun $run)
