@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\MobileGame;
 use App\Models\MobileGameScore;
 use App\Models\MobileGameSession;
+use App\Models\ShopGood;
 use App\Services\MobileGameService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -45,6 +46,26 @@ class MobileGameController extends Controller
         $session = $this->games->finish($session, $request->user(), $data['score'], $data['duration_ms'], $data['events'] ?? []);
 
         return response()->json(['success' => true, 'data' => ['score' => $session->score, 'reward_points' => $session->reward_points, 'is_suspicious' => $session->is_suspicious, 'message' => $session->is_suspicious ? 'Результат отправлен на проверку' : 'Результат сохранен']]);
+    }
+
+    public function productAsset(ShopGood $good)
+    {
+        $image = $good->images()->ordered()->first() ?: $good->allImages()->ordered()->first();
+        abort_unless($image && $image->file_path && ! str_starts_with($image->file_path, 'http'), 404);
+
+        $root = realpath(frontend_public_path());
+        $relative = ltrim(str_replace('\\', '/', $image->file_path), '/');
+        if (! str_starts_with($relative, 'images/')) {
+            $relative = 'images/'.$relative;
+        }
+        $file = realpath($root.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $relative));
+        abort_unless($root && $file && str_starts_with($file, $root.DIRECTORY_SEPARATOR) && is_file($file), 404);
+
+        return response()->file($file, [
+            'Access-Control-Allow-Origin' => '*',
+            'Cache-Control' => 'public, max-age=86400',
+            'Cross-Origin-Resource-Policy' => 'cross-origin',
+        ]);
     }
 
     public function leaderboard(Request $request, string $slug)

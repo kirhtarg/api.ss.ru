@@ -118,7 +118,7 @@ class MobileGameService
     {
         $source = $game->product_source ?: [];
         $limit = min(30, max(6, (int) ($source['limit'] ?? 18)));
-        $query = ShopGood::query()->where('is_active', true)->where('is_show', true)->with(['images' => fn ($q) => $q->ordered()]);
+        $query = ShopGood::query()->where('is_active', true)->where('is_show', true)->with(['images' => fn ($q) => $q->ordered(), 'allImages' => fn ($q) => $q->ordered()]);
         if (($source['type'] ?? '') === 'category' && ! empty($source['ids'])) {
             $query->whereHas('categories', fn ($q) => $q->whereIn('shop_categories.id', $source['ids']));
         }
@@ -134,10 +134,10 @@ class MobileGameService
 
         $goods = $query->inRandomOrder()->limit($limit)->get();
         if ($goods->count() < 6) {
-            $goods = ShopGood::query()->where('is_active', true)->where('is_show', true)->with('images')->inRandomOrder()->limit($limit)->get();
+            $goods = ShopGood::query()->where('is_active', true)->where('is_show', true)->with(['images', 'allImages'])->inRandomOrder()->limit($limit)->get();
         }
 
-        return $goods->map(fn ($good) => ['id' => $good->id, 'name' => $good->name, 'slug' => $good->slug, 'image_url' => $good->images->first()?->url])->values()->all();
+        return $goods->map(fn ($good) => ['id' => $good->id, 'name' => $good->name, 'slug' => $good->slug, 'image_url' => ($good->images->first() || $good->allImages->first()) ? route('mobile-games.product-asset', ['good' => $good->id]) : null])->values()->all();
     }
 
     private function rewardForScore(MobileGame $game, int $score): int

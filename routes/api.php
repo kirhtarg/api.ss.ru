@@ -1192,6 +1192,7 @@ Route::middleware(['cors', 'throttle:public'])->group(function () {
     // Игровой центр мобильного приложения
     Route::get('/public/games', [App\Http\Controllers\Api\Public\MobileGameController::class, 'index']);
     Route::get('/public/games/leaderboard/overall', [App\Http\Controllers\Api\Public\MobileGameController::class, 'overallLeaderboard']);
+    Route::get('/public/games/assets/products/{good}', [App\Http\Controllers\Api\Public\MobileGameController::class, 'productAsset'])->name('mobile-games.product-asset');
     Route::get('/public/games/{slug}', [App\Http\Controllers\Api\Public\MobileGameController::class, 'show']);
     Route::get('/public/games/{slug}/leaderboard', [App\Http\Controllers\Api\Public\MobileGameController::class, 'leaderboard']);
     Route::middleware('auth:sanctum')->group(function () {
