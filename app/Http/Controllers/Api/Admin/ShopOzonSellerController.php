@@ -34,7 +34,12 @@ class ShopOzonSellerController extends Controller
             'selection_tag_id' => 'nullable|exists:shop_tags,id', 'vat' => 'required|string|max:20', 'is_active' => 'boolean',
         ]);
         $data['client_id'] = trim($data['client_id']);
-        if (filled($data['api_key'] ?? null)) $data['api_key'] = trim($data['api_key'], " \t\n\r\0\x0B\xEF\xBB\xBF\"'");
+        $hasNewApiKey = filled($data['api_key'] ?? null);
+        if ($hasNewApiKey) {
+            $data['api_key'] = trim($data['api_key'], " \t\n\r\0\x0B\xEF\xBB\xBF\"'");
+            $data['last_error'] = null;
+            $data['last_connection_at'] = null;
+        }
         $account = ShopOzonAccount::query()->first() ?? new ShopOzonAccount;
         if (! filled($data['api_key'] ?? null)) unset($data['api_key']);
         if (! $account->exists && empty($data['api_key'])) return response()->json(['success' => false, 'message' => 'Укажите API-ключ Ozon.'], 422);
@@ -107,39 +112,51 @@ class ShopOzonSellerController extends Controller
 
     public function ozonCategories(Request $request)
     {
-        $language = $request->string('language', 'DEFAULT')->toString();
-        $key = "ozon:{$this->account()->id}:category-tree:{$language}";
-        if ($request->boolean('refresh')) Cache::forget($key);
-        $data = Cache::remember($key, now()->addHours(12), fn () => (new OzonSellerClient($this->account()))->post('/v1/description-category/tree', ['language' => $language]));
-        return response()->json(['success' => true, 'data' => data_get($data, 'result', $data)]);
+        try {
+            $language = $request->string('language', 'DEFAULT')->toString();
+            $key = "ozon:{$this->account()->id}:category-tree:{$language}";
+            if ($request->boolean('refresh')) Cache::forget($key);
+            $data = Cache::remember($key, now()->addHours(12), fn () => (new OzonSellerClient($this->account()))->post('/v1/description-category/tree', ['language' => $language]));
+            return response()->json(['success' => true, 'data' => data_get($data, 'result', $data)]);
+        } catch (\Throwable $e) {
+            return $this->ozonRequestError($e);
+        }
     }
 
     public function attributes(Request $request)
     {
-        $input = $request->validate(['description_category_id' => 'required|integer', 'type_id' => 'required|integer', 'language' => 'nullable|string']);
-        $key = "ozon:{$this->account()->id}:attributes:{$input['description_category_id']}:{$input['type_id']}";
-        $data = Cache::remember($key, now()->addHours(12), fn () => (new OzonSellerClient($this->account()))->post('/v1/description-category/attribute', [
-            'description_category_id' => (int) $input['description_category_id'], 'type_id' => (int) $input['type_id'], 'language' => $input['language'] ?? 'DEFAULT',
-        ]));
-        return response()->json(['success' => true, 'data' => data_get($data, 'result', $data)]);
+        try {
+            $input = $request->validate(['description_category_id' => 'required|integer', 'type_id' => 'required|integer', 'language' => 'nullable|string']);
+            $key = "ozon:{$this->account()->id}:attributes:{$input['description_category_id']}:{$input['type_id']}";
+            $data = Cache::remember($key, now()->addHours(12), fn () => (new OzonSellerClient($this->account()))->post('/v1/description-category/attribute', [
+                'description_category_id' => (int) $input['description_category_id'], 'type_id' => (int) $input['type_id'], 'language' => $input['language'] ?? 'DEFAULT',
+            ]));
+            return response()->json(['success' => true, 'data' => data_get($data, 'result', $data)]);
+        } catch (\Throwable $e) {
+            return $this->ozonRequestError($e);
+        }
     }
 
     public function attributeValues(Request $request)
     {
-        $input = $request->validate(['description_category_id' => 'required|integer', 'type_id' => 'required|integer', 'attribute_id' => 'required|integer', 'last_value_id' => 'nullable|integer', 'limit' => 'nullable|integer|min:1|max:5000']);
-        $data = (new OzonSellerClient($this->account()))->post('/v1/description-category/attribute/values', [
-            'description_category_id' => (int) $input['description_category_id'],
-            'type_id' => (int) $input['type_id'],
-            'attribute_id' => (int) $input['attribute_id'],
-            'language' => 'DEFAULT',
-            'last_value_id' => (int) ($input['last_value_id'] ?? 0),
-            'limit' => (int) ($input['limit'] ?? 1000),
-        ]);
+        try {
+            $input = $request->validate(['description_category_id' => 'required|integer', 'type_id' => 'required|integer', 'attribute_id' => 'required|integer', 'last_value_id' => 'nullable|integer', 'limit' => 'nullable|integer|min:1|max:5000']);
+            $data = (new OzonSellerClient($this->account()))->post('/v1/description-category/attribute/values', [
+                'description_category_id' => (int) $input['description_category_id'],
+                'type_id' => (int) $input['type_id'],
+                'attribute_id' => (int) $input['attribute_id'],
+                'language' => 'DEFAULT',
+                'last_value_id' => (int) ($input['last_value_id'] ?? 0),
+                'limit' => (int) ($input['limit'] ?? 1000),
+            ]);
 
-        return response()->json(['success' => true, 'data' => [
-            'items' => data_get($data, 'result', []),
-            'has_next' => (bool) data_get($data, 'has_next', false),
-        ]]);
+            return response()->json(['success' => true, 'data' => [
+                'items' => data_get($data, 'result', []),
+                'has_next' => (bool) data_get($data, 'has_next', false),
+            ]]);
+        } catch (\Throwable $e) {
+            return $this->ozonRequestError($e);
+        }
     }
 
     public function mappings()
@@ -345,5 +362,21 @@ class ShopOzonSellerController extends Controller
     private function account(): ShopOzonAccount
     {
         return ShopOzonAccount::query()->firstOrFail();
+    }
+
+    private function ozonRequestError(\Throwable $e)
+    {
+        $account = ShopOzonAccount::query()->first();
+        $account?->update(['last_error' => mb_substr($e->getMessage(), 0, 4000)]);
+        $invalidKey = str_contains(mb_strtolower($e->getMessage()), 'invalid api-key');
+
+        return response()->json([
+            'success' => false,
+            'message' => $invalidKey
+                ? 'Ozon отклонил сохранённый API-ключ. Повторно укажите ключ для текущего Client-Id, сохраните настройки и нажмите «Проверить подключение».'
+                : $e->getMessage(),
+            'error' => $e->getMessage(),
+            'code' => $invalidKey ? 'OZON_INVALID_API_KEY' : 'OZON_REQUEST_FAILED',
+        ], 422);
     }
 }
