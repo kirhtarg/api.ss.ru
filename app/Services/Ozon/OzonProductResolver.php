@@ -95,7 +95,7 @@ class OzonProductResolver
 
         if (empty($mapping?->variation_attribute_mappings)) {
             foreach ($rows as &$row) {
-                $row['row_errors'][] = 'Для объединения не сопоставлена ни одна ось вариаций.';
+                $row['row_errors'][] = 'Для объединения не сопоставлена ни одна характеристика вариации.';
             }
             unset($row);
             return $rows;

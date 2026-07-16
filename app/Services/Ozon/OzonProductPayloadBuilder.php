@@ -53,6 +53,7 @@ class OzonProductPayloadBuilder
             'mapping_id' => $mapping?->id,
             'variation_mode' => $mapping?->variation_mode ?? 'grouped',
             'variation_attributes' => $this->variationSummary($mapping, $variation),
+            'display_attributes' => $this->attributeSummary($mapping, $good, $variation),
             'computed_model' => $this->nameParser->modelForGood($good),
             'computed_type' => $this->nameParser->typeForGood($good),
         ];
@@ -228,6 +229,37 @@ class OzonProductPayloadBuilder
             'ozon_attribute_id' => (int) ($axis['ozon_attribute_id'] ?? 0),
             'ozon_attribute_name' => $axis['ozon_attribute_name'] ?? null,
         ])->all();
+    }
+
+    private function attributeSummary(?ShopOzonCategoryMapping $mapping, ShopGood $good, ?ShopGoodVariation $variation): array
+    {
+        $items = collect($mapping?->attribute_mappings ?? [])->map(function (array $item) use ($good, $variation) {
+            $value = $this->sourceValue($item, $good, $variation);
+            if ($value === null || $value === '') return null;
+
+            return [
+                'id' => (int) ($item['id'] ?? 0),
+                'name' => $item['name'] ?? 'Атрибут Ozon',
+                'value' => (string) $value,
+                'is_variation' => false,
+            ];
+        })->filter();
+
+        foreach ($mapping?->variation_attribute_mappings ?? [] as $item) {
+            $value = $this->resolver->variationAttributeValue($variation, (int) ($item['local_attribute_id'] ?? 0));
+            if ($value === '') continue;
+            $items->push([
+                'id' => (int) ($item['ozon_attribute_id'] ?? 0),
+                'name' => $item['ozon_attribute_name'] ?? $item['local_attribute_name'] ?? 'Характеристика вариации',
+                'value' => $value,
+                'is_variation' => true,
+            ]);
+        }
+
+        return $items->filter(fn (array $item) => $item['id'] > 0)
+            ->unique('id')
+            ->values()
+            ->all();
     }
 
     private function propertyValue(ShopGood $good, int $propertyId): string
