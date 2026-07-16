@@ -290,14 +290,13 @@ class AvatarUploadController extends Controller
             Log::info('Final file size: '.filesize($fullPath).' bytes');
 
             // Путь для базы данных (относительно фронтенда)
-            $dbPath = '/images/users/'.$filename;
+            $dbPath = '/images/users/'.$filename.'?v='.filemtime($fullPath);
 
             // Получаем информацию об оптимизированном файле
             $optimizedFileSize = filesize($fullPath);
             $compressionRatio = round((1 - $optimizedFileSize / $fileSize) * 100, 2);
 
-            // Аватар сохраняется только в папке images/users/user_{id}.jpg
-            // Поля avatar и avatar_url больше не используются в базе данных
+            $request->user()->forceFill(['avatar_url' => $dbPath])->save();
             Log::info('Avatar saved to: '.$fullPath);
 
             // Возвращаем успешный ответ
@@ -354,6 +353,7 @@ class AvatarUploadController extends Controller
 
             // Получаем пользователя из базы данных
             $user = $request->user();
+            $user->forceFill(['avatar_url' => null])->save();
 
             // Путь к папке на фронтенде (из FRONTEND_PATH в .env)
             $frontendPath = frontend_public_path('images/users').'/';
@@ -400,44 +400,7 @@ class AvatarUploadController extends Controller
      */
     public function deleteAvatar(Request $request): JsonResponse
     {
-        try {
-            $avatarPath = $request->input('avatar_path');
-
-            if (! $avatarPath) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Путь к аватару не указан',
-                ], 400);
-            }
-
-            // Убираем /storage/ префикс для работы с Storage
-            $filePath = str_replace('/storage/', '', $avatarPath);
-
-            // Проверяем существование файла
-            if (Storage::disk('public')->exists($filePath)) {
-                // Удаляем файл
-                Storage::disk('public')->delete($filePath);
-
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Аватар успешно удален',
-                ], 200);
-            } else {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Файл не найден',
-                ], 404);
-            }
-
-        } catch (\Exception $e) {
-            Log::error('Ошибка удаления аватара: '.$e->getMessage());
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка удаления файла',
-                'error' => config('app.debug') ? $e->getMessage() : 'Внутренняя ошибка сервера',
-            ], 500);
-        }
+        return $this->deleteAvatarByUserId($request);
     }
 
     /**

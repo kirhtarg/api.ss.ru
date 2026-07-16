@@ -224,9 +224,11 @@ class YandexAuthController extends Controller
                     'name' => $displayName,
                     'first_name' => $additionalData['first_name'],
                     'last_name' => $additionalData['last_name'],
-                    'avatar_url' => $avatarUrl,
                     'last_login_at' => now(),
                 ];
+                if (! $user->has_local_avatar) {
+                    $updateData['avatar_url'] = $avatarUrl;
+                }
 
                 // Обновляем email только если он пустой у пользователя
                 // Если email уже есть, не обновляем его (пользователь мог изменить его)
@@ -265,9 +267,11 @@ class YandexAuthController extends Controller
                         'yandex_id' => $yandexUser['id'],
                         'first_name' => $additionalData['first_name'],
                         'last_name' => $additionalData['last_name'],
-                        'avatar_url' => $avatarUrl,
                         'last_login_at' => now(),
                     ];
+                    if (! $existingUser->has_local_avatar) {
+                        $updateExisting['avatar_url'] = $avatarUrl;
+                    }
 
                     // Обновляем email только если он пустой у пользователя
                     // Если email уже есть, не обновляем его (пользователь мог изменить его)

@@ -82,9 +82,11 @@ class GoogleAuthController extends Controller
 
                 $updateData = [
                     'name' => $displayName,
-                    'avatar_url' => $googleUser->getAvatar(),
                     'last_login_at' => now(),
                 ];
+                if (! $user->has_local_avatar) {
+                    $updateData['avatar_url'] = $googleUser->getAvatar();
+                }
 
                 // Обновляем email только если он пустой у пользователя
                 // Если email уже есть, не обновляем его (пользователь мог изменить его)
@@ -110,9 +112,11 @@ class GoogleAuthController extends Controller
                     // Связываем существующего пользователя с Google
                     $updateExisting = [
                         'google_id' => $googleUser->getId(),
-                        'avatar_url' => $googleUser->getAvatar(),
                         'last_login_at' => now(),
                     ];
+                    if (! $existingUser->has_local_avatar) {
+                        $updateExisting['avatar_url'] = $googleUser->getAvatar();
+                    }
 
                     // Обновляем email только если он пустой у пользователя
                     // Если email уже есть, не обновляем его (пользователь мог изменить его)
