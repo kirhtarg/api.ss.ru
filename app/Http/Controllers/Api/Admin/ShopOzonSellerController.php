@@ -17,6 +17,7 @@ use App\Services\Ozon\OzonSellerClient;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Collection;
 
 class ShopOzonSellerController extends Controller
 {
@@ -263,15 +264,24 @@ class ShopOzonSellerController extends Controller
 
     public function preview(Request $request, OzonProductPayloadBuilder $builder, OzonProductResolver $resolver)
     {
-        $input = $request->validate(['good_ids' => 'nullable|array|max:50', 'good_ids.*' => 'integer']);
+        $input = $request->validate([
+            'good_ids' => 'nullable|array|max:50',
+            'good_ids.*' => 'integer',
+            'page' => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:10|max:50',
+        ]);
         $ids = array_values(array_unique(array_map('intval', $input['good_ids'] ?? []))) ?: null;
+        $page = $ids ? 1 : (int) ($input['page'] ?? 1);
+        $perPage = $ids ? max(10, count($ids)) : (int) ($input['per_page'] ?? 10);
         $account = $this->account();
         if (! $account->selection_tag_id) return response()->json(['success' => false, 'message' => 'Сначала выберите тег отбора Ozon в настройках.'], 422);
         $result = [];
-        $query = $resolver->query($account, $ids);
-        $eligibleGoods = (clone $query)->count();
-        $goods = $query->limit(50)->get();
         $mappings = $resolver->mappings($account);
+        $query = $resolver->query($account, $ids)->orderByDesc('shop_goods.id');
+        $eligibleGoods = (clone $query)->count();
+        $lastPage = max(1, (int) ceil($eligibleGoods / $perPage));
+        $page = min($page, $lastPage);
+        $goods = $query->forPage($page, $perPage)->get();
         foreach ($goods as $good) {
             $mapping = $resolver->mappingFor($good, $mappings);
             foreach ($resolver->rowsForGood($good, $mapping) as $row) {
@@ -292,7 +302,12 @@ class ShopOzonSellerController extends Controller
             'shown_goods' => $goods->count(),
             'offers' => count($result),
             'offers_with_errors' => collect($result)->filter(fn ($row) => ! empty($row['errors']))->count(),
-            'truncated' => $eligibleGoods > $goods->count(),
+            'current_page' => $page,
+            'last_page' => $lastPage,
+            'per_page' => $perPage,
+            'from' => $eligibleGoods ? (($page - 1) * $perPage) + 1 : null,
+            'to' => $eligibleGoods ? min($page * $perPage, $eligibleGoods) : null,
+            'selection_diagnostics' => $ids ? $this->previewSelectionDiagnostics($ids, $account, $mappings, $resolver) : [],
         ]]);
     }
 
@@ -426,5 +441,42 @@ class ShopOzonSellerController extends Controller
             $value = trim(substr($value, 1, -1));
         }
         return $value;
+    }
+
+    private function previewSelectionDiagnostics(array $ids, ShopOzonAccount $account, Collection $mappings, OzonProductResolver $resolver): array
+    {
+        $goods = ShopGood::query()
+            ->with(['tags:id,name', 'categories:id,name'])
+            ->whereIn('id', $ids)
+            ->get()
+            ->keyBy('id');
+        $selectionTag = ShopTag::query()->find($account->selection_tag_id, ['id', 'name']);
+
+        return collect($ids)->map(function (int $id) use ($goods, $selectionTag, $mappings, $resolver) {
+            $good = $goods->get($id);
+            if (! $good) {
+                return ['good_id' => $id, 'found' => false, 'eligible' => false, 'reasons' => ['Товар с таким ID не найден.']];
+            }
+
+            $hasTag = $good->tags->contains(fn ($tag) => (int) $tag->id === (int) $selectionTag?->id);
+            $mapping = $resolver->mappingFor($good, $mappings);
+            $reasons = [];
+            if (! $good->is_active) $reasons[] = 'Товар выключен.';
+            if (! $hasTag) $reasons[] = 'Нет сохранённого тега отбора «'.($selectionTag?->name ?? 'ID '.$selectionTag?->id).'».';
+            if (! $mapping) $reasons[] = 'Ни одна категория товара не входит в активный профиль Ozon.';
+
+            return [
+                'good_id' => $good->id,
+                'name' => $good->name,
+                'found' => true,
+                'is_active' => (bool) $good->is_active,
+                'eligible' => $reasons === [],
+                'expected_tag' => $selectionTag ? ['id' => $selectionTag->id, 'name' => $selectionTag->name] : null,
+                'tags' => $good->tags->map->only(['id', 'name'])->values()->all(),
+                'categories' => $good->categories->map->only(['id', 'name'])->values()->all(),
+                'matching_profile' => $mapping ? ['id' => $mapping->id, 'name' => $mapping->ozon_category_name] : null,
+                'reasons' => $reasons,
+            ];
+        })->values()->all();
     }
 }
