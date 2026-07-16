@@ -11,9 +11,11 @@ use App\Models\ShopOzonCategoryMapping;
 use App\Models\ShopOzonProductBinding;
 use App\Models\ShopOzonSyncRun;
 use App\Models\ShopTag;
+use App\Models\ShopVariationAttribute;
 use App\Services\Ozon\OzonProductPayloadBuilder;
 use App\Services\Ozon\OzonProductResolver;
 use App\Services\Ozon\OzonSellerClient;
+use App\Services\ProductNameParser;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -137,6 +139,52 @@ class ShopOzonSellerController extends Controller
         ]);
     }
 
+    public function localSourceValues(Request $request, ProductNameParser $nameParser)
+    {
+        $data = $request->validate([
+            'source' => 'required|in:brand,computed_type',
+            'category_ids' => 'nullable|array',
+            'category_ids.*' => 'integer|distinct|exists:shop_categories,id',
+        ]);
+        $account = $this->account();
+
+        if (! $account->selection_tag_id) {
+            return response()->json(['success' => true, 'data' => []]);
+        }
+
+        $query = ShopGood::query()
+            ->select(['id', 'name'])
+            ->with('brands:id,name')
+            ->where('is_active', true)
+            ->whereHas('tags', fn ($query) => $query->where('shop_tags.id', $account->selection_tag_id));
+
+        $categoryIds = collect($data['category_ids'] ?? [])->map(fn ($id) => (int) $id)->filter()->unique()->values();
+        if ($categoryIds->isNotEmpty()) {
+            $query->whereHas('categories', fn ($query) => $query->whereIn('shop_categories.id', $categoryIds));
+        }
+
+        $counts = [];
+        $query->chunkById(500, function ($goods) use (&$counts, $data, $nameParser) {
+            foreach ($goods as $good) {
+                $value = $data['source'] === 'brand'
+                    ? trim((string) $good->brands->first()?->name)
+                    : trim($nameParser->typeForGood($good));
+                if ($value !== '') {
+                    $counts[$value] = ($counts[$value] ?? 0) + 1;
+                }
+            }
+        });
+        uksort($counts, fn ($left, $right) => strnatcasecmp($left, $right));
+
+        $items = collect($counts)->map(fn ($count, $value) => [
+            'id' => (string) $value,
+            'value' => (string) $value,
+            'count' => (int) $count,
+        ])->values();
+
+        return response()->json(['success' => true, 'data' => $items]);
+    }
+
     public function ozonCategories(Request $request)
     {
         try {
@@ -190,6 +238,49 @@ class ShopOzonSellerController extends Controller
         }
     }
 
+    public function resolveAttributeValues(Request $request)
+    {
+        try {
+            $input = $request->validate([
+                'description_category_id' => 'required|integer',
+                'type_id' => 'required|integer',
+                'attribute_id' => 'required|integer',
+                'values' => 'required|array|max:200',
+                'values.*' => 'required|string|max:500',
+            ]);
+            $account = $this->account();
+            $client = new OzonSellerClient($account);
+            $matches = [];
+            $suggestions = [];
+
+            foreach (collect($input['values'])->map(fn ($value) => trim((string) $value))->filter()->unique() as $value) {
+                $cacheKey = 'ozon:'.$account->id.':attribute-value-search:'
+                    .$input['description_category_id'].':'.$input['type_id'].':'.$input['attribute_id'].':'.hash('sha256', $this->normalizeDictionaryValue($value));
+                $result = Cache::remember($cacheKey, now()->addHours(12), fn () => $client->post('/v1/description-category/attribute/values/search', [
+                    'description_category_id' => (int) $input['description_category_id'],
+                    'type_id' => (int) $input['type_id'],
+                    'attribute_id' => (int) $input['attribute_id'],
+                    'value' => $value,
+                    'limit' => 20,
+                ]));
+                $items = collect(data_get($result, 'result', $result))->filter(fn ($item) => filled(data_get($item, 'id')) && filled(data_get($item, 'value')))->values();
+                $exact = $items->first(fn ($item) => $this->normalizeDictionaryValue((string) data_get($item, 'value')) === $this->normalizeDictionaryValue($value));
+                if ($exact) {
+                    $matches[$value] = ['id' => (int) data_get($exact, 'id'), 'value' => (string) data_get($exact, 'value')];
+                } elseif ($items->isNotEmpty()) {
+                    $suggestions[$value] = $items->take(10)->map(fn ($item) => [
+                        'id' => (int) data_get($item, 'id'),
+                        'value' => (string) data_get($item, 'value'),
+                    ])->all();
+                }
+            }
+
+            return response()->json(['success' => true, 'data' => ['matches' => $matches, 'suggestions' => $suggestions]]);
+        } catch (\Throwable $e) {
+            return $this->ozonRequestError($e);
+        }
+    }
+
     public function mappings()
     {
         $account = ShopOzonAccount::query()->first();
@@ -233,8 +324,17 @@ class ShopOzonSellerController extends Controller
             'variation_mode' => 'required|in:grouped,independent,single', 'group_attribute_id' => 'nullable|integer',
             'attribute_mappings' => 'nullable|array', 'variation_attribute_mappings' => 'nullable|array|max:20',
             'variation_attribute_mappings.*.local_attribute_id' => 'required|integer|exists:shop_variation_attributes,id',
+            'variation_attribute_mappings.*.local_attribute_name' => 'nullable|string|max:255',
             'variation_attribute_mappings.*.ozon_attribute_id' => 'required|integer',
-            'variation_attribute_mappings.*.dictionary_map' => 'nullable|array', 'is_active' => 'boolean',
+            'variation_attribute_mappings.*.ozon_attribute_name' => 'nullable|string|max:500',
+            'variation_attribute_mappings.*.uses_dictionary' => 'nullable|boolean',
+            'variation_attribute_mappings.*.dictionary_map' => 'nullable|array',
+            'dimension_settings' => 'nullable|array',
+            'dimension_settings.depth_multiplier' => 'nullable|numeric|min:0.000001|max:1000000',
+            'dimension_settings.width_multiplier' => 'nullable|numeric|min:0.000001|max:1000000',
+            'dimension_settings.height_multiplier' => 'nullable|numeric|min:0.000001|max:1000000',
+            'dimension_settings.weight_multiplier' => 'nullable|numeric|min:0.000001|max:1000000',
+            'is_active' => 'boolean',
         ]);
         $account = $this->account();
         $conflict = ShopOzonCategoryMapping::query()->where('account_id', $account->id)
@@ -244,6 +344,15 @@ class ShopOzonSellerController extends Controller
         if ($conflict) {
             return response()->json(['success' => false, 'message' => 'Одна из выбранных категорий уже используется в другом профиле Ozon.'], 422);
         }
+
+        $variationAttributeNames = ShopVariationAttribute::query()
+            ->whereIn('id', collect($data['variation_attribute_mappings'] ?? [])->pluck('local_attribute_id'))
+            ->pluck('name', 'id');
+        $data['variation_attribute_mappings'] = collect($data['variation_attribute_mappings'] ?? [])->map(function (array $item) use ($variationAttributeNames) {
+            $item['local_attribute_name'] = (string) ($variationAttributeNames[(int) $item['local_attribute_id']] ?? $item['local_attribute_name'] ?? '');
+            $item['uses_dictionary'] = (bool) ($item['uses_dictionary'] ?? false);
+            return $item;
+        })->values()->all();
 
         $payload = array_merge($data, [
             'account_id' => $account->id,
@@ -288,6 +397,7 @@ class ShopOzonSellerController extends Controller
                 $built = $builder->build($good, $row['variation'], $account, $mapping);
                 $result[] = array_merge([
                     'good_id' => $good->id,
+                    'good_name' => $good->name,
                     'variation_id' => $row['variation']?->id,
                     'sku' => $row['variation']?->sku ?: $good->sku,
                     'stock' => (int) ($row['variation']?->stock_quantity ?? $good->stock_quantity),
@@ -330,7 +440,11 @@ class ShopOzonSellerController extends Controller
         ]);
         $query = ShopOzonProductBinding::query()
             ->where('account_id', $this->account()->id)
-            ->with(['good:id,name,sku,is_active', 'variation:id,good_id,name,sku,is_active,price,sale_price,stock_quantity'])
+            ->with([
+                'good:id,name,sku,is_active',
+                'variation:id,good_id,name,sku,is_active,price,sale_price,stock_quantity',
+                'variation.attributeValues.attribute:id,name',
+            ])
             ->latest('id');
         if (filled($input['status'] ?? null)) $query->where('status', $input['status']);
         if (filled($input['search'] ?? null)) {
@@ -441,6 +555,12 @@ class ShopOzonSellerController extends Controller
             $value = trim(substr($value, 1, -1));
         }
         return $value;
+    }
+
+    private function normalizeDictionaryValue(string $value): string
+    {
+        $value = str_replace('ё', 'е', mb_strtolower(trim($value)));
+        return trim((string) preg_replace('/[^\p{L}\p{N}]+/u', ' ', $value));
     }
 
     private function previewSelectionDiagnostics(array $ids, ShopOzonAccount $account, Collection $mappings, OzonProductResolver $resolver): array

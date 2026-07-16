@@ -18,12 +18,14 @@ class ShopOzonCategoryMapping extends Model
         'group_attribute_id',
         'attribute_mappings',
         'variation_attribute_mappings',
+        'dimension_settings',
         'is_active',
     ];
     protected $casts = [
         'category_ids' => 'array',
         'attribute_mappings' => 'array',
         'variation_attribute_mappings' => 'array',
+        'dimension_settings' => 'array',
         'is_active' => 'boolean',
     ];
 

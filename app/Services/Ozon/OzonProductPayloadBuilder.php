@@ -20,12 +20,12 @@ class OzonProductPayloadBuilder
         $mapping ??= $this->resolver->mappingFor($good, $this->resolver->mappings($account));
         $offerId = $this->offerId($good, $variation, $account);
         $price = $this->price($good, $variation);
-        $dimensions = $this->dimensions($good, $variation);
+        $dimensions = $this->dimensions($good, $variation, $mapping);
         $images = $this->images($good, $variation, $account);
 
         $payload = [
             'offer_id' => $offerId,
-            'name' => trim($good->name.($variation?->name ? ' '.$variation->name : '')),
+            'name' => trim((string) $good->name),
             'description' => (string) ($good->description ?: $good->short_description ?: $good->name),
             'description_category_id' => $mapping?->description_category_id,
             'type_id' => $mapping?->type_id,
@@ -108,17 +108,18 @@ class OzonProductPayloadBuilder
         return number_format($value, 2, '.', '');
     }
 
-    private function dimensions(ShopGood $good, ?ShopGoodVariation $variation): array
+    private function dimensions(ShopGood $good, ?ShopGoodVariation $variation, ?ShopOzonCategoryMapping $mapping): array
     {
         $length = (float) ($variation?->shipping_length ?: $variation?->length ?: $good->shipping_length ?: $good->depth);
         $width = (float) ($variation?->shipping_width ?: $variation?->width ?: $good->shipping_width ?: $good->width);
         $height = (float) ($variation?->shipping_height ?: $variation?->height ?: $good->shipping_height ?: $good->height);
         $weight = (float) ($variation?->shipping_weight ?: $variation?->weight ?: $good->shipping_weight ?: $good->weight);
+        $settings = $mapping?->dimension_settings ?? [];
         return [
-            'depth' => (int) round($length * 10),
-            'width' => (int) round($width * 10),
-            'height' => (int) round($height * 10),
-            'weight' => (int) round($weight * 1000),
+            'depth' => (int) round($length * (float) ($settings['depth_multiplier'] ?? 10)),
+            'width' => (int) round($width * (float) ($settings['width_multiplier'] ?? 10)),
+            'height' => (int) round($height * (float) ($settings['height_multiplier'] ?? 10)),
+            'weight' => (int) round($weight * (float) ($settings['weight_multiplier'] ?? 1000)),
         ];
     }
 
@@ -222,13 +223,20 @@ class OzonProductPayloadBuilder
     private function variationSummary(?ShopOzonCategoryMapping $mapping, ?ShopGoodVariation $variation): array
     {
         if (! $variation) return [];
-        return collect($mapping?->variation_attribute_mappings ?? [])->map(fn (array $axis) => [
-            'local_attribute_id' => (int) ($axis['local_attribute_id'] ?? 0),
-            'name' => $axis['local_attribute_name'] ?? 'Характеристика',
-            'value' => $this->resolver->variationAttributeValue($variation, (int) ($axis['local_attribute_id'] ?? 0)),
-            'ozon_attribute_id' => (int) ($axis['ozon_attribute_id'] ?? 0),
-            'ozon_attribute_name' => $axis['ozon_attribute_name'] ?? null,
-        ])->all();
+        $axes = collect($mapping?->variation_attribute_mappings ?? [])->keyBy(fn (array $axis) => (int) ($axis['local_attribute_id'] ?? 0));
+
+        return $variation->attributeValues->map(function ($value) use ($variation, $axes) {
+            $localAttributeId = (int) $value->attribute_id;
+            $axis = $axes->get($localAttributeId, []);
+            return [
+                'local_attribute_id' => $localAttributeId,
+                'name' => $this->variationAttributeName($variation, $localAttributeId, $axis),
+                'value' => trim((string) $value->value),
+                'ozon_attribute_id' => (int) ($axis['ozon_attribute_id'] ?? 0),
+                'ozon_attribute_name' => $axis['ozon_attribute_name'] ?? null,
+                'is_mapped' => $axes->has($localAttributeId),
+            ];
+        })->filter(fn (array $item) => $item['value'] !== '')->values()->all();
     }
 
     private function attributeSummary(?ShopOzonCategoryMapping $mapping, ShopGood $good, ?ShopGoodVariation $variation): array
@@ -250,7 +258,7 @@ class OzonProductPayloadBuilder
             if ($value === '') continue;
             $items->push([
                 'id' => (int) ($item['ozon_attribute_id'] ?? 0),
-                'name' => $item['ozon_attribute_name'] ?? $item['local_attribute_name'] ?? 'Характеристика вариации',
+                'name' => $item['ozon_attribute_name'] ?? $this->variationAttributeName($variation, (int) ($item['local_attribute_id'] ?? 0), $item),
                 'value' => $value,
                 'is_variation' => true,
             ]);
@@ -260,6 +268,15 @@ class OzonProductPayloadBuilder
             ->unique('id')
             ->values()
             ->all();
+    }
+
+    private function variationAttributeName(ShopGoodVariation $variation, int $attributeId, array $mapping): string
+    {
+        $storedName = trim((string) ($mapping['local_attribute_name'] ?? ''));
+        if ($storedName !== '') return $storedName;
+
+        $value = $variation->attributeValues->first(fn ($item) => (int) $item->attribute_id === $attributeId);
+        return trim((string) ($value?->attribute?->name ?? '')) ?: 'Характеристика вариации';
     }
 
     private function propertyValue(ShopGood $good, int $propertyId): string
@@ -275,7 +292,8 @@ class OzonProductPayloadBuilder
 
     private function sourceValue(array $item, ShopGood $good, ?ShopGoodVariation $variation): mixed
     {
-        return match ($item['source'] ?? '') {
+        $source = $item['source'] ?? '';
+        $value = match ($source) {
             'static' => $item['value'] ?? '',
             'variation' => data_get($variation, $item['source_key'] ?? ''),
             'property' => $this->propertyValue($good, (int) ($item['source_key'] ?? 0)),
@@ -289,5 +307,11 @@ class OzonProductPayloadBuilder
             'dimension_depth' => $variation?->shipping_length ?: $variation?->length ?: $good->shipping_length ?: $good->depth,
             default => data_get($good, $item['source_key'] ?? ''),
         };
+
+        if (str_starts_with($source, 'dimension_') && is_numeric($value)) {
+            return (float) $value * (float) ($item['multiplier'] ?? 1);
+        }
+
+        return $value;
     }
 }

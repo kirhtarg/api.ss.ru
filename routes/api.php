@@ -2478,9 +2478,11 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('/variation-attributes', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'variationAttributes']);
                 Route::get('/local-properties', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localProperties']);
                 Route::get('/local-properties/{property}/values', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localPropertyValues']);
+                Route::post('/local-source-values', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localSourceValues']);
                 Route::get('/categories', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'ozonCategories']);
                 Route::post('/attributes', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'attributes']);
                 Route::post('/attribute-values', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'attributeValues']);
+                Route::post('/attribute-values/resolve', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'resolveAttributeValues']);
                 Route::get('/mappings', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'mappings']);
                 Route::post('/mappings', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'saveMapping']);
                 Route::delete('/mappings/{mapping}', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'deleteMapping']);
