@@ -90,7 +90,7 @@ class OzonProductPayloadBuilderTest extends TestCase
         $this->assertSame('Cadence Camber', data_get(collect($built['payload']['attributes'])->firstWhere('id', 9048), 'values.0.value'));
     }
 
-    public function test_dimension_sources_prefer_variation_and_fall_back_to_parent_good(): void
+    public function test_dimension_sources_always_use_parent_good_for_variations(): void
     {
         $good = new ShopGood([
             'name' => 'Товар с габаритами',
@@ -140,14 +140,14 @@ class OzonProductPayloadBuilderTest extends TestCase
             ->build($good, $variation, new ShopOzonAccount(['image_base_url' => 'https://example.test', 'vat' => '0']), $mapping);
         $attributes = collect($built['payload']['attributes']);
 
-        $this->assertSame('3250', data_get($attributes->firstWhere('id', 101), 'values.0.value'));
-        $this->assertSame('360', data_get($attributes->firstWhere('id', 102), 'values.0.value'));
-        $this->assertSame('50', data_get($attributes->firstWhere('id', 103), 'values.0.value'));
+        $this->assertSame('2500', data_get($attributes->firstWhere('id', 101), 'values.0.value'));
+        $this->assertSame('350', data_get($attributes->firstWhere('id', 102), 'values.0.value'));
+        $this->assertSame('45', data_get($attributes->firstWhere('id', 103), 'values.0.value'));
         $this->assertSame('25', data_get($attributes->firstWhere('id', 104), 'values.0.value'));
-        $this->assertSame('55', data_get($attributes->firstWhere('id', 105), 'values.0.value'));
-        $this->assertSame(110, data_get($built, 'payload.depth'));
-        $this->assertSame(108, data_get($built, 'payload.width'));
+        $this->assertSame('45', data_get($attributes->firstWhere('id', 105), 'values.0.value'));
+        $this->assertSame(90, data_get($built, 'payload.depth'));
+        $this->assertSame(105, data_get($built, 'payload.width'));
         $this->assertSame(100, data_get($built, 'payload.height'));
-        $this->assertSame(16, data_get($built, 'payload.weight'));
+        $this->assertSame(13, data_get($built, 'payload.weight'));
     }
 }

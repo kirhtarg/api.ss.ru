@@ -111,10 +111,11 @@ class OzonProductPayloadBuilder
 
     private function dimensions(ShopGood $good, ?ShopGoodVariation $variation, ?ShopOzonCategoryMapping $mapping): array
     {
-        $length = (float) ($variation?->shipping_length ?: $variation?->length ?: $good->shipping_length ?: $good->depth);
-        $width = (float) ($variation?->shipping_width ?: $variation?->width ?: $good->shipping_width ?: $good->width);
-        $height = (float) ($variation?->shipping_height ?: $variation?->height ?: $good->shipping_height ?: $good->height);
-        $weight = (float) ($variation?->shipping_weight ?: $variation?->weight ?: $good->shipping_weight ?: $good->weight);
+        // Ozon offers inherit package dimensions from the parent product.
+        $length = $this->firstPositive($good->shipping_length, $good->depth);
+        $width = $this->firstPositive($good->shipping_width, $good->width);
+        $height = $this->firstPositive($good->shipping_height, $good->height);
+        $weight = $this->firstPositive($good->shipping_weight, $good->weight);
         $settings = $mapping?->dimension_settings ?? [];
         return [
             'depth' => (int) round($length * (float) ($settings['depth_multiplier'] ?? 10)),
@@ -301,11 +302,10 @@ class OzonProductPayloadBuilder
             'brand' => $good->brands->first()?->name ?? '',
             'computed_model' => $this->nameParser->modelForGood($good),
             'computed_type' => $this->nameParser->typeForGood($good),
-            'dimension_weight' => $variation?->shipping_weight ?: $variation?->weight ?: $good->shipping_weight ?: $good->weight,
-            'dimension_width' => $variation?->shipping_width ?: $variation?->width ?: $good->shipping_width ?: $good->width,
-            'dimension_length' => $variation?->length ?: $good->length,
-            'dimension_height' => $variation?->shipping_height ?: $variation?->height ?: $good->shipping_height ?: $good->height,
-            'dimension_depth' => $variation?->shipping_length ?: $variation?->length ?: $good->shipping_length ?: $good->depth,
+            'dimension_weight' => $this->firstPositive($good->shipping_weight, $good->weight),
+            'dimension_width' => $this->firstPositive($good->shipping_width, $good->width),
+            'dimension_length', 'dimension_depth' => $this->firstPositive($good->shipping_length, $good->depth),
+            'dimension_height' => $this->firstPositive($good->shipping_height, $good->height),
             default => data_get($good, $item['source_key'] ?? ''),
         };
 
@@ -314,6 +314,15 @@ class OzonProductPayloadBuilder
         }
 
         return is_string($value) ? $this->decodedText($value) : $value;
+    }
+
+    private function firstPositive(mixed ...$values): float
+    {
+        foreach ($values as $value) {
+            if (is_numeric($value) && (float) $value > 0) return (float) $value;
+        }
+
+        return 0.0;
     }
 
     private function decodedText(mixed $value): string
