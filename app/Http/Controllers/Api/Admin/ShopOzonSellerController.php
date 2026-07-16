@@ -29,6 +29,8 @@ class ShopOzonSellerController extends Controller
             'api_url' => 'required|url|max:500', 'warehouse_id' => 'nullable|string|max:255', 'image_base_url' => 'required|url|max:500',
             'vat' => 'required|string|max:20', 'is_active' => 'boolean',
         ]);
+        $data['client_id'] = trim($data['client_id']);
+        if (filled($data['api_key'] ?? null)) $data['api_key'] = trim($data['api_key'], " \t\n\r\0\x0B\xEF\xBB\xBF\"'");
         $account = ShopOzonAccount::query()->first() ?? new ShopOzonAccount;
         if (! filled($data['api_key'] ?? null)) unset($data['api_key']);
         if (! $account->exists && empty($data['api_key'])) return response()->json(['success' => false, 'message' => 'Укажите API-ключ Ozon.'], 422);
@@ -45,7 +47,17 @@ class ShopOzonSellerController extends Controller
             return response()->json(['success' => true, 'message' => 'Подключение к Ozon установлено.', 'data' => $result]);
         } catch (\Throwable $e) {
             $account->update(['last_error' => $e->getMessage()]);
-            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+            $apiKey = trim((string) $account->api_key);
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'diagnostics' => [
+                    'client_id' => trim((string) $account->client_id),
+                    'api_url' => rtrim((string) $account->api_url, '/'),
+                    'api_key_length' => strlen($apiKey),
+                    'api_key_fingerprint' => $apiKey !== '' ? substr(hash('sha256', $apiKey), 0, 12) : null,
+                ],
+            ], 422);
         }
     }
 

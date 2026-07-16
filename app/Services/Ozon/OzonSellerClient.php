@@ -25,9 +25,12 @@ class OzonSellerClient
 
     private function request(): PendingRequest
     {
+        $clientId = $this->normalizeCredential((string) $this->account->client_id);
+        $apiKey = $this->normalizeCredential((string) $this->account->api_key);
+
         return Http::acceptJson()
             ->asJson()
-            ->withHeaders(['Client-Id' => $this->account->client_id, 'Api-Key' => $this->account->api_key])
+            ->withHeaders(['Client-Id' => $clientId, 'Api-Key' => $apiKey])
             ->connectTimeout(10)
             ->timeout(45)
             ->retry(3, 750, function ($exception) {
@@ -36,6 +39,19 @@ class OzonSellerClient
                 $status = $exception->response->status();
                 return $status === 429 || $status >= 500;
             }, throw: false);
+    }
+
+    private function normalizeCredential(string $value): string
+    {
+        $value = trim($value, " \t\n\r\0\x0B\xEF\xBB\xBF");
+        if (strlen($value) >= 2) {
+            $first = $value[0];
+            $last = $value[strlen($value) - 1];
+            if (($first === '"' && $last === '"') || ($first === "'" && $last === "'")) {
+                $value = trim(substr($value, 1, -1));
+            }
+        }
+        return $value;
     }
 
     private function url(string $path): string

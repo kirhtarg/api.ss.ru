@@ -14,8 +14,8 @@ class OzonSellerClientTest extends TestCase
     {
         Http::fake(['https://api-seller.ozon.ru/*' => Http::response(['result' => []])]);
         $account = new ShopOzonAccount([
-            'client_id' => '12345',
-            'api_key' => 'secret',
+            'client_id' => ' 12345 ',
+            'api_key' => "\n\"secret\"\r\n",
             'api_url' => 'https://api-seller.ozon.ru',
         ]);
 
