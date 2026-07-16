@@ -135,6 +135,85 @@ class OzonProductPayloadBuilderTest extends TestCase
         $this->assertFalse(collect($built['errors'])->contains(fn ($error) => str_contains($error, 'Author')));
     }
 
+    public function test_required_static_attributes_accept_text_and_dictionary_values(): void
+    {
+        $good = new ShopGood(['name' => 'Товар', 'price' => 10000, 'depth' => 10, 'width' => 20, 'height' => 30, 'weight' => 1]);
+        $good->id = 82;
+        $good->setRelation('images', new Collection);
+        $good->setRelation('brands', new Collection);
+
+        $mapping = new ShopOzonCategoryMapping([
+            'description_category_id' => 1,
+            'type_id' => 2,
+            'attribute_mappings' => [
+                ['id' => 7001, 'name' => 'Нужен код маркировки', 'type' => 'Boolean', 'required' => true, 'source' => 'static', 'value' => 'Нет'],
+                ['id' => 7002, 'name' => 'ТН ВЭД коды ЕАЭС', 'required' => true, 'source' => 'static', 'value' => '', 'dictionary_value_id' => 123456],
+            ],
+        ]);
+
+        $built = (new OzonProductPayloadBuilder(new OzonProductResolver, new ProductNameParser))
+            ->build($good, null, new ShopOzonAccount(['image_base_url' => 'https://example.test', 'vat' => '0']), $mapping);
+        $attributes = collect($built['payload']['attributes']);
+
+        $this->assertSame('false', data_get($attributes->firstWhere('id', 7001), 'values.0.value'));
+        $this->assertSame(123456, data_get($attributes->firstWhere('id', 7002), 'values.0.dictionary_value_id'));
+        $this->assertFalse(collect($built['errors'])->contains(fn ($error) => str_contains($error, 'Нужен код маркировки')));
+        $this->assertFalse(collect($built['errors'])->contains(fn ($error) => str_contains($error, 'ТН ВЭД')));
+    }
+
+    public function test_prices_and_stocks_use_store_priority_and_remote_availability_formula(): void
+    {
+        $good = new ShopGood([
+            'name' => 'Товар', 'price' => 10000, 'sale_price' => 9000,
+            'demping_price' => 8000, 'show_demping' => true,
+            'stock_quantity' => 3, 'remote_stock_quantity' => '>10', 'fast_remote_stock_quantity' => '0',
+            'depth' => 10, 'width' => 20, 'height' => 30, 'weight' => 1,
+        ]);
+        $good->id = 83;
+        $good->setRelation('images', new Collection);
+        $good->setRelation('brands', new Collection);
+        $account = new ShopOzonAccount(['image_base_url' => 'https://example.test', 'vat' => '0', 'warehouse_id' => '100']);
+        $mapping = new ShopOzonCategoryMapping(['description_category_id' => 1, 'type_id' => 2]);
+        $builder = new OzonProductPayloadBuilder(new OzonProductResolver, new ProductNameParser);
+
+        $built = $builder->build($good, null, $account, $mapping);
+
+        $this->assertSame('8000.00', data_get($built, 'payload.price'));
+        $this->assertSame('10000.00', data_get($built, 'payload.old_price'));
+        $this->assertSame('dumping', data_get($built, 'price_summary.source'));
+        $this->assertSame(13, data_get($built, 'stock'));
+        $this->assertSame(10, data_get($built, 'stock_summary.remote_bonus'));
+        $this->assertSame(0, data_get($built, 'stock_summary.fast_remote_bonus'));
+        $this->assertSame(13, data_get($builder->stock($good, null, $account), 'stock'));
+        $this->assertSame('8000.00', data_get($builder->pricePayload($good, null, $account), 'price'));
+
+        $good->show_demping = false;
+        $good->remote_stock_quantity = '';
+        $good->fast_remote_stock_quantity = '5';
+        $built = $builder->build($good, null, $account, $mapping);
+
+        $this->assertSame('9000.00', data_get($built, 'payload.price'));
+        $this->assertSame('sale', data_get($built, 'price_summary.source'));
+        $this->assertSame(13, data_get($built, 'stock'));
+        $this->assertSame(0, data_get($built, 'stock_summary.remote_bonus'));
+        $this->assertSame(10, data_get($built, 'stock_summary.fast_remote_bonus'));
+
+        $variation = new ShopGoodVariation([
+            'price' => 5000, 'sale_price' => 4500, 'demping_price' => 4000, 'show_demping' => true,
+            'stock_quantity' => 2, 'remote_stock_quantity' => '0', 'fast_remote_stock_quantity' => '>10',
+        ]);
+        $variation->id = 84;
+        $variation->setRelation('images', new Collection);
+        $variation->setRelation('attributeValues', new Collection);
+        $built = $builder->build($good, $variation, $account, $mapping);
+
+        $this->assertSame('4000.00', data_get($built, 'payload.price'));
+        $this->assertSame('5000.00', data_get($built, 'payload.old_price'));
+        $this->assertSame(12, data_get($built, 'stock'));
+        $this->assertSame(0, data_get($built, 'stock_summary.remote_bonus'));
+        $this->assertSame(10, data_get($built, 'stock_summary.fast_remote_bonus'));
+    }
+
     public function test_dimension_sources_always_use_parent_good_for_variations(): void
     {
         $good = new ShopGood([
@@ -167,8 +246,8 @@ class OzonProductPayloadBuilderTest extends TestCase
             'description_category_id' => 1,
             'type_id' => 2,
             'attribute_mappings' => [
-                ['id' => 101, 'name' => 'Вес в собранном состоянии, кг', 'source' => 'dimension_weight', 'multiplier' => 1000],
-                ['id' => 106, 'name' => 'Вес товара, г', 'source' => 'dimension_weight', 'multiplier' => 1],
+                ['id' => 101, 'name' => 'Вес в собранном состоянии, кг', 'source' => 'dimension_weight', 'multiplier' => 2],
+                ['id' => 106, 'name' => 'Вес товара, г', 'source' => 'dimension_weight', 'multiplier' => 1000],
                 ['id' => 102, 'source' => 'dimension_width', 'multiplier' => 10],
                 ['id' => 103, 'source' => 'dimension_length'],
                 ['id' => 104, 'source' => 'dimension_height'],
@@ -186,7 +265,7 @@ class OzonProductPayloadBuilderTest extends TestCase
             ->build($good, $variation, new ShopOzonAccount(['image_base_url' => 'https://example.test', 'vat' => '0']), $mapping);
         $attributes = collect($built['payload']['attributes']);
 
-        $this->assertSame('2.5', data_get($attributes->firstWhere('id', 101), 'values.0.value'));
+        $this->assertSame('5', data_get($attributes->firstWhere('id', 101), 'values.0.value'));
         $this->assertSame('2500', data_get($attributes->firstWhere('id', 106), 'values.0.value'));
         $this->assertSame('350', data_get($attributes->firstWhere('id', 102), 'values.0.value'));
         $this->assertSame('45', data_get($attributes->firstWhere('id', 103), 'values.0.value'));

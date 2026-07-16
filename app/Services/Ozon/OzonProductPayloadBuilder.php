@@ -19,7 +19,9 @@ class OzonProductPayloadBuilder
     {
         $mapping ??= $this->resolver->mappingFor($good, $this->resolver->mappings($account));
         $offerId = $this->offerId($good, $variation, $account);
-        $price = $this->price($good, $variation);
+        $priceSummary = $this->priceSummary($good, $variation);
+        $stockSummary = $this->stockSummary($good, $variation);
+        $price = $priceSummary['final'];
         $dimensions = $this->dimensions($good, $mapping);
         $media = $this->media($good, $variation, $account);
 
@@ -30,7 +32,7 @@ class OzonProductPayloadBuilder
             'description_category_id' => $mapping?->description_category_id,
             'type_id' => $mapping?->type_id,
             'price' => $this->money($price),
-            'old_price' => $this->oldPrice($good, $variation, $price),
+            'old_price' => $priceSummary['old_price'],
             'currency_code' => 'RUB',
             'vat' => (string) $account->vat,
             'barcode' => '',
@@ -51,6 +53,9 @@ class OzonProductPayloadBuilder
             'brand_name' => $this->decodedText($good->brands->first()?->name),
             'source_dimensions' => $this->sourceDimensions($good),
             'media_summary' => $media['summary'],
+            'price_summary' => $priceSummary,
+            'stock_summary' => $stockSummary,
+            'stock' => $stockSummary['total'],
             'payload' => $payload,
             'errors' => $this->validate($payload, $mapping, $good, $variation),
             'mapping_id' => $mapping?->id,
@@ -64,21 +69,23 @@ class OzonProductPayloadBuilder
 
     public function stock(ShopGood $good, ?ShopGoodVariation $variation, ShopOzonAccount $account): array
     {
+        $summary = $this->stockSummary($good, $variation);
+
         return [
             'offer_id' => $this->offerId($good, $variation, $account),
-            'stock' => max(0, (int) ($variation?->stock_quantity ?? $good->stock_quantity)),
+            'stock' => $summary['total'],
             'warehouse_id' => (string) $account->warehouse_id,
         ];
     }
 
     public function pricePayload(ShopGood $good, ?ShopGoodVariation $variation, ShopOzonAccount $account): array
     {
-        $price = $this->price($good, $variation);
+        $summary = $this->priceSummary($good, $variation);
         return [
             'offer_id' => $this->offerId($good, $variation, $account),
             'currency_code' => 'RUB',
-            'price' => $this->money($price),
-            'old_price' => $this->oldPrice($good, $variation, $price),
+            'price' => $this->money($summary['final']),
+            'old_price' => $summary['old_price'],
             'auto_action_enabled' => 'UNKNOWN',
         ];
     }
@@ -95,15 +102,67 @@ class OzonProductPayloadBuilder
         return (string) ($binding?->offer_id ?: ($variation ? "g_{$good->id}_v_{$variation->id}" : "g_{$good->id}"));
     }
 
-    private function price(ShopGood $good, ?ShopGoodVariation $variation): float
+    private function priceSummary(ShopGood $good, ?ShopGoodVariation $variation): array
     {
-        return (float) ($variation?->final_price ?? $good->final_price);
+        $item = $variation ?: $good;
+        $base = max(0, (float) $item->price);
+        $sale = max(0, (float) $item->sale_price);
+        $dumping = max(0, (float) $item->demping_price);
+        $dumpingActive = (bool) $item->show_demping && $dumping > 0;
+
+        if ($dumpingActive) {
+            $final = $dumping;
+            $source = 'dumping';
+        } elseif ($sale > 0 && $sale < $base) {
+            $final = $sale;
+            $source = 'sale';
+        } else {
+            $final = $base;
+            $source = 'base';
+        }
+
+        return [
+            'base' => $base,
+            'sale' => $sale > 0 ? $sale : null,
+            'dumping' => $dumping > 0 ? $dumping : null,
+            'dumping_active' => $dumpingActive,
+            'source' => $source,
+            'final' => $final,
+            'old_price' => $base > $final ? $this->money($base) : '0',
+        ];
     }
 
-    private function oldPrice(ShopGood $good, ?ShopGoodVariation $variation, float $price): string
+    private function stockSummary(ShopGood $good, ?ShopGoodVariation $variation): array
     {
-        $base = (float) ($variation?->price ?? $good->price);
-        return $base > $price ? $this->money($base) : '0';
+        $item = $variation ?: $good;
+        $local = max(0, (int) $item->stock_quantity);
+        $remoteAvailable = $this->hasRemoteStock($item->remote_stock_quantity);
+        $fastRemoteAvailable = $this->hasRemoteStock($item->fast_remote_stock_quantity);
+        $remoteBonus = $remoteAvailable ? 10 : 0;
+        $fastRemoteBonus = $fastRemoteAvailable ? 10 : 0;
+
+        return [
+            'local' => $local,
+            'remote_raw' => $item->remote_stock_quantity,
+            'remote_available' => $remoteAvailable,
+            'remote_bonus' => $remoteBonus,
+            'fast_remote_raw' => $item->fast_remote_stock_quantity,
+            'fast_remote_available' => $fastRemoteAvailable,
+            'fast_remote_bonus' => $fastRemoteBonus,
+            'total' => $local + $remoteBonus + $fastRemoteBonus,
+        ];
+    }
+
+    private function hasRemoteStock(mixed $value): bool
+    {
+        if ($value === null) return false;
+        $normalized = trim((string) $value);
+        if ($normalized === '') return false;
+        if (preg_match('/-?\d+(?:[.,]\d+)?/u', $normalized, $match)) {
+            return (float) str_replace(',', '.', $match[0]) > 0;
+        }
+
+        return ! in_array(mb_strtolower($normalized), ['нет', 'false', 'none', 'null'], true);
     }
 
     private function money(float $value): string
@@ -188,11 +247,11 @@ class OzonProductPayloadBuilder
             $source = $item['source'] ?? '';
             if ($source === '') return null;
             $value = $this->sourceValue($item, $good, $variation);
-            if ($value === null || $value === '') return null;
-            $dictionaryId = $item['dictionary_value_id'] ?? $this->dictionaryValueId($item['dictionary_map'] ?? [], (string) $value);
+            $dictionaryId = (int) ($item['dictionary_value_id'] ?? $this->dictionaryValueId($item['dictionary_map'] ?? [], (string) $value));
+            if (($value === null || $value === '') && $dictionaryId <= 0) return null;
             $ozonValue = $dictionaryId ? $this->dictionaryValueLabel($item, (string) $value) : (string) $value;
             $attributeValue = $dictionaryId
-                ? ['dictionary_value_id' => (int) $dictionaryId, 'value' => $ozonValue]
+                ? array_filter(['dictionary_value_id' => $dictionaryId, 'value' => $ozonValue], fn ($item) => $item !== '')
                 : ['value' => (string) $value];
             return ['id' => (int) ($item['id'] ?? 0), 'complex_id' => 0, 'values' => [$attributeValue]];
         })->filter(fn ($item) => $item && $item['id'] > 0);
@@ -331,9 +390,11 @@ class OzonProductPayloadBuilder
     {
         $items = collect($mapping?->attribute_mappings ?? [])->map(function (array $item) use ($good, $variation) {
             $value = $this->sourceValue($item, $good, $variation);
-            if ($value === null || $value === '') return null;
-            $dictionaryId = $item['dictionary_value_id'] ?? $this->dictionaryValueId($item['dictionary_map'] ?? [], (string) $value);
-            $displayValue = $dictionaryId ? $this->dictionaryValueLabel($item, (string) $value) : $this->decodedText($value);
+            $dictionaryId = (int) ($item['dictionary_value_id'] ?? $this->dictionaryValueId($item['dictionary_map'] ?? [], (string) $value));
+            if (($value === null || $value === '') && $dictionaryId <= 0) return null;
+            $displayValue = $dictionaryId
+                ? ($this->dictionaryValueLabel($item, (string) $value) ?: "Значение Ozon #{$dictionaryId}")
+                : $this->decodedText($value);
 
             return [
                 'id' => (int) ($item['id'] ?? 0),
@@ -391,7 +452,8 @@ class OzonProductPayloadBuilder
     {
         $source = $item['source'] ?? '';
         $value = match ($source) {
-            'static' => $item['value'] ?? '',
+            // source_value/source_key keep older profiles created by early UI versions readable.
+            'static' => $item['value'] ?? $item['source_value'] ?? $item['source_key'] ?? '',
             'variation' => data_get($variation, $item['source_key'] ?? ''),
             'property' => $this->propertyValue($good, (int) ($item['source_key'] ?? 0)),
             'brand' => $good->brands->first()?->name ?? '',
@@ -408,7 +470,21 @@ class OzonProductPayloadBuilder
             return (float) $value * $this->dimensionAttributeMultiplier($item, $source);
         }
 
+        if ($source === 'static' && $this->isBooleanAttribute($item)) {
+            $normalized = mb_strtolower(trim((string) $value));
+            if (in_array($normalized, ['нет', 'false', '0'], true)) return 'false';
+            if (in_array($normalized, ['да', 'true', '1'], true)) return 'true';
+        }
+
         return is_string($value) ? $this->decodedText($value) : $value;
+    }
+
+    private function isBooleanAttribute(array $item): bool
+    {
+        $type = mb_strtolower(trim((string) ($item['type'] ?? $item['value_type'] ?? '')));
+        $name = mb_strtolower($this->decodedText($item['name'] ?? ''));
+
+        return in_array($type, ['boolean', 'bool'], true) || str_contains($name, 'нужен код маркировки');
     }
 
     private function firstPositive(mixed ...$values): float
@@ -435,6 +511,9 @@ class OzonProductPayloadBuilder
 
     private function dimensionAttributeMultiplier(array $item, string $source): float
     {
+        $configured = (float) ($item['multiplier'] ?? 0);
+        if ($configured > 0) return $configured;
+
         $name = mb_strtolower($this->decodedText($item['name'] ?? ''));
         if ($source === 'dimension_weight') {
             if ($this->hasUnit($name, 'кг')) return 1.0;
@@ -445,7 +524,7 @@ class OzonProductPayloadBuilder
             if ($this->hasUnit($name, 'м')) return 0.01;
         }
 
-        return (float) ($item['multiplier'] ?? 1);
+        return 1.0;
     }
 
     private function hasUnit(string $name, string $unit): bool

@@ -85,9 +85,14 @@ class ProcessOzonSyncRunJob implements ShouldQueue
             if ($run->mode === 'prices' && (float) $builder->pricePayload($good, $variation, $account)['price'] <= 0) {
                 $errors[] = 'Цена должна быть больше нуля.';
             }
+            $requestPayload = match ($run->mode) {
+                'prices' => $builder->pricePayload($good, $variation, $account),
+                'stocks' => $builder->stock($good, $variation, $account),
+                default => $built['payload'],
+            };
             $item = ShopOzonSyncItem::create([
                 'run_id' => $run->id, 'good_id' => $good->id, 'variation_id' => $variation?->id,
-                'offer_id' => $built['offer_id'], 'request_payload' => $built['payload'],
+                'offer_id' => $built['offer_id'], 'request_payload' => $requestPayload,
                 'status' => $errors ? 'failed' : 'pending', 'errors' => $errors ?: null,
             ]);
             if ($errors) {

@@ -443,6 +443,7 @@ class ShopOzonSellerController extends Controller
             'good_ids.*' => 'integer',
             'page' => 'nullable|integer|min:1',
             'per_page' => 'nullable|integer|min:10|max:50',
+            'search' => 'nullable|string|max:255',
         ]);
         $ids = array_values(array_unique(array_map('intval', $input['good_ids'] ?? []))) ?: null;
         $page = $ids ? 1 : (int) ($input['page'] ?? 1);
@@ -452,6 +453,32 @@ class ShopOzonSellerController extends Controller
         $result = [];
         $mappings = $resolver->mappings($account);
         $query = $resolver->query($account, $ids)->orderByDesc('shop_goods.id');
+        if (filled($input['search'] ?? null)) {
+            $search = trim($input['search']);
+            $numericId = ctype_digit($search) ? (int) $search : null;
+            preg_match('/^g_(\d+)(?:_v_(\d+))?$/i', $search, $offerMatch);
+            $generatedGoodId = isset($offerMatch[1]) ? (int) $offerMatch[1] : null;
+            $generatedVariationId = isset($offerMatch[2]) ? (int) $offerMatch[2] : null;
+            $query->where(function ($nested) use ($search, $numericId, $generatedGoodId, $generatedVariationId, $account) {
+                $nested->where('shop_goods.name', 'like', "%{$search}%")
+                    ->orWhere('shop_goods.sku', 'like', "%{$search}%")
+                    ->when($numericId, fn ($item) => $item->orWhere('shop_goods.id', $numericId))
+                    ->when($generatedGoodId, fn ($item) => $item->orWhere('shop_goods.id', $generatedGoodId))
+                    ->orWhereHas('variations', function ($variations) use ($search, $numericId, $generatedVariationId) {
+                        $variations->where('shop_good_variations.sku', 'like', "%{$search}%")
+                            ->when($numericId, fn ($item) => $item->orWhere('shop_good_variations.id', $numericId))
+                            ->when($generatedVariationId, fn ($item) => $item->orWhere('shop_good_variations.id', $generatedVariationId));
+                    })
+                    ->orWhereIn('shop_goods.id', ShopOzonProductBinding::query()
+                        ->where('account_id', $account->id)
+                        ->where(function ($bindings) use ($search) {
+                            $bindings->where('offer_id', 'like', "%{$search}%")
+                                ->orWhere('product_id', 'like', "%{$search}%")
+                                ->orWhere('sku', 'like', "%{$search}%");
+                        })
+                        ->select('good_id'));
+            });
+        }
         $eligibleGoods = (clone $query)->count();
         $lastPage = max(1, (int) ceil($eligibleGoods / $perPage));
         $page = min($page, $lastPage);
@@ -465,7 +492,7 @@ class ShopOzonSellerController extends Controller
                     'good_name' => $good->name,
                     'variation_id' => $row['variation']?->id,
                     'sku' => $row['variation']?->sku ?: $good->sku,
-                    'stock' => (int) ($row['variation']?->stock_quantity ?? $good->stock_quantity),
+                    'stock' => $built['stock'],
                     'category_profile' => $mapping?->ozon_category_name,
                 ], $built, ['errors' => array_values(array_unique(array_merge($built['errors'], $row['row_errors'])))]);
             }
@@ -473,6 +500,7 @@ class ShopOzonSellerController extends Controller
         return response()->json(['success' => true, 'data' => $result, 'meta' => [
             'scope' => $ids ? 'selected' : 'all',
             'requested_goods' => $ids ? count($ids) : null,
+            'search' => $input['search'] ?? '',
             'eligible_goods' => $eligibleGoods,
             'shown_goods' => $goods->count(),
             'offers' => count($result),
