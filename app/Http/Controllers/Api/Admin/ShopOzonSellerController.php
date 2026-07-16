@@ -30,19 +30,45 @@ class ShopOzonSellerController extends Controller
     {
         $data = $request->validate([
             'name' => 'required|string|max:255', 'client_id' => 'required|string|max:255', 'api_key' => 'nullable|string|max:2000',
+            'replace_api_key' => 'nullable|boolean',
             'api_url' => 'required|url|max:500', 'warehouse_id' => 'nullable|string|max:255', 'image_base_url' => 'required|url|max:500',
             'selection_tag_id' => 'nullable|exists:shop_tags,id', 'vat' => 'required|string|max:20', 'is_active' => 'boolean',
         ]);
         $data['client_id'] = trim($data['client_id']);
-        $hasNewApiKey = filled($data['api_key'] ?? null);
-        if ($hasNewApiKey) {
-            $data['api_key'] = trim($data['api_key'], " \t\n\r\0\x0B\xEF\xBB\xBF\"'");
-            $data['last_error'] = null;
-            $data['last_connection_at'] = null;
-        }
         $account = ShopOzonAccount::query()->first() ?? new ShopOzonAccount;
-        if (! filled($data['api_key'] ?? null)) unset($data['api_key']);
-        if (! $account->exists && empty($data['api_key'])) return response()->json(['success' => false, 'message' => 'Укажите API-ключ Ozon.'], 422);
+        $replaceApiKey = (bool) ($data['replace_api_key'] ?? false) || ! $account->exists;
+        unset($data['replace_api_key']);
+
+        if ($replaceApiKey) {
+            $data['api_key'] = $this->normalizeApiKeyInput((string) ($data['api_key'] ?? ''));
+            if ($data['api_key'] === '') {
+                return response()->json(['success' => false, 'message' => 'Для замены укажите новый API-ключ Ozon.'], 422);
+            }
+
+            $candidate = $account->exists ? $account->replicate() : new ShopOzonAccount;
+            $candidate->fill($data);
+            try {
+                (new OzonSellerClient($candidate))->post('/v4/product/info/limit');
+            } catch (\Throwable $e) {
+                $apiKey = (string) $candidate->api_key;
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Новый API-ключ не сохранён: Ozon отклонил проверку. '.$e->getMessage(),
+                    'code' => 'OZON_API_KEY_VALIDATION_FAILED',
+                    'diagnostics' => [
+                        'client_id' => (string) $candidate->client_id,
+                        'api_key_length' => strlen($apiKey),
+                        'api_key_fingerprint' => substr(hash('sha256', $apiKey), 0, 12),
+                    ],
+                ], 422);
+            }
+
+            $data['last_error'] = null;
+            $data['last_connection_at'] = now();
+        } else {
+            unset($data['api_key']);
+        }
+
         $account->fill($data)->save();
         return response()->json(['success' => true, 'message' => 'Настройки сохранены.', 'data' => array_merge($account->toArray(), ['has_api_key' => true])]);
     }
@@ -141,14 +167,18 @@ class ShopOzonSellerController extends Controller
     {
         try {
             $input = $request->validate(['description_category_id' => 'required|integer', 'type_id' => 'required|integer', 'attribute_id' => 'required|integer', 'last_value_id' => 'nullable|integer', 'limit' => 'nullable|integer|min:1|max:5000']);
-            $data = (new OzonSellerClient($this->account()))->post('/v1/description-category/attribute/values', [
+            $account = $this->account();
+            $lastValueId = (int) ($input['last_value_id'] ?? 0);
+            $limit = (int) ($input['limit'] ?? 1000);
+            $key = "ozon:{$account->id}:attribute-values:{$input['description_category_id']}:{$input['type_id']}:{$input['attribute_id']}:{$lastValueId}:{$limit}";
+            $data = Cache::remember($key, now()->addHours(12), fn () => (new OzonSellerClient($account))->post('/v1/description-category/attribute/values', [
                 'description_category_id' => (int) $input['description_category_id'],
                 'type_id' => (int) $input['type_id'],
                 'attribute_id' => (int) $input['attribute_id'],
                 'language' => 'DEFAULT',
-                'last_value_id' => (int) ($input['last_value_id'] ?? 0),
-                'limit' => (int) ($input['limit'] ?? 1000),
-            ]);
+                'last_value_id' => $lastValueId,
+                'limit' => $limit,
+            ]));
 
             return response()->json(['success' => true, 'data' => [
                 'items' => data_get($data, 'result', []),
@@ -369,6 +399,7 @@ class ShopOzonSellerController extends Controller
         $account = ShopOzonAccount::query()->first();
         $account?->update(['last_error' => mb_substr($e->getMessage(), 0, 4000)]);
         $invalidKey = str_contains(mb_strtolower($e->getMessage()), 'invalid api-key');
+        $apiKey = trim((string) $account?->api_key);
 
         return response()->json([
             'success' => false,
@@ -377,6 +408,23 @@ class ShopOzonSellerController extends Controller
                 : $e->getMessage(),
             'error' => $e->getMessage(),
             'code' => $invalidKey ? 'OZON_INVALID_API_KEY' : 'OZON_REQUEST_FAILED',
+            'diagnostics' => [
+                'client_id' => trim((string) $account?->client_id),
+                'api_key_length' => strlen($apiKey),
+                'api_key_fingerprint' => $apiKey !== '' ? substr(hash('sha256', $apiKey), 0, 12) : null,
+            ],
         ], 422);
+    }
+
+    private function normalizeApiKeyInput(string $value): string
+    {
+        $value = preg_replace('/^[\s\x{00A0}\x{200B}\x{FEFF}]+|[\s\x{00A0}\x{200B}\x{FEFF}]+$/u', '', $value) ?? trim($value);
+        $value = preg_replace('/^(?:api-key|authorization)\s*:\s*/i', '', $value) ?? $value;
+        if (str_starts_with(mb_strtolower($value), 'bearer ')) $value = mb_substr($value, 7);
+        $value = trim($value);
+        if (strlen($value) >= 2 && (($value[0] === '"' && $value[-1] === '"') || ($value[0] === "'" && $value[-1] === "'"))) {
+            $value = trim(substr($value, 1, -1));
+        }
+        return $value;
     }
 }
