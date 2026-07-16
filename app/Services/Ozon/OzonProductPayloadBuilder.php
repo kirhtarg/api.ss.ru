@@ -20,8 +20,8 @@ class OzonProductPayloadBuilder
         $mapping ??= $this->resolver->mappingFor($good, $this->resolver->mappings($account));
         $offerId = $this->offerId($good, $variation, $account);
         $price = $this->price($good, $variation);
-        $dimensions = $this->dimensions($good, $variation, $mapping);
-        $images = $this->images($good, $variation, $account);
+        $dimensions = $this->dimensions($good, $mapping);
+        $media = $this->media($good, $variation, $account);
 
         $payload = [
             'offer_id' => $offerId,
@@ -40,8 +40,8 @@ class OzonProductPayloadBuilder
             'dimension_unit' => 'mm',
             'weight' => $dimensions['weight'],
             'weight_unit' => 'g',
-            'images' => $images,
-            'primary_image' => $images[0] ?? '',
+            'images' => $media['images'],
+            'primary_image' => $media['primary_image'],
             'attributes' => $this->attributes($mapping, $good, $variation),
             'complex_attributes' => [],
         ];
@@ -49,6 +49,8 @@ class OzonProductPayloadBuilder
         return [
             'offer_id' => $offerId,
             'brand_name' => $this->decodedText($good->brands->first()?->name),
+            'source_dimensions' => $this->sourceDimensions($good),
+            'media_summary' => $media['summary'],
             'payload' => $payload,
             'errors' => $this->validate($payload, $mapping, $good, $variation),
             'mapping_id' => $mapping?->id,
@@ -109,7 +111,7 @@ class OzonProductPayloadBuilder
         return number_format($value, 2, '.', '');
     }
 
-    private function dimensions(ShopGood $good, ?ShopGoodVariation $variation, ?ShopOzonCategoryMapping $mapping): array
+    private function dimensions(ShopGood $good, ?ShopOzonCategoryMapping $mapping): array
     {
         // Ozon offers inherit package dimensions from the parent product.
         $length = $this->firstPositive($good->shipping_length, $good->depth);
@@ -125,13 +127,59 @@ class OzonProductPayloadBuilder
         ];
     }
 
-    private function images(ShopGood $good, ?ShopGoodVariation $variation, ShopOzonAccount $account): array
+    private function media(ShopGood $good, ?ShopGoodVariation $variation, ShopOzonAccount $account): array
     {
-        $items = $variation && $variation->images->isNotEmpty() ? $variation->images : $good->images;
-        return $items->map(function ($image) use ($account) {
-            $url = $image->url;
-            return str_starts_with((string) $url, 'http') ? $url : rtrim($account->image_base_url, '/').'/'.ltrim((string) $url, '/');
-        })->filter()->unique()->take(15)->values()->all();
+        $productImages = $this->orderedImages($good->images);
+        $variationImages = $variation ? $this->orderedImages($variation->images) : collect();
+
+        // If a variation has its own gallery, it must not be mixed with the parent gallery.
+        // The parent gallery is used only when the variation has no images at all.
+        $usesVariationImages = $variationImages->isNotEmpty();
+        $items = $usesVariationImages ? $variationImages : $productImages;
+        $urls = $items
+            ->map(fn ($image) => $this->imageUrl((string) $image->url, $account))
+            ->filter()
+            ->unique()
+            ->values();
+
+        $primaryImage = (string) ($urls->first() ?? '');
+        $additionalImages = $variation && (! $usesVariationImages || $urls->count() < 2)
+            ? []
+            : $urls->skip(1)->take(14)->values()->all();
+
+        return [
+            'primary_image' => $primaryImage,
+            'images' => $additionalImages,
+            'summary' => [
+                'primary_source' => $usesVariationImages ? 'variation' : ($productImages->isNotEmpty() ? 'product' : null),
+                'additional_count' => count($additionalImages),
+                'total_count' => ($primaryImage !== '' ? 1 : 0) + count($additionalImages),
+            ],
+        ];
+    }
+
+    private function orderedImages($images)
+    {
+        return $images->sortBy([
+            [fn ($image) => $image->is_main ? 0 : 1, 'asc'],
+            [fn ($image) => (int) $image->sort_order, 'asc'],
+            [fn ($image) => (int) $image->id, 'asc'],
+        ])->values();
+    }
+
+    private function imageUrl(string $url, ShopOzonAccount $account): ?string
+    {
+        $url = trim($url);
+        if ($url === '') return null;
+
+        if (str_starts_with($url, '//')) $url = 'https:'.$url;
+        if (! preg_match('~^https?://~i', $url)) {
+            $baseUrl = rtrim((string) $account->image_base_url, '/');
+            if ($baseUrl === '') return null;
+            $url = $baseUrl.'/'.ltrim($url, '/');
+        }
+
+        return filter_var($url, FILTER_VALIDATE_URL) ? $url : null;
     }
 
     private function attributes(?ShopOzonCategoryMapping $mapping, ShopGood $good, ?ShopGoodVariation $variation): array
@@ -182,7 +230,7 @@ class OzonProductPayloadBuilder
         foreach (['offer_id', 'name'] as $field) if (empty($payload[$field])) $errors[] = "Не заполнено поле {$field}.";
         if ((float) $payload['price'] <= 0) $errors[] = 'Цена должна быть больше нуля.';
         foreach (['depth', 'width', 'height', 'weight'] as $field) if ((int) $payload[$field] <= 0) $errors[] = "Не заполнено поле {$field}.";
-        if (empty($payload['images'])) $errors[] = 'У товара нет изображения.';
+        if (empty($payload['primary_image']) && empty($payload['images'])) $errors[] = 'У товара нет изображения.';
         $sentAttributeIds = collect($payload['attributes'])->pluck('id')->map(fn ($id) => (int) $id);
         foreach ($mapping?->attribute_mappings ?? [] as $attribute) {
             if (($attribute['required'] ?? false) && ! $sentAttributeIds->contains((int) ($attribute['id'] ?? 0))) {
@@ -191,7 +239,7 @@ class OzonProductPayloadBuilder
             if (($attribute['uses_dictionary'] ?? false) && ($attribute['source'] ?? '') !== 'static') {
                 $value = (string) $this->sourceValue($attribute, $good, $variation);
                 if ($value !== '' && ! $this->dictionaryValueId($attribute['dictionary_map'] ?? [], $value)) {
-                    $errors[] = 'Значение «'.$value.'» не сопоставлено со словарём Ozon для атрибута '.($attribute['name'] ?? $attribute['id']).'.';
+                    $errors[] = 'Значение «'.$value.'» не сопоставлено со словарём Ozon для атрибута '.($attribute['name'] ?? $attribute['id']).'. Откройте профиль категории, нажмите «Справочник Ozon», выберите соответствие и сохраните профиль.';
                 }
             }
         }
@@ -201,7 +249,7 @@ class OzonProductPayloadBuilder
                 $errors[] = 'Не заполнена характеристика вариации: '.($axis['local_attribute_name'] ?? 'ID '.$axis['local_attribute_id']).'.';
             }
             if ($value !== '' && ! empty($axis['uses_dictionary']) && ! $this->dictionaryValueId($axis['dictionary_map'] ?? [], $value)) {
-                $errors[] = 'Значение «'.$value.'» не сопоставлено со словарём Ozon для характеристики '.($axis['ozon_attribute_name'] ?? $axis['ozon_attribute_id']).'.';
+                $errors[] = 'Значение «'.$value.'» не сопоставлено со словарём Ozon для характеристики '.($axis['ozon_attribute_name'] ?? $axis['ozon_attribute_id']).'. Откройте профиль категории, нажмите «Справочник Ozon», сопоставьте значение вариации и сохраните профиль.';
             }
         }
         if ($variation && ($mapping?->variation_mode ?? '') === 'grouped' && $mapping?->group_attribute_id
@@ -310,7 +358,7 @@ class OzonProductPayloadBuilder
         };
 
         if (str_starts_with($source, 'dimension_') && is_numeric($value)) {
-            return (float) $value * (float) ($item['multiplier'] ?? 1);
+            return (float) $value * $this->dimensionAttributeMultiplier($item, $source);
         }
 
         return is_string($value) ? $this->decodedText($value) : $value;
@@ -323,6 +371,39 @@ class OzonProductPayloadBuilder
         }
 
         return 0.0;
+    }
+
+    private function sourceDimensions(ShopGood $good): array
+    {
+        return [
+            'length' => $this->firstPositive($good->shipping_length, $good->depth),
+            'width' => $this->firstPositive($good->shipping_width, $good->width),
+            'height' => $this->firstPositive($good->shipping_height, $good->height),
+            'weight' => $this->firstPositive($good->shipping_weight, $good->weight),
+            'dimension_unit' => 'cm',
+            'weight_unit' => 'kg',
+            'uses_shipping_dimensions' => $this->firstPositive($good->shipping_length, $good->shipping_width, $good->shipping_height, $good->shipping_weight) > 0,
+        ];
+    }
+
+    private function dimensionAttributeMultiplier(array $item, string $source): float
+    {
+        $name = mb_strtolower($this->decodedText($item['name'] ?? ''));
+        if ($source === 'dimension_weight') {
+            if ($this->hasUnit($name, 'кг')) return 1.0;
+            if ($this->hasUnit($name, 'г')) return 1000.0;
+        } else {
+            if ($this->hasUnit($name, 'мм')) return 10.0;
+            if ($this->hasUnit($name, 'см')) return 1.0;
+            if ($this->hasUnit($name, 'м')) return 0.01;
+        }
+
+        return (float) ($item['multiplier'] ?? 1);
+    }
+
+    private function hasUnit(string $name, string $unit): bool
+    {
+        return preg_match('/(?:^|[^\p{L}])'.preg_quote($unit, '/').'(?:$|[^\p{L}])/u', $name) === 1;
     }
 
     private function decodedText(mixed $value): string

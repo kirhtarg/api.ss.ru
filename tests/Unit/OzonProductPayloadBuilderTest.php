@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Models\ShopGood;
+use App\Models\ShopGoodImage;
 use App\Models\ShopGoodVariation;
 use App\Models\ShopBrand;
 use App\Models\ShopOzonAccount;
@@ -122,7 +123,8 @@ class OzonProductPayloadBuilderTest extends TestCase
             'description_category_id' => 1,
             'type_id' => 2,
             'attribute_mappings' => [
-                ['id' => 101, 'source' => 'dimension_weight', 'multiplier' => 1000],
+                ['id' => 101, 'name' => 'Вес в собранном состоянии, кг', 'source' => 'dimension_weight', 'multiplier' => 1000],
+                ['id' => 106, 'name' => 'Вес товара, г', 'source' => 'dimension_weight', 'multiplier' => 1],
                 ['id' => 102, 'source' => 'dimension_width', 'multiplier' => 10],
                 ['id' => 103, 'source' => 'dimension_length'],
                 ['id' => 104, 'source' => 'dimension_height'],
@@ -140,7 +142,8 @@ class OzonProductPayloadBuilderTest extends TestCase
             ->build($good, $variation, new ShopOzonAccount(['image_base_url' => 'https://example.test', 'vat' => '0']), $mapping);
         $attributes = collect($built['payload']['attributes']);
 
-        $this->assertSame('2500', data_get($attributes->firstWhere('id', 101), 'values.0.value'));
+        $this->assertSame('2.5', data_get($attributes->firstWhere('id', 101), 'values.0.value'));
+        $this->assertSame('2500', data_get($attributes->firstWhere('id', 106), 'values.0.value'));
         $this->assertSame('350', data_get($attributes->firstWhere('id', 102), 'values.0.value'));
         $this->assertSame('45', data_get($attributes->firstWhere('id', 103), 'values.0.value'));
         $this->assertSame('25', data_get($attributes->firstWhere('id', 104), 'values.0.value'));
@@ -149,5 +152,100 @@ class OzonProductPayloadBuilderTest extends TestCase
         $this->assertSame(105, data_get($built, 'payload.width'));
         $this->assertSame(100, data_get($built, 'payload.height'));
         $this->assertSame(13, data_get($built, 'payload.weight'));
+        $this->assertSame(45.0, data_get($built, 'source_dimensions.length'));
+        $this->assertSame(2.5, data_get($built, 'source_dimensions.weight'));
+    }
+
+    public function test_images_are_split_into_primary_and_additional_media_for_ozon(): void
+    {
+        $good = new ShopGood(['name' => 'Товар с изображениями', 'price' => 10000, 'depth' => 10, 'width' => 20, 'height' => 30, 'weight' => 1]);
+        $good->id = 10;
+        $good->setRelation('brands', new Collection);
+        $good->setRelation('images', new Collection([
+            $this->image(1, 'goods/product-detail.png', false, 1),
+            $this->image(2, 'goods/product-main.jpg', true, 20),
+        ]));
+
+        $variation = new ShopGoodVariation(['name' => 'Красный', 'price' => 10000]);
+        $variation->id = 20;
+        $variation->setRelation('attributeValues', new Collection);
+        $variation->setRelation('images', new Collection([
+            $this->image(3, 'goods/variation-detail.jpg', false, 1),
+            $this->image(4, 'goods/variation-main.jpg', true, 50),
+        ]));
+
+        $mapping = new ShopOzonCategoryMapping(['description_category_id' => 1, 'type_id' => 2]);
+        $built = (new OzonProductPayloadBuilder(new OzonProductResolver, new ProductNameParser))
+            ->build($good, $variation, new ShopOzonAccount(['image_base_url' => 'https://example.test', 'vat' => '0']), $mapping);
+
+        $this->assertSame('https://example.test/images/goods/variation-main.jpg', data_get($built, 'payload.primary_image'));
+        $this->assertSame([
+            'https://example.test/images/goods/variation-detail.jpg',
+        ], data_get($built, 'payload.images'));
+        $this->assertSame('variation', data_get($built, 'media_summary.primary_source'));
+        $this->assertSame(2, data_get($built, 'media_summary.total_count'));
+        $this->assertNotContains('У товара нет изображения.', $built['errors']);
+    }
+
+    public function test_variation_with_one_image_has_no_additional_images(): void
+    {
+        $good = $this->goodWithProductImages();
+        $variation = new ShopGoodVariation(['name' => 'Синий', 'price' => 10000]);
+        $variation->id = 21;
+        $variation->setRelation('attributeValues', new Collection);
+        $variation->setRelation('images', new Collection([
+            $this->image(3, 'goods/variation-only.jpg', true, 1),
+        ]));
+
+        $built = $this->buildMedia($good, $variation);
+
+        $this->assertSame('https://example.test/images/goods/variation-only.jpg', data_get($built, 'payload.primary_image'));
+        $this->assertSame([], data_get($built, 'payload.images'));
+        $this->assertSame('variation', data_get($built, 'media_summary.primary_source'));
+    }
+
+    public function test_variation_without_images_uses_only_product_primary_image(): void
+    {
+        $good = $this->goodWithProductImages();
+        $variation = new ShopGoodVariation(['name' => 'Без фото', 'price' => 10000]);
+        $variation->id = 22;
+        $variation->setRelation('attributeValues', new Collection);
+        $variation->setRelation('images', new Collection);
+
+        $built = $this->buildMedia($good, $variation);
+
+        $this->assertSame('https://example.test/images/goods/product-main.jpg', data_get($built, 'payload.primary_image'));
+        $this->assertSame([], data_get($built, 'payload.images'));
+        $this->assertSame('product', data_get($built, 'media_summary.primary_source'));
+        $this->assertSame(1, data_get($built, 'media_summary.total_count'));
+    }
+
+    private function goodWithProductImages(): ShopGood
+    {
+        $good = new ShopGood(['name' => 'Товар с изображениями', 'price' => 10000, 'depth' => 10, 'width' => 20, 'height' => 30, 'weight' => 1]);
+        $good->id = 11;
+        $good->setRelation('brands', new Collection);
+        $good->setRelation('images', new Collection([
+            $this->image(1, 'goods/product-detail.png', false, 1),
+            $this->image(2, 'goods/product-main.jpg', true, 20),
+        ]));
+        return $good;
+    }
+
+    private function buildMedia(ShopGood $good, ShopGoodVariation $variation): array
+    {
+        return (new OzonProductPayloadBuilder(new OzonProductResolver, new ProductNameParser))->build(
+            $good,
+            $variation,
+            new ShopOzonAccount(['image_base_url' => 'https://example.test', 'vat' => '0']),
+            new ShopOzonCategoryMapping(['description_category_id' => 1, 'type_id' => 2]),
+        );
+    }
+
+    private function image(int $id, string $path, bool $isMain, int $sortOrder): ShopGoodImage
+    {
+        $image = new ShopGoodImage(['file_path' => $path, 'is_main' => $isMain, 'sort_order' => $sortOrder]);
+        $image->id = $id;
+        return $image;
     }
 }
