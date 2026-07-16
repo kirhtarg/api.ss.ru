@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\MobileGame;
 use App\Models\MobileGameScore;
 use App\Models\MobileGameSession;
+use App\Models\Promocode;
 use App\Models\ShopGood;
 use App\Models\User;
 use App\Models\UserBonus;
@@ -54,10 +55,16 @@ class MobileGameService
                 ]);
             }
 
+            $settings = $game->settings ?: [];
+            $dailyLayout = $game->type === 'memory' && ($settings['daily_layout'] ?? true);
+            $seed = $dailyLayout
+                ? hash('sha256', implode('|', [$game->id, now()->toDateString(), $game->activeSeason()?->id ?: 0]))
+                : bin2hex(random_bytes(20));
+
             $session = MobileGameSession::create([
                 'public_id' => (string) Str::uuid(), 'game_id' => $game->id, 'season_id' => $game->activeSeason()?->id,
-                'user_id' => $user->id, 'status' => 'started', 'seed' => bin2hex(random_bytes(20)),
-                'idempotency_key' => $idempotencyKey, 'config_snapshot' => $game->settings ?: [],
+                'user_id' => $user->id, 'status' => 'started', 'seed' => $seed,
+                'idempotency_key' => $idempotencyKey, 'config_snapshot' => $settings,
                 'entry_cost' => $entryCost, 'used_free_attempt' => $useFree, 'started_at' => now(),
             ]);
 
@@ -94,9 +101,10 @@ class MobileGameService
             $awardedToday = MobileGameSession::where('game_id', $session->game_id)->where('user_id', $user->id)->where('completed_at', '>=', now()->startOfDay())->sum('reward_points');
             $reward = min($reward, max(0, (int) $session->game->daily_reward_limit - (int) $awardedToday));
 
+            $summary = array_slice($events, 0, 99);
             $session->update([
                 'status' => 'completed', 'score' => max(0, $score), 'duration_ms' => $durationMs,
-                'event_summary' => array_slice($events, 0, 100), 'reward_points' => $reward,
+                'event_summary' => $summary, 'reward_points' => $reward,
                 'is_suspicious' => $suspicious, 'review_status' => $suspicious ? 'pending' : 'automatic',
                 'validation_note' => $note, 'completed_at' => now(),
             ]);
@@ -107,6 +115,10 @@ class MobileGameService
             if ($reward > 0) {
                 $this->award($session, $user, $reward);
             }
+            if (! $suspicious && ($promocode = $this->issuePromocode($session, $user))) {
+                $summary[] = ['event' => 'promocode_issued', 'promocode' => $this->promocodeData($promocode)];
+                $session->update(['event_summary' => $summary]);
+            }
 
             Log::info('Mobile game session completed', ['session' => $session->public_id, 'score' => $score, 'reward' => $reward, 'suspicious' => $suspicious]);
 
@@ -114,11 +126,11 @@ class MobileGameService
         }, 3);
     }
 
-    public function products(MobileGame $game): array
+    public function products(MobileGame $game, ?string $seed = null): array
     {
         $source = $game->product_source ?: [];
         $minimum = $game->type === 'memory' ? 10 : 6;
-        $limit = min(30, max($minimum, (int) ($source['limit'] ?? 18)));
+        $limit = min(60, max($minimum, (int) ($source['limit'] ?? 30)));
         $relations = ['images' => fn ($q) => $q->ordered(), 'allImages' => fn ($q) => $q->ordered()];
         $query = ShopGood::query()
             ->where('is_active', true)
@@ -133,24 +145,85 @@ class MobileGameService
         if (($source['type'] ?? '') === 'manual' && ! empty($source['ids'])) {
             $query->whereIn('id', $source['ids']);
         }
-        if (($source['type'] ?? '') === 'featured') {
+        $useFullCatalog = $game->type === 'memory' && ($game->settings['use_full_catalog'] ?? true);
+        if (($source['type'] ?? '') === 'featured' && ! $useFullCatalog) {
             $query->where('is_featured', true);
         }
 
-        $goods = $query->inRandomOrder()->limit($limit)->get();
+        if ($seed) {
+            $count = (clone $query)->count('shop_goods.id');
+            $offset = $count > $limit ? hexdec(substr(hash('sha256', $seed.'|offset'), 0, 8)) % ($count - $limit + 1) : 0;
+            $goods = $query->orderBy('shop_goods.id')->offset($offset)->limit($limit)->get();
+        } else {
+            $goods = $query->inRandomOrder()->limit($limit)->get();
+        }
         if ($goods->count() < $minimum) {
-            $additional = ShopGood::query()
+            $additionalQuery = ShopGood::query()
                 ->where('is_active', true)
                 ->whereHas('allImages')
                 ->whereNotIn('id', $goods->pluck('id'))
-                ->with($relations)
-                ->inRandomOrder()
-                ->limit($limit - $goods->count())
-                ->get();
+                ->with($relations);
+            $additional = $seed
+                ? $additionalQuery->orderBy('shop_goods.id')->limit(100)->get()->sortBy(fn ($good) => hash('sha256', $seed.'|fallback|'.$good->id))->take($limit - $goods->count())
+                : $additionalQuery->inRandomOrder()->limit($limit - $goods->count())->get();
             $goods = $goods->concat($additional);
         }
 
         return $goods->map(fn ($good) => ['id' => $good->id, 'name' => $good->name, 'slug' => $good->slug, 'image_url' => ($good->images->first() || $good->allImages->first()) ? route('mobile-games.product-asset', ['good' => $good->id]) : null])->values()->all();
+    }
+
+    public function sessionPromocode(MobileGameSession $session): ?array
+    {
+        $event = collect($session->event_summary ?: [])->first(fn ($item) => ($item['event'] ?? null) === 'promocode_issued');
+
+        return is_array($event['promocode'] ?? null) ? $event['promocode'] : null;
+    }
+
+    private function issuePromocode(MobileGameSession $session, User $user): ?Promocode
+    {
+        $settings = $session->config_snapshot ?: [];
+        if (! ($settings['promo_enabled'] ?? false) || $session->score < (int) ($settings['promo_min_score'] ?? 5000)) {
+            return null;
+        }
+        $chance = min(100, max(0, (int) ($settings['promo_chance_percent'] ?? 10)));
+        if ($chance < 1 || random_int(1, 100) > $chance) {
+            return null;
+        }
+        $name = 'Игровой приз: '.$session->game->name;
+        $dailyLimit = max(1, (int) ($settings['promo_daily_limit'] ?? 1));
+        if (Promocode::where('user_id', $user->id)->where('name', $name)->where('created_at', '>=', now()->startOfDay())->count() >= $dailyLimit) {
+            return null;
+        }
+        do {
+            $code = 'GAME-'.$user->id.'-'.Str::upper(Str::random(8));
+        } while (Promocode::where('code', $code)->exists());
+
+        return Promocode::create([
+            'code' => $code,
+            'name' => $name,
+            'description' => 'Персональная награда за результат в мобильной игре',
+            'type' => ($settings['promo_type'] ?? 'percentage') === 'fixed_amount' ? 'fixed_amount' : 'percentage',
+            'value' => max(1, (float) ($settings['promo_value'] ?? 5)),
+            'min_order_amount' => max(0, (float) ($settings['promo_min_order_amount'] ?? 0)) ?: null,
+            'max_discount_amount' => max(0, (float) ($settings['promo_max_discount_amount'] ?? 0)) ?: null,
+            'usage_limit' => 1,
+            'usage_limit_per_user' => 1,
+            'is_active' => true,
+            'starts_at' => now(),
+            'expires_at' => now()->addDays(max(1, (int) ($settings['promo_valid_days'] ?? 14))),
+            'user_id' => $user->id,
+        ]);
+    }
+
+    private function promocodeData(Promocode $promocode): array
+    {
+        return [
+            'code' => $promocode->code,
+            'type' => $promocode->type,
+            'value' => (float) $promocode->value,
+            'expires_at' => $promocode->expires_at?->toISOString(),
+            'min_order_amount' => $promocode->min_order_amount ? (float) $promocode->min_order_amount : null,
+        ];
     }
 
     private function rewardForScore(MobileGame $game, int $score): int

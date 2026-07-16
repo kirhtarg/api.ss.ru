@@ -36,7 +36,7 @@ class MobileGameController extends Controller
         $game = MobileGame::available()->where('slug', $slug)->firstOrFail();
         $session = $this->games->start($game, $request->user(), $data['idempotency_key']);
 
-        return response()->json(['success' => true, 'data' => ['session_id' => $session->public_id, 'seed' => $session->seed, 'settings' => $session->config_snapshot, 'entry_cost' => $session->entry_cost, 'used_free_attempt' => $session->used_free_attempt, 'products' => $this->games->products($game)]]);
+        return response()->json(['success' => true, 'data' => ['session_id' => $session->public_id, 'seed' => $session->seed, 'settings' => $session->config_snapshot, 'entry_cost' => $session->entry_cost, 'used_free_attempt' => $session->used_free_attempt, 'products' => $this->games->products($game, $session->seed)]]);
     }
 
     public function finish(Request $request, string $publicId)
@@ -45,7 +45,7 @@ class MobileGameController extends Controller
         $session = MobileGameSession::where('public_id', $publicId)->firstOrFail();
         $session = $this->games->finish($session, $request->user(), $data['score'], $data['duration_ms'], $data['events'] ?? []);
 
-        return response()->json(['success' => true, 'data' => ['score' => $session->score, 'reward_points' => $session->reward_points, 'is_suspicious' => $session->is_suspicious, 'message' => $session->is_suspicious ? 'Результат отправлен на проверку' : 'Результат сохранен']]);
+        return response()->json(['success' => true, 'data' => ['score' => $session->score, 'reward_points' => $session->reward_points, 'promocode' => $this->games->sessionPromocode($session), 'is_suspicious' => $session->is_suspicious, 'message' => $session->is_suspicious ? 'Результат отправлен на проверку' : 'Результат сохранен']]);
     }
 
     public function productAsset(ShopGood $good)
