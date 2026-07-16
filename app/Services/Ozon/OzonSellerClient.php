@@ -16,7 +16,10 @@ class OzonSellerClient
 
     public function post(string $path, array $payload = []): array
     {
-        $response = $this->request()->post($this->url($path), $payload);
+        $request = $this->request();
+        $response = $payload === []
+            ? $request->send('POST', $this->url($path), ['body' => '{}'])
+            : $request->post($this->url($path), $payload);
         return $this->decode($response, $path);
     }
 
