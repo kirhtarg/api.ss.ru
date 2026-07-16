@@ -91,6 +91,50 @@ class OzonProductPayloadBuilderTest extends TestCase
         $this->assertSame('Cadence Camber', data_get(collect($built['payload']['attributes'])->firstWhere('id', 9048), 'values.0.value'));
     }
 
+    public function test_dictionary_mappings_use_ozon_labels_and_normalized_local_values(): void
+    {
+        $good = new ShopGood(['name' => 'Велосипед детский Author Stylo 2022', 'price' => 10000, 'depth' => 10, 'width' => 20, 'height' => 30, 'weight' => 1]);
+        $good->id = 81;
+        $good->setRelation('images', new Collection);
+        $good->setRelation('brands', new Collection([new ShopBrand(['name' => 'Author'])]));
+
+        $mapping = new ShopOzonCategoryMapping([
+            'description_category_id' => 1,
+            'type_id' => 2,
+            'attribute_mappings' => [
+                [
+                    'id' => 10,
+                    'name' => 'Тип',
+                    'source' => 'computed_type',
+                    'uses_dictionary' => true,
+                    'dictionary_map' => ['Детский велосипед' => 501],
+                    'dictionary_labels' => ['Детский велосипед' => 'Велосипед'],
+                ],
+                [
+                    'id' => 31,
+                    'name' => 'Бренд',
+                    'source' => 'brand',
+                    'uses_dictionary' => true,
+                    'dictionary_map' => [' Author ' => 77],
+                    'dictionary_labels' => [' Author ' => 'Author'],
+                ],
+            ],
+        ]);
+
+        $built = (new OzonProductPayloadBuilder(new OzonProductResolver, new ProductNameParser))
+            ->build($good, null, new ShopOzonAccount(['image_base_url' => 'https://example.test', 'vat' => '0']), $mapping);
+        $payloadAttributes = collect($built['payload']['attributes']);
+        $displayAttributes = collect($built['display_attributes']);
+
+        $this->assertSame(501, data_get($payloadAttributes->firstWhere('id', 10), 'values.0.dictionary_value_id'));
+        $this->assertSame('Велосипед', data_get($payloadAttributes->firstWhere('id', 10), 'values.0.value'));
+        $this->assertSame('Велосипед детский', data_get($displayAttributes->firstWhere('id', 10), 'source_value'));
+        $this->assertSame('Велосипед', data_get($displayAttributes->firstWhere('id', 10), 'value'));
+        $this->assertSame(77, data_get($payloadAttributes->firstWhere('id', 31), 'values.0.dictionary_value_id'));
+        $this->assertSame('Author', data_get($payloadAttributes->firstWhere('id', 31), 'values.0.value'));
+        $this->assertFalse(collect($built['errors'])->contains(fn ($error) => str_contains($error, 'Author')));
+    }
+
     public function test_dimension_sources_always_use_parent_good_for_variations(): void
     {
         $good = new ShopGood([

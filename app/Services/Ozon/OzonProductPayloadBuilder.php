@@ -190,8 +190,9 @@ class OzonProductPayloadBuilder
             $value = $this->sourceValue($item, $good, $variation);
             if ($value === null || $value === '') return null;
             $dictionaryId = $item['dictionary_value_id'] ?? $this->dictionaryValueId($item['dictionary_map'] ?? [], (string) $value);
+            $ozonValue = $dictionaryId ? $this->dictionaryValueLabel($item, (string) $value) : (string) $value;
             $attributeValue = $dictionaryId
-                ? ['dictionary_value_id' => (int) $dictionaryId, 'value' => (string) $value]
+                ? ['dictionary_value_id' => (int) $dictionaryId, 'value' => $ozonValue]
                 : ['value' => (string) $value];
             return ['id' => (int) ($item['id'] ?? 0), 'complex_id' => 0, 'values' => [$attributeValue]];
         })->filter(fn ($item) => $item && $item['id'] > 0);
@@ -200,10 +201,11 @@ class OzonProductPayloadBuilder
             $value = $this->resolver->variationAttributeValue($variation, (int) ($axis['local_attribute_id'] ?? 0));
             if ($value === '') continue;
             $dictionaryId = $this->dictionaryValueId($axis['dictionary_map'] ?? [], $value);
+            $ozonValue = $dictionaryId ? $this->dictionaryValueLabel($axis, $value) : $value;
             $attributes->push([
                 'id' => (int) ($axis['ozon_attribute_id'] ?? 0),
                 'complex_id' => 0,
-                'values' => [$dictionaryId ? ['dictionary_value_id' => $dictionaryId, 'value' => $value] : ['value' => $value]],
+                'values' => [$dictionaryId ? ['dictionary_value_id' => $dictionaryId, 'value' => $ozonValue] : ['value' => $value]],
             ]);
         }
 
@@ -262,12 +264,48 @@ class OzonProductPayloadBuilder
     private function dictionaryValueId(array $map, string $value): ?int
     {
         $direct = $map[$value] ?? null;
-        if ($direct) return (int) $direct;
-        $needle = mb_strtolower($this->decodedText($value));
+        if ($direct) return (int) (is_array($direct) ? ($direct['id'] ?? 0) : $direct) ?: null;
+        $needle = $this->normalizedDictionaryText($value);
+        $signature = $this->dictionaryWordSignature($value);
         foreach ($map as $key => $id) {
-            if (mb_strtolower($this->decodedText($key)) === $needle && $id) return (int) $id;
+            $resolvedId = (int) (is_array($id) ? ($id['id'] ?? 0) : $id);
+            if ($resolvedId <= 0) continue;
+            if ($this->normalizedDictionaryText((string) $key) === $needle) return $resolvedId;
+            if ($signature !== '' && $this->dictionaryWordSignature((string) $key) === $signature) return $resolvedId;
         }
         return null;
+    }
+
+    private function dictionaryValueLabel(array $mapping, string $localValue): string
+    {
+        $labels = $mapping['dictionary_labels'] ?? [];
+        $direct = $labels[$localValue] ?? null;
+        if (filled($direct)) return $this->decodedText($direct);
+
+        $needle = $this->normalizedDictionaryText($localValue);
+        $signature = $this->dictionaryWordSignature($localValue);
+        foreach ($labels as $key => $label) {
+            if (! filled($label)) continue;
+            if ($this->normalizedDictionaryText((string) $key) === $needle) return $this->decodedText($label);
+            if ($signature !== '' && $this->dictionaryWordSignature((string) $key) === $signature) return $this->decodedText($label);
+        }
+
+        return $this->decodedText($localValue);
+    }
+
+    private function normalizedDictionaryText(string $value): string
+    {
+        $value = mb_strtolower($this->decodedText($value));
+        $value = preg_replace('/[\x{00A0}\s]+/u', ' ', $value) ?? $value;
+        return trim($value);
+    }
+
+    private function dictionaryWordSignature(string $value): string
+    {
+        $normalized = preg_replace('/[^\p{L}\p{N}]+/u', ' ', $this->normalizedDictionaryText($value)) ?? '';
+        $words = array_values(array_filter(explode(' ', trim($normalized))));
+        sort($words, SORT_STRING);
+        return implode(' ', $words);
     }
 
     private function variationSummary(?ShopOzonCategoryMapping $mapping, ?ShopGoodVariation $variation): array
@@ -294,11 +332,16 @@ class OzonProductPayloadBuilder
         $items = collect($mapping?->attribute_mappings ?? [])->map(function (array $item) use ($good, $variation) {
             $value = $this->sourceValue($item, $good, $variation);
             if ($value === null || $value === '') return null;
+            $dictionaryId = $item['dictionary_value_id'] ?? $this->dictionaryValueId($item['dictionary_map'] ?? [], (string) $value);
+            $displayValue = $dictionaryId ? $this->dictionaryValueLabel($item, (string) $value) : $this->decodedText($value);
 
             return [
                 'id' => (int) ($item['id'] ?? 0),
                 'name' => $this->decodedText($item['name'] ?? 'Атрибут Ozon'),
-                'value' => $this->decodedText($value),
+                'value' => $displayValue,
+                'source_value' => $this->decodedText($value),
+                'dictionary_value_id' => $dictionaryId ? (int) $dictionaryId : null,
+                'is_dictionary_mapped' => (bool) $dictionaryId,
                 'is_variation' => false,
             ];
         })->filter();
@@ -306,10 +349,14 @@ class OzonProductPayloadBuilder
         foreach ($mapping?->variation_attribute_mappings ?? [] as $item) {
             $value = $this->resolver->variationAttributeValue($variation, (int) ($item['local_attribute_id'] ?? 0));
             if ($value === '') continue;
+            $dictionaryId = $this->dictionaryValueId($item['dictionary_map'] ?? [], $value);
             $items->push([
                 'id' => (int) ($item['ozon_attribute_id'] ?? 0),
                 'name' => $this->decodedText($item['ozon_attribute_name'] ?? $this->variationAttributeName($variation, (int) ($item['local_attribute_id'] ?? 0), $item)),
-                'value' => $this->decodedText($value),
+                'value' => $dictionaryId ? $this->dictionaryValueLabel($item, $value) : $this->decodedText($value),
+                'source_value' => $this->decodedText($value),
+                'dictionary_value_id' => $dictionaryId,
+                'is_dictionary_mapped' => (bool) $dictionaryId,
                 'is_variation' => true,
             ]);
         }

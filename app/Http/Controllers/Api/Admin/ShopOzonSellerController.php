@@ -115,10 +115,7 @@ class ShopOzonSellerController extends Controller
 
     public function variationAttributes()
     {
-        $items = \App\Models\ShopVariationAttribute::query()
-            ->with(['values' => fn ($query) => $query->where('is_active', true)->orderBy('sort_order')->orderBy('value')])
-            ->orderBy('name')
-            ->get(['id', 'name']);
+        $items = \App\Models\ShopVariationAttribute::query()->orderBy('name')->get(['id', 'name']);
 
         return response()->json(['success' => true, 'data' => $items]);
     }
@@ -131,12 +128,80 @@ class ShopOzonSellerController extends Controller
         ]);
     }
 
-    public function localPropertyValues(\App\Models\Shop\Property $property)
+    public function localPropertyValues(Request $request, \App\Models\Shop\Property $property)
     {
+        $categoryIds = $this->validatedCategoryIds($request);
+        $account = $this->account();
+        if (! $account->selection_tag_id) return response()->json(['success' => true, 'data' => []]);
+
+        $query = DB::table('shop_good_properties as gp')
+            ->join('shop_property_values as pv', 'pv.id', '=', 'gp.shop_property_value_id')
+            ->join('shop_goods as goods', 'goods.id', '=', 'gp.good_id')
+            ->join('shop_good_tags as tags', 'tags.good_id', '=', 'goods.id')
+            ->where('gp.property_id', $property->id)
+            ->where('pv.is_active', true)
+            ->where('goods.is_active', true)
+            ->where('tags.tag_id', $account->selection_tag_id)
+            ->whereNotNull('gp.shop_property_value_id');
+        $this->applyCategoryScope($query, $categoryIds, 'goods.id');
+
+        $items = $query->groupBy('pv.id', 'pv.value')
+            ->orderBy('pv.value')
+            ->selectRaw('pv.id, pv.value, COUNT(DISTINCT goods.id) as count')
+            ->get()
+            ->map(fn ($item) => ['id' => (int) $item->id, 'value' => (string) $item->value, 'count' => (int) $item->count]);
+
         return response()->json([
             'success' => true,
-            'data' => $property->values()->where('is_active', true)->orderBy('sort_order')->orderBy('value')->get(['id', 'value']),
+            'data' => $items,
         ]);
+    }
+
+    public function localVariationValues(Request $request, \App\Models\ShopVariationAttribute $attribute)
+    {
+        $categoryIds = $this->validatedCategoryIds($request);
+        $account = $this->account();
+        if (! $account->selection_tag_id) return response()->json(['success' => true, 'data' => []]);
+
+        $query = DB::table('shop_variation_attribute_values as av')
+            ->join('shop_variation_attributes_values as links', 'links.attribute_value_id', '=', 'av.id')
+            ->join('shop_good_variations as variations', 'variations.id', '=', 'links.variation_id')
+            ->join('shop_goods as goods', 'goods.id', '=', 'variations.good_id')
+            ->join('shop_good_tags as tags', 'tags.good_id', '=', 'goods.id')
+            ->where('av.attribute_id', $attribute->id)
+            ->where('av.is_active', true)
+            ->where('variations.is_active', true)
+            ->where('goods.is_active', true)
+            ->where('tags.tag_id', $account->selection_tag_id);
+        $this->applyCategoryScope($query, $categoryIds, 'goods.id');
+
+        $items = $query->groupBy('av.id', 'av.value')
+            ->orderBy('av.value')
+            ->selectRaw('av.id, av.value, COUNT(DISTINCT variations.id) as count')
+            ->get()
+            ->map(fn ($item) => ['id' => (int) $item->id, 'value' => (string) $item->value, 'count' => (int) $item->count]);
+
+        return response()->json(['success' => true, 'data' => $items]);
+    }
+
+    private function validatedCategoryIds(Request $request): \Illuminate\Support\Collection
+    {
+        $data = $request->validate([
+            'category_ids' => 'nullable|array',
+            'category_ids.*' => 'integer|distinct|exists:shop_categories,id',
+        ]);
+        return collect($data['category_ids'] ?? [])->map(fn ($id) => (int) $id)->filter()->unique()->values();
+    }
+
+    private function applyCategoryScope($query, \Illuminate\Support\Collection $categoryIds, string $goodColumn): void
+    {
+        if ($categoryIds->isEmpty()) return;
+        $query->whereExists(function ($categoryQuery) use ($categoryIds, $goodColumn) {
+            $categoryQuery->selectRaw('1')
+                ->from('shop_good_categories as scoped_categories')
+                ->whereColumn('scoped_categories.good_id', $goodColumn)
+                ->whereIn('scoped_categories.category_id', $categoryIds);
+        });
     }
 
     public function localSourceValues(Request $request, ProductNameParser $nameParser)

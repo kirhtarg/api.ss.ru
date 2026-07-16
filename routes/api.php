@@ -2476,8 +2476,11 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('/local-categories', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localCategories']);
                 Route::get('/local-tags', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localTags']);
                 Route::get('/variation-attributes', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'variationAttributes']);
+                Route::get('/variation-attributes/{attribute}/values', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localVariationValues']);
+                Route::post('/variation-attributes/{attribute}/values', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localVariationValues']);
                 Route::get('/local-properties', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localProperties']);
                 Route::get('/local-properties/{property}/values', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localPropertyValues']);
+                Route::post('/local-properties/{property}/values', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localPropertyValues']);
                 Route::post('/local-source-values', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localSourceValues']);
                 Route::get('/categories', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'ozonCategories']);
                 Route::post('/attributes', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'attributes']);
