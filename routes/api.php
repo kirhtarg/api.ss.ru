@@ -2474,6 +2474,10 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/settings', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'saveSettings']);
                 Route::post('/test-connection', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'testConnection']);
                 Route::get('/local-categories', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localCategories']);
+                Route::get('/local-tags', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localTags']);
+                Route::get('/variation-attributes', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'variationAttributes']);
+                Route::get('/local-properties', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localProperties']);
+                Route::get('/local-properties/{property}/values', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localPropertyValues']);
                 Route::get('/categories', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'ozonCategories']);
                 Route::post('/attributes', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'attributes']);
                 Route::post('/attribute-values', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'attributeValues']);
@@ -2482,6 +2486,9 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::delete('/mappings/{mapping}', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'deleteMapping']);
                 Route::post('/preview', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'preview']);
                 Route::post('/sync', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'startSync']);
+                Route::get('/products', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'products']);
+                Route::post('/products/refresh', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'refreshProducts']);
+                Route::post('/products/{binding}/zero-stock', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'zeroBindingStock']);
                 Route::get('/runs', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'runs']);
                 Route::get('/runs/{run}', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'run']);
             });

@@ -47,7 +47,7 @@ class PollOzonImportTaskJob implements ShouldQueue
             $item->update(['status' => $success ? 'completed' : 'failed', 'response_payload' => $result, 'errors' => $errors ?: null]);
             ShopOzonProductBinding::updateOrCreate(
                 ['account_id' => $run->account_id, 'offer_id' => $item->offer_id],
-                ['good_id' => $item->good_id, 'variation_id' => $item->variation_id, 'status' => $success ? 'synced' : 'error', 'product_id' => data_get($result, 'product_id'), 'errors' => $errors ?: null, 'last_synced_at' => now()]
+                ['good_id' => $item->good_id, 'variation_id' => $item->variation_id, 'is_variation' => (bool) $item->variation_id, 'status' => $success ? 'synced' : 'error', 'product_id' => data_get($result, 'product_id'), 'errors' => $errors ?: null, 'last_synced_at' => now()]
             );
             $run->increment('processed');
             $run->increment($success ? 'succeeded' : 'failed');
