@@ -6,10 +6,14 @@ use App\Models\ShopGood;
 use App\Models\ShopGoodVariation;
 use App\Models\ShopOzonAccount;
 use App\Models\ShopOzonCategoryMapping;
+use App\Services\ProductNameParser;
 
 class OzonProductPayloadBuilder
 {
-    public function __construct(private readonly OzonProductResolver $resolver) {}
+    public function __construct(
+        private readonly OzonProductResolver $resolver,
+        private readonly ProductNameParser $nameParser,
+    ) {}
 
     public function build(ShopGood $good, ?ShopGoodVariation $variation, ShopOzonAccount $account, ?ShopOzonCategoryMapping $mapping = null): array
     {
@@ -49,6 +53,7 @@ class OzonProductPayloadBuilder
             'mapping_id' => $mapping?->id,
             'variation_mode' => $mapping?->variation_mode ?? 'grouped',
             'variation_attributes' => $this->variationSummary($mapping, $variation),
+            'computed_model' => $this->nameParser->modelForGood($good),
         ];
     }
 
@@ -150,11 +155,12 @@ class OzonProductPayloadBuilder
         }
 
         if ($variation && ($mapping?->variation_mode ?? '') === 'grouped' && $mapping?->group_attribute_id) {
-            $attributes->push([
-                'id' => (int) $mapping->group_attribute_id,
-                'complex_id' => 0,
-                'values' => [['value' => trim((string) $good->name)]],
-            ]);
+            $groupAttributeId = (int) $mapping->group_attribute_id;
+            $groupAttributeConfigured = collect($mapping->attribute_mappings ?? [])->contains(fn ($item) => (int) ($item['id'] ?? 0) === $groupAttributeId);
+            if (! $groupAttributeConfigured) {
+                $model = $this->nameParser->modelForGood($good) ?: trim((string) $good->name);
+                $attributes->push(['id' => $groupAttributeId, 'complex_id' => 0, 'values' => [['value' => $model]]]);
+            }
         }
 
         return $attributes->filter(fn ($item) => $item && $item['id'] > 0)
@@ -192,6 +198,10 @@ class OzonProductPayloadBuilder
             if ($value !== '' && ! empty($axis['uses_dictionary']) && ! $this->dictionaryValueId($axis['dictionary_map'] ?? [], $value)) {
                 $errors[] = 'Значение «'.$value.'» не сопоставлено со словарём Ozon для характеристики '.($axis['ozon_attribute_name'] ?? $axis['ozon_attribute_id']).'.';
             }
+        }
+        if ($variation && ($mapping?->variation_mode ?? '') === 'grouped' && $mapping?->group_attribute_id
+            && ! $sentAttributeIds->contains((int) $mapping->group_attribute_id)) {
+            $errors[] = 'Не удалось вычислить «Название модели» для объединения. Проверьте название товара и бренд.';
         }
         return $errors;
     }
@@ -237,6 +247,12 @@ class OzonProductPayloadBuilder
             'variation' => data_get($variation, $item['source_key'] ?? ''),
             'property' => $this->propertyValue($good, (int) ($item['source_key'] ?? 0)),
             'brand' => (string) ($good->brands->first()?->name ?? ''),
+            'computed_model' => $this->nameParser->modelForGood($good),
+            'dimension_weight' => $variation?->shipping_weight ?: $variation?->weight ?: $good->shipping_weight ?: $good->weight,
+            'dimension_width' => $variation?->shipping_width ?: $variation?->width ?: $good->shipping_width ?: $good->width,
+            'dimension_length' => $variation?->length ?: $good->length,
+            'dimension_height' => $variation?->shipping_height ?: $variation?->height ?: $good->shipping_height ?: $good->height,
+            'dimension_depth' => $variation?->shipping_length ?: $variation?->length ?: $good->shipping_length ?: $good->depth,
             default => data_get($good, $item['source_key'] ?? ''),
         };
     }
