@@ -16,6 +16,7 @@ use App\Services\Ozon\OzonProductResolver;
 use App\Services\Ozon\OzonSellerClient;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 class ShopOzonSellerController extends Controller
 {
@@ -146,9 +147,32 @@ class ShopOzonSellerController extends Controller
         $account = ShopOzonAccount::query()->first();
         if (! $account) return response()->json(['success' => true, 'data' => []]);
         $items = ShopOzonCategoryMapping::query()->where('account_id', $account->id)->with('category:id,name')->orderByDesc('id')->get();
-        $categoryNames = ShopCategory::query()->whereIn('id', $items->flatMap(fn ($item) => $item->categoryIds())->unique())->pluck('name', 'id');
-        $items->each(function ($item) use ($categoryNames) {
-            $item->setAttribute('categories', collect($item->categoryIds())->map(fn ($id) => ['id' => $id, 'name' => $categoryNames[$id] ?? "ID {$id}"])->all());
+        $categoryIds = $items->flatMap(fn ($item) => $item->categoryIds())->unique()->values();
+        $categoryNames = ShopCategory::query()->whereIn('id', $categoryIds)->pluck('name', 'id');
+        $categoryCounts = collect();
+        if ($account->selection_tag_id && $categoryIds->isNotEmpty()) {
+            $categoryCounts = DB::table('shop_good_categories as categories')
+                ->join('shop_goods as goods', 'goods.id', '=', 'categories.good_id')
+                ->join('shop_good_tags as tags', 'tags.good_id', '=', 'goods.id')
+                ->where('goods.is_active', true)
+                ->where('tags.tag_id', $account->selection_tag_id)
+                ->whereIn('categories.category_id', $categoryIds)
+                ->groupBy('categories.category_id')
+                ->selectRaw('categories.category_id, COUNT(DISTINCT goods.id) as goods_count')
+                ->pluck('goods_count', 'category_id');
+        }
+        $items->each(function ($item) use ($account, $categoryNames, $categoryCounts) {
+            $ids = collect($item->categoryIds())->map(fn ($id) => (int) $id)->values();
+            $item->setAttribute('categories', $ids->map(fn ($id) => [
+                'id' => $id,
+                'name' => $categoryNames[$id] ?? "ID {$id}",
+                'tagged_goods_count' => (int) ($categoryCounts[$id] ?? 0),
+            ])->all());
+            $item->setAttribute('tagged_goods_count', $account->selection_tag_id ? ShopGood::query()
+                ->where('is_active', true)
+                ->whereHas('tags', fn ($query) => $query->where('shop_tags.id', $account->selection_tag_id))
+                ->whereHas('categories', fn ($query) => $query->whereIn('shop_categories.id', $ids))
+                ->count() : 0);
         });
         return response()->json(['success' => true, 'data' => $items]);
     }
@@ -192,11 +216,14 @@ class ShopOzonSellerController extends Controller
 
     public function preview(Request $request, OzonProductPayloadBuilder $builder, OzonProductResolver $resolver)
     {
-        $ids = $request->validate(['good_ids' => 'required|array|min:1|max:50', 'good_ids.*' => 'integer'])['good_ids'];
+        $input = $request->validate(['good_ids' => 'nullable|array|max:50', 'good_ids.*' => 'integer']);
+        $ids = array_values(array_unique(array_map('intval', $input['good_ids'] ?? []))) ?: null;
         $account = $this->account();
         if (! $account->selection_tag_id) return response()->json(['success' => false, 'message' => 'Сначала выберите тег отбора Ozon в настройках.'], 422);
         $result = [];
-        $goods = $resolver->query($account, $ids)->get();
+        $query = $resolver->query($account, $ids);
+        $eligibleGoods = (clone $query)->count();
+        $goods = $query->limit(50)->get();
         $mappings = $resolver->mappings($account);
         foreach ($goods as $good) {
             $mapping = $resolver->mappingFor($good, $mappings);
@@ -211,7 +238,15 @@ class ShopOzonSellerController extends Controller
                 ], $built, ['errors' => array_values(array_unique(array_merge($built['errors'], $row['row_errors'])))]);
             }
         }
-        return response()->json(['success' => true, 'data' => $result, 'meta' => ['requested_goods' => count($ids), 'matched_goods' => $goods->count(), 'offers' => count($result)]]);
+        return response()->json(['success' => true, 'data' => $result, 'meta' => [
+            'scope' => $ids ? 'selected' : 'all',
+            'requested_goods' => $ids ? count($ids) : null,
+            'eligible_goods' => $eligibleGoods,
+            'shown_goods' => $goods->count(),
+            'offers' => count($result),
+            'offers_with_errors' => collect($result)->filter(fn ($row) => ! empty($row['errors']))->count(),
+            'truncated' => $eligibleGoods > $goods->count(),
+        ]]);
     }
 
     public function startSync(Request $request)
