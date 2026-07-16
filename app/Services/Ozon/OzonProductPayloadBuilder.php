@@ -54,6 +54,7 @@ class OzonProductPayloadBuilder
             'variation_mode' => $mapping?->variation_mode ?? 'grouped',
             'variation_attributes' => $this->variationSummary($mapping, $variation),
             'computed_model' => $this->nameParser->modelForGood($good),
+            'computed_type' => $this->nameParser->typeForGood($good),
         ];
     }
 
@@ -248,6 +249,7 @@ class OzonProductPayloadBuilder
             'property' => $this->propertyValue($good, (int) ($item['source_key'] ?? 0)),
             'brand' => (string) ($good->brands->first()?->name ?? ''),
             'computed_model' => $this->nameParser->modelForGood($good),
+            'computed_type' => $this->nameParser->typeForGood($good),
             'dimension_weight' => $variation?->shipping_weight ?: $variation?->weight ?: $good->shipping_weight ?: $good->weight,
             'dimension_width' => $variation?->shipping_width ?: $variation?->width ?: $good->shipping_width ?: $good->width,
             'dimension_length' => $variation?->length ?: $good->length,

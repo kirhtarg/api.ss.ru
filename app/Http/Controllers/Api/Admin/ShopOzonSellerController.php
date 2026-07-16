@@ -126,8 +126,19 @@ class ShopOzonSellerController extends Controller
     public function attributeValues(Request $request)
     {
         $input = $request->validate(['description_category_id' => 'required|integer', 'type_id' => 'required|integer', 'attribute_id' => 'required|integer', 'last_value_id' => 'nullable|integer', 'limit' => 'nullable|integer|min:1|max:5000']);
-        $data = (new OzonSellerClient($this->account()))->post('/v1/description-category/attribute/values', array_merge($input, ['language' => 'DEFAULT', 'limit' => $input['limit'] ?? 1000]));
-        return response()->json(['success' => true, 'data' => data_get($data, 'result', $data)]);
+        $data = (new OzonSellerClient($this->account()))->post('/v1/description-category/attribute/values', [
+            'description_category_id' => (int) $input['description_category_id'],
+            'type_id' => (int) $input['type_id'],
+            'attribute_id' => (int) $input['attribute_id'],
+            'language' => 'DEFAULT',
+            'last_value_id' => (int) ($input['last_value_id'] ?? 0),
+            'limit' => (int) ($input['limit'] ?? 1000),
+        ]);
+
+        return response()->json(['success' => true, 'data' => [
+            'items' => data_get($data, 'result', []),
+            'has_next' => (bool) data_get($data, 'has_next', false),
+        ]]);
     }
 
     public function mappings()

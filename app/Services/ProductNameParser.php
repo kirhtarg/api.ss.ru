@@ -34,6 +34,12 @@ class ProductNameParser
         return $this->value((string) $good->name, $brand, 'model');
     }
 
+    public function typeForGood(ShopGood $good): string
+    {
+        $brand = $good->brands->pluck('name')->filter()->join(' ');
+        return $this->value((string) $good->name, $brand, 'type');
+    }
+
     public function year(string $text): string
     {
         preg_match_all('/\b(20\d{2}|19\d{2})\b/', $text, $matches);

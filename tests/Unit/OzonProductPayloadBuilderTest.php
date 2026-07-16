@@ -74,6 +74,7 @@ class OzonProductPayloadBuilderTest extends TestCase
             ->build($good, $variation, new ShopOzonAccount(['image_base_url' => 'https://example.test', 'vat' => '0']), $mapping);
 
         $this->assertSame('Cadence Camber', $built['computed_model']);
+        $this->assertSame('Сноуборд', $built['computed_type']);
         $this->assertSame('Cadence Camber', data_get(collect($built['payload']['attributes'])->firstWhere('id', 9048), 'values.0.value'));
     }
 
