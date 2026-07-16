@@ -129,6 +129,13 @@ class OzonProductResolver
         }
 
         $value = $variation->attributeValues->first(fn ($item) => (int) $item->attribute_id === $attributeId);
-        return trim((string) ($value?->value ?? ''));
+        $decoded = trim((string) ($value?->value ?? ''));
+        for ($iteration = 0; $iteration < 5; $iteration++) {
+            $next = html_entity_decode($decoded, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            if ($next === $decoded) break;
+            $decoded = $next;
+        }
+
+        return trim($decoded);
     }
 }

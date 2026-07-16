@@ -25,8 +25,8 @@ class OzonProductPayloadBuilder
 
         $payload = [
             'offer_id' => $offerId,
-            'name' => trim((string) $good->name),
-            'description' => (string) ($good->description ?: $good->short_description ?: $good->name),
+            'name' => $this->decodedText($good->name),
+            'description' => $this->decodedText($good->description ?: $good->short_description ?: $good->name),
             'description_category_id' => $mapping?->description_category_id,
             'type_id' => $mapping?->type_id,
             'price' => $this->money($price),
@@ -48,14 +48,15 @@ class OzonProductPayloadBuilder
 
         return [
             'offer_id' => $offerId,
+            'brand_name' => $this->decodedText($good->brands->first()?->name),
             'payload' => $payload,
             'errors' => $this->validate($payload, $mapping, $good, $variation),
             'mapping_id' => $mapping?->id,
             'variation_mode' => $mapping?->variation_mode ?? 'grouped',
             'variation_attributes' => $this->variationSummary($mapping, $variation),
             'display_attributes' => $this->attributeSummary($mapping, $good, $variation),
-            'computed_model' => $this->nameParser->modelForGood($good),
-            'computed_type' => $this->nameParser->typeForGood($good),
+            'computed_model' => $this->decodedText($this->nameParser->modelForGood($good)),
+            'computed_type' => $this->decodedText($this->nameParser->typeForGood($good)),
         ];
     }
 
@@ -213,9 +214,9 @@ class OzonProductPayloadBuilder
     {
         $direct = $map[$value] ?? null;
         if ($direct) return (int) $direct;
-        $needle = mb_strtolower(trim($value));
+        $needle = mb_strtolower($this->decodedText($value));
         foreach ($map as $key => $id) {
-            if (mb_strtolower(trim((string) $key)) === $needle && $id) return (int) $id;
+            if (mb_strtolower($this->decodedText($key)) === $needle && $id) return (int) $id;
         }
         return null;
     }
@@ -230,8 +231,8 @@ class OzonProductPayloadBuilder
             $axis = $axes->get($localAttributeId, []);
             return [
                 'local_attribute_id' => $localAttributeId,
-                'name' => $this->variationAttributeName($variation, $localAttributeId, $axis),
-                'value' => trim((string) $value->value),
+                'name' => $this->decodedText($this->variationAttributeName($variation, $localAttributeId, $axis)),
+                'value' => $this->decodedText($value->value),
                 'ozon_attribute_id' => (int) ($axis['ozon_attribute_id'] ?? 0),
                 'ozon_attribute_name' => $axis['ozon_attribute_name'] ?? null,
                 'is_mapped' => $axes->has($localAttributeId),
@@ -247,8 +248,8 @@ class OzonProductPayloadBuilder
 
             return [
                 'id' => (int) ($item['id'] ?? 0),
-                'name' => $item['name'] ?? 'Атрибут Ozon',
-                'value' => (string) $value,
+                'name' => $this->decodedText($item['name'] ?? 'Атрибут Ozon'),
+                'value' => $this->decodedText($value),
                 'is_variation' => false,
             ];
         })->filter();
@@ -258,8 +259,8 @@ class OzonProductPayloadBuilder
             if ($value === '') continue;
             $items->push([
                 'id' => (int) ($item['ozon_attribute_id'] ?? 0),
-                'name' => $item['ozon_attribute_name'] ?? $this->variationAttributeName($variation, (int) ($item['local_attribute_id'] ?? 0), $item),
-                'value' => $value,
+                'name' => $this->decodedText($item['ozon_attribute_name'] ?? $this->variationAttributeName($variation, (int) ($item['local_attribute_id'] ?? 0), $item)),
+                'value' => $this->decodedText($value),
                 'is_variation' => true,
             ]);
         }
@@ -285,9 +286,9 @@ class OzonProductPayloadBuilder
         if (! $property) return '';
         $valueId = (int) ($property->pivot?->shop_property_value_id ?? 0);
         if ($valueId > 0) {
-            return trim((string) ($property->values->firstWhere('id', $valueId)?->value ?? ''));
+            return $this->decodedText($property->values->firstWhere('id', $valueId)?->value);
         }
-        return trim((string) ($property->pivot?->value ?? ''));
+        return $this->decodedText($property->pivot?->value);
     }
 
     private function sourceValue(array $item, ShopGood $good, ?ShopGoodVariation $variation): mixed
@@ -297,7 +298,7 @@ class OzonProductPayloadBuilder
             'static' => $item['value'] ?? '',
             'variation' => data_get($variation, $item['source_key'] ?? ''),
             'property' => $this->propertyValue($good, (int) ($item['source_key'] ?? 0)),
-            'brand' => (string) ($good->brands->first()?->name ?? ''),
+            'brand' => $good->brands->first()?->name ?? '',
             'computed_model' => $this->nameParser->modelForGood($good),
             'computed_type' => $this->nameParser->typeForGood($good),
             'dimension_weight' => $variation?->shipping_weight ?: $variation?->weight ?: $good->shipping_weight ?: $good->weight,
@@ -312,6 +313,18 @@ class OzonProductPayloadBuilder
             return (float) $value * (float) ($item['multiplier'] ?? 1);
         }
 
-        return $value;
+        return is_string($value) ? $this->decodedText($value) : $value;
+    }
+
+    private function decodedText(mixed $value): string
+    {
+        $decoded = trim((string) ($value ?? ''));
+        for ($iteration = 0; $iteration < 5; $iteration++) {
+            $next = html_entity_decode($decoded, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            if ($next === $decoded) break;
+            $decoded = $next;
+        }
+
+        return trim($decoded);
     }
 }

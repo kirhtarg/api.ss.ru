@@ -29,7 +29,7 @@ class OzonProductPayloadBuilderTest extends TestCase
         $variation->setRelation('images', new Collection);
         $attribute = new ShopVariationAttribute(['name' => 'Размер']);
         $attribute->id = 5;
-        $attributeValue = new ShopVariationAttributeValue(['attribute_id' => 5, 'value' => 'M']);
+        $attributeValue = new ShopVariationAttributeValue(['attribute_id' => 5, 'value' => '9&amp;quot;']);
         $attributeValue->setRelation('attribute', $attribute);
         $variation->setRelation('attributeValues', new Collection([$attributeValue]));
 
@@ -41,7 +41,7 @@ class OzonProductPayloadBuilderTest extends TestCase
             'variation_attribute_mappings' => [[
                 'local_attribute_id' => 5,
                 'ozon_attribute_id' => 10,
-                'dictionary_map' => ['M' => 100],
+                'dictionary_map' => ['9"' => 100],
                 'uses_dictionary' => true,
             ]],
         ]);
@@ -52,6 +52,8 @@ class OzonProductPayloadBuilderTest extends TestCase
         $this->assertSame('g_7_v_11', $built['offer_id']);
         $this->assertSame('Куртка', data_get($built, 'payload.name'));
         $this->assertSame('Размер', data_get($built, 'variation_attributes.0.name'));
+        $this->assertSame('9"', data_get($built, 'variation_attributes.0.value'));
+        $this->assertSame('9"', data_get(collect($built['payload']['attributes'])->firstWhere('id', 10), 'values.0.value'));
         $this->assertSame(100, data_get(collect($built['payload']['attributes'])->firstWhere('id', 10), 'values.0.dictionary_value_id'));
         $this->assertSame('Куртка', data_get(collect($built['payload']['attributes'])->firstWhere('id', 9048), 'values.0.value'));
     }
@@ -71,7 +73,10 @@ class OzonProductPayloadBuilderTest extends TestCase
             'type_id' => 2,
             'variation_mode' => 'grouped',
             'group_attribute_id' => 9048,
-            'attribute_mappings' => [['id' => 9048, 'name' => 'Название модели', 'required' => true, 'source' => 'computed_model']],
+            'attribute_mappings' => [
+                ['id' => 9048, 'name' => 'Название модели', 'required' => true, 'source' => 'computed_model'],
+                ['id' => 31, 'name' => 'Бренд', 'source' => 'brand', 'uses_dictionary' => true, 'dictionary_map' => ['Arbor' => 77]],
+            ],
         ]);
 
         $built = (new OzonProductPayloadBuilder(new OzonProductResolver, new ProductNameParser))
@@ -79,6 +84,9 @@ class OzonProductPayloadBuilderTest extends TestCase
 
         $this->assertSame('Cadence Camber', $built['computed_model']);
         $this->assertSame('Сноуборд', $built['computed_type']);
+        $this->assertSame('Arbor', $built['brand_name']);
+        $this->assertSame('Arbor', data_get(collect($built['display_attributes'])->firstWhere('id', 31), 'value'));
+        $this->assertSame(77, data_get(collect($built['payload']['attributes'])->firstWhere('id', 31), 'values.0.dictionary_value_id'));
         $this->assertSame('Cadence Camber', data_get(collect($built['payload']['attributes'])->firstWhere('id', 9048), 'values.0.value'));
     }
 
