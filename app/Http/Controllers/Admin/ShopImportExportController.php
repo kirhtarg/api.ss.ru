@@ -210,6 +210,15 @@ class ShopImportExportController extends Controller
             'campaign_id' => 'nullable|string|max:50',
             'auth_token' => 'nullable|string|max:500',
             'auth_type' => 'nullable|string|in:api_key,oauth',
+            'price_adjustment' => 'nullable|array',
+            'price_adjustment.operation' => 'nullable|string|in:add,subtract',
+            'price_adjustment.mode' => 'nullable|string|in:percent,absolute',
+            'price_adjustment.value' => 'nullable|numeric|min:0|max:10000000',
+            'dimension_multipliers' => 'nullable|array',
+            'dimension_multipliers.weight' => 'nullable|numeric|gt:0|max:1000000',
+            'dimension_multipliers.length' => 'nullable|numeric|gt:0|max:1000000',
+            'dimension_multipliers.width' => 'nullable|numeric|gt:0|max:1000000',
+            'dimension_multipliers.height' => 'nullable|numeric|gt:0|max:1000000',
         ]);
 
         $current = $stockService->getSettings();
@@ -230,17 +239,63 @@ class ShopImportExportController extends Controller
         ]);
     }
 
-    public function syncYandexMarketStocks(\App\Services\YandexMarketStockService $stockService): JsonResponse
+    public function syncYandexMarketStocks(Request $request, \App\Services\YandexMarketStockService $stockService): JsonResponse
     {
-        $result = $stockService->syncStocks();
+        try {
+            $run = $stockService->startStockSync($request->user()?->id);
+        } catch (\Throwable $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
 
         return response()->json([
-            'success' => (bool) ($result['success'] ?? false),
-            'message' => ($result['success'] ?? false)
-                ? 'Остатки успешно отправлены в Яндекс Маркет'
-                : ($result['message'] ?? 'Ошибка отправки остатков в Яндекс Маркет'),
-            'data' => $result,
-        ], ($result['success'] ?? false) ? 200 : 422);
+            'success' => true,
+            'message' => $run->type === 'stocks'
+                ? ($run->status === 'pending' ? 'Отправка остатков поставлена в очередь' : 'Отправка остатков уже выполняется')
+                : 'Дождитесь завершения текущей сверки остатков',
+            'data' => $stockService->serializeRun($run),
+        ], 202);
+    }
+
+    public function getYandexMarketStockRuns(\App\Services\YandexMarketStockService $stockService): JsonResponse
+    {
+        return response()->json(['success' => true, 'data' => $stockService->recentRuns()]);
+    }
+
+    public function verifyYandexMarketStocks(Request $request, \App\Services\YandexMarketStockService $stockService): JsonResponse
+    {
+        try {
+            $run = $stockService->startStockVerification($request->user()?->id);
+        } catch (\Throwable $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => $run->type === 'stock_verification' ? 'Проверка остатков поставлена в очередь' : 'Дождитесь завершения текущей операции',
+            'data' => $stockService->serializeRun($run),
+        ], 202);
+    }
+
+    public function getYandexMarketStockRun(int $run, \App\Services\YandexMarketStockService $stockService): JsonResponse
+    {
+        $model = \App\Models\ShopYandexMarketSyncRun::findOrFail($run);
+
+        return response()->json(['success' => true, 'data' => $stockService->serializeRun($model)]);
+    }
+
+    public function auditYandexMarketFeed(Request $request, \App\Services\YandexMarketStockService $stockService, \App\Services\YandexMarketFeedAuditService $auditService): JsonResponse
+    {
+        $filters = $request->validate([
+            'scope' => 'nullable|string|in:all,issues,clean',
+            'severity' => 'nullable|string|in:critical,warning',
+            'query' => 'nullable|string|max:255',
+        ]);
+        $path = $stockService->getFeedPath();
+        if (! $path) {
+            return response()->json(['success' => false, 'message' => 'Файл goods_feed.xml не найден.'], 404);
+        }
+
+        return response()->json(['success' => true, 'data' => $auditService->audit($path, $filters)]);
     }
 
     /**

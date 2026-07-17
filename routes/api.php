@@ -2057,6 +2057,10 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::get('/export/yml/yandex-market/stocks/settings', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getYandexMarketStockSettings']);
                     Route::post('/export/yml/yandex-market/stocks/settings', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'updateYandexMarketStockSettings']);
                     Route::post('/export/yml/yandex-market/stocks/sync', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'syncYandexMarketStocks']);
+                    Route::get('/export/yml/yandex-market/stocks/runs', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getYandexMarketStockRuns']);
+                    Route::post('/export/yml/yandex-market/stocks/verify', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'verifyYandexMarketStocks']);
+                    Route::get('/export/yml/yandex-market/stocks/runs/{run}', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getYandexMarketStockRun']);
+                    Route::get('/export/yml/yandex-market/audit', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'auditYandexMarketFeed']);
                     Route::post('/import/csv', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'importCsv']);
                     Route::get('/template', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getTemplate']);
                 });

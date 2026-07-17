@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\Log;
 
 class YmlFeedService
 {
+    private ?array $marketSettings = null;
+
     /**
      * Генерация YML фида
      * 
@@ -83,6 +85,7 @@ class YmlFeedService
                 'categories:id,name',
                 'brands:id,name',
                 'images:id,good_id,file_path,alt_text,is_main,sort_order',
+                'properties.values:id,property_id,value',
                 'variations' => function ($q) {
                     $q->select(
                         'id',
@@ -108,8 +111,9 @@ class YmlFeedService
             $count = 0;
             $query->chunk(200, function ($goods) use ($handle, &$count) {
                 foreach ($goods as $good) {
-                    $this->writeOfferToHandle($handle, $good);
-                    $count++;
+                    if ($this->writeOfferToHandle($handle, $good)) {
+                        $count++;
+                    }
                 }
                 unset($goods);
             });
@@ -200,13 +204,13 @@ class YmlFeedService
         return $frontendBase . '/images/' . $cleanPath;
     }
 
-    private function writeOfferToHandle($handle, $good): void
+    private function writeOfferToHandle($handle, $good): bool
     {
         $priceData = $this->getOfferPriceData($good);
 
         // Пропускаем товары без имени или без актуальной положительной цены.
         if (empty($good->name) || $priceData === null) {
-            return;
+            return false;
         }
 
         // Определяем доступность и остаток. Для товаров с вариациями остаток хранится в вариациях.
@@ -278,6 +282,30 @@ class YmlFeedService
             fwrite($handle, '                <description><![CDATA[' . $description . ']]></description>' . PHP_EOL);
         }
 
+        if ($good->relationLoaded('properties')) {
+            $params = $good->properties
+                ->groupBy('id')
+                ->map(function ($properties) {
+                    $property = $properties->first();
+                    $values = $properties
+                        ->map(function ($entry) {
+                            $valueId = $entry->pivot?->shop_property_value_id;
+                            return $entry->values->firstWhere('id', $valueId)?->value;
+                        })
+                        ->filter(fn ($value) => $value !== null && trim((string) $value) !== '')
+                        ->map(fn ($value) => html_entity_decode(trim((string) $value), ENT_QUOTES | ENT_HTML5, 'UTF-8'))
+                        ->unique()
+                        ->values();
+
+                    return ['name' => $property->name, 'value' => $values->implode(', ')];
+                })
+                ->filter(fn ($param) => trim((string) $param['name']) !== '' && $param['value'] !== '');
+
+            foreach ($params as $param) {
+                fwrite($handle, '                <param name="'.htmlspecialchars(html_entity_decode($param['name'], ENT_QUOTES | ENT_HTML5, 'UTF-8'), ENT_QUOTES | ENT_XML1, 'UTF-8').'">'.htmlspecialchars($param['value'], ENT_QUOTES | ENT_XML1, 'UTF-8').'</param>'.PHP_EOL);
+            }
+        }
+
         if ($logisticsData['weight'] !== null) {
             fwrite($handle, '                <weight>' . $this->formatYmlNumber($logisticsData['weight']) . '</weight>' . PHP_EOL);
         }
@@ -287,6 +315,8 @@ class YmlFeedService
         }
 
         fwrite($handle, '            </offer>' . PHP_EOL);
+
+        return true;
     }
 
     private function getOfferPriceData(ShopGood $good): ?array
@@ -346,11 +376,16 @@ class YmlFeedService
             return null;
         }
 
-        $oldPrice = ($basePrice !== null && $basePrice > $currentPrice) ? $basePrice : null;
+        $adjustedCurrentPrice = $this->adjustMarketPrice($currentPrice);
+        if ($adjustedCurrentPrice <= 0) {
+            return null;
+        }
+        $adjustedBasePrice = $basePrice !== null ? $this->adjustMarketPrice($basePrice) : null;
+        $oldPrice = ($adjustedBasePrice !== null && $adjustedBasePrice > $adjustedCurrentPrice) ? $adjustedBasePrice : null;
 
         return [
-            'numeric_price' => $currentPrice,
-            'price' => $this->formatYmlPrice($currentPrice),
+            'numeric_price' => $adjustedCurrentPrice,
+            'price' => $this->formatYmlPrice($adjustedCurrentPrice),
             'oldprice' => $oldPrice !== null ? $this->formatYmlPrice($oldPrice) : null,
             'item' => $item,
         ];
@@ -410,19 +445,22 @@ class YmlFeedService
 
     private function getOfferLogisticsData(ShopGood $good, $preferredItem = null): array
     {
-        $weight = $this->positiveDimensionValue($preferredItem->weight ?? null)
+        // Вариации наследуют логистику основной карточки: в магазине габариты ведутся у товара.
+        $weight = $this->positiveDimensionValue($good->shipping_weight ?? null)
             ?? $this->positiveDimensionValue($good->weight ?? null);
-
-        $length = $this->positiveDimensionValue($preferredItem->length ?? null)
-            ?? $this->positiveDimensionValue($preferredItem->depth ?? null)
+        $length = $this->positiveDimensionValue($good->shipping_length ?? null)
             ?? $this->positiveDimensionValue($good->length ?? null)
             ?? $this->positiveDimensionValue($good->depth ?? null);
-
-        $width = $this->positiveDimensionValue($preferredItem->width ?? null)
+        $width = $this->positiveDimensionValue($good->shipping_width ?? null)
             ?? $this->positiveDimensionValue($good->width ?? null);
-
-        $height = $this->positiveDimensionValue($preferredItem->height ?? null)
+        $height = $this->positiveDimensionValue($good->shipping_height ?? null)
             ?? $this->positiveDimensionValue($good->height ?? null);
+
+        $multipliers = $this->getMarketSettings()['dimension_multipliers'];
+        $weight = $weight !== null ? $weight * $multipliers['weight'] : null;
+        $length = $length !== null ? $length * $multipliers['length'] : null;
+        $width = $width !== null ? $width * $multipliers['width'] : null;
+        $height = $height !== null ? $height * $multipliers['height'] : null;
 
         $dimensions = null;
         if ($length !== null && $width !== null && $height !== null) {
@@ -468,5 +506,20 @@ class YmlFeedService
                 @copy($sourcePath, $destPath);
             }
         }
+    }
+
+    private function adjustMarketPrice(float $price): float
+    {
+        $adjustment = $this->getMarketSettings()['price_adjustment'];
+        $value = max(0, (float) ($adjustment['value'] ?? 0));
+        $delta = ($adjustment['mode'] ?? 'percent') === 'absolute' ? $value : $price * $value / 100;
+        $result = ($adjustment['operation'] ?? 'add') === 'subtract' ? $price - $delta : $price + $delta;
+
+        return round(max(0, $result), 2);
+    }
+
+    private function getMarketSettings(): array
+    {
+        return $this->marketSettings ??= app(YandexMarketStockService::class)->getSettings();
     }
 }
