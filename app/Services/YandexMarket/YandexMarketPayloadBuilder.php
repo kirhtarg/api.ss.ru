@@ -19,8 +19,8 @@ class YandexMarketPayloadBuilder
         $stock = $this->stockSummary($good, $variation);
         $media = $this->media($good, $variation, $account);
         $dimensions = $this->dimensions($good, $mapping);
-        $parameters = $this->parameters($mapping, $good, $variation);
         $hasVariations = $good->variations->where('is_active', true)->count() > 1;
+        $parameters = $this->parameters($mapping, $good, $variation, $hasVariations);
         $hasDimensions = collect($dimensions)->every(fn ($value) => $value > 0);
 
         $offer = [
@@ -31,8 +31,6 @@ class YandexMarketPayloadBuilder
             'vendor' => $this->decoded($good->brands->first()?->name),
             'description' => $this->plainDescription($good->description ?: $good->short_description ?: $good->name),
             'weightDimensions' => $hasDimensions ? $dimensions : null,
-            // Market creates the variation group from groupId and the category values
-            // in one offer-mappings/update request.
             'parameterValues' => $parameters['payload'] ?: null,
             // customsCommodityCode is deprecated by Market. The active API field is commodityCodes.
             'commodityCodes' => ! empty($parameters['customsCommodityCode']) ? [[
@@ -45,7 +43,6 @@ class YandexMarketPayloadBuilder
                 'currencyId' => 'RUR',
             ],
         ];
-        if ($hasVariations) $offer['groupId'] = 'g_'.$good->id;
         $offer = array_filter($offer, fn ($value) => $value !== null && $value !== '' && $value !== []);
 
         $errors = [];
@@ -76,7 +73,7 @@ class YandexMarketPayloadBuilder
             'stock' => $stock['total'],
             'dimensions_summary' => ['values' => $dimensions, 'sent' => $hasDimensions],
             'weight_dimensions' => $offer['weightDimensions'] ?? null,
-            'variation_group_id' => $offer['groupId'] ?? null,
+            'variation_group_id' => $parameters['variation_group_name'] ?? null,
             'media_summary' => ['count' => count($media['pictures']), 'primary' => $media['pictures'][0] ?? null],
             'offer_mapping' => ['offer' => $offer],
             'category_parameter_values' => $parameters['payload'],
@@ -109,11 +106,16 @@ class YandexMarketPayloadBuilder
         return (string) ($binding?->offer_id ?: ($variation ? "g_{$good->id}_v_{$variation->id}" : "g_{$good->id}"));
     }
 
-    private function parameters(?ShopYandexMarketCategoryMapping $mapping, ShopGood $good, ?ShopGoodVariation $variation): array
+    private function parameters(?ShopYandexMarketCategoryMapping $mapping, ShopGood $good, ?ShopGoodVariation $variation, bool $hasVariations): array
     {
-        $payload = []; $display = []; $missing = []; $customsCommodityCode = null;
+        $payload = []; $display = []; $missing = []; $customsCommodityCode = null; $variationGroupName = null; $hasVariationGroupParameter = false;
         foreach ($mapping?->attribute_mappings ?? [] as $item) {
-            $value = $this->resolver->sourceValue($item, $good, $variation);
+            $isVariationGroup = $this->isVariationGroupParameter($item);
+            if ($isVariationGroup) $hasVariationGroupParameter = true;
+            if ($isVariationGroup && ! $hasVariations) continue;
+
+            $value = $isVariationGroup ? $this->variationGroupName($good) : $this->resolver->sourceValue($item, $good, $variation);
+            if ($isVariationGroup) $variationGroupName = $value;
             $value = $this->normalizeNumericValue($value, $item);
             $dictionary = $this->dictionaryValue($item, (string) $value);
             $isEmpty = ($value === null || $value === '') && ! $dictionary;
@@ -145,7 +147,21 @@ class YandexMarketPayloadBuilder
                 'distinctive' => (bool) ($item['distinctive'] ?? false),
             ];
         }
-        return compact('payload', 'display', 'missing', 'customsCommodityCode');
+        if ($hasVariations && ! $hasVariationGroupParameter) {
+            $missing[] = 'Категория Яндекс Маркета не содержит характеристику «Название группы вариантов» и не поддерживает объединение вариаций.';
+        }
+        return compact('payload', 'display', 'missing', 'customsCommodityCode', 'variationGroupName');
+    }
+
+    private function isVariationGroupParameter(array $item): bool
+    {
+        return (int) ($item['id'] ?? 0) === 200
+            || (bool) preg_match('/назван(?:ие|ия)\s+групп[ыа]\s+вариант/ui', (string) ($item['name'] ?? ''));
+    }
+
+    private function variationGroupName(ShopGood $good): string
+    {
+        return 'shop-good-'.(int) $good->id;
     }
 
     private function dictionaryValue(array $item, string $value): ?array

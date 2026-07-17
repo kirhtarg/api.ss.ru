@@ -52,6 +52,7 @@ class YandexMarketPayloadBuilderTest extends TestCase
             'attribute_mappings' => [
                 ['id' => 1, 'name' => 'Бренд', 'required' => true, 'source' => 'brand'],
                 ['id' => 2, 'name' => 'Размер', 'required' => true, 'distinctive' => true, 'source' => 'variation_attribute', 'source_key' => 5, 'values' => [['id' => 77]], 'allow_custom_values' => false, 'dictionary_map' => ['9"' => 77], 'dictionary_labels' => ['9"' => '9 дюймов']],
+                ['id' => 200, 'name' => 'Название группы вариантов', 'source' => 'variation_group'],
             ],
         ]);
         $account = new ShopYandexMarketAccount(['image_base_url' => 'https://example.test']);
@@ -60,15 +61,15 @@ class YandexMarketPayloadBuilderTest extends TestCase
         $offer = $built['offer_mapping']['offer'];
 
         $this->assertSame('g_10_v_20', $built['offer_id']);
-        $this->assertSame('g_10', $offer['groupId']);
         $this->assertSame(8250.0, $offer['basicPrice']['value']);
         $this->assertSame(8800.0, $offer['basicPrice']['discountBase']);
         $this->assertSame(12, $built['stock']);
         $this->assertSame(['length' => 120.0, 'width' => 20.0, 'height' => 60.0, 'weight' => 12.0], $offer['weightDimensions']);
         $this->assertSame(['length' => 120.0, 'width' => 20.0, 'height' => 60.0, 'weight' => 12.0], $built['weight_dimensions']);
-        $this->assertSame('g_10', $built['variation_group_id']);
+        $this->assertSame('shop-good-10', $built['variation_group_id']);
         $this->assertSame(['https://example.test/images/goods/bike.jpg'], $offer['pictures']);
         $this->assertSame(77, data_get(collect($offer['parameterValues'])->firstWhere('parameterId', 2), 'valueId'));
+        $this->assertSame('shop-good-10', data_get(collect($offer['parameterValues'])->firstWhere('parameterId', 200), 'value'));
         $this->assertSame('9"', data_get(collect($built['display_parameters'])->firstWhere('id', 2), 'source_value'));
         $this->assertSame('9 дюймов', data_get(collect($built['display_parameters'])->firstWhere('id', 2), 'value'));
         $this->assertSame([], $built['errors']);
