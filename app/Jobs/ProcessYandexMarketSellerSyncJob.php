@@ -28,9 +28,16 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
         $run = ShopYandexMarketSyncRun::findOrFail($this->runId);
         $account = ShopYandexMarketAccount::findOrFail($run->account_id);
         $client = new YandexMarketClient($account);
-        if ($run->type === 'catalog_import' && $run->status !== 'running') {
+        if (in_array($run->type, ['catalog_import', 'purge_catalog'], true) && $run->status !== 'running') {
             // A queue retry restarts the remote pagination, so its counters must not accumulate.
-            $run->update(['total' => 0, 'processed' => 0, 'succeeded' => 0, 'failed' => 0, 'requests' => 0]);
+            $run->update([
+                'total' => 0,
+                'processed' => 0,
+                'succeeded' => 0,
+                'failed' => 0,
+                'requests' => 0,
+                'meta' => array_merge((array) $run->meta, ['phase' => 'collecting_offer_ids', 'found_offer_ids' => 0, 'catalog_pages' => 0]),
+            ]);
         }
         $run->update(['status' => 'running', 'started_at' => now(), 'error_message' => null]);
 
@@ -219,11 +226,12 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
                 $offerId = (string) data_get($item, 'offer.offerId', data_get($item, 'offerId', ''));
                 if ($offerId !== '') $offerIds[] = $offerId;
             }
+            $this->updateCatalogCollectionProgress($run, count($offerIds));
             $pageToken = data_get($response, 'result.paging.nextPageToken', data_get($response, 'paging.nextPageToken'));
         } while ($pageToken && ! empty($items));
 
         $offerIds = array_values(array_unique($offerIds));
-        $run->update(['total' => count($offerIds), 'meta' => array_merge((array) $run->meta, ['found_offer_ids' => count($offerIds)])]);
+        $run->update(['total' => count($offerIds), 'meta' => array_merge((array) $run->meta, ['phase' => 'deleting', 'found_offer_ids' => count($offerIds)])]);
         foreach (array_chunk($offerIds, 500) as $chunk) {
             try {
                 $run->increment('requests');
@@ -280,7 +288,7 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
                 $seen++;
                 $this->increment($run, true);
             }
-            $run->update(['total' => $seen]);
+            $run->update(['total' => $seen, 'meta' => array_merge((array) $run->meta, ['phase' => 'importing_catalog', 'found_offer_ids' => $seen, 'catalog_pages' => ((int) data_get($run->meta, 'catalog_pages', 0)) + 1])]);
             $pageToken = data_get($response, 'result.paging.nextPageToken', data_get($response, 'paging.nextPageToken'));
         } while ($pageToken && ! empty($items));
         $run->refresh();
@@ -331,6 +339,17 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
         }
 
         throw $lastException ?? new \RuntimeException('Не удалось получить страницу каталога Яндекс Маркета.');
+    }
+
+    private function updateCatalogCollectionProgress(ShopYandexMarketSyncRun $run, int $foundOfferIds): void
+    {
+        $run->update([
+            'meta' => array_merge((array) $run->meta, [
+                'phase' => 'collecting_offer_ids',
+                'found_offer_ids' => $foundOfferIds,
+                'catalog_pages' => ((int) data_get($run->meta, 'catalog_pages', 0)) + 1,
+            ]),
+        ]);
     }
 
     private function readBackCards(ShopYandexMarketSyncRun $run, ShopYandexMarketAccount $account, YandexMarketClient $client): void
