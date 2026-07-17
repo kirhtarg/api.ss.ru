@@ -122,30 +122,34 @@ class YandexMarketPayloadBuilder
             $name = (string) ($item['name'] ?? 'ID '.($item['id'] ?? ''));
             $isTnVed = (bool) preg_match('/тн\s*вэд|тнвэд/ui', $name);
             if ((($item['required'] ?? false) || $isTnVed) && $isEmpty) $missing[] = $name;
+            if ($hasVariations && (bool) ($item['distinctive'] ?? false) && $isEmpty) {
+                $missing[] = "Не заполнена характеристика вариации Яндекс Маркета: {$name}.";
+            }
             if ($isTnVed && ! $isEmpty) {
                 $code = preg_replace('/\D/u', '', (string) $value);
                 if (! in_array(strlen($code), [10, 14], true)) $missing[] = "{$name} должен содержать 10 или 14 цифр без пробелов.";
                 else $customsCommodityCode = $code;
             }
-            if (! $isEmpty && ! empty($item['uses_dictionary']) && ! ($item['allow_custom_values'] ?? true) && ! $dictionary) {
+            $dictionaryMissing = ! $isEmpty && ! empty($item['uses_dictionary']) && ! ($item['allow_custom_values'] ?? true) && ! $dictionary;
+            if ($dictionaryMissing) {
                 $missing[] = ($item['name'] ?? 'ID '.($item['id'] ?? '')).' — значение «'.$this->decoded($value).'» не сопоставлено со словарем Маркета';
-                continue;
             }
-            if ($isEmpty || (int) ($item['id'] ?? 0) <= 0) continue;
+            $sent = ! $isEmpty && ! $dictionaryMissing && (int) ($item['id'] ?? 0) > 0 && ! $isTnVed;
+            $displaySent = $sent || ($isTnVed && $customsCommodityCode !== null);
 
-            if (! $isTnVed) {
-                $parameter = ['parameterId' => (int) $item['id']];
-                if ($dictionary) $parameter['valueId'] = (int) $dictionary['id'];
-                else $parameter['value'] = is_bool($value) ? ($value ? 'true' : 'false') : (string) $value;
-                if (! empty($item['unit_id'])) $parameter['unitId'] = (int) $item['unit_id'];
-                $payload[] = $parameter;
-            }
             $display[] = [
                 'id' => (int) $item['id'], 'name' => $this->decoded($item['name'] ?? ''),
                 'source_value' => $this->decoded($value), 'value' => $dictionary['label'] ?? $this->decoded($value),
                 'value_id' => $dictionary['id'] ?? null, 'required' => (bool) ($item['required'] ?? false),
-                'distinctive' => (bool) ($item['distinctive'] ?? false),
+                'distinctive' => (bool) ($item['distinctive'] ?? false), 'sent' => $displaySent,
             ];
+            if (! $sent) continue;
+
+            $parameter = ['parameterId' => (int) $item['id']];
+            if ($dictionary) $parameter['valueId'] = (int) $dictionary['id'];
+            else $parameter['value'] = is_bool($value) ? ($value ? 'true' : 'false') : (string) $value;
+            if (! empty($item['unit_id'])) $parameter['unitId'] = (int) $item['unit_id'];
+            $payload[] = $parameter;
         }
         if ($hasVariations && ! $hasVariationGroupParameter) {
             $missing[] = 'Категория Яндекс Маркета не содержит характеристику «Название группы вариантов» и не поддерживает объединение вариаций.';

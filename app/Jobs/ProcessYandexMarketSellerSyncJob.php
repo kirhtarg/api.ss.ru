@@ -112,6 +112,7 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
             if ($errors) { $this->increment($run, false); continue; }
             $valid[] = compact('row', 'built', 'item', 'payload');
         }
+        if ($run->type === 'products') $valid = $this->excludeDuplicateVariationPayloads($run, $valid);
         if (! $valid) return;
 
         if ($run->type === 'stocks') {
@@ -195,6 +196,50 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
         if ($parameters) data_set($payload, 'offer.parameterValues', array_values($parameters));
 
         return $payload;
+    }
+
+    /**
+     * Market compares the final parameter values, not the local variation text.
+     * Reject a duplicate locally, with the actual Market fields in the error.
+     *
+     * @param array<int, array<string, mixed>> $entries
+     * @return array<int, array<string, mixed>>
+     */
+    private function excludeDuplicateVariationPayloads(ShopYandexMarketSyncRun $run, array $entries): array
+    {
+        $rejected = [];
+        foreach (collect($entries)->groupBy(fn (array $entry) => (int) $entry['row']['good']->id) as $group) {
+            if ($group->count() < 2) continue;
+
+            $signatures = [];
+            foreach ($group as $entry) {
+                $axes = collect($entry['built']['display_parameters'] ?? [])
+                    ->filter(fn (array $parameter) => ! empty($parameter['distinctive']) && ! empty($parameter['sent']))
+                    ->map(fn (array $parameter) => [
+                        'name' => (string) ($parameter['name'] ?? ''),
+                        'value' => (string) ($parameter['value_id'] ?? $parameter['value'] ?? ''),
+                    ])->values();
+
+                if ($axes->isEmpty()) continue;
+                $signature = $axes->map(fn (array $axis) => $axis['name'].'='.$axis['value'])->implode('|');
+                if (! isset($signatures[$signature])) {
+                    $signatures[$signature] = $entry;
+                    continue;
+                }
+
+                $fields = $axes->map(fn (array $axis) => $axis['name'].' = '.$axis['value'])->implode('; ');
+                $message = 'Дублируется комбинация отличительных характеристик Яндекс Маркета: '.$fields.'.';
+                foreach ([$entry, $signatures[$signature]] as $duplicate) {
+                    $itemId = (int) $duplicate['item']->id;
+                    if (isset($rejected[$itemId])) continue;
+                    $duplicate['item']->update(['status' => 'failed', 'errors' => [$message]]);
+                    $this->increment($run, false);
+                    $rejected[$itemId] = true;
+                }
+            }
+        }
+
+        return array_values(array_filter($entries, fn (array $entry) => ! isset($rejected[(int) $entry['item']->id])));
     }
 
     private function measurementNumber(string $value): ?string
