@@ -68,7 +68,7 @@ class YandexMarketPayloadBuilderTest extends TestCase
         $this->assertSame(['length' => 120.0, 'width' => 20.0, 'height' => 60.0, 'weight' => 12.0], $built['weight_dimensions']);
         $this->assertSame('g_10', $built['variation_group_id']);
         $this->assertSame(['https://example.test/images/goods/bike.jpg'], $offer['pictures']);
-        $this->assertSame(77, data_get(collect($built['category_parameter_values'])->firstWhere('parameterId', 2), 'valueId'));
+        $this->assertSame(77, data_get(collect($offer['parameterValues'])->firstWhere('parameterId', 2), 'valueId'));
         $this->assertSame('9"', data_get(collect($built['display_parameters'])->firstWhere('id', 2), 'source_value'));
         $this->assertSame('9 дюймов', data_get(collect($built['display_parameters'])->firstWhere('id', 2), 'value'));
         $this->assertSame([], $built['errors']);
@@ -91,8 +91,9 @@ class YandexMarketPayloadBuilderTest extends TestCase
         ]);
 
         $built = (new YandexMarketPayloadBuilder(new YandexMarketProductResolver))->build($good, null, new ShopYandexMarketAccount(['image_base_url' => 'https://example.test']), $mapping);
+        $offer = $built['offer_mapping']['offer'];
 
-        $this->assertSame('false', data_get(collect($built['category_parameter_values'])->firstWhere('parameterId', 1), 'value'));
+        $this->assertSame('false', data_get(collect($offer['parameterValues'])->firstWhere('parameterId', 1), 'value'));
         $this->assertTrue(collect($built['errors'])->contains(fn ($error) => str_contains($error, 'Локальный тип')));
         $this->assertFalse(collect($built['errors'])->contains(fn ($error) => str_contains($error, 'Маркировка')));
     }
