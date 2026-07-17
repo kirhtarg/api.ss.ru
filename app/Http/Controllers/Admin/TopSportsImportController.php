@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\Response;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
@@ -48,7 +49,9 @@ class TopSportsImportController extends Controller
             if ($loginResponse->status() === 401 || $loginResponse->status() === 403) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'TopSports отклонил логин или API-пароль.',
+                    'message' => 'TopSports отклонил логин или пароль на этапе /api/login. Проверьте учетные данные B2B-кабинета.',
+                    'stage' => 'login',
+                    'upstream_status' => $loginResponse->status(),
                 ], 401);
             }
 
@@ -56,14 +59,16 @@ class TopSportsImportController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => 'Не удалось авторизоваться в API TopSports (HTTP '.$loginResponse->status().').',
+                    'stage' => 'login',
+                    'upstream_status' => $loginResponse->status(),
                 ], 502);
             }
 
-            $token = trim((string) $loginResponse->json('token'));
+            $token = $this->extractToken($loginResponse);
             if ($token === '') {
                 return response()->json([
                     'success' => false,
-                    'message' => 'API TopSports не вернул токен авторизации.',
+                    'message' => 'API TopSports не вернул токен авторизации в ожидаемом JSON или текстовом формате.',
                 ], 502);
             }
 
@@ -73,15 +78,7 @@ class TopSportsImportController extends Controller
             }
 
             $tempPath = $tempDirectory.'/topsports_'.Str::uuid().'.csv';
-            $catalogResponse = Http::withToken($token)
-                ->accept('text/csv, text/plain, application/octet-stream, */*')
-                ->timeout(180)
-                ->connectTimeout(15)
-                ->withOptions($this->httpOptions([
-                    'allow_redirects' => false,
-                    'sink' => $tempPath,
-                ]))
-                ->get($catalogUrl);
+            $catalogResponse = $this->downloadCatalog($catalogUrl, $token, $tempPath);
 
             if (! $catalogResponse->successful()) {
                 $status = $catalogResponse->status();
@@ -91,8 +88,10 @@ class TopSportsImportController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => $status === 401 || $status === 403
-                        ? 'TopSports не разрешил загрузку каталога. Проверьте доступ API.'
+                        ? 'Вход через /api/login выполнен, но TopSports отклонил полученный токен при загрузке каталога. Повторите запрос; если ошибка сохранится, передайте поддержке TopSports время запроса.'
                         : 'Не удалось загрузить CSV-каталог TopSports (HTTP '.$status.').',
+                    'stage' => 'catalog',
+                    'upstream_status' => $status,
                 ], $status === 401 || $status === 403 ? 401 : 502);
             }
 
@@ -178,6 +177,60 @@ class TopSportsImportController extends Controller
 
         return 'https://'.self::ALLOWED_HOST.self::CATALOG_PATH
             .(isset($parts['query']) && $parts['query'] !== '' ? '?'.$parts['query'] : '');
+    }
+
+    private function extractToken(Response $response): string
+    {
+        $json = $response->json();
+        if (is_array($json)) {
+            foreach (['token', 'access_token', 'data.token', 'data.access_token'] as $path) {
+                $value = data_get($json, $path);
+                if (is_string($value) && trim($value) !== '') {
+                    return trim($value);
+                }
+            }
+        }
+
+        $content = trim($response->body());
+        if ($content === '' || str_starts_with($content, '{') || str_starts_with($content, '[')) {
+            return '';
+        }
+
+        return trim($content, " \t\n\r\0\x0B\"'");
+    }
+
+    private function downloadCatalog(string $catalogUrl, string $token, string $tempPath): Response
+    {
+        $response = null;
+        foreach ($this->authorizationCandidates($token) as $authorization) {
+            $this->deleteTempFile($tempPath);
+            $response = Http::withHeaders(['Authorization' => $authorization])
+                ->accept('text/csv, text/plain, application/octet-stream, */*')
+                ->timeout(180)
+                ->connectTimeout(15)
+                ->withOptions($this->httpOptions([
+                    'allow_redirects' => false,
+                    'sink' => $tempPath,
+                ]))
+                ->get($catalogUrl);
+
+            if (! in_array($response->status(), [401, 403], true)) {
+                return $response;
+            }
+        }
+
+        return $response;
+    }
+
+    private function authorizationCandidates(string $token): array
+    {
+        $token = trim($token);
+        if (preg_match('/^(?:Bearer|Token|Basic)\s+/i', $token)) {
+            return [$token];
+        }
+
+        // Поддержка требует передавать ответ /api/login как полное значение Authorization.
+        return [$token, 'Bearer '.$token];
     }
 
     private function httpOptions(array $options = []): array
