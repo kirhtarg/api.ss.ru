@@ -583,25 +583,52 @@ class ShopOzonSellerController extends Controller
         $input = $request->validate([
             'status' => 'nullable|string|max:50',
             'search' => 'nullable|string|max:255',
+            'stock_filter' => 'nullable|in:zero',
             'per_page' => 'nullable|integer|min:10|max:100',
         ]);
-        $query = ShopOzonProductBinding::query()
-            ->where('account_id', $this->account()->id)
+        $query = $this->productBindingsQuery($this->account(), $input)
             ->with([
                 'good:id,name,sku,is_active',
                 'variation:id,good_id,name,sku,is_active,price,sale_price,stock_quantity',
                 'variation.attributeValues.attribute:id,name',
             ])
             ->latest('id');
-        if (filled($input['status'] ?? null)) $query->where('status', $input['status']);
-        if (filled($input['search'] ?? null)) {
-            $search = trim($input['search']);
-            $query->where(function ($nested) use ($search) {
-                $nested->where('offer_id', 'like', "%{$search}%")
-                    ->orWhereHas('good', fn ($goodQuery) => $goodQuery->where('name', 'like', "%{$search}%"));
-            });
-        }
         return response()->json(['success' => true, 'data' => $query->paginate($input['per_page'] ?? 50)]);
+    }
+
+    public function archiveProducts(Request $request)
+    {
+        $input = $request->validate([
+            'binding_ids' => 'nullable|array|max:10000',
+            'binding_ids.*' => 'integer',
+            'all_filtered' => 'nullable|boolean',
+            'status' => 'nullable|string|max:50',
+            'search' => 'nullable|string|max:255',
+            'stock_filter' => 'nullable|in:zero',
+        ]);
+        if (empty($input['binding_ids']) && ! ($input['all_filtered'] ?? false)) {
+            return response()->json(['success' => false, 'message' => 'Выберите карточки или примените действие ко всем отфильтрованным.'], 422);
+        }
+
+        $account = $this->account();
+        $query = $this->productBindingsQuery($account, $input);
+        if (! ($input['all_filtered'] ?? false)) $query->whereIn('id', $input['binding_ids']);
+        $bindingIds = $query->pluck('id')->all();
+        if (! $bindingIds) return response()->json(['success' => false, 'message' => 'Подходящие карточки не найдены.'], 422);
+
+        $active = ShopOzonSyncRun::query()->where('account_id', $account->id)->whereIn('status', ['pending', 'running'])->first();
+        if ($active) return response()->json(['success' => true, 'message' => 'Другая операция уже выполняется.', 'data' => $active], 202);
+        $run = ShopOzonSyncRun::create([
+            'account_id' => $account->id,
+            'user_id' => $request->user()?->id,
+            'mode' => 'archive',
+            'binding_ids' => $bindingIds,
+            'total' => count($bindingIds),
+            'status' => 'pending',
+        ]);
+        ProcessOzonSyncRunJob::dispatch($run->id);
+
+        return response()->json(['success' => true, 'message' => 'Архивирование карточек Ozon поставлено в очередь.', 'data' => $run], 202);
     }
 
     public function refreshProducts(Request $request)
@@ -685,6 +712,29 @@ class ShopOzonSellerController extends Controller
     private function account(): ShopOzonAccount
     {
         return ShopOzonAccount::query()->firstOrFail();
+    }
+
+    private function productBindingsQuery(ShopOzonAccount $account, array $filters)
+    {
+        $query = ShopOzonProductBinding::query()->where('account_id', $account->id)->latest('id');
+        if (filled($filters['status'] ?? null)) $query->where('status', $filters['status']);
+        if (filled($filters['search'] ?? null)) {
+            $search = trim($filters['search']);
+            $query->where(function ($nested) use ($search) {
+                $nested->where('offer_id', 'like', "%{$search}%")
+                    ->orWhere('sku', 'like', "%{$search}%")
+                    ->orWhereHas('good', fn ($goodQuery) => $goodQuery->where('name', 'like', "%{$search}%")->orWhere('sku', 'like', "%{$search}%"));
+            });
+        }
+        if (($filters['stock_filter'] ?? null) === 'zero') {
+            $zeroStock = fn ($stockQuery) => $stockQuery->where('stock_quantity', '<=', 0);
+            $query->where(function ($nested) use ($zeroStock) {
+                $nested->where(function ($parent) use ($zeroStock) {
+                    $parent->whereNull('variation_id')->whereHas('good', $zeroStock);
+                })->orWhereHas('variation', $zeroStock);
+            });
+        }
+        return $query;
     }
 
     private function ozonRequestError(\Throwable $e)

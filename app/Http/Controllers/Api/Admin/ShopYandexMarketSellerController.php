@@ -238,11 +238,82 @@ class ShopYandexMarketSellerController extends Controller
 
     public function products(Request $request)
     {
-        $data = $request->validate(['search' => 'nullable|string|max:255', 'status' => 'nullable|string|max:50', 'per_page' => 'nullable|integer|min:10|max:100']);
-        $query = ShopYandexMarketProductBinding::query()->where('account_id', $this->account()->id)->with(['good:id,name,sku,is_active', 'variation:id,good_id,name,sku,is_active'])->latest('id');
-        if (filled($data['status'] ?? null)) $query->where('status', $data['status']);
-        if (filled($data['search'] ?? null)) { $search = trim($data['search']); $query->where(fn ($q) => $q->where('offer_id', 'like', "%{$search}%")->orWhere('market_sku', 'like', "%{$search}%")->orWhereHas('good', fn ($g) => $g->where('name', 'like', "%{$search}%")->orWhere('sku', 'like', "%{$search}%"))); }
+        $data = $request->validate(['search' => 'nullable|string|max:255', 'status' => 'nullable|string|max:50', 'stock_filter' => 'nullable|in:zero', 'per_page' => 'nullable|integer|min:10|max:100']);
+        $query = $this->productBindingsQuery($this->account(), $data)
+            ->with(['good:id,name,sku,is_active,stock_quantity', 'variation:id,good_id,name,sku,is_active,stock_quantity']);
         return response()->json(['success' => true, 'data' => $query->paginate($data['per_page'] ?? 50)]);
+    }
+
+    public function deleteProducts(Request $request)
+    {
+        $data = $request->validate([
+            'binding_ids' => 'nullable|array|max:10000', 'binding_ids.*' => 'integer',
+            'all_filtered' => 'nullable|boolean', 'search' => 'nullable|string|max:255',
+            'status' => 'nullable|string|max:50', 'stock_filter' => 'nullable|in:zero',
+        ]);
+        if (empty($data['binding_ids']) && ! ($data['all_filtered'] ?? false)) {
+            return response()->json(['success' => false, 'message' => 'Выберите карточки или примените действие ко всем отфильтрованным.'], 422);
+        }
+        $account = $this->account();
+        if (! $account->business_id) return response()->json(['success' => false, 'message' => 'Не указан Business ID Яндекс Маркета.'], 422);
+        $query = $this->productBindingsQuery($account, $data);
+        if (! ($data['all_filtered'] ?? false)) $query->whereIn('id', $data['binding_ids']);
+        $bindingIds = $query->pluck('id')->all();
+        if (! $bindingIds) return response()->json(['success' => false, 'message' => 'Подходящие карточки не найдены.'], 422);
+        $active = ShopYandexMarketSyncRun::query()->where('account_id', $account->id)->whereIn('status', ['pending', 'running'])->first();
+        if ($active) return response()->json(['success' => true, 'message' => 'Другая операция уже выполняется.', 'data' => $active], 202);
+        $run = ShopYandexMarketSyncRun::create([
+            'account_id' => $account->id, 'user_id' => $request->user()?->id,
+            'type' => 'delete', 'status' => 'pending', 'total' => count($bindingIds),
+            'meta' => ['binding_ids' => $bindingIds],
+        ]);
+        ProcessYandexMarketSellerSyncJob::dispatch($run->id);
+        return response()->json(['success' => true, 'message' => 'Удаление товаров из каталога Яндекс Маркета поставлено в очередь.', 'data' => $run], 202);
+    }
+
+    public function hideProducts(Request $request)
+    {
+        $data = $request->validate([
+            'binding_ids' => 'nullable|array|max:10000', 'binding_ids.*' => 'integer',
+            'all_filtered' => 'nullable|boolean', 'search' => 'nullable|string|max:255',
+            'status' => 'nullable|string|max:50', 'stock_filter' => 'nullable|in:zero',
+        ]);
+        if (empty($data['binding_ids']) && ! ($data['all_filtered'] ?? false)) {
+            return response()->json(['success' => false, 'message' => 'Выберите карточки или примените действие ко всем отфильтрованным.'], 422);
+        }
+        $account = $this->account();
+        if (! $account->campaign_id) return response()->json(['success' => false, 'message' => 'Для скрытия товаров выберите магазин Campaign ID.'], 422);
+        $query = $this->productBindingsQuery($account, $data);
+        if (! ($data['all_filtered'] ?? false)) $query->whereIn('id', $data['binding_ids']);
+        $bindingIds = $query->pluck('id')->all();
+        if (! $bindingIds) return response()->json(['success' => false, 'message' => 'Подходящие карточки не найдены.'], 422);
+        $active = ShopYandexMarketSyncRun::query()->where('account_id', $account->id)->whereIn('status', ['pending', 'running'])->first();
+        if ($active) return response()->json(['success' => true, 'message' => 'Другая операция уже выполняется.', 'data' => $active], 202);
+        $run = ShopYandexMarketSyncRun::create([
+            'account_id' => $account->id, 'user_id' => $request->user()?->id,
+            'type' => 'hide', 'status' => 'pending', 'total' => count($bindingIds),
+            'meta' => ['binding_ids' => $bindingIds],
+        ]);
+        ProcessYandexMarketSellerSyncJob::dispatch($run->id);
+        return response()->json(['success' => true, 'message' => 'Скрытие товаров с витрины Яндекс Маркета поставлено в очередь.', 'data' => $run], 202);
+    }
+
+    public function purgeCatalog(Request $request)
+    {
+        $request->validate(['confirmed' => 'required|accepted']);
+        $account = $this->account();
+        if (! $account->business_id) return response()->json(['success' => false, 'message' => 'Не указан Business ID Яндекс Маркета.'], 422);
+        $active = ShopYandexMarketSyncRun::query()->where('account_id', $account->id)->whereIn('status', ['pending', 'running'])->first();
+        if ($active) return response()->json(['success' => true, 'message' => 'Другая операция уже выполняется.', 'data' => $active], 202);
+        $run = ShopYandexMarketSyncRun::create([
+            'account_id' => $account->id,
+            'user_id' => $request->user()?->id,
+            'type' => 'purge_catalog',
+            'status' => 'pending',
+            'meta' => ['source' => 'market_catalog'],
+        ]);
+        ProcessYandexMarketSellerSyncJob::dispatch($run->id);
+        return response()->json(['success' => true, 'message' => 'Очистка всего каталога Яндекс Маркета поставлена в очередь. Сначала будут получены все Offer ID, затем они удалятся пачками.', 'data' => $run], 202);
     }
 
     public function refreshProducts(Request $request)
@@ -275,6 +346,25 @@ class ShopYandexMarketSellerController extends Controller
     }
 
     private function account(): ShopYandexMarketAccount { return ShopYandexMarketAccount::query()->firstOrFail(); }
+    private function productBindingsQuery(ShopYandexMarketAccount $account, array $filters)
+    {
+        $query = ShopYandexMarketProductBinding::query()->where('account_id', $account->id)->latest('id');
+        if (filled($filters['status'] ?? null)) $query->where('status', $filters['status']);
+        if (filled($filters['search'] ?? null)) {
+            $search = trim($filters['search']);
+            $query->where(fn ($q) => $q->where('offer_id', 'like', "%{$search}%")
+                ->orWhere('market_sku', 'like', "%{$search}%")
+                ->orWhereHas('good', fn ($g) => $g->where('name', 'like', "%{$search}%")->orWhere('sku', 'like', "%{$search}%")));
+        }
+        if (($filters['stock_filter'] ?? null) === 'zero') {
+            $zeroStock = fn ($stockQuery) => $stockQuery->where('stock_quantity', '<=', 0);
+            $query->where(function ($nested) use ($zeroStock) {
+                $nested->where(fn ($parent) => $parent->whereNull('variation_id')->whereHas('good', $zeroStock))
+                    ->orWhereHas('variation', $zeroStock);
+            });
+        }
+        return $query;
+    }
     private function accountData(ShopYandexMarketAccount $account): array { return array_merge($account->toArray(), ['has_api_key' => filled($account->api_key), 'api_key' => '']); }
     private function campaignData(array $item): array { return ['id' => (int) ($item['id'] ?? 0), 'domain' => $item['domain'] ?? $item['name'] ?? '', 'business_id' => (int) data_get($item, 'business.id', $item['businessId'] ?? 0), 'business_name' => data_get($item, 'business.name', ''), 'placement_type' => $item['placementType'] ?? '', 'api_availability' => $item['apiAvailability'] ?? 'AVAILABLE']; }
     private function capabilities(array $scopes, array $campaign): array

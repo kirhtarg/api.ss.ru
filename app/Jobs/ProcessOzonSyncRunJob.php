@@ -37,6 +37,10 @@ class ProcessOzonSyncRunJob implements ShouldQueue
         $run->update(['status' => 'running', 'started_at' => now(), 'error_message' => null]);
 
         try {
+            if ($run->mode === 'archive') {
+                $this->archiveBindings($run, $account, $client);
+                return;
+            }
             $rows = $this->rows($run, $account, $resolver);
             $run->update(['total' => count($rows)]);
 
@@ -194,5 +198,53 @@ class ProcessOzonSyncRunJob implements ShouldQueue
     {
         $run->increment('processed');
         $run->increment($success ? 'succeeded' : 'failed');
+    }
+
+    private function archiveBindings(ShopOzonSyncRun $run, ShopOzonAccount $account, OzonSellerClient $client): void
+    {
+        $query = ShopOzonProductBinding::query()
+            ->where('account_id', $account->id)
+            ->whereIn('id', $run->binding_ids ?? [])
+            ->orderBy('id');
+        $run->update(['total' => (clone $query)->count()]);
+
+        $query->chunkById(100, function ($bindings) use ($run, $account, $client) {
+            $available = $bindings->filter(fn ($binding) => filled($binding->product_id));
+            foreach ($bindings->diff($available) as $binding) {
+                ShopOzonSyncItem::create([
+                    'run_id' => $run->id, 'good_id' => $binding->good_id, 'variation_id' => $binding->variation_id,
+                    'offer_id' => $binding->offer_id, 'status' => 'failed',
+                    'errors' => ['Не найден Ozon Product ID. Сначала выполните «Обновить данные Ozon».'],
+                ]);
+                $this->increment($run, false);
+            }
+            if ($available->isEmpty()) return;
+
+            try {
+                $run->increment('requests');
+                $response = $client->post('/v1/product/archive', ['product_id' => $available->pluck('product_id')->map(fn ($id) => (int) $id)->values()->all()]);
+                foreach ($available as $binding) {
+                    ShopOzonSyncItem::create([
+                        'run_id' => $run->id, 'good_id' => $binding->good_id, 'variation_id' => $binding->variation_id,
+                        'offer_id' => $binding->offer_id, 'status' => 'completed', 'response_payload' => $response,
+                    ]);
+                    $binding->update(['status' => 'archived', 'errors' => null, 'last_synced_at' => now()]);
+                    $this->increment($run, true);
+                }
+            } catch (Throwable $e) {
+                $message = mb_substr($e->getMessage(), 0, 4000);
+                foreach ($available as $binding) {
+                    ShopOzonSyncItem::create([
+                        'run_id' => $run->id, 'good_id' => $binding->good_id, 'variation_id' => $binding->variation_id,
+                        'offer_id' => $binding->offer_id, 'status' => 'failed', 'errors' => [$message],
+                    ]);
+                    $binding->update(['status' => 'error', 'errors' => [$message]]);
+                    $this->increment($run, false);
+                }
+                $run->update(['error_message' => $message]);
+            }
+        });
+        $run->refresh();
+        $run->update(['status' => $run->failed ? 'completed_with_errors' : 'completed', 'finished_at' => now()]);
     }
 }

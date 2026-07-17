@@ -2498,6 +2498,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/sync', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'startSync']);
                 Route::get('/products', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'products']);
                 Route::post('/products/refresh', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'refreshProducts']);
+                Route::post('/products/archive', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'archiveProducts']);
                 Route::post('/products/{binding}/zero-stock', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'zeroBindingStock']);
                 Route::get('/runs', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'runs']);
                 Route::get('/runs/{run}', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'run']);
@@ -2521,6 +2522,9 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/sync', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'startSync']);
                 Route::get('/products', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'products']);
                 Route::post('/products/refresh', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'refreshProducts']);
+                Route::post('/products/delete', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'deleteProducts']);
+                Route::post('/products/hide', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'hideProducts']);
+                Route::post('/products/purge-catalog', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'purgeCatalog']);
                 Route::get('/runs', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'runs']);
                 Route::get('/runs/{run}', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'run']);
             });

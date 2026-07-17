@@ -30,6 +30,14 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
         $run->update(['status' => 'running', 'started_at' => now(), 'error_message' => null]);
 
         try {
+            if ($run->type === 'purge_catalog') {
+                $this->purgeCatalog($run, $account, $client);
+                return;
+            }
+            if (in_array($run->type, ['delete', 'hide'], true)) {
+                $this->manageBindings($run, $account, $client);
+                return;
+            }
             if ($run->type === 'readback') {
                 $this->readBackCards($run, $account, $client);
                 $run->refresh();
@@ -138,6 +146,106 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
     {
         $run->increment('processed');
         $run->increment($success ? 'succeeded' : 'failed');
+    }
+
+    private function manageBindings(ShopYandexMarketSyncRun $run, ShopYandexMarketAccount $account, YandexMarketClient $client): void
+    {
+        $bindingIds = (array) data_get($run->meta, 'binding_ids', []);
+        $query = ShopYandexMarketProductBinding::query()->where('account_id', $account->id)->whereIn('id', $bindingIds)->orderBy('id');
+        $run->update(['total' => (clone $query)->count()]);
+        $query->chunkById(500, function ($bindings) use ($run, $account, $client) {
+            $offerIds = $bindings->pluck('offer_id')->filter()->values()->all();
+            if (! $offerIds) return;
+            try {
+                $run->increment('requests');
+                $response = $run->type === 'delete'
+                    ? $client->post("/v2/businesses/{$account->business_id}/offer-mappings/delete", ['offerIds' => $offerIds])
+                    : $client->post("/v2/campaigns/{$account->campaign_id}/hidden-offers", ['hiddenOffers' => array_map(fn ($offerId) => ['offerId' => $offerId], $offerIds)]);
+                $notDeleted = $run->type === 'delete'
+                    ? collect(data_get($response, 'result.notDeletedOfferIds', data_get($response, 'notDeletedOfferIds', [])))->map(fn ($value) => (string) (is_array($value) ? ($value['offerId'] ?? '') : $value))->filter()->all()
+                    : [];
+                foreach ($bindings as $binding) {
+                    $failed = in_array($binding->offer_id, $notDeleted, true);
+                    ShopYandexMarketSyncItem::create([
+                        'run_id' => $run->id, 'good_id' => $binding->good_id, 'variation_id' => $binding->variation_id,
+                        'offer_id' => $binding->offer_id, 'status' => $failed ? 'failed' : 'completed',
+                        'response_payload' => $response,
+                        'errors' => $failed ? ['Яндекс Маркет не удалил этот Offer ID.'] : null,
+                    ]);
+                    if ($failed) {
+                        $binding->update(['status' => 'error', 'errors' => ['Яндекс Маркет не удалил этот Offer ID.']]);
+                    } else {
+                        $binding->update(['status' => $run->type === 'delete' ? 'deleted' : 'hidden', 'errors' => null, 'last_synced_at' => now()]);
+                    }
+                    $this->increment($run, ! $failed);
+                }
+            } catch (Throwable $e) {
+                $message = mb_substr($e->getMessage(), 0, 4000);
+                foreach ($bindings as $binding) {
+                    ShopYandexMarketSyncItem::create([
+                        'run_id' => $run->id, 'good_id' => $binding->good_id, 'variation_id' => $binding->variation_id,
+                        'offer_id' => $binding->offer_id, 'status' => 'failed', 'errors' => [$message],
+                    ]);
+                    $binding->update(['status' => 'error', 'errors' => [$message]]);
+                    $this->increment($run, false);
+                }
+                $run->update(['error_message' => $message]);
+            }
+        });
+        $run->refresh();
+        $run->update(['status' => $run->failed ? 'completed_with_errors' : 'completed', 'finished_at' => now()]);
+    }
+
+    private function purgeCatalog(ShopYandexMarketSyncRun $run, ShopYandexMarketAccount $account, YandexMarketClient $client): void
+    {
+        $offerIds = [];
+        $pageToken = null;
+        do {
+            $run->increment('requests');
+            $payload = ['limit' => 200];
+            if ($pageToken) $payload['pageToken'] = $pageToken;
+            $response = $client->post("/v2/businesses/{$account->business_id}/offer-mappings", $payload, ['language' => 'RU']);
+            $items = (array) data_get($response, 'result.offerMappings', data_get($response, 'offerMappings', []));
+            foreach ($items as $item) {
+                $offerId = (string) data_get($item, 'offer.offerId', data_get($item, 'offerId', ''));
+                if ($offerId !== '') $offerIds[] = $offerId;
+            }
+            $pageToken = data_get($response, 'result.paging.nextPageToken', data_get($response, 'paging.nextPageToken'));
+        } while ($pageToken && ! empty($items));
+
+        $offerIds = array_values(array_unique($offerIds));
+        $run->update(['total' => count($offerIds), 'meta' => array_merge((array) $run->meta, ['found_offer_ids' => count($offerIds)])]);
+        foreach (array_chunk($offerIds, 500) as $chunk) {
+            try {
+                $run->increment('requests');
+                $response = $client->post("/v2/businesses/{$account->business_id}/offer-mappings/delete", ['offerIds' => $chunk]);
+                $notDeleted = collect(data_get($response, 'result.notDeletedOfferIds', data_get($response, 'notDeletedOfferIds', [])))
+                    ->map(fn ($value) => (string) (is_array($value) ? ($value['offerId'] ?? '') : $value))->filter()->all();
+                foreach ($chunk as $offerId) {
+                    $failed = in_array($offerId, $notDeleted, true);
+                    ShopYandexMarketSyncItem::create([
+                        'run_id' => $run->id, 'offer_id' => $offerId,
+                        'status' => $failed ? 'failed' : 'completed', 'response_payload' => $response,
+                        'errors' => $failed ? ['Яндекс Маркет не удалил этот Offer ID.'] : null,
+                    ]);
+                    $this->increment($run, ! $failed);
+                }
+            } catch (Throwable $e) {
+                $message = mb_substr($e->getMessage(), 0, 4000);
+                foreach ($chunk as $offerId) {
+                    ShopYandexMarketSyncItem::create(['run_id' => $run->id, 'offer_id' => $offerId, 'status' => 'failed', 'errors' => [$message]]);
+                    $this->increment($run, false);
+                }
+                $run->update(['error_message' => $message]);
+            }
+        }
+        $run->refresh();
+        if ($run->failed === 0) {
+            ShopYandexMarketProductBinding::query()
+                ->where('account_id', $account->id)
+                ->update(['status' => 'deleted', 'errors' => null, 'last_synced_at' => now()]);
+        }
+        $run->update(['status' => $run->failed ? 'completed_with_errors' : 'completed', 'finished_at' => now()]);
     }
 
     private function readBackCards(ShopYandexMarketSyncRun $run, ShopYandexMarketAccount $account, YandexMarketClient $client): void
