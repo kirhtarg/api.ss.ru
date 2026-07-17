@@ -483,6 +483,10 @@ class OzonProductPayloadBuilder
 
     private function isBooleanAttribute(array $item): bool
     {
+        if (($item['is_boolean'] ?? false) === true || ($item['is_boolean'] ?? null) === 1 || ($item['is_boolean'] ?? null) === '1') {
+            return true;
+        }
+
         $type = mb_strtolower(trim((string) ($item['type'] ?? $item['value_type'] ?? '')));
         $name = mb_strtolower($this->decodedText($item['name'] ?? ''));
 
