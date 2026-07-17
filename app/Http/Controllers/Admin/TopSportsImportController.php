@@ -78,7 +78,7 @@ class TopSportsImportController extends Controller
             }
 
             $tempPath = $tempDirectory.'/topsports_'.Str::uuid().'.csv';
-            $catalogResponse = $this->downloadCatalog($catalogUrl, $token, $tempPath);
+            [$catalogResponse, $authorizationAttempts] = $this->downloadCatalog($catalogUrl, $token, $tempPath);
 
             if (! $catalogResponse->successful()) {
                 $status = $catalogResponse->status();
@@ -89,9 +89,12 @@ class TopSportsImportController extends Controller
                     'success' => false,
                     'message' => $status === 401 || $status === 403
                         ? 'Вход через /api/login выполнен, но TopSports отклонил полученный токен при загрузке каталога. Повторите запрос; если ошибка сохранится, передайте поддержке TopSports время запроса.'
-                        : 'Не удалось загрузить CSV-каталог TopSports (HTTP '.$status.').',
+                        : ($status >= 500
+                            ? 'TopSports принял данные для входа, но вернул внутреннюю ошибку при формировании CSV-каталога (HTTP '.$status.').'
+                            : 'Не удалось загрузить CSV-каталог TopSports (HTTP '.$status.').'),
                     'stage' => 'catalog',
                     'upstream_status' => $status,
+                    'authorization_attempts' => $authorizationAttempts,
                 ], $status === 401 || $status === 403 ? 401 : 502);
             }
 
@@ -199,10 +202,11 @@ class TopSportsImportController extends Controller
         return trim($content, " \t\n\r\0\x0B\"'");
     }
 
-    private function downloadCatalog(string $catalogUrl, string $token, string $tempPath): Response
+    private function downloadCatalog(string $catalogUrl, string $token, string $tempPath): array
     {
         $response = null;
-        foreach ($this->authorizationCandidates($token) as $authorization) {
+        $attempts = [];
+        foreach ($this->authorizationCandidates($token) as $format => $authorization) {
             $this->deleteTempFile($tempPath);
             $response = Http::withHeaders(['Authorization' => $authorization])
                 ->accept('text/csv, text/plain, application/octet-stream, */*')
@@ -214,23 +218,57 @@ class TopSportsImportController extends Controller
                 ]))
                 ->get($catalogUrl);
 
-            if (! in_array($response->status(), [401, 403], true)) {
-                return $response;
+            $attempt = ['format' => $format, 'status' => $response->status()];
+            $upstreamMessage = $this->upstreamErrorMessage($tempPath);
+            if ($upstreamMessage !== null) {
+                $attempt['message'] = $upstreamMessage;
+            }
+            $attempts[] = $attempt;
+
+            if ($response->successful() || ! $this->shouldTryAlternativeAuthorization($response->status())) {
+                return [$response, $attempts];
             }
         }
 
-        return $response;
+        return [$response, $attempts];
     }
 
     private function authorizationCandidates(string $token): array
     {
         $token = trim($token);
         if (preg_match('/^(?:Bearer|Token|Basic)\s+/i', $token)) {
-            return [$token];
+            return ['as_returned' => $token];
         }
 
         // Поддержка требует передавать ответ /api/login как полное значение Authorization.
-        return [$token, 'Bearer '.$token];
+        return ['as_returned' => $token, 'bearer' => 'Bearer '.$token];
+    }
+
+    private function shouldTryAlternativeAuthorization(int $status): bool
+    {
+        return in_array($status, [401, 403, 500], true);
+    }
+
+    private function upstreamErrorMessage(string $tempPath): ?string
+    {
+        if (! is_file($tempPath) || filesize($tempPath) <= 0) {
+            return null;
+        }
+
+        $content = (string) file_get_contents($tempPath, false, null, 0, 4096);
+        $json = json_decode($content, true);
+        if (! is_array($json)) {
+            return null;
+        }
+
+        foreach (['message', 'error', 'detail', 'errors.0.message'] as $path) {
+            $message = data_get($json, $path);
+            if (is_string($message) && trim($message) !== '') {
+                return mb_substr(trim($message), 0, 500);
+            }
+        }
+
+        return null;
     }
 
     private function httpOptions(array $options = []): array

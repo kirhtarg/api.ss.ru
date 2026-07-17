@@ -37,7 +37,18 @@ class TopSportsImportControllerTest extends TestCase
         $method = new \ReflectionMethod(TopSportsImportController::class, 'authorizationCandidates');
         $controller = new TopSportsImportController();
 
-        $this->assertSame(['jwt-token', 'Bearer jwt-token'], $method->invoke($controller, 'jwt-token'));
-        $this->assertSame(['Bearer ready-token'], $method->invoke($controller, 'Bearer ready-token'));
+        $this->assertSame(['as_returned' => 'jwt-token', 'bearer' => 'Bearer jwt-token'], $method->invoke($controller, 'jwt-token'));
+        $this->assertSame(['as_returned' => 'Bearer ready-token'], $method->invoke($controller, 'Bearer ready-token'));
+    }
+
+    public function test_it_retries_an_alternative_authorization_format_for_auth_and_upstream_500_errors(): void
+    {
+        $method = new \ReflectionMethod(TopSportsImportController::class, 'shouldTryAlternativeAuthorization');
+        $controller = new TopSportsImportController();
+
+        $this->assertTrue($method->invoke($controller, 401));
+        $this->assertTrue($method->invoke($controller, 403));
+        $this->assertTrue($method->invoke($controller, 500));
+        $this->assertFalse($method->invoke($controller, 429));
     }
 }
