@@ -12,6 +12,7 @@ use App\Services\Ozon\OzonProductResolver;
 use App\Services\Ozon\OzonSellerClient;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Arr;
 use Throwable;
 
 class ProcessOzonSyncRunJob implements ShouldQueue
@@ -136,8 +137,13 @@ class ProcessOzonSyncRunJob implements ShouldQueue
 
     private function responseErrorsForOffer(array $response, string $offerId): array
     {
-        $items = collect(data_get($response, 'result', data_get($response, 'items', [])));
-        if ($items->isAssoc()) $items = collect(data_get($response, 'result.items', []));
+        $rawItems = data_get($response, 'result', data_get($response, 'items', []));
+        if (is_array($rawItems) && Arr::isAssoc($rawItems)) {
+            $rawItems = array_key_exists('offer_id', $rawItems)
+                ? [$rawItems]
+                : data_get($response, 'result.items', data_get($response, 'items', []));
+        }
+        $items = collect(is_array($rawItems) ? $rawItems : []);
         $row = $items->first(fn ($item) => (string) data_get($item, 'offer_id') === $offerId);
         return collect(data_get($row, 'errors', []))->filter()->values()->all();
     }

@@ -102,8 +102,10 @@ class OzonProductResolver
         }
 
         $signatures = [];
+        $variationMappings = collect($mapping->variation_attribute_mappings);
+        $mappedAttributeIds = $variationMappings->pluck('local_attribute_id')->map(fn ($id) => (int) $id);
         foreach ($rows as $index => &$row) {
-            $values = collect($mapping->variation_attribute_mappings)
+            $values = $variationMappings
                 ->map(fn (array $axis) => $this->variationAttributeValue($row['variation'], (int) ($axis['local_attribute_id'] ?? 0)))
                 ->all();
             $signature = mb_strtolower(implode('|', $values));
@@ -111,8 +113,22 @@ class OzonProductResolver
                 $row['row_errors'][] = 'Не заполнены все сопоставленные характеристики вариации.';
             }
             if ($signature !== '' && isset($signatures[$signature])) {
-                $row['row_errors'][] = 'Комбинация характеристик вариации повторяет другую активную вариацию товара.';
-                $rows[$signatures[$signature]]['row_errors'][] = 'Комбинация характеристик вариации повторяет другую активную вариацию товара.';
+                $combination = $variationMappings->map(function (array $axis, int $axisIndex) use ($values) {
+                    $name = trim((string) ($axis['local_attribute_name'] ?? '')) ?: 'Характеристика '.($axisIndex + 1);
+                    return $name.': '.($values[$axisIndex] ?? 'не задано');
+                })->implode(', ');
+                $unmappedNames = $row['variation']->attributeValues
+                    ->reject(fn ($value) => $mappedAttributeIds->contains((int) $value->attribute_id))
+                    ->map(fn ($value) => trim((string) ($value->attribute?->name ?? '')))
+                    ->filter()
+                    ->unique()
+                    ->implode(', ');
+                $error = 'Повторяется передаваемая в Ozon комбинация: '.$combination.'.';
+                if ($unmappedNames !== '') {
+                    $error .= ' Локальные характеристики «'.$unmappedNames.'» сейчас не передаются. Сопоставьте их с соответствующими характеристиками Ozon.';
+                }
+                $row['row_errors'][] = $error;
+                $rows[$signatures[$signature]]['row_errors'][] = $error;
             } else {
                 $signatures[$signature] = $index;
             }

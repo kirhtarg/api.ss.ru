@@ -471,6 +471,8 @@ class OzonProductPayloadBuilder
         }
 
         if ($source === 'static' && $this->isBooleanAttribute($item)) {
+            if ($value === false) return 'false';
+            if ($value === true) return 'true';
             $normalized = mb_strtolower(trim((string) $value));
             if (in_array($normalized, ['нет', 'false', '0'], true)) return 'false';
             if (in_array($normalized, ['да', 'true', '1'], true)) return 'true';

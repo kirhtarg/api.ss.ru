@@ -161,6 +161,28 @@ class OzonProductPayloadBuilderTest extends TestCase
         $this->assertFalse(collect($built['errors'])->contains(fn ($error) => str_contains($error, 'ТН ВЭД')));
     }
 
+    public function test_boolean_false_static_value_is_not_treated_as_empty(): void
+    {
+        $good = new ShopGood(['name' => 'Товар', 'price' => 10000, 'depth' => 10, 'width' => 20, 'height' => 30, 'weight' => 1]);
+        $good->id = 821;
+        $good->setRelation('images', new Collection);
+        $good->setRelation('brands', new Collection);
+
+        $mapping = new ShopOzonCategoryMapping([
+            'description_category_id' => 1,
+            'type_id' => 2,
+            'attribute_mappings' => [
+                ['id' => 7001, 'name' => 'Нужен код маркировки', 'required' => true, 'source' => 'static', 'value' => false],
+            ],
+        ]);
+
+        $built = (new OzonProductPayloadBuilder(new OzonProductResolver, new ProductNameParser))
+            ->build($good, null, new ShopOzonAccount(['image_base_url' => 'https://example.test', 'vat' => '0']), $mapping);
+
+        $this->assertSame('false', data_get(collect($built['payload']['attributes'])->firstWhere('id', 7001), 'values.0.value'));
+        $this->assertFalse(collect($built['errors'])->contains(fn ($error) => str_contains($error, 'Нужен код маркировки')));
+    }
+
     public function test_prices_and_stocks_use_store_priority_and_remote_availability_formula(): void
     {
         $good = new ShopGood([

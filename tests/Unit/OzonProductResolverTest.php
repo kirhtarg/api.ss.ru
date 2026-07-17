@@ -6,6 +6,7 @@ use App\Models\ShopCategory;
 use App\Models\ShopGood;
 use App\Models\ShopGoodVariation;
 use App\Models\ShopOzonCategoryMapping;
+use App\Models\ShopVariationAttribute;
 use App\Models\ShopVariationAttributeValue;
 use App\Services\Ozon\OzonProductResolver;
 use Illuminate\Support\Collection;
@@ -54,6 +55,42 @@ class OzonProductResolverTest extends TestCase
         $this->assertCount(2, $rows);
         $this->assertNotEmpty($rows[0]['row_errors']);
         $this->assertNotEmpty($rows[1]['row_errors']);
+    }
+
+    public function test_duplicate_error_explains_unmapped_local_variation_attributes(): void
+    {
+        $colorAttribute = new ShopVariationAttribute(['name' => 'Цвет']);
+        $colorAttribute->id = 5;
+        $sizeAttribute = new ShopVariationAttribute(['name' => 'Размер']);
+        $sizeAttribute->id = 6;
+        $good = new ShopGood(['name' => 'Велосипед']);
+        $variations = collect(['12', '14'])->map(function (string $size, int $index) use ($colorAttribute, $sizeAttribute) {
+            $variation = new ShopGoodVariation(['is_active' => true]);
+            $variation->id = $index + 1;
+            $colorValue = new ShopVariationAttributeValue(['attribute_id' => 5, 'value' => 'Красный']);
+            $colorValue->setRelation('attribute', $colorAttribute);
+            $sizeValue = new ShopVariationAttributeValue(['attribute_id' => 6, 'value' => $size]);
+            $sizeValue->setRelation('attribute', $sizeAttribute);
+            $variation->setRelation('attributeValues', new Collection([$colorValue, $sizeValue]));
+            return $variation;
+        });
+        $good->setRelation('variations', $variations);
+        $mapping = new ShopOzonCategoryMapping([
+            'variation_mode' => 'grouped',
+            'group_attribute_id' => 9048,
+            'variation_attribute_mappings' => [[
+                'local_attribute_id' => 5,
+                'local_attribute_name' => 'Цвет',
+                'ozon_attribute_id' => 10,
+            ]],
+        ]);
+
+        $rows = (new OzonProductResolver)->rowsForGood($good, $mapping);
+        $message = implode(' ', $rows[0]['row_errors']);
+
+        $this->assertStringContainsString('Цвет: Красный', $message);
+        $this->assertStringContainsString('Размер', $message);
+        $this->assertStringContainsString('не передаются', $message);
     }
 
     private function goodWithVariations(array $values): ShopGood
