@@ -188,6 +188,11 @@ class YandexMarketPayloadBuilder
         $dumping = $this->adjust((float) $item->demping_price, $mapping?->price_adjustment);
         $source = $item->show_demping && $dumping > 0 ? 'dumping' : ($sale > 0 && $sale < $base ? 'sale' : 'base');
         $final = $source === 'dumping' ? $dumping : ($source === 'sale' ? $sale : $base);
+        // Market accepts prices in whole rubles only.
+        $base = (float) round($base);
+        $sale = (float) round($sale);
+        $dumping = (float) round($dumping);
+        $final = $source === 'dumping' ? $dumping : ($source === 'sale' ? $sale : $base);
         return ['base' => $base, 'sale' => $sale ?: null, 'dumping' => $dumping ?: null, 'source' => $source, 'final' => $final, 'old_price' => $base > $final ? $base : null];
     }
 

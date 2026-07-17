@@ -152,8 +152,9 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
         }
 
         $baseErrors = $run->type === 'products' ? $this->marketErrorsByOffer($response) : [];
+        $contentResponses = [];
         $contentErrors = $run->type === 'products'
-            ? $this->updateCategoryContent($run, $account, $client, $valid)
+            ? $this->updateCategoryContent($run, $account, $client, $valid, $contentResponses)
             : [];
 
         foreach ($valid as $entry) {
@@ -161,7 +162,9 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
             $errors = array_values(array_unique(array_merge($baseErrors[$offerId] ?? [], $contentErrors[$offerId] ?? [])));
             $entry['item']->update([
                 'status' => $errors ? 'failed' : 'completed',
-                'response_payload' => $response,
+                'response_payload' => $run->type === 'products'
+                    ? ['offer_mappings_update' => $response, 'offer_cards_update' => $contentResponses[$offerId] ?? null]
+                    : $response,
                 'errors' => $errors ?: null,
             ]);
             $bindingData = [
@@ -266,7 +269,7 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
      * @param array<int, array<string, mixed>> $entries
      * @return array<string, array<int, string>>
      */
-    private function updateCategoryContent(ShopYandexMarketSyncRun $run, ShopYandexMarketAccount $account, YandexMarketClient $client, array $entries): array
+    private function updateCategoryContent(ShopYandexMarketSyncRun $run, ShopYandexMarketAccount $account, YandexMarketClient $client, array $entries, array &$responses): array
     {
         $offers = collect($entries)->map(function (array $entry) {
             $offer = (array) data_get($entry, 'payload.offer', []);
@@ -287,6 +290,7 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
                 $response = $client->post("/v2/businesses/{$account->business_id}/offer-cards/update", [
                     'offersContent' => $chunk->all(),
                 ]);
+                foreach ($chunk as $offer) $responses[$offer['offerId']] = $response;
                 $errors = $this->marketErrorsByOffer($response, 'Яндекс Маркет не принял категорийную характеристику.');
                 if (data_get($response, 'status') === 'ERROR') {
                     foreach ($chunk as $offer) {
