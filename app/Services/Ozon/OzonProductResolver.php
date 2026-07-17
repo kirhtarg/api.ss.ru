@@ -29,21 +29,24 @@ class OzonProductResolver
             $query->whereIn('id', $goodIds);
         }
 
-        if ($account->selection_tag_id) {
-            $query->whereHas('tags', fn (Builder $tagQuery) => $tagQuery->where('shop_tags.id', $account->selection_tag_id));
-        } else {
-            // An unconfigured account must never accidentally publish the whole catalogue.
+        $mappings = $this->mappings($account);
+        if ($mappings->isEmpty()) {
             $query->whereRaw('1 = 0');
-        }
+        } else {
+            // A profile is a complete publication rule: local category plus its own tag.
+            $query->where(function (Builder $profileQuery) use ($mappings, $account) {
+                foreach ($mappings as $mapping) {
+                    $tagId = $this->effectiveSelectionTagId($mapping, $account);
+                    $categoryIds = $mapping->categoryIds();
+                    if (! $tagId || $categoryIds === []) continue;
 
-        $categoryIds = $this->mappings($account)
-            ->flatMap(fn (ShopOzonCategoryMapping $mapping) => $mapping->categoryIds())
-            ->unique()
-            ->values();
-        if ($categoryIds->isEmpty()) {
-            $query->whereRaw('1 = 0');
-        } else {
-            $query->whereHas('categories', fn (Builder $categoryQuery) => $categoryQuery->whereIn('shop_categories.id', $categoryIds));
+                    $profileQuery->orWhere(function (Builder $ruleQuery) use ($tagId, $categoryIds) {
+                        $ruleQuery
+                            ->whereHas('tags', fn (Builder $tagQuery) => $tagQuery->where('shop_tags.id', $tagId))
+                            ->whereHas('categories', fn (Builder $categoryQuery) => $categoryQuery->whereIn('shop_categories.id', $categoryIds));
+                    });
+                }
+            });
         }
 
         return $query;
@@ -57,11 +60,30 @@ class OzonProductResolver
             ->get();
     }
 
-    public function mappingFor(ShopGood $good, Collection $mappings): ?ShopOzonCategoryMapping
+    public function mappingFor(ShopGood $good, Collection $mappings, ShopOzonAccount $account): ?ShopOzonCategoryMapping
     {
         $categoryIds = $good->categories->pluck('id')->map(fn ($id) => (int) $id);
+        $tagIds = $good->tags->pluck('id')->map(fn ($id) => (int) $id);
 
-        return $mappings->first(fn (ShopOzonCategoryMapping $mapping) => $categoryIds->intersect($mapping->categoryIds())->isNotEmpty());
+        return $mappings->first(function (ShopOzonCategoryMapping $mapping) use ($categoryIds, $tagIds, $account) {
+            $tagId = $this->effectiveSelectionTagId($mapping, $account);
+
+            return $tagId
+                && $tagIds->contains($tagId)
+                && $categoryIds->intersect($mapping->categoryIds())->isNotEmpty();
+        });
+    }
+
+    public function effectiveSelectionTagId(ShopOzonCategoryMapping $mapping, ShopOzonAccount $account): ?int
+    {
+        $tagId = $mapping->selection_tag_id ?: $account->selection_tag_id;
+        return $tagId ? (int) $tagId : null;
+    }
+
+    public function effectiveWarehouseId(ShopOzonCategoryMapping $mapping, ShopOzonAccount $account): ?string
+    {
+        $warehouseId = trim((string) ($mapping->warehouse_id ?: $account->warehouse_id));
+        return $warehouseId !== '' ? $warehouseId : null;
     }
 
     public function rowsForGood(ShopGood $good, ?ShopOzonCategoryMapping $mapping): array

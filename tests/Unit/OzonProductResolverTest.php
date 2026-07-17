@@ -6,6 +6,8 @@ use App\Models\ShopCategory;
 use App\Models\ShopGood;
 use App\Models\ShopGoodVariation;
 use App\Models\ShopOzonCategoryMapping;
+use App\Models\ShopOzonAccount;
+use App\Models\ShopTag;
 use App\Models\ShopVariationAttribute;
 use App\Models\ShopVariationAttributeValue;
 use App\Services\Ozon\OzonProductResolver;
@@ -20,10 +22,14 @@ class OzonProductResolverTest extends TestCase
         $category = new ShopCategory;
         $category->id = 20;
         $good->setRelation('categories', new Collection([$category]));
+        $tag = new ShopTag;
+        $tag->id = 7;
+        $good->setRelation('tags', new Collection([$tag]));
 
-        $mapping = new ShopOzonCategoryMapping(['category_id' => 10, 'category_ids' => [10, 20, 30]]);
+        $mapping = new ShopOzonCategoryMapping(['category_id' => 10, 'category_ids' => [10, 20, 30], 'selection_tag_id' => 7]);
+        $account = new ShopOzonAccount(['selection_tag_id' => 1]);
 
-        $this->assertSame($mapping, (new OzonProductResolver)->mappingFor($good, new Collection([$mapping])));
+        $this->assertSame($mapping, (new OzonProductResolver)->mappingFor($good, new Collection([$mapping]), $account));
     }
 
     public function test_single_mode_creates_only_parent_row(): void

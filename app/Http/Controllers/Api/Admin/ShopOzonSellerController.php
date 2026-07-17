@@ -166,7 +166,8 @@ class ShopOzonSellerController extends Controller
     {
         $categoryIds = $this->validatedCategoryIds($request);
         $account = $this->account();
-        if (! $account->selection_tag_id) return response()->json(['success' => true, 'data' => []]);
+        $tagId = $this->selectionTagId($request, $account);
+        if (! $tagId) return response()->json(['success' => true, 'data' => []]);
 
         $query = DB::table('shop_good_properties as gp')
             ->join('shop_property_values as pv', 'pv.id', '=', 'gp.shop_property_value_id')
@@ -175,7 +176,7 @@ class ShopOzonSellerController extends Controller
             ->where('gp.property_id', $property->id)
             ->where('pv.is_active', true)
             ->where('goods.is_active', true)
-            ->where('tags.tag_id', $account->selection_tag_id)
+            ->where('tags.tag_id', $tagId)
             ->whereNotNull('gp.shop_property_value_id');
         $this->applyCategoryScope($query, $categoryIds, 'goods.id');
 
@@ -195,7 +196,8 @@ class ShopOzonSellerController extends Controller
     {
         $categoryIds = $this->validatedCategoryIds($request);
         $account = $this->account();
-        if (! $account->selection_tag_id) return response()->json(['success' => true, 'data' => []]);
+        $tagId = $this->selectionTagId($request, $account);
+        if (! $tagId) return response()->json(['success' => true, 'data' => []]);
 
         $query = DB::table('shop_variation_attribute_values as av')
             ->join('shop_variation_attributes_values as links', 'links.attribute_value_id', '=', 'av.id')
@@ -206,7 +208,7 @@ class ShopOzonSellerController extends Controller
             ->where('av.is_active', true)
             ->where('variations.is_active', true)
             ->where('goods.is_active', true)
-            ->where('tags.tag_id', $account->selection_tag_id);
+            ->where('tags.tag_id', $tagId);
         $this->applyCategoryScope($query, $categoryIds, 'goods.id');
 
         $items = $query->groupBy('av.id', 'av.value')
@@ -223,8 +225,17 @@ class ShopOzonSellerController extends Controller
         $data = $request->validate([
             'category_ids' => 'nullable|array',
             'category_ids.*' => 'integer|distinct|exists:shop_categories,id',
+            'selection_tag_id' => 'nullable|integer|exists:shop_tags,id',
         ]);
         return collect($data['category_ids'] ?? [])->map(fn ($id) => (int) $id)->filter()->unique()->values();
+    }
+
+    private function selectionTagId(Request $request, ShopOzonAccount $account): ?int
+    {
+        $data = $request->validate(['selection_tag_id' => 'nullable|integer|exists:shop_tags,id']);
+        $tagId = $data['selection_tag_id'] ?? $account->selection_tag_id;
+
+        return $tagId ? (int) $tagId : null;
     }
 
     private function applyCategoryScope($query, \Illuminate\Support\Collection $categoryIds, string $goodColumn): void
@@ -247,7 +258,8 @@ class ShopOzonSellerController extends Controller
         ]);
         $account = $this->account();
 
-        if (! $account->selection_tag_id) {
+        $tagId = $data['selection_tag_id'] ?? $account->selection_tag_id;
+        if (! $tagId) {
             return response()->json(['success' => true, 'data' => []]);
         }
 
@@ -255,7 +267,7 @@ class ShopOzonSellerController extends Controller
             ->select(['id', 'name'])
             ->with('brands:id,name')
             ->where('is_active', true)
-            ->whereHas('tags', fn ($query) => $query->where('shop_tags.id', $account->selection_tag_id));
+            ->whereHas('tags', fn ($query) => $query->where('shop_tags.id', $tagId));
 
         $categoryIds = collect($data['category_ids'] ?? [])->map(fn ($id) => (int) $id)->filter()->unique()->values();
         if ($categoryIds->isNotEmpty()) {
@@ -387,28 +399,27 @@ class ShopOzonSellerController extends Controller
         $items = ShopOzonCategoryMapping::query()->where('account_id', $account->id)->with('category:id,name')->orderByDesc('id')->get();
         $categoryIds = $items->flatMap(fn ($item) => $item->categoryIds())->unique()->values();
         $categoryNames = ShopCategory::query()->whereIn('id', $categoryIds)->pluck('name', 'id');
-        $categoryCounts = collect();
-        if ($account->selection_tag_id && $categoryIds->isNotEmpty()) {
-            $categoryCounts = DB::table('shop_good_categories as categories')
+        $tagNames = ShopTag::query()->whereIn('id', $items->map(fn ($item) => $item->selection_tag_id ?: $account->selection_tag_id)->filter()->unique())->pluck('name', 'id');
+        $resolver = app(OzonProductResolver::class);
+        $items->each(function ($item) use ($account, $categoryNames, $tagNames, $resolver) {
+            $ids = collect($item->categoryIds())->map(fn ($id) => (int) $id)->values();
+            $tagId = $resolver->effectiveSelectionTagId($item, $account);
+            $categoryCounts = $tagId && $ids->isNotEmpty() ? DB::table('shop_good_categories as categories')
                 ->join('shop_goods as goods', 'goods.id', '=', 'categories.good_id')
                 ->join('shop_good_tags as tags', 'tags.good_id', '=', 'goods.id')
-                ->where('goods.is_active', true)
-                ->where('tags.tag_id', $account->selection_tag_id)
-                ->whereIn('categories.category_id', $categoryIds)
-                ->groupBy('categories.category_id')
-                ->selectRaw('categories.category_id, COUNT(DISTINCT goods.id) as goods_count')
-                ->pluck('goods_count', 'category_id');
-        }
-        $items->each(function ($item) use ($account, $categoryNames, $categoryCounts) {
-            $ids = collect($item->categoryIds())->map(fn ($id) => (int) $id)->values();
+                ->where('goods.is_active', true)->where('tags.tag_id', $tagId)->whereIn('categories.category_id', $ids)
+                ->groupBy('categories.category_id')->selectRaw('categories.category_id, COUNT(DISTINCT goods.id) as goods_count')->pluck('goods_count', 'category_id') : collect();
             $item->setAttribute('categories', $ids->map(fn ($id) => [
                 'id' => $id,
                 'name' => $categoryNames[$id] ?? "ID {$id}",
                 'tagged_goods_count' => (int) ($categoryCounts[$id] ?? 0),
             ])->all());
-            $item->setAttribute('tagged_goods_count', $account->selection_tag_id ? ShopGood::query()
+            $item->setAttribute('effective_selection_tag_id', $tagId);
+            $item->setAttribute('effective_selection_tag_name', $tagId ? ($tagNames[$tagId] ?? "ID {$tagId}") : null);
+            $item->setAttribute('effective_warehouse_id', $resolver->effectiveWarehouseId($item, $account));
+            $item->setAttribute('tagged_goods_count', $tagId ? ShopGood::query()
                 ->where('is_active', true)
-                ->whereHas('tags', fn ($query) => $query->where('shop_tags.id', $account->selection_tag_id))
+                ->whereHas('tags', fn ($query) => $query->where('shop_tags.id', $tagId))
                 ->whereHas('categories', fn ($query) => $query->whereIn('shop_categories.id', $ids))
                 ->count() : 0);
         });
@@ -419,6 +430,7 @@ class ShopOzonSellerController extends Controller
     {
         $data = $request->validate([
             'id' => 'nullable|integer', 'category_ids' => 'required|array|min:1', 'category_ids.*' => 'integer|distinct|exists:shop_categories,id',
+            'warehouse_id' => 'nullable|string|max:255', 'selection_tag_id' => 'nullable|integer|exists:shop_tags,id',
             'description_category_id' => 'required|integer', 'type_id' => 'required|integer', 'ozon_category_name' => 'nullable|string|max:500',
             'variation_mode' => 'required|in:grouped,independent,single', 'group_attribute_id' => 'nullable|integer',
             'attribute_mappings' => 'nullable|array', 'variation_attribute_mappings' => 'nullable|array|max:20',
@@ -456,6 +468,8 @@ class ShopOzonSellerController extends Controller
             $item['uses_dictionary'] = (bool) ($item['uses_dictionary'] ?? false);
             return $item;
         })->values()->all();
+        $data['warehouse_id'] = filled($data['warehouse_id'] ?? null) ? trim((string) $data['warehouse_id']) : null;
+        $data['selection_tag_id'] = $data['selection_tag_id'] ?? null;
 
         $payload = array_merge($data, [
             'account_id' => $account->id,
@@ -487,9 +501,9 @@ class ShopOzonSellerController extends Controller
         $page = $ids ? 1 : (int) ($input['page'] ?? 1);
         $perPage = $ids ? max(10, count($ids)) : (int) ($input['per_page'] ?? 10);
         $account = $this->account();
-        if (! $account->selection_tag_id) return response()->json(['success' => false, 'message' => 'Сначала выберите тег отбора Ozon в настройках.'], 422);
         $result = [];
         $mappings = $resolver->mappings($account);
+        if ($mappings->isEmpty() || ! $mappings->contains(fn ($mapping) => $resolver->effectiveSelectionTagId($mapping, $account))) return response()->json(['success' => false, 'message' => 'Создайте активный профиль Ozon и выберите в нём тег отбора товаров.'], 422);
         $query = $resolver->query($account, $ids)->orderByDesc('shop_goods.id');
         if (filled($input['search'] ?? null)) {
             $search = trim($input['search']);
@@ -522,7 +536,7 @@ class ShopOzonSellerController extends Controller
         $page = min($page, $lastPage);
         $goods = $query->forPage($page, $perPage)->get();
         foreach ($goods as $good) {
-            $mapping = $resolver->mappingFor($good, $mappings);
+            $mapping = $resolver->mappingFor($good, $mappings, $account);
             foreach ($resolver->rowsForGood($good, $mapping) as $row) {
                 $built = $builder->build($good, $row['variation'], $account, $mapping);
                 $result[] = array_merge([
@@ -556,10 +570,9 @@ class ShopOzonSellerController extends Controller
     {
         $data = $request->validate(['mode' => 'required|in:products,prices,stocks', 'good_ids' => 'nullable|array', 'good_ids.*' => 'integer|exists:shop_goods,id']);
         $account = $this->account();
-        if (! $account->selection_tag_id) return response()->json(['success' => false, 'message' => 'Выберите тег отбора товаров Ozon.'], 422);
-        if (in_array($data['mode'], ['products', 'stocks'], true) && ! $account->warehouse_id) {
-            return response()->json(['success' => false, 'message' => 'Укажите Warehouse ID во вкладке «Подключение и отбор». Без него Ozon не примет остатки.'], 422);
-        }
+        $resolver = app(OzonProductResolver::class);
+        $mappings = $resolver->mappings($account);
+        if ($mappings->isEmpty() || ! $mappings->contains(fn ($mapping) => $resolver->effectiveSelectionTagId($mapping, $account))) return response()->json(['success' => false, 'message' => 'Настройте тег отбора хотя бы в одном активном профиле Ozon.'], 422);
         $run = ShopOzonSyncRun::create(['account_id' => $account->id, 'user_id' => $request->user()?->id, 'mode' => $data['mode'], 'good_ids' => $data['good_ids'] ?? null, 'status' => 'pending']);
         ProcessOzonSyncRunJob::dispatch($run->id);
         return response()->json(['success' => true, 'message' => 'Синхронизация поставлена в очередь.', 'data' => $run], 202);
@@ -625,13 +638,15 @@ class ShopOzonSellerController extends Controller
     {
         $account = $this->account();
         abort_unless($binding->account_id === $account->id, 404);
-        if (! $account->warehouse_id) {
-            return response()->json(['success' => false, 'message' => 'В настройках не указан Warehouse ID.'], 422);
-        }
+        $resolver = app(OzonProductResolver::class);
+        $good = $binding->good()->with(['categories:id,name', 'tags:id,name'])->first();
+        $mapping = $good ? $resolver->mappingFor($good, $resolver->mappings($account), $account) : null;
+        $warehouseId = $mapping ? $resolver->effectiveWarehouseId($mapping, $account) : null;
+        if (! $warehouseId) return response()->json(['success' => false, 'message' => 'Для профиля категории этого товара не указан склад Ozon.'], 422);
         $response = (new OzonSellerClient($account))->post('/v2/products/stocks', ['stocks' => [[
             'offer_id' => $binding->offer_id,
             'stock' => 0,
-            'warehouse_id' => (string) $account->warehouse_id,
+            'warehouse_id' => $warehouseId,
         ]]]);
         $errors = collect(data_get($response, 'result', data_get($response, 'items', [])))
             ->flatMap(fn ($item) => data_get($item, 'errors', []))->filter()->values()->all();
@@ -719,20 +734,24 @@ class ShopOzonSellerController extends Controller
             ->whereIn('id', $ids)
             ->get()
             ->keyBy('id');
-        $selectionTag = ShopTag::query()->find($account->selection_tag_id, ['id', 'name']);
+        $tagNames = ShopTag::query()->whereIn('id', $mappings->map(fn ($mapping) => $resolver->effectiveSelectionTagId($mapping, $account))->filter()->unique())->pluck('name', 'id');
 
-        return collect($ids)->map(function (int $id) use ($goods, $selectionTag, $mappings, $resolver) {
+        return collect($ids)->map(function (int $id) use ($goods, $tagNames, $mappings, $resolver, $account) {
             $good = $goods->get($id);
             if (! $good) {
                 return ['good_id' => $id, 'found' => false, 'eligible' => false, 'reasons' => ['Товар с таким ID не найден.']];
             }
 
-            $hasTag = $good->tags->contains(fn ($tag) => (int) $tag->id === (int) $selectionTag?->id);
-            $mapping = $resolver->mappingFor($good, $mappings);
+            $categoryIds = $good->categories->pluck('id')->map(fn ($categoryId) => (int) $categoryId);
+            $categoryMapping = $mappings->first(fn ($mapping) => $categoryIds->intersect($mapping->categoryIds())->isNotEmpty());
+            $selectionTagId = $categoryMapping ? $resolver->effectiveSelectionTagId($categoryMapping, $account) : null;
+            $hasTag = $selectionTagId && $good->tags->contains(fn ($tag) => (int) $tag->id === $selectionTagId);
+            $mapping = $resolver->mappingFor($good, $mappings, $account);
             $reasons = [];
             if (! $good->is_active) $reasons[] = 'Товар выключен.';
-            if (! $hasTag) $reasons[] = 'Нет сохранённого тега отбора «'.($selectionTag?->name ?? 'ID '.$selectionTag?->id).'».';
-            if (! $mapping) $reasons[] = 'Ни одна категория товара не входит в активный профиль Ozon.';
+            if (! $categoryMapping) $reasons[] = 'Ни одна категория товара не входит в активный профиль Ozon.';
+            elseif (! $selectionTagId) $reasons[] = 'В профиле категории не выбран тег отбора.';
+            elseif (! $hasTag) $reasons[] = 'Нет тега профиля «'.($tagNames[$selectionTagId] ?? 'ID '.$selectionTagId).'».';
 
             return [
                 'good_id' => $good->id,
@@ -740,7 +759,7 @@ class ShopOzonSellerController extends Controller
                 'found' => true,
                 'is_active' => (bool) $good->is_active,
                 'eligible' => $reasons === [],
-                'expected_tag' => $selectionTag ? ['id' => $selectionTag->id, 'name' => $selectionTag->name] : null,
+                'expected_tag' => $selectionTagId ? ['id' => $selectionTagId, 'name' => $tagNames[$selectionTagId] ?? 'ID '.$selectionTagId] : null,
                 'tags' => $good->tags->map->only(['id', 'name'])->values()->all(),
                 'categories' => $good->categories->map->only(['id', 'name'])->values()->all(),
                 'matching_profile' => $mapping ? ['id' => $mapping->id, 'name' => $mapping->ozon_category_name] : null,

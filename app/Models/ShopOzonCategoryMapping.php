@@ -9,6 +9,8 @@ class ShopOzonCategoryMapping extends Model
 {
     protected $fillable = [
         'account_id',
+        'warehouse_id',
+        'selection_tag_id',
         'category_id',
         'category_ids',
         'description_category_id',

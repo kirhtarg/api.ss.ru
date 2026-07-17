@@ -16,12 +16,7 @@ class OzonPostProductSyncScheduler
         }
 
         $account = ShopOzonAccount::find($productRun->account_id);
-        if (! $account?->warehouse_id) {
-            $productRun->update([
-                'error_message' => 'Карточки загружены, но остатки не отправлены: в настройках Ozon Seller не указан Warehouse ID.',
-            ]);
-            return null;
-        }
+        if (! $account) return null;
 
         $goodIds = $productRun->items()
             ->where('status', 'completed')

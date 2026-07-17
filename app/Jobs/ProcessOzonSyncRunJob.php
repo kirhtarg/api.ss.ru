@@ -64,17 +64,16 @@ class ProcessOzonSyncRunJob implements ShouldQueue
 
     private function rows(ShopOzonSyncRun $run, ShopOzonAccount $account, OzonProductResolver $resolver): array
     {
-        if (! $account->selection_tag_id) {
-            throw new \RuntimeException('Выберите тег отбора товаров Ozon в настройках кабинета.');
-        }
-
         $query = $resolver->query($account, $run->good_ids);
         $mappings = $resolver->mappings($account);
+        if ($mappings->isEmpty() || ! $mappings->contains(fn ($mapping) => $resolver->effectiveSelectionTagId($mapping, $account))) {
+            throw new \RuntimeException('Для активного профиля Ozon укажите тег отбора товаров.');
+        }
 
         $rows = [];
-        $query->chunkById(200, function ($goods) use (&$rows, $mappings, $resolver) {
+        $query->chunkById(200, function ($goods) use (&$rows, $mappings, $resolver, $account) {
             foreach ($goods as $good) {
-                $mapping = $resolver->mappingFor($good, $mappings);
+                $mapping = $resolver->mappingFor($good, $mappings, $account);
                 foreach ($resolver->rowsForGood($good, $mapping) as $row) $rows[] = $row;
             }
         });
@@ -91,12 +90,15 @@ class ProcessOzonSyncRunJob implements ShouldQueue
             $built = $builder->build($good, $variation, $account, $mapping);
             $errors = $run->mode === 'products' ? array_values(array_unique(array_merge($built['errors'], $row['row_errors']))) : [];
             if (! $mapping) $errors[] = 'Для категории товара не настроен профиль Ozon.';
+            if ($run->mode === 'stocks' && (! $mapping || ! $builder->stock($good, $variation, $account, $mapping)['warehouse_id'])) {
+                $errors[] = 'Для профиля категории не указан склад Ozon для остатков.';
+            }
             if ($run->mode === 'prices' && (float) $builder->pricePayload($good, $variation, $account, $mapping)['price'] <= 0) {
                 $errors[] = 'Цена должна быть больше нуля.';
             }
             $requestPayload = match ($run->mode) {
                 'prices' => $builder->pricePayload($good, $variation, $account, $mapping),
-                'stocks' => $builder->stock($good, $variation, $account),
+                'stocks' => $builder->stock($good, $variation, $account, $mapping),
                 default => $built['payload'],
             };
             $item = ShopOzonSyncItem::create([
@@ -127,8 +129,7 @@ class ProcessOzonSyncRunJob implements ShouldQueue
         if ($run->mode === 'prices') {
             $response = $client->post('/v1/product/import/prices', ['prices' => array_map(fn ($entry) => $builder->pricePayload($entry['good'], $entry['variation'], $account, $entry['mapping']), $valid)]);
         } else {
-            if (! $account->warehouse_id) throw new \RuntimeException('Для синхронизации остатков укажите warehouse_id Ozon.');
-            $response = $client->post('/v2/products/stocks', ['stocks' => array_map(fn ($entry) => $builder->stock($entry['good'], $entry['variation'], $account), $valid)]);
+            $response = $client->post('/v2/products/stocks', ['stocks' => array_map(fn ($entry) => $builder->stock($entry['good'], $entry['variation'], $account, $entry['mapping']), $valid)]);
         }
         foreach ($valid as $entry) {
             $errors = $this->responseErrorsForOffer($response, $entry['built']['offer_id']);

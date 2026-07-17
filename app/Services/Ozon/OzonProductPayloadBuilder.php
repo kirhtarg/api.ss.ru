@@ -17,7 +17,7 @@ class OzonProductPayloadBuilder
 
     public function build(ShopGood $good, ?ShopGoodVariation $variation, ShopOzonAccount $account, ?ShopOzonCategoryMapping $mapping = null): array
     {
-        $mapping ??= $account->exists ? $this->resolver->mappingFor($good, $this->resolver->mappings($account)) : null;
+        $mapping ??= $account->exists ? $this->resolver->mappingFor($good, $this->resolver->mappings($account), $account) : null;
         $offerId = $this->offerId($good, $variation, $account);
         $priceSummary = $this->priceSummary($good, $variation, $mapping);
         $stockSummary = $this->stockSummary($good, $variation);
@@ -59,6 +59,8 @@ class OzonProductPayloadBuilder
             'payload' => $payload,
             'errors' => $this->validate($payload, $mapping, $good, $variation),
             'mapping_id' => $mapping?->id,
+            'selection_tag_id' => $mapping ? $this->resolver->effectiveSelectionTagId($mapping, $account) : null,
+            'warehouse_id' => $mapping ? $this->resolver->effectiveWarehouseId($mapping, $account) : null,
             'variation_mode' => $mapping?->variation_mode ?? 'grouped',
             'variation_attributes' => $this->variationSummary($mapping, $variation),
             'display_attributes' => $this->attributeSummary($mapping, $good, $variation),
@@ -67,20 +69,21 @@ class OzonProductPayloadBuilder
         ];
     }
 
-    public function stock(ShopGood $good, ?ShopGoodVariation $variation, ShopOzonAccount $account): array
+    public function stock(ShopGood $good, ?ShopGoodVariation $variation, ShopOzonAccount $account, ?ShopOzonCategoryMapping $mapping = null): array
     {
+        $mapping ??= $account->exists ? $this->resolver->mappingFor($good, $this->resolver->mappings($account), $account) : null;
         $summary = $this->stockSummary($good, $variation);
 
         return [
             'offer_id' => $this->offerId($good, $variation, $account),
             'stock' => $summary['total'],
-            'warehouse_id' => (string) $account->warehouse_id,
+            'warehouse_id' => (string) ($mapping ? $this->resolver->effectiveWarehouseId($mapping, $account) : ''),
         ];
     }
 
     public function pricePayload(ShopGood $good, ?ShopGoodVariation $variation, ShopOzonAccount $account, ?ShopOzonCategoryMapping $mapping = null): array
     {
-        $mapping ??= $account->exists ? $this->resolver->mappingFor($good, $this->resolver->mappings($account)) : null;
+        $mapping ??= $account->exists ? $this->resolver->mappingFor($good, $this->resolver->mappings($account), $account) : null;
         $summary = $this->priceSummary($good, $variation, $mapping);
         return [
             'offer_id' => $this->offerId($good, $variation, $account),

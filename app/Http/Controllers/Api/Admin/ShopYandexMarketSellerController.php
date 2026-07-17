@@ -67,10 +67,30 @@ class ShopYandexMarketSellerController extends Controller
             $this->syncLegacySettings($account->refresh());
             return response()->json(['success' => true, 'message' => 'Подключение к Яндекс Маркету работает.', 'data' => $this->accountData($account)]);
         } catch (Throwable $e) {
-            $account->update(['last_error' => mb_substr($e->getMessage(), 0, 4000)]);
-            return response()->json(['success' => false, 'message' => $e->getMessage(), 'diagnostics' => [
+            $originalMessage = $e->getMessage();
+            $allCampaignsDisabled = str_contains($originalMessage, 'disabled because it has only disabled partners');
+            $message = $allCampaignsDisabled
+                ? 'API-ключ распознан, но API отключен для всех магазинов этого кабинета. Включите API хотя бы для одного магазина в настройках Яндекс Маркета.'
+                : $originalMessage;
+            $account->update(['last_error' => mb_substr($message, 0, 4000)]);
+            preg_match('/business\s+(\d+)/i', $originalMessage, $businessMatch);
+
+            return response()->json([
+                'success' => false,
+                'message' => $message,
+                'code' => $allCampaignsDisabled ? 'all_campaigns_disabled' : 'connection_failed',
+                'data' => $this->accountData($account->refresh()),
+                'help' => $allCampaignsDisabled ? [
+                    'Откройте кабинет продавца Яндекс Маркета → Настройки → API и модули.',
+                    'Включите интеграцию API хотя бы для одного магазина кабинета.',
+                    'Если включение недоступно, проверьте активный договор, юридические данные и подключенную программу размещения.',
+                    'Подождите до одной минуты и повторите проверку подключения.',
+                ] : null,
+                'diagnostics' => [
                 'api_url' => $account->api_url, 'api_key_length' => mb_strlen(trim((string) $account->api_key)),
                 'api_key_fingerprint' => substr(hash('sha256', trim((string) $account->api_key)), 0, 12),
+                'business_id' => isset($businessMatch[1]) ? (int) $businessMatch[1] : $account->business_id,
+                'original_message' => $allCampaignsDisabled ? $originalMessage : null,
             ]], 422);
         }
     }
