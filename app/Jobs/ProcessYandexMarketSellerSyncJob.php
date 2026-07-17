@@ -11,6 +11,7 @@ use App\Services\YandexMarket\YandexMarketPayloadBuilder;
 use App\Services\YandexMarket\YandexMarketProductResolver;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Facades\RateLimiter;
 use Throwable;
 
 class ProcessYandexMarketSellerSyncJob implements ShouldQueue
@@ -212,7 +213,7 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
             $run->increment('requests');
             $query = ['language' => 'RU', 'limit' => 100];
             if ($pageToken) $query['pageToken'] = $pageToken;
-            $response = $client->post("/v2/businesses/{$account->business_id}/offer-mappings", ['archived' => false], $query);
+            $response = $this->getCatalogPage($account, $client, $query);
             $items = (array) data_get($response, 'result.offerMappings', data_get($response, 'offerMappings', []));
             foreach ($items as $item) {
                 $offerId = (string) data_get($item, 'offer.offerId', data_get($item, 'offerId', ''));
@@ -264,7 +265,7 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
             $run->increment('requests');
             $query = ['language' => 'RU', 'limit' => 100];
             if ($pageToken) $query['pageToken'] = $pageToken;
-            $response = $client->post("/v2/businesses/{$account->business_id}/offer-mappings", ['archived' => false], $query);
+            $response = $this->getCatalogPage($account, $client, $query);
             $items = (array) data_get($response, 'result.offerMappings', data_get($response, 'offerMappings', []));
             foreach ($items as $remote) {
                 $offerId = (string) data_get($remote, 'offer.offerId', data_get($remote, 'offerId', ''));
@@ -284,6 +285,52 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
         } while ($pageToken && ! empty($items));
         $run->refresh();
         $run->update(['status' => 'completed', 'finished_at' => now(), 'meta' => array_merge((array) $run->meta, ['imported_offer_ids' => $seen])]);
+    }
+
+    /**
+     * The Marketplace API allows no more than 100 catalog pages per minute.
+     * Keep a margin so a long catalogue import can finish without a 420 response.
+     *
+     * @param array<string, mixed> $query
+     * @return array<string, mixed>
+     */
+    private function getCatalogPage(ShopYandexMarketAccount $account, YandexMarketClient $client, array $query): array
+    {
+        $rateKey = "yandex-market:offer-mappings:{$account->business_id}";
+        $lastException = null;
+
+        for ($attempt = 0; $attempt < 3; $attempt++) {
+            while (RateLimiter::tooManyAttempts($rateKey, 85)) {
+                sleep(max(1, RateLimiter::availableIn($rateKey)));
+            }
+
+            RateLimiter::hit($rateKey, 60);
+
+            try {
+                $response = $client->post(
+                    "/v2/businesses/{$account->business_id}/offer-mappings",
+                    ['archived' => false],
+                    $query,
+                );
+
+                // 85 requests/minute leaves room for other Marketplace operations.
+                usleep(750000);
+
+                return $response;
+            } catch (Throwable $exception) {
+                $lastException = $exception;
+
+                if (! str_contains($exception->getMessage(), 'HTTP 420')) {
+                    throw $exception;
+                }
+
+                // The remote minute window may have been spent by an earlier run.
+                RateLimiter::clear($rateKey);
+                sleep(61);
+            }
+        }
+
+        throw $lastException ?? new \RuntimeException('Не удалось получить страницу каталога Яндекс Маркета.');
     }
 
     private function readBackCards(ShopYandexMarketSyncRun $run, ShopYandexMarketAccount $account, YandexMarketClient $client): void
