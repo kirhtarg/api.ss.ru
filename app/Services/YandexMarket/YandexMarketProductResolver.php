@@ -96,7 +96,7 @@ class YandexMarketProductResolver
             'variation_attribute' => $this->variationValue($variation, (int) ($mapping['source_key'] ?? 0)),
             'property' => $this->propertyValue($good, (int) ($mapping['source_key'] ?? 0)),
             'dimension_weight' => $this->firstPositive($good->shipping_weight, $good->weight),
-            'dimension_length' => $this->firstPositive($good->shipping_length, $good->depth),
+            'dimension_length' => $this->firstPositive($good->shipping_length, $good->length, $good->depth),
             'dimension_width' => $this->firstPositive($good->shipping_width, $good->width),
             'dimension_height' => $this->firstPositive($good->shipping_height, $good->height),
             default => data_get($variation, $mapping['source_key'] ?? '') ?: data_get($good, $mapping['source_key'] ?? ''),

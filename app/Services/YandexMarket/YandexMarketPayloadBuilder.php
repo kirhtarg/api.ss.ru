@@ -32,7 +32,11 @@ class YandexMarketPayloadBuilder
             'description' => $this->plainDescription($good->description ?: $good->short_description ?: $good->name),
             'weightDimensions' => $hasDimensions ? $dimensions : null,
             'parameterValues' => $parameters['payload'],
-            'customsCommodityCode' => $parameters['customsCommodityCode'] ?? null,
+            // customsCommodityCode is deprecated by Market. The active API field is commodityCodes.
+            'commodityCodes' => ! empty($parameters['customsCommodityCode']) ? [[
+                'type' => 'CUSTOMS_COMMODITY_CODE',
+                'code' => $parameters['customsCommodityCode'],
+            ]] : null,
             'basicPrice' => [
                 'value' => $price['final'],
                 'discountBase' => $price['old_price'] ?: null,
@@ -189,7 +193,7 @@ class YandexMarketPayloadBuilder
     {
         $settings = $mapping?->dimension_settings ?? [];
         return [
-            'length' => round($this->positive($good->shipping_length, $good->depth) * (float) ($settings['length_multiplier'] ?? 1), 3),
+            'length' => round($this->positive($good->shipping_length, $good->length, $good->depth) * (float) ($settings['length_multiplier'] ?? 1), 3),
             'width' => round($this->positive($good->shipping_width, $good->width) * (float) ($settings['width_multiplier'] ?? 1), 3),
             'height' => round($this->positive($good->shipping_height, $good->height) * (float) ($settings['height_multiplier'] ?? 1), 3),
             'weight' => round($this->positive($good->shipping_weight, $good->weight) * (float) ($settings['weight_multiplier'] ?? 1), 3),

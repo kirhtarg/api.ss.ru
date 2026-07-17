@@ -9,7 +9,7 @@ class ShopYandexMarketProductBinding extends Model
 {
     protected $fillable = [
         'account_id', 'good_id', 'variation_id', 'offer_id', 'market_sku', 'status',
-        'content_rating', 'payload_hash', 'errors', 'warnings', 'remote_payload',
+        'content_rating', 'market_stock', 'market_stock_details', 'market_stock_updated_at', 'payload_hash', 'errors', 'warnings', 'remote_payload',
         'last_synced_at', 'remote_updated_at', 'last_catalog_sync_run_id',
     ];
 
@@ -17,6 +17,8 @@ class ShopYandexMarketProductBinding extends Model
         'errors' => 'array',
         'warnings' => 'array',
         'remote_payload' => 'array',
+        'market_stock_details' => 'array',
+        'market_stock_updated_at' => 'datetime',
         'last_synced_at' => 'datetime',
         'remote_updated_at' => 'datetime',
         'last_catalog_sync_run_id' => 'integer',

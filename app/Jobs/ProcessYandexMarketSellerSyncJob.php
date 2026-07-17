@@ -53,7 +53,7 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
                 return;
             }
             if ($run->type === 'catalog_import') {
-                $this->importCatalog($run, $account, $client);
+                $this->importCatalog($run, $account, $client, $resolver);
                 return;
             }
             if (in_array($run->type, ['delete', 'hide'], true)) {
@@ -149,12 +149,21 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
             return;
         }
 
+        $contentErrors = $run->type === 'products'
+            ? $this->updateCategoryContent($run, $account, $client, $valid)
+            : [];
+
         foreach ($valid as $entry) {
-            $entry['item']->update(['status' => 'completed', 'response_payload' => $response]);
+            $errors = $contentErrors[$entry['built']['offer_id']] ?? [];
+            $entry['item']->update([
+                'status' => $errors ? 'failed' : 'completed',
+                'response_payload' => $response,
+                'errors' => $errors ?: null,
+            ]);
             $bindingData = [
                 'good_id' => $entry['row']['good']->id, 'variation_id' => $entry['row']['variation']?->id,
-                'status' => $run->type === 'products' ? 'submitted' : 'synced',
-                'errors' => null, 'last_synced_at' => now(),
+                'status' => $errors ? 'error' : ($run->type === 'products' ? 'submitted' : 'synced'),
+                'errors' => $errors ?: null, 'last_synced_at' => now(),
             ];
             if ($run->type === 'products') {
                 $bindingData['payload_hash'] = hash('sha256', json_encode($entry['payload']));
@@ -163,8 +172,57 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
                 ['account_id' => $account->id, 'offer_id' => $entry['built']['offer_id']],
                 $bindingData,
             );
-            $this->increment($run, true);
+            $this->increment($run, ! $errors);
         }
+    }
+
+    /**
+     * Category-specific values must be sent through offer-cards/update. Keeping this
+     * separate from offer-mappings/update makes the Market response actionable per SKU.
+     *
+     * @param array<int, array<string, mixed>> $entries
+     * @return array<string, array<int, string>>
+     */
+    private function updateCategoryContent(ShopYandexMarketSyncRun $run, ShopYandexMarketAccount $account, YandexMarketClient $client, array $entries): array
+    {
+        $offers = collect($entries)->map(function (array $entry) {
+            $offer = (array) data_get($entry, 'payload.offer', []);
+            $parameters = array_values((array) ($offer['parameterValues'] ?? []));
+            if (! $parameters) return null;
+            return [
+                'offerId' => (string) ($offer['offerId'] ?? ''),
+                'categoryId' => (int) ($offer['marketCategoryId'] ?? 0),
+                'parameterValues' => $parameters,
+            ];
+        })->filter(fn ($offer) => $offer && $offer['offerId'] !== '' && $offer['categoryId'] > 0)->values();
+
+        $errorsByOffer = [];
+        foreach ($offers->chunk(100) as $chunk) {
+            $run->increment('requests');
+            try {
+                $response = $client->post("/v2/businesses/{$account->business_id}/offer-cards/update", [
+                    'offersContent' => $chunk->all(),
+                ]);
+                $resultErrors = collect(data_get($response, 'results', []))->mapWithKeys(function ($result) {
+                    $messages = collect($result['errors'] ?? [])->map(fn ($error) => (string) ($error['message'] ?? $error['type'] ?? 'Яндекс Маркет не принял характеристику.'))->filter()->values()->all();
+                    return $messages ? [(string) ($result['offerId'] ?? '') => $messages] : [];
+                })->all();
+
+                if (data_get($response, 'status') === 'ERROR') {
+                    foreach ($chunk as $offer) {
+                        $offerId = $offer['offerId'];
+                        $errorsByOffer[$offerId] = $resultErrors[$offerId] ?? ['Категорийные характеристики не применены: Маркет вернул ошибку для пачки.'];
+                    }
+                } else {
+                    foreach ($resultErrors as $offerId => $messages) $errorsByOffer[$offerId] = $messages;
+                }
+            } catch (Throwable $e) {
+                $message = 'Не удалось передать категорийные характеристики: '.mb_substr($e->getMessage(), 0, 3500);
+                foreach ($chunk as $offer) $errorsByOffer[$offer['offerId']] = [$message];
+            }
+        }
+
+        return $errorsByOffer;
     }
 
     private function sendStocksByCampaign(ShopYandexMarketSyncRun $run, ShopYandexMarketAccount $account, YandexMarketClient $client, array $valid): void
@@ -306,7 +364,7 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
         $run->update(['status' => $run->failed ? 'completed_with_errors' : 'completed', 'finished_at' => now()]);
     }
 
-    private function importCatalog(ShopYandexMarketSyncRun $run, ShopYandexMarketAccount $account, YandexMarketClient $client): void
+    private function importCatalog(ShopYandexMarketSyncRun $run, ShopYandexMarketAccount $account, YandexMarketClient $client, YandexMarketProductResolver $resolver): void
     {
         $pageToken = null;
         $foundOfferIds = 0;
@@ -351,6 +409,10 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
             })
             ->delete();
 
+        // The catalogue endpoint only returns the mapping. Card completion and stock are
+        // provided by separate Market endpoints, so enrich the local mirror here.
+        $this->refreshCatalogDetails($account, $client, $resolver);
+
         $catalogCount = ShopYandexMarketProductBinding::query()
             ->where('account_id', $account->id)
             ->where('last_catalog_sync_run_id', $run->id)
@@ -364,6 +426,72 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
             'finished_at' => now(),
             'meta' => array_merge((array) $run->meta, ['phase' => 'completed', 'imported_offer_ids' => $catalogCount, 'found_offer_ids' => $catalogCount]),
         ]);
+    }
+
+    private function refreshCatalogDetails(ShopYandexMarketAccount $account, YandexMarketClient $client, YandexMarketProductResolver $resolver): void
+    {
+        $bindings = ShopYandexMarketProductBinding::query()
+            ->where('account_id', $account->id)
+            ->with(['good.categories:id', 'good.tags:id'])
+            ->orderBy('id')
+            ->get();
+
+        foreach ($bindings->chunk(200) as $chunk) {
+            $response = $client->post("/v2/businesses/{$account->business_id}/offer-cards", [
+                'offerIds' => $chunk->pluck('offer_id')->values()->all(),
+                'withRecommendations' => true,
+            ]);
+            $cards = collect(data_get($response, 'result.offerCards', []))->keyBy(fn ($item) => (string) data_get($item, 'offerId'));
+            foreach ($chunk as $binding) {
+                $card = $cards->get($binding->offer_id);
+                if (! $card) continue;
+                $binding->update([
+                    'market_sku' => data_get($card, 'mapping.marketSku') ?: $binding->market_sku,
+                    'status' => data_get($card, 'cardStatus', $binding->status),
+                    'content_rating' => data_get($card, 'contentRating'),
+                    'errors' => ($errors = collect(data_get($card, 'errors', []))->values()->all()) ?: null,
+                    'warnings' => ($warnings = collect(data_get($card, 'warnings', []))->merge(data_get($card, 'recommendations', []))->values()->all()) ?: null,
+                    'remote_payload' => array_merge((array) $binding->remote_payload, ['content_status' => $card]),
+                    'remote_updated_at' => now(),
+                ]);
+            }
+        }
+
+        $mappings = $resolver->mappings($account);
+        $byCampaign = $bindings->groupBy(function (ShopYandexMarketProductBinding $binding) use ($account, $mappings, $resolver) {
+            $mapping = $binding->good ? $resolver->mappingFor($binding->good, $mappings, $account) : null;
+            return (int) ($mapping?->campaign_id ?: $account->campaign_id);
+        })->filter(fn ($group, $campaignId) => $campaignId > 0);
+
+        foreach ($byCampaign as $campaignId => $campaignBindings) {
+            foreach ($campaignBindings->chunk(500) as $chunk) {
+                $response = $client->post("/v2/campaigns/{$campaignId}/offers/stocks", [
+                    'offerIds' => $chunk->pluck('offer_id')->values()->all(),
+                ]);
+                $stocksByOffer = [];
+                foreach ((array) data_get($response, 'result.warehouses', []) as $warehouse) {
+                    $warehouseId = (int) ($warehouse['warehouseId'] ?? 0);
+                    foreach ((array) ($warehouse['offers'] ?? []) as $offer) {
+                        $offerId = (string) ($offer['offerId'] ?? '');
+                        if ($offerId === '') continue;
+                        $available = collect($offer['stocks'] ?? [])->where('type', 'AVAILABLE')->sum(fn ($stock) => (int) ($stock['count'] ?? 0));
+                        $stocksByOffer[$offerId][$warehouseId] = [
+                            'available' => $available,
+                            'stocks' => $offer['stocks'] ?? [],
+                            'updated_at' => $offer['updatedAt'] ?? null,
+                        ];
+                    }
+                }
+                foreach ($chunk as $binding) {
+                    $details = $stocksByOffer[$binding->offer_id] ?? [];
+                    $binding->update([
+                        'market_stock' => collect($details)->sum('available'),
+                        'market_stock_details' => $details ?: null,
+                        'market_stock_updated_at' => now(),
+                    ]);
+                }
+            }
+        }
     }
 
     /**
