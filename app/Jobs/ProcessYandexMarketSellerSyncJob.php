@@ -27,6 +27,10 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
         $run = ShopYandexMarketSyncRun::findOrFail($this->runId);
         $account = ShopYandexMarketAccount::findOrFail($run->account_id);
         $client = new YandexMarketClient($account);
+        if ($run->type === 'catalog_import' && $run->status !== 'running') {
+            // A queue retry restarts the remote pagination, so its counters must not accumulate.
+            $run->update(['total' => 0, 'processed' => 0, 'succeeded' => 0, 'failed' => 0, 'requests' => 0]);
+        }
         $run->update(['status' => 'running', 'started_at' => now(), 'error_message' => null]);
 
         try {

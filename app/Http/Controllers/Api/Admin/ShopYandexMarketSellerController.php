@@ -238,9 +238,10 @@ class ShopYandexMarketSellerController extends Controller
 
     public function products(Request $request)
     {
-        $data = $request->validate(['search' => 'nullable|string|max:255', 'status' => 'nullable|string|max:50', 'stock_filter' => 'nullable|in:zero', 'per_page' => 'nullable|integer|min:10|max:100']);
+        $data = $request->validate(['search' => 'nullable|string|max:255', 'status' => 'nullable|string|max:50', 'stock_filter' => 'nullable|in:zero', 'error_filter' => 'nullable|boolean', 'per_page' => 'nullable|integer|min:10|max:100']);
         $query = $this->productBindingsQuery($this->account(), $data)
             ->with(['good:id,name,sku,is_active,stock_quantity', 'variation:id,good_id,name,sku,is_active,stock_quantity']);
+        if ($data['error_filter'] ?? false) $query->whereNotNull('errors');
         return response()->json(['success' => true, 'data' => $query->paginate($data['per_page'] ?? 50)]);
     }
 
