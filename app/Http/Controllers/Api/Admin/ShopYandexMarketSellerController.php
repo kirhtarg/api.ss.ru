@@ -229,9 +229,8 @@ class ShopYandexMarketSellerController extends Controller
         if (! $account->selection_tag_id) return response()->json(['success' => false, 'message' => 'Выберите тег отбора товаров.'], 422);
         if (! $account->business_id) return response()->json(['success' => false, 'message' => 'Сначала проверьте подключение и выберите кабинет.'], 422);
         if ($data['mode'] === 'stocks' && ! $account->campaign_id) return response()->json(['success' => false, 'message' => 'Для остатков выберите магазин campaignId.'], 422);
-        $active = ShopYandexMarketSyncRun::query()->where('account_id', $account->id)->whereIn('status', ['pending', 'running'])->first();
-        if ($active) return response()->json(['success' => true, 'message' => 'Операция уже выполняется.', 'data' => $active], 202);
-        $run = ShopYandexMarketSyncRun::create(['account_id' => $account->id, 'user_id' => $request->user()?->id, 'type' => $data['mode'], 'good_ids' => $data['good_ids'] ?? null, 'status' => 'pending']);
+        [$run, $created] = $this->startRun($account, $request->user()?->id, ['type' => $data['mode'], 'good_ids' => $data['good_ids'] ?? null]);
+        if (! $created) return response()->json(['success' => true, 'message' => 'Операция уже выполняется.', 'data' => $run], 202);
         ProcessYandexMarketSellerSyncJob::dispatch($run->id);
         return response()->json(['success' => true, 'message' => 'Синхронизация поставлена в очередь.', 'data' => $run], 202);
     }
@@ -261,13 +260,8 @@ class ShopYandexMarketSellerController extends Controller
         if (! ($data['all_filtered'] ?? false)) $query->whereIn('id', $data['binding_ids']);
         $bindingIds = $query->pluck('id')->all();
         if (! $bindingIds) return response()->json(['success' => false, 'message' => 'Подходящие карточки не найдены.'], 422);
-        $active = ShopYandexMarketSyncRun::query()->where('account_id', $account->id)->whereIn('status', ['pending', 'running'])->first();
-        if ($active) return response()->json(['success' => true, 'message' => 'Другая операция уже выполняется.', 'data' => $active], 202);
-        $run = ShopYandexMarketSyncRun::create([
-            'account_id' => $account->id, 'user_id' => $request->user()?->id,
-            'type' => 'delete', 'status' => 'pending', 'total' => count($bindingIds),
-            'meta' => ['binding_ids' => $bindingIds],
-        ]);
+        [$run, $created] = $this->startRun($account, $request->user()?->id, ['type' => 'delete', 'total' => count($bindingIds), 'meta' => ['binding_ids' => $bindingIds]]);
+        if (! $created) return response()->json(['success' => true, 'message' => 'Другая операция уже выполняется.', 'data' => $run], 202);
         ProcessYandexMarketSellerSyncJob::dispatch($run->id);
         return response()->json(['success' => true, 'message' => 'Удаление товаров из каталога Яндекс Маркета поставлено в очередь.', 'data' => $run], 202);
     }
@@ -288,13 +282,8 @@ class ShopYandexMarketSellerController extends Controller
         if (! ($data['all_filtered'] ?? false)) $query->whereIn('id', $data['binding_ids']);
         $bindingIds = $query->pluck('id')->all();
         if (! $bindingIds) return response()->json(['success' => false, 'message' => 'Подходящие карточки не найдены.'], 422);
-        $active = ShopYandexMarketSyncRun::query()->where('account_id', $account->id)->whereIn('status', ['pending', 'running'])->first();
-        if ($active) return response()->json(['success' => true, 'message' => 'Другая операция уже выполняется.', 'data' => $active], 202);
-        $run = ShopYandexMarketSyncRun::create([
-            'account_id' => $account->id, 'user_id' => $request->user()?->id,
-            'type' => 'hide', 'status' => 'pending', 'total' => count($bindingIds),
-            'meta' => ['binding_ids' => $bindingIds],
-        ]);
+        [$run, $created] = $this->startRun($account, $request->user()?->id, ['type' => 'hide', 'total' => count($bindingIds), 'meta' => ['binding_ids' => $bindingIds]]);
+        if (! $created) return response()->json(['success' => true, 'message' => 'Другая операция уже выполняется.', 'data' => $run], 202);
         ProcessYandexMarketSellerSyncJob::dispatch($run->id);
         return response()->json(['success' => true, 'message' => 'Скрытие товаров с витрины Яндекс Маркета поставлено в очередь.', 'data' => $run], 202);
     }
@@ -304,15 +293,8 @@ class ShopYandexMarketSellerController extends Controller
         $request->validate(['confirmed' => 'required|accepted']);
         $account = $this->account();
         if (! $account->business_id) return response()->json(['success' => false, 'message' => 'Не указан Business ID Яндекс Маркета.'], 422);
-        $active = ShopYandexMarketSyncRun::query()->where('account_id', $account->id)->whereIn('status', ['pending', 'running'])->first();
-        if ($active) return response()->json(['success' => true, 'message' => 'Другая операция уже выполняется.', 'data' => $active], 202);
-        $run = ShopYandexMarketSyncRun::create([
-            'account_id' => $account->id,
-            'user_id' => $request->user()?->id,
-            'type' => 'purge_catalog',
-            'status' => 'pending',
-            'meta' => ['source' => 'market_catalog'],
-        ]);
+        [$run, $created] = $this->startRun($account, $request->user()?->id, ['type' => 'purge_catalog', 'meta' => ['source' => 'market_catalog']]);
+        if (! $created) return response()->json(['success' => true, 'message' => 'Другая операция уже выполняется.', 'data' => $run], 202);
         ProcessYandexMarketSellerSyncJob::dispatch($run->id);
         return response()->json(['success' => true, 'message' => 'Очистка всего каталога Яндекс Маркета поставлена в очередь. Сначала будут получены все Offer ID, затем они удалятся пачками.', 'data' => $run], 202);
     }
@@ -321,14 +303,8 @@ class ShopYandexMarketSellerController extends Controller
     {
         $account = $this->account();
         if (! $account->business_id) return response()->json(['success' => false, 'message' => 'Сначала проверьте подключение к Яндекс Маркету.'], 422);
-        $active = ShopYandexMarketSyncRun::query()->where('account_id', $account->id)->whereIn('status', ['pending', 'running'])->first();
-        if ($active) return response()->json(['success' => true, 'message' => 'Другая операция уже выполняется.', 'data' => $active], 202);
-        $run = ShopYandexMarketSyncRun::create([
-            'account_id' => $account->id,
-            'user_id' => $request->user()?->id,
-            'type' => 'catalog_import',
-            'status' => 'pending',
-        ]);
+        [$run, $created] = $this->startRun($account, $request->user()?->id, ['type' => 'catalog_import']);
+        if (! $created) return response()->json(['success' => true, 'message' => 'Другая операция уже выполняется.', 'data' => $run], 202);
         ProcessYandexMarketSellerSyncJob::dispatch($run->id);
 
         return response()->json(['success' => true, 'message' => 'Загрузка фактического каталога Яндекс Маркета поставлена в очередь.', 'data' => $run], 202);
@@ -346,7 +322,38 @@ class ShopYandexMarketSellerController extends Controller
         return response()->json(['success' => true, 'data' => $run->load(['items' => fn ($q) => $q->latest()->limit(200)])]);
     }
 
+    public function cancelRun(ShopYandexMarketSyncRun $run)
+    {
+        abort_unless($run->account_id === $this->account()->id, 404);
+        if (in_array($run->status, ['pending', 'running'], true)) {
+            $run->update(['status' => 'cancelled', 'finished_at' => now(), 'error_message' => 'Операция отменена пользователем.']);
+        }
+        return response()->json(['success' => true, 'message' => 'Операция отменена.', 'data' => $run->fresh()]);
+    }
+
     private function account(): ShopYandexMarketAccount { return ShopYandexMarketAccount::query()->firstOrFail(); }
+
+    /** @return array{0: ShopYandexMarketSyncRun, 1: bool} */
+    private function startRun(ShopYandexMarketAccount $account, ?int $userId, array $attributes): array
+    {
+        return DB::transaction(function () use ($account, $userId, $attributes) {
+            ShopYandexMarketAccount::query()->whereKey($account->id)->lockForUpdate()->firstOrFail();
+            $active = ShopYandexMarketSyncRun::query()
+                ->where('account_id', $account->id)
+                ->whereIn('status', ['pending', 'running'])
+                ->lockForUpdate()
+                ->first();
+
+            if ($active) return [$active, false];
+
+            return [ShopYandexMarketSyncRun::create(array_merge([
+                'account_id' => $account->id,
+                'user_id' => $userId,
+                'status' => 'pending',
+            ], $attributes)), true];
+        });
+    }
+
     private function productBindingsQuery(ShopYandexMarketAccount $account, array $filters)
     {
         $query = ShopYandexMarketProductBinding::query()->where('account_id', $account->id)->latest('id');

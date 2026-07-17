@@ -26,6 +26,7 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
     public function handle(YandexMarketPayloadBuilder $builder, YandexMarketProductResolver $resolver): void
     {
         $run = ShopYandexMarketSyncRun::findOrFail($this->runId);
+        if ($run->status === 'cancelled') return;
         $account = ShopYandexMarketAccount::findOrFail($run->account_id);
         $client = new YandexMarketClient($account);
         if (in_array($run->type, ['catalog_import', 'purge_catalog'], true) && $run->status !== 'pending') {
@@ -222,6 +223,7 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
         $offerIds = [];
         $pageToken = null;
         do {
+            if ($this->isCancelled($run)) return;
             $run->increment('requests');
             $query = ['language' => 'RU', 'limit' => 100];
             if ($pageToken) $query['pageToken'] = $pageToken;
@@ -238,6 +240,7 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
         $offerIds = array_values(array_unique($offerIds));
         $run->update(['total' => count($offerIds), 'meta' => array_merge((array) $run->meta, ['phase' => 'deleting', 'found_offer_ids' => count($offerIds)])]);
         foreach (array_chunk($offerIds, 500) as $chunk) {
+            if ($this->isCancelled($run)) return;
             try {
                 $run->increment('requests');
                 $response = $this->deleteCatalogOffers($account, $client, $chunk);
@@ -282,6 +285,7 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
             'meta' => array_merge((array) $run->meta, ['phase' => 'collecting_catalog', 'found_offer_ids' => 0, 'catalog_pages' => 0]),
         ]);
         do {
+            if ($this->isCancelled($run)) return;
             $run->increment('requests');
             $query = ['language' => 'RU', 'limit' => 100];
             if ($pageToken) $query['pageToken'] = $pageToken;
@@ -384,6 +388,11 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
                 'catalog_pages' => ((int) data_get($run->meta, 'catalog_pages', 0)) + 1,
             ]),
         ]);
+    }
+
+    private function isCancelled(ShopYandexMarketSyncRun $run): bool
+    {
+        return $run->fresh()?->status === 'cancelled';
     }
 
     /**

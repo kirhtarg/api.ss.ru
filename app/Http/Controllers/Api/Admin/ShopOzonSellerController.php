@@ -507,6 +507,9 @@ class ShopOzonSellerController extends Controller
         $mappingIds = array_values(array_unique(array_map('intval', $input['mapping_ids'] ?? []))) ?: null;
         $mappings = $resolver->mappings($account, $mappingIds);
         if ($mappings->isEmpty() || ! $mappings->contains(fn ($mapping) => $resolver->effectiveSelectionTagId($mapping, $account))) return response()->json(['success' => false, 'message' => 'Создайте активный профиль Ozon и выберите в нём тег отбора товаров.'], 422);
+        $tagNames = ShopTag::query()
+            ->whereIn('id', $mappings->map(fn ($mapping) => $resolver->effectiveSelectionTagId($mapping, $account))->filter()->unique())
+            ->pluck('name', 'id');
         $query = $resolver->query($account, $ids, $mappingIds)->orderByDesc('shop_goods.id');
         if (filled($input['search'] ?? null)) {
             $search = trim($input['search']);
@@ -548,7 +551,9 @@ class ShopOzonSellerController extends Controller
                     'variation_id' => $row['variation']?->id,
                     'sku' => $row['variation']?->sku ?: $good->sku,
                     'stock' => $built['stock'],
+                    'category_profile_id' => $mapping?->id,
                     'category_profile' => $mapping?->ozon_category_name,
+                    'selection_tag_name' => $mapping ? ($tagNames[$resolver->effectiveSelectionTagId($mapping, $account)] ?? null) : null,
                 ], $built, ['errors' => array_values(array_unique(array_merge($built['errors'], $row['row_errors'])))]);
             }
         }

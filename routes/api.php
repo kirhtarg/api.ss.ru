@@ -2527,6 +2527,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/products/purge-catalog', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'purgeCatalog']);
                 Route::get('/runs', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'runs']);
                 Route::get('/runs/{run}', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'run']);
+                Route::post('/runs/{run}/cancel', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'cancelRun']);
             });
         });
 
