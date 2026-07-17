@@ -70,7 +70,7 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
 
             $rows = [];
             $mappings = $resolver->mappings($account);
-            $resolver->query($account, $run->good_ids)->chunkById(100, function ($goods) use (&$rows, $resolver, $mappings) {
+            $resolver->query($account, $run->good_ids)->chunkById(100, function ($goods) use (&$rows, $resolver, $mappings, $account) {
                 foreach ($goods as $good) {
                     $mapping = $resolver->mappingFor($good, $mappings, $account);
                     foreach ($resolver->rowsForGood($good, $mapping) as $row) $rows[] = $row;
