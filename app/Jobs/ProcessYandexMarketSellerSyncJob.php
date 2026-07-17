@@ -34,6 +34,10 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
                 $this->purgeCatalog($run, $account, $client);
                 return;
             }
+            if ($run->type === 'catalog_import') {
+                $this->importCatalog($run, $account, $client);
+                return;
+            }
             if (in_array($run->type, ['delete', 'hide'], true)) {
                 $this->manageBindings($run, $account, $client);
                 return;
@@ -246,6 +250,36 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
                 ->update(['status' => 'deleted', 'errors' => null, 'last_synced_at' => now()]);
         }
         $run->update(['status' => $run->failed ? 'completed_with_errors' : 'completed', 'finished_at' => now()]);
+    }
+
+    private function importCatalog(ShopYandexMarketSyncRun $run, ShopYandexMarketAccount $account, YandexMarketClient $client): void
+    {
+        $pageToken = null;
+        $seen = 0;
+        do {
+            $run->increment('requests');
+            $payload = ['limit' => 200];
+            if ($pageToken) $payload['pageToken'] = $pageToken;
+            $response = $client->post("/v2/businesses/{$account->business_id}/offer-mappings", $payload, ['language' => 'RU']);
+            $items = (array) data_get($response, 'result.offerMappings', data_get($response, 'offerMappings', []));
+            foreach ($items as $remote) {
+                $offerId = (string) data_get($remote, 'offer.offerId', data_get($remote, 'offerId', ''));
+                if ($offerId === '') continue;
+                $binding = ShopYandexMarketProductBinding::firstOrNew(['account_id' => $account->id, 'offer_id' => $offerId]);
+                $binding->market_sku = data_get($remote, 'mapping.marketSku', data_get($remote, 'marketSku')) ?: $binding->market_sku;
+                $binding->status = (string) data_get($remote, 'cardStatus', $binding->status ?: 'catalog_imported');
+                $binding->remote_payload = $remote;
+                $binding->remote_updated_at = now();
+                $binding->last_synced_at = now();
+                $binding->save();
+                $seen++;
+                $this->increment($run, true);
+            }
+            $run->update(['total' => $seen]);
+            $pageToken = data_get($response, 'result.paging.nextPageToken', data_get($response, 'paging.nextPageToken'));
+        } while ($pageToken && ! empty($items));
+        $run->refresh();
+        $run->update(['status' => 'completed', 'finished_at' => now(), 'meta' => array_merge((array) $run->meta, ['imported_offer_ids' => $seen])]);
     }
 
     private function readBackCards(ShopYandexMarketSyncRun $run, ShopYandexMarketAccount $account, YandexMarketClient $client): void

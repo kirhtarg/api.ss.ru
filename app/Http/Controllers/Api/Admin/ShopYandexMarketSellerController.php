@@ -325,12 +325,12 @@ class ShopYandexMarketSellerController extends Controller
         $run = ShopYandexMarketSyncRun::create([
             'account_id' => $account->id,
             'user_id' => $request->user()?->id,
-            'type' => 'readback',
+            'type' => 'catalog_import',
             'status' => 'pending',
         ]);
         ProcessYandexMarketSellerSyncJob::dispatch($run->id);
 
-        return response()->json(['success' => true, 'message' => 'Сверка всего каталога поставлена в очередь.', 'data' => $run], 202);
+        return response()->json(['success' => true, 'message' => 'Загрузка фактического каталога Яндекс Маркета поставлена в очередь.', 'data' => $run], 202);
     }
 
     public function runs()
