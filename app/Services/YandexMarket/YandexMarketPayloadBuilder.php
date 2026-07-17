@@ -109,6 +109,7 @@ class YandexMarketPayloadBuilder
         $payload = []; $display = []; $missing = []; $customsCommodityCode = null;
         foreach ($mapping?->attribute_mappings ?? [] as $item) {
             $value = $this->resolver->sourceValue($item, $good, $variation);
+            $value = $this->normalizeNumericValue($value, $item);
             $dictionary = $this->dictionaryValue($item, (string) $value);
             $isEmpty = ($value === null || $value === '') && ! $dictionary;
             $name = (string) ($item['name'] ?? 'ID '.($item['id'] ?? ''));
@@ -216,6 +217,16 @@ class YandexMarketPayloadBuilder
     }
 
     private function positive(mixed ...$values): float { foreach ($values as $value) if (is_numeric($value) && (float) $value > 0) return (float) $value; return 0; }
+    private function normalizeNumericValue(mixed $value, array $item): mixed
+    {
+        $type = mb_strtolower((string) ($item['type'] ?? ''));
+        if (! preg_match('/number|numeric|decimal|float|integer|int/u', $type) || ! is_string($value)) return $value;
+
+        // Store values often contain a unit (for example "160 mm"). Market expects
+        // only the number in NUMBER/NUMERIC category attributes.
+        if (! preg_match('/[-+]?\d+(?:[\.,]\d+)?/u', $value, $match)) return $value;
+        return str_replace(',', '.', $match[0]);
+    }
     private function plainDescription(mixed $value): string { return trim(preg_replace('/\s+/u', ' ', strip_tags($this->decoded($value))) ?? ''); }
     private function normalized(mixed $value): string { return mb_strtolower(preg_replace('/\s+/u', ' ', $this->decoded($value)) ?? ''); }
     private function decoded(mixed $value): string { $value = trim((string) ($value ?? '')); for ($i = 0; $i < 5; $i++) { $next = html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8'); if ($next === $value) break; $value = $next; } return trim($value); }
