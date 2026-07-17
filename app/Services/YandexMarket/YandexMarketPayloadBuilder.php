@@ -39,8 +39,6 @@ class YandexMarketPayloadBuilder
                 'type' => 'CUSTOMS_COMMODITY_CODE',
                 'code' => $parameters['customsCommodityCode'],
             ]] : null,
-            // Still accepted by the API and needed by some existing Market categories.
-            'customsCommodityCode' => $parameters['customsCommodityCode'] ?? null,
             'basicPrice' => [
                 'value' => $price['final'],
                 'discountBase' => $price['old_price'] ?: null,
