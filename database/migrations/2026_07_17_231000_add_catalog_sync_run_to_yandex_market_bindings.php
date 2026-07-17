@@ -10,7 +10,8 @@ return new class extends Migration
     {
         Schema::table('shop_yandex_market_product_bindings', function (Blueprint $table) {
             if (! Schema::hasColumn('shop_yandex_market_product_bindings', 'last_catalog_sync_run_id')) {
-                $table->unsignedBigInteger('last_catalog_sync_run_id')->nullable()->index()->after('remote_updated_at');
+                $table->unsignedBigInteger('last_catalog_sync_run_id')->nullable()->after('remote_updated_at');
+                $table->index('last_catalog_sync_run_id', 'ym_binding_catalog_run_idx');
             }
         });
     }
@@ -19,7 +20,7 @@ return new class extends Migration
     {
         Schema::table('shop_yandex_market_product_bindings', function (Blueprint $table) {
             if (Schema::hasColumn('shop_yandex_market_product_bindings', 'last_catalog_sync_run_id')) {
-                $table->dropIndex(['last_catalog_sync_run_id']);
+                $table->dropIndex('ym_binding_catalog_run_idx');
                 $table->dropColumn('last_catalog_sync_run_id');
             }
         });
