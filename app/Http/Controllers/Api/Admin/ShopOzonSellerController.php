@@ -102,12 +102,21 @@ class ShopOzonSellerController extends Controller
     public function warehouses()
     {
         try {
-            $response = (new OzonSellerClient($this->account()))->post('/v1/warehouse/list');
-            $rawItems = data_get($response, 'result', data_get($response, 'warehouses', []));
-            if (is_array($rawItems) && array_key_exists('warehouses', $rawItems)) {
-                $rawItems = $rawItems['warehouses'];
+            $client = new OzonSellerClient($this->account());
+            $warehouses = collect();
+            $cursor = '';
+            for ($page = 0; $page < 20; $page++) {
+                $response = $client->post('/v2/warehouse/list', ['limit' => 100, 'cursor' => $cursor]);
+                $rawItems = data_get($response, 'warehouses', data_get($response, 'result.warehouses', data_get($response, 'result', [])));
+                $warehouses->push(...(is_array($rawItems) ? $rawItems : []));
+
+                $hasNext = (bool) data_get($response, 'has_next', data_get($response, 'result.has_next', false));
+                $nextCursor = (string) data_get($response, 'cursor', data_get($response, 'result.cursor', ''));
+                if (! $hasNext || $nextCursor === '' || $nextCursor === $cursor) break;
+                $cursor = $nextCursor;
             }
-            $items = collect(is_array($rawItems) ? $rawItems : [])->map(function ($item) {
+
+            $items = $warehouses->map(function ($item) {
                 $id = data_get($item, 'warehouse_id', data_get($item, 'id'));
                 if (! filled($id)) return null;
                 return [
@@ -116,7 +125,7 @@ class ShopOzonSellerController extends Controller
                     'is_rfbs' => (bool) data_get($item, 'is_rfbs', false),
                     'status' => data_get($item, 'status'),
                 ];
-            })->filter()->sortBy('name', SORT_NATURAL | SORT_FLAG_CASE)->values();
+            })->filter()->unique('id')->sortBy('name', SORT_NATURAL | SORT_FLAG_CASE)->values();
 
             return response()->json(['success' => true, 'data' => $items]);
         } catch (\Throwable $e) {
