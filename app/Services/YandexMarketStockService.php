@@ -410,11 +410,24 @@ class YandexMarketStockService
     private function apiHeaders(array $settings): array
     {
         $authType = ($settings['auth_type'] ?? 'api_key') === 'oauth' ? 'oauth' : 'api_key';
+        $token = trim((string) ($settings['auth_token'] ?? ''));
 
-        return [
+        $headers = [
             'Accept' => 'application/json',
             'Content-Type' => 'application/json',
-            'Authorization' => ($authType === 'oauth' ? 'OAuth ' : 'Api-Key ').trim((string) ($settings['auth_token'] ?? '')),
         ];
+
+        if ($authType === 'api_key') {
+            $headers['Api-Key'] = $token;
+
+            return $headers;
+        }
+
+        if (! preg_match('/^(OAuth|Bearer)\s+/i', $token)) {
+            $token = 'OAuth '.$token;
+        }
+        $headers['Authorization'] = $token;
+
+        return $headers;
     }
 }
