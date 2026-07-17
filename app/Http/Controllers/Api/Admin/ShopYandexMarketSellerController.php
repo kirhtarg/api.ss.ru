@@ -313,6 +313,25 @@ class ShopYandexMarketSellerController extends Controller
         return response()->json(['success' => true, 'message' => 'Загрузка фактического каталога Яндекс Маркета поставлена в очередь.', 'data' => $run], 202);
     }
 
+    public function readBackProducts(Request $request)
+    {
+        $account = $this->account();
+        if (! $account->business_id) {
+            return response()->json(['success' => false, 'message' => 'Сначала проверьте подключение к Яндекс Маркету.'], 422);
+        }
+
+        $count = ShopYandexMarketProductBinding::query()->where('account_id', $account->id)->count();
+        if (! $count) {
+            return response()->json(['success' => false, 'message' => 'Нет карточек для сверки. Сначала отправьте карточки или загрузите каталог из Яндекса.'], 422);
+        }
+
+        [$run, $created] = $this->startRun($account, $request->user()?->id, ['type' => 'readback', 'total' => $count]);
+        if (! $created) return response()->json(['success' => true, 'message' => 'Другая операция уже выполняется.', 'data' => $run], 202);
+        ProcessYandexMarketSellerSyncJob::dispatch($run->id);
+
+        return response()->json(['success' => true, 'message' => 'Сверка фактических карточек с Яндекс Маркетом поставлена в очередь.', 'data' => $run], 202);
+    }
+
     public function runs(Request $request)
     {
         $data = $request->validate(['page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);

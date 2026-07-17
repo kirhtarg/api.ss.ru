@@ -2522,6 +2522,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/sync', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'startSync']);
                 Route::get('/products', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'products']);
                 Route::post('/products/refresh', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'refreshProducts']);
+                Route::post('/products/readback', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'readBackProducts']);
                 Route::post('/products/delete', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'deleteProducts']);
                 Route::post('/products/hide', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'hideProducts']);
                 Route::post('/products/purge-catalog', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'purgeCatalog']);
