@@ -206,9 +206,9 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
         $pageToken = null;
         do {
             $run->increment('requests');
-            $payload = ['limit' => 200];
-            if ($pageToken) $payload['pageToken'] = $pageToken;
-            $response = $client->post("/v2/businesses/{$account->business_id}/offer-mappings", $payload, ['language' => 'RU']);
+            $query = ['language' => 'RU', 'limit' => 100];
+            if ($pageToken) $query['pageToken'] = $pageToken;
+            $response = $client->post("/v2/businesses/{$account->business_id}/offer-mappings", [], $query);
             $items = (array) data_get($response, 'result.offerMappings', data_get($response, 'offerMappings', []));
             foreach ($items as $item) {
                 $offerId = (string) data_get($item, 'offer.offerId', data_get($item, 'offerId', ''));
@@ -258,9 +258,9 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
         $seen = 0;
         do {
             $run->increment('requests');
-            $payload = ['limit' => 200];
-            if ($pageToken) $payload['pageToken'] = $pageToken;
-            $response = $client->post("/v2/businesses/{$account->business_id}/offer-mappings", $payload, ['language' => 'RU']);
+            $query = ['language' => 'RU', 'limit' => 100];
+            if ($pageToken) $query['pageToken'] = $pageToken;
+            $response = $client->post("/v2/businesses/{$account->business_id}/offer-mappings", [], $query);
             $items = (array) data_get($response, 'result.offerMappings', data_get($response, 'offerMappings', []));
             foreach ($items as $remote) {
                 $offerId = (string) data_get($remote, 'offer.offerId', data_get($remote, 'offerId', ''));
