@@ -17,9 +17,9 @@ class OzonProductPayloadBuilder
 
     public function build(ShopGood $good, ?ShopGoodVariation $variation, ShopOzonAccount $account, ?ShopOzonCategoryMapping $mapping = null): array
     {
-        $mapping ??= $this->resolver->mappingFor($good, $this->resolver->mappings($account));
+        $mapping ??= $account->exists ? $this->resolver->mappingFor($good, $this->resolver->mappings($account)) : null;
         $offerId = $this->offerId($good, $variation, $account);
-        $priceSummary = $this->priceSummary($good, $variation);
+        $priceSummary = $this->priceSummary($good, $variation, $mapping);
         $stockSummary = $this->stockSummary($good, $variation);
         $price = $priceSummary['final'];
         $dimensions = $this->dimensions($good, $mapping);
@@ -78,9 +78,10 @@ class OzonProductPayloadBuilder
         ];
     }
 
-    public function pricePayload(ShopGood $good, ?ShopGoodVariation $variation, ShopOzonAccount $account): array
+    public function pricePayload(ShopGood $good, ?ShopGoodVariation $variation, ShopOzonAccount $account, ?ShopOzonCategoryMapping $mapping = null): array
     {
-        $summary = $this->priceSummary($good, $variation);
+        $mapping ??= $account->exists ? $this->resolver->mappingFor($good, $this->resolver->mappings($account)) : null;
+        $summary = $this->priceSummary($good, $variation, $mapping);
         return [
             'offer_id' => $this->offerId($good, $variation, $account),
             'currency_code' => 'RUB',
@@ -102,12 +103,15 @@ class OzonProductPayloadBuilder
         return (string) ($binding?->offer_id ?: ($variation ? "g_{$good->id}_v_{$variation->id}" : "g_{$good->id}"));
     }
 
-    private function priceSummary(ShopGood $good, ?ShopGoodVariation $variation): array
+    private function priceSummary(ShopGood $good, ?ShopGoodVariation $variation, ?ShopOzonCategoryMapping $mapping): array
     {
         $item = $variation ?: $good;
-        $base = max(0, (float) $item->price);
-        $sale = max(0, (float) $item->sale_price);
-        $dumping = max(0, (float) $item->demping_price);
+        $sourceBase = max(0, (float) $item->price);
+        $sourceSale = max(0, (float) $item->sale_price);
+        $sourceDumping = max(0, (float) $item->demping_price);
+        $base = $this->adjustPrice($sourceBase, $mapping?->price_adjustment);
+        $sale = $sourceSale > 0 ? $this->adjustPrice($sourceSale, $mapping?->price_adjustment) : 0;
+        $dumping = $sourceDumping > 0 ? $this->adjustPrice($sourceDumping, $mapping?->price_adjustment) : 0;
         $dumpingActive = (bool) $item->show_demping && $dumping > 0;
 
         if ($dumpingActive) {
@@ -129,6 +133,31 @@ class OzonProductPayloadBuilder
             'source' => $source,
             'final' => $final,
             'old_price' => $base > $final ? $this->money($base) : '0',
+            'source_base' => $sourceBase,
+            'source_sale' => $sourceSale > 0 ? $sourceSale : null,
+            'source_dumping' => $sourceDumping > 0 ? $sourceDumping : null,
+            'adjustment' => $this->normalizedPriceAdjustment($mapping?->price_adjustment),
+        ];
+    }
+
+    private function adjustPrice(float $price, ?array $adjustment): float
+    {
+        if ($price <= 0) return 0;
+        $rule = $this->normalizedPriceAdjustment($adjustment);
+        $value = $rule['value'];
+        if ($value <= 0) return $price;
+
+        $delta = $rule['type'] === 'percent' ? $price * $value / 100 : $value;
+        $result = $rule['operation'] === 'subtract' ? $price - $delta : $price + $delta;
+        return max(0, round($result, 2));
+    }
+
+    private function normalizedPriceAdjustment(?array $adjustment): array
+    {
+        return [
+            'operation' => ($adjustment['operation'] ?? 'add') === 'subtract' ? 'subtract' : 'add',
+            'type' => ($adjustment['type'] ?? 'percent') === 'absolute' ? 'absolute' : 'percent',
+            'value' => max(0, (float) ($adjustment['value'] ?? 0)),
         ];
     }
 

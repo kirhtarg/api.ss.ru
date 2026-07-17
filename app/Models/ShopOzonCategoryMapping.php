@@ -19,6 +19,7 @@ class ShopOzonCategoryMapping extends Model
         'attribute_mappings',
         'variation_attribute_mappings',
         'dimension_settings',
+        'price_adjustment',
         'is_active',
     ];
     protected $casts = [
@@ -26,6 +27,7 @@ class ShopOzonCategoryMapping extends Model
         'attribute_mappings' => 'array',
         'variation_attribute_mappings' => 'array',
         'dimension_settings' => 'array',
+        'price_adjustment' => 'array',
         'is_active' => 'boolean',
     ];
 

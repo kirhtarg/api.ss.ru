@@ -2473,6 +2473,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('/settings', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'settings']);
                 Route::post('/settings', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'saveSettings']);
                 Route::post('/test-connection', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'testConnection']);
+                Route::get('/warehouses', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'warehouses']);
                 Route::get('/local-categories', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localCategories']);
                 Route::get('/local-tags', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localTags']);
                 Route::get('/variation-attributes', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'variationAttributes']);

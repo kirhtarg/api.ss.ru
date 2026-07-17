@@ -99,6 +99,31 @@ class ShopOzonSellerController extends Controller
         }
     }
 
+    public function warehouses()
+    {
+        try {
+            $response = (new OzonSellerClient($this->account()))->post('/v1/warehouse/list');
+            $rawItems = data_get($response, 'result', data_get($response, 'warehouses', []));
+            if (is_array($rawItems) && array_key_exists('warehouses', $rawItems)) {
+                $rawItems = $rawItems['warehouses'];
+            }
+            $items = collect(is_array($rawItems) ? $rawItems : [])->map(function ($item) {
+                $id = data_get($item, 'warehouse_id', data_get($item, 'id'));
+                if (! filled($id)) return null;
+                return [
+                    'id' => (string) $id,
+                    'name' => (string) (data_get($item, 'name') ?: 'Склад '.$id),
+                    'is_rfbs' => (bool) data_get($item, 'is_rfbs', false),
+                    'status' => data_get($item, 'status'),
+                ];
+            })->filter()->sortBy('name', SORT_NATURAL | SORT_FLAG_CASE)->values();
+
+            return response()->json(['success' => true, 'data' => $items]);
+        } catch (\Throwable $e) {
+            return $this->ozonRequestError($e);
+        }
+    }
+
     public function localCategories()
     {
         $items = ShopCategory::query()->where('is_active', true)->orderBy('name')->get(['id', 'name', 'parent_id']);
@@ -399,6 +424,10 @@ class ShopOzonSellerController extends Controller
             'dimension_settings.width_multiplier' => 'nullable|numeric|min:0.000001|max:1000000',
             'dimension_settings.height_multiplier' => 'nullable|numeric|min:0.000001|max:1000000',
             'dimension_settings.weight_multiplier' => 'nullable|numeric|min:0.000001|max:1000000',
+            'price_adjustment' => 'nullable|array',
+            'price_adjustment.operation' => 'nullable|in:add,subtract',
+            'price_adjustment.type' => 'nullable|in:percent,absolute',
+            'price_adjustment.value' => 'nullable|numeric|min:0|max:100000000',
             'is_active' => 'boolean',
         ]);
         $account = $this->account();
@@ -519,6 +548,9 @@ class ShopOzonSellerController extends Controller
         $data = $request->validate(['mode' => 'required|in:products,prices,stocks', 'good_ids' => 'nullable|array', 'good_ids.*' => 'integer|exists:shop_goods,id']);
         $account = $this->account();
         if (! $account->selection_tag_id) return response()->json(['success' => false, 'message' => 'Выберите тег отбора товаров Ozon.'], 422);
+        if (in_array($data['mode'], ['products', 'stocks'], true) && ! $account->warehouse_id) {
+            return response()->json(['success' => false, 'message' => 'Укажите Warehouse ID во вкладке «Подключение и отбор». Без него Ozon не примет остатки.'], 422);
+        }
         $run = ShopOzonSyncRun::create(['account_id' => $account->id, 'user_id' => $request->user()?->id, 'mode' => $data['mode'], 'good_ids' => $data['good_ids'] ?? null, 'status' => 'pending']);
         ProcessOzonSyncRunJob::dispatch($run->id);
         return response()->json(['success' => true, 'message' => 'Синхронизация поставлена в очередь.', 'data' => $run], 202);
@@ -569,7 +601,7 @@ class ShopOzonSellerController extends Controller
                 if (! $remote) continue;
                 $binding->update([
                     'product_id' => data_get($remote, 'id', data_get($remote, 'product_id', $binding->product_id)),
-                    'sku' => data_get($remote, 'sources.0.sku', data_get($remote, 'sku', $binding->sku)),
+                    'sku' => $this->ozonSku($remote) ?? $binding->sku,
                     'status' => (string) (data_get($remote, 'statuses.status') ?: data_get($remote, 'status') ?: $binding->status),
                     'remote_payload' => $remote,
                     'remote_updated_at' => now(),
@@ -609,6 +641,21 @@ class ShopOzonSellerController extends Controller
     {
         abort_unless($run->account_id === $this->account()->id, 404);
         return response()->json(['success' => true, 'data' => $run->load(['items' => fn ($q) => $q->latest()->limit(200)])]);
+    }
+
+    private function ozonSku(mixed $remote): ?int
+    {
+        foreach (['sku', 'fbs_sku', 'fbo_sku', 'sources.0.sku'] as $path) {
+            $value = data_get($remote, $path);
+            if (is_numeric($value) && (int) $value > 0) return (int) $value;
+        }
+
+        foreach ((array) data_get($remote, 'sources', []) as $source) {
+            $value = data_get($source, 'sku');
+            if (is_numeric($value) && (int) $value > 0) return (int) $value;
+        }
+
+        return null;
     }
 
     private function account(): ShopOzonAccount

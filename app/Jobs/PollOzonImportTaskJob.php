@@ -6,6 +6,7 @@ use App\Models\ShopOzonAccount;
 use App\Models\ShopOzonProductBinding;
 use App\Models\ShopOzonSyncItem;
 use App\Models\ShopOzonSyncRun;
+use App\Services\Ozon\OzonPostProductSyncScheduler;
 use App\Services\Ozon\OzonSellerClient;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -18,7 +19,7 @@ class PollOzonImportTaskJob implements ShouldQueue
 
     public function __construct(public int $runId, public string $taskId) {}
 
-    public function handle(): void
+    public function handle(OzonPostProductSyncScheduler $postProductSyncScheduler): void
     {
         $run = ShopOzonSyncRun::findOrFail($this->runId);
         $client = new OzonSellerClient(ShopOzonAccount::findOrFail($run->account_id));
@@ -45,14 +46,29 @@ class PollOzonImportTaskJob implements ShouldQueue
             if (! $result) $errors[] = ['message' => 'Ozon не вернул результат для offer_id '.$item->offer_id];
             $success = $result && empty($errors) && strtolower((string) data_get($result, 'status')) === 'imported';
             $item->update(['status' => $success ? 'completed' : 'failed', 'response_payload' => $result, 'errors' => $errors ?: null]);
+            $bindingData = ['good_id' => $item->good_id, 'variation_id' => $item->variation_id, 'is_variation' => (bool) $item->variation_id, 'status' => $success ? 'synced' : 'error', 'product_id' => data_get($result, 'product_id'), 'errors' => $errors ?: null, 'last_synced_at' => now()];
+            if ($sku = $this->ozonSku($result)) $bindingData['sku'] = $sku;
             ShopOzonProductBinding::updateOrCreate(
                 ['account_id' => $run->account_id, 'offer_id' => $item->offer_id],
-                ['good_id' => $item->good_id, 'variation_id' => $item->variation_id, 'is_variation' => (bool) $item->variation_id, 'status' => $success ? 'synced' : 'error', 'product_id' => data_get($result, 'product_id'), 'errors' => $errors ?: null, 'last_synced_at' => now()]
+                $bindingData,
             );
             $run->increment('processed');
             $run->increment($success ? 'succeeded' : 'failed');
         }
         $run->refresh();
-        if ($run->processed >= $run->total) $run->update(['status' => $run->failed ? 'completed_with_errors' : 'completed', 'finished_at' => now()]);
+        if ($run->processed >= $run->total) {
+            $run->update(['status' => $run->failed ? 'completed_with_errors' : 'completed', 'finished_at' => now()]);
+            $postProductSyncScheduler->scheduleStocks($run);
+        }
+    }
+
+    private function ozonSku(mixed $result): ?int
+    {
+        foreach (['sku', 'fbs_sku', 'fbo_sku', 'sources.0.sku'] as $path) {
+            $value = data_get($result, $path);
+            if (is_numeric($value) && (int) $value > 0) return (int) $value;
+        }
+
+        return null;
     }
 }

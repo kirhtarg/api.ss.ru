@@ -236,6 +236,39 @@ class OzonProductPayloadBuilderTest extends TestCase
         $this->assertSame(10, data_get($built, 'stock_summary.fast_remote_bonus'));
     }
 
+    public function test_profile_price_adjustment_applies_to_all_price_types(): void
+    {
+        $good = new ShopGood([
+            'name' => 'Товар', 'price' => 10000, 'sale_price' => 9000,
+            'demping_price' => 8000, 'show_demping' => true,
+            'depth' => 10, 'width' => 20, 'height' => 30, 'weight' => 1,
+        ]);
+        $good->id = 85;
+        $good->setRelation('images', new Collection);
+        $good->setRelation('brands', new Collection);
+        $account = new ShopOzonAccount(['image_base_url' => 'https://example.test', 'vat' => '0']);
+        $mapping = new ShopOzonCategoryMapping([
+            'description_category_id' => 1,
+            'type_id' => 2,
+            'price_adjustment' => ['operation' => 'add', 'type' => 'percent', 'value' => 10],
+        ]);
+        $builder = new OzonProductPayloadBuilder(new OzonProductResolver, new ProductNameParser);
+
+        $built = $builder->build($good, null, $account, $mapping);
+
+        $this->assertSame('8800.00', data_get($built, 'payload.price'));
+        $this->assertSame('11000.00', data_get($built, 'payload.old_price'));
+        $this->assertSame(11000.0, data_get($built, 'price_summary.base'));
+        $this->assertSame(9900.0, data_get($built, 'price_summary.sale'));
+        $this->assertSame(8800.0, data_get($built, 'price_summary.dumping'));
+        $this->assertSame('8800.00', data_get($builder->pricePayload($good, null, $account, $mapping), 'price'));
+
+        $mapping->price_adjustment = ['operation' => 'subtract', 'type' => 'absolute', 'value' => 500];
+        $built = $builder->build($good, null, $account, $mapping);
+        $this->assertSame('7500.00', data_get($built, 'payload.price'));
+        $this->assertSame('9500.00', data_get($built, 'payload.old_price'));
+    }
+
     public function test_dimension_sources_always_use_parent_good_for_variations(): void
     {
         $good = new ShopGood([
