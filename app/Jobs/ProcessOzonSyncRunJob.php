@@ -209,6 +209,23 @@ class ProcessOzonSyncRunJob implements ShouldQueue
         $run->update(['total' => (clone $query)->count()]);
 
         $query->chunkById(100, function ($bindings) use ($run, $account, $client) {
+            $missingProductIds = $bindings->filter(fn ($binding) => ! filled($binding->product_id));
+            if ($missingProductIds->isNotEmpty()) {
+                try {
+                    $response = $client->post('/v3/product/info/list', ['offer_id' => $missingProductIds->pluck('offer_id')->values()->all()]);
+                    $remoteItems = collect(data_get($response, 'items', data_get($response, 'result.items', [])));
+                    foreach ($missingProductIds as $binding) {
+                        $remote = $remoteItems->first(fn ($item) => (string) data_get($item, 'offer_id') === $binding->offer_id);
+                        $productId = data_get($remote, 'id', data_get($remote, 'product_id'));
+                        if (filled($productId)) {
+                            $binding->update(['product_id' => $productId, 'remote_payload' => $remote, 'remote_updated_at' => now()]);
+                            $binding->setAttribute('product_id', $productId);
+                        }
+                    }
+                } catch (Throwable $e) {
+                    // The per-offer records below retain a clear failure message when Ozon cannot return a product ID.
+                }
+            }
             $available = $bindings->filter(fn ($binding) => filled($binding->product_id));
             foreach ($bindings->diff($available) as $binding) {
                 ShopOzonSyncItem::create([
