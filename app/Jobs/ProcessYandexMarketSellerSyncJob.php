@@ -152,10 +152,13 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
         }
 
         $baseErrors = $run->type === 'products' ? $this->marketErrorsByOffer($response) : [];
+        $contentErrors = $run->type === 'products'
+            ? $this->updateCategoryContent($run, $account, $client, $valid)
+            : [];
 
         foreach ($valid as $entry) {
             $offerId = $entry['built']['offer_id'];
-            $errors = array_values(array_unique($baseErrors[$offerId] ?? []));
+            $errors = array_values(array_unique(array_merge($baseErrors[$offerId] ?? [], $contentErrors[$offerId] ?? [])));
             $entry['item']->update([
                 'status' => $errors ? 'failed' : 'completed',
                 'response_payload' => $response,
@@ -252,6 +255,53 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
         preg_match('/[-+]?\d+(?:[\.,]\d+)?/u', $value, $match);
 
         return isset($match[0]) ? str_replace(',', '.', $match[0]) : null;
+    }
+
+    /**
+     * The base mapping request creates the offer and its variation group. Send the
+     * same validated category values through the dedicated content endpoint too:
+     * this makes them visible in the Market card editor without relying on delayed
+     * background processing of offer-mappings/update.
+     *
+     * @param array<int, array<string, mixed>> $entries
+     * @return array<string, array<int, string>>
+     */
+    private function updateCategoryContent(ShopYandexMarketSyncRun $run, ShopYandexMarketAccount $account, YandexMarketClient $client, array $entries): array
+    {
+        $offers = collect($entries)->map(function (array $entry) {
+            $offer = (array) data_get($entry, 'payload.offer', []);
+            $parameters = array_values((array) ($offer['parameterValues'] ?? []));
+            if (! $parameters) return null;
+
+            return [
+                'offerId' => (string) ($offer['offerId'] ?? ''),
+                'categoryId' => (int) ($offer['marketCategoryId'] ?? 0),
+                'parameterValues' => $parameters,
+            ];
+        })->filter(fn ($offer) => $offer && $offer['offerId'] !== '' && $offer['categoryId'] > 0)->values();
+
+        $errorsByOffer = [];
+        foreach ($offers->chunk(100) as $chunk) {
+            $run->increment('requests');
+            try {
+                $response = $client->post("/v2/businesses/{$account->business_id}/offer-cards/update", [
+                    'offersContent' => $chunk->all(),
+                ]);
+                $errors = $this->marketErrorsByOffer($response, 'Яндекс Маркет не принял категорийную характеристику.');
+                if (data_get($response, 'status') === 'ERROR') {
+                    foreach ($chunk as $offer) {
+                        $errorsByOffer[$offer['offerId']] = $errors[$offer['offerId']] ?? ['Маркет не применил категорийные характеристики.'];
+                    }
+                } else {
+                    foreach ($errors as $offerId => $messages) $errorsByOffer[$offerId] = $messages;
+                }
+            } catch (Throwable $e) {
+                $message = 'Не удалось применить категорийные характеристики: '.mb_substr($e->getMessage(), 0, 3500);
+                foreach ($chunk as $offer) $errorsByOffer[$offer['offerId']] = [$message];
+            }
+        }
+
+        return $errorsByOffer;
     }
 
     /** @return array<string, array<int, string>> */
