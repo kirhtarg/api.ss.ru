@@ -103,6 +103,7 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
                 'stocks' => $builder->stockPayload($row['good'], $row['variation'], $account),
                 default => $built['offer_mapping'],
             };
+            if ($run->type === 'products') $payload = $this->sanitizeProductPayload($payload);
             $item = ShopYandexMarketSyncItem::create([
                 'run_id' => $run->id, 'good_id' => $row['good']->id, 'variation_id' => $row['variation']?->id,
                 'offer_id' => $built['offer_id'], 'request_payload' => $payload,
@@ -173,6 +174,39 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
             );
             $this->increment($run, ! $errors);
         }
+    }
+
+    /**
+     * Final guard for payloads sent to Market. Category metadata is not always
+     * consistent: a numeric field can be returned as TEXT, while the API still
+     * rejects values such as "160 mm". The API must receive the pure number.
+     */
+    private function sanitizeProductPayload(array $payload): array
+    {
+        $parameters = (array) data_get($payload, 'offer.parameterValues', []);
+        foreach ($parameters as $index => $parameter) {
+            $value = $parameter['value'] ?? null;
+            if (! is_string($value)) continue;
+
+            $normalized = $this->measurementNumber($value);
+            if ($normalized !== null) $parameters[$index]['value'] = $normalized;
+        }
+
+        if ($parameters) data_set($payload, 'offer.parameterValues', array_values($parameters));
+
+        return $payload;
+    }
+
+    private function measurementNumber(string $value): ?string
+    {
+        $value = trim(str_replace("\xC2\xA0", ' ', $value));
+        if (! preg_match('/^[-+]?\d+(?:[\.,]\d+)?\s*(?:mm|мм|cm|см|m|м|kg|кг|g|гр|г|ml|мл|l|л|w|вт)\.?$/ui', $value)) {
+            return null;
+        }
+
+        preg_match('/[-+]?\d+(?:[\.,]\d+)?/u', $value, $match);
+
+        return isset($match[0]) ? str_replace(',', '.', $match[0]) : null;
     }
 
     /** @return array<string, array<int, string>> */
