@@ -32,7 +32,7 @@ class YandexMarketPayloadBuilder
             'description' => $this->plainDescription($good->description ?: $good->short_description ?: $good->name),
             'weightDimensions' => $hasDimensions ? $dimensions : null,
             'parameterValues' => $parameters['payload'],
-            'customsCommodityCode' => $parameters['customs_commodity_code'],
+            'customsCommodityCode' => $parameters['customsCommodityCode'] ?? null,
             'basicPrice' => [
                 'value' => $price['final'],
                 'discountBase' => $price['old_price'] ?: null,
