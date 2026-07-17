@@ -149,12 +149,14 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
             return;
         }
 
+        $baseErrors = $run->type === 'products' ? $this->marketErrorsByOffer($response) : [];
         $contentErrors = $run->type === 'products'
             ? $this->updateCategoryContent($run, $account, $client, $valid)
             : [];
 
         foreach ($valid as $entry) {
-            $errors = $contentErrors[$entry['built']['offer_id']] ?? [];
+            $offerId = $entry['built']['offer_id'];
+            $errors = array_values(array_unique(array_merge($baseErrors[$offerId] ?? [], $contentErrors[$offerId] ?? [])));
             $entry['item']->update([
                 'status' => $errors ? 'failed' : 'completed',
                 'response_payload' => $response,
@@ -187,7 +189,7 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
     {
         $offers = collect($entries)->map(function (array $entry) {
             $offer = (array) data_get($entry, 'payload.offer', []);
-            $parameters = array_values((array) ($offer['parameterValues'] ?? []));
+            $parameters = array_values((array) ($entry['built']['category_parameter_values'] ?? []));
             if (! $parameters) return null;
             return [
                 'offerId' => (string) ($offer['offerId'] ?? ''),
@@ -203,10 +205,7 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
                 $response = $client->post("/v2/businesses/{$account->business_id}/offer-cards/update", [
                     'offersContent' => $chunk->all(),
                 ]);
-                $resultErrors = collect(data_get($response, 'results', []))->mapWithKeys(function ($result) {
-                    $messages = collect($result['errors'] ?? [])->map(fn ($error) => (string) ($error['message'] ?? $error['type'] ?? 'Яндекс Маркет не принял характеристику.'))->filter()->values()->all();
-                    return $messages ? [(string) ($result['offerId'] ?? '') => $messages] : [];
-                })->all();
+                $resultErrors = $this->marketErrorsByOffer($response, 'Яндекс Маркет не принял характеристику.');
 
                 if (data_get($response, 'status') === 'ERROR') {
                     foreach ($chunk as $offer) {
@@ -223,6 +222,20 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
         }
 
         return $errorsByOffer;
+    }
+
+    /** @return array<string, array<int, string>> */
+    private function marketErrorsByOffer(array $response, string $fallback = 'Яндекс Маркет не принял данные карточки.'): array
+    {
+        return collect(data_get($response, 'results', []))->mapWithKeys(function ($result) use ($fallback) {
+            $messages = collect($result['errors'] ?? [])
+                ->map(fn ($error) => (string) ($error['message'] ?? $error['type'] ?? $fallback))
+                ->filter()
+                ->values()
+                ->all();
+            $offerId = (string) ($result['offerId'] ?? '');
+            return $messages && $offerId !== '' ? [$offerId => $messages] : [];
+        })->all();
     }
 
     private function sendStocksByCampaign(ShopYandexMarketSyncRun $run, ShopYandexMarketAccount $account, YandexMarketClient $client, array $valid): void

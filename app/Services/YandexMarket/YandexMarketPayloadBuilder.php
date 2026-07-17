@@ -31,12 +31,16 @@ class YandexMarketPayloadBuilder
             'vendor' => $this->decoded($good->brands->first()?->name),
             'description' => $this->plainDescription($good->description ?: $good->short_description ?: $good->name),
             'weightDimensions' => $hasDimensions ? $dimensions : null,
-            'parameterValues' => $parameters['payload'],
+            // Category values are sent by the dedicated offer-cards/update endpoint.
+            // Keeping them out of the base offer update prevents one invalid attribute
+            // from rejecting creation/update of the whole offer mapping batch.
             // customsCommodityCode is deprecated by Market. The active API field is commodityCodes.
             'commodityCodes' => ! empty($parameters['customsCommodityCode']) ? [[
                 'type' => 'CUSTOMS_COMMODITY_CODE',
                 'code' => $parameters['customsCommodityCode'],
             ]] : null,
+            // Still accepted by the API and needed by some existing Market categories.
+            'customsCommodityCode' => $parameters['customsCommodityCode'] ?? null,
             'basicPrice' => [
                 'value' => $price['final'],
                 'discountBase' => $price['old_price'] ?: null,
@@ -75,6 +79,7 @@ class YandexMarketPayloadBuilder
             'dimensions_summary' => ['values' => $dimensions, 'sent' => $hasDimensions],
             'media_summary' => ['count' => count($media['pictures']), 'primary' => $media['pictures'][0] ?? null],
             'offer_mapping' => ['offer' => $offer],
+            'category_parameter_values' => $parameters['payload'],
             'errors' => array_values(array_unique($errors)),
         ];
     }
