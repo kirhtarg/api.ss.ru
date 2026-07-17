@@ -226,11 +226,17 @@ class YandexMarketPayloadBuilder
     private function positive(mixed ...$values): float { foreach ($values as $value) if (is_numeric($value) && (float) $value > 0) return (float) $value; return 0; }
     private function normalizeNumericValue(mixed $value, array $item): mixed
     {
-        $type = mb_strtolower((string) ($item['type'] ?? ''));
-        if (! preg_match('/number|numeric|decimal|float|integer|int/u', $type) || ! is_string($value)) return $value;
+        if (! is_string($value)) return $value;
 
-        // Store values often contain a unit (for example "160 mm"). Market expects
-        // only the number in NUMBER/NUMERIC category attributes.
+        $type = mb_strtolower((string) ($item['type'] ?? $item['value_type'] ?? ''));
+        $isNumericType = (bool) preg_match('/number|numeric|decimal|float|integer|int|числ|число/ui', $type);
+
+        // Market's category metadata can mark a numerical characteristic as TEXT.
+        // A value that consists solely of a number and a physical unit is still
+        // unambiguously numerical, e.g. "160 mm" for fork travel.
+        $isMeasurement = (bool) preg_match('/^\s*[-+]?\d+(?:[\.,]\d+)?\s*(?:mm|мм|cm|см|m|м|kg|кг|g|гр|г|ml|мл|l|л|w|вт)\.?\s*$/ui', $value);
+        if (! $isNumericType && ! $isMeasurement) return $value;
+
         if (! preg_match('/[-+]?\d+(?:[\.,]\d+)?/u', $value, $match)) return $value;
         return str_replace(',', '.', $match[0]);
     }
