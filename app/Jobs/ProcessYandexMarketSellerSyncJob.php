@@ -72,7 +72,7 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
             $mappings = $resolver->mappings($account);
             $resolver->query($account, $run->good_ids)->chunkById(100, function ($goods) use (&$rows, $resolver, $mappings) {
                 foreach ($goods as $good) {
-                    $mapping = $resolver->mappingFor($good, $mappings);
+                    $mapping = $resolver->mappingFor($good, $mappings, $account);
                     foreach ($resolver->rowsForGood($good, $mapping) as $row) $rows[] = $row;
                 }
             });
@@ -97,6 +97,7 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
             $built = $builder->build($row['good'], $row['variation'], $account, $row['mapping']);
             $errors = $run->type === 'products' ? array_values(array_unique(array_merge($built['errors'], $row['row_errors']))) : [];
             if (! $row['mapping']) $errors[] = 'Для категории товара не настроен профиль Яндекс Маркета.';
+            if ($run->type === 'stocks' && ! ($row['mapping']?->campaign_id ?: $account->campaign_id)) $errors[] = 'Для профиля не выбран магазин/склад Маркета для передачи остатков.';
             $payload = match ($run->type) {
                 'prices' => $builder->pricePayload($row['good'], $row['variation'], $account, $row['mapping']),
                 'stocks' => $builder->stockPayload($row['good'], $row['variation'], $account),
@@ -112,6 +113,11 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
         }
         if (! $valid) return;
 
+        if ($run->type === 'stocks') {
+            $this->sendStocksByCampaign($run, $account, $client, $valid);
+            return;
+        }
+
         $run->increment('requests');
         try {
             $response = match ($run->type) {
@@ -120,9 +126,6 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
                 ], ['language' => 'RU']),
                 'prices' => $client->post("/v2/businesses/{$account->business_id}/offer-prices/updates", [
                     'offers' => array_column($valid, 'payload'),
-                ]),
-                'stocks' => $client->put("/v2/campaigns/{$account->campaign_id}/offers/stocks", [
-                    'skus' => array_column($valid, 'payload'),
                 ]),
                 default => throw new \RuntimeException('Неизвестный тип синхронизации.'),
             };
@@ -161,6 +164,36 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
                 $bindingData,
             );
             $this->increment($run, true);
+        }
+    }
+
+    private function sendStocksByCampaign(ShopYandexMarketSyncRun $run, ShopYandexMarketAccount $account, YandexMarketClient $client, array $valid): void
+    {
+        $groups = collect($valid)->groupBy(fn ($entry) => (int) ($entry['row']['mapping']?->campaign_id ?: $account->campaign_id));
+        foreach ($groups as $campaignId => $entries) {
+            try {
+                $run->increment('requests');
+                $response = $client->put("/v2/campaigns/{$campaignId}/offers/stocks", ['skus' => $entries->pluck('payload')->all()]);
+                foreach ($entries as $entry) {
+                    $entry['item']->update(['status' => 'completed', 'response_payload' => $response]);
+                    ShopYandexMarketProductBinding::updateOrCreate(['account_id' => $account->id, 'offer_id' => $entry['built']['offer_id']], [
+                        'good_id' => $entry['row']['good']->id, 'variation_id' => $entry['row']['variation']?->id,
+                        'status' => 'synced', 'errors' => null, 'last_synced_at' => now(),
+                    ]);
+                    $this->increment($run, true);
+                }
+            } catch (Throwable $e) {
+                $message = mb_substr($e->getMessage(), 0, 4000);
+                foreach ($entries as $entry) {
+                    $entry['item']->update(['status' => 'failed', 'errors' => [$message]]);
+                    ShopYandexMarketProductBinding::updateOrCreate(['account_id' => $account->id, 'offer_id' => $entry['built']['offer_id']], [
+                        'good_id' => $entry['row']['good']->id, 'variation_id' => $entry['row']['variation']?->id,
+                        'status' => 'error', 'errors' => [$message],
+                    ]);
+                    $this->increment($run, false);
+                }
+                $run->update(['error_message' => $message]);
+            }
         }
     }
 

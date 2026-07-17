@@ -21,6 +21,7 @@ class YandexMarketPayloadBuilder
         $dimensions = $this->dimensions($good, $mapping);
         $parameters = $this->parameters($mapping, $good, $variation);
         $hasVariations = $good->variations->where('is_active', true)->count() > 1;
+        $hasDimensions = collect($dimensions)->every(fn ($value) => $value > 0);
 
         $offer = [
             'offerId' => $offerId,
@@ -29,8 +30,9 @@ class YandexMarketPayloadBuilder
             'pictures' => $media['pictures'],
             'vendor' => $this->decoded($good->brands->first()?->name),
             'description' => $this->plainDescription($good->description ?: $good->short_description ?: $good->name),
-            'weightDimensions' => $dimensions,
+            'weightDimensions' => $hasDimensions ? $dimensions : null,
             'parameterValues' => $parameters['payload'],
+            'customsCommodityCode' => $parameters['customs_commodity_code'],
             'basicPrice' => [
                 'value' => $price['final'],
                 'discountBase' => $price['old_price'] ?: null,
@@ -58,11 +60,15 @@ class YandexMarketPayloadBuilder
             'sku' => $this->decoded($variation?->sku ?: $good->sku),
             'market_category' => $mapping?->market_category_name,
             'market_category_id' => $mapping?->market_category_id,
+            'mapping_id' => $mapping?->id,
+            'selection_tag_id' => $mapping?->selection_tag_id ?: $account->selection_tag_id,
+            'selection_tag_name' => $mapping?->selectionTag?->name,
             'variation_attributes' => $this->resolver->variationSummary($variation),
             'display_parameters' => $parameters['display'],
             'price_summary' => $price,
             'stock_summary' => $stock,
             'stock' => $stock['total'],
+            'dimensions_summary' => ['values' => $dimensions, 'sent' => $hasDimensions],
             'media_summary' => ['count' => count($media['pictures']), 'primary' => $media['pictures'][0] ?? null],
             'offer_mapping' => ['offer' => $offer],
             'errors' => array_values(array_unique($errors)),
@@ -96,23 +102,32 @@ class YandexMarketPayloadBuilder
 
     private function parameters(?ShopYandexMarketCategoryMapping $mapping, ShopGood $good, ?ShopGoodVariation $variation): array
     {
-        $payload = []; $display = []; $missing = [];
+        $payload = []; $display = []; $missing = []; $customsCommodityCode = null;
         foreach ($mapping?->attribute_mappings ?? [] as $item) {
             $value = $this->resolver->sourceValue($item, $good, $variation);
             $dictionary = $this->dictionaryValue($item, (string) $value);
             $isEmpty = ($value === null || $value === '') && ! $dictionary;
-            if (($item['required'] ?? false) && $isEmpty) $missing[] = $item['name'] ?? 'ID '.($item['id'] ?? '');
+            $name = (string) ($item['name'] ?? 'ID '.($item['id'] ?? ''));
+            $isTnVed = (bool) preg_match('/тн\s*вэд|тнвэд/ui', $name);
+            if ((($item['required'] ?? false) || $isTnVed) && $isEmpty) $missing[] = $name;
+            if ($isTnVed && ! $isEmpty) {
+                $code = preg_replace('/\D/u', '', (string) $value);
+                if (! in_array(strlen($code), [10, 14], true)) $missing[] = "{$name} должен содержать 10 или 14 цифр без пробелов.";
+                else $customsCommodityCode = $code;
+            }
             if (! $isEmpty && ! empty($item['uses_dictionary']) && ! ($item['allow_custom_values'] ?? true) && ! $dictionary) {
                 $missing[] = ($item['name'] ?? 'ID '.($item['id'] ?? '')).' — значение «'.$this->decoded($value).'» не сопоставлено со словарем Маркета';
                 continue;
             }
             if ($isEmpty || (int) ($item['id'] ?? 0) <= 0) continue;
 
-            $parameter = ['parameterId' => (int) $item['id']];
-            if ($dictionary) $parameter['valueId'] = (int) $dictionary['id'];
-            else $parameter['value'] = is_bool($value) ? ($value ? 'true' : 'false') : (string) $value;
-            if (! empty($item['unit_id'])) $parameter['unitId'] = (int) $item['unit_id'];
-            $payload[] = $parameter;
+            if (! $isTnVed) {
+                $parameter = ['parameterId' => (int) $item['id']];
+                if ($dictionary) $parameter['valueId'] = (int) $dictionary['id'];
+                else $parameter['value'] = is_bool($value) ? ($value ? 'true' : 'false') : (string) $value;
+                if (! empty($item['unit_id'])) $parameter['unitId'] = (int) $item['unit_id'];
+                $payload[] = $parameter;
+            }
             $display[] = [
                 'id' => (int) $item['id'], 'name' => $this->decoded($item['name'] ?? ''),
                 'source_value' => $this->decoded($value), 'value' => $dictionary['label'] ?? $this->decoded($value),
@@ -120,7 +135,7 @@ class YandexMarketPayloadBuilder
                 'distinctive' => (bool) ($item['distinctive'] ?? false),
             ];
         }
-        return compact('payload', 'display', 'missing');
+        return compact('payload', 'display', 'missing', 'customsCommodityCode');
     }
 
     private function dictionaryValue(array $item, string $value): ?array

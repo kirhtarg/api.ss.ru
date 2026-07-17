@@ -19,28 +19,33 @@ class YandexMarketProductResolver
         ])->where('is_active', true);
 
         if ($goodIds) $query->whereIn('id', $goodIds);
-        if ($account->selection_tag_id) {
-            $query->whereHas('tags', fn (Builder $q) => $q->where('shop_tags.id', $account->selection_tag_id));
-        } else {
-            $query->whereRaw('1 = 0');
-        }
+        $mappings = $this->mappings($account);
+        if ($mappings->isEmpty()) return $query->whereRaw('1 = 0');
 
-        $categoryIds = $this->mappings($account)->flatMap(fn ($mapping) => $mapping->categoryIds())->unique();
-        if ($categoryIds->isEmpty()) $query->whereRaw('1 = 0');
-        else $query->whereHas('categories', fn (Builder $q) => $q->whereIn('shop_categories.id', $categoryIds));
+        $query->where(function (Builder $rules) use ($mappings, $account) {
+            foreach ($mappings as $mapping) {
+                $tagId = $this->selectionTagId($mapping, $account);
+                if (! $tagId || $mapping->categoryIds()->isEmpty()) continue;
+                $rules->orWhere(function (Builder $rule) use ($mapping, $tagId) {
+                    $rule->whereHas('tags', fn (Builder $tags) => $tags->where('shop_tags.id', $tagId))
+                        ->whereHas('categories', fn (Builder $categories) => $categories->whereIn('shop_categories.id', $mapping->categoryIds()->all()));
+                });
+            }
+        });
 
         return $query;
     }
 
     public function mappings(ShopYandexMarketAccount $account): Collection
     {
-        return ShopYandexMarketCategoryMapping::query()->where('account_id', $account->id)->where('is_active', true)->get();
+        return ShopYandexMarketCategoryMapping::query()->with('selectionTag:id,name')->where('account_id', $account->id)->where('is_active', true)->get();
     }
 
-    public function mappingFor(ShopGood $good, Collection $mappings): ?ShopYandexMarketCategoryMapping
+    public function mappingFor(ShopGood $good, Collection $mappings, ShopYandexMarketAccount $account): ?ShopYandexMarketCategoryMapping
     {
         $ids = $good->categories->pluck('id')->map(fn ($id) => (int) $id);
-        return $mappings->first(fn ($mapping) => $ids->intersect($mapping->categoryIds())->isNotEmpty());
+        return $mappings->first(fn ($mapping) => $ids->intersect($mapping->categoryIds())->isNotEmpty()
+            && $good->tags->contains('id', $this->selectionTagId($mapping, $account)));
     }
 
     public function rowsForGood(ShopGood $good, ?ShopYandexMarketCategoryMapping $mapping): array
@@ -75,6 +80,11 @@ class YandexMarketProductResolver
         unset($row);
 
         return $rows;
+    }
+
+    public function selectionTagId(ShopYandexMarketCategoryMapping $mapping, ShopYandexMarketAccount $account): ?int
+    {
+        return (int) ($mapping->selection_tag_id ?: $account->selection_tag_id) ?: null;
     }
 
     public function sourceValue(array $mapping, ShopGood $good, $variation): mixed

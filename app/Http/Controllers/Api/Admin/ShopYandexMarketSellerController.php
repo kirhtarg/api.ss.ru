@@ -123,14 +123,15 @@ class ShopYandexMarketSellerController extends Controller
     {
         $data = $request->validate([
             'source' => 'required|string|in:brand,property,variation_attribute',
-            'source_key' => 'nullable|integer|min:1',
+            'source_key' => 'nullable|integer|min:1', 'selection_tag_id' => 'nullable|integer|exists:shop_tags,id',
             'category_ids' => 'required|array|min:1', 'category_ids.*' => 'integer',
         ]);
         $account = $this->account();
         $query = \App\Models\ShopGood::query()->with(['brands:id,name', 'properties.values', 'variations.attributeValues.attribute'])
             ->where('is_active', true)
             ->whereHas('categories', fn ($q) => $q->whereIn('shop_categories.id', $data['category_ids']));
-        if ($account->selection_tag_id) $query->whereHas('tags', fn ($q) => $q->where('shop_tags.id', $account->selection_tag_id));
+        $tagId = (int) ($data['selection_tag_id'] ?? $account->selection_tag_id);
+        if ($tagId) $query->whereHas('tags', fn ($q) => $q->where('shop_tags.id', $tagId));
         $counts = [];
         $mapping = ['source' => $data['source'], 'source_key' => $data['source_key'] ?? null];
         $query->chunkById(200, function ($goods) use (&$counts, $resolver, $mapping) {
@@ -178,6 +179,7 @@ class ShopYandexMarketSellerController extends Controller
         $data = $request->validate([
             'id' => 'nullable|integer', 'category_ids' => 'required|array|min:1', 'category_ids.*' => 'integer|exists:shop_categories,id',
             'market_category_id' => 'required|integer|min:1', 'market_category_name' => 'required|string|max:255',
+            'selection_tag_id' => 'nullable|integer|exists:shop_tags,id', 'campaign_id' => 'nullable|integer|min:1',
             'attribute_mappings' => 'nullable|array', 'dimension_settings' => 'nullable|array',
             'price_adjustment' => 'nullable|array', 'is_active' => 'nullable|boolean',
         ]);
@@ -199,7 +201,7 @@ class ShopYandexMarketSellerController extends Controller
     {
         $data = $request->validate(['page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:10|max:50', 'search' => 'nullable|string|max:255', 'good_ids' => 'nullable|array|max:100', 'good_ids.*' => 'integer']);
         $account = $this->account();
-        if (! $account->selection_tag_id) return response()->json(['success' => false, 'message' => 'Выберите тег отбора товаров Яндекс Маркета.'], 422);
+        if (! $this->hasUsableMappings($account)) return response()->json(['success' => false, 'message' => 'Создайте активный профиль с категорией и тегом отбора (или задайте тег по умолчанию в подключении).'], 422);
         $page = (int) ($data['page'] ?? 1); $perPage = (int) ($data['per_page'] ?? 10);
         $query = $resolver->query($account, $data['good_ids'] ?? null)->orderByDesc('shop_goods.id');
         if (filled($data['search'] ?? null)) {
@@ -209,7 +211,7 @@ class ShopYandexMarketSellerController extends Controller
         $total = (clone $query)->count(); $lastPage = max(1, (int) ceil($total / $perPage)); $page = min($page, $lastPage);
         $mappings = $resolver->mappings($account); $rows = [];
         foreach ($query->forPage($page, $perPage)->get() as $good) {
-            $mapping = $resolver->mappingFor($good, $mappings);
+            $mapping = $resolver->mappingFor($good, $mappings, $account);
             foreach ($resolver->rowsForGood($good, $mapping) as $row) {
                 $built = $builder->build($good, $row['variation'], $account, $mapping);
                 $built['errors'] = array_values(array_unique(array_merge($built['errors'], $row['row_errors'])));
@@ -226,9 +228,9 @@ class ShopYandexMarketSellerController extends Controller
     {
         $data = $request->validate(['mode' => 'required|in:products,prices,stocks', 'good_ids' => 'nullable|array', 'good_ids.*' => 'integer|exists:shop_goods,id']);
         $account = $this->account();
-        if (! $account->selection_tag_id) return response()->json(['success' => false, 'message' => 'Выберите тег отбора товаров.'], 422);
+        if (! $this->hasUsableMappings($account)) return response()->json(['success' => false, 'message' => 'Создайте активный профиль с категорией и тегом отбора (или задайте тег по умолчанию в подключении).'], 422);
         if (! $account->business_id) return response()->json(['success' => false, 'message' => 'Сначала проверьте подключение и выберите кабинет.'], 422);
-        if ($data['mode'] === 'stocks' && ! $account->campaign_id) return response()->json(['success' => false, 'message' => 'Для остатков выберите магазин campaignId.'], 422);
+        if ($data['mode'] === 'stocks' && ! $this->hasStockCampaign($account)) return response()->json(['success' => false, 'message' => 'Укажите магазин/склад Маркета хотя бы в одном активном профиле или в настройках подключения по умолчанию.'], 422);
         [$run, $created] = $this->startRun($account, $request->user()?->id, ['type' => $data['mode'], 'good_ids' => $data['good_ids'] ?? null]);
         if (! $created) return response()->json(['success' => true, 'message' => 'Операция уже выполняется.', 'data' => $run], 202);
         ProcessYandexMarketSellerSyncJob::dispatch($run->id);
@@ -372,6 +374,15 @@ class ShopYandexMarketSellerController extends Controller
             });
         }
         return $query;
+    }
+    private function hasUsableMappings(ShopYandexMarketAccount $account): bool
+    {
+        return ShopYandexMarketCategoryMapping::query()->where('account_id', $account->id)->where('is_active', true)
+            ->get()->contains(fn ($mapping) => $mapping->categoryIds()->isNotEmpty() && ($mapping->selection_tag_id ?: $account->selection_tag_id));
+    }
+    private function hasStockCampaign(ShopYandexMarketAccount $account): bool
+    {
+        return (bool) $account->campaign_id || ShopYandexMarketCategoryMapping::query()->where('account_id', $account->id)->where('is_active', true)->whereNotNull('campaign_id')->exists();
     }
     private function accountData(ShopYandexMarketAccount $account): array { return array_merge($account->toArray(), ['has_api_key' => filled($account->api_key), 'api_key' => '']); }
     private function campaignData(array $item): array { return ['id' => (int) ($item['id'] ?? 0), 'domain' => $item['domain'] ?? $item['name'] ?? '', 'business_id' => (int) data_get($item, 'business.id', $item['businessId'] ?? 0), 'business_name' => data_get($item, 'business.name', ''), 'placement_type' => $item['placementType'] ?? '', 'api_availability' => $item['apiAvailability'] ?? 'AVAILABLE']; }

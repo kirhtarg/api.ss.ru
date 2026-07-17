@@ -9,7 +9,7 @@ use Illuminate\Support\Collection;
 class ShopYandexMarketCategoryMapping extends Model
 {
     protected $fillable = [
-        'account_id', 'category_ids', 'market_category_id', 'market_category_name',
+        'account_id', 'selection_tag_id', 'campaign_id', 'category_ids', 'market_category_id', 'market_category_name',
         'attribute_mappings', 'dimension_settings', 'price_adjustment', 'is_active',
     ];
 
@@ -24,6 +24,11 @@ class ShopYandexMarketCategoryMapping extends Model
     public function account(): BelongsTo
     {
         return $this->belongsTo(ShopYandexMarketAccount::class, 'account_id');
+    }
+
+    public function selectionTag(): BelongsTo
+    {
+        return $this->belongsTo(ShopTag::class, 'selection_tag_id');
     }
 
     public function categoryIds(): Collection
