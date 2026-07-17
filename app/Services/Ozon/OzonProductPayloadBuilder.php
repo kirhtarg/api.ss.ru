@@ -281,6 +281,9 @@ class OzonProductPayloadBuilder
             $value = $this->sourceValue($item, $good, $variation);
             $dictionaryId = (int) ($item['dictionary_value_id'] ?? $this->dictionaryValueId($item['dictionary_map'] ?? [], (string) $value));
             if (($value === null || $value === '') && $dictionaryId <= 0) return null;
+            // Ozon numeric attributes reject strings with units, for example "160 mm".
+            // Dictionary labels must remain untouched because they are Ozon values.
+            if (! $dictionaryId) $value = $this->normalizeAttributeValue($value, $item);
             $ozonValue = $dictionaryId ? $this->dictionaryValueLabel($item, (string) $value) : (string) $value;
             $attributeValue = $dictionaryId
                 ? array_filter(['dictionary_value_id' => $dictionaryId, 'value' => $ozonValue], fn ($item) => $item !== '')
@@ -424,6 +427,7 @@ class OzonProductPayloadBuilder
             $value = $this->sourceValue($item, $good, $variation);
             $dictionaryId = (int) ($item['dictionary_value_id'] ?? $this->dictionaryValueId($item['dictionary_map'] ?? [], (string) $value));
             if (($value === null || $value === '') && $dictionaryId <= 0) return null;
+            if (! $dictionaryId) $value = $this->normalizeAttributeValue($value, $item);
             $displayValue = $dictionaryId
                 ? ($this->dictionaryValueLabel($item, (string) $value) ?: "Значение Ozon #{$dictionaryId}")
                 : $this->decodedText($value);
@@ -511,6 +515,23 @@ class OzonProductPayloadBuilder
         }
 
         return is_string($value) ? $this->decodedText($value) : $value;
+    }
+
+    private function normalizeAttributeValue(mixed $value, array $item): mixed
+    {
+        if (! is_string($value)) return $value;
+
+        $type = mb_strtolower(trim((string) ($item['type'] ?? $item['value_type'] ?? '')));
+        $isNumeric = (bool) preg_match('/number|numeric|decimal|float|integer|int|числ|число/ui', $type);
+
+        // Ozon metadata does not always disclose a numeric type. A value wholly
+        // composed of a number and a physical unit is unambiguously numeric.
+        $measurement = '/^\s*([-+]?\d+(?:[\.,]\d+)?)\s*(?:mm|мм|cm|см|m|м|kg|кг|g|гр|г|ml|мл|l|л|w|вт)\.?\s*$/ui';
+        if (! $isNumeric && ! preg_match($measurement, $value)) return $value;
+
+        if (! preg_match('/[-+]?\d+(?:[\.,]\d+)?/u', $value, $match)) return $value;
+
+        return str_replace(',', '.', $match[0]);
     }
 
     private function isBooleanAttribute(array $item): bool
