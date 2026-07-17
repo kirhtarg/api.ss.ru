@@ -208,7 +208,7 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
             $run->increment('requests');
             $query = ['language' => 'RU', 'limit' => 100];
             if ($pageToken) $query['pageToken'] = $pageToken;
-            $response = $client->post("/v2/businesses/{$account->business_id}/offer-mappings", [], $query);
+            $response = $client->post("/v2/businesses/{$account->business_id}/offer-mappings", ['archived' => false], $query);
             $items = (array) data_get($response, 'result.offerMappings', data_get($response, 'offerMappings', []));
             foreach ($items as $item) {
                 $offerId = (string) data_get($item, 'offer.offerId', data_get($item, 'offerId', ''));
@@ -260,7 +260,7 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
             $run->increment('requests');
             $query = ['language' => 'RU', 'limit' => 100];
             if ($pageToken) $query['pageToken'] = $pageToken;
-            $response = $client->post("/v2/businesses/{$account->business_id}/offer-mappings", [], $query);
+            $response = $client->post("/v2/businesses/{$account->business_id}/offer-mappings", ['archived' => false], $query);
             $items = (array) data_get($response, 'result.offerMappings', data_get($response, 'offerMappings', []));
             foreach ($items as $remote) {
                 $offerId = (string) data_get($remote, 'offer.offerId', data_get($remote, 'offerId', ''));
