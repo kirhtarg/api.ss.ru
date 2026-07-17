@@ -2502,6 +2502,28 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('/runs', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'runs']);
                 Route::get('/runs/{run}', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'run']);
             });
+
+            Route::prefix('yandex-market-seller')->group(function () {
+                Route::get('/settings', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'settings']);
+                Route::post('/settings', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'saveSettings']);
+                Route::post('/test-connection', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'testConnection']);
+                Route::get('/campaigns', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'campaigns']);
+                Route::get('/local-categories', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'localCategories']);
+                Route::get('/local-tags', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'localTags']);
+                Route::get('/local-sources', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'localSources']);
+                Route::post('/local-source-values', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'localSourceValues']);
+                Route::get('/categories', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'categories']);
+                Route::post('/parameters', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'parameters']);
+                Route::get('/mappings', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'mappings']);
+                Route::post('/mappings', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'saveMapping']);
+                Route::delete('/mappings/{mapping}', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'deleteMapping']);
+                Route::post('/preview', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'preview']);
+                Route::post('/sync', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'startSync']);
+                Route::get('/products', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'products']);
+                Route::post('/products/refresh', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'refreshProducts']);
+                Route::get('/runs', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'runs']);
+                Route::get('/runs/{run}', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'run']);
+            });
         });
 
         // Users management
