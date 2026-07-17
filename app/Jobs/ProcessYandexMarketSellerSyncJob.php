@@ -28,8 +28,9 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
         $run = ShopYandexMarketSyncRun::findOrFail($this->runId);
         $account = ShopYandexMarketAccount::findOrFail($run->account_id);
         $client = new YandexMarketClient($account);
-        if (in_array($run->type, ['catalog_import', 'purge_catalog'], true) && $run->status !== 'running') {
-            // A queue retry restarts the remote pagination, so its counters must not accumulate.
+        if (in_array($run->type, ['catalog_import', 'purge_catalog'], true) && $run->status !== 'pending') {
+            // A retry can inherit the running state after a worker crash. Its remote
+            // pagination starts from the beginning, therefore all counters must restart too.
             $run->update([
                 'total' => 0,
                 'processed' => 0,
@@ -38,6 +39,10 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
                 'requests' => 0,
                 'meta' => array_merge((array) $run->meta, ['phase' => 'collecting_offer_ids', 'found_offer_ids' => 0, 'catalog_pages' => 0]),
             ]);
+
+            if ($run->type === 'purge_catalog') {
+                ShopYandexMarketSyncItem::query()->where('run_id', $run->id)->delete();
+            }
         }
         $run->update(['status' => 'running', 'started_at' => now(), 'error_message' => null]);
 
@@ -175,7 +180,7 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
             try {
                 $run->increment('requests');
                 $response = $run->type === 'delete'
-                    ? $client->post("/v2/businesses/{$account->business_id}/offer-mappings/delete", ['offerIds' => $offerIds])
+                    ? $this->deleteCatalogOffers($account, $client, $offerIds)
                     : $client->post("/v2/campaigns/{$account->campaign_id}/hidden-offers", ['hiddenOffers' => array_map(fn ($offerId) => ['offerId' => $offerId], $offerIds)]);
                 $notDeleted = $run->type === 'delete'
                     ? collect(data_get($response, 'result.notDeletedOfferIds', data_get($response, 'notDeletedOfferIds', [])))->map(fn ($value) => (string) (is_array($value) ? ($value['offerId'] ?? '') : $value))->filter()->all()
@@ -235,7 +240,7 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
         foreach (array_chunk($offerIds, 500) as $chunk) {
             try {
                 $run->increment('requests');
-                $response = $client->post("/v2/businesses/{$account->business_id}/offer-mappings/delete", ['offerIds' => $chunk]);
+                $response = $this->deleteCatalogOffers($account, $client, $chunk);
                 $notDeleted = collect(data_get($response, 'result.notDeletedOfferIds', data_get($response, 'notDeletedOfferIds', [])))
                     ->map(fn ($value) => (string) (is_array($value) ? ($value['offerId'] ?? '') : $value))->filter()->all();
                 foreach ($chunk as $offerId) {
@@ -350,6 +355,47 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
                 'catalog_pages' => ((int) data_get($run->meta, 'catalog_pages', 0)) + 1,
             ]),
         ]);
+    }
+
+    /**
+     * The delete endpoint consumes one rate-limit point per Offer ID, not per request.
+     * Keep under 5,000 points/minute even when the API accepts a larger request batch.
+     *
+     * @param array<int, string> $offerIds
+     * @return array<string, mixed>
+     */
+    private function deleteCatalogOffers(ShopYandexMarketAccount $account, YandexMarketClient $client, array $offerIds): array
+    {
+        $rateKey = "yandex-market:offer-mappings-delete:{$account->business_id}";
+        $points = count($offerIds);
+        $limit = 4500;
+        $lastException = null;
+
+        for ($attempt = 0; $attempt < 3; $attempt++) {
+            while (RateLimiter::attempts($rateKey) + $points > $limit) {
+                sleep(max(1, RateLimiter::availableIn($rateKey)));
+            }
+
+            RateLimiter::increment($rateKey, 60, $points);
+
+            try {
+                return $client->post(
+                    "/v2/businesses/{$account->business_id}/offer-mappings/delete",
+                    ['offerIds' => $offerIds],
+                );
+            } catch (Throwable $exception) {
+                $lastException = $exception;
+
+                if (! str_contains($exception->getMessage(), 'HTTP 420')) {
+                    throw $exception;
+                }
+
+                RateLimiter::clear($rateKey);
+                sleep(61);
+            }
+        }
+
+        throw $lastException ?? new \RuntimeException('Не удалось удалить товары из каталога Яндекс Маркета.');
     }
 
     private function readBackCards(ShopYandexMarketSyncRun $run, ShopYandexMarketAccount $account, YandexMarketClient $client): void
