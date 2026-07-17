@@ -307,13 +307,17 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
     /** @return array<string, array<int, string>> */
     private function marketErrorsByOffer(array $response, string $fallback = 'Яндекс Маркет не принял данные карточки.'): array
     {
-        return collect(data_get($response, 'results', []))->mapWithKeys(function ($result) use ($fallback) {
-            $messages = collect($result['errors'] ?? [])
+        $results = data_get($response, 'results', data_get($response, 'result.results', data_get($response, 'result', [])));
+        if (! is_array($results) || array_is_list($results) === false && isset($results['offerId'])) $results = [$results];
+
+        return collect($results)->mapWithKeys(function ($result) use ($fallback) {
+            if (! is_array($result)) return [];
+            $messages = collect($result['errors'] ?? $result['error'] ?? [])
                 ->map(fn ($error) => (string) ($error['message'] ?? $error['type'] ?? $fallback))
                 ->filter()
                 ->values()
                 ->all();
-            $offerId = (string) ($result['offerId'] ?? '');
+            $offerId = (string) ($result['offerId'] ?? $result['offer_id'] ?? '');
             return $messages && $offerId !== '' ? [$offerId => $messages] : [];
         })->all();
     }
