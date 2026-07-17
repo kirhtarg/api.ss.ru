@@ -11,6 +11,7 @@ use App\Models\ShopVariationAttribute;
 use App\Models\ShopYandexMarketAccount;
 use App\Models\ShopYandexMarketCategoryMapping;
 use App\Models\ShopYandexMarketProductBinding;
+use App\Models\ShopYandexMarketSyncItem;
 use App\Models\ShopYandexMarketSyncRun;
 use App\Services\YandexMarket\YandexMarketClient;
 use App\Services\YandexMarket\YandexMarketPayloadBuilder;
@@ -312,10 +313,37 @@ class ShopYandexMarketSellerController extends Controller
         return response()->json(['success' => true, 'message' => 'Загрузка фактического каталога Яндекс Маркета поставлена в очередь.', 'data' => $run], 202);
     }
 
-    public function runs()
+    public function runs(Request $request)
     {
+        $data = $request->validate(['page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
         $account = ShopYandexMarketAccount::query()->first();
-        return response()->json(['success' => true, 'data' => $account ? ShopYandexMarketSyncRun::query()->where('account_id', $account->id)->latest()->limit(30)->get() : []]);
+        $runs = $account
+            ? ShopYandexMarketSyncRun::query()->where('account_id', $account->id)->latest()->paginate($data['per_page'] ?? 20)
+            : null;
+
+        return response()->json(['success' => true, 'data' => $runs ?: [
+            'data' => [], 'current_page' => 1, 'last_page' => 1, 'per_page' => $data['per_page'] ?? 20, 'total' => 0,
+        ]]);
+    }
+
+    public function clearRuns()
+    {
+        $account = $this->account();
+        $active = ShopYandexMarketSyncRun::query()
+            ->where('account_id', $account->id)
+            ->whereIn('status', ['pending', 'running'])
+            ->exists();
+        if ($active) {
+            return response()->json(['success' => false, 'message' => 'Нельзя очистить журнал, пока выполняется операция синхронизации.'], 422);
+        }
+
+        DB::transaction(function () use ($account) {
+            $runIds = ShopYandexMarketSyncRun::query()->where('account_id', $account->id)->pluck('id');
+            ShopYandexMarketSyncItem::query()->whereIn('run_id', $runIds)->delete();
+            ShopYandexMarketSyncRun::query()->whereIn('id', $runIds)->delete();
+        });
+
+        return response()->json(['success' => true, 'message' => 'Журнал синхронизации очищен. Карточки и настройки профилей не затронуты.']);
     }
 
     public function run(ShopYandexMarketSyncRun $run)
@@ -400,7 +428,7 @@ class ShopYandexMarketSellerController extends Controller
             'campaign_available' => ($campaign['api_availability'] ?? '') === 'AVAILABLE',
         ];
     }
-    private function parameterData(array $item): array { return ['id' => (int) ($item['id'] ?? 0), 'name' => html_entity_decode((string) ($item['name'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8'), 'description' => $item['description'] ?? '', 'type' => $item['type'] ?? 'TEXT', 'required' => (bool) ($item['required'] ?? false), 'distinctive' => (bool) ($item['distinctive'] ?? false), 'multivalue' => (bool) ($item['multivalue'] ?? false), 'allow_custom_values' => (bool) ($item['allowCustomValues'] ?? true), 'values' => collect($item['values'] ?? [])->map(fn ($value) => ['id' => (int) ($value['id'] ?? 0), 'value' => html_entity_decode((string) ($value['value'] ?? $value['name'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8')])->values(), 'units' => data_get($item, 'unit.units', []), 'default_unit_id' => data_get($item, 'unit.defaultUnitId')]; }
+    private function parameterData(array $item): array { return ['id' => (int) ($item['id'] ?? 0), 'name' => html_entity_decode((string) ($item['name'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8'), 'description' => $item['description'] ?? '', 'type' => $item['type'] ?? 'TEXT', 'required' => (bool) ($item['required'] ?? $item['isRequired'] ?? false), 'distinctive' => (bool) ($item['distinctive'] ?? $item['isDistinctive'] ?? false), 'multivalue' => (bool) ($item['multivalue'] ?? $item['isMultivalue'] ?? false), 'allow_custom_values' => (bool) ($item['allowCustomValues'] ?? $item['allow_custom_values'] ?? true), 'values' => collect($item['values'] ?? [])->map(fn ($value) => ['id' => (int) ($value['id'] ?? 0), 'value' => html_entity_decode((string) ($value['value'] ?? $value['name'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8')])->values(), 'units' => data_get($item, 'unit.units', []), 'default_unit_id' => data_get($item, 'unit.defaultUnitId')]; }
     private function sortTree(array $node): array
     {
         if (array_is_list($node)) {

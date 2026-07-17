@@ -77,6 +77,8 @@ class YandexMarketPayloadBuilder
             'stock_summary' => $stock,
             'stock' => $stock['total'],
             'dimensions_summary' => ['values' => $dimensions, 'sent' => $hasDimensions],
+            'weight_dimensions' => $offer['weightDimensions'] ?? null,
+            'variation_group_id' => $offer['groupId'] ?? null,
             'media_summary' => ['count' => count($media['pictures']), 'primary' => $media['pictures'][0] ?? null],
             'offer_mapping' => ['offer' => $offer],
             'category_parameter_values' => $parameters['payload'],
