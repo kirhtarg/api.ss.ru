@@ -273,7 +273,14 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
     private function importCatalog(ShopYandexMarketSyncRun $run, ShopYandexMarketAccount $account, YandexMarketClient $client): void
     {
         $pageToken = null;
-        $seen = 0;
+        $foundOfferIds = 0;
+        $run->update([
+            'total' => 0,
+            'processed' => 0,
+            'succeeded' => 0,
+            'failed' => 0,
+            'meta' => array_merge((array) $run->meta, ['phase' => 'collecting_catalog', 'found_offer_ids' => 0, 'catalog_pages' => 0]),
+        ]);
         do {
             $run->increment('requests');
             $query = ['language' => 'RU', 'limit' => 100];
@@ -289,15 +296,37 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
                 $binding->remote_payload = $remote;
                 $binding->remote_updated_at = now();
                 $binding->last_synced_at = now();
+                $binding->last_catalog_sync_run_id = $run->id;
                 $binding->save();
-                $seen++;
-                $this->increment($run, true);
+                $foundOfferIds++;
             }
-            $run->update(['total' => $seen, 'meta' => array_merge((array) $run->meta, ['phase' => 'importing_catalog', 'found_offer_ids' => $seen, 'catalog_pages' => ((int) data_get($run->meta, 'catalog_pages', 0)) + 1])]);
+            $this->updateCatalogCollectionProgress($run, $foundOfferIds, 'collecting_catalog');
             $pageToken = data_get($response, 'result.paging.nextPageToken', data_get($response, 'paging.nextPageToken'));
         } while ($pageToken && ! empty($items));
+
+        // Keep the local table as a mirror of the remote business catalogue.
+        // Bindings not observed in this completed import no longer exist in Market.
+        ShopYandexMarketProductBinding::query()
+            ->where('account_id', $account->id)
+            ->where(function ($query) use ($run) {
+                $query->whereNull('last_catalog_sync_run_id')
+                    ->orWhere('last_catalog_sync_run_id', '!=', $run->id);
+            })
+            ->delete();
+
+        $catalogCount = ShopYandexMarketProductBinding::query()
+            ->where('account_id', $account->id)
+            ->where('last_catalog_sync_run_id', $run->id)
+            ->count();
         $run->refresh();
-        $run->update(['status' => 'completed', 'finished_at' => now(), 'meta' => array_merge((array) $run->meta, ['imported_offer_ids' => $seen])]);
+        $run->update([
+            'total' => $catalogCount,
+            'processed' => $catalogCount,
+            'succeeded' => $catalogCount,
+            'status' => 'completed',
+            'finished_at' => now(),
+            'meta' => array_merge((array) $run->meta, ['phase' => 'completed', 'imported_offer_ids' => $catalogCount, 'found_offer_ids' => $catalogCount]),
+        ]);
     }
 
     /**
@@ -346,11 +375,11 @@ class ProcessYandexMarketSellerSyncJob implements ShouldQueue
         throw $lastException ?? new \RuntimeException('Не удалось получить страницу каталога Яндекс Маркета.');
     }
 
-    private function updateCatalogCollectionProgress(ShopYandexMarketSyncRun $run, int $foundOfferIds): void
+    private function updateCatalogCollectionProgress(ShopYandexMarketSyncRun $run, int $foundOfferIds, string $phase = 'collecting_offer_ids'): void
     {
         $run->update([
             'meta' => array_merge((array) $run->meta, [
-                'phase' => 'collecting_offer_ids',
+                'phase' => $phase,
                 'found_offer_ids' => $foundOfferIds,
                 'catalog_pages' => ((int) data_get($run->meta, 'catalog_pages', 0)) + 1,
             ]),

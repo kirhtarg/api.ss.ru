@@ -493,6 +493,8 @@ class ShopOzonSellerController extends Controller
         $input = $request->validate([
             'good_ids' => 'nullable|array|max:50',
             'good_ids.*' => 'integer',
+            'mapping_ids' => 'nullable|array|max:100',
+            'mapping_ids.*' => 'integer',
             'page' => 'nullable|integer|min:1',
             'per_page' => 'nullable|integer|min:10|max:50',
             'search' => 'nullable|string|max:255',
@@ -502,9 +504,10 @@ class ShopOzonSellerController extends Controller
         $perPage = $ids ? max(10, count($ids)) : (int) ($input['per_page'] ?? 10);
         $account = $this->account();
         $result = [];
-        $mappings = $resolver->mappings($account);
+        $mappingIds = array_values(array_unique(array_map('intval', $input['mapping_ids'] ?? []))) ?: null;
+        $mappings = $resolver->mappings($account, $mappingIds);
         if ($mappings->isEmpty() || ! $mappings->contains(fn ($mapping) => $resolver->effectiveSelectionTagId($mapping, $account))) return response()->json(['success' => false, 'message' => 'Создайте активный профиль Ozon и выберите в нём тег отбора товаров.'], 422);
-        $query = $resolver->query($account, $ids)->orderByDesc('shop_goods.id');
+        $query = $resolver->query($account, $ids, $mappingIds)->orderByDesc('shop_goods.id');
         if (filled($input['search'] ?? null)) {
             $search = trim($input['search']);
             $numericId = ctype_digit($search) ? (int) $search : null;
@@ -568,12 +571,21 @@ class ShopOzonSellerController extends Controller
 
     public function startSync(Request $request)
     {
-        $data = $request->validate(['mode' => 'required|in:products,prices,stocks', 'good_ids' => 'nullable|array', 'good_ids.*' => 'integer|exists:shop_goods,id']);
+        $data = $request->validate([
+            'mode' => 'required|in:products,prices,stocks',
+            'good_ids' => 'nullable|array',
+            'good_ids.*' => 'integer|exists:shop_goods,id',
+            'mapping_ids' => 'nullable|array|max:100',
+            'mapping_ids.*' => 'integer',
+        ]);
         $account = $this->account();
         $resolver = app(OzonProductResolver::class);
-        $mappings = $resolver->mappings($account);
+        $mappingIds = array_values(array_unique(array_map('intval', $data['mapping_ids'] ?? []))) ?: null;
+        $mappings = $resolver->mappings($account, $mappingIds);
         if ($mappings->isEmpty() || ! $mappings->contains(fn ($mapping) => $resolver->effectiveSelectionTagId($mapping, $account))) return response()->json(['success' => false, 'message' => 'Настройте тег отбора хотя бы в одном активном профиле Ozon.'], 422);
-        $run = ShopOzonSyncRun::create(['account_id' => $account->id, 'user_id' => $request->user()?->id, 'mode' => $data['mode'], 'good_ids' => $data['good_ids'] ?? null, 'status' => 'pending']);
+        $active = ShopOzonSyncRun::query()->where('account_id', $account->id)->whereIn('status', ['pending', 'running', 'awaiting_result'])->first();
+        if ($active) return response()->json(['success' => true, 'message' => 'Другая синхронизация Ozon уже выполняется.', 'data' => $active], 202);
+        $run = ShopOzonSyncRun::create(['account_id' => $account->id, 'user_id' => $request->user()?->id, 'mode' => $data['mode'], 'good_ids' => $data['good_ids'] ?? null, 'mapping_ids' => $mappingIds, 'status' => 'pending']);
         ProcessOzonSyncRunJob::dispatch($run->id);
         return response()->json(['success' => true, 'message' => 'Синхронизация поставлена в очередь.', 'data' => $run], 202);
     }

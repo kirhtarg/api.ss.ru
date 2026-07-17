@@ -10,7 +10,7 @@ use Illuminate\Support\Collection;
 
 class OzonProductResolver
 {
-    public function query(ShopOzonAccount $account, ?array $goodIds = null): Builder
+    public function query(ShopOzonAccount $account, ?array $goodIds = null, ?array $mappingIds = null): Builder
     {
         $query = ShopGood::query()
             ->with([
@@ -29,7 +29,7 @@ class OzonProductResolver
             $query->whereIn('id', $goodIds);
         }
 
-        $mappings = $this->mappings($account);
+        $mappings = $this->mappings($account, $mappingIds);
         if ($mappings->isEmpty()) {
             $query->whereRaw('1 = 0');
         } else {
@@ -52,12 +52,17 @@ class OzonProductResolver
         return $query;
     }
 
-    public function mappings(ShopOzonAccount $account): Collection
+    public function mappings(ShopOzonAccount $account, ?array $mappingIds = null): Collection
     {
-        return ShopOzonCategoryMapping::query()
+        $query = ShopOzonCategoryMapping::query()
             ->where('account_id', $account->id)
-            ->where('is_active', true)
-            ->get();
+            ->where('is_active', true);
+
+        if ($mappingIds !== null) {
+            $query->whereIn('id', array_values(array_unique(array_map('intval', $mappingIds))));
+        }
+
+        return $query->get();
     }
 
     public function mappingFor(ShopGood $good, Collection $mappings, ShopOzonAccount $account): ?ShopOzonCategoryMapping

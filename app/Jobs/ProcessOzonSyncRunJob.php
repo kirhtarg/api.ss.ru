@@ -68,8 +68,9 @@ class ProcessOzonSyncRunJob implements ShouldQueue
 
     private function rows(ShopOzonSyncRun $run, ShopOzonAccount $account, OzonProductResolver $resolver): array
     {
-        $query = $resolver->query($account, $run->good_ids);
-        $mappings = $resolver->mappings($account);
+        $mappingIds = filled($run->mapping_ids) ? (array) $run->mapping_ids : null;
+        $query = $resolver->query($account, $run->good_ids, $mappingIds);
+        $mappings = $resolver->mappings($account, $mappingIds);
         if ($mappings->isEmpty() || ! $mappings->contains(fn ($mapping) => $resolver->effectiveSelectionTagId($mapping, $account))) {
             throw new \RuntimeException('Для активного профиля Ozon укажите тег отбора товаров.');
         }

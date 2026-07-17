@@ -10,7 +10,7 @@ class ShopYandexMarketProductBinding extends Model
     protected $fillable = [
         'account_id', 'good_id', 'variation_id', 'offer_id', 'market_sku', 'status',
         'content_rating', 'payload_hash', 'errors', 'warnings', 'remote_payload',
-        'last_synced_at', 'remote_updated_at',
+        'last_synced_at', 'remote_updated_at', 'last_catalog_sync_run_id',
     ];
 
     protected $casts = [
@@ -19,6 +19,7 @@ class ShopYandexMarketProductBinding extends Model
         'remote_payload' => 'array',
         'last_synced_at' => 'datetime',
         'remote_updated_at' => 'datetime',
+        'last_catalog_sync_run_id' => 'integer',
     ];
 
     public function good(): BelongsTo { return $this->belongsTo(ShopGood::class, 'good_id'); }
