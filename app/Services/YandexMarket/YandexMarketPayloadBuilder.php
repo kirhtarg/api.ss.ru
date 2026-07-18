@@ -146,8 +146,15 @@ class YandexMarketPayloadBuilder
             if (! $sent) continue;
 
             $parameter = ['parameterId' => (int) $item['id']];
-            if ($dictionary) $parameter['valueId'] = (int) $dictionary['id'];
-            else $parameter['value'] = is_bool($value) ? ($value ? 'true' : 'false') : (string) $value;
+            if ($dictionary) {
+                // The content endpoint persists ENUM values only when the dictionary ID
+                // is accompanied by its textual value. Sending just valueId is accepted
+                // by the request but the value can disappear from the saved card.
+                $parameter['valueId'] = (int) $dictionary['id'];
+                $parameter['value'] = (string) $dictionary['label'];
+            } else {
+                $parameter['value'] = is_bool($value) ? ($value ? 'true' : 'false') : (string) $value;
+            }
             if (! empty($item['unit_id'])) $parameter['unitId'] = (int) $item['unit_id'];
             $payload[] = $parameter;
         }
