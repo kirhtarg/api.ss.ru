@@ -142,6 +142,7 @@ class YandexMarketPayloadBuilder
                 'source_value' => $this->decoded($value), 'value' => $dictionary['label'] ?? $this->decoded($value),
                 'value_id' => $dictionary['id'] ?? null, 'required' => (bool) ($item['required'] ?? false),
                 'distinctive' => (bool) ($item['distinctive'] ?? false), 'sent' => $displaySent,
+                'dictionary_missing' => $dictionaryMissing,
             ];
             if (! $sent) continue;
 
