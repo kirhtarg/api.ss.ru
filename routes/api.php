@@ -2454,6 +2454,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::delete('/settings/{id}', [\App\Http\Controllers\Api\Admin\ShopRussianPostSettingsController::class, 'destroy']);
                 Route::post('/settings/{id}/activate', [\App\Http\Controllers\Api\Admin\ShopRussianPostSettingsController::class, 'activate']);
                 Route::post('/validate-credentials', [\App\Http\Controllers\Api\Admin\ShopRussianPostSettingsController::class, 'validateCredentials']);
+                Route::post('/available-tariffs', [\App\Http\Controllers\Api\Admin\ShopRussianPostSettingsController::class, 'getAvailableTariffs']);
             });
 
             // Управление настройками DPD

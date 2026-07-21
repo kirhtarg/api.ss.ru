@@ -37,6 +37,7 @@ class ShopRussianPostController extends Controller
                 'default_length' => (float) ($settings->default_length ?? 10),
                 'default_width' => (float) ($settings->default_width ?? 10),
                 'default_height' => (float) ($settings->default_height ?? 10),
+                'tariffs' => $this->enabledTariffProfiles($settings),
                 'cash_on_delivery_enabled' => (bool) $settings->cash_on_delivery_enabled,
                 'create_order_in_account' => (bool) $settings->create_order_in_account,
             ],
@@ -257,11 +258,24 @@ class ShopRussianPostController extends Controller
             $deliveryTypes = $deliveryType === 'address' && $request->boolean('include_alternative_tariff')
                 ? ['address', 'office']
                 : [$deliveryType];
+            $tariffProfiles = collect($deliveryTypes)
+                ->flatMap(fn (string $type) => $this->enabledTariffProfiles($settings, $type))
+                ->values()
+                ->all();
+
+            if (empty($tariffProfiles)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Для выбранного способа вручения не включен ни один тариф Почты России.',
+                    'data' => [],
+                ]);
+            }
             $tariffs = [];
             $responses = [];
             $requestPayloads = [];
 
-            foreach ($deliveryTypes as $tariffDeliveryType) {
+            foreach ($tariffProfiles as $tariffProfile) {
+                $tariffDeliveryType = $tariffProfile['delivery_type'];
                 // One tariff request contains only the final amount. Calculate the same
                 // shipment without optional services as well, so the storefront can show
                 // exactly what formed the delivery price.
@@ -269,24 +283,24 @@ class ShopRussianPostController extends Controller
                     $settings,
                     $indexTo,
                     $plainPackages,
-                    $tariffDeliveryType
+                    $tariffProfile
                 );
                 $declaredCalculation = $this->calculateTariffForDeliveryType(
                     $settings,
                     $indexTo,
                     $declaredPackages,
-                    $tariffDeliveryType
+                    $tariffProfile
                 );
                 $calculation = $cashOnDeliveryAmount > 0
-                    ? $this->calculateTariffForDeliveryType($settings, $indexTo, $packages, $tariffDeliveryType)
+                    ? $this->calculateTariffForDeliveryType($settings, $indexTo, $packages, $tariffProfile)
                     : $declaredCalculation;
 
-                $responses[$tariffDeliveryType] = [
+                $responses[$tariffProfile['code']] = [
                     'plain' => $plainCalculation['responses'],
                     'declared_value' => $declaredCalculation['responses'],
                     'final' => $calculation['responses'],
                 ];
-                $requestPayloads[$tariffDeliveryType] = [
+                $requestPayloads[$tariffProfile['code']] = [
                     'plain' => $plainCalculation['payloads'],
                     'declared_value' => $declaredCalculation['payloads'],
                     'final' => $calculation['payloads'],
@@ -306,9 +320,10 @@ class ShopRussianPostController extends Controller
                     : max(0, round($calculation['cost'] - $declaredValueCost, 2));
 
                 $tariffs[] = [
-                    'code' => 'russianpost_'.$tariffDeliveryType,
-                    'name' => $tariffDeliveryType === 'address' ? 'Почта России до адреса' : 'Почта России до ОПС',
-                    'tariff_product' => $tariffDeliveryType === 'address' ? 'Курьер онлайн' : 'Посылка онлайн',
+                    'code' => 'russianpost_'.mb_strtolower($tariffProfile['code']),
+                    'tariff_code' => $tariffProfile['code'],
+                    'name' => $tariffProfile['site_name'],
+                    'tariff_product' => $tariffProfile['name'],
                     'description' => $tariffDeliveryType === 'address'
                         ? $this->formatResolvedAddress($resolvedAddress, $resolvedOffice)
                         : $this->formatOfficeDescription($resolvedOffice, $indexTo),
@@ -375,18 +390,18 @@ class ShopRussianPostController extends Controller
         ShopRussianPostSettings $settings,
         string $indexTo,
         array $packages,
-        string $deliveryType
+        array $tariffProfile
     ): array {
-        $payloads = array_map(function (array $package) use ($settings, $indexTo, $deliveryType) {
+        $deliveryType = $tariffProfile['delivery_type'];
+        $mailType = $tariffProfile['mail_type'];
+        $payloads = array_map(function (array $package) use ($settings, $indexTo, $deliveryType, $mailType) {
             $payload = [
                 'index-from' => preg_replace('/\D+/', '', (string) $settings->sender_postal_code),
                 'index-to' => $indexTo,
                 'mail-category' => ! empty($package['cash_on_delivery_amount'])
                     ? 'WITH_DECLARED_VALUE_AND_CASH_ON_DELIVERY'
                     : (! empty($package['declared_value']) ? 'WITH_DECLARED_VALUE' : 'ORDINARY'),
-                // Доставка до адреса в договорном API — отдельный продукт,
-                // а не обычная «Посылка онлайн» с дополнительным флагом.
-                'mail-type' => $deliveryType === 'address' ? 'ONLINE_COURIER' : 'ONLINE_PARCEL',
+                'mail-type' => $mailType,
                 'mass' => (int) max(1, round($package['weight'] * 1000)),
                 'dimension' => [
                     'length' => (int) max(1, ceil($package['length'])),
@@ -449,6 +464,40 @@ class ShopRussianPostController extends Controller
         Cache::put($cacheKey, $result, now()->addMinutes(5));
 
         return $result;
+    }
+
+    private function enabledTariffProfiles(ShopRussianPostSettings $settings, ?string $deliveryType = null): array
+    {
+        $profiles = is_array($settings->tariffs) && ! empty($settings->tariffs)
+            ? $settings->tariffs
+            : [
+                [
+                    'code' => 'ONLINE_PARCEL',
+                    'mail_type' => 'ONLINE_PARCEL',
+                    'name' => 'Посылка онлайн',
+                    'site_name' => 'Почта России до ОПС',
+                    'delivery_type' => 'office',
+                    'delivery_label' => 'До ОПС',
+                    'enabled' => true,
+                ],
+                [
+                    'code' => 'ONLINE_COURIER',
+                    'mail_type' => 'ONLINE_COURIER',
+                    'name' => 'Курьер онлайн',
+                    'site_name' => 'Почта России до адреса',
+                    'delivery_type' => 'address',
+                    'delivery_label' => 'До адреса',
+                    'enabled' => true,
+                ],
+            ];
+
+        return array_values(array_filter($profiles, static function (array $profile) use ($deliveryType): bool {
+            return ! empty($profile['enabled'])
+                && ! empty($profile['code'])
+                && ! empty($profile['mail_type'])
+                && in_array($profile['delivery_type'] ?? null, ['address', 'office'], true)
+                && ($deliveryType === null || $profile['delivery_type'] === $deliveryType);
+        }));
     }
 
     private function formatResolvedAddress(string $address, ?array $office): string

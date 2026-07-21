@@ -107,6 +107,11 @@ class ShopRussianPostSettingsController extends Controller
             'default_length' => 'nullable|numeric|min:1|max:1000',
             'default_width' => 'nullable|numeric|min:1|max:1000',
             'default_height' => 'nullable|numeric|min:1|max:1000',
+            'tariffs' => 'nullable|array',
+            'tariffs.*.code' => 'required_with:tariffs|string|max:100',
+            'tariffs.*.mail_type' => 'required_with:tariffs|string|max:100',
+            'tariffs.*.delivery_type' => 'required_with:tariffs|in:address,office',
+            'tariffs.*.enabled' => 'boolean',
             'cash_on_delivery_enabled' => 'boolean',
             'create_order_in_account' => 'boolean',
             'is_active' => 'boolean',
@@ -171,6 +176,11 @@ class ShopRussianPostSettingsController extends Controller
             'default_length' => 'nullable|numeric|min:1|max:1000',
             'default_width' => 'nullable|numeric|min:1|max:1000',
             'default_height' => 'nullable|numeric|min:1|max:1000',
+            'tariffs' => 'nullable|array',
+            'tariffs.*.code' => 'required_with:tariffs|string|max:100',
+            'tariffs.*.mail_type' => 'required_with:tariffs|string|max:100',
+            'tariffs.*.delivery_type' => 'required_with:tariffs|in:address,office',
+            'tariffs.*.enabled' => 'boolean',
             'cash_on_delivery_enabled' => 'boolean',
             'create_order_in_account' => 'boolean',
             'is_active' => 'boolean',
@@ -278,6 +288,76 @@ class ShopRussianPostSettingsController extends Controller
                 'error' => $validation['error'] ?? null,
             ],
         ]);
+    }
+
+    /**
+     * The Russian Post contract API does not expose an endpoint that enumerates
+     * products available under an account. Return supported contract products
+     * only after the credentials have been checked, so the administrator can
+     * explicitly enable the products used on the storefront.
+     */
+    public function getAvailableTariffs(Request $request): JsonResponse
+    {
+        $accessCheck = $this->checkAccess($request);
+        if ($accessCheck) {
+            return $accessCheck;
+        }
+
+        $validator = Validator::make($request->all(), [
+            'api_token' => 'required|string',
+            'login' => 'required|string',
+            'password' => 'required|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Сначала заполните учетные данные Почты России.',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $validation = $this->validateRussianPostCredentials($request->api_token, $request->login, $request->password);
+        if (! $validation['valid']) {
+            return response()->json([
+                'success' => false,
+                'message' => $validation['error'] ?? 'Не удалось проверить учетные данные Почты России.',
+            ], 422);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Загружены поддерживаемые договорные продукты. Включите только те, которые предусмотрены вашим договором.',
+            'data' => $this->russianPostTariffProfiles(),
+            'meta' => [
+                'source' => 'supported_contract_products',
+                'note' => 'API Почты России не возвращает каталог продуктов по договору. Доступность выбранного продукта дополнительно проверяется при расчете.',
+            ],
+        ]);
+    }
+
+    private function russianPostTariffProfiles(): array
+    {
+        return [
+            [
+                'code' => 'ONLINE_PARCEL',
+                'mail_type' => 'ONLINE_PARCEL',
+                'name' => 'Посылка онлайн',
+                'site_name' => 'Почта России до ОПС',
+                'delivery_type' => 'office',
+                'delivery_label' => 'До ОПС',
+                'enabled' => true,
+            ],
+            [
+                'code' => 'ONLINE_COURIER',
+                'mail_type' => 'ONLINE_COURIER',
+                'name' => 'Курьер онлайн',
+                'site_name' => 'Почта России до адреса',
+                'delivery_type' => 'address',
+                'delivery_label' => 'До адреса',
+                'enabled' => true,
+            ],
+        ];
     }
 
     /**
