@@ -196,6 +196,8 @@ class ShopRussianPostController extends Controller
             'street' => 'nullable|string|max:255',
             'house' => 'nullable|string|max:50',
             'postal_code' => 'nullable|string|max:20',
+            'cash_on_delivery_amount' => 'nullable|numeric|min:0',
+            'include_alternative_tariff' => 'nullable|boolean',
             'cart_items' => 'nullable',
         ]);
 
@@ -210,9 +212,10 @@ class ShopRussianPostController extends Controller
             $indexTo = preg_replace('/\D+/', '', (string) $request->query('postal_code', ''));
             $resolvedOffice = null;
             $resolvedAddress = $this->buildAddress($request);
+            $resolvedLocation = $this->normalizeAddressLocation($settings, $resolvedAddress);
 
             if ($indexTo === '' && $deliveryType === 'address') {
-                $indexTo = $this->normalizeAddressIndex($settings, $resolvedAddress);
+                $indexTo = $resolvedLocation['postal_code'];
 
                 if ($indexTo === '') {
                     $fallbackOffice = $this->resolveCityOffice($settings, (string) $request->query('city'), $resolvedAddress);
@@ -235,82 +238,75 @@ class ShopRussianPostController extends Controller
                 $resolvedOffice = $this->resolveOfficeByPostalCode($settings, $indexTo);
             }
 
-            $cargo = $this->calculateCargo($cartItems, $settings);
-            $payloads = array_map(function (array $package) use ($settings, $indexTo, $deliveryType) {
-                $payload = [
-                    'index-from' => preg_replace('/\D+/', '', (string) $settings->sender_postal_code),
-                    'index-to' => $indexTo,
-                    'mail-category' => 'ORDINARY',
-                    'mail-type' => 'ONLINE_PARCEL',
-                    'mass' => (int) max(1, round($package['weight'] * 1000)),
-                    'dimension' => [
-                        'length' => (int) max(1, ceil($package['length'])),
-                        'width' => (int) max(1, ceil($package['width'])),
-                        'height' => (int) max(1, ceil($package['height'])),
-                    ],
-                    'fragile' => false,
-                    'inventory' => false,
-                    'with-order-of-notice' => false,
-                    'with-simple-notice' => false,
-                ];
-                if ($deliveryType === 'address') {
-                    $payload['courier'] = true;
-                }
-
-                return $payload;
-            }, $cargo['packages']);
-
-            $data = [];
-            $cost = 0.0;
-            $tariffSource = 'otpravka_api_dimensions';
-            foreach ($payloads as $payload) {
-                $response = Http::withOptions($this->httpOptions())
-                    ->withHeaders($this->headers($settings))
-                    ->post('https://otpravka-api.pochta.ru/1.0/tariff', $payload);
-
-                if (! $response->successful()) {
-                    throw new \RuntimeException($this->extractError($response));
-                }
-
-                $packageData = $response->json() ?: [];
-                $packageCost = $this->extractTariffCost($packageData);
-                if ($packageCost === null) {
-                    $cost = null;
-                    break;
-                }
-                $cost += $packageCost;
-                $data[] = $packageData;
+            if ($resolvedOffice && empty($resolvedOffice['city'])) {
+                $resolvedOffice['city'] = $resolvedLocation['city']
+                    ?: (preg_match('/^\d{6}$/', $resolvedAddress) ? null : trim((string) $request->query('city')));
             }
 
-            if ($cost === null) {
+            $cargo = $this->calculateCargo($cartItems, $settings);
+            $packages = $this->withDeclaredValues(
+                $cargo['packages'],
+                $cartItems,
+                (float) $request->query('cash_on_delivery_amount', 0)
+            );
+            // В карточке товара можно показать оба способа вручения. В чекауте
+            // рассчитывается только вариант, который уже выбрал покупатель.
+            $deliveryTypes = $deliveryType === 'address' && $request->boolean('include_alternative_tariff')
+                ? ['address', 'office']
+                : [$deliveryType];
+            $tariffs = [];
+            $responses = [];
+            $requestPayloads = [];
+
+            foreach ($deliveryTypes as $tariffDeliveryType) {
+                $calculation = $this->calculateTariffForDeliveryType(
+                    $settings,
+                    $indexTo,
+                    $packages,
+                    $tariffDeliveryType
+                );
+
+                $responses[$tariffDeliveryType] = $calculation['responses'];
+                $requestPayloads[$tariffDeliveryType] = $calculation['payloads'];
+
+                if ($calculation['cost'] === null) {
+                    continue;
+                }
+
+                $tariffs[] = [
+                    'code' => 'russianpost_'.$tariffDeliveryType,
+                    'name' => $tariffDeliveryType === 'address' ? 'Почта России до адреса' : 'Почта России до ОПС',
+                    'description' => $tariffDeliveryType === 'address'
+                        ? $this->formatResolvedAddress($resolvedAddress, $resolvedOffice)
+                        : $this->formatOfficeDescription($resolvedOffice, $indexTo),
+                    'cost' => $calculation['cost'],
+                    'cost_value' => $calculation['cost'],
+                    'type' => $tariffDeliveryType,
+                    'postal_code' => $indexTo,
+                    'resolved_postal_code' => $indexTo,
+                    'resolved_address' => $resolvedAddress,
+                    'resolved_office' => $resolvedOffice,
+                    'period' => $this->extractPeriod($calculation['responses'][0] ?? []),
+                ];
+            }
+
+            if (empty($tariffs)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Почта России не вернула стоимость доставки для выбранного направления',
                     'data' => [],
-                    'meta' => ['response' => $data],
+                    'meta' => ['response' => $responses],
                 ]);
             }
 
             return response()->json([
                 'success' => true,
-                'data' => [[
-                    'code' => 'russianpost_'.$deliveryType,
-                    'name' => $deliveryType === 'address' ? 'Почта России до адреса' : 'Почта России до отделения',
-                    'description' => $deliveryType === 'address' ? $resolvedAddress : 'Индекс отделения: '.$indexTo,
-                    'cost' => $cost,
-                    'cost_value' => $cost,
-                    'type' => $deliveryType,
-                    'postal_code' => $indexTo,
-                    'resolved_postal_code' => $indexTo,
-                    'resolved_address' => $resolvedAddress,
-                    'resolved_office' => $resolvedOffice,
-                    'period' => $this->extractPeriod($data[0] ?? []),
-                ]],
+                'data' => $tariffs,
                 'meta' => [
-                    'tariff_source' => $tariffSource,
-                    'request_payload' => $payloads,
-                    'server_response' => $data,
-                    'packages' => $cargo['packages'],
+                    'tariff_source' => 'otpravka_api_dimensions',
+                    'request_payload' => $requestPayloads,
+                    'server_response' => $responses,
+                    'packages' => $packages,
                     'resolved_postal_code' => $indexTo,
                     'resolved_address' => $resolvedAddress,
                     'resolved_office' => $resolvedOffice,
@@ -336,6 +332,93 @@ class ShopRussianPostController extends Controller
         }
 
         return $settings;
+    }
+
+    private function calculateTariffForDeliveryType(
+        ShopRussianPostSettings $settings,
+        string $indexTo,
+        array $packages,
+        string $deliveryType
+    ): array {
+        $payloads = array_map(function (array $package) use ($settings, $indexTo, $deliveryType) {
+            $payload = [
+                'index-from' => preg_replace('/\D+/', '', (string) $settings->sender_postal_code),
+                'index-to' => $indexTo,
+                'mail-category' => ! empty($package['declared_value']) ? 'WITH_DECLARED_VALUE' : 'ORDINARY',
+                'mail-type' => 'ONLINE_PARCEL',
+                'mass' => (int) max(1, round($package['weight'] * 1000)),
+                'dimension' => [
+                    'length' => (int) max(1, ceil($package['length'])),
+                    'width' => (int) max(1, ceil($package['width'])),
+                    'height' => (int) max(1, ceil($package['height'])),
+                ],
+                'fragile' => false,
+                'inventory' => false,
+                'with-order-of-notice' => false,
+                'with-simple-notice' => false,
+            ];
+
+            if (! empty($package['declared_value'])) {
+                // API "Отправка" принимает объявленную ценность в рублях.
+                $payload['declared-value'] = (int) max(1, round((float) $package['declared_value']));
+            }
+
+            if (! empty($package['cash_on_delivery_amount'])) {
+                $payload['payment'] = (int) max(1, round((float) $package['cash_on_delivery_amount']));
+            }
+
+            if ($deliveryType === 'address') {
+                $payload['courier'] = true;
+            }
+
+            return $payload;
+        }, $packages);
+
+        $responses = [];
+        $cost = 0.0;
+        foreach ($payloads as $payload) {
+            $response = Http::withOptions($this->httpOptions())
+                ->withHeaders($this->headers($settings))
+                ->post('https://otpravka-api.pochta.ru/1.0/tariff', $payload);
+
+            if (! $response->successful()) {
+                throw new \RuntimeException($this->extractError($response));
+            }
+
+            $packageData = $response->json() ?: [];
+            $packageCost = $this->extractTariffCost($packageData);
+            if ($packageCost === null) {
+                return compact('payloads', 'responses') + ['cost' => null];
+            }
+
+            $cost += $packageCost;
+            $responses[] = $packageData;
+        }
+
+        return compact('payloads', 'responses', 'cost');
+    }
+
+    private function formatResolvedAddress(string $address, ?array $office): string
+    {
+        if ($address !== '' && ! preg_match('/^\d{6}$/', $address)) {
+            return $address;
+        }
+
+        return $this->formatOfficeDescription($office, $address);
+    }
+
+    private function formatOfficeDescription(?array $office, string $postalCode): string
+    {
+        if (! $office) {
+            return 'Индекс отделения: '.$postalCode;
+        }
+
+        $parts = array_filter([
+            $office['city'] ?? null,
+            $office['address'] ?? null,
+        ]);
+
+        return ! empty($parts) ? implode(', ', array_unique($parts)) : 'Индекс отделения: '.$postalCode;
     }
 
     private function calculatePublicTariff(ShopRussianPostSettings $settings, string $indexTo, array $cargo): array
@@ -436,11 +519,16 @@ class ShopRussianPostController extends Controller
         ];
     }
 
-    private function normalizeAddressIndex(ShopRussianPostSettings $settings, string $address): string
+    private function normalizeAddressLocation(ShopRussianPostSettings $settings, string $address): array
     {
-        $cacheKey = 'russianpost_address_index_v1_'.md5($address);
+        $emptyLocation = ['postal_code' => '', 'city' => null];
+        if ($address === '') {
+            return $emptyLocation;
+        }
+
+        $cacheKey = 'russianpost_address_location_v2_'.md5($address);
         if (Cache::has($cacheKey)) {
-            return (string) Cache::get($cacheKey);
+            return Cache::get($cacheKey);
         }
 
         $response = Http::withOptions($this->httpOptions())
@@ -451,18 +539,24 @@ class ShopRussianPostController extends Controller
             ]]);
 
         if (! $response->successful()) {
-            return '';
+            return $emptyLocation;
         }
 
         $data = $response->json();
         $item = is_array($data) ? ($data[0] ?? []) : [];
+        $location = [
+            'postal_code' => preg_replace('/\D+/', '', $this->firstScalarValue($item['index'] ?? null, $item['postal-code'] ?? null) ?? ''),
+            'city' => $this->firstScalarValue(
+                $item['city'] ?? null,
+                $item['settlement'] ?? null,
+                $item['locality'] ?? null,
+                $item['place'] ?? null,
+                $item['region-to'] ?? null
+            ),
+        ];
+        Cache::put($cacheKey, $location, now()->addDays(7));
 
-        $index = preg_replace('/\D+/', '', $this->firstScalarValue($item['index'] ?? null, $item['postal-code'] ?? null) ?? '');
-        if ($index !== '') {
-            Cache::put($cacheKey, $index, now()->addDays(7));
-        }
-
-        return $index;
+        return $location;
     }
 
     private function buildAddress(Request $request): string
@@ -830,6 +924,17 @@ class ShopRussianPostController extends Controller
         return [
             'id' => $this->stringValue($postalCode),
             'postal_code' => $this->stringValue($postalCode),
+            'city' => $this->firstScalarValue(
+                $item['city'] ?? null,
+                $item['settlement'] ?? null,
+                $item['locality'] ?? null,
+                $item['municipality'] ?? null,
+                $item['place'] ?? null,
+                $item['address']['city'] ?? null,
+                $item['address']['settlement'] ?? null,
+                $item['address']['locality'] ?? null,
+                $item['address']['municipality'] ?? null
+            ),
             'name' => $this->firstScalarValue(
                 $item['name'] ?? null,
                 $item['postoffice-name'] ?? null,
@@ -963,6 +1068,60 @@ class ShopRussianPostController extends Controller
             'height' => $summary['max_height'],
             'packages' => $packages,
         ];
+    }
+
+    private function withDeclaredValues(array $packages, array $cartItems, float $cashOnDeliveryAmount = 0): array
+    {
+        $unitValues = [];
+        foreach ($cartItems as $itemIndex => $item) {
+            $quantity = max(1, (int) ($item['quantity'] ?? 1));
+            $lineTotal = $this->positiveMoney($item['total'] ?? null);
+            if ($lineTotal === null) {
+                $unitPrice = $this->positiveMoney($item['price'] ?? null)
+                    ?? $this->positiveMoney($item['final_price'] ?? null)
+                    ?? $this->positiveMoney($item['sale_price'] ?? null)
+                    ?? 0.0;
+                $lineTotal = $unitPrice * $quantity;
+            }
+            $unitValues[$itemIndex] = $lineTotal / $quantity;
+        }
+
+        $totalDeclaredValue = 0.0;
+        foreach ($packages as &$package) {
+            $declaredValue = 0.0;
+            foreach ((array) ($package['items'] ?? []) as $packageItem) {
+                $itemIndex = $packageItem['item_index'] ?? null;
+                if ($itemIndex === null || ! array_key_exists($itemIndex, $unitValues)) {
+                    continue;
+                }
+                $declaredValue += $unitValues[$itemIndex] * max(1, (int) ($packageItem['quantity'] ?? 1));
+            }
+            $package['declared_value'] = round($declaredValue, 2);
+            $totalDeclaredValue += $package['declared_value'];
+        }
+        unset($package);
+
+        if ($cashOnDeliveryAmount <= 0 || $totalDeclaredValue <= 0) {
+            return $packages;
+        }
+
+        $remainingPayment = round($cashOnDeliveryAmount, 2);
+        $lastIndex = array_key_last($packages);
+        foreach ($packages as $index => &$package) {
+            $payment = $index === $lastIndex
+                ? $remainingPayment
+                : round($cashOnDeliveryAmount * ((float) $package['declared_value'] / $totalDeclaredValue), 2);
+            $package['cash_on_delivery_amount'] = $payment;
+            $remainingPayment = round($remainingPayment - $payment, 2);
+        }
+        unset($package);
+
+        return $packages;
+    }
+
+    private function positiveMoney($value): ?float
+    {
+        return is_numeric($value) && (float) $value > 0 ? (float) $value : null;
     }
 
     private function getItemDeliveryFields(array $item, ShopRussianPostSettings $settings): array
