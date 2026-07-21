@@ -78,6 +78,38 @@ class ShopDellinSettingsController extends Controller
     }
 
     /**
+     * Identifies the active configured Dellin account without exposing its API
+     * credentials. Used in the order-creation confirmation dialog.
+     */
+    public function accountSummary(Request $request): JsonResponse
+    {
+        $accessCheck = $this->checkAccess($request);
+        if ($accessCheck) {
+            return $accessCheck;
+        }
+
+        $settings = ShopDellinSettings::getActive();
+        if (! $settings) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Активные настройки Деловых линий не найдены.',
+            ], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'settings_id' => $settings->id,
+                'login' => $settings->login,
+                'company' => $settings->sender_company,
+                'full_name' => $settings->sender_name,
+                'phone' => $settings->sender_phone,
+                'auth_type' => $settings->auth_type,
+            ],
+        ]);
+    }
+
+    /**
      * Создать или обновить настройки Деловых линий
      */
     public function store(Request $request): JsonResponse

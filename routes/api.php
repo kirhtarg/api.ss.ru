@@ -2443,6 +2443,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::delete('/settings/{id}', [\App\Http\Controllers\Api\Admin\ShopDellinSettingsController::class, 'destroy']);
                 Route::post('/settings/{id}/activate', [\App\Http\Controllers\Api\Admin\ShopDellinSettingsController::class, 'activate']);
                 Route::post('/validate-key', [\App\Http\Controllers\Api\Admin\ShopDellinSettingsController::class, 'validateKey']);
+                Route::get('/settings/account-summary', [\App\Http\Controllers\Api\Admin\ShopDellinSettingsController::class, 'accountSummary']);
             });
 
             // Управление настройками Почты России
