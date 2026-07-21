@@ -345,7 +345,9 @@ class ShopRussianPostController extends Controller
                 'index-from' => preg_replace('/\D+/', '', (string) $settings->sender_postal_code),
                 'index-to' => $indexTo,
                 'mail-category' => ! empty($package['declared_value']) ? 'WITH_DECLARED_VALUE' : 'ORDINARY',
-                'mail-type' => 'ONLINE_PARCEL',
+                // Доставка до адреса в договорном API — отдельный продукт,
+                // а не обычная «Посылка онлайн» с дополнительным флагом.
+                'mail-type' => $deliveryType === 'address' ? 'ONLINE_COURIER' : 'ONLINE_PARCEL',
                 'mass' => (int) max(1, round($package['weight'] * 1000)),
                 'dimension' => [
                     'length' => (int) max(1, ceil($package['length'])),

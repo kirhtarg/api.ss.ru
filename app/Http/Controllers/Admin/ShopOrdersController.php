@@ -3897,6 +3897,8 @@ XML;
         $postOfficeCode = $this->resolveRussianPostSenderPostOfficeCode($order, $settings);
         $mailDirect = $this->resolveRussianPostMailDirect($order);
         $address = $this->resolveRussianPostRecipientAddress($order);
+        $metadata = is_array($order->metadata) ? $order->metadata : [];
+        $isCourierDelivery = ($metadata['russianpost_delivery_type'] ?? '') === 'address';
 
         return array_filter([
             'address-type-to' => 'DEFAULT',
@@ -3914,7 +3916,7 @@ XML;
             'slash-to' => $address['slash'] ?? null,
             'room-to' => $address['room'] ?? null,
             'mail-category' => ! empty($package['declared_value']) ? 'WITH_DECLARED_VALUE' : 'ORDINARY',
-            'mail-type' => 'ONLINE_PARCEL',
+            'mail-type' => $isCourierDelivery ? 'ONLINE_COURIER' : 'ONLINE_PARCEL',
             'mass' => (int) max(1, round($package['weight'] * 1000)),
             'order-num' => $order->order_number.'-'.($package['number'] ?? 1),
             'tel-address' => preg_replace('/\D+/', '', (string) $order->customer_phone),
@@ -3924,6 +3926,7 @@ XML;
                 'height' => (int) max(1, ceil($package['height'])),
             ],
             'fragile' => false,
+            'courier' => $isCourierDelivery,
             'completeness-checking' => false,
             'sms-notice-recipient' => 0,
             // В API "Отправка" оба значения передаются в рублях.
