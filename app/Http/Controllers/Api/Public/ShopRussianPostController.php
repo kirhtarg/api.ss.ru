@@ -244,10 +244,13 @@ class ShopRussianPostController extends Controller
             }
 
             $cargo = $this->calculateCargo($cartItems, $settings);
+            $cashOnDeliveryAmount = (float) $request->query('cash_on_delivery_amount', 0);
+            $plainPackages = $cargo['packages'];
+            $declaredPackages = $this->withDeclaredValues($plainPackages, $cartItems);
             $packages = $this->withDeclaredValues(
-                $cargo['packages'],
+                $plainPackages,
                 $cartItems,
-                (float) $request->query('cash_on_delivery_amount', 0)
+                $cashOnDeliveryAmount
             );
             // В карточке товара можно показать оба способа вручения. В чекауте
             // рассчитывается только вариант, который уже выбрал покупатель.
@@ -259,28 +262,62 @@ class ShopRussianPostController extends Controller
             $requestPayloads = [];
 
             foreach ($deliveryTypes as $tariffDeliveryType) {
-                $calculation = $this->calculateTariffForDeliveryType(
+                // One tariff request contains only the final amount. Calculate the same
+                // shipment without optional services as well, so the storefront can show
+                // exactly what formed the delivery price.
+                $plainCalculation = $this->calculateTariffForDeliveryType(
                     $settings,
                     $indexTo,
-                    $packages,
+                    $plainPackages,
                     $tariffDeliveryType
                 );
+                $declaredCalculation = $this->calculateTariffForDeliveryType(
+                    $settings,
+                    $indexTo,
+                    $declaredPackages,
+                    $tariffDeliveryType
+                );
+                $calculation = $cashOnDeliveryAmount > 0
+                    ? $this->calculateTariffForDeliveryType($settings, $indexTo, $packages, $tariffDeliveryType)
+                    : $declaredCalculation;
 
-                $responses[$tariffDeliveryType] = $calculation['responses'];
-                $requestPayloads[$tariffDeliveryType] = $calculation['payloads'];
+                $responses[$tariffDeliveryType] = [
+                    'plain' => $plainCalculation['responses'],
+                    'declared_value' => $declaredCalculation['responses'],
+                    'final' => $calculation['responses'],
+                ];
+                $requestPayloads[$tariffDeliveryType] = [
+                    'plain' => $plainCalculation['payloads'],
+                    'declared_value' => $declaredCalculation['payloads'],
+                    'final' => $calculation['payloads'],
+                ];
 
                 if ($calculation['cost'] === null) {
                     continue;
                 }
 
+                $baseShippingCost = $plainCalculation['cost'];
+                $declaredValueCost = $declaredCalculation['cost'];
+                $declaredValueSurcharge = $baseShippingCost === null || $declaredValueCost === null
+                    ? 0.0
+                    : max(0, round($declaredValueCost - $baseShippingCost, 2));
+                $cashOnDeliverySurcharge = $cashOnDeliveryAmount <= 0 || $declaredValueCost === null
+                    ? 0.0
+                    : max(0, round($calculation['cost'] - $declaredValueCost, 2));
+
                 $tariffs[] = [
                     'code' => 'russianpost_'.$tariffDeliveryType,
                     'name' => $tariffDeliveryType === 'address' ? 'Почта России до адреса' : 'Почта России до ОПС',
+                    'tariff_product' => $tariffDeliveryType === 'address' ? 'Курьер онлайн' : 'Посылка онлайн',
                     'description' => $tariffDeliveryType === 'address'
                         ? $this->formatResolvedAddress($resolvedAddress, $resolvedOffice)
                         : $this->formatOfficeDescription($resolvedOffice, $indexTo),
                     'cost' => $calculation['cost'],
                     'cost_value' => $calculation['cost'],
+                    'base_cost' => $baseShippingCost,
+                    'declared_value_surcharge' => $declaredValueSurcharge,
+                    'cash_on_delivery_surcharge' => $cashOnDeliverySurcharge,
+                    'declared_value' => round(array_sum(array_column($declaredPackages, 'declared_value')), 2),
                     'type' => $tariffDeliveryType,
                     'postal_code' => $indexTo,
                     'resolved_postal_code' => $indexTo,
@@ -344,7 +381,9 @@ class ShopRussianPostController extends Controller
             $payload = [
                 'index-from' => preg_replace('/\D+/', '', (string) $settings->sender_postal_code),
                 'index-to' => $indexTo,
-                'mail-category' => ! empty($package['declared_value']) ? 'WITH_DECLARED_VALUE' : 'ORDINARY',
+                'mail-category' => ! empty($package['cash_on_delivery_amount'])
+                    ? 'WITH_DECLARED_VALUE_AND_CASH_ON_DELIVERY'
+                    : (! empty($package['declared_value']) ? 'WITH_DECLARED_VALUE' : 'ORDINARY'),
                 // Доставка до адреса в договорном API — отдельный продукт,
                 // а не обычная «Посылка онлайн» с дополнительным флагом.
                 'mail-type' => $deliveryType === 'address' ? 'ONLINE_COURIER' : 'ONLINE_PARCEL',
@@ -366,7 +405,8 @@ class ShopRussianPostController extends Controller
             }
 
             if (! empty($package['cash_on_delivery_amount'])) {
-                $payload['payment'] = (int) max(1, round((float) $package['cash_on_delivery_amount']));
+                $payload['payment'] = (int) max(1, round((float) $package['cash_on_delivery_amount'] * 100));
+                $payload['payment-method'] = 'CASHLESS';
             }
 
             if ($deliveryType === 'address') {
@@ -375,6 +415,14 @@ class ShopRussianPostController extends Controller
 
             return $payload;
         }, $packages);
+
+        // The calculation screen requests the same package in several service modes.
+        // Reuse each exact request briefly to avoid creating unnecessary load on the
+        // contracted Russian Post API while the customer changes checkout options.
+        $cacheKey = 'russianpost_tariff_v3_'.md5(json_encode($payloads, JSON_UNESCAPED_UNICODE));
+        if (Cache::has($cacheKey)) {
+            return Cache::get($cacheKey);
+        }
 
         $responses = [];
         $cost = 0.0;
@@ -397,7 +445,10 @@ class ShopRussianPostController extends Controller
             $responses[] = $packageData;
         }
 
-        return compact('payloads', 'responses', 'cost');
+        $result = compact('payloads', 'responses', 'cost');
+        Cache::put($cacheKey, $result, now()->addMinutes(5));
+
+        return $result;
     }
 
     private function formatResolvedAddress(string $address, ?array $office): string

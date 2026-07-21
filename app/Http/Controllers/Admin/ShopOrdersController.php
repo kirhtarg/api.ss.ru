@@ -3915,7 +3915,9 @@ XML;
             'house-to' => $address['house'] ?? null,
             'slash-to' => $address['slash'] ?? null,
             'room-to' => $address['room'] ?? null,
-            'mail-category' => ! empty($package['declared_value']) ? 'WITH_DECLARED_VALUE' : 'ORDINARY',
+            'mail-category' => ! empty($package['cash_on_delivery_amount'])
+                ? 'WITH_DECLARED_VALUE_AND_CASH_ON_DELIVERY'
+                : (! empty($package['declared_value']) ? 'WITH_DECLARED_VALUE' : 'ORDINARY'),
             'mail-type' => $isCourierDelivery ? 'ONLINE_COURIER' : 'ONLINE_PARCEL',
             'mass' => (int) max(1, round($package['weight'] * 1000)),
             'order-num' => $order->order_number.'-'.($package['number'] ?? 1),
@@ -3929,13 +3931,14 @@ XML;
             'courier' => $isCourierDelivery,
             'completeness-checking' => false,
             'sms-notice-recipient' => 0,
-            // В API "Отправка" оба значения передаются в рублях.
+            // Объявленная ценность передаётся в рублях, наложенный платёж — в копейках.
             'declared-value' => ! empty($package['declared_value'])
                 ? (int) max(1, round((float) $package['declared_value']))
                 : null,
             'payment' => ! empty($package['cash_on_delivery_amount'])
-                ? (int) max(1, round((float) $package['cash_on_delivery_amount']))
+                ? (int) max(1, round((float) $package['cash_on_delivery_amount'] * 100))
                 : null,
+            'payment-method' => ! empty($package['cash_on_delivery_amount']) ? 'CASHLESS' : null,
         ], fn ($value) => $value !== null && $value !== '');
     }
 
