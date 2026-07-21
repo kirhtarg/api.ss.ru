@@ -634,7 +634,10 @@ class ShopDellinController extends Controller
     {
         $payload['appkey'] = $settings->appkey;
         if ($settings->session_id) {
+            $this->activateSelectedCounteragent($settings);
             $payload['sessionID'] = $settings->session_id;
+        } elseif ($settings->counteragent_uid) {
+            throw new \RuntimeException('Для расчета по выбранному контрагенту ДЛ требуется действующая сессия. Проверьте настройки подключения.');
         }
 
         $response = Http::withOptions([
@@ -648,6 +651,43 @@ class ShopDellinController extends Controller
         }
 
         return is_array($data) ? $data : [];
+    }
+
+    /**
+     * В Деловых линиях контрагент закрепляется за сессией. Это дает
+     * калькулятору те же договорные условия, что и при создании заявки.
+     */
+    private function activateSelectedCounteragent(ShopDellinSettings $settings): void
+    {
+        $counteragentUid = trim((string) $settings->counteragent_uid);
+        $sessionId = trim((string) $settings->session_id);
+        if ($counteragentUid === '' || $sessionId === '') {
+            return;
+        }
+
+        $cacheKey = 'dellin_counteragent_session_'.md5($settings->appkey.'|'.$sessionId.'|'.$counteragentUid);
+        if (Cache::has($cacheKey)) {
+            return;
+        }
+
+        $response = Http::withOptions([
+            'verify' => $this->getDellinVerifyOption(),
+            'timeout' => 30,
+        ])->post('https://api.dellin.ru/v2/counteragents.json', [
+            'appkey' => $settings->appkey,
+            'sessionID' => $sessionId,
+            'cauid' => $counteragentUid,
+            'fullInfo' => false,
+        ]);
+        $data = $response->json() ?: [];
+        if (! $response->successful() || isset($data['errors'])) {
+            throw new \RuntimeException($this->extractDellinError(
+                $data,
+                'Не удалось применить выбранного контрагента Деловых линий.'
+            ));
+        }
+
+        Cache::put($cacheKey, true, now()->addMinutes(10));
     }
 
     private function calculateCargo($cartItems, ShopDellinSettings $settings): array

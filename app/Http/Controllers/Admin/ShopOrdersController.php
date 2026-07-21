@@ -2560,6 +2560,13 @@ class ShopOrdersController extends Controller
                 return response()->json(['success' => false, 'message' => 'Активные настройки Деловых линий не заполнены'], 400);
             }
 
+            if (! $settings->counteragent_uid) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'В настройках Деловых линий не выбран контрагент. Проверьте ключ, выберите контрагента и сохраните настройки.',
+                ], 422);
+            }
+
             if ($order->dellin_order_id) {
                 return response()->json(['success' => true, 'message' => 'Заявка Деловых линий уже создана', 'data' => ['dellin_order_id' => $order->dellin_order_id]]);
             }
@@ -3801,9 +3808,14 @@ XML;
             ],
         ];
 
-        if ($settings->auth_type !== 'appkey') {
+        if ($settings->auth_type !== 'appkey' || $settings->counteragent_uid) {
             $sessionId = $this->getDellinSessionId($settings);
+            if ($settings->counteragent_uid && ! $sessionId) {
+                throw new \RuntimeException('Для выбранного контрагента ДЛ нужна авторизация через PAT или логин и пароль. Проверьте настройки доставки.');
+            }
+
             if ($sessionId) {
+                $this->activateDellinCounteragent($settings, $sessionId);
                 $payload['sessionID'] = $sessionId;
             }
         }
@@ -4576,6 +4588,36 @@ XML;
         }
 
         return $sessionId;
+    }
+
+    /**
+     * Контрагент в ДЛ выбирается для сессии, а не передается в заявке.
+     * Активируем сохраненный UID непосредственно перед запросом к API.
+     */
+    private function activateDellinCounteragent(ShopDellinSettings $settings, string $sessionId): void
+    {
+        $counteragentUid = trim((string) $settings->counteragent_uid);
+        if ($counteragentUid === '') {
+            return;
+        }
+
+        $response = Http::withOptions([
+            'verify' => $this->getDellinVerifyOption(),
+            'timeout' => 30,
+        ])->post('https://api.dellin.ru/v2/counteragents.json', [
+            'appkey' => $settings->appkey,
+            'sessionID' => $sessionId,
+            'cauid' => $counteragentUid,
+            'fullInfo' => false,
+        ]);
+        $data = $response->json() ?: [];
+
+        if (! $response->successful() || isset($data['errors'])) {
+            throw new \RuntimeException($this->extractExternalDeliveryError(
+                $data,
+                'Не удалось активировать выбранного контрагента Деловых линий.'
+            ));
+        }
     }
 
     private function extractDellinLastStatusItem($history): array

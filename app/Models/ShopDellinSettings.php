@@ -17,6 +17,8 @@ class ShopDellinSettings extends Model
         'password',
         'session_id',
         'session_expires_at',
+        'counteragent_uid',
+        'counteragent_data',
         'sender_company',
         'sender_name',
         'sender_phone',
@@ -46,6 +48,7 @@ class ShopDellinSettings extends Model
         'create_order_in_account' => 'boolean',
         'is_active' => 'boolean',
         'session_expires_at' => 'datetime',
+        'counteragent_data' => 'array',
     ];
 
     /**
