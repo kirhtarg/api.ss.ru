@@ -2576,6 +2576,12 @@ class ShopOrdersController extends Controller
             $terminalId = $metadata['dellin_terminal_id'] ?? null;
             $deliveryAddress = $metadata['dellin_delivery_address'] ?? $order->shipping_address;
 
+            // Старые заказы создавались до сохранения типа доставки ДЛ в metadata.
+            // Для них безопасно восстанавливаем доставку до адреса, только если адрес уже есть в заказе.
+            if (! $deliveryType && filled($deliveryAddress)) {
+                $deliveryType = 'address';
+            }
+
             if (! $deliveryType || ($deliveryType === 'terminal' && ! $terminalId) || ($deliveryType === 'address' && ! $deliveryAddress)) {
                 return response()->json([
                     'success' => false,
