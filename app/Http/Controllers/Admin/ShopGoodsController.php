@@ -7267,6 +7267,8 @@ class ShopGoodsController extends Controller
                 ], 400);
             }
 
+            $xmlContent = $this->normalizeYMLFeedContentEncoding((string) $xmlContent);
+
             // Проверяем базовую структуру YML
             if (strpos($xmlContent, 'yml_catalog') === false && strpos($xmlContent, '<?xml') === false) {
                 return response()->json([
@@ -7488,6 +7490,59 @@ class ShopGoodsController extends Controller
                 'message' => 'Ошибка при загрузке фида: '.$e->getMessage(),
             ], 500);
         }
+    }
+
+    /**
+     * Нормализует XML/YML-фид в UTF-8 перед SimpleXML и JSON-ответом.
+     */
+    private function normalizeYMLFeedContentEncoding(string $content): string
+    {
+        if ($content === '') {
+            return $content;
+        }
+
+        $encoding = null;
+        $prefix = substr($content, 0, 1024);
+
+        if (preg_match('/<\?xml[^>]*encoding=["\']([^"\']+)["\']/i', $prefix, $matches)) {
+            $encoding = strtoupper(trim($matches[1]));
+        } elseif (function_exists('mb_detect_encoding')) {
+            $detected = mb_detect_encoding($content, ['UTF-8', 'Windows-1251', 'CP1251', 'ISO-8859-1'], true);
+            $encoding = $detected ? strtoupper($detected) : null;
+        }
+
+        $isUtf8 = function_exists('mb_check_encoding')
+            ? mb_check_encoding($content, 'UTF-8')
+            : (bool) preg_match('//u', $content);
+
+        if ($encoding && ! in_array($encoding, ['UTF-8', 'UTF8'], true)) {
+            $sourceEncoding = in_array($encoding, ['WINDOWS-1251', 'CP1251'], true) ? 'Windows-1251' : $encoding;
+
+            if (function_exists('mb_convert_encoding')) {
+                $content = mb_convert_encoding($content, 'UTF-8', $sourceEncoding);
+            } elseif (function_exists('iconv')) {
+                $converted = @iconv($sourceEncoding, 'UTF-8//IGNORE', $content);
+                if ($converted !== false) {
+                    $content = $converted;
+                }
+            }
+        } elseif (! $isUtf8) {
+            if (function_exists('mb_convert_encoding')) {
+                $content = mb_convert_encoding($content, 'UTF-8', 'Windows-1251');
+            } elseif (function_exists('iconv')) {
+                $converted = @iconv('Windows-1251', 'UTF-8//IGNORE', $content);
+                if ($converted !== false) {
+                    $content = $converted;
+                }
+            }
+        }
+
+        return preg_replace(
+            '/(<\?xml[^>]*encoding=)["\'][^"\']+["\']/i',
+            '$1"UTF-8"',
+            $content,
+            1
+        ) ?? $content;
     }
 
     /**
