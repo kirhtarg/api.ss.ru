@@ -1092,7 +1092,17 @@ class ShopGoodVariationsController extends Controller
             'attribute_groups.*.values.*' => 'required|string|max:255',
             'sku_prefix' => 'nullable|string|max:255',
             'base_price' => 'nullable|numeric|min:0',
+            'base_sale_price' => 'nullable|numeric|min:0',
             'base_quantity' => 'nullable|integer|min:0',
+            'base_remote_stock' => 'nullable|string|max:255',
+            'base_fast_remote_stock' => 'nullable|string|max:255',
+            'variation_overrides' => 'nullable|array',
+            'variation_overrides.*.sku' => 'nullable|string|max:255',
+            'variation_overrides.*.price' => 'nullable|numeric|min:0',
+            'variation_overrides.*.sale_price' => 'nullable|numeric|min:0',
+            'variation_overrides.*.stock_quantity' => 'nullable|integer|min:0',
+            'variation_overrides.*.remote_stock_quantity' => 'nullable|string|max:255',
+            'variation_overrides.*.fast_remote_stock_quantity' => 'nullable|string|max:255',
         ]);
 
         if ($validator->fails()) {
@@ -1127,17 +1137,28 @@ class ShopGoodVariationsController extends Controller
             $nextSortOrder = (int) $good->variations()->max('sort_order') + 1;
             $skuPrefix = $request->get('sku_prefix');
             $basePrice = $request->get('base_price');
+            $baseSalePrice = $request->get('base_sale_price');
             $baseQty = (int) ($request->get('base_quantity', 0));
+            $baseRemoteStock = $request->get('base_remote_stock');
+            $baseFastRemoteStock = $request->get('base_fast_remote_stock');
+            $variationOverrides = $request->get('variation_overrides', []);
             $idx = 0;
 
             foreach ($combinations as $combo) {
                 $idx++;
+                $override = is_array($variationOverrides[$idx - 1] ?? null) ? $variationOverrides[$idx - 1] : [];
+                $defaultSkuPrefix = trim((string) ($skuPrefix ?: $good->sku ?: 'VAR'));
+                $defaultSku = $defaultSkuPrefix.'-'.$idx;
+                $overrideSku = trim((string) ($override['sku'] ?? ''));
+                $hasOverridePrice = array_key_exists('price', $override) && $override['price'] !== null && $override['price'] !== '';
+                $hasOverrideSalePrice = array_key_exists('sale_price', $override) && $override['sale_price'] !== '';
+                $hasOverrideQuantity = array_key_exists('stock_quantity', $override) && $override['stock_quantity'] !== null && $override['stock_quantity'] !== '';
                 $variation = ShopGoodVariation::create([
                     'good_id' => $goodId,
                     'name' => $good->name,
-                    'sku' => $skuPrefix ? ($skuPrefix.'-'.$idx) : $good->sku,
-                    'price' => $basePrice ?? $good->price,
-                    'sale_price' => null,
+                    'sku' => $overrideSku !== '' ? $overrideSku : $defaultSku,
+                    'price' => $hasOverridePrice ? $override['price'] : ($basePrice ?? $good->price),
+                    'sale_price' => $hasOverrideSalePrice ? ($override['sale_price'] === null ? null : $override['sale_price']) : $baseSalePrice,
                     'weight' => $good->weight,
                     'length' => $good->length,
                     'height' => $good->height,
@@ -1147,7 +1168,13 @@ class ShopGoodVariationsController extends Controller
                     'shipping_width' => $good->shipping_width,
                     'shipping_height' => $good->shipping_height,
                     'ships_separately' => $good->ships_separately,
-                    'stock_quantity' => $baseQty,
+                    'stock_quantity' => $hasOverrideQuantity ? (int) $override['stock_quantity'] : $baseQty,
+                    'remote_stock_quantity' => array_key_exists('remote_stock_quantity', $override)
+                        ? $this->normalizeBulkVariationStock($override['remote_stock_quantity'])
+                        : $this->normalizeBulkVariationStock($baseRemoteStock),
+                    'fast_remote_stock_quantity' => array_key_exists('fast_remote_stock_quantity', $override)
+                        ? $this->normalizeBulkVariationStock($override['fast_remote_stock_quantity'])
+                        : $this->normalizeBulkVariationStock($baseFastRemoteStock),
                     'is_active' => true,
                     'sort_order' => $nextSortOrder++,
                 ]);
@@ -1196,6 +1223,13 @@ class ShopGoodVariationsController extends Controller
                 'message' => 'РћС€РёР±РєР° СЃРѕР·РґР°РЅРёСЏ РІР°СЂРёР°С†РёР№: '.$e->getMessage(),
             ], 500);
         }
+    }
+
+    private function normalizeBulkVariationStock($value): ?string
+    {
+        $value = trim((string) $value);
+
+        return $value === '' ? null : $value;
     }
 
     /**

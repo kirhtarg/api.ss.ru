@@ -78,6 +78,36 @@ class ShopDellinSettingsController extends Controller
     }
 
     /**
+     * Identifies the active configured Dellin account without exposing its API
+     * credentials. Used in the order-creation confirmation dialog.
+     */
+    public function accountSummary(Request $request): JsonResponse
+    {
+        $accessCheck = $this->checkAccess($request);
+        if ($accessCheck) {
+            return $accessCheck;
+        }
+
+        $settings = ShopDellinSettings::getActive();
+        if (! $settings) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Активные настройки Деловых линий не найдены.',
+            ], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'login' => $settings->login,
+                'counteragent' => $settings->counteragent_data,
+                'counteragent_uid' => $settings->counteragent_uid,
+                'auth_type' => $settings->auth_type,
+            ],
+        ]);
+    }
+
+    /**
      * Создать или обновить настройки Деловых линий
      */
     public function store(Request $request): JsonResponse
@@ -93,6 +123,8 @@ class ShopDellinSettingsController extends Controller
             'pat' => 'nullable|string|max:255',
             'login' => 'nullable|string|max:255',
             'password' => 'nullable|string|max:255',
+            'counteragent_uid' => 'nullable|string|max:100',
+            'counteragent_data' => 'nullable|array',
             'sender_company' => 'nullable|string|max:255',
             'sender_name' => 'nullable|string|max:255',
             'sender_phone' => 'nullable|string|max:255',
@@ -158,6 +190,8 @@ class ShopDellinSettingsController extends Controller
             'pat' => 'nullable|string|max:255',
             'login' => 'nullable|string|max:255',
             'password' => 'nullable|string|max:255',
+            'counteragent_uid' => 'nullable|string|max:100',
+            'counteragent_data' => 'nullable|array',
             'sender_company' => 'nullable|string|max:255',
             'sender_name' => 'nullable|string|max:255',
             'sender_phone' => 'nullable|string|max:255',
@@ -262,6 +296,10 @@ class ShopDellinSettingsController extends Controller
             'pat' => 'nullable|string',
             'login' => 'nullable|string',
             'password' => 'nullable|string',
+            'settings_id' => 'nullable|integer',
+            'sender_company' => 'nullable|string|max:255',
+            'sender_name' => 'nullable|string|max:255',
+            'sender_phone' => 'nullable|string|max:255',
         ]);
 
         if ($validator->fails()) {
@@ -279,6 +317,15 @@ class ShopDellinSettingsController extends Controller
             $request->get('login'),
             $request->get('password')
         );
+        $counteragents = [];
+        $counteragentsError = null;
+        if ($validation['valid'] && ! empty($validation['session_id'])) {
+            try {
+                $counteragents = $this->fetchCounteragents($request->appkey, $validation['session_id']);
+            } catch (\Throwable $e) {
+                $counteragentsError = $e->getMessage();
+            }
+        }
 
         return response()->json([
             'success' => $validation['valid'],
@@ -289,8 +336,39 @@ class ShopDellinSettingsController extends Controller
                 'session_id' => $validation['session_id'] ?? null,
                 'session_expires_at' => ! empty($validation['session_id']) ? now()->addDays(30)->toDateTimeString() : null,
                 'raw' => $validation['raw'] ?? null,
+                'counteragents' => $counteragents,
+                'counteragents_error' => $counteragentsError,
             ],
         ]);
+    }
+
+    private function fetchCounteragents(string $appkey, string $sessionId): array
+    {
+        $response = Http::withOptions([
+            'verify' => $this->getDellinVerifyOption(),
+            'timeout' => 30,
+        ])->post('https://api.dellin.ru/v2/counteragents.json', [
+            'appkey' => $appkey,
+            'sessionID' => $sessionId,
+            'fullInfo' => true,
+        ]);
+        $data = $response->json() ?: [];
+        if (! $response->successful() || isset($data['errors'])) {
+            throw new \RuntimeException($this->extractDellinError($data, 'Деловые линии не вернули список контрагентов.'));
+        }
+
+        return array_values(array_map(static function (array $item): array {
+            return [
+                'uid' => $item['uid'] ?? null,
+                'name' => $item['name'] ?? null,
+                'inn' => $item['inn'] ?? null,
+                'is_current' => (bool) ($item['isCurrent'] ?? false),
+                'access_level' => $item['info']['accessLevel'] ?? null,
+                'manager_name' => $item['info']['managerName'] ?? null,
+                'manager_phone' => $item['info']['managerPhone'] ?? null,
+                'cash_on_delivery_available' => (bool) ($item['cashOnDeliveryAvailable'] ?? false),
+            ];
+        }, array_filter($data['data']['counteragents'] ?? [], 'is_array')));
     }
 
     /**

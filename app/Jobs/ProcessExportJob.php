@@ -2063,49 +2063,7 @@ class ProcessExportJob implements ShouldQueue
      */
     protected function parseProductName(string $name, string $brand, string $fieldType): string
     {
-        if (!$name || !$brand) {
-            return '';
-        }
-
-        // Находим позицию бренда в названии (регистронезависимо)
-        $brandIndex = stripos($name, $brand);
-
-        if ($fieldType === 'type') {
-            // Тип - это часть до бренда
-            if ($brandIndex === false) {
-                return '';
-            }
-
-            return trim(substr($name, 0, $brandIndex));
-        }
-
-        if ($fieldType === 'model' || $fieldType === 'year') {
-            // Модель и год - это часть после бренда
-            if ($brandIndex === false) {
-                return '';
-            }
-
-            $afterBrand = trim(substr($name, $brandIndex + strlen($brand)));
-            if (!$afterBrand) {
-                return '';
-            }
-
-            if ($fieldType === 'year') {
-                // Ищем год в оставшейся части
-                return $this->extractYearFromText($afterBrand);
-            }
-            else {
-                // Модель - все остальное после удаления года
-                $year = $this->extractYearFromText($afterBrand);
-                if ($year) {
-                    return trim(str_replace($year, '', $afterBrand));
-                }
-
-                return $afterBrand;
-            }
-        }
-
-        return '';
+        return app(\App\Services\ProductNameParser::class)->value($name, $brand, $fieldType);
     }
 
     /**
@@ -2113,18 +2071,7 @@ class ProcessExportJob implements ShouldQueue
      */
     protected function extractYearFromText(string $text): string
     {
-        if (!$text) {
-            return '';
-        }
-
-        // Ищем 4-значные числа в диапазоне лет
-        preg_match_all('/\b(20\d{2}|19\d{2})\b/', $text, $matches);
-
-        if (!empty($matches[0])) {
-            return $matches[0][0];
-        }
-
-        return '';
+        return app(\App\Services\ProductNameParser::class)->year($text);
     }
 
     /**

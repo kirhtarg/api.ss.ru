@@ -2065,6 +2065,10 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::get('/export/yml/yandex-market/stocks/settings', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getYandexMarketStockSettings']);
                     Route::post('/export/yml/yandex-market/stocks/settings', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'updateYandexMarketStockSettings']);
                     Route::post('/export/yml/yandex-market/stocks/sync', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'syncYandexMarketStocks']);
+                    Route::get('/export/yml/yandex-market/stocks/runs', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getYandexMarketStockRuns']);
+                    Route::post('/export/yml/yandex-market/stocks/verify', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'verifyYandexMarketStocks']);
+                    Route::get('/export/yml/yandex-market/stocks/runs/{run}', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getYandexMarketStockRun']);
+                    Route::get('/export/yml/yandex-market/audit', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'auditYandexMarketFeed']);
                     Route::post('/import/csv', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'importCsv']);
                     Route::get('/template', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getTemplate']);
                 });
@@ -2447,6 +2451,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::delete('/settings/{id}', [\App\Http\Controllers\Api\Admin\ShopDellinSettingsController::class, 'destroy']);
                 Route::post('/settings/{id}/activate', [\App\Http\Controllers\Api\Admin\ShopDellinSettingsController::class, 'activate']);
                 Route::post('/validate-key', [\App\Http\Controllers\Api\Admin\ShopDellinSettingsController::class, 'validateKey']);
+                Route::get('/settings/account-summary', [\App\Http\Controllers\Api\Admin\ShopDellinSettingsController::class, 'accountSummary']);
             });
 
             // Управление настройками Почты России
@@ -2458,6 +2463,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::delete('/settings/{id}', [\App\Http\Controllers\Api\Admin\ShopRussianPostSettingsController::class, 'destroy']);
                 Route::post('/settings/{id}/activate', [\App\Http\Controllers\Api\Admin\ShopRussianPostSettingsController::class, 'activate']);
                 Route::post('/validate-credentials', [\App\Http\Controllers\Api\Admin\ShopRussianPostSettingsController::class, 'validateCredentials']);
+                Route::post('/available-tariffs', [\App\Http\Controllers\Api\Admin\ShopRussianPostSettingsController::class, 'getAvailableTariffs']);
             });
 
             // Управление настройками DPD
@@ -2481,17 +2487,59 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('/settings', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'settings']);
                 Route::post('/settings', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'saveSettings']);
                 Route::post('/test-connection', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'testConnection']);
+                Route::get('/warehouses', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'warehouses']);
                 Route::get('/local-categories', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localCategories']);
+                Route::get('/local-tags', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localTags']);
+                Route::get('/variation-attributes', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'variationAttributes']);
+                Route::get('/variation-attributes/{attribute}/values', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localVariationValues']);
+                Route::post('/variation-attributes/{attribute}/values', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localVariationValues']);
+                Route::get('/local-properties', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localProperties']);
+                Route::get('/local-properties/{property}/values', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localPropertyValues']);
+                Route::post('/local-properties/{property}/values', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localPropertyValues']);
+                Route::post('/local-source-values', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'localSourceValues']);
                 Route::get('/categories', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'ozonCategories']);
                 Route::post('/attributes', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'attributes']);
                 Route::post('/attribute-values', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'attributeValues']);
+                Route::post('/attribute-values/resolve', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'resolveAttributeValues']);
                 Route::get('/mappings', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'mappings']);
                 Route::post('/mappings', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'saveMapping']);
                 Route::delete('/mappings/{mapping}', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'deleteMapping']);
                 Route::post('/preview', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'preview']);
                 Route::post('/sync', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'startSync']);
+                Route::get('/products', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'products']);
+                Route::post('/products/refresh', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'refreshProducts']);
+                Route::post('/products/archive', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'archiveProducts']);
+                Route::post('/products/{binding}/zero-stock', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'zeroBindingStock']);
                 Route::get('/runs', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'runs']);
                 Route::get('/runs/{run}', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'run']);
+            });
+
+            Route::prefix('yandex-market-seller')->group(function () {
+                Route::get('/settings', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'settings']);
+                Route::post('/settings', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'saveSettings']);
+                Route::post('/test-connection', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'testConnection']);
+                Route::get('/campaigns', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'campaigns']);
+                Route::get('/local-categories', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'localCategories']);
+                Route::get('/local-tags', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'localTags']);
+                Route::get('/local-sources', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'localSources']);
+                Route::post('/local-source-values', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'localSourceValues']);
+                Route::get('/categories', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'categories']);
+                Route::post('/parameters', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'parameters']);
+                Route::get('/mappings', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'mappings']);
+                Route::post('/mappings', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'saveMapping']);
+                Route::delete('/mappings/{mapping}', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'deleteMapping']);
+                Route::post('/preview', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'preview']);
+                Route::post('/sync', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'startSync']);
+                Route::get('/products', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'products']);
+                Route::post('/products/refresh', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'refreshProducts']);
+                Route::post('/products/readback', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'readBackProducts']);
+                Route::post('/products/delete', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'deleteProducts']);
+                Route::post('/products/hide', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'hideProducts']);
+                Route::post('/products/purge-catalog', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'purgeCatalog']);
+                Route::get('/runs', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'runs']);
+                Route::delete('/runs', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'clearRuns']);
+                Route::get('/runs/{run}', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'run']);
+                Route::post('/runs/{run}/cancel', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'cancelRun']);
             });
         });
 

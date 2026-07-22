@@ -773,10 +773,21 @@ class AvitoFeedService
             }
         }
 
-        // 3. Артикул
-        if ($good->sku) {
-            // Добавляем пустую строку ПОСЛЕ артикула (т.е. два <br>)
-            $result .= "<strong>Артикул:</strong> {$good->sku}<br><br>";
+        // 3. Артикул. У товаров с вариациями SKU часто хранится только у вариаций.
+        $skus = collect();
+        if ($good->relationLoaded('variations') && $good->variations->isNotEmpty()) {
+            $skus = $good->variations
+                ->pluck('sku')
+                ->filter(fn ($sku) => filled($sku))
+                ->map(fn ($sku) => trim((string) $sku));
+        }
+        if ($skus->isEmpty() && filled($good->sku)) {
+            $skus->push(trim((string) $good->sku));
+        }
+        $skuLabel = $skus->unique()->values()->implode(', ');
+        if ($skuLabel !== '') {
+            // Добавляем пустую строку после артикула (два <br>).
+            $result .= '<strong>Артикул:</strong> '.htmlspecialchars($skuLabel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'<br><br>';
         }
         
         // 4. Основное описание

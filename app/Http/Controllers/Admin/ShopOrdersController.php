@@ -2560,6 +2560,13 @@ class ShopOrdersController extends Controller
                 return response()->json(['success' => false, 'message' => 'Активные настройки Деловых линий не заполнены'], 400);
             }
 
+            if (! $settings->counteragent_uid) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'В настройках Деловых линий не выбран контрагент. Проверьте ключ, выберите контрагента и сохраните настройки.',
+                ], 422);
+            }
+
             if ($order->dellin_order_id) {
                 return response()->json(['success' => true, 'message' => 'Заявка Деловых линий уже создана', 'data' => ['dellin_order_id' => $order->dellin_order_id]]);
             }
@@ -2568,6 +2575,12 @@ class ShopOrdersController extends Controller
             $deliveryType = $metadata['dellin_delivery_type'] ?? null;
             $terminalId = $metadata['dellin_terminal_id'] ?? null;
             $deliveryAddress = $metadata['dellin_delivery_address'] ?? $order->shipping_address;
+
+            // Старые заказы создавались до сохранения типа доставки ДЛ в metadata.
+            // Для них безопасно восстанавливаем доставку до адреса, только если адрес уже есть в заказе.
+            if (! $deliveryType && filled($deliveryAddress)) {
+                $deliveryType = 'address';
+            }
 
             if (! $deliveryType || ($deliveryType === 'terminal' && ! $terminalId) || ($deliveryType === 'address' && ! $deliveryAddress)) {
                 return response()->json([
@@ -2751,6 +2764,7 @@ class ShopOrdersController extends Controller
             }
 
             $packages = app(DeliveryPackageService::class)->fromOrder($order, $settings);
+            $packages = $this->withRussianPostPackageValues($order, $settings, $packages);
             $payload = array_map(
                 fn (array $package) => $this->buildRussianPostOrderPayload($order, $settings, $postalCode, $package),
                 $packages
@@ -3800,9 +3814,14 @@ XML;
             ],
         ];
 
-        if ($settings->auth_type !== 'appkey') {
+        if ($settings->auth_type !== 'appkey' || $settings->counteragent_uid) {
             $sessionId = $this->getDellinSessionId($settings);
+            if ($settings->counteragent_uid && ! $sessionId) {
+                throw new \RuntimeException('Для выбранного контрагента ДЛ нужна авторизация через PAT или логин и пароль. Проверьте настройки доставки.');
+            }
+
             if ($sessionId) {
+                $this->activateDellinCounteragent($settings, $sessionId);
                 $payload['sessionID'] = $sessionId;
             }
         }
@@ -3896,6 +3915,8 @@ XML;
         $postOfficeCode = $this->resolveRussianPostSenderPostOfficeCode($order, $settings);
         $mailDirect = $this->resolveRussianPostMailDirect($order);
         $address = $this->resolveRussianPostRecipientAddress($order);
+        $metadata = is_array($order->metadata) ? $order->metadata : [];
+        $isCourierDelivery = ($metadata['russianpost_delivery_type'] ?? '') === 'address';
 
         return array_filter([
             'address-type-to' => 'DEFAULT',
@@ -3912,8 +3933,10 @@ XML;
             'house-to' => $address['house'] ?? null,
             'slash-to' => $address['slash'] ?? null,
             'room-to' => $address['room'] ?? null,
-            'mail-category' => 'ORDINARY',
-            'mail-type' => 'ONLINE_PARCEL',
+            'mail-category' => ! empty($package['cash_on_delivery_amount'])
+                ? 'WITH_DECLARED_VALUE_AND_CASH_ON_DELIVERY'
+                : (! empty($package['declared_value']) ? 'WITH_DECLARED_VALUE' : 'ORDINARY'),
+            'mail-type' => $isCourierDelivery ? 'ONLINE_COURIER' : 'ONLINE_PARCEL',
             'mass' => (int) max(1, round($package['weight'] * 1000)),
             'order-num' => $order->order_number.'-'.($package['number'] ?? 1),
             'tel-address' => preg_replace('/\D+/', '', (string) $order->customer_phone),
@@ -3923,9 +3946,77 @@ XML;
                 'height' => (int) max(1, ceil($package['height'])),
             ],
             'fragile' => false,
+            'courier' => $isCourierDelivery,
             'completeness-checking' => false,
             'sms-notice-recipient' => 0,
+            // Объявленная ценность передаётся в рублях, наложенный платёж — в копейках.
+            'declared-value' => ! empty($package['declared_value'])
+                ? (int) max(1, round((float) $package['declared_value']))
+                : null,
+            'payment' => ! empty($package['cash_on_delivery_amount'])
+                ? (int) max(1, round((float) $package['cash_on_delivery_amount'] * 100))
+                : null,
+            'payment-method' => ! empty($package['cash_on_delivery_amount']) ? 'CASHLESS' : null,
         ], fn ($value) => $value !== null && $value !== '');
+    }
+
+    private function withRussianPostPackageValues(ShopOrder $order, ShopRussianPostSettings $settings, array $packages): array
+    {
+        $items = is_array($order->items) ? $order->items : [];
+        $unitValues = [];
+        foreach ($items as $itemIndex => $item) {
+            $quantity = max(1, (int) ($item['quantity'] ?? 1));
+            $lineTotal = is_numeric($item['total'] ?? null)
+                ? (float) $item['total']
+                : (float) ($item['price'] ?? $item['final_price'] ?? 0) * $quantity;
+            $unitValues[$itemIndex] = max(0, $lineTotal / $quantity);
+        }
+
+        $totalDeclaredValue = 0.0;
+        foreach ($packages as &$package) {
+            $declaredValue = 0.0;
+            foreach ((array) ($package['items'] ?? []) as $packageItem) {
+                $itemIndex = $packageItem['item_index'] ?? null;
+                if ($itemIndex !== null && array_key_exists($itemIndex, $unitValues)) {
+                    $declaredValue += $unitValues[$itemIndex] * max(1, (int) ($packageItem['quantity'] ?? 1));
+                }
+            }
+            $package['declared_value'] = round($declaredValue, 2);
+            $totalDeclaredValue += $package['declared_value'];
+        }
+        unset($package);
+
+        if (! $this->isRussianPostCashOnDelivery($order, $settings) || $totalDeclaredValue <= 0) {
+            return $packages;
+        }
+
+        $remainingPayment = round(max(0, (float) $order->total_amount), 2);
+        $lastIndex = array_key_last($packages);
+        foreach ($packages as $index => &$package) {
+            $payment = $index === $lastIndex
+                ? $remainingPayment
+                : round($remainingPayment * ((float) $package['declared_value'] / $totalDeclaredValue), 2);
+            $package['cash_on_delivery_amount'] = $payment;
+            $remainingPayment = round($remainingPayment - $payment, 2);
+        }
+        unset($package);
+
+        return $packages;
+    }
+
+    private function isRussianPostCashOnDelivery(ShopOrder $order, ShopRussianPostSettings $settings): bool
+    {
+        if (! $settings->cash_on_delivery_enabled || $order->payed) {
+            return false;
+        }
+
+        $paymentMethod = $order->paymentMethod;
+        $type = mb_strtolower((string) ($paymentMethod?->type ?? ''));
+        $name = mb_strtolower((string) ($paymentMethod?->name ?? $order->payment_method ?? ''));
+
+        return $type === 'cash'
+            || str_contains($name, 'при получении')
+            || str_contains($name, 'налож');
     }
 
     private function russianPostResponseHasErrors($data): bool
@@ -4503,6 +4594,36 @@ XML;
         }
 
         return $sessionId;
+    }
+
+    /**
+     * Контрагент в ДЛ выбирается для сессии, а не передается в заявке.
+     * Активируем сохраненный UID непосредственно перед запросом к API.
+     */
+    private function activateDellinCounteragent(ShopDellinSettings $settings, string $sessionId): void
+    {
+        $counteragentUid = trim((string) $settings->counteragent_uid);
+        if ($counteragentUid === '') {
+            return;
+        }
+
+        $response = Http::withOptions([
+            'verify' => $this->getDellinVerifyOption(),
+            'timeout' => 30,
+        ])->post('https://api.dellin.ru/v2/counteragents.json', [
+            'appkey' => $settings->appkey,
+            'sessionID' => $sessionId,
+            'cauid' => $counteragentUid,
+            'fullInfo' => false,
+        ]);
+        $data = $response->json() ?: [];
+
+        if (! $response->successful() || isset($data['errors'])) {
+            throw new \RuntimeException($this->extractExternalDeliveryError(
+                $data,
+                'Не удалось активировать выбранного контрагента Деловых линий.'
+            ));
+        }
     }
 
     private function extractDellinLastStatusItem($history): array

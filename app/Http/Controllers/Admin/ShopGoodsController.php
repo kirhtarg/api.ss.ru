@@ -140,7 +140,7 @@ class ShopGoodsController extends Controller
         // Фильтр по названию (точное вхождение текста)
         if ($request->filled('name_search')) {
             $nameSearch = $request->get('name_search');
-            $query->whereRaw('LOWER(name) LIKE ?', ['%'.mb_strtolower($nameSearch).'%']);
+            $query->whereRaw('LOWER(shop_goods.name) LIKE ?', ['%'.mb_strtolower($nameSearch).'%']);
         }
 
         // Фильтр по артикулу (точное вхождение текста) - обновленная логика с учетом вариаций
@@ -3983,7 +3983,7 @@ class ShopGoodsController extends Controller
         // Фильтр по названию (точное вхождение текста)
         if ($request->filled('name_search')) {
             $nameSearch = $request->get('name_search');
-            $query->whereRaw('LOWER(name) LIKE ?', ['%'.mb_strtolower($nameSearch).'%']);
+            $query->whereRaw('LOWER(shop_goods.name) LIKE ?', ['%'.mb_strtolower($nameSearch).'%']);
         }
 
         // Фильтр по артикулу (точное вхождение текста)
