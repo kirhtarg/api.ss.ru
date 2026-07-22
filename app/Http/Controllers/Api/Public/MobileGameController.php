@@ -36,7 +36,10 @@ class MobileGameController extends Controller
         $game = MobileGame::available()->where('slug', $slug)->firstOrFail();
         $session = $this->games->start($game, $request->user(), $data['idempotency_key']);
 
-        return response()->json(['success' => true, 'data' => ['session_id' => $session->public_id, 'seed' => $session->seed, 'settings' => $session->config_snapshot, 'entry_cost' => $session->entry_cost, 'used_free_attempt' => $session->used_free_attempt, 'products' => $this->games->products($game, $session->seed)]]);
+        // Keep a daily board layout when configured, but vary its products for every attempt.
+        $productSeed = $session->seed.'|products|'.$session->public_id;
+
+        return response()->json(['success' => true, 'data' => ['session_id' => $session->public_id, 'seed' => $session->seed, 'settings' => $session->config_snapshot, 'entry_cost' => $session->entry_cost, 'used_free_attempt' => $session->used_free_attempt, 'products' => $this->games->products($game, $productSeed)]]);
     }
 
     public function finish(Request $request, string $publicId)

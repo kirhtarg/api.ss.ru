@@ -1291,6 +1291,14 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/check-multiple', [\App\Http\Controllers\Api\Public\ComparisonController::class, 'checkMultiple']);
     });
 
+    // История просмотренных товаров мобильного приложения.
+    Route::prefix('shop/viewed')->group(function () {
+        Route::get('/', [\App\Http\Controllers\Api\Public\ViewedGoodsController::class, 'index']);
+        Route::post('/', [\App\Http\Controllers\Api\Public\ViewedGoodsController::class, 'store']);
+        Route::delete('/{goodId}', [\App\Http\Controllers\Api\Public\ViewedGoodsController::class, 'destroy']);
+        Route::delete('/', [\App\Http\Controllers\Api\Public\ViewedGoodsController::class, 'clear']);
+    });
+
     // Загрузка изображений для rich editor (требует аутентификации)
     Route::middleware(['auth:sanctum', 'role:admin,manager,site'])->group(function () {
         Route::post('/admin/upload/good-text-image', [\App\Http\Controllers\Admin\UploadController::class, 'uploadGoodTextImage']);
