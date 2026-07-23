@@ -1587,6 +1587,8 @@ Route::middleware('auth:sanctum')->group(function () {
         }
     });
 
+Route::get('/admin/database-backups/download/{token}', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'downloadByToken']);
+
     // Маршруты для администраторов и менеджеров
     Route::middleware(['auth:sanctum', 'role:admin,manager,site'])->prefix('admin')->group(function () {
         // Site info for admin
@@ -1626,6 +1628,9 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/logs', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'logs']);
             Route::get('/task/current', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'currentTask']);
             Route::get('/task/{taskId}', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'taskStatus']);
+            Route::get('/restore-task/current', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'currentRestoreTask']);
+            Route::get('/restore-task/{taskId}', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'restoreTaskStatus']);
+            Route::post('/{filename}/download-token', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'createDownloadToken']);
             Route::get('/{filename}/download', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'download']);
             Route::post('/{filename}/restore', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'restore']);
             Route::delete('/{filename}', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'destroy']);

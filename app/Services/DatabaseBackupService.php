@@ -16,6 +16,8 @@ class DatabaseBackupService
 {
     private const DISK = 'local';
     private const DIRECTORY = 'backups/database';
+    private const TASK_DIRECTORY = 'backups/database/tasks';
+    private const DOWNLOAD_TOKEN_PREFIX = 'database_backup_download_token:';
 
     public function listBackups(): array
     {
@@ -67,6 +69,11 @@ class DatabaseBackupService
 
     public function createQueuedBackup(?string $name = null, ?string $comment = null, ?int $userId = null): array
     {
+        $activeRestore = $this->currentRestoreTask();
+        if ($activeRestore && in_array($activeRestore['status'] ?? null, ['queued', 'running'], true)) {
+            throw new RuntimeException('Сейчас выполняется восстановление базы. Дождитесь завершения перед созданием нового бэкапа.');
+        }
+
         $active = $this->currentTask();
         if ($active && in_array($active['status'] ?? null, ['queued', 'running'], true)) {
             return $active;
@@ -92,6 +99,123 @@ class DatabaseBackupService
         \App\Jobs\CreateDatabaseBackupJob::dispatch($taskId, $name, $comment, $userId);
 
         return $task;
+    }
+
+    public function createQueuedRestore(string $filename, ?int $userId = null): array
+    {
+        $filename = $this->sanitizeFilename($filename);
+        $this->absolutePath($filename);
+
+        $active = $this->currentRestoreTask();
+        if ($active && in_array($active['status'] ?? null, ['queued', 'running'], true)) {
+            throw new RuntimeException('Восстановление базы уже выполняется. Дождитесь завершения текущего процесса.');
+        }
+
+        $activeBackup = $this->currentTask();
+        if ($activeBackup && in_array($activeBackup['status'] ?? null, ['queued', 'running'], true)) {
+            throw new RuntimeException('Сейчас создается бэкап. Дождитесь завершения перед восстановлением.');
+        }
+
+        $taskId = (string) Str::uuid();
+        $task = [
+            'id' => $taskId,
+            'type' => 'restore',
+            'status' => 'queued',
+            'progress' => 1,
+            'stage' => 'В очереди',
+            'filename' => $filename,
+            'safety_backup_filename' => null,
+            'message' => 'Восстановление поставлено в очередь',
+            'user_id' => $userId,
+            'created_at' => date('Y-m-d H:i:s'),
+            'updated_at' => date('Y-m-d H:i:s'),
+        ];
+
+        $this->putRestoreTaskStatus($taskId, $task);
+        Storage::disk(self::DISK)->put(self::TASK_DIRECTORY.'/current_restore_task.txt', $taskId);
+        \App\Jobs\RestoreDatabaseBackupJob::dispatch($taskId, $filename, $userId);
+
+        return $task;
+    }
+
+    public function currentRestoreTask(): ?array
+    {
+        $path = self::TASK_DIRECTORY.'/current_restore_task.txt';
+        if (! Storage::disk(self::DISK)->exists($path)) {
+            return null;
+        }
+
+        $taskId = trim(Storage::disk(self::DISK)->get($path));
+        return $taskId !== '' ? $this->restoreTaskStatus($taskId) : null;
+    }
+
+    public function restoreTaskStatus(string $taskId): ?array
+    {
+        $taskId = $this->sanitizeTaskId($taskId);
+        $path = self::TASK_DIRECTORY.'/'.$taskId.'.json';
+
+        if (! Storage::disk(self::DISK)->exists($path)) {
+            return null;
+        }
+
+        $decoded = json_decode(Storage::disk(self::DISK)->get($path), true);
+        return is_array($decoded) ? $decoded : null;
+    }
+
+    public function putRestoreTaskStatus(string $taskId, array $data): void
+    {
+        $taskId = $this->sanitizeTaskId($taskId);
+        Storage::disk(self::DISK)->makeDirectory(self::TASK_DIRECTORY);
+
+        $current = $this->restoreTaskStatus($taskId) ?? [];
+        $status = array_merge($current, $data, [
+            'id' => $taskId,
+            'type' => 'restore',
+            'updated_at' => date('Y-m-d H:i:s'),
+        ]);
+
+        Storage::disk(self::DISK)->put(
+            self::TASK_DIRECTORY.'/'.$taskId.'.json',
+            json_encode($status, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT)
+        );
+
+        if (in_array($status['status'] ?? null, ['queued', 'running'], true)) {
+            Storage::disk(self::DISK)->put(self::TASK_DIRECTORY.'/current_restore_task.txt', $taskId);
+        }
+    }
+
+    public function createDownloadToken(string $filename, ?int $userId = null): array
+    {
+        $filename = $this->sanitizeFilename($filename);
+        $this->absolutePath($filename);
+
+        $token = Str::random(64);
+        Cache::put(self::DOWNLOAD_TOKEN_PREFIX.$token, [
+            'filename' => $filename,
+            'user_id' => $userId,
+            'created_at' => date('Y-m-d H:i:s'),
+        ], now()->addMinutes(5));
+
+        return [
+            'token' => $token,
+            'expires_in' => 300,
+        ];
+    }
+
+    public function consumeDownloadToken(string $token): string
+    {
+        if (! preg_match('/^[A-Za-z0-9]{40,100}$/', $token)) {
+            throw new RuntimeException('Некорректный токен скачивания');
+        }
+
+        $cacheKey = self::DOWNLOAD_TOKEN_PREFIX.$token;
+        $payload = Cache::pull($cacheKey);
+
+        if (! is_array($payload) || empty($payload['filename'])) {
+            throw new RuntimeException('Ссылка скачивания устарела. Создайте новую ссылку.');
+        }
+
+        return $this->absolutePath((string) $payload['filename']);
     }
 
     public function currentTask(): ?array
@@ -271,6 +395,66 @@ class DatabaseBackupService
         return $deleted;
     }
 
+    public function restoreWithSafetyBackup(string $filename, string $taskId, ?int $userId = null): void
+    {
+        $filename = $this->sanitizeFilename($filename);
+        $this->putRestoreTaskStatus((string) $taskId, [
+            'status' => 'running',
+            'progress' => 5,
+            'stage' => 'Проверка файла',
+            'filename' => $filename,
+            'message' => 'Проверяем выбранный дамп перед восстановлением',
+        ]);
+
+        $absolutePath = $this->absolutePath($filename);
+        $this->validateBackupFile($absolutePath);
+
+        $this->putRestoreTaskStatus((string) $taskId, [
+            'status' => 'running',
+            'progress' => 12,
+            'stage' => 'Страховочный бэкап',
+            'message' => 'Создаем копию текущей базы перед восстановлением',
+        ]);
+
+        $safetyBackup = $this->createBackup(
+            'Страховочный бэкап перед восстановлением '.date('d.m.Y H:i'),
+            'Автоматически создан перед восстановлением из '.$filename,
+            $userId
+        );
+
+        $this->logAction('pre_restore_backup', $safetyBackup['filename'] ?? null, $userId, [
+            'restore_task_id' => $taskId,
+            'restore_filename' => $filename,
+            'size' => $safetyBackup['size'] ?? null,
+        ]);
+
+        $this->putRestoreTaskStatus((string) $taskId, [
+            'status' => 'running',
+            'progress' => 35,
+            'stage' => 'Импорт дампа',
+            'safety_backup_filename' => $safetyBackup['filename'] ?? null,
+            'message' => 'Страховочный бэкап создан, начинаем восстановление базы',
+        ]);
+
+        $this->restore($filename);
+
+        $this->putRestoreTaskStatus((string) $taskId, [
+            'status' => 'running',
+            'progress' => 95,
+            'stage' => 'Финальная проверка',
+            'message' => 'Проверяем доступность базы после восстановления',
+        ]);
+
+        DB::select('SELECT 1');
+
+        $this->putRestoreTaskStatus((string) $taskId, [
+            'status' => 'completed',
+            'progress' => 100,
+            'stage' => 'Готово',
+            'message' => 'База восстановлена из выбранного бэкапа',
+        ]);
+    }
+
     public function restore(string $filename): void
     {
         $filename = $this->sanitizeFilename($filename);
@@ -293,6 +477,16 @@ class DatabaseBackupService
 
     public function delete(string $filename): void
     {
+        $activeRestore = $this->currentRestoreTask();
+        if ($activeRestore && in_array($activeRestore['status'] ?? null, ['queued', 'running'], true)) {
+            throw new RuntimeException('Нельзя удалять бэкапы во время восстановления базы.');
+        }
+
+        $activeBackup = $this->currentTask();
+        if ($activeBackup && in_array($activeBackup['status'] ?? null, ['queued', 'running'], true)) {
+            throw new RuntimeException('Нельзя удалять бэкапы во время создания нового дампа.');
+        }
+
         $filename = $this->sanitizeFilename($filename);
         Storage::disk(self::DISK)->delete(self::DIRECTORY.'/'.$filename);
         Storage::disk(self::DISK)->delete(self::DIRECTORY.'/'.$filename.'.json');
@@ -356,6 +550,7 @@ class DatabaseBackupService
             'uses_native_dump' => (bool) $dumpBinary,
             'fallback_mode' => in_array($driver, ['mysql', 'mariadb'], true) && ! $dumpBinary ? 'php_pdo' : null,
             'current_task' => $this->currentTask(),
+            'current_restore_task' => $this->currentRestoreTask(),
         ];
     }
 
@@ -458,9 +653,11 @@ class DatabaseBackupService
 
     private function restoreMysql(string $absolutePath, array $config): void
     {
+        $this->updateCurrentRestoreTask(40, 'Подготовка SQL-файла');
         $binary = $this->findBinary(env('DB_BACKUP_MYSQL_PATH'), 'mysql', 'DB_BACKUP_MYSQL_PATH');
         $restorePath = $this->gunzipToTemporarySqlIfNeeded($absolutePath);
         if (! $binary) {
+            $this->updateCurrentRestoreTask(55, 'Импорт через PHP/PDO');
             $this->restoreSqlWithPdo($restorePath);
             if ($restorePath !== $absolutePath) {
                 File::delete($restorePath);
@@ -481,6 +678,7 @@ class DatabaseBackupService
         ];
 
         try {
+            $this->updateCurrentRestoreTask(55, 'Импорт через mysql client');
             $this->runProcess($command, ['MYSQL_PWD' => (string) $config['password']], 1800);
         } finally {
             if ($restorePath !== $absolutePath) {
@@ -505,6 +703,7 @@ class DatabaseBackupService
         ];
 
         try {
+            $this->updateCurrentRestoreTask(55, 'Импорт через psql');
             $this->runProcess($command, ['PGPASSWORD' => (string) $config['password']], 1800);
             $this->updateCurrentRunningTask(75, 'Сжатие дампа');
             $this->gzipFile($sqlPath, $absolutePath);
@@ -515,6 +714,7 @@ class DatabaseBackupService
 
     private function restorePostgres(string $absolutePath, array $config): void
     {
+        $this->updateCurrentRestoreTask(40, 'Подготовка SQL-файла');
         $restorePath = $this->gunzipToTemporarySqlIfNeeded($absolutePath);
         $binary = $this->resolveBinary(env('DB_BACKUP_PSQL_PATH'), 'psql', 'DB_BACKUP_PSQL_PATH');
         $command = [
@@ -584,6 +784,28 @@ class DatabaseBackupService
 
         fwrite($handle, "SET FOREIGN_KEY_CHECKS=1;\n");
         fclose($handle);
+    }
+
+    private function updateCurrentRestoreTask(int $progress, string $stage): void
+    {
+        $path = self::TASK_DIRECTORY.'/current_restore_task.txt';
+        if (! Storage::disk(self::DISK)->exists($path)) {
+            return;
+        }
+
+        $taskId = trim(Storage::disk(self::DISK)->get($path));
+        if ($taskId === '') {
+            return;
+        }
+
+        $task = $this->restoreTaskStatus($taskId);
+        if (($task['status'] ?? null) === 'running') {
+            $this->putRestoreTaskStatus($taskId, [
+                'status' => 'running',
+                'progress' => max(0, min(100, $progress)),
+                'stage' => $stage,
+            ]);
+        }
     }
 
     private function updateCurrentRunningTask(int $progress, string $stage): void
@@ -862,6 +1084,7 @@ class DatabaseBackupService
 
     private function gunzipToTemporarySqlIfNeeded(string $absolutePath): string
     {
+        $this->updateCurrentRestoreTask(42, 'Распаковка дампа');
         if (! Str::endsWith($absolutePath, '.gz')) {
             return $absolutePath;
         }
@@ -972,6 +1195,15 @@ class DatabaseBackupService
             self::DIRECTORY.'/'.$this->sanitizeFilename($filename).'.json',
             json_encode($metadata, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT)
         );
+    }
+
+    private function sanitizeTaskId(string $taskId): string
+    {
+        if (! preg_match('/^[a-f0-9-]{36}$/i', $taskId)) {
+            throw new RuntimeException('Некорректный идентификатор задачи');
+        }
+
+        return $taskId;
     }
 
     private function sanitizeFilename(string $filename): string
