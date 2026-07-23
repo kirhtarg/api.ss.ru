@@ -13,6 +13,14 @@ use Illuminate\Support\Facades\Route;
 
 // CORS уже настроен в OPTIONS обработчике выше
 
+// Статус технического обслуживания без чтения БД.
+Route::get('/public/maintenance-status', function (\App\Services\DatabaseRestoreMaintenanceService $maintenance) {
+    return response()->json([
+        'success' => true,
+        'data' => $maintenance->status(),
+    ]);
+});
+
 // Вебхук Т‑Банк (e‑acq и Долями)
 Route::post('/webhooks/tbank', [\App\Http\Controllers\Api\Public\ShopPaymentController::class, 'tbankWebhook']);
 
@@ -1628,6 +1636,8 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/schedule', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'schedule']);
             Route::post('/schedule', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'updateSchedule']);
             Route::get('/logs', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'logs']);
+            Route::get('/maintenance', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'maintenanceStatus']);
+            Route::delete('/maintenance', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'clearMaintenance']);
             Route::get('/task/current', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'currentTask']);
             Route::get('/task/{taskId}', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'taskStatus']);
             Route::get('/restore-task/current', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'currentRestoreTask']);

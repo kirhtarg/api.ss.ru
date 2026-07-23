@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use App\Services\DatabaseRestoreMaintenanceService;
 use PDO;
 use RuntimeException;
 use Symfony\Component\Process\Process;
@@ -479,8 +480,22 @@ class DatabaseBackupService
         $this->putRestoreTaskStatus((string) $taskId, [
             'status' => 'running',
             'progress' => 35,
-            'stage' => 'Импорт дампа',
+            'stage' => 'Блокировка публичного сайта',
             'safety_backup_filename' => $safetyBackup['filename'] ?? null,
+            'message' => 'Закрываем публичный сайт на время восстановления',
+        ]);
+
+        app(DatabaseRestoreMaintenanceService::class)->activate(
+            $taskId,
+            $filename,
+            $restoreSelection['mode'],
+            count($restoreSelection['tables'])
+        );
+
+        $this->putRestoreTaskStatus((string) $taskId, [
+            'status' => 'running',
+            'progress' => 38,
+            'stage' => 'Импорт дампа',
             'message' => $restoreSelection['mode'] === 'full' ? 'Страховочный бэкап создан, начинаем восстановление базы' : 'Страховочный бэкап создан, начинаем выборочное восстановление таблиц',
         ]);
 
@@ -494,6 +509,8 @@ class DatabaseBackupService
         ]);
 
         DB::select('SELECT 1');
+
+        app(DatabaseRestoreMaintenanceService::class)->deactivate();
 
         $this->putRestoreTaskStatus((string) $taskId, [
             'status' => 'completed',

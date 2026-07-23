@@ -24,7 +24,28 @@ class DatabaseBackupController extends Controller
                 'logs' => $this->backupService->listActionLogs(),
                 'environment' => $this->backupService->environmentStatus(),
                 'restore_task' => $this->backupService->currentRestoreTask(),
+                'maintenance' => app(\App\Services\DatabaseRestoreMaintenanceService::class)->status(),
             ],
+        ]);
+    }
+
+    public function maintenanceStatus(\App\Services\DatabaseRestoreMaintenanceService $maintenance): JsonResponse
+    {
+        return response()->json([
+            'success' => true,
+            'data' => $maintenance->status(),
+        ]);
+    }
+
+    public function clearMaintenance(\App\Services\DatabaseRestoreMaintenanceService $maintenance): JsonResponse
+    {
+        $maintenance->deactivate();
+        $this->backupService->logAction('clear_restore_maintenance', null, request()->user()?->id);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Блокировка публичного сайта снята',
+            'data' => $maintenance->status(),
         ]);
     }
 
