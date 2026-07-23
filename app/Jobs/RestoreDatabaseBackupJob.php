@@ -18,7 +18,8 @@ class RestoreDatabaseBackupJob implements ShouldQueue
     public function __construct(
         public string $taskId,
         public string $filename,
-        public ?int $userId = null
+        public ?int $userId = null,
+        public array $options = []
     ) {
     }
 
@@ -28,7 +29,7 @@ class RestoreDatabaseBackupJob implements ShouldQueue
         ini_set('max_execution_time', '7200');
 
         try {
-            $backupService->restoreWithSafetyBackup($this->filename, $this->taskId, $this->userId);
+            $backupService->restoreWithSafetyBackup($this->filename, $this->taskId, $this->userId, $this->options);
             $backupService->logAction('restore', $this->filename, $this->userId, [
                 'task_id' => $this->taskId,
             ]);

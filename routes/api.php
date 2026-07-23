@@ -48,6 +48,10 @@ Route::post('/test-simple-upload', function (Request $request) {
 // Тестовый маршрут для непривязанных поставщиков (без аутентификации)
 // Route::get('/test-unlinked-suppliers', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getUnlinkedSuppliers']);
 
+// Скачивание дампов БД по одноразовому токену. Нельзя помещать в auth:sanctum,
+// потому что браузер открывает ссылку напрямую без Authorization header.
+Route::get('/admin/database-backups/download/{token}', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'downloadByToken']);
+
 // Скачивание экспорт файлов (с middleware для аутентификации через token)
 Route::get('/admin/export-files/{exportFile}/download', [\App\Http\Controllers\Admin\ExportFilesController::class, 'download'])
     ->middleware(['download.token']);
@@ -1587,8 +1591,6 @@ Route::middleware('auth:sanctum')->group(function () {
         }
     });
 
-Route::get('/admin/database-backups/download/{token}', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'downloadByToken']);
-
     // Маршруты для администраторов и менеджеров
     Route::middleware(['auth:sanctum', 'role:admin,manager,site'])->prefix('admin')->group(function () {
         // Site info for admin
@@ -1630,6 +1632,7 @@ Route::get('/admin/database-backups/download/{token}', [\App\Http\Controllers\Ad
             Route::get('/task/{taskId}', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'taskStatus']);
             Route::get('/restore-task/current', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'currentRestoreTask']);
             Route::get('/restore-task/{taskId}', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'restoreTaskStatus']);
+            Route::get('/{filename}/manifest', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'manifest']);
             Route::post('/{filename}/download-token', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'createDownloadToken']);
             Route::get('/{filename}/download', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'download']);
             Route::post('/{filename}/restore', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'restore']);

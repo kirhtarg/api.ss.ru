@@ -53,6 +53,35 @@ class DatabaseBackupService
         return $backups;
     }
 
+    public function backupManifest(string $filename): array
+    {
+        $filename = $this->sanitizeFilename($filename);
+        $relativePath = self::DIRECTORY.'/'.$filename;
+
+        if (! Storage::disk(self::DISK)->exists($relativePath)) {
+            throw new RuntimeException('Файл бэкапа не найден');
+        }
+
+        $metadata = $this->readMetadata($filename);
+        $tables = is_array($metadata['tables'] ?? null) ? $metadata['tables'] : [];
+        $groups = is_array($metadata['table_groups'] ?? null) ? $metadata['table_groups'] : $this->summarizeTableGroups($tables);
+
+        return array_merge([
+            'filename' => $filename,
+            'name' => $metadata['name'] ?? $filename,
+            'comment' => $metadata['comment'] ?? '',
+            'driver' => $metadata['driver'] ?? $this->connectionConfig()['driver'],
+            'database' => $metadata['database'] ?? $this->connectionConfig()['database'],
+            'created_at' => $metadata['created_at'] ?? date('Y-m-d H:i:s', Storage::disk(self::DISK)->lastModified($relativePath)),
+            'size' => Storage::disk(self::DISK)->size($relativePath),
+            'size_human' => $this->formatBytes(Storage::disk(self::DISK)->size($relativePath)),
+            'tables' => $tables,
+            'table_groups' => $groups,
+            'table_count' => count($tables),
+            'has_table_manifest' => $tables !== [],
+        ], $metadata);
+    }
+
     public function createBackup(?string $name = null, ?string $comment = null, ?int $userId = null, ?string $taskId = null): array
     {
         $lock = Cache::lock('database_backup_create', 3600);
@@ -101,10 +130,11 @@ class DatabaseBackupService
         return $task;
     }
 
-    public function createQueuedRestore(string $filename, ?int $userId = null): array
+    public function createQueuedRestore(string $filename, ?int $userId = null, array $options = []): array
     {
         $filename = $this->sanitizeFilename($filename);
         $this->absolutePath($filename);
+        $restoreSelection = $this->normalizeRestoreSelection($filename, $options);
 
         $active = $this->currentRestoreTask();
         if ($active && in_array($active['status'] ?? null, ['queued', 'running'], true)) {
@@ -124,6 +154,10 @@ class DatabaseBackupService
             'progress' => 1,
             'stage' => 'В очереди',
             'filename' => $filename,
+            'restore_mode' => $restoreSelection['mode'],
+            'selected_groups' => $restoreSelection['groups'],
+            'selected_tables' => $restoreSelection['tables'],
+            'selected_tables_count' => count($restoreSelection['tables']),
             'safety_backup_filename' => null,
             'message' => 'Восстановление поставлено в очередь',
             'user_id' => $userId,
@@ -133,7 +167,7 @@ class DatabaseBackupService
 
         $this->putRestoreTaskStatus($taskId, $task);
         Storage::disk(self::DISK)->put(self::TASK_DIRECTORY.'/current_restore_task.txt', $taskId);
-        \App\Jobs\RestoreDatabaseBackupJob::dispatch($taskId, $filename, $userId);
+        \App\Jobs\RestoreDatabaseBackupJob::dispatch($taskId, $filename, $userId, $restoreSelection);
 
         return $task;
     }
@@ -313,6 +347,13 @@ class DatabaseBackupService
             'verification' => 'ok',
         ];
 
+        $tables = $this->databaseTableManifest($config);
+        $metadata['tables'] = $tables;
+        $metadata['table_groups'] = $this->summarizeTableGroups($tables);
+        $metadata['table_count'] = count($tables);
+        $metadata['total_rows_estimate'] = array_sum(array_map(fn ($table) => (int) ($table['rows'] ?? 0), $tables));
+        $metadata['manifest_version'] = 1;
+
         $this->writeMetadata($filename, $metadata);
         $this->updateTask($taskId, 'completed', 100, 'Готово', [
             'filename' => $filename,
@@ -395,14 +436,19 @@ class DatabaseBackupService
         return $deleted;
     }
 
-    public function restoreWithSafetyBackup(string $filename, string $taskId, ?int $userId = null): void
+    public function restoreWithSafetyBackup(string $filename, string $taskId, ?int $userId = null, array $options = []): void
     {
         $filename = $this->sanitizeFilename($filename);
+        $restoreSelection = $this->normalizeRestoreSelection($filename, $options);
         $this->putRestoreTaskStatus((string) $taskId, [
             'status' => 'running',
             'progress' => 5,
             'stage' => 'Проверка файла',
             'filename' => $filename,
+            'restore_mode' => $restoreSelection['mode'],
+            'selected_groups' => $restoreSelection['groups'],
+            'selected_tables' => $restoreSelection['tables'],
+            'selected_tables_count' => count($restoreSelection['tables']),
             'message' => 'Проверяем выбранный дамп перед восстановлением',
         ]);
 
@@ -425,6 +471,8 @@ class DatabaseBackupService
         $this->logAction('pre_restore_backup', $safetyBackup['filename'] ?? null, $userId, [
             'restore_task_id' => $taskId,
             'restore_filename' => $filename,
+            'restore_mode' => $restoreSelection['mode'],
+            'selected_tables_count' => count($restoreSelection['tables']),
             'size' => $safetyBackup['size'] ?? null,
         ]);
 
@@ -433,10 +481,10 @@ class DatabaseBackupService
             'progress' => 35,
             'stage' => 'Импорт дампа',
             'safety_backup_filename' => $safetyBackup['filename'] ?? null,
-            'message' => 'Страховочный бэкап создан, начинаем восстановление базы',
+            'message' => $restoreSelection['mode'] === 'full' ? 'Страховочный бэкап создан, начинаем восстановление базы' : 'Страховочный бэкап создан, начинаем выборочное восстановление таблиц',
         ]);
 
-        $this->restore($filename);
+        $this->restore($filename, $restoreSelection['tables']);
 
         $this->putRestoreTaskStatus((string) $taskId, [
             'status' => 'running',
@@ -455,7 +503,7 @@ class DatabaseBackupService
         ]);
     }
 
-    public function restore(string $filename): void
+    public function restore(string $filename, array $selectedTables = []): void
     {
         $filename = $this->sanitizeFilename($filename);
         $relativePath = self::DIRECTORY.'/'.$filename;
@@ -468,9 +516,9 @@ class DatabaseBackupService
         $absolutePath = Storage::disk(self::DISK)->path($relativePath);
 
         match ($config['driver']) {
-            'mysql', 'mariadb' => $this->restoreMysql($absolutePath, $config),
-            'pgsql' => $this->restorePostgres($absolutePath, $config),
-            'sqlite' => $this->restoreSqlite($absolutePath, $config),
+            'mysql', 'mariadb' => $this->restoreMysql($absolutePath, $config, $selectedTables),
+            'pgsql' => $this->restorePostgres($absolutePath, $config, $selectedTables),
+            'sqlite' => $this->restoreSqlite($absolutePath, $config, $selectedTables),
             default => throw new RuntimeException("Драйвер {$config['driver']} не поддерживается для восстановления"),
         };
     }
@@ -651,14 +699,14 @@ class DatabaseBackupService
         }
     }
 
-    private function restoreMysql(string $absolutePath, array $config): void
+    private function restoreMysql(string $absolutePath, array $config, array $selectedTables = []): void
     {
         $this->updateCurrentRestoreTask(40, 'Подготовка SQL-файла');
         $binary = $this->findBinary(env('DB_BACKUP_MYSQL_PATH'), 'mysql', 'DB_BACKUP_MYSQL_PATH');
         $restorePath = $this->gunzipToTemporarySqlIfNeeded($absolutePath);
-        if (! $binary) {
-            $this->updateCurrentRestoreTask(55, 'Импорт через PHP/PDO');
-            $this->restoreSqlWithPdo($restorePath);
+        if ($selectedTables !== [] || ! $binary) {
+            $this->updateCurrentRestoreTask(55, $selectedTables === [] ? 'Импорт через PHP/PDO' : 'Выборочный импорт таблиц');
+            $this->restoreSqlWithPdo($restorePath, $selectedTables);
             if ($restorePath !== $absolutePath) {
                 File::delete($restorePath);
             }
@@ -703,7 +751,6 @@ class DatabaseBackupService
         ];
 
         try {
-            $this->updateCurrentRestoreTask(55, 'Импорт через psql');
             $this->runProcess($command, ['PGPASSWORD' => (string) $config['password']], 1800);
             $this->updateCurrentRunningTask(75, 'Сжатие дампа');
             $this->gzipFile($sqlPath, $absolutePath);
@@ -712,8 +759,12 @@ class DatabaseBackupService
         }
     }
 
-    private function restorePostgres(string $absolutePath, array $config): void
+    private function restorePostgres(string $absolutePath, array $config, array $selectedTables = []): void
     {
+        if ($selectedTables !== []) {
+            throw new RuntimeException('Выборочное восстановление пока поддерживается только для MySQL/MariaDB дампов.');
+        }
+
         $this->updateCurrentRestoreTask(40, 'Подготовка SQL-файла');
         $restorePath = $this->gunzipToTemporarySqlIfNeeded($absolutePath);
         $binary = $this->resolveBinary(env('DB_BACKUP_PSQL_PATH'), 'psql', 'DB_BACKUP_PSQL_PATH');
@@ -820,12 +871,15 @@ class DatabaseBackupService
         }
     }
 
-    private function restoreSqlWithPdo(string $absolutePath): void
+    private function restoreSqlWithPdo(string $absolutePath, array $selectedTables = []): void
     {
         $sql = File::get($absolutePath);
 
         DB::connection()->disableQueryLog();
         DB::unprepared('SET FOREIGN_KEY_CHECKS=0');
+
+        $selectedLookup = $selectedTables !== [] ? array_fill_keys($selectedTables, true) : [];
+        $processed = 0;
 
         foreach ($this->splitSqlStatements($sql) as $statement) {
             $trimmed = trim($statement);
@@ -833,10 +887,315 @@ class DatabaseBackupService
                 continue;
             }
 
+            if ($selectedLookup !== [] && ! $this->statementTargetsSelectedTable($trimmed, $selectedLookup)) {
+                continue;
+            }
+
             DB::unprepared($trimmed);
+            $processed++;
+            if ($selectedLookup !== [] && $processed % 100 === 0) {
+                $this->updateCurrentRestoreTask(55 + min(35, (int) floor($processed / 100)), 'Выборочный импорт таблиц');
+            }
         }
 
         DB::unprepared('SET FOREIGN_KEY_CHECKS=1');
+    }
+
+    private function normalizeRestoreSelection(string $filename, array $options): array
+    {
+        $mode = (string) ($options['mode'] ?? 'full');
+        if (! in_array($mode, ['full', 'groups', 'tables'], true)) {
+            $mode = 'full';
+        }
+
+        if ($mode === 'full') {
+            return [
+                'mode' => 'full',
+                'groups' => [],
+                'tables' => [],
+            ];
+        }
+
+        $manifest = $this->backupManifest($filename);
+        $tables = is_array($manifest['tables'] ?? null) ? $manifest['tables'] : [];
+        if ($tables === []) {
+            throw new RuntimeException('Для выбранного дампа нет манифеста таблиц. Выборочное восстановление доступно только для новых бэкапов.');
+        }
+
+        $availableTables = [];
+        foreach ($tables as $table) {
+            $name = (string) ($table['name'] ?? '');
+            if ($name !== '') {
+                $availableTables[$name] = (string) ($table['group'] ?? $this->tableGroup($name));
+            }
+        }
+
+        $selectedGroups = [];
+        $selectedTables = [];
+
+        if ($mode === 'groups') {
+            $requestedGroups = array_values(array_unique(array_filter(array_map('strval', $options['groups'] ?? []))));
+            if ($requestedGroups === []) {
+                throw new RuntimeException('Выберите хотя бы одну группу таблиц для восстановления.');
+            }
+
+            foreach ($availableTables as $table => $group) {
+                if (in_array($group, $requestedGroups, true)) {
+                    $selectedTables[] = $table;
+                }
+            }
+            $selectedGroups = $requestedGroups;
+        }
+
+        if ($mode === 'tables') {
+            $requestedTables = array_values(array_unique(array_filter(array_map('strval', $options['tables'] ?? []))));
+            if ($requestedTables === []) {
+                throw new RuntimeException('Выберите хотя бы одну таблицу для восстановления.');
+            }
+
+            foreach ($requestedTables as $table) {
+                if (! array_key_exists($table, $availableTables)) {
+                    throw new RuntimeException('Таблица '.$table.' отсутствует в манифесте выбранного дампа.');
+                }
+                $selectedTables[] = $table;
+            }
+        }
+
+        $selectedTables = array_values(array_unique($selectedTables));
+        sort($selectedTables);
+
+        if ($selectedTables === []) {
+            throw new RuntimeException('Не найдено таблиц для выборочного восстановления.');
+        }
+
+        $blockedTables = array_values(array_filter($selectedTables, fn ($table) => ! $this->isPartialRestoreTableAllowed($table)));
+        if ($blockedTables !== []) {
+            throw new RuntimeException('Выборочное восстановление системных таблиц запрещено: '.implode(', ', $blockedTables).'. Используйте полное восстановление дампа.');
+        }
+
+        return [
+            'mode' => $mode,
+            'groups' => $selectedGroups,
+            'tables' => $selectedTables,
+        ];
+    }
+
+    private function statementTargetsSelectedTable(string $statement, array $selectedLookup): bool
+    {
+        $normalized = ltrim($statement);
+
+        if (preg_match('/^(SET|START TRANSACTION|COMMIT|UNLOCK TABLES)\b/i', $normalized)) {
+            return true;
+        }
+
+        $patterns = [
+            '/^(DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?)/i',
+            '/^(CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?)/i',
+            '/^(INSERT\s+INTO\s+)/i',
+            '/^(REPLACE\s+INTO\s+)/i',
+            '/^(LOCK\s+TABLES\s+)/i',
+            '/^(ALTER\s+TABLE\s+)/i',
+            '/^(TRUNCATE\s+TABLE\s+)/i',
+        ];
+
+        foreach ($patterns as $pattern) {
+            if (! preg_match($pattern, $normalized, $match)) {
+                continue;
+            }
+
+            $tail = substr($normalized, strlen($match[1]));
+            $table = $this->extractSqlTableName($tail);
+            return $table !== null && isset($selectedLookup[$table]);
+        }
+
+        return false;
+    }
+
+    private function extractSqlTableName(string $sqlTail): ?string
+    {
+        $sqlTail = ltrim($sqlTail);
+
+        if (preg_match('/^`((?:``|[^`])+)`/', $sqlTail, $match)) {
+            return str_replace('``', '`', $match[1]);
+        }
+
+        if (preg_match('/^([a-zA-Z0-9_]+)/', $sqlTail, $match)) {
+            return $match[1];
+        }
+
+        return null;
+    }
+
+    private function databaseTableManifest(array $config): array
+    {
+        try {
+            return match ($config['driver']) {
+                'mysql', 'mariadb' => $this->mysqlTableManifest($config),
+                'pgsql' => $this->postgresTableManifest(),
+                'sqlite' => $this->sqliteTableManifest(),
+                default => [],
+            };
+        } catch (\Throwable) {
+            return [];
+        }
+    }
+
+    private function mysqlTableManifest(array $config): array
+    {
+        $rows = DB::select('SHOW TABLE STATUS');
+        $tables = [];
+
+        foreach ($rows as $row) {
+            $data = (array) $row;
+            $name = (string) ($data['Name'] ?? '');
+            if ($name === '') {
+                continue;
+            }
+
+            $dataLength = (int) ($data['Data_length'] ?? 0);
+            $indexLength = (int) ($data['Index_length'] ?? 0);
+            $size = $dataLength + $indexLength;
+
+            $tables[] = [
+                'name' => $name,
+                'group' => $this->tableGroup($name),
+                'engine' => $data['Engine'] ?? null,
+                'rows' => (int) ($data['Rows'] ?? 0),
+                'rows_estimated' => true,
+                'data_size' => $dataLength,
+                'index_size' => $indexLength,
+                'size' => $size,
+                'size_human' => $this->formatBytes($size),
+            ];
+        }
+
+        usort($tables, fn ($a, $b) => strcmp($a['name'], $b['name']));
+        return $tables;
+    }
+
+    private function postgresTableManifest(): array
+    {
+        $rows = DB::select("select relname as name, n_live_tup as rows, pg_total_relation_size(relid) as size from pg_stat_user_tables order by relname");
+
+        return array_map(function ($row) {
+            $data = (array) $row;
+            $name = (string) ($data['name'] ?? '');
+            $size = (int) ($data['size'] ?? 0);
+
+            return [
+                'name' => $name,
+                'group' => $this->tableGroup($name),
+                'engine' => null,
+                'rows' => (int) ($data['rows'] ?? 0),
+                'rows_estimated' => true,
+                'data_size' => $size,
+                'index_size' => 0,
+                'size' => $size,
+                'size_human' => $this->formatBytes($size),
+            ];
+        }, $rows);
+    }
+
+    private function sqliteTableManifest(): array
+    {
+        $rows = DB::select("select name from sqlite_master where type = 'table' and name not like 'sqlite_%' order by name");
+        $tables = [];
+
+        foreach ($rows as $row) {
+            $name = (string) (((array) $row)['name'] ?? '');
+            if ($name === '') {
+                continue;
+            }
+
+            $countRows = DB::select('select count(*) as count from '.$this->quoteIdentifier($name));
+            $tables[] = [
+                'name' => $name,
+                'group' => $this->tableGroup($name),
+                'engine' => 'sqlite',
+                'rows' => (int) (((array) ($countRows[0] ?? []))['count'] ?? 0),
+                'rows_estimated' => false,
+                'data_size' => 0,
+                'index_size' => 0,
+                'size' => 0,
+                'size_human' => '0 B',
+            ];
+        }
+
+        return $tables;
+    }
+
+    private function summarizeTableGroups(array $tables): array
+    {
+        $groups = [];
+
+        foreach ($tables as $table) {
+            $group = (string) ($table['group'] ?? $this->tableGroup((string) ($table['name'] ?? '')));
+            if (! isset($groups[$group])) {
+                $groups[$group] = [
+                    'key' => $group,
+                    'label' => $this->tableGroupLabel($group),
+                    'tables_count' => 0,
+                    'rows' => 0,
+                    'size' => 0,
+                    'size_human' => '0 B',
+                ];
+            }
+
+            $groups[$group]['tables_count']++;
+            $groups[$group]['rows'] += (int) ($table['rows'] ?? 0);
+            $groups[$group]['size'] += (int) ($table['size'] ?? 0);
+            $groups[$group]['size_human'] = $this->formatBytes((int) $groups[$group]['size']);
+        }
+
+        return array_values($groups);
+    }
+
+    private function isPartialRestoreTableAllowed(string $table): bool
+    {
+        return ! Str::startsWith($table, [
+            'cache',
+            'jobs',
+            'failed_jobs',
+            'migrations',
+            'settings',
+        ]);
+    }
+
+    private function tableGroup(string $table): string
+    {
+        if (Str::startsWith($table, ['shop_', 'promocode', 'bonus_', 'absent_promocode'])) {
+            return 'shop';
+        }
+
+        if (Str::startsWith($table, ['users', 'roles', 'permissions', 'model_', 'personal_access_tokens', 'sessions'])) {
+            return 'users';
+        }
+
+        if (Str::startsWith($table, ['site_', 'constructor_', 'slider', 'textblocks', 'contacts', 'admin_menu'])) {
+            return 'content';
+        }
+
+        if (Str::startsWith($table, ['export_', 'import_', 'ozon_', 'yandex_', 'avito_', 'sr_'])) {
+            return 'integrations';
+        }
+
+        if (Str::startsWith($table, ['cache', 'jobs', 'failed_jobs', 'migrations', 'settings'])) {
+            return 'system';
+        }
+
+        return 'other';
+    }
+
+    private function tableGroupLabel(string $group): string
+    {
+        return [
+            'shop' => 'Магазин',
+            'users' => 'Пользователи и доступы',
+            'content' => 'Контент и настройки сайта',
+            'integrations' => 'Интеграции и импорты',
+            'system' => 'Системные таблицы',
+            'other' => 'Прочее',
+        ][$group] ?? $group;
     }
 
     private function mysqlTables(): array
@@ -928,8 +1287,12 @@ class DatabaseBackupService
         File::copy($config['database'], $absolutePath);
     }
 
-    private function restoreSqlite(string $absolutePath, array $config): void
+    private function restoreSqlite(string $absolutePath, array $config, array $selectedTables = []): void
     {
+        if ($selectedTables !== []) {
+            throw new RuntimeException('Выборочное восстановление SQLite не поддерживается.');
+        }
+
         if (! File::exists($absolutePath)) {
             throw new RuntimeException('Файл SQLite бэкапа не найден');
         }

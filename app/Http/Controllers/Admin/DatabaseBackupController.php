@@ -76,16 +76,41 @@ class DatabaseBackupController extends Controller
         ]);
     }
 
+    public function manifest(string $filename): JsonResponse
+    {
+        try {
+            $manifest = $this->backupService->backupManifest($filename);
+        } catch (\Throwable $e) {
+            return $this->errorResponse('Ошибка чтения состава бэкапа: '.$e->getMessage());
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $manifest,
+        ]);
+    }
+
     public function restore(string $filename, Request $request): JsonResponse
     {
-        $request->validate([
+        $validated = $request->validate([
             'confirm' => 'required|accepted',
+            'mode' => 'nullable|string|in:full,groups,tables',
+            'groups' => 'nullable|array',
+            'groups.*' => 'string|max:100',
+            'tables' => 'nullable|array',
+            'tables.*' => 'string|max:191',
         ]);
 
         try {
-            $task = $this->backupService->createQueuedRestore($filename, $request->user()?->id);
+            $task = $this->backupService->createQueuedRestore($filename, $request->user()?->id, [
+                'mode' => $validated['mode'] ?? 'full',
+                'groups' => $validated['groups'] ?? [],
+                'tables' => $validated['tables'] ?? [],
+            ]);
             $this->backupService->logAction('queued_restore', $filename, $request->user()?->id, [
                 'task_id' => $task['id'] ?? null,
+                'restore_mode' => $task['restore_mode'] ?? 'full',
+                'selected_tables_count' => $task['selected_tables_count'] ?? 0,
             ]);
         } catch (\Throwable $e) {
             return $this->errorResponse('Ошибка постановки восстановления в очередь: '.$e->getMessage());
