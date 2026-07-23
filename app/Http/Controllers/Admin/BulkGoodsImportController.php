@@ -3053,10 +3053,30 @@ class BulkGoodsImportController extends Controller
         $attachToVariation = $variation !== null;
 
         $filteredImages = [];
+        $seenImageNames = [];
         foreach ($images as $imageUrl) {
-            if (!empty($imageUrl)) {
-                $filteredImages[] = $imageUrl;
+            if (empty($imageUrl)) {
+                continue;
             }
+
+            $imageUrl = trim((string) $imageUrl);
+            if ($imageUrl === '') {
+                continue;
+            }
+
+            $path = parse_url($imageUrl, PHP_URL_PATH) ?: $imageUrl;
+            $filename = basename(str_replace('\\', '/', urldecode($path)));
+            $uniqueKey = mb_strtolower($filename ?: $imageUrl);
+
+            if ($uniqueKey !== '' && isset($seenImageNames[$uniqueKey])) {
+                continue;
+            }
+
+            if ($uniqueKey !== '') {
+                $seenImageNames[$uniqueKey] = true;
+            }
+
+            $filteredImages[] = $imageUrl;
         }
         if (empty($filteredImages)) {
             return $stats;
@@ -3092,7 +3112,7 @@ class BulkGoodsImportController extends Controller
 
         // Проверяем, есть ли среди новых изображений изображения из Excel
         $hasExcelImages = false;
-        foreach ($images as $imageUrl) {
+        foreach ($filteredImages as $imageUrl) {
             if (str_starts_with($imageUrl, '/images/shop/goods/excel_')) {
                 $hasExcelImages = true;
                 break;

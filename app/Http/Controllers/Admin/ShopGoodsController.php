@@ -346,9 +346,17 @@ class ShopGoodsController extends Controller
         if ($request->has('tags')) {
             $tagIds = $request->input('tags');
             if (is_array($tagIds) && ! empty($tagIds)) {
-                $query->whereHas('tags', function ($q) use ($tagIds) {
-                    $q->whereIn('shop_tags.id', $tagIds);
-                });
+                $tagIds = array_values(array_unique(array_map('intval', $tagIds)));
+
+                if ($request->boolean('tags_match_all', false)) {
+                    $query->whereHas('tags', function ($q) use ($tagIds) {
+                        $q->whereIn('shop_tags.id', $tagIds);
+                    }, '=', count($tagIds));
+                } else {
+                    $query->whereHas('tags', function ($q) use ($tagIds) {
+                        $q->whereIn('shop_tags.id', $tagIds);
+                    });
+                }
             }
         }
 
@@ -4026,9 +4034,17 @@ class ShopGoodsController extends Controller
         if ($request->has('tags')) {
             $tagIds = $request->input('tags');
             if (is_array($tagIds) && ! empty($tagIds)) {
-                $query->whereHas('tags', function ($q) use ($tagIds) {
-                    $q->whereIn('shop_tags.id', $tagIds);
-                });
+                $tagIds = array_values(array_unique(array_map('intval', $tagIds)));
+
+                if ($request->boolean('tags_match_all', false)) {
+                    $query->whereHas('tags', function ($q) use ($tagIds) {
+                        $q->whereIn('shop_tags.id', $tagIds);
+                    }, '=', count($tagIds));
+                } else {
+                    $query->whereHas('tags', function ($q) use ($tagIds) {
+                        $q->whereIn('shop_tags.id', $tagIds);
+                    });
+                }
             }
         }
 
