@@ -111,7 +111,7 @@ class ShopNotificationController extends Controller
                 'description' => 'nullable|string',
                 'skip_bot_check' => 'sometimes|boolean', // Флаг для пропуска проверки бота
                 'events' => 'nullable|array',
-                'events.*.event_type' => 'required|in:order_created,cancellation_request,order_cancelled,preorder_created,site_message',
+                'events.*.event_type' => 'required|in:order_created,cancellation_request,order_cancelled,preorder_created,site_message,backup',
                 'events.*.is_enabled' => 'sometimes|boolean',
             ]);
 
@@ -152,6 +152,7 @@ class ShopNotificationController extends Controller
                     'order_cancelled',
                     'preorder_created',
                     'site_message',
+                    'backup',
                 ];
                 foreach ($defaultEvents as $eventType) {
                     ShopNotificationEvent::create([
@@ -208,7 +209,7 @@ class ShopNotificationController extends Controller
                 'is_active' => 'sometimes|boolean',
                 'description' => 'nullable|string',
                 'events' => 'nullable|array',
-                'events.*.event_type' => 'required|in:order_created,cancellation_request,order_cancelled,preorder_created,site_message',
+                'events.*.event_type' => 'required|in:order_created,cancellation_request,order_cancelled,preorder_created,site_message,backup',
                 'events.*.is_enabled' => 'sometimes|boolean',
             ]);
 
@@ -449,7 +450,7 @@ class ShopNotificationController extends Controller
         try {
             $validator = Validator::make($request->all(), [
                 'email' => 'required|email',
-                'event_type' => 'nullable|in:order_created,payment_received,payment_failed,cancellation_request,order_cancelled,preorder_created,site_message,callback,found_cheaper',
+                'event_type' => 'nullable|in:order_created,payment_received,payment_failed,cancellation_request,order_cancelled,preorder_created,site_message,callback,found_cheaper,backup',
             ]);
 
             if ($validator->fails()) {

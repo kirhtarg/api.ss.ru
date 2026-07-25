@@ -13,6 +13,14 @@ use Illuminate\Support\Facades\Route;
 
 // CORS уже настроен в OPTIONS обработчике выше
 
+// Статус технического обслуживания без чтения БД.
+Route::get('/public/maintenance-status', function (\App\Services\DatabaseRestoreMaintenanceService $maintenance) {
+    return response()->json([
+        'success' => true,
+        'data' => $maintenance->status(),
+    ]);
+});
+
 // Вебхук Т‑Банк (e‑acq и Долями)
 Route::post('/webhooks/tbank', [\App\Http\Controllers\Api\Public\ShopPaymentController::class, 'tbankWebhook']);
 
@@ -47,6 +55,10 @@ Route::post('/test-simple-upload', function (Request $request) {
 
 // Тестовый маршрут для непривязанных поставщиков (без аутентификации)
 // Route::get('/test-unlinked-suppliers', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getUnlinkedSuppliers']);
+
+// Скачивание дампов БД по одноразовому токену. Нельзя помещать в auth:sanctum,
+// потому что браузер открывает ссылку напрямую без Authorization header.
+Route::get('/admin/database-backups/download/{token}', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'downloadByToken']);
 
 // Скачивание экспорт файлов (с middleware для аутентификации через token)
 Route::get('/admin/export-files/{exportFile}/download', [\App\Http\Controllers\Admin\ExportFilesController::class, 'download'])
@@ -1291,6 +1303,14 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/check-multiple', [\App\Http\Controllers\Api\Public\ComparisonController::class, 'checkMultiple']);
     });
 
+    // История просмотренных товаров мобильного приложения.
+    Route::prefix('shop/viewed')->group(function () {
+        Route::get('/', [\App\Http\Controllers\Api\Public\ViewedGoodsController::class, 'index']);
+        Route::post('/', [\App\Http\Controllers\Api\Public\ViewedGoodsController::class, 'store']);
+        Route::delete('/{goodId}', [\App\Http\Controllers\Api\Public\ViewedGoodsController::class, 'destroy']);
+        Route::delete('/', [\App\Http\Controllers\Api\Public\ViewedGoodsController::class, 'clear']);
+    });
+
     // Загрузка изображений для rich editor (требует аутентификации)
     Route::middleware(['auth:sanctum', 'role:admin,manager,site'])->group(function () {
         Route::post('/admin/upload/good-text-image', [\App\Http\Controllers\Admin\UploadController::class, 'uploadGoodTextImage']);
@@ -1616,8 +1636,14 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/schedule', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'schedule']);
             Route::post('/schedule', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'updateSchedule']);
             Route::get('/logs', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'logs']);
+            Route::get('/maintenance', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'maintenanceStatus']);
+            Route::delete('/maintenance', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'clearMaintenance']);
             Route::get('/task/current', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'currentTask']);
             Route::get('/task/{taskId}', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'taskStatus']);
+            Route::get('/restore-task/current', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'currentRestoreTask']);
+            Route::get('/restore-task/{taskId}', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'restoreTaskStatus']);
+            Route::get('/{filename}/manifest', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'manifest']);
+            Route::post('/{filename}/download-token', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'createDownloadToken']);
             Route::get('/{filename}/download', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'download']);
             Route::post('/{filename}/restore', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'restore']);
             Route::delete('/{filename}', [\App\Http\Controllers\Admin\DatabaseBackupController::class, 'destroy']);

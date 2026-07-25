@@ -209,6 +209,14 @@ class NotificationService
         ]);
     }
 
+    public function notifyBackup(string $status, string $operation, array $data = []): void
+    {
+        $this->sendNotification('backup', array_merge($data, [
+            'status' => $status,
+            'operation' => $operation,
+        ]));
+    }
+
     /**
      * Отправить уведомление через все активные каналы для события
      */
@@ -324,6 +332,7 @@ class NotificationService
             'cancellation_request' => "Заявка на отмену заказа #{$data['order']->order_number}",
             'order_cancelled' => "Заказ #{$data['order']->order_number} отменен",
             'preorder_created' => 'Новый предзаказ товара',
+            'backup' => $this->getBackupEmailSubject($data),
             'site_message' => match ($data['message']->type) {
                 'callback' => "Запрос обратного звонка от {$data['message']->name}",
                 'found_cheaper' => "Нашел дешевле от {$data['message']->name}",
@@ -346,6 +355,7 @@ class NotificationService
             'order_cancelled' => $this->formatOrderCancelledEmail($data['order']),
             'preorder_created' => $this->formatPreorderCreatedEmail($data['preorder']),
             'site_message' => $this->formatSiteMessageEmail($data['message']),
+            'backup' => $this->formatBackupNotificationEmail($data),
             default => "Уведомление о событии: {$eventType}"
         };
     }
@@ -363,6 +373,7 @@ class NotificationService
             'site_message' => $this->formatSiteMessageTelegram($data['message']),
             'payment_received' => $this->formatPaymentReceivedTelegram($data['order'], $data['transaction'] ?? null, $data['payment_object'] ?? []),
             'payment_failed' => $this->formatPaymentFailedTelegram($data['order'], $data['transaction'] ?? null, $data['payment_object'] ?? []),
+            'backup' => $this->formatBackupNotificationTelegram($data),
             default => "Уведомление о событии: {$eventType}"
         };
     }
@@ -1225,6 +1236,100 @@ class NotificationService
         }
 
         return $message;
+    }
+
+    protected function getBackupEmailSubject(array $data): string
+    {
+        $operation = ($data['operation'] ?? 'create') === 'restore' ? 'восстановление БД' : 'бэкап БД';
+
+        return match ($data['status'] ?? null) {
+            'started' => 'Запущено '.$operation,
+            'completed' => 'Завершено '.$operation,
+            'failed' => 'Ошибка: '.$operation,
+            default => 'Уведомление о бэкапе БД',
+        };
+    }
+
+    protected function formatBackupNotificationEmail(array $data): string
+    {
+        $status = $this->backupStatusLabel($data['status'] ?? '');
+        $operation = $this->backupOperationLabel($data['operation'] ?? 'create');
+        $message = $status.': '.$operation."\n\n";
+        $message .= 'Задача: '.($data['task_id'] ?? '-')."\n";
+        if (! empty($data['filename'])) {
+            $message .= 'Файл: '.$data['filename']."\n";
+        }
+        if (isset($data['size'])) {
+            $message .= 'Размер: '.$this->formatBytes((int) $data['size'])."\n";
+        }
+        if (! empty($data['mode'])) {
+            $message .= 'Режим: '.$data['mode']."\n";
+        }
+        if (isset($data['selected_tables_count'])) {
+            $message .= 'Таблиц выбрано: '.$data['selected_tables_count']."\n";
+        }
+        if (! empty($data['error'])) {
+            $message .= "\nОшибка: ".$data['error']."\n";
+        }
+        $message .= "\nВремя: ".now()->format('d.m.Y H:i:s');
+
+        return $message;
+    }
+
+    protected function formatBackupNotificationTelegram(array $data): string
+    {
+        $status = $this->backupStatusLabel($data['status'] ?? '');
+        $operation = $this->backupOperationLabel($data['operation'] ?? 'create');
+        $message = "🗄 <b>{$status}: {$operation}</b>\n\n";
+        $message .= '🆔 <b>Задача:</b> '.htmlspecialchars((string) ($data['task_id'] ?? '-'), ENT_QUOTES, 'UTF-8')."\n";
+        if (! empty($data['filename'])) {
+            $message .= '📄 <b>Файл:</b> '.htmlspecialchars((string) $data['filename'], ENT_QUOTES, 'UTF-8')."\n";
+        }
+        if (isset($data['size'])) {
+            $message .= '💾 <b>Размер:</b> '.$this->formatBytes((int) $data['size'])."\n";
+        }
+        if (! empty($data['mode'])) {
+            $message .= '⚙️ <b>Режим:</b> '.htmlspecialchars((string) $data['mode'], ENT_QUOTES, 'UTF-8')."\n";
+        }
+        if (isset($data['selected_tables_count'])) {
+            $message .= '📊 <b>Таблиц выбрано:</b> '.(int) $data['selected_tables_count']."\n";
+        }
+        if (! empty($data['error'])) {
+            $message .= "\n❌ <b>Ошибка:</b> ".htmlspecialchars((string) $data['error'], ENT_QUOTES, 'UTF-8')."\n";
+        }
+        $message .= "\n🕐 <b>Время:</b> ".now()->format('d.m.Y H:i:s');
+
+        return $message;
+    }
+
+    protected function backupStatusLabel(string $status): string
+    {
+        return match ($status) {
+            'started' => 'Запущено',
+            'completed' => 'Завершено',
+            'failed' => 'Ошибка',
+            default => 'Событие',
+        };
+    }
+
+    protected function backupOperationLabel(string $operation): string
+    {
+        return match ($operation) {
+            'restore' => 'восстановление базы данных',
+            default => 'создание бэкапа базы данных',
+        };
+    }
+
+    protected function formatBytes(int $bytes): string
+    {
+        if ($bytes <= 0) {
+            return '0 Б';
+        }
+
+        $units = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ'];
+        $power = min((int) floor(log($bytes, 1024)), count($units) - 1);
+
+        return round($bytes / (1024 ** $power), 2).' '.$units[$power];
     }
 
     /**

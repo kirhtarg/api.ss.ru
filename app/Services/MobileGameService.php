@@ -136,16 +136,16 @@ class MobileGameService
             ->where('is_active', true)
             ->whereHas('allImages')
             ->with($relations);
-        if (($source['type'] ?? '') === 'category' && ! empty($source['ids'])) {
+        $useFullCatalog = $game->type === 'memory' && ($game->settings['use_full_catalog'] ?? true);
+        if (! $useFullCatalog && ($source['type'] ?? '') === 'category' && ! empty($source['ids'])) {
             $query->whereHas('categories', fn ($q) => $q->whereIn('shop_categories.id', $source['ids']));
         }
-        if (($source['type'] ?? '') === 'brand' && ! empty($source['ids'])) {
+        if (! $useFullCatalog && ($source['type'] ?? '') === 'brand' && ! empty($source['ids'])) {
             $query->whereHas('brands', fn ($q) => $q->whereIn('shop_brands.id', $source['ids']));
         }
-        if (($source['type'] ?? '') === 'manual' && ! empty($source['ids'])) {
+        if (! $useFullCatalog && ($source['type'] ?? '') === 'manual' && ! empty($source['ids'])) {
             $query->whereIn('id', $source['ids']);
         }
-        $useFullCatalog = $game->type === 'memory' && ($game->settings['use_full_catalog'] ?? true);
         if (($source['type'] ?? '') === 'featured' && ! $useFullCatalog) {
             $query->where('is_featured', true);
         }

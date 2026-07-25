@@ -21,6 +21,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'throttle.public' => \App\Http\Middleware\ThrottlePublicRoutes::class,
             'api.logger' => \App\Http\Middleware\GlobalApiLogger::class,
             'download.token' => \App\Http\Middleware\CheckDownloadToken::class,
+            'database.restore.maintenance' => \App\Http\Middleware\BlockPublicDuringDatabaseRestore::class,
         ]);
 
         // Настраиваем web middleware с CSRF
@@ -31,6 +32,7 @@ return Application::configure(basePath: dirname(__DIR__))
         // Настраиваем API middleware с CORS
         $middleware->api([
             \App\Http\Middleware\CustomCors::class,
+            'database.restore.maintenance',
             'api.logger',
             'throttle.public',
             \Illuminate\Routing\Middleware\SubstituteBindings::class,

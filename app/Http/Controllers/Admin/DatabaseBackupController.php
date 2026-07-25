@@ -23,7 +23,29 @@ class DatabaseBackupController extends Controller
                 'schedule' => $this->getScheduleData(),
                 'logs' => $this->backupService->listActionLogs(),
                 'environment' => $this->backupService->environmentStatus(),
+                'restore_task' => $this->backupService->currentRestoreTask(),
+                'maintenance' => app(\App\Services\DatabaseRestoreMaintenanceService::class)->status(),
             ],
+        ]);
+    }
+
+    public function maintenanceStatus(\App\Services\DatabaseRestoreMaintenanceService $maintenance): JsonResponse
+    {
+        return response()->json([
+            'success' => true,
+            'data' => $maintenance->status(),
+        ]);
+    }
+
+    public function clearMaintenance(\App\Services\DatabaseRestoreMaintenanceService $maintenance): JsonResponse
+    {
+        $maintenance->deactivate();
+        $this->backupService->logAction('clear_restore_maintenance', null, request()->user()?->id);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Блокировка публичного сайта снята',
+            'data' => $maintenance->status(),
         ]);
     }
 
@@ -75,22 +97,93 @@ class DatabaseBackupController extends Controller
         ]);
     }
 
-    public function restore(string $filename, Request $request): JsonResponse
+    public function manifest(string $filename): JsonResponse
     {
-        $request->validate([
-            'confirm' => 'required|accepted',
-        ]);
-
         try {
-            $this->backupService->restore($filename);
-            $this->backupService->logAction('restore', $filename, $request->user()?->id);
+            $manifest = $this->backupService->backupManifest($filename);
         } catch (\Throwable $e) {
-            return $this->errorResponse('Ошибка восстановления базы: '.$e->getMessage());
+            return $this->errorResponse('Ошибка чтения состава бэкапа: '.$e->getMessage());
         }
 
         return response()->json([
             'success' => true,
-            'message' => 'База данных восстановлена из выбранного бэкапа',
+            'data' => $manifest,
+        ]);
+    }
+
+    public function restore(string $filename, Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'confirm' => 'required|accepted',
+            'mode' => 'nullable|string|in:full,groups,tables',
+            'groups' => 'nullable|array',
+            'groups.*' => 'string|max:100',
+            'tables' => 'nullable|array',
+            'tables.*' => 'string|max:191',
+        ]);
+
+        try {
+            $task = $this->backupService->createQueuedRestore($filename, $request->user()?->id, [
+                'mode' => $validated['mode'] ?? 'full',
+                'groups' => $validated['groups'] ?? [],
+                'tables' => $validated['tables'] ?? [],
+            ]);
+            $this->backupService->logAction('queued_restore', $filename, $request->user()?->id, [
+                'task_id' => $task['id'] ?? null,
+                'restore_mode' => $task['restore_mode'] ?? 'full',
+                'selected_tables_count' => $task['selected_tables_count'] ?? 0,
+            ]);
+        } catch (\Throwable $e) {
+            return $this->errorResponse('Ошибка постановки восстановления в очередь: '.$e->getMessage());
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Восстановление базы поставлено в очередь',
+            'data' => $task,
+        ], 202);
+    }
+
+    public function currentRestoreTask(): JsonResponse
+    {
+        return response()->json([
+            'success' => true,
+            'data' => $this->backupService->currentRestoreTask(),
+        ]);
+    }
+
+    public function restoreTaskStatus(string $taskId): JsonResponse
+    {
+        return response()->json([
+            'success' => true,
+            'data' => $this->backupService->restoreTaskStatus($taskId),
+        ]);
+    }
+
+    public function createDownloadToken(string $filename, Request $request): JsonResponse
+    {
+        try {
+            $token = $this->backupService->createDownloadToken($filename, $request->user()?->id);
+        } catch (\Throwable $e) {
+            return $this->errorResponse('Ошибка подготовки скачивания: '.$e->getMessage());
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $token,
+        ]);
+    }
+
+    public function downloadByToken(string $token)
+    {
+        try {
+            $path = $this->backupService->consumeDownloadToken($token);
+        } catch (\Throwable $e) {
+            abort(404, $e->getMessage());
+        }
+
+        return response()->download($path, basename($path), [
+            'Content-Type' => 'application/octet-stream',
         ]);
     }
 

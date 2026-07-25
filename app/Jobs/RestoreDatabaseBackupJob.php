@@ -8,7 +8,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Log;
 
-class CreateDatabaseBackupJob implements ShouldQueue
+class RestoreDatabaseBackupJob implements ShouldQueue
 {
     use Queueable;
 
@@ -18,9 +18,9 @@ class CreateDatabaseBackupJob implements ShouldQueue
 
     public function __construct(
         public string $taskId,
-        public ?string $name = null,
-        public ?string $comment = null,
-        public ?int $userId = null
+        public string $filename,
+        public ?int $userId = null,
+        public array $options = []
     ) {
     }
 
@@ -29,48 +29,46 @@ class CreateDatabaseBackupJob implements ShouldQueue
         ini_set('memory_limit', '2048M');
         ini_set('max_execution_time', '7200');
 
-        $backupService->putTaskStatus($this->taskId, [
-            'status' => 'running',
-            'progress' => 3,
-            'stage' => 'Запуск задачи',
-            'message' => 'Задача выполняется',
-        ]);
-
         try {
-            $this->notifyBackup('started', 'create');
-
-            $backup = $backupService->createBackup($this->name, $this->comment, $this->userId, $this->taskId);
-            $backupService->logAction('manual_create', $backup['filename'] ?? null, $this->userId, [
-                'size' => $backup['size'] ?? null,
-                'auto_delete_at' => $backup['auto_delete_at'] ?? null,
-                'task_id' => $this->taskId,
-                'verification' => $backup['verification'] ?? null,
+            $this->notifyBackup('started', 'restore', [
+                'filename' => $this->filename,
+                'mode' => $this->options['mode'] ?? 'full',
+                'selected_tables_count' => count($this->options['tables'] ?? []),
             ]);
 
-            $this->notifyBackup('completed', 'create', [
-                'filename' => $backup['filename'] ?? null,
-                'size' => $backup['size'] ?? null,
-                'verification' => $backup['verification'] ?? null,
+            $backupService->restoreWithSafetyBackup($this->filename, $this->taskId, $this->userId, $this->options);
+            $backupService->logAction('restore', $this->filename, $this->userId, [
+                'task_id' => $this->taskId,
+            ]);
+
+            $this->notifyBackup('completed', 'restore', [
+                'filename' => $this->filename,
+                'mode' => $this->options['mode'] ?? 'full',
+                'selected_tables_count' => count($this->options['tables'] ?? []),
             ]);
         } catch (\Throwable $e) {
-            Log::error('Database backup job failed', [
+            Log::error('Database restore job failed', [
                 'task_id' => $this->taskId,
+                'filename' => $this->filename,
                 'error' => $e->getMessage(),
             ]);
 
-            $backupService->putTaskStatus($this->taskId, [
+            $backupService->putRestoreTaskStatus($this->taskId, [
                 'status' => 'failed',
                 'progress' => 100,
                 'stage' => 'Ошибка',
                 'message' => $e->getMessage(),
             ]);
 
-            $backupService->logAction('failed_create', null, $this->userId, [
+            $backupService->logAction('failed_restore', $this->filename, $this->userId, [
                 'task_id' => $this->taskId,
                 'error' => $e->getMessage(),
             ]);
 
-            $this->notifyBackup('failed', 'create', [
+            $this->notifyBackup('failed', 'restore', [
+                'filename' => $this->filename,
+                'mode' => $this->options['mode'] ?? 'full',
+                'selected_tables_count' => count($this->options['tables'] ?? []),
                 'error' => $e->getMessage(),
             ]);
 
