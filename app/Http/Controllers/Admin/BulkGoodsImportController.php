@@ -517,30 +517,11 @@ class BulkGoodsImportController extends Controller
                         }
                     }
 
-                    // При поиске в вариациях по SKU: ищем вариацию по артикулу также для строк С вариацией (hasVariation),
-                    // т.к. в блоке выше поиск выполняется только при !hasVariation. Если вариация найдена по SKU —
-                    // приоритет: только обновить вариацию, имя основного товара не затрагивать.
+                    // При поиске в вариациях по SKU артикул является идентификатором конкретной вариации.
+                    // Не сравниваем с неполным набором осей из файла: поставщики нередко передают только размер,
+                    // хотя в карточке есть и размер, и цвет. Найденную по SKU вариацию обновляем без замены её осей.
                     if (!$existingVariation && $searchByNameInVariations && $searchByFieldInVariations === 'sku' && !empty($sku) && $hasVariation) {
-                        // Сначала пробуем найти с учетом поставщика
-                        $existingVariation = null;
-                        if ($supplierName) {
-                            $existingVariation = $this->findVariationByNameAndAttributes(
-                                'sku',
-                                $sku,
-                                $goodData['variation']['attributes'] ?? [],
-                                $supplierName
-                            );
-                        }
-
-                        // Если не нашли с поставщиком — пробуем без него
-                        if (!$existingVariation) {
-                            $existingVariation = $this->findVariationByNameAndAttributes(
-                                'sku',
-                                $sku,
-                                $goodData['variation']['attributes'] ?? [],
-                                null
-                            );
-                        }
+                        $existingVariation = $this->findVariationBySku($sku, $supplierName);
 
                         if ($existingVariation) {
                             $existingGood = $existingVariation->good;
@@ -882,7 +863,13 @@ class BulkGoodsImportController extends Controller
                         }
 
                         // Обновляем вариацию (найденную по имени или по артикулу)
-                        $variationId = $this->updateVariationFromGoodData($existingVariation, $goodData, $searchByNameInVariations);
+                        $preserveVariationAttributes = $searchByFieldInVariations === 'sku';
+                        $variationId = $this->updateVariationFromGoodData(
+                            $existingVariation,
+                            $goodData,
+                            $searchByNameInVariations,
+                            $preserveVariationAttributes
+                        );
 
                         // Логируем действие с вариацией
                         $sheet = $goodData['_sheet'] ?? 'неизвестно';
@@ -902,13 +889,15 @@ class BulkGoodsImportController extends Controller
                             ];
                         }
 
-                        $details = 'Найдена по ' . ($searchByFieldInVariations === 'sku' ? 'артикулу' : 'имени') . ' + совпадению атрибутов: ' . ($searchByFieldInVariations === 'sku' ? ($searchValue ?? $sku) : $name);
+                        $details = $searchByFieldInVariations === 'sku'
+                            ? 'Найдена по артикулу: ' . ($searchValue ?? $sku) . '. Набор атрибутов сохранен из базы.'
+                            : 'Найдена по имени и совпадению атрибутов: ' . $name;
                         if ($sheet !== 'неизвестно') {
                             $details .= ", Лист: {$sheet}, Строка: {$count}";
                         }
 
                         $this->importLogService->logVariation(
-                            $searchByFieldInVariations === 'sku' ? 'ОБНОВЛЕНА ВАРИАЦИЯ ПО АРТИКУЛУ + АТРИБУТАМ' : 'ОБНОВЛЕНА ВАРИАЦИЯ ПО ИМЕНИ + АТРИБУТАМ',
+                            $searchByFieldInVariations === 'sku' ? 'ОБНОВЛЕНА ВАРИАЦИЯ ПО АРТИКУЛУ' : 'ОБНОВЛЕНА ВАРИАЦИЯ ПО ИМЕНИ + АТРИБУТАМ',
                             $existingGood->name ?? $name,
                             $existingGood->sku ?? 'нет SKU',
                             $variationAttributes,
@@ -1497,7 +1486,12 @@ class BulkGoodsImportController extends Controller
                                 $attachImagesToVariation = $existingGood->variations()->where('sku', $sku)->first();
                                 // Критично: обновляем вариацию (остатки, цена, SKU и т.д.) из строки — иначе вариации «не затрагиваются»
                                 if ($attachImagesToVariation) {
-                                    $this->updateVariationFromGoodData($attachImagesToVariation, $goodData, $searchByNameInVariations);
+                                    $this->updateVariationFromGoodData(
+                                        $attachImagesToVariation,
+                                        $goodData,
+                                        $searchByNameInVariations,
+                                        $searchByNameInVariations && $searchByFieldInVariations === 'sku'
+                                    );
                                 }
                             }
 
@@ -1736,7 +1730,12 @@ class BulkGoodsImportController extends Controller
 
                             if ($goodToUpdate && $duplicateAction === 'update') {
                                 if ($existingVariation) {
-                                    $this->updateVariationFromGoodData($existingVariation, $goodData, $searchByNameInVariations);
+                                    $this->updateVariationFromGoodData(
+                                        $existingVariation,
+                                        $goodData,
+                                        $searchByNameInVariations,
+                                        $searchByNameInVariations && $searchByFieldInVariations === 'sku'
+                                    );
                                 }
 
                                 $updateResult = $this->updateGood(
@@ -2867,8 +2866,10 @@ class BulkGoodsImportController extends Controller
             $this->processProperties($existingGood, $goodData['properties']);
         }
 
-        // Обрабатываем вариации товара
-        if (isset($goodData['variation']) && is_array($goodData['variation'])) {
+        // При точном совпадении по SKU вариация уже обновлена выше. Не передаем
+        // неполную комбинацию из файла в processVariation, иначе она может быть
+        // ошибочно воспринята как новая карточка.
+        if (isset($goodData['variation']) && is_array($goodData['variation']) && !$attachImagesToVariation) {
             // Передаем nameTrimSymbol в goodData для обрезки названия товара
             if (!isset($goodData['_nameTrimSymbol'])) {
                 $goodData['_nameTrimSymbol'] = $nameTrimSymbol;
@@ -4410,6 +4411,43 @@ class BulkGoodsImportController extends Controller
             // Ищем существующую вариацию с такой же комбинацией атрибутов и поставщиком
             $existingVariation = $this->findVariationByAttributes($good->id, $attributeValueIds, $searchSupplier);
 
+            // Файл поставщика может содержать не все оси вариаций. Это не повод
+            // терять товар: если SKU не нашел существующую вариацию, создаем новую
+            // с переданными осями и фиксируем предупреждение в журнале.
+            if (!$existingVariation && $hasExistingVariations) {
+                $importAttributeIds = DB::table('shop_variation_attribute_values')
+                    ->whereIn('id', $attributeValueIds)
+                    ->pluck('attribute_id')
+                    ->map(fn ($id) => (int) $id)
+                    ->unique()
+                    ->values()
+                    ->toArray();
+                $missingAttributeIds = array_values(array_diff($existingAttributeIds, $importAttributeIds));
+
+                if ($missingAttributeIds !== []) {
+                    $missingAttributeNames = DB::table('shop_variation_attributes')
+                        ->whereIn('id', $missingAttributeIds)
+                        ->orderBy('name')
+                        ->pluck('name')
+                        ->all();
+                    $message = 'Создается неполная вариация: в файле отсутствуют оси '.implode(', ', $missingAttributeNames).'.';
+
+                    $this->importLogService->logVariation(
+                        'ПРЕДУПРЕЖДЕНИЕ: НЕПОЛНАЯ ВАРИАЦИЯ',
+                        $good->name,
+                        $goodData['sku'] ?? $good->sku ?? 'нет SKU',
+                        $attributes,
+                        null,
+                        $message
+                    );
+                    Log::warning('Импорт: создается неполная вариация', [
+                        'good_id' => $good->id,
+                        'sku' => $goodData['sku'] ?? null,
+                        'missing_attributes' => $missingAttributeNames,
+                    ]);
+                }
+            }
+
             if ($existingVariation) {
                 // Вариация существует - обновляем все поля из goodData
 
@@ -4718,7 +4756,7 @@ class BulkGoodsImportController extends Controller
      * @param  bool  $searchByNameInVariations  Если true, поле name не обновляется
      * @return int ID вариации
      */
-    private function updateVariationFromGoodData($variation, $goodData, $searchByNameInVariations = false)
+    private function updateVariationFromGoodData($variation, $goodData, $searchByNameInVariations = false, $preserveAttributes = false)
     {
         $goodData = $this->removeBlankValuesForPartialUpdate($goodData);
 
@@ -4778,8 +4816,9 @@ class BulkGoodsImportController extends Controller
             $variation->name = $goodData['name'];
         }
 
-        // Обновляем атрибуты вариации, если они переданы
-        if (isset($goodData['variation']) && isset($goodData['variation']['attributes']) && is_array($goodData['variation']['attributes'])) {
+        // При точном поиске по SKU оси вариации уже определены в базе. Файл может
+        // содержать только часть осей, поэтому не заменяем существующую комбинацию.
+        if (!$preserveAttributes && isset($goodData['variation']) && isset($goodData['variation']['attributes']) && is_array($goodData['variation']['attributes'])) {
             $newAttributes = $goodData['variation']['attributes'];
 
             // Удаляем существующие связи с атрибутами
@@ -4958,6 +4997,25 @@ class BulkGoodsImportController extends Controller
         }
 
         return null;
+    }
+
+    /**
+     * SKU identifies a concrete variation during stock and price updates.
+     * Attributes from the import row are intentionally not used here because
+     * a source file may contain only a subset of the product's variation axes.
+     */
+    private function findVariationBySku(string $sku, ?string $supplier = null): ?ShopGoodVariation
+    {
+        $query = ShopGoodVariation::where('sku', $sku);
+
+        if ($supplier !== null && $supplier !== '') {
+            $matched = (clone $query)->where('supplier', $supplier)->orderBy('id')->first();
+            if ($matched) {
+                return $matched;
+            }
+        }
+
+        return $query->orderBy('id')->first();
     }
 
     /**
