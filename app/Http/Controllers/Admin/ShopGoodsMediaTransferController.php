@@ -61,7 +61,6 @@ class ShopGoodsMediaTransferController extends Controller
                     }
 
                     if (!empty($updateData)) {
-                        $this->logAudit($targetGood, 'updated', $targetGood->only(array_keys($updateData)), $updateData);
                         $targetGood->update($updateData);
                     }
                 }
@@ -91,7 +90,6 @@ class ShopGoodsMediaTransferController extends Controller
                 // Удаляем товар-донор
                 $donorGood = ShopGood::find($donorId);
                 if ($donorGood) {
-                    $this->logAudit($donorGood, 'deleted', $donorGood->toArray(), null);
                     $donorGood->delete();
                     $deletedGoodsCount++;
                 }
@@ -119,18 +117,4 @@ class ShopGoodsMediaTransferController extends Controller
         }
     }
 
-    /**
-     * Логирование аудита
-     */
-    private function logAudit($good, $action, $oldValues, $newValues)
-    {
-        $good->audit()->create([
-            'user_id' => request()->user()->id,
-            'action' => $action,
-            'old_values' => $oldValues,
-            'new_values' => $newValues,
-            'ip_address' => request()->ip(),
-            'user_agent' => request()->userAgent(),
-        ]);
-    }
 }

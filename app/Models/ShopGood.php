@@ -210,14 +210,6 @@ class ShopGood extends Model
     }
 
     /**
-     * Аудит товара
-     */
-    public function audit(): HasMany
-    {
-        return $this->hasMany(ShopGoodAudit::class, 'good_id');
-    }
-
-    /**
      * Главное изображение
      */
     public function mainImage(): HasOne

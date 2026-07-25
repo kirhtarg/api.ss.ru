@@ -58,7 +58,6 @@ class ClearShopGoods extends Command
             $tables = [
                 'shop_stock_reservations' => 'резервации товаров',
                 'shop_low_stock_notifications' => 'уведомления о низких остатках',
-                'shop_good_audits' => 'аудит товаров',
                 'shop_good_prices' => 'цены товаров',
                 'shop_stocks' => 'остатки товаров',
                 'shop_good_images' => 'изображения товаров',
@@ -111,7 +110,6 @@ class ClearShopGoods extends Command
                 'shop_good_prices',
                 'shop_stocks',
                 'shop_stock_reservations',
-                'shop_good_audits',
                 'shop_low_stock_notifications',
             ];
 

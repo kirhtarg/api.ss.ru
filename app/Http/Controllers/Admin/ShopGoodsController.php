@@ -1878,9 +1878,6 @@ class ShopGoodsController extends Controller
                 }
             }
 
-            // Аудит
-            $this->logAudit($newGood, 'cloned', $originalGood->id, $newGood->toArray());
-
             DB::commit();
 
             return response()->json([
@@ -2060,8 +2057,6 @@ class ShopGoodsController extends Controller
             }
 
             // Аудит
-            $this->logAudit($good, 'created', null, $good->toArray());
-
             DB::commit();
 
             return response()->json([
@@ -2086,7 +2081,6 @@ class ShopGoodsController extends Controller
     public function update(Request $request, $id): JsonResponse
     {
         $good = ShopGood::findOrFail($id);
-        $oldValues = $good->toArray();
 
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
@@ -2283,8 +2277,6 @@ class ShopGoodsController extends Controller
             }
 
             // Аудит
-            $this->logAudit($good, 'updated', $oldValues, $good->fresh()->toArray());
-
             DB::commit();
 
             // Обновляем модель из БД для получения актуальных данных
@@ -2474,13 +2466,9 @@ class ShopGoodsController extends Controller
     public function destroy($id): JsonResponse
     {
         $good = ShopGood::findOrFail($id);
-        $oldValues = $good->toArray();
 
         try {
             DB::beginTransaction();
-
-            // Аудит
-            $this->logAudit($good, 'deleted', $oldValues, null);
 
             $good->delete();
 
@@ -3031,12 +3019,6 @@ class ShopGoodsController extends Controller
                     ShopGoodImage::whereIn('id', $imagesToDelete->pluck('id')->all())->delete();
                 }
 
-                foreach (ShopGood::whereIn('id', $ids)->get() as $good) {
-                    $this->logAudit($good, 'bulk_delete_non_main_images', null, [
-                        'deleted_images_count' => $deletedImagesCount,
-                    ]);
-                }
-
                 DB::commit();
 
                 return response()->json([
@@ -3147,7 +3129,6 @@ class ShopGoodsController extends Controller
                 $deletedGoodsAfterVariationsRemovedCount = 0;
 
                 foreach ($goodsForProcessing as $good) {
-                    $oldValues = $good->toArray();
                     $variations = $good->variations;
 
                     if ($variations->isEmpty()) {
@@ -3156,7 +3137,6 @@ class ShopGoodsController extends Controller
                         }
 
                         $goodsWithoutVariationsCount++;
-                        $this->logAudit($good, 'bulk_deleted_without_images', $oldValues, null);
                         $good->delete();
                         $deletedCount++;
                         continue;
@@ -3176,7 +3156,6 @@ class ShopGoodsController extends Controller
                     }
 
                     if ($deleteGoodIfAllVariationsRemoved && $variationsWithoutImages->count() === $variations->count()) {
-                        $this->logAudit($good, 'bulk_deleted_without_images', $oldValues, null);
                         $good->delete();
                         $deletedGoodsAfterVariationsRemovedCount++;
                         $deletedCount++;
@@ -3208,11 +3187,8 @@ class ShopGoodsController extends Controller
                 if (! $good) {
                     continue; // Пропускаем null товары
                 }
-                $oldValues = $good->toArray();
 
-                // Для удаления сначала создаем запись аудита, потом удаляем товар
                 if ($action === 'delete') {
-                    $this->logAudit($good, 'bulk_deleted', $oldValues, null);
                     $good->delete();
 
                     continue;
@@ -3864,7 +3840,6 @@ class ShopGoodsController extends Controller
                 }
 
                 // Аудит для всех действий кроме delete (для delete уже создан выше)
-                $this->logAudit($good, 'bulk_'.$action, $oldValues, $good->fresh()->toArray());
             }
 
             DB::commit();
@@ -6037,21 +6012,6 @@ class ShopGoodsController extends Controller
     }
 
     /**
-     * Логирование аудита
-     */
-    private function logAudit($good, $action, $oldValues, $newValues)
-    {
-        $good->audit()->create([
-            'user_id' => request()->user()->id,
-            'action' => $action,
-            'old_values' => $oldValues,
-            'new_values' => $newValues,
-            'ip_address' => request()->ip(),
-            'user_agent' => request()->userAgent(),
-        ]);
-    }
-
-    /**
      * Чзменение размера изображения
      */
     private function resizeImageFile($imagePath, $width, $height, $resizeType)
@@ -7984,7 +7944,6 @@ class ShopGoodsController extends Controller
 
             // Удаление исходного товара, если указано
             if ($deleteSource) {
-                $this->logAudit($sourceGood, 'deleted', $sourceGood->toArray(), null);
                 $sourceGood->delete();
             }
 
@@ -8281,7 +8240,6 @@ class ShopGoodsController extends Controller
             foreach ($goodIdsToDelete as $goodId) {
                 $goodToDelete = ShopGood::find($goodId);
                 if ($goodToDelete) {
-                    $this->logAudit($goodToDelete, 'deleted', $goodToDelete->toArray(), null);
                     $goodToDelete->delete();
                 }
             }
@@ -9278,17 +9236,6 @@ class ShopGoodsController extends Controller
             }
 
             DB::commit();
-
-            // Логируем действие для каждого товара
-            foreach ($goodIds as $goodId) {
-                $good = ShopGood::find($goodId);
-                if ($good) {
-                    $this->logAudit($good, 'bulk_remove_properties', [
-                        'properties_removed' => $properties,
-                        'removed_count' => $removedCount,
-                    ], null);
-                }
-            }
 
             return response()->json([
                 'success' => true,
