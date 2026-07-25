@@ -485,39 +485,42 @@ class DatabaseBackupService
             'message' => 'Закрываем публичный сайт на время восстановления',
         ]);
 
-        app(DatabaseRestoreMaintenanceService::class)->activate(
+        $maintenance = app(DatabaseRestoreMaintenanceService::class);
+        $maintenance->activate(
             $taskId,
             $filename,
             $restoreSelection['mode'],
             count($restoreSelection['tables'])
         );
 
-        $this->putRestoreTaskStatus((string) $taskId, [
-            'status' => 'running',
-            'progress' => 38,
-            'stage' => 'Импорт дампа',
-            'message' => $restoreSelection['mode'] === 'full' ? 'Страховочный бэкап создан, начинаем восстановление базы' : 'Страховочный бэкап создан, начинаем выборочное восстановление таблиц',
-        ]);
+        try {
+            $this->putRestoreTaskStatus((string) $taskId, [
+                'status' => 'running',
+                'progress' => 38,
+                'stage' => 'Импорт дампа',
+                'message' => $restoreSelection['mode'] === 'full' ? 'Страховочный бэкап создан, начинаем восстановление базы' : 'Страховочный бэкап создан, начинаем выборочное восстановление таблиц',
+            ]);
 
-        $this->restore($filename, $restoreSelection['tables']);
+            $this->restore($filename, $restoreSelection['tables']);
 
-        $this->putRestoreTaskStatus((string) $taskId, [
-            'status' => 'running',
-            'progress' => 95,
-            'stage' => 'Финальная проверка',
-            'message' => 'Проверяем доступность базы после восстановления',
-        ]);
+            $this->putRestoreTaskStatus((string) $taskId, [
+                'status' => 'running',
+                'progress' => 95,
+                'stage' => 'Финальная проверка',
+                'message' => 'Проверяем доступность базы после восстановления',
+            ]);
 
-        DB::select('SELECT 1');
+            DB::select('SELECT 1');
 
-        app(DatabaseRestoreMaintenanceService::class)->deactivate();
-
-        $this->putRestoreTaskStatus((string) $taskId, [
-            'status' => 'completed',
-            'progress' => 100,
-            'stage' => 'Готово',
-            'message' => 'База восстановлена из выбранного бэкапа',
-        ]);
+            $this->putRestoreTaskStatus((string) $taskId, [
+                'status' => 'completed',
+                'progress' => 100,
+                'stage' => 'Готово',
+                'message' => 'База восстановлена из выбранного бэкапа',
+            ]);
+        } finally {
+            $maintenance->deactivate();
+        }
     }
 
     public function restore(string $filename, array $selectedTables = []): void
@@ -721,9 +724,25 @@ class DatabaseBackupService
         $this->updateCurrentRestoreTask(40, 'Подготовка SQL-файла');
         $binary = $this->findBinary(env('DB_BACKUP_MYSQL_PATH'), 'mysql', 'DB_BACKUP_MYSQL_PATH');
         $restorePath = $this->gunzipToTemporarySqlIfNeeded($absolutePath);
-        if ($selectedTables !== [] || ! $binary) {
-            $this->updateCurrentRestoreTask(55, $selectedTables === [] ? 'Импорт через PHP/PDO' : 'Выборочный импорт таблиц');
-            $this->restoreSqlWithPdo($restorePath, $selectedTables);
+        if ($selectedTables !== []) {
+            if (! $binary) {
+                throw new RuntimeException('Для выборочного восстановления требуется mysql client. Установите его или укажите DB_BACKUP_MYSQL_PATH.');
+            }
+
+            try {
+                $this->restoreMysqlSelectedTables($restorePath, $config, $binary, $selectedTables);
+            } finally {
+                if ($restorePath !== $absolutePath) {
+                    File::delete($restorePath);
+                }
+            }
+
+            return;
+        }
+
+        if (! $binary) {
+            $this->updateCurrentRestoreTask(55, 'Импорт через PHP/PDO');
+            $this->restoreSqlWithPdo($restorePath);
             if ($restorePath !== $absolutePath) {
                 File::delete($restorePath);
             }
@@ -748,6 +767,94 @@ class DatabaseBackupService
         } finally {
             if ($restorePath !== $absolutePath) {
                 File::delete($restorePath);
+            }
+        }
+    }
+
+    /**
+     * Imports the dump natively into an isolated database, then replaces only
+     * the requested tables. This avoids parsing SQL values such as HTML, JSON
+     * and order logs in PHP.
+     */
+    private function restoreMysqlSelectedTables(string $restorePath, array $config, string $binary, array $selectedTables): void
+    {
+        $baseName = preg_replace('/[^a-zA-Z0-9_]/', '_', (string) $config['database']) ?: 'database';
+        $temporaryDatabase = 'restore_'.substr($baseName, 0, 40).'_'.Str::lower(Str::random(10));
+        $temporaryIdentifier = $this->quoteIdentifier($temporaryDatabase);
+
+        try {
+            $this->updateCurrentRestoreTask(45, 'Подготовка временной базы');
+            DB::unprepared('CREATE DATABASE '.$temporaryIdentifier.' CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
+
+            $safePath = str_replace('\\', '/', $restorePath);
+            $command = [
+                $binary,
+                '--default-character-set=utf8mb4',
+                '--host='.$config['host'],
+                '--port='.(string) $config['port'],
+                '--user='.$config['username'],
+                $temporaryDatabase,
+                '--execute=source '.$safePath,
+            ];
+
+            $this->updateCurrentRestoreTask(55, 'Нативный импорт во временную базу');
+            $this->runProcess($command, ['MYSQL_PWD' => (string) $config['password']], 1800);
+
+            $this->updateCurrentRestoreTask(78, 'Замена выбранных таблиц');
+            $this->disconnectOtherApplicationConnections($config);
+            DB::unprepared('SET FOREIGN_KEY_CHECKS=0');
+
+            try {
+                foreach ($selectedTables as $table) {
+                    $sourceTable = $temporaryIdentifier.'.'.$this->quoteIdentifier($table);
+                    $targetTable = $this->quoteIdentifier($table);
+                    $definition = DB::selectOne('SHOW CREATE TABLE '.$sourceTable);
+
+                    if (! $definition) {
+                        throw new RuntimeException('Таблица '.$table.' отсутствует во временной базе восстановления.');
+                    }
+
+                    $values = array_values((array) $definition);
+                    $createStatement = (string) ($values[1] ?? '');
+                    if ($createStatement === '') {
+                        throw new RuntimeException('Не удалось получить структуру таблицы '.$table.' из временной базы.');
+                    }
+
+                    DB::unprepared('DROP TABLE IF EXISTS '.$targetTable);
+                    DB::unprepared($createStatement);
+                    DB::unprepared('INSERT INTO '.$targetTable.' SELECT * FROM '.$sourceTable);
+                }
+            } finally {
+                DB::unprepared('SET FOREIGN_KEY_CHECKS=1');
+            }
+        } finally {
+            try {
+                DB::unprepared('DROP DATABASE IF EXISTS '.$temporaryIdentifier);
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        }
+    }
+
+    private function disconnectOtherApplicationConnections(array $config): void
+    {
+        $currentConnectionId = (int) DB::scalar('SELECT CONNECTION_ID()');
+        $connections = DB::select('SHOW PROCESSLIST');
+
+        foreach ($connections as $connection) {
+            $id = (int) ($connection->Id ?? 0);
+            if ($id === 0 || $id === $currentConnectionId) {
+                continue;
+            }
+
+            if (($connection->User ?? null) !== $config['username'] || ($connection->db ?? null) !== $config['database']) {
+                continue;
+            }
+
+            try {
+                DB::unprepared('KILL '.$id);
+            } catch (\Throwable $e) {
+                report($e);
             }
         }
     }
