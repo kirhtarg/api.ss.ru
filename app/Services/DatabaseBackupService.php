@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use App\Services\DatabaseRestoreMaintenanceService;
@@ -512,11 +513,15 @@ class DatabaseBackupService
 
             DB::select('SELECT 1');
 
+            $phpFpmRestarted = $this->restartPhpFpmAfterRestore();
+
             $this->putRestoreTaskStatus((string) $taskId, [
                 'status' => 'completed',
                 'progress' => 100,
                 'stage' => 'Готово',
-                'message' => 'База восстановлена из выбранного бэкапа',
+                'message' => $phpFpmRestarted
+                    ? 'База восстановлена из выбранного бэкапа. PHP-FPM перезапущен.'
+                    : 'База восстановлена из выбранного бэкапа',
             ]);
         } finally {
             $maintenance->deactivate();
@@ -857,6 +862,36 @@ class DatabaseBackupService
                 report($e);
             }
         }
+    }
+
+    private function restartPhpFpmAfterRestore(): bool
+    {
+        $enabled = filter_var(env('DB_RESTORE_RESTART_PHP_FPM', false), FILTER_VALIDATE_BOOL);
+        if (! $enabled) {
+            return false;
+        }
+
+        $service = trim((string) env('DB_RESTORE_PHP_FPM_SERVICE', 'php8.4-fpm'));
+        if ($service === '' || ! preg_match('/^[A-Za-z0-9@._-]+$/', $service)) {
+            Log::warning('Database restore: invalid PHP-FPM service name', ['service' => $service]);
+
+            return false;
+        }
+
+        $process = new Process(['sudo', '-n', '/bin/systemctl', 'restart', $service], base_path());
+        $process->setTimeout(60);
+        $process->run();
+
+        if (! $process->isSuccessful()) {
+            Log::warning('Database restore: PHP-FPM restart failed', [
+                'service' => $service,
+                'error' => $this->normalizeProcessText($process->getErrorOutput() ?: $process->getOutput()),
+            ]);
+
+            return false;
+        }
+
+        return true;
     }
 
     private function dumpPostgres(string $absolutePath, array $config): void

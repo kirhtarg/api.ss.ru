@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\File;
 
 class DatabaseRestoreMaintenanceService
 {
@@ -27,6 +28,14 @@ class DatabaseRestoreMaintenanceService
     public function deactivate(): void
     {
         Storage::disk(self::DISK)->delete(self::PATH);
+
+        // На некоторых конфигурациях локальный диск мог оставить пустой файл.
+        // Такой файл всё равно включает режим обслуживания, поэтому проверяем
+        // абсолютный путь и удаляем остаток напрямую.
+        $absolutePath = Storage::disk(self::DISK)->path(self::PATH);
+        if (File::exists($absolutePath)) {
+            File::delete($absolutePath);
+        }
     }
 
     public function status(): array

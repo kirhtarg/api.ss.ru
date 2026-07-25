@@ -32,7 +32,9 @@ class BlockPublicDuringDatabaseRestore
             return true;
         }
 
-        if ($request->is('api/admin/*')) {
+        // Админка должна видеть только статус восстановления. Остальные запросы
+        // к админскому API могут удерживать блокировки заменяемых таблиц.
+        if ($request->is('api/admin/database-backups*')) {
             return true;
         }
 
