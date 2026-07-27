@@ -213,16 +213,10 @@ class TbankPaymentService
                 $payload['create_demo'] = ['flow' => $this->settings['dolyame_demo_flow']];
             }
 
-            // Детальное логирование запроса для отладки
-            Log::debug('Dolyame Partner: Full request payload', [
-                'payload' => $payload,
+            Log::debug('Dolyame Partner: Payment request prepared', [
                 'order_number' => $orderNumber,
                 'total_amount' => $totalAmount,
                 'items_count' => count($items),
-                'items' => $items,
-                'items_total' => array_reduce($items, function ($sum, $item) {
-                    return $sum + ($item['price'] * $item['quantity']);
-                }, 0),
             ]);
 
             // Build HTTP client with Basic Auth and optional mTLS
@@ -457,7 +451,11 @@ class TbankPaymentService
                 'connect_timeout' => 10,
             ]);
 
-            Log::info('T-Bank Acquiring: Sending payment request.', ['url' => $apiUrl, 'payload' => $payload]);
+            Log::info('T-Bank Acquiring: Sending payment request.', [
+                'url' => $apiUrl,
+                'order_id' => $orderId,
+                'amount' => $payload['Amount'] ?? null,
+            ]);
             if ($gatewayOrderId) {
                 Log::info('[FIX:tbank-regenerate-payment-link] T-Bank Init uses regenerated gateway OrderId.', [
                     'order_id' => $orderId,
@@ -733,7 +731,7 @@ class TbankPaymentService
             $expectedToken = $this->generateToken($payloadForToken);
 
             if (! hash_equals($expectedToken, $receivedToken)) {
-                Log::warning('T-Bank Webhook: Token mismatch.', ['expected' => $expectedToken, 'received' => $receivedToken]);
+                Log::warning('T-Bank Webhook: Token mismatch.');
 
                 return false;
             }

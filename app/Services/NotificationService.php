@@ -466,16 +466,26 @@ class NotificationService
         if ($order->payment_method) {
             $message .= "💳 <b>Способ оплаты:</b> {$order->payment_method}\n";
         }
-        $message .= '✅ <b>Статус оплаты:</b> '.($order->payed ? 'Оплачен' : 'Не оплачен')."\n";
+
+        // Для двухэтапной оплаты разрешение менеджера и фактическая оплата — разные состояния.
+        $twoStagePay = \App\Models\Setting::where('key', 'two_stage_pay')->first();
+        $isTwoStagePay = $twoStagePay && ($twoStagePay->value === '1' || $twoStagePay->value === true);
+        if ($order->payed) {
+            $paymentStatus = 'Оплачен';
+        } elseif ($isTwoStagePay && ! $order->pay_agree) {
+            $paymentStatus = 'Ожидает подтверждения менеджером';
+        } elseif ($isTwoStagePay) {
+            $paymentStatus = 'Оплата разрешена, ожидается оплата клиента';
+        } else {
+            $paymentStatus = 'Не оплачен';
+        }
+        $message .= "💳 <b>Статус оплаты:</b> {$paymentStatus}\n";
 
         if ($order->shipping_address) {
             $message .= "📍 <b>Адрес:</b> {$order->shipping_address}\n";
         }
 
         // Проверяем, включена ли двухэтапная оплата и требуется ли одобрение
-        $twoStagePay = \App\Models\Setting::where('key', 'two_stage_pay')->first();
-        $isTwoStagePay = $twoStagePay && ($twoStagePay->value === '1' || $twoStagePay->value === true);
-
         if ($isTwoStagePay && ! $order->pay_agree) {
             $message .= "\n\n⚠️ <b>ВНИМАНИЕ: Включен режим двухэтапной оплаты!</b>\n";
             $message .= "🔍 Необходимо проверить наличие товаров в заказе и одобрить оплату в админ-панели.\n";

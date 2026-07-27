@@ -1323,14 +1323,12 @@ class ShopPaymentController extends Controller
         }
         $settings = $this->normalizePaymentSettings($paymentMethod->settings);
 
-        // Debug: Log the actual settings from database
-        Log::debug('ShopPaymentController: handleTbankEacqPayment settings', [
+        Log::debug('ShopPaymentController: T-Bank acquiring configuration loaded', [
             'payment_method_id' => $paymentMethod->id,
-            'raw_settings' => $paymentMethod->settings,
-            'normalized_settings' => $settings,
-            'dolyame_keys' => array_filter(array_keys($settings), function ($key) {
-                return strpos($key, 'dolyame') !== false;
-            }),
+            'mode' => $settings['mode'] ?? null,
+            'two_stage_pay' => (bool) ($settings['two_stage_pay'] ?? false),
+            'has_terminal_key' => ! empty($settings['terminal_key']),
+            'has_terminal_password' => ! empty($settings['terminal_password']),
         ]);
 
         $shouldBeTwoStagePay = $settings['two_stage_pay'] ?? false;
@@ -1362,6 +1360,15 @@ class ShopPaymentController extends Controller
                     'payment_method_id' => $paymentMethod->id,
                     'payment_status_id' => ShopPaymentStatus::where('name', 'pending')->value('id'),
                 ]);
+                try {
+                    app(\App\Services\NotificationService::class)->notifyOrderCreated($order);
+                } catch (\Throwable $e) {
+                    Log::error('T-Bank acquiring: failed to send order_created notification', [
+                        'order_id' => $order->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+
                 if ($shouldBeTwoStagePay && in_array($paymentMethod->type, $twoStagePaymentTypesAllowed)) {
                     return response()->json([
                         'success' => true,
@@ -2286,7 +2293,7 @@ class ShopPaymentController extends Controller
             $password = $settings['dolyame_password1'] ?? $settings['dolyame_password'] ?? '';
             
             if (empty($login) || empty($password)) {
-                \Log::error('Dolyame partner init: missing login or password', ['method_id' => $paymentMethod->id, 'settings' => $settings]);
+                \Log::error('Dolyame partner init: missing login or password', ['method_id' => $paymentMethod->id]);
 
                 return response()->json(['success' => false, 'message' => 'Payment gateway misconfigured (Dolyame Partner)'], 500);
             }
@@ -2540,10 +2547,11 @@ class ShopPaymentController extends Controller
         }
 
         $settings = $this->normalizePaymentSettings($paymentMethod->settings);
-        Log::debug('handleTbankDolyamePayment: settings for payment method', [
+        Log::debug('handleTbankDolyamePayment: configuration loaded', [
             'method_id' => $paymentMethod->id,
-            'settings' => $settings,
-            'raw_settings' => $paymentMethod->settings,
+            'provider' => $settings['dolyame_provider'] ?? 'tbank',
+            'has_terminal_key' => ! empty($settings['terminal_key']),
+            'has_terminal_password' => ! empty($settings['terminal_password']),
             'settings_keys' => array_keys($settings),
             'has_shop_id' => isset($settings['shop_id']),
             'has_dolyame_shop_id' => isset($settings['dolyame_shop_id']),
@@ -2593,7 +2601,11 @@ class ShopPaymentController extends Controller
         try {
             Log::debug('handleTbankDolyamePayment: Initiating payment via TbankService for order', ['order_id' => $order->id, 'payment_method_id' => $paymentMethod->id]);
             $paymentResult = $tbankService->initiatePayment($order);
-            Log::debug('handleTbankDolyamePayment: Payment initiation result from TbankService', ['order_id' => $order->id, 'payment_result' => $paymentResult]);
+            Log::debug('handleTbankDolyamePayment: Payment initiation result', [
+                'order_id' => $order->id,
+                'success' => (bool) ($paymentResult['success'] ?? false),
+                'transaction_id' => $paymentResult['transaction_id'] ?? null,
+            ]);
             if (isset($paymentResult['success']) && $paymentResult['success']) {
                 $transaction = ShopPaymentTransaction::create([
                     'order_id' => $order->id,
@@ -2714,7 +2726,11 @@ class ShopPaymentController extends Controller
             return response()->json(['success' => false, 'message' => 'Payment method is inactive'], 400);
         }
         $settings = $this->normalizePaymentSettings($paymentMethod->settings);
-        Log::debug('handleTbankDolyamePaymentDraft: settings for payment method', ['method_id' => $paymentMethod->id, 'settings' => $settings]);
+        Log::debug('handleTbankDolyamePaymentDraft: configuration loaded', [
+            'method_id' => $paymentMethod->id,
+            'has_terminal_key' => ! empty($settings['terminal_key']),
+            'has_terminal_password' => ! empty($settings['terminal_password']),
+        ]);
         if (empty($settings['terminal_key']) || empty($settings['terminal_password'])) {
             Log::error('handleTbankDolyamePaymentDraft: missing terminal_key or terminal_password');
 
@@ -2729,7 +2745,11 @@ class ShopPaymentController extends Controller
             $orderStub->order_number = $transaction->request_data['order_number'] ?? ('TX-'.$transaction->id);
             $orderStub->total_amount = $transaction->amount;
             $paymentResult = $tbankService->initiatePayment($orderStub);
-            Log::debug('handleTbankDolyamePaymentDraft: Payment initiation result', ['tx_id' => $transaction->id, 'payment_result' => $paymentResult]);
+            Log::debug('handleTbankDolyamePaymentDraft: Payment initiation result', [
+                'tx_id' => $transaction->id,
+                'success' => (bool) ($paymentResult['success'] ?? false),
+                'transaction_id' => $paymentResult['transaction_id'] ?? null,
+            ]);
             if (isset($paymentResult['success']) && $paymentResult['success']) {
                 $transaction->update([
                     'transaction_id' => $paymentResult['transaction_id'] ?? null,
@@ -4337,4 +4357,3 @@ class ShopPaymentController extends Controller
         return is_array($data) ? $data : null;
     }
 }
-

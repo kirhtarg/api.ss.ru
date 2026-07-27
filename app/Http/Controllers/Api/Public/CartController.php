@@ -1916,7 +1916,8 @@ class CartController extends Controller
                 'price' => $price,
                 'total' => $total,
                 'good_name' => $good->name,
-                'variation_name' => $variation ? $variation->name : null,
+                // Техническое имя вариации не является значением, выбранным покупателем.
+                'variation_name' => $variation ? $this->formatVariationProperties($variation) : null,
                 'good_sku' => $goodSku,
                 'good_image' => $this->getGoodImage($good),
                 'status' => 'pending',
