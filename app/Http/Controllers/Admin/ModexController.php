@@ -233,14 +233,30 @@ class ModexController extends Controller
             'token_query' => $request->query('token'),
         ]);
 
-        // Проверяем, что это файл модекса и он готов
-        if (($exportFile->export_config['type'] ?? null) !== 'modex' || $exportFile->status !== 'completed') {
+        if (($exportFile->export_config['type'] ?? null) !== 'modex') {
+            abort(404, 'Файл не найден или не готов');
+        }
+
+        $finalPath = 'modex/'.$exportFile->filename;
+        // A duplicate Redis job can fail after the original one has completed
+        // and deleted its input. The final output is authoritative in this
+        // situation, so restore the download record automatically.
+        if ($exportFile->status !== 'completed' && Storage::exists($finalPath)) {
+            $exportFile->update([
+                'status' => 'completed',
+                'file_path' => $finalPath,
+                'file_size' => Storage::size($finalPath),
+                'error_message' => null,
+            ]);
+            $exportFile->refresh();
+        }
+
+        if ($exportFile->status !== 'completed') {
             abort(404, 'Файл не найден или не готов');
         }
 
         // Repair records created by the previous worker implementation, which
         // could leave a temporary path after successfully copying the result.
-        $finalPath = 'modex/'.$exportFile->filename;
         if (! Storage::exists((string) $exportFile->file_path) && Storage::exists($finalPath)) {
             $exportFile->update([
                 'file_path' => $finalPath,

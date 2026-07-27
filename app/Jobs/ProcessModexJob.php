@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\ExportFile;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -39,12 +40,34 @@ class ProcessModexJob implements ShouldQueue
         $this->modexFile = $modexFile;
     }
 
+    public function middleware(): array
+    {
+        return [
+            (new WithoutOverlapping('modex-file:'.$this->modexFile->getKey()))
+                ->releaseAfter(60)
+                ->expireAfter($this->timeout + 60),
+        ];
+    }
+
     /**
      * Execute the job.
      */
     public function handle(): void
     {
         try {
+            $this->modexFile->refresh();
+
+            // A Redis visibility timeout may deliver the same long-running job
+            // to another worker. Once the first worker has completed it, the
+            // duplicate must be treated as a no-op rather than as a failure.
+            if ($this->modexFile->status === 'completed'
+                && $this->modexFile->file_path
+                && Storage::exists($this->modexFile->file_path)) {
+                Log::info('Skipping already completed Modex job', ['file_id' => $this->modexFile->id]);
+
+                return;
+            }
+
             // Проверяем существование файла
             $config = $this->modexFile->export_config ?? [];
             $inputFilePath = $config['input_file_path'] ?? null;
