@@ -236,6 +236,17 @@ class ModexController extends Controller
             abort(404, 'Файл не найден или не готов');
         }
 
+        // Repair records created by the previous worker implementation, which
+        // could leave a temporary path after successfully copying the result.
+        $finalPath = 'modex/'.$exportFile->filename;
+        if (! Storage::exists((string) $exportFile->file_path) && Storage::exists($finalPath)) {
+            $exportFile->update([
+                'file_path' => $finalPath,
+                'file_size' => Storage::size($finalPath),
+            ]);
+            $exportFile->refresh();
+        }
+
         $user = Auth::user();
 
         if (! $user) {

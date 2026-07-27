@@ -463,14 +463,11 @@ class ProcessModexJob implements ShouldQueue
 
             @unlink($tempCsvPath);
 
-            // Update model immediately
+            // The final job copies this temporary file to modex/. Do not mark the
+            // record as completed here: otherwise the UI can offer a download
+            // before the final file path has been saved.
             try {
-                $finalSize = filesize($fullOutputPath);
                 $this->modexFile->update([
-                    'status' => 'completed',
-                    'file_path' => $tempOut,
-                    'file_size' => $finalSize,
-                    'total_rows' => $rowIndex,
                     'export_config' => array_merge($this->modexFile->export_config ?? [], ['phase' => 'completed', 'progress_rows' => $rowIndex]),
                 ]);
             } catch (\Throwable $e) {
