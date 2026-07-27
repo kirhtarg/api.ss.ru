@@ -138,10 +138,14 @@ class ModexController extends Controller
         }
 
         try {
-            // Сохраняем входной файл временно
+            // Keep the source file outside the shared temp directory until the
+            // queued job has finished. Temp cleanup must not be able to remove
+            // a file that is still waiting in the queue.
             $inputFile = $request->file('file');
             $tempFilename = 'temp_modex_'.time().'_'.uniqid().'.'.$inputFile->getClientOriginalExtension();
-            $tempPath = $inputFile->storeAs('temp', $tempFilename);
+            $inputDirectory = 'modex/input';
+            Storage::makeDirectory($inputDirectory);
+            $tempPath = $inputFile->storeAs($inputDirectory, $tempFilename);
 
             // Определяем имя выходного файла
             $customFilename = trim($request->output_filename ?? '');
