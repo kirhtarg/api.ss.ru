@@ -287,7 +287,7 @@ class ProcessModexJob implements ShouldQueue
             }
 
             $ruleKey = $rule['ruleKey'] ?? '';
-            if ($ruleKey === 'extractBetweenFragments') {
+            if (in_array($ruleKey, ['extractBetweenFragments', 'extractVariationFromParentheses'], true)) {
                 $name = $params['newColumnName'] ?? 'New Column';
                 if ($maxCols > 1) {
                     for ($i = 0; $i < $maxCols; $i++) {
@@ -537,9 +537,110 @@ class ProcessModexJob implements ShouldQueue
     {
         return match ($ruleKey) {
             'extractBetweenFragments' => $this->applyExtractBetweenFragments($cellValue, $params),
+            'extractVariationFromParentheses' => $this->applyExtractVariationFromParentheses($cellValue, $params),
             'splitByDelimiter' => $this->applySplitByDelimiter($cellValue, $params),
             default => null
         };
+    }
+
+    /**
+     * Extract one variation value from a comma-separated list inside parentheses.
+     * Single values in parentheses, such as a SKU, are intentionally ignored.
+     */
+    protected function applyExtractVariationFromParentheses(string $cellValue, array $params): string
+    {
+        if (($params['removeTags'] ?? false) === true) {
+            $cellValue = strip_tags($cellValue);
+        }
+
+        $delimiter = (string) ($params['delimiter'] ?? ',');
+        $position = max(1, (int) ($params['position'] ?? 1));
+        $minimumParts = max(2, (int) ($params['minimumParts'] ?? 2));
+
+        if ($delimiter === '') {
+            return '';
+        }
+
+        foreach ($this->parenthesizedParts($cellValue) as $contents) {
+            $parts = $this->splitAtTopLevel($contents, $delimiter);
+            if (count($parts) < $minimumParts || ! isset($parts[$position - 1])) {
+                continue;
+            }
+
+            $result = trim($parts[$position - 1]);
+            if ($result === '') {
+                continue;
+            }
+
+            foreach ($this->parseDelimiters((string) ($params['deleteFragmentsAfter'] ?? '')) as $fragment) {
+                $result = str_replace($fragment, '', $result);
+            }
+
+            return trim($result);
+        }
+
+        return '';
+    }
+
+    /** @return array<int, string> */
+    protected function parenthesizedParts(string $value): array
+    {
+        $parts = [];
+        $depth = 0;
+        $start = null;
+        $length = strlen($value);
+
+        for ($index = 0; $index < $length; $index++) {
+            if ($value[$index] === '(') {
+                if ($depth === 0) {
+                    $start = $index + 1;
+                }
+                $depth++;
+                continue;
+            }
+
+            if ($value[$index] === ')' && $depth > 0) {
+                $depth--;
+                if ($depth === 0 && $start !== null) {
+                    $parts[] = substr($value, $start, $index - $start);
+                    $start = null;
+                }
+            }
+        }
+
+        return $parts;
+    }
+
+    /** @return array<int, string> */
+    protected function splitAtTopLevel(string $value, string $delimiter): array
+    {
+        $parts = [];
+        $depth = 0;
+        $start = 0;
+        $length = strlen($value);
+        $delimiterLength = strlen($delimiter);
+
+        for ($index = 0; $index < $length; $index++) {
+            if ($value[$index] === '(') {
+                $depth++;
+                continue;
+            }
+
+            if ($value[$index] === ')' && $depth > 0) {
+                $depth--;
+                continue;
+            }
+
+            if ($depth === 0 && substr($value, $index, $delimiterLength) === $delimiter) {
+                $parts[] = trim(substr($value, $start, $index - $start));
+                $index += $delimiterLength - 1;
+                $start = $index + 1;
+            }
+        }
+
+        $parts[] = trim(substr($value, $start));
+
+        return $parts;
     }
 
     /**
@@ -649,7 +750,7 @@ class ProcessModexJob implements ShouldQueue
         $normalized = str_replace(["\r", "\n"], ',', $textarea);
 
         // Парсим CSV строку
-        $delimiters = str_getcsv($normalized);
+        $delimiters = str_getcsv($normalized, ',', '"', '\\');
 
         // Фильтруем пустые значения, но сохраняем пробелы
         return array_unique(array_filter($delimiters, function ($v) {

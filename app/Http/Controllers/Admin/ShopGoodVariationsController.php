@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Shop\Property as ShopProperty;
 use App\Models\ShopGood;
+use App\Models\ShopGoodImage;
 use App\Models\ShopGoodProperty;
 use App\Models\ShopGoodVariation;
 use Illuminate\Http\JsonResponse;
@@ -1015,6 +1016,7 @@ class ShopGoodVariationsController extends Controller
 
             // РЎРѕР·РґР°РµРј РІР°СЂРёР°С†РёСЋ
             $variation = ShopGoodVariation::create($variationData);
+            $this->removeStaleVariationImageBindings($variation);
 
             // РЎРѕР·РґР°РµРј Р°С‚СЂРёР±СѓС‚С‹ РІР°СЂРёР°С†РёРё (РЅРѕРІР°СЏ СЃС…РµРјР°)
             if ($request->has('attributes') && is_array($request->get('attributes'))) {
@@ -1178,6 +1180,7 @@ class ShopGoodVariationsController extends Controller
                     'is_active' => true,
                     'sort_order' => $nextSortOrder++,
                 ]);
+                $this->removeStaleVariationImageBindings($variation);
 
                 // РџСЂРёРІСЏР·С‹РІР°РµРј Р·РЅР°С‡РµРЅРёСЏ Р°С‚СЂРёР±СѓС‚РѕРІ Рє РІР°СЂРёР°С†РёРё
                 foreach ($combo as $pair) {
@@ -1223,6 +1226,30 @@ class ShopGoodVariationsController extends Controller
                 'message' => 'РћС€РёР±РєР° СЃРѕР·РґР°РЅРёСЏ РІР°СЂРёР°С†РёР№: '.$e->getMessage(),
             ], 500);
         }
+    }
+
+    /**
+     * Удаляет устаревшие связи изображений, оставшиеся от удалённой вариации
+     * с тем же ID после неполного восстановления базы.
+     */
+    private function removeStaleVariationImageBindings(ShopGoodVariation $variation): void
+    {
+        $staleImages = ShopGoodImage::query()
+            ->where('variation_id', $variation->id)
+            ->where('created_at', '<', $variation->created_at)
+            ->get(['id', 'file_path']);
+
+        if ($staleImages->isEmpty()) {
+            return;
+        }
+
+        ShopGoodImage::whereIn('id', $staleImages->pluck('id'))->delete();
+
+        \Log::warning('Removed stale image bindings from newly created variation', [
+            'variation_id' => $variation->id,
+            'good_id' => $variation->good_id,
+            'image_ids' => $staleImages->pluck('id')->all(),
+        ]);
     }
 
     private function normalizeBulkVariationStock($value): ?string
