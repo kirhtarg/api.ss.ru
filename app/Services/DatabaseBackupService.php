@@ -748,6 +748,7 @@ class DatabaseBackupService
         if (! $binary) {
             $this->updateCurrentRestoreTask(55, 'Импорт через PHP/PDO');
             $this->restoreSqlWithPdo($restorePath);
+            $this->repairLegacyRestoreForeignKeysAfterImport();
             if ($restorePath !== $absolutePath) {
                 File::delete($restorePath);
             }
@@ -769,6 +770,7 @@ class DatabaseBackupService
         try {
             $this->updateCurrentRestoreTask(55, 'Импорт через mysql client');
             $this->runProcess($command, ['MYSQL_PWD' => (string) $config['password']], 1800);
+            $this->repairLegacyRestoreForeignKeysAfterImport();
         } finally {
             if ($restorePath !== $absolutePath) {
                 File::delete($restorePath);
@@ -829,6 +831,13 @@ class DatabaseBackupService
                     DB::unprepared($createStatement);
                     DB::unprepared('INSERT INTO '.$targetTable.' SELECT * FROM '.$sourceTable);
                 }
+
+                $repairedForeignKeys = $this->repairLegacyRestoreForeignKeys();
+                if ($repairedForeignKeys > 0) {
+                    Log::warning('Исправлены внешние ключи после восстановления базы данных', [
+                        'count' => $repairedForeignKeys,
+                    ]);
+                }
             } finally {
                 DB::unprepared('SET FOREIGN_KEY_CHECKS=1');
             }
@@ -838,6 +847,88 @@ class DatabaseBackupService
             } catch (\Throwable $e) {
                 report($e);
             }
+        }
+    }
+
+    /**
+     * Older restore implementations could leave foreign keys pointing to
+     * temporary shop_*_old or shop_*_bk tables. Such keys make valid current
+     * product and variation IDs fail integrity checks after a restore.
+     */
+    private function repairLegacyRestoreForeignKeys(): int
+    {
+        $rows = DB::select(
+            "SELECT k.TABLE_NAME, k.CONSTRAINT_NAME, k.COLUMN_NAME, k.REFERENCED_TABLE_NAME,
+                    k.REFERENCED_COLUMN_NAME, k.ORDINAL_POSITION,
+                    r.UPDATE_RULE, r.DELETE_RULE
+             FROM information_schema.KEY_COLUMN_USAGE k
+             INNER JOIN information_schema.REFERENTIAL_CONSTRAINTS r
+                ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA
+               AND r.TABLE_NAME = k.TABLE_NAME
+               AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME
+             WHERE k.CONSTRAINT_SCHEMA = DATABASE()
+               AND k.REFERENCED_TABLE_NAME REGEXP '(_old|_bk)$'
+             ORDER BY k.TABLE_NAME, k.CONSTRAINT_NAME, k.ORDINAL_POSITION"
+        );
+
+        $constraints = [];
+        foreach ($rows as $row) {
+            $key = $row->TABLE_NAME.'|'.$row->CONSTRAINT_NAME;
+            $constraints[$key]['table'] = $row->TABLE_NAME;
+            $constraints[$key]['name'] = $row->CONSTRAINT_NAME;
+            $constraints[$key]['referenced_table'] = $row->REFERENCED_TABLE_NAME;
+            $constraints[$key]['update_rule'] = $row->UPDATE_RULE;
+            $constraints[$key]['delete_rule'] = $row->DELETE_RULE;
+            $constraints[$key]['columns'][] = $row->COLUMN_NAME;
+            $constraints[$key]['referenced_columns'][] = $row->REFERENCED_COLUMN_NAME;
+        }
+
+        $allowedRules = ['CASCADE', 'RESTRICT', 'SET NULL', 'NO ACTION'];
+        $repaired = 0;
+
+        foreach ($constraints as $constraint) {
+            $referencedTable = preg_replace('/_(?:old|bk)$/', '', $constraint['referenced_table']);
+            if (! $referencedTable || ! in_array($constraint['update_rule'], $allowedRules, true) || ! in_array($constraint['delete_rule'], $allowedRules, true)) {
+                throw new RuntimeException('Не удалось безопасно восстановить внешний ключ '.$constraint['name'].'.');
+            }
+
+            $tableExists = DB::selectOne(
+                'SELECT 1 AS present FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
+                [$referencedTable]
+            );
+            if (! $tableExists) {
+                throw new RuntimeException('Не найдена рабочая таблица '.$referencedTable.' для внешнего ключа '.$constraint['name'].'.');
+            }
+
+            $columns = implode(', ', array_map($this->quoteIdentifier(...), $constraint['columns']));
+            $referencedColumns = implode(', ', array_map($this->quoteIdentifier(...), $constraint['referenced_columns']));
+
+            DB::unprepared('ALTER TABLE '.$this->quoteIdentifier($constraint['table']).' DROP FOREIGN KEY '.$this->quoteIdentifier($constraint['name']));
+            DB::unprepared(
+                'ALTER TABLE '.$this->quoteIdentifier($constraint['table'])
+                .' ADD CONSTRAINT '.$this->quoteIdentifier($constraint['name'])
+                .' FOREIGN KEY ('.$columns.') REFERENCES '.$this->quoteIdentifier($referencedTable)
+                .' ('.$referencedColumns.') ON DELETE '.$constraint['delete_rule'].' ON UPDATE '.$constraint['update_rule']
+            );
+            $repaired++;
+        }
+
+        return $repaired;
+    }
+
+    private function repairLegacyRestoreForeignKeysAfterImport(): void
+    {
+        DB::unprepared('SET FOREIGN_KEY_CHECKS=0');
+
+        try {
+            $repaired = $this->repairLegacyRestoreForeignKeys();
+            if ($repaired > 0) {
+                Log::warning('Исправлены внешние ключи после полного восстановления базы данных', [
+                    'count' => $repaired,
+                ]);
+            }
+        } finally {
+            DB::unprepared('SET FOREIGN_KEY_CHECKS=1');
         }
     }
 
