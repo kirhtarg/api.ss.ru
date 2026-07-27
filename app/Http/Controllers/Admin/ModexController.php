@@ -27,17 +27,15 @@ class ModexController extends Controller
             $file = $request->file('file');
             $path = $file->getRealPath();
 
-            // Увеличиваем лимит памяти для анализа
-            ini_set('memory_limit', '512M');
-
             try {
-                // Используем IOFactory для автоматического определения типа
-                $spreadsheet = IOFactory::load($path);
-                $worksheet = $spreadsheet->getActiveSheet();
-
-                $rows = $worksheet->getHighestRow();
-                $highestColumn = $worksheet->getHighestColumn();
-                $columns = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($highestColumn);
+                // Read sheet metadata only. Loading a whole supplier file here
+                // blocks PHP-FPM and may cause a gateway timeout before the job
+                // itself has even been queued.
+                $reader = IOFactory::createReaderForFile($path);
+                $worksheetInfo = $reader->listWorksheetInfo($path);
+                $firstSheet = $worksheetInfo[0] ?? [];
+                $rows = (int) ($firstSheet['totalRows'] ?? 0);
+                $columns = (int) ($firstSheet['totalColumns'] ?? 0);
 
                 return response()->json([
                     'success' => true,
