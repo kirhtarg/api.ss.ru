@@ -141,6 +141,6 @@ class RestoreMissingSizesFromBackup extends Command
     {
         $sizeToken = '(?:XXS|XS|S|M|М|L|XL|XXL|2XL|3XL|4XL|SM|MD|LG|OS|NS|UNI|ONE\s+SIZE)';
 
-        return (bool) preg_match('/^(?:ДЕТ\s+.+|\d+(?:[.,]\d+)?\s*-\s*\d+(?:[.,]\d+)?|\d+(?:\s*-\s*\d+)?\s*\([^)]+\)|\d+(?:[.,]\d+)?(?:\s*-\s*\d+(?:[.,]\d+)?)?\s*(?:ML|L|KGS?|G|MM|CM|M|IN)(?:\s*\/\s*\d+(?:[.,]\d+)?(?:\s*-\s*\d+(?:[.,]\d+)?)?\s*(?:ML|L|KGS?|G|MM|CM|M|IN))*|'.$sizeToken.'(?:\s*\/\s*'.$sizeToken.')*|OS\s*-\s*(?:LEFT|RIGHT)|(?:SHORT|REGULAR|LONG|TALL)\s*-\s*\d+)$/iu', trim($value));
+        return (bool) preg_match('/^(?:ДЕТ\s+.+|\d+\s*\'\s*\d+\s*"|\d+(?:[.,]\d+)?\s*-\s*\d+(?:[.,]\d+)?|\d+(?:\s*-\s*\d+)?\s*\([^)]+\)|\d+(?:[.,]\d+)?(?:\s*-\s*\d+(?:[.,]\d+)?)?\s*(?:ML|L|KGS?|G|MM|CM|M|IN)(?:\s*\/\s*\d+(?:[.,]\d+)?(?:\s*-\s*\d+(?:[.,]\d+)?)?\s*(?:ML|L|KGS?|G|MM|CM|M|IN))*|'.$sizeToken.'(?:\s*\/\s*'.$sizeToken.')*|OS\s*-\s*(?:LEFT|RIGHT)|(?:SHORT|REGULAR|LONG|TALL)\s*-\s*\d+)$/iu', trim($value));
     }
 }
