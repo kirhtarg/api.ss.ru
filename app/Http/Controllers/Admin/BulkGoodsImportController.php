@@ -4309,7 +4309,7 @@ class BulkGoodsImportController extends Controller
                 return null;
             }
 
-            $attributes = $variationData['attributes'];
+            $attributes = $this->normalizeVariationAttributes($variationData['attributes']);
             $priceModification = $goodData["price_modification"] ?? null;
             $rawVarPrice = $variationData["price"] ?? $goodData["price"] ?? $good->price ?? 0;
             $variationPrice = $this->applyPriceModification($rawVarPrice, $priceModification["regular"] ?? null);
@@ -4391,7 +4391,7 @@ class BulkGoodsImportController extends Controller
                     continue;
                 }
 
-                $attributeValueIds[] = $attributeValueId;
+                $attributeValueIds[$attribute->id] = $attributeValueId;
             }
 
             // Если были ошибки или нет валидных атрибутов - не создаем вариацию
@@ -4402,6 +4402,7 @@ class BulkGoodsImportController extends Controller
             }
 
             // Сортируем ID атрибутов для сравнения
+            $attributeValueIds = array_values($attributeValueIds);
             sort($attributeValueIds);
 
             // Получаем поставщика для вариации
@@ -4819,7 +4820,7 @@ class BulkGoodsImportController extends Controller
         // При точном поиске по SKU оси вариации уже определены в базе. Файл может
         // содержать только часть осей, поэтому не заменяем существующую комбинацию.
         if (!$preserveAttributes && isset($goodData['variation']) && isset($goodData['variation']['attributes']) && is_array($goodData['variation']['attributes'])) {
-            $newAttributes = $goodData['variation']['attributes'];
+            $newAttributes = $this->normalizeVariationAttributes($goodData['variation']['attributes']);
 
             // Удаляем существующие связи с атрибутами
             DB::table('shop_variation_attributes_values')->where('variation_id', $variation->id)->delete();
@@ -4933,6 +4934,44 @@ class BulkGoodsImportController extends Controller
 
         // Не создаем новые атрибуты - просто возвращаем null, если атрибут не найден
         return null;
+    }
+
+    /**
+     * A variation has one value per axis. Importing two different values for
+     * the same axis is ambiguous and must not overwrite or duplicate data.
+     *
+     * @throws \InvalidArgumentException
+     */
+    private function normalizeVariationAttributes(array $attributes): array
+    {
+        $normalized = [];
+
+        foreach ($attributes as $attribute) {
+            $name = trim((string) ($attribute['name'] ?? ''));
+            $value = trim((string) ($attribute['value'] ?? ''));
+
+            if ($name === '' || $value === '') {
+                continue;
+            }
+
+            $key = mb_strtolower($name);
+            if (isset($normalized[$key])) {
+                if ($normalized[$key]['value'] !== $value) {
+                    throw new \InvalidArgumentException(
+                        "В импортируемой вариации характеристика «{$name}» задана несколькими значениями: «{$normalized[$key]['value']}» и «{$value}»."
+                    );
+                }
+
+                continue;
+            }
+
+            $normalized[$key] = [
+                'name' => $name,
+                'value' => $value,
+            ];
+        }
+
+        return array_values($normalized);
     }
 
     /**

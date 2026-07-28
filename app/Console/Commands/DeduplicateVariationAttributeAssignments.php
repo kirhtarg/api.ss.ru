@@ -51,44 +51,51 @@ class DeduplicateVariationAttributeAssignments extends Command
 
         $backupTable = 'shop_variation_attribute_duplicates_'.now()->format('Ymd_His');
 
-        DB::transaction(function () use ($backupTable): void {
-            DB::statement(<<<SQL
-                CREATE TABLE `{$backupTable}` AS
-                SELECT ranked.id, ranked.variation_id, ranked.attribute_value_id,
-                       ranked.created_at, ranked.updated_at
+        // MySQL commits implicitly on CREATE TABLE, so the backup and deletion
+        // cannot be combined in one transaction.
+        DB::statement(<<<SQL
+            CREATE TABLE `{$backupTable}` AS
+            SELECT ranked.id, ranked.variation_id, ranked.attribute_value_id,
+                   ranked.created_at, ranked.updated_at
+            FROM (
+                SELECT vav.id, vav.variation_id, vav.attribute_value_id,
+                       vav.created_at, vav.updated_at,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY vav.variation_id, av.attribute_id
+                           ORDER BY vav.updated_at DESC, vav.id DESC
+                       ) AS row_num
+                FROM shop_variation_attributes_values vav
+                INNER JOIN shop_variation_attribute_values av ON av.id = vav.attribute_value_id
+            ) ranked
+            WHERE ranked.row_num > 1
+        SQL);
+
+        $backupRows = (int) DB::table($backupTable)->count();
+        if ($backupRows !== $duplicateRows) {
+            throw new \RuntimeException(
+                "Резервная таблица {$backupTable} содержит {$backupRows} строк вместо ожидаемых {$duplicateRows}. Удаление отменено."
+            );
+        }
+
+        $deletedRows = DB::delete(<<<'SQL'
+            DELETE vav
+            FROM shop_variation_attributes_values vav
+            INNER JOIN (
+                SELECT id
                 FROM (
-                    SELECT vav.id, vav.variation_id, vav.attribute_value_id,
-                           vav.created_at, vav.updated_at,
+                    SELECT vav.id,
                            ROW_NUMBER() OVER (
                                PARTITION BY vav.variation_id, av.attribute_id
                                ORDER BY vav.updated_at DESC, vav.id DESC
                            ) AS row_num
                     FROM shop_variation_attributes_values vav
                     INNER JOIN shop_variation_attribute_values av ON av.id = vav.attribute_value_id
-                ) ranked
-                WHERE ranked.row_num > 1
-            SQL);
+                ) ranked_rows
+                WHERE row_num > 1
+            ) duplicates ON duplicates.id = vav.id
+        SQL);
 
-            DB::delete(<<<'SQL'
-                DELETE vav
-                FROM shop_variation_attributes_values vav
-                INNER JOIN (
-                    SELECT id
-                    FROM (
-                        SELECT vav.id,
-                               ROW_NUMBER() OVER (
-                                   PARTITION BY vav.variation_id, av.attribute_id
-                                   ORDER BY vav.updated_at DESC, vav.id DESC
-                               ) AS row_num
-                        FROM shop_variation_attributes_values vav
-                        INNER JOIN shop_variation_attribute_values av ON av.id = vav.attribute_value_id
-                    ) ranked_rows
-                    WHERE row_num > 1
-                ) duplicates ON duplicates.id = vav.id
-            SQL);
-        });
-
-        $this->info("Дубли удалены. Резервная таблица: {$backupTable}");
+        $this->info("Дубли удалены: {$deletedRows}. Резервная таблица: {$backupTable}");
 
         return self::SUCCESS;
     }
