@@ -125,6 +125,10 @@ class AuditVariationRepairBackup extends Command
             return ['code' => 'current_valid', 'label' => 'Текущие оси корректны', 'recommendation' => 'Текущие данные не менять: архивная связь устарела.'];
         }
 
+        if ($this->hasColorOnlyCurrentAxis($byAttribute, $colorAttributeId, $sizeAttributeId, $archived)) {
+            return ['code' => 'no_size_required', 'label' => 'Размер не используется', 'recommendation' => 'Действия не требуются: для этой вариации размер не задан.'];
+        }
+
         if ($this->hasAllowedChildVariationValue($byAttribute, $colorAttributeId, $sizeAttributeId)) {
             return ['code' => 'allowed_child_value', 'label' => 'Допустимое значение вариации', 'recommendation' => 'Действия не требуются: значение оставлено по правилу магазина.'];
         }
@@ -189,12 +193,28 @@ class AuditVariationRepairBackup extends Command
             && $this->looksLikeSize($sizes->first()->value);
     }
 
+    private function hasColorOnlyCurrentAxis($byAttribute, $colorAttributeId, $sizeAttributeId, $archived): bool
+    {
+        if ($colorAttributeId === false || $sizeAttributeId === false) {
+            return false;
+        }
+
+        $colors = $byAttribute->get($colorAttributeId, collect());
+        $sizes = $byAttribute->get($sizeAttributeId, collect());
+
+        return $colors->count() === 1
+            && $sizes->isEmpty()
+            && ! $this->looksLikeSize($colors->first()->value)
+            && ! $archived->contains(fn ($row) => $this->looksLikeSize($row->value));
+    }
+
     private function statusLabel(string $code): string
     {
         return match ($code) {
             'repaired' => 'Исправлено корректно',
             'current_valid' => 'Текущие оси корректны',
             'allowed_child_value' => 'Допустимое значение вариации',
+            'no_size_required' => 'Размер не используется',
             'no_current_axes' => 'Нет текущих осей',
             'duplicate_axis' => 'Повтор значения одной оси',
             'size_in_color' => 'Размер записан как цвет',
