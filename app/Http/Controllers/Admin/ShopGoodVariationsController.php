@@ -974,9 +974,23 @@ class ShopGoodVariationsController extends Controller
 
             // РџСЂРѕРІРµСЂСЏРµРј РЅР° РґСѓР±Р»РёРєР°С‚С‹ РІР°СЂРёР°С†РёР№ РїРѕ РєРѕРјР±РёРЅР°С†РёРё Р°С‚СЂРёР±СѓС‚РѕРІ
             if ($request->has('attributes') && is_array($request->get('attributes'))) {
-                $requestAttributeValueIds = array_map(function ($attr) {
-                    return (int) $attr['value_id'];
-                }, $request->get('attributes'));
+                $requestAttributes = collect($request->get('attributes'))
+                    ->filter(fn ($attr) => isset($attr['attribute_id'], $attr['value_id']))
+                    ->map(fn ($attr) => [
+                        'attribute_id' => (int) $attr['attribute_id'],
+                        'value_id' => (int) $attr['value_id'],
+                    ]);
+
+                if ($requestAttributes->pluck('attribute_id')->duplicates()->isNotEmpty()) {
+                    DB::rollBack();
+
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Для одной вариации можно выбрать только одно значение каждой характеристики.',
+                    ], 422);
+                }
+
+                $requestAttributeValueIds = $requestAttributes->pluck('value_id')->all();
                 sort($requestAttributeValueIds);
 
                 // РџРѕР»СѓС‡Р°РµРј РІСЃРµ СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РІР°СЂРёР°С†РёРё С‚РѕРІР°СЂР°
@@ -1026,11 +1040,16 @@ class ShopGoodVariationsController extends Controller
 
             // РЎРѕР·РґР°РµРј Р°С‚СЂРёР±СѓС‚С‹ РІР°СЂРёР°С†РёРё (РЅРѕРІР°СЏ СЃС…РµРјР°)
             if ($request->has('attributes') && is_array($request->get('attributes'))) {
-                foreach ($request->get('attributes') as $attrData) {
-                    if (isset($attrData['attribute_id']) && isset($attrData['value_id'])) {
+                foreach ($requestAttributes as $attrData) {
+                    $valueBelongsToAttribute = DB::table('shop_variation_attribute_values')
+                        ->where('id', $attrData['value_id'])
+                        ->where('attribute_id', $attrData['attribute_id'])
+                        ->exists();
+
+                    if ($valueBelongsToAttribute) {
                         DB::table('shop_variation_attributes_values')->insert([
                             'variation_id' => $variation->id,
-                            'attribute_value_id' => (int) $attrData['value_id'],
+                            'attribute_value_id' => $attrData['value_id'],
                             'created_at' => now(),
                             'updated_at' => now(),
                         ]);
@@ -1126,6 +1145,15 @@ class ShopGoodVariationsController extends Controller
 
             // РЎРіРµРЅРµСЂРёСЂСѓРµРј РІСЃРµ РєРѕРјР±РёРЅР°С†РёРё Р·РЅР°С‡РµРЅРёР№ РїРѕ РіСЂСѓРїРїР°Рј
             $groups = $request->get('attribute_groups', []);
+
+            if (collect($groups)->pluck('attribute_id')->duplicates()->isNotEmpty()) {
+                DB::rollBack();
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Каждая характеристика может участвовать в наборе вариаций только один раз.',
+                ], 422);
+            }
 
             $combinations = [[]];
             foreach ($groups as $group) {
@@ -1519,9 +1547,13 @@ class ShopGoodVariationsController extends Controller
             $newVariation->save();
 
             // 2. Копируем атрибуты (новая схема)
-            $attributes = \DB::table('shop_variation_attributes_values')
-                ->where('variation_id', $originalVariation->id)
-                ->get();
+            $attributes = \DB::table('shop_variation_attributes_values as vav')
+                ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                ->where('vav.variation_id', $originalVariation->id)
+                ->orderByDesc('vav.updated_at')
+                ->orderByDesc('vav.id')
+                ->get(['vav.attribute_value_id', 'av.attribute_id'])
+                ->unique('attribute_id');
             
             foreach ($attributes as $attr) {
                 \DB::table('shop_variation_attributes_values')->insert([
@@ -1718,6 +1750,28 @@ class ShopGoodVariationsController extends Controller
 
             $addedCount = 0;
             foreach ($variations as $variation) {
+                $attributeAssignmentIds = \Illuminate\Support\Facades\DB::table('shop_variation_attributes_values as vav')
+                    ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                    ->where('vav.variation_id', $variation->id)
+                    ->where('av.attribute_id', $attributeId)
+                    ->pluck('vav.id');
+
+                if ($attributeAssignmentIds->count() > 1) {
+                    \Illuminate\Support\Facades\DB::table('shop_variation_attributes_values')
+                        ->whereIn('id', $attributeAssignmentIds)
+                        ->delete();
+
+                    \Illuminate\Support\Facades\DB::table('shop_variation_attributes_values')->insert([
+                        'variation_id' => $variation->id,
+                        'attribute_value_id' => $valueId,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                    $addedCount++;
+
+                    continue;
+                }
+
                 // РџСЂРѕРІРµСЂСЏРµРј, РЅРµ РґРѕР±Р°РІР»РµРЅ Р»Рё СѓР¶Рµ СЌС‚РѕС‚ Р°С‚СЂРёР±СѓС‚ Рє РІР°СЂРёР°С†РёРё
                 $exists = \Illuminate\Support\Facades\DB::table('shop_variation_attributes_values')
                     ->where('variation_id', $variation->id)
