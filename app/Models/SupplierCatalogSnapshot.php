@@ -12,7 +12,7 @@ class SupplierCatalogSnapshot extends Model
 
     protected $fillable = [
         'supplier_code', 'source_type', 'source_name', 'source_url', 'storage_path',
-        'checksum', 'status', 'items_count', 'summary', 'error_message',
+        'checksum', 'status', 'progress', 'stage', 'processed_rows', 'total_rows', 'items_count', 'summary', 'error_message',
         'source_updated_at', 'processed_at',
     ];
 

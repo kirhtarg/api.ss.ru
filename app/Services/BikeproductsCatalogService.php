@@ -14,6 +14,8 @@ use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class BikeproductsCatalogService
@@ -35,27 +37,63 @@ class BikeproductsCatalogService
         'more_images' => 'MORE_PHOTO',
     ];
 
-    public function importExcel(UploadedFile $file, string $supplierCode): SupplierCatalogSnapshot
+    public function queueExcelImport(UploadedFile $file, string $supplierCode): SupplierCatalogSnapshot
     {
         $supplierCode = $this->normalizeSupplierCode($supplierCode);
         $this->ensureDefaultMappings($supplierCode);
 
-        // Один актуальный временный разбор на профиль. Исходный файл не сохраняется.
-        SupplierCatalogSnapshot::query()
+        // Один актуальный временный разбор на профиль. Файл удаляется в фоне после обработки.
+        $previousTemporaryPaths = SupplierCatalogSnapshot::query()
             ->where('supplier_code', $supplierCode)
-            ->delete();
+            ->pluck('storage_path')
+            ->filter()
+            ->all();
+        SupplierCatalogSnapshot::query()->where('supplier_code', $supplierCode)->delete();
+        foreach ($previousTemporaryPaths as $previousTemporaryPath) {
+            Storage::disk('local')->delete($previousTemporaryPath);
+        }
+
+        $temporaryPath = 'supplier-catalog-tmp/'.$supplierCode.'/'.Str::uuid().'.'.$file->getClientOriginalExtension();
+        Storage::disk('local')->put($temporaryPath, file_get_contents($file->getRealPath()));
 
         $snapshot = SupplierCatalogSnapshot::create([
             'supplier_code' => $supplierCode,
             'source_type' => 'xlsx',
             'source_name' => $file->getClientOriginalName(),
+            'storage_path' => $temporaryPath,
             'checksum' => hash_file('sha256', $file->getRealPath()),
-            'status' => 'processing',
+            'status' => 'queued',
+            'stage' => 'Файл поставлен в очередь',
         ]);
 
-        try {
-            $result = $this->parseExcel($file->getRealPath(), $supplierCode);
+        return $snapshot;
+    }
 
+    public function processExcelSnapshot(int $snapshotId): void
+    {
+        $snapshot = SupplierCatalogSnapshot::find($snapshotId);
+        if (! $snapshot || ! $snapshot->storage_path) {
+            return;
+        }
+
+        $temporaryPath = $snapshot->storage_path;
+
+        try {
+            $path = Storage::disk('local')->path($snapshot->storage_path);
+            if (! is_file($path)) {
+                throw new \RuntimeException('Временный файл разбора не найден. Загрузите Excel заново.');
+            }
+            $snapshot->update(['status' => 'processing', 'progress' => 1, 'stage' => 'Чтение листа Excel']);
+            $result = $this->parseExcel($path, $snapshot->supplier_code, function (int $processedRows, int $totalRows) use ($snapshot): void {
+                $snapshot->update([
+                    'progress' => min(92, max(2, (int) floor($processedRows * 92 / max(1, $totalRows)))),
+                    'stage' => 'Разбор строк Excel',
+                    'processed_rows' => $processedRows,
+                    'total_rows' => $totalRows,
+                ]);
+            });
+
+            $snapshot->update(['progress' => 94, 'stage' => 'Сохранение разобранных строк']);
             foreach ($result['items'] as &$item) {
                 $item['snapshot_id'] = $snapshot->id;
             }
@@ -67,25 +105,31 @@ class BikeproductsCatalogService
 
             $snapshot->update([
                 'status' => 'ready',
+                'progress' => 100,
+                'stage' => 'Готово',
+                'processed_rows' => $result['summary']['rows_total'],
+                'total_rows' => $result['summary']['rows_total'],
                 'items_count' => count($result['items']),
                 'summary' => $result['summary'],
                 'processed_at' => now(),
+                'storage_path' => null,
             ]);
         } catch (\Throwable $exception) {
             $snapshot->update([
                 'status' => 'failed',
+                'stage' => 'Ошибка',
                 'error_message' => $exception->getMessage(),
                 'processed_at' => now(),
+                'storage_path' => null,
             ]);
-
-            throw $exception;
+            report($exception);
+        } finally {
+            Storage::disk('local')->delete($temporaryPath);
         }
-
-        return $snapshot->fresh();
     }
 
     /** @return array{items: array<int, array<string, mixed>>, summary: array<string, mixed>} */
-    private function parseExcel(string $path, string $supplierCode): array
+    private function parseExcel(string $path, string $supplierCode, ?callable $onProgress = null): array
     {
         $reader = IOFactory::createReaderForFile($path);
         $reader->setReadDataOnly(true);
@@ -174,6 +218,10 @@ class BikeproductsCatalogService
                 'created_at' => $now,
                 'updated_at' => $now,
             ];
+
+            if ($onProgress !== null && ($row === 2 || $row === $rowsTotal + 1 || $row % 100 === 0)) {
+                $onProgress($row - 1, $rowsTotal);
+            }
         }
 
         $spreadsheet->disconnectWorksheets();

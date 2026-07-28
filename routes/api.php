@@ -2042,6 +2042,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::put('/profiles/{profile}', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'updateProfile']);
                     Route::get('/snapshots', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'snapshots']);
                     Route::post('/snapshots/excel', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'uploadExcel']);
+                    Route::get('/snapshots/{snapshot}', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'status']);
                     Route::get('/snapshots/{snapshot}/overview', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'overview']);
                     Route::get('/snapshots/{snapshot}/fields', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'fields']);
                     Route::get('/snapshots/{snapshot}/variation-audit', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'variationAudit']);

@@ -8,6 +8,7 @@ use App\Models\ShopVariationAttribute;
 use App\Models\SupplierCatalogFieldMapping;
 use App\Models\SupplierCatalogProfile;
 use App\Models\SupplierCatalogSnapshot;
+use App\Jobs\ProcessSupplierCatalogExcelJob;
 use App\Services\BikeproductsCatalogService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -61,13 +62,15 @@ class BikeproductsCatalogController extends Controller
 
         try {
             $supplierCode = $this->selectedSupplierCode($request->input('supplier_code'));
-            $snapshot = $this->catalog->importExcel($request->file('file'), $supplierCode);
+            $snapshot = $this->catalog->queueExcelImport($request->file('file'), $supplierCode);
+            // Возвращаем 202 до тяжёлого разбора даже на сервере с временно синхронной очередью.
+            ProcessSupplierCatalogExcelJob::dispatchAfterResponse($snapshot->id);
 
             return response()->json([
                 'success' => true,
-                'message' => 'Excel поставщика разобран и сохранён как снимок.',
+                'message' => 'Excel поставлен в очередь на разбор.',
                 'data' => $snapshot,
-            ], 201);
+            ], 202);
         } catch (\Throwable $exception) {
             report($exception);
 
@@ -76,6 +79,11 @@ class BikeproductsCatalogController extends Controller
                 'message' => 'Не удалось разобрать Excel поставщика: '.$exception->getMessage(),
             ], 422);
         }
+    }
+
+    public function status(SupplierCatalogSnapshot $snapshot): JsonResponse
+    {
+        return response()->json(['success' => true, 'data' => $snapshot]);
     }
 
     public function overview(SupplierCatalogSnapshot $snapshot): JsonResponse
