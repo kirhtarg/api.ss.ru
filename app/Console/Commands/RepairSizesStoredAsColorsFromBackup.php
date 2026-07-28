@@ -181,7 +181,9 @@ class RepairSizesStoredAsColorsFromBackup extends Command
 
     private function looksLikeSize(string $value): bool
     {
-        return (bool) preg_match('/^(?:\d+(?:\s*-\s*\d+)?\s*\([^)]+\)|(?:XXS|XS|S|M|L|XL|XXL|2XL|3XL|4XL))$/iu', trim($value));
+        $sizeToken = '(?:XXS|XS|S|M|L|XL|XXL|2XL|3XL|4XL|SM|MD|LG)';
+
+        return (bool) preg_match('/^(?:\d+(?:\s*-\s*\d+)?\s*\([^)]+\)|'.$sizeToken.'(?:\s*\/\s*'.$sizeToken.')*)$/iu', trim($value));
     }
 
     private function looksLikeColor(string $value): bool
