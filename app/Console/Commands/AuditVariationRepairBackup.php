@@ -56,7 +56,7 @@ class AuditVariationRepairBackup extends Command
 
         foreach ($archivedByVariation as $variationId => $rows) {
             $live = $liveRows->get($variationId, collect());
-            $classification = $this->classify($live, $colorAttributeId, $sizeAttributeId);
+            $classification = $this->classify($live, $rows, $colorAttributeId, $sizeAttributeId);
             $summary[$classification['code']] = ($summary[$classification['code']] ?? 0) + 1;
 
             $csvRows[] = [
@@ -93,7 +93,7 @@ class AuditVariationRepairBackup extends Command
         return self::SUCCESS;
     }
 
-    private function classify($live, $colorAttributeId, $sizeAttributeId): array
+    private function classify($live, $archived, $colorAttributeId, $sizeAttributeId): array
     {
         if ($live->isEmpty()) {
             return ['code' => 'no_current_axes', 'label' => 'Нет текущих осей', 'recommendation' => 'Восстановить по исходному файлу импорта.'];
@@ -102,6 +102,23 @@ class AuditVariationRepairBackup extends Command
         $byAttribute = $live->groupBy('attribute_id');
         if ($byAttribute->contains(fn ($values) => $values->count() > 1)) {
             return ['code' => 'duplicate_axis', 'label' => 'Повтор значения одной оси', 'recommendation' => 'Требуется проверка: не выбирать значение автоматически.'];
+        }
+
+        // The initial cleanup archive has the original color. If it is present in
+        // the current color axis and the current size axis has a valid value, the
+        // repair is complete and must not be reported as an unresolved difference.
+        if ($colorAttributeId !== false && $sizeAttributeId !== false && $archived->count() === 1) {
+            $archivedColor = $archived->first();
+            $currentColors = $byAttribute->get($colorAttributeId, collect())->pluck('value');
+            $currentSizes = $byAttribute->get($sizeAttributeId, collect())->pluck('value');
+
+            if (
+                (int) $archivedColor->attribute_id === (int) $colorAttributeId
+                && $currentColors->contains($archivedColor->value)
+                && $currentSizes->contains(fn (string $value) => $this->looksLikeSize($value))
+            ) {
+                return ['code' => 'repaired', 'label' => 'Исправлено корректно', 'recommendation' => 'Действия не требуются.'];
+            }
         }
 
         if ($colorAttributeId !== false) {
@@ -135,6 +152,7 @@ class AuditVariationRepairBackup extends Command
     private function statusLabel(string $code): string
     {
         return match ($code) {
+            'repaired' => 'Исправлено корректно',
             'no_current_axes' => 'Нет текущих осей',
             'duplicate_axis' => 'Повтор значения одной оси',
             'size_in_color' => 'Размер записан как цвет',
