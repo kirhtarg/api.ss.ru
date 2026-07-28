@@ -94,6 +94,7 @@ class RepairSizesStoredAsColorsFromBackup extends Command
                 'sku' => $archiveLinks->first()->sku,
                 'color' => $archiveLinks->first()->archived_value,
                 'size' => $size,
+                'live_links_count' => $liveLinks->count(),
             ]);
         }
 
@@ -123,9 +124,10 @@ class RepairSizesStoredAsColorsFromBackup extends Command
             implode(',', array_map('intval', $candidateVariationIds)),
         ));
 
+        $expectedBackupRows = (int) $candidates->sum('live_links_count');
         $backupRows = (int) DB::table($repairBackupTable)->count();
-        if ($backupRows !== $candidates->count()) {
-            throw new \RuntimeException("Резервная таблица {$repairBackupTable} содержит {$backupRows} строк вместо {$candidates->count()}. Исправление отменено.");
+        if ($backupRows !== $expectedBackupRows) {
+            throw new \RuntimeException("Резервная таблица {$repairBackupTable} содержит {$backupRows} строк вместо ожидаемых {$expectedBackupRows}. Исправление отменено.");
         }
 
         DB::transaction(function () use ($candidates, $candidateVariationIds, $colorAttributeId, $sizeAttributeId): void {
