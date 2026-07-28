@@ -79,6 +79,11 @@ class RepairSizesStoredAsColorsFromBackup extends Command
                 && $liveSizeLinks->count() === 1
                 && $this->looksLikeSize($liveSizeLinks->first()->live_value)
             ) {
+                if ($this->isChildSize($liveColorLinks->first()->live_value)) {
+                    // Two valid size values coexist. Do not choose one automatically.
+                    continue;
+                }
+
                 // A valid size already exists; remove only the extra size from Color.
                 $size = $liveSizeLinks->first()->live_value;
             }
@@ -183,7 +188,12 @@ class RepairSizesStoredAsColorsFromBackup extends Command
     {
         $sizeToken = '(?:XXS|XS|S|M|L|XL|XXL|2XL|3XL|4XL|SM|MD|LG|OS|NS|ONE\s+SIZE)';
 
-        return (bool) preg_match('/^(?:ДЕТ\s+.+|\d+(?:\s*-\s*\d+)?\s*\([^)]+\)|\d+(?:[.,]\d+)?\s*(?:ML|L|KGS?|G|MM|CM|M|IN)(?:\s*\/\s*\d+(?:[.,]\d+)?\s*(?:ML|L|KGS?|G|MM|CM|M|IN))*|'.$sizeToken.'(?:\s*\/\s*'.$sizeToken.')*|OS\s*-\s*(?:LEFT|RIGHT)|(?:SHORT|REGULAR|LONG|TALL)\s*-\s*\d+)$/iu', trim($value));
+        return (bool) preg_match('/^(?:ДЕТ\s+.+|\d+(?:\s*-\s*\d+)?\s*\([^)]+\)|\d+(?:[.,]\d+)?(?:\s*-\s*\d+(?:[.,]\d+)?)?\s*(?:ML|L|KGS?|G|MM|CM|M|IN)(?:\s*\/\s*\d+(?:[.,]\d+)?(?:\s*-\s*\d+(?:[.,]\d+)?)?\s*(?:ML|L|KGS?|G|MM|CM|M|IN))*|'.$sizeToken.'(?:\s*\/\s*'.$sizeToken.')*|OS\s*-\s*(?:LEFT|RIGHT)|(?:SHORT|REGULAR|LONG|TALL)\s*-\s*\d+)$/iu', trim($value));
+    }
+
+    private function isChildSize(string $value): bool
+    {
+        return (bool) preg_match('/^ДЕТ\s+/iu', trim($value));
     }
 
     private function looksLikeColor(string $value): bool
