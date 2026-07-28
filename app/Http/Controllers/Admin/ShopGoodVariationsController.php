@@ -35,23 +35,29 @@ class ShopGoodVariationsController extends Controller
                 ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
                 ->whereIn('vav.variation_id', $variationIds)
                 ->select(
-                    'vav.variation_id',
+                    'vav.id as assignment_id', 'vav.variation_id', 'vav.updated_at as assignment_updated_at',
                     'a.id as attribute_id', 'a.name as attribute_name',
                     'av.id as value_id', 'av.value as value_value'
                 )
                 ->orderBy('a.name')
+                ->orderByDesc('vav.updated_at')
+                ->orderByDesc('vav.id')
                 ->get();
 
             $byVariation = [];
             foreach ($rows as $r) {
-                $byVariation[$r->variation_id][] = [
+                if (isset($byVariation[$r->variation_id][$r->attribute_id])) {
+                    continue;
+                }
+
+                $byVariation[$r->variation_id][$r->attribute_id] = [
                     'attribute' => ['id' => (int) $r->attribute_id, 'name' => $r->attribute_name],
                     'value' => ['id' => (int) $r->value_id, 'value' => $r->value_value],
                 ];
             }
 
             foreach ($variations as $v) {
-                $v->attributes = $byVariation[$v->id] ?? [];
+                $v->attributes = array_values($byVariation[$v->id] ?? []);
             }
         }
 
@@ -1369,39 +1375,39 @@ class ShopGoodVariationsController extends Controller
                 // РєРѕС‚РѕСЂРѕРµ РІ СЃРІРѕСЋ РѕС‡РµСЂРµРґСЊ СЃСЃС‹Р»Р°РµС‚СЃСЏ РЅР° СЌС‚РѕС‚ Р°С‚СЂРёР±СѓС‚.
 
                 // РџРѕР»СѓС‡Р°РµРј С‚РµРєСѓС‰РёРµ Р·РЅР°С‡РµРЅРёСЏ РІР°СЂРёР°С†РёРё
-                $currentValues = DB::table('shop_variation_attributes_values as vav')
+                $assignmentIds = DB::table('shop_variation_attributes_values as vav')
                     ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
                     ->where('vav.variation_id', $variation->id)
                     ->where('av.attribute_id', $attributeId)
-                    ->select('vav.id', 'vav.attribute_value_id')
-                    ->first();
+                    ->pluck('vav.id');
 
-                if ($currentValues) {
-                    // Р•СЃР»Рё СЃРІСЏР·СЊ РµСЃС‚СЊ, РѕР±РЅРѕРІР»СЏРµРј Рµ‘
-                    if ($currentValues->attribute_value_id != $valueId) {
-                        DB::table('shop_variation_attributes_values')
-                            ->where('id', $currentValues->id)
-                            ->update([
-                                'attribute_value_id' => $valueId,
-                                'updated_at' => now(),
-                            ]);
-                    }
-                } else {
-                    // Р•СЃР»Рё СЃРІСЏР·Рё РЅРµС‚, СЃРѕР·РґР°РµРј РЅРѕРІСѓСЋ
-                    DB::table('shop_variation_attributes_values')->insert([
-                        'variation_id' => $variation->id,
-                        'attribute_value_id' => $valueId,
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ]);
+                // The old unique key allows several values of the same
+                // attribute for one variation. Replace all of them with one.
+                if ($assignmentIds->isNotEmpty()) {
+                    DB::table('shop_variation_attributes_values')
+                        ->whereIn('id', $assignmentIds)
+                        ->delete();
                 }
+
+                DB::table('shop_variation_attributes_values')->insert([
+                    'variation_id' => $variation->id,
+                    'attribute_value_id' => $valueId,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
             }
 
             DB::commit();
 
+            $updatedAttributes = $this->getVariationAttributes($variation->id);
+
             return response()->json([
                 'success' => true,
                 'message' => 'РђС‚СЂРёР±СѓС‚С‹ РІР°СЂРёР°С†РёРё РѕР±РЅРѕРІР»РµРЅС‹',
+                'data' => [
+                    'variation_id' => $variation->id,
+                    'attributes' => $updatedAttributes,
+                ],
             ]);
 
         } catch (\Exception $e) {
@@ -1412,6 +1418,30 @@ class ShopGoodVariationsController extends Controller
                 'message' => 'РћС€РёР±РєР° РѕР±РЅРѕРІР»РµРЅРёСЏ Р°С‚СЂРёР±СѓС‚РѕРІ: '.$e->getMessage(),
             ], 500);
         }
+    }
+
+    private function getVariationAttributes(int $variationId): array
+    {
+        return DB::table('shop_variation_attributes_values as vav')
+            ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+            ->join('shop_variation_attributes as a', 'a.id', '=', 'av.attribute_id')
+            ->where('vav.variation_id', $variationId)
+            ->orderBy('a.name')
+            ->orderByDesc('vav.updated_at')
+            ->orderByDesc('vav.id')
+            ->get([
+                'a.id as attribute_id',
+                'a.name as attribute_name',
+                'av.id as value_id',
+                'av.value as value_value',
+            ])
+            ->unique('attribute_id')
+            ->map(fn ($row) => [
+                'attribute' => ['id' => (int) $row->attribute_id, 'name' => $row->attribute_name],
+                'value' => ['id' => (int) $row->value_id, 'value' => $row->value_value],
+            ])
+            ->values()
+            ->all();
     }
 
     /**
