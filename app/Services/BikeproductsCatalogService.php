@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\ShopGoodImage;
+use App\Models\ShopGood;
 use App\Models\ShopGoodVariation;
 use App\Models\ShopVariationAttribute;
 use App\Models\SupplierCatalogFieldMapping;
@@ -41,15 +42,8 @@ class BikeproductsCatalogService
         $supplierCode = $this->normalizeSupplierCode($supplierCode);
         $this->ensureDefaultMappings($supplierCode);
 
-        // Один актуальный временный разбор на профиль. Файл удаляется в фоне после обработки.
-        $previousTemporaryPaths = SupplierCatalogSnapshot::query()
-            ->where('supplier_code', $supplierCode)
-            ->pluck('storage_path')
-            ->filter()
-            ->all();
-        SupplierCatalogSnapshot::query()->where('supplier_code', $supplierCode)->delete();
-        foreach ($previousTemporaryPaths as $previousTemporaryPath) {
-            Storage::disk('local')->delete($previousTemporaryPath);
+        if (SupplierCatalogSnapshot::query()->where('supplier_code', $supplierCode)->exists()) {
+            throw new \RuntimeException('Текущие разобранные данные уже существуют. Сначала очистите их в интерфейсе поставщика.');
         }
 
         $temporaryPath = 'supplier-catalog-tmp/'.$supplierCode.'/'.Str::uuid().'.'.$file->getClientOriginalExtension();
@@ -127,6 +121,15 @@ class BikeproductsCatalogService
         } finally {
             Storage::disk('local')->delete($temporaryPath);
         }
+    }
+
+    public function clearSnapshot(SupplierCatalogSnapshot $snapshot): void
+    {
+        if ($snapshot->storage_path) {
+            Storage::disk('local')->delete($snapshot->storage_path);
+        }
+
+        $snapshot->delete();
     }
 
     /** @return array{summary: array<string, mixed>} */
@@ -296,7 +299,7 @@ class BikeproductsCatalogService
             ->get();
     }
 
-    private function ensureDefaultMappings(string $supplierCode): void
+    public function ensureDefaultMappings(string $supplierCode): void
     {
         $attributes = ShopVariationAttribute::query()->pluck('id', 'name');
         $defaults = [
@@ -313,6 +316,24 @@ class BikeproductsCatalogService
                 [
                     'variation_attribute_id' => $attributes[$attributeName] ?? null,
                     'display_field' => $displayField,
+                    'is_check_enabled' => true,
+                    'is_update_enabled' => false,
+                ]
+            );
+        }
+
+        foreach ([
+            'NAME' => 'name',
+            'BRAND' => 'brand',
+            'PREVIEW_TEXT' => 'short_description',
+            'DETAIL_TEXT' => 'description',
+            'PRICE' => 'price',
+            'QUANTITY' => 'stock_quantity',
+        ] as $sourceField => $target) {
+            SupplierCatalogFieldMapping::firstOrCreate(
+                ['supplier_code' => $supplierCode, 'source_field' => $sourceField, 'scope' => 'good'],
+                [
+                    'conditions' => ['target' => $target],
                     'is_check_enabled' => true,
                     'is_update_enabled' => false,
                 ]
@@ -355,7 +376,8 @@ class BikeproductsCatalogService
     {
         $this->assertReadySnapshot($snapshot);
         $items = $snapshot->items()->get(['external_sku', 'external_group_key', 'image_urls', 'source_axes']);
-        $variations = $this->findVariationsBySku($items->pluck('external_sku'), $snapshot->supplier_code);
+        $matches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code);
+        $variations = $matches->where('type', 'variation')->pluck('model');
         $sourceAxes = [];
         $sourceUrls = [];
 
@@ -377,16 +399,29 @@ class BikeproductsCatalogService
             }
         }
 
+        $supplierNames = $this->supplierNames($snapshot->supplier_code);
+        $databaseGoods = ShopGood::query()
+            ->where(function ($query) use ($supplierNames) {
+                $query->whereIn('supplier', $supplierNames)
+                    ->orWhereHas('variations', fn ($variations) => $variations->whereIn('supplier', $supplierNames));
+            })
+            ->get(['id']);
+        $sourceProducts = $items->whereNotNull('external_group_key')->pluck('external_group_key')->unique()->count()
+            + $items->whereNull('external_group_key')->count();
+
         return [
             'snapshot' => $snapshot,
             'stats' => [
                 'source_items' => $items->count(),
+                'source_products' => $sourceProducts,
                 'source_groups' => $items->whereNotNull('external_group_key')->pluck('external_group_key')->unique()->count(),
                 'source_items_without_group' => $items->whereNull('external_group_key')->count(),
                 'source_items_with_images' => $items->filter(fn ($item) => ! empty($item->image_urls))->count(),
                 'source_duplicate_image_urls' => count(array_filter($sourceUrls, static fn (int $count) => $count > 1)),
-                'database_matching_variations' => $variations->count(),
-                'database_unmatched_source_skus' => $items->count() - $variations->count(),
+                'database_goods' => $databaseGoods->count(),
+                'database_matching_goods' => $matches->where('type', 'good')->count(),
+                'database_matching_variations' => $matches->where('type', 'variation')->count(),
+                'database_unmatched_source_skus' => $items->count() - $matches->count(),
                 'database_goods_with_variations' => $variations->pluck('good_id')->unique()->count(),
             ],
             'source_axes' => $this->sortStats($sourceAxes),
@@ -399,12 +434,14 @@ class BikeproductsCatalogService
     {
         $this->assertReadySnapshot($snapshot);
         $paginator = $snapshot->items()->orderBy('id')->paginate($perPage, ['*'], 'page', $page);
-        $variations = $this->findVariationsBySku($paginator->getCollection()->pluck('external_sku'), $snapshot->supplier_code);
+        $matches = $this->resolveSkuMatches($paginator->getCollection()->pluck('external_sku'), $snapshot->supplier_code);
         $mappings = $this->getMappings($snapshot->supplier_code);
         $rows = [];
 
         foreach ($paginator->getCollection() as $item) {
-            $variation = $variations->get($item->external_sku);
+            $match = $matches->get($item->external_sku);
+            $variation = $match && $match['type'] === 'variation' ? $match['model'] : null;
+            $good = $match ? ($match['type'] === 'good' ? $match['model'] : $variation->good) : null;
             $sourceAxes = collect($this->resolveSourceAxes($item->raw_payload ?? [], $mappings))
                 ->filter(static fn (array $axis) => ! empty($axis['is_check_enabled']))
                 ->values();
@@ -413,8 +450,10 @@ class BikeproductsCatalogService
                 : collect();
             $differences = [];
 
-            if (! $variation) {
+            if (! $match) {
                 $differences[] = ['status' => 'source_sku_not_found', 'attribute' => null, 'source_value' => null, 'database_values' => []];
+            } elseif (! $variation) {
+                $differences[] = ['status' => 'not_applicable', 'attribute' => null, 'source_value' => null, 'database_values' => []];
             } else {
                 $sourceAttributeIds = [];
                 foreach ($sourceAxes as $axis) {
@@ -443,10 +482,12 @@ class BikeproductsCatalogService
                 'external_sku' => $item->external_sku,
                 'external_group_key' => $item->external_group_key,
                 'source_name' => $item->name,
+                'database_match_type' => $match['type'] ?? null,
                 'database_variation_id' => $variation?->id,
-                'database_good_id' => $variation?->good_id,
-                'differences' => $differences,
-                'status' => collect($differences)->contains(fn (array $diff) => $diff['status'] !== 'match') ? 'attention' : 'match',
+                'database_good_id' => $good?->id,
+                'database_name' => $good?->name,
+                'differences' => array_values(array_filter($differences, fn (array $difference) => $difference['status'] !== 'not_applicable')),
+                'status' => ! $match ? 'not_found' : (! $variation ? 'not_applicable' : (collect($differences)->contains(fn (array $diff) => ! in_array($diff['status'], ['match', 'not_applicable'], true)) ? 'attention' : 'match')),
             ];
         }
 
@@ -472,26 +513,40 @@ class BikeproductsCatalogService
             }
         }
 
-        $variations = $this->findVariationsBySku($items->pluck('external_sku'), $snapshot->supplier_code);
+        $matches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code);
+        $variations = $matches->where('type', 'variation')->pluck('model');
+        $goods = $matches->map(fn (array $match) => $match['type'] === 'good' ? $match['model'] : $match['model']->good)->unique('id')->values();
         $variationIds = $variations->pluck('id');
-        $images = $variationIds->isEmpty()
+        $goodIds = $goods->pluck('id');
+        $images = ($variationIds->isEmpty() && $goodIds->isEmpty())
             ? collect()
-            : ShopGoodImage::query()->whereIn('variation_id', $variationIds)->get(['id', 'variation_id', 'file_path', 'is_main']);
+            : ShopGoodImage::query()
+                ->where(function ($query) use ($variationIds, $goodIds) {
+                    if ($variationIds->isNotEmpty()) $query->whereIn('variation_id', $variationIds);
+                    if ($goodIds->isNotEmpty()) $query->orWhereIn('good_id', $goodIds);
+                })
+                ->get(['id', 'good_id', 'variation_id', 'file_path', 'is_main']);
         $pathGroups = $images->groupBy('file_path')->filter(fn (Collection $group) => $group->count() > 1);
         $imageCountByVariation = $images->groupBy('variation_id')->map(fn (Collection $group) => $group->count());
+        $imageCountByGood = $images->whereNull('variation_id')->groupBy('good_id')->map(fn (Collection $group) => $group->count());
         $coverageMismatches = [];
         foreach ($items as $item) {
-            $variation = $variations->get($item->external_sku);
-            if (! $variation) {
+            $match = $matches->get($item->external_sku);
+            if (! $match) {
                 continue;
             }
+            $variation = $match['type'] === 'variation' ? $match['model'] : null;
+            $good = $variation ? $variation->good : $match['model'];
             $expectedCount = count($item->image_urls ?? []);
-            $actualCount = (int) ($imageCountByVariation->get($variation->id) ?? 0);
+            $actualCount = $variation
+                ? (int) ($imageCountByVariation->get($variation->id) ?? 0)
+                : (int) ($imageCountByGood->get($good->id) ?? 0);
             if ($expectedCount !== $actualCount) {
                 $coverageMismatches[] = [
                     'external_sku' => $item->external_sku,
-                    'variation_id' => $variation->id,
-                    'good_id' => $variation->good_id,
+                    'match_type' => $match['type'],
+                    'variation_id' => $variation?->id,
+                    'good_id' => $good->id,
                     'expected_count' => $expectedCount,
                     'database_count' => $actualCount,
                 ];
@@ -545,7 +600,7 @@ class BikeproductsCatalogService
     {
         $this->assertReadySnapshot($snapshot);
         $paginator = $snapshot->items()->orderBy('id')->paginate($perPage, ['*'], 'page', $page);
-        $variations = $this->findVariationsBySku($paginator->getCollection()->pluck('external_sku'), $snapshot->supplier_code);
+        $matches = $this->resolveSkuMatches($paginator->getCollection()->pluck('external_sku'), $snapshot->supplier_code);
         $mappings = SupplierCatalogFieldMapping::query()
             ->where('supplier_code', $snapshot->supplier_code)
             ->where('scope', 'product')
@@ -553,7 +608,7 @@ class BikeproductsCatalogService
             ->where('is_check_enabled', true)
             ->with('property:id,name')
             ->get();
-        $goodIds = $variations->pluck('good_id')->unique()->values();
+        $goodIds = $matches->map(fn (array $match) => $match['type'] === 'good' ? $match['model']->id : $match['model']->good_id)->unique()->values();
         $propertyQuery = DB::table('shop_good_properties as gp')
             ->join('shop_properties as p', 'p.id', '=', 'gp.property_id')
             ->whereIn('gp.good_id', $goodIds);
@@ -570,9 +625,10 @@ class BikeproductsCatalogService
         $rows = [];
 
         foreach ($paginator->getCollection() as $item) {
-            $variation = $variations->get($item->external_sku);
+            $match = $matches->get($item->external_sku);
+            $goodId = $match ? ($match['type'] === 'good' ? $match['model']->id : $match['model']->good_id) : null;
             $differences = [];
-            if (! $variation) {
+            if (! $match) {
                 $differences[] = ['status' => 'source_sku_not_found', 'property' => null, 'source_value' => null, 'database_values' => []];
             } else {
                 foreach ($mappings as $mapping) {
@@ -583,7 +639,7 @@ class BikeproductsCatalogService
                     $sourceValue = $mapping->display_field
                         ? ($this->nullableString($item->raw_payload[$mapping->display_field] ?? null) ?? $rawValue)
                         : $rawValue;
-                    $databaseValues = $properties->get($variation->good_id.':'.$mapping->property_id, collect())
+                    $databaseValues = $properties->get($goodId.':'.$mapping->property_id, collect())
                         ->pluck('value')
                         ->filter()
                         ->values()
@@ -603,7 +659,7 @@ class BikeproductsCatalogService
                 'item_id' => $item->id,
                 'external_sku' => $item->external_sku,
                 'source_name' => $item->name,
-                'database_good_id' => $variation?->good_id,
+                'database_good_id' => $goodId,
                 'differences' => $differences,
                 'status' => collect($differences)->contains(fn (array $diff) => $diff['status'] !== 'match') ? 'attention' : 'match',
             ];
@@ -618,6 +674,123 @@ class BikeproductsCatalogService
                 'total' => $paginator->total(),
             ],
         ];
+    }
+
+    /** @return array{data: array<int, array<string, mixed>>, meta: array<string, int>} */
+    public function goodAudit(SupplierCatalogSnapshot $snapshot, int $page = 1, int $perPage = 50): array
+    {
+        $this->assertReadySnapshot($snapshot);
+        $paginator = $snapshot->items()->orderBy('id')->paginate($perPage, ['*'], 'page', $page);
+        $matches = $this->resolveSkuMatches($paginator->getCollection()->pluck('external_sku'), $snapshot->supplier_code);
+        $mappings = SupplierCatalogFieldMapping::query()
+            ->where('supplier_code', $snapshot->supplier_code)
+            ->where('scope', 'good')
+            ->where('is_check_enabled', true)
+            ->get();
+        $goodIds = $matches->map(fn (array $match) => $match['type'] === 'good' ? $match['model']->id : $match['model']->good_id)->unique()->values();
+        $goods = ShopGood::query()->whereIn('id', $goodIds)->with('brands:id,name')->get()->keyBy('id');
+        $rows = [];
+
+        foreach ($paginator->getCollection() as $item) {
+            $match = $matches->get($item->external_sku);
+            $good = $match ? $goods->get($match['type'] === 'good' ? $match['model']->id : $match['model']->good_id) : null;
+            $differences = [];
+            if (! $good) {
+                $differences[] = ['status' => 'source_sku_not_found', 'field' => null, 'source_value' => null, 'database_values' => []];
+            } else {
+                foreach ($mappings as $mapping) {
+                    $target = (string) data_get($mapping->conditions, 'target');
+                    $sourceValue = $this->nullableString($item->raw_payload[$mapping->source_field] ?? null);
+                    if ($target === '' || $sourceValue === null) {
+                        continue;
+                    }
+                    $comparisonSourceValue = $this->applyMappingAdjustment($sourceValue, $mapping->conditions ?? []);
+                    $databaseValues = $target === 'brand'
+                        ? $good->brands->pluck('name')->values()->all()
+                        : [trim((string) ($good->{$target} ?? ''))];
+                    $databaseValues = array_values(array_filter($databaseValues, static fn ($value) => $value !== ''));
+                    $matchesValue = collect($databaseValues)->contains(fn (string $value) => $this->normalizeComparisonValue($value) === $this->normalizeComparisonValue($comparisonSourceValue));
+                    $differences[] = [
+                        'status' => empty($databaseValues) ? 'missing_in_database' : ($matchesValue ? 'match' : 'different'),
+                        'field' => $target,
+                        'source_field' => $mapping->source_field,
+                        'source_value' => $comparisonSourceValue,
+                        'source_raw_value' => $sourceValue,
+                        'database_values' => $databaseValues,
+                    ];
+                }
+            }
+            $rows[] = [
+                'item_id' => $item->id,
+                'external_sku' => $item->external_sku,
+                'source_name' => $item->name,
+                'database_match_type' => $match['type'] ?? null,
+                'database_good_id' => $good?->id,
+                'database_name' => $good?->name,
+                'differences' => $differences,
+                'status' => ! $good ? 'not_found' : (collect($differences)->contains(fn (array $diff) => ! in_array($diff['status'], ['match'], true)) ? 'attention' : 'match'),
+            ];
+        }
+
+        return [
+            'data' => $rows,
+            'meta' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
+        ];
+    }
+
+    /** @param array<string, mixed> $conditions */
+    private function applyMappingAdjustment(string $value, array $conditions): string
+    {
+        $operation = $conditions['adjustment'] ?? 'none';
+        $amount = (float) ($conditions['adjustment_value'] ?? 0);
+        if ($operation === 'none' || $amount == 0.0 || ! is_numeric(str_replace(',', '.', $value))) {
+            return $value;
+        }
+
+        $number = (float) str_replace(',', '.', $value);
+        $number = match ($operation) {
+            'add_percent' => $number * (1 + $amount / 100),
+            'subtract_percent' => $number * (1 - $amount / 100),
+            'add_fixed' => $number + $amount,
+            'subtract_fixed' => $number - $amount,
+            default => $number,
+        };
+
+        return rtrim(rtrim(number_format($number, 2, '.', ''), '0'), '.');
+    }
+
+    /** @param Collection<int, string> $skus @return Collection<string, array{type: string, model: ShopGood|ShopGoodVariation}> */
+    private function resolveSkuMatches(Collection $skus, string $supplierCode): Collection
+    {
+        $skus = $skus->filter()->unique()->values();
+        if ($skus->isEmpty()) {
+            return collect();
+        }
+
+        $supplierNames = $this->supplierNames($supplierCode);
+        if ($supplierNames === []) {
+            return collect();
+        }
+
+        $goods = ShopGood::query()
+            ->whereIn('sku', $skus)
+            ->whereIn('supplier', $supplierNames)
+            ->get(['id', 'sku', 'name', 'supplier']);
+        $variations = $this->findVariationsBySku($skus, $supplierCode);
+        $matches = $variations->map(fn (ShopGoodVariation $variation) => ['type' => 'variation', 'model' => $variation]);
+
+        // Товар имеет приоритет: строка поставщика сначала описывает самостоятельный товар,
+        // затем вариацию, если товара с таким SKU нет.
+        foreach ($goods as $good) {
+            $matches->put($good->sku, ['type' => 'good', 'model' => $good]);
+        }
+
+        return $matches;
     }
 
     /** @param Collection<int, string> $skus @return Collection<string, ShopGoodVariation> */
@@ -638,7 +811,7 @@ class BikeproductsCatalogService
         }
 
         return $query
-            ->with(['attributeValues.attribute'])
+            ->with(['good:id,name', 'attributeValues.attribute'])
             ->get()
             ->keyBy('sku');
     }

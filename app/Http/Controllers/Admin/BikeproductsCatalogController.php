@@ -48,9 +48,15 @@ class BikeproductsCatalogController extends Controller
             'data' => SupplierCatalogSnapshot::query()
                 ->where('supplier_code', $supplierCode)
                 ->latest('id')
-                ->limit(30)
                 ->get(),
         ]);
+    }
+
+    public function destroySnapshot(SupplierCatalogSnapshot $snapshot): JsonResponse
+    {
+        $this->catalog->clearSnapshot($snapshot);
+
+        return response()->json(['success' => true]);
     }
 
     public function uploadExcel(Request $request): JsonResponse
@@ -100,6 +106,7 @@ class BikeproductsCatalogController extends Controller
         if ($response = $this->notReadyResponse($snapshot)) {
             return $response;
         }
+        $this->catalog->ensureDefaultMappings($snapshot->supplier_code);
         $mappings = SupplierCatalogFieldMapping::query()
             ->where('supplier_code', $snapshot->supplier_code)
             ->get()
@@ -107,12 +114,14 @@ class BikeproductsCatalogController extends Controller
         $fields = collect($snapshot->summary['fields'] ?? [])->map(function (array $stats, string $sourceField) use ($mappings) {
             $variationMapping = $mappings->get($sourceField.'|variation');
             $propertyMapping = $mappings->get($sourceField.'|product');
+            $goodMapping = $mappings->get($sourceField.'|good');
 
             return [
                 'source_field' => $sourceField,
                 ...$stats,
                 'variation_mapping' => $this->mappingPayload($variationMapping),
                 'property_mapping' => $this->mappingPayload($propertyMapping),
+                'good_mapping' => $this->mappingPayload($goodMapping),
             ];
         })->sortByDesc('nonempty_count')->values();
 
@@ -132,6 +141,10 @@ class BikeproductsCatalogController extends Controller
             'variation_attribute_id' => ['nullable', 'integer', 'exists:shop_variation_attributes,id'],
             'property_id' => ['nullable', 'integer', 'exists:shop_properties,id'],
             'display_field' => ['nullable', 'string', 'max:120'],
+            'conditions' => ['nullable', 'array'],
+            'conditions.target' => ['nullable', 'in:name,description,short_description,brand,price,sale_price,demping_price,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity'],
+            'conditions.adjustment' => ['nullable', 'in:none,add_percent,subtract_percent,add_fixed,subtract_fixed'],
+            'conditions.adjustment_value' => ['nullable', 'numeric'],
             'is_check_enabled' => ['required', 'boolean'],
             'is_update_enabled' => ['required', 'boolean'],
         ]);
@@ -146,10 +159,14 @@ class BikeproductsCatalogController extends Controller
         $data = $request->validate([
             'snapshot_id' => ['required', 'integer', 'exists:supplier_catalog_snapshots,id'],
             'source_field' => ['required', 'string', 'max:120'],
-            'scope' => ['required', 'in:variation,product'],
+            'scope' => ['required', 'in:variation,product,good'],
             'variation_attribute_id' => ['nullable', 'integer', 'exists:shop_variation_attributes,id'],
             'property_id' => ['nullable', 'integer', 'exists:shop_properties,id'],
             'display_field' => ['nullable', 'string', 'max:120'],
+            'conditions' => ['nullable', 'array'],
+            'conditions.target' => ['nullable', 'in:name,description,short_description,brand,price,sale_price,demping_price,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity'],
+            'conditions.adjustment' => ['nullable', 'in:none,add_percent,subtract_percent,add_fixed,subtract_fixed'],
+            'conditions.adjustment_value' => ['nullable', 'numeric'],
             'is_check_enabled' => ['required', 'boolean'],
             'is_update_enabled' => ['required', 'boolean'],
         ]);
@@ -170,6 +187,7 @@ class BikeproductsCatalogController extends Controller
                 'variation_attribute_id' => $data['variation_attribute_id'],
                 'property_id' => $data['property_id'],
                 'display_field' => $data['display_field'],
+                'conditions' => $data['conditions'] ?? null,
                 'is_check_enabled' => $data['is_check_enabled'],
                 'is_update_enabled' => $data['is_update_enabled'],
             ]
@@ -221,6 +239,20 @@ class BikeproductsCatalogController extends Controller
         ]);
     }
 
+    public function goodAudit(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
+    {
+        if ($response = $this->notReadyResponse($snapshot)) {
+            return $response;
+        }
+
+        $data = $request->validate([
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:10', 'max:200'],
+        ]);
+
+        return response()->json(['success' => true, 'data' => $this->catalog->goodAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50)]);
+    }
+
     private function mappingPayload(?SupplierCatalogFieldMapping $mapping): ?array
     {
         return $mapping ? [
@@ -229,6 +261,7 @@ class BikeproductsCatalogController extends Controller
             'variation_attribute_id' => $mapping->variation_attribute_id,
             'property_id' => $mapping->property_id,
             'display_field' => $mapping->display_field,
+            'conditions' => $mapping->conditions,
             'is_check_enabled' => $mapping->is_check_enabled,
             'is_update_enabled' => $mapping->is_update_enabled,
         ] : null;
