@@ -88,12 +88,18 @@ class BikeproductsCatalogController extends Controller
 
     public function overview(SupplierCatalogSnapshot $snapshot): JsonResponse
     {
+        if ($response = $this->notReadyResponse($snapshot)) {
+            return $response;
+        }
+
         return response()->json(['success' => true, 'data' => $this->catalog->overview($snapshot)]);
     }
 
     public function fields(SupplierCatalogSnapshot $snapshot): JsonResponse
     {
-        $this->ensureReadySnapshot($snapshot);
+        if ($response = $this->notReadyResponse($snapshot)) {
+            return $response;
+        }
         $mappings = SupplierCatalogFieldMapping::query()
             ->where('supplier_code', $snapshot->supplier_code)
             ->get()
@@ -149,7 +155,9 @@ class BikeproductsCatalogController extends Controller
         ]);
 
         $snapshot = SupplierCatalogSnapshot::findOrFail($data['snapshot_id']);
-        $this->ensureReadySnapshot($snapshot);
+        if ($response = $this->notReadyResponse($snapshot)) {
+            return $response;
+        }
         abort_unless(array_key_exists($data['source_field'], $snapshot->summary['fields'] ?? []), 422, 'Поле отсутствует в текущем снимке.');
 
         $mapping = SupplierCatalogFieldMapping::updateOrCreate(
@@ -172,6 +180,10 @@ class BikeproductsCatalogController extends Controller
 
     public function variationAudit(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
     {
+        if ($response = $this->notReadyResponse($snapshot)) {
+            return $response;
+        }
+
         $data = $request->validate([
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:10', 'max:200'],
@@ -185,11 +197,19 @@ class BikeproductsCatalogController extends Controller
 
     public function imageAudit(SupplierCatalogSnapshot $snapshot): JsonResponse
     {
+        if ($response = $this->notReadyResponse($snapshot)) {
+            return $response;
+        }
+
         return response()->json(['success' => true, 'data' => $this->catalog->imageAudit($snapshot)]);
     }
 
     public function propertyAudit(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
     {
+        if ($response = $this->notReadyResponse($snapshot)) {
+            return $response;
+        }
+
         $data = $request->validate([
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:10', 'max:200'],
@@ -214,12 +234,24 @@ class BikeproductsCatalogController extends Controller
         ] : null;
     }
 
-    private function ensureReadySnapshot(SupplierCatalogSnapshot $snapshot): void
+    private function notReadyResponse(SupplierCatalogSnapshot $snapshot): ?JsonResponse
     {
-        abort_unless(
-            $snapshot->status === 'ready',
-            404
-        );
+        if ($snapshot->status === 'ready') {
+            return null;
+        }
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Разбор Excel ещё не завершён.',
+            'data' => [
+                'status' => $snapshot->status,
+                'stage' => $snapshot->stage,
+                'progress' => $snapshot->progress,
+                'processed_rows' => $snapshot->processed_rows,
+                'total_rows' => $snapshot->total_rows,
+                'error_message' => $snapshot->error_message,
+            ],
+        ], 409);
     }
 
     private function selectedSupplierCode(?string $supplierCode): string
