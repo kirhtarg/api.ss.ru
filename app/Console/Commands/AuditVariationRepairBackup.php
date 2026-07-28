@@ -146,9 +146,9 @@ class AuditVariationRepairBackup extends Command
 
     private function looksLikeSize(string $value): bool
     {
-        $sizeToken = '(?:XXS|XS|S|M|L|XL|XXL|2XL|3XL|4XL|SM|MD|LG|OS|ONE\s+SIZE)';
+        $sizeToken = '(?:XXS|XS|S|M|L|XL|XXL|2XL|3XL|4XL|SM|MD|LG|OS|NS|ONE\s+SIZE)';
 
-        return (bool) preg_match('/^(?:\d+(?:\s*-\s*\d+)?\s*\([^)]+\)|'.$sizeToken.'(?:\s*\/\s*'.$sizeToken.')*|(?:SHORT|REGULAR|LONG|TALL)\s*-\s*\d+)$/iu', trim($value));
+        return (bool) preg_match('/^(?:\d+(?:\s*-\s*\d+)?\s*\([^)]+\)|'.$sizeToken.'(?:\s*\/\s*'.$sizeToken.')*|OS\s*-\s*(?:LEFT|RIGHT)|(?:SHORT|REGULAR|LONG|TALL)\s*-\s*\d+)$/iu', trim($value));
     }
 
     private function statusLabel(string $code): string
