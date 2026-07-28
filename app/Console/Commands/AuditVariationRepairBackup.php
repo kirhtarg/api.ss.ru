@@ -121,6 +121,10 @@ class AuditVariationRepairBackup extends Command
             }
         }
 
+        if ($this->hasClearlyValidCurrentAxes($byAttribute, $colorAttributeId, $sizeAttributeId)) {
+            return ['code' => 'current_valid', 'label' => 'Текущие оси корректны', 'recommendation' => 'Текущие данные не менять: архивная связь устарела.'];
+        }
+
         if ($colorAttributeId !== false) {
             $colorValues = $byAttribute->get($colorAttributeId, collect())->pluck('value');
             if ($colorValues->contains(fn (string $value) => $this->looksLikeSize($value))) {
@@ -148,13 +152,29 @@ class AuditVariationRepairBackup extends Command
     {
         $sizeToken = '(?:XXS|XS|S|M|L|XL|XXL|2XL|3XL|4XL|SM|MD|LG|OS|NS|ONE\s+SIZE)';
 
-        return (bool) preg_match('/^(?:\d+(?:\s*-\s*\d+)?\s*\([^)]+\)|\d+(?:[.,]\d+)?\s*(?:ML|L|KG|G|MM|CM|M|IN)|'.$sizeToken.'(?:\s*\/\s*'.$sizeToken.')*|OS\s*-\s*(?:LEFT|RIGHT)|(?:SHORT|REGULAR|LONG|TALL)\s*-\s*\d+)$/iu', trim($value));
+        return (bool) preg_match('/^(?:ДЕТ\s+.+|\d+(?:\s*-\s*\d+)?\s*\([^)]+\)|\d+(?:[.,]\d+)?\s*(?:ML|L|KGS?|G|MM|CM|M|IN)(?:\s*\/\s*\d+(?:[.,]\d+)?\s*(?:ML|L|KGS?|G|MM|CM|M|IN))*|'.$sizeToken.'(?:\s*\/\s*'.$sizeToken.')*|OS\s*-\s*(?:LEFT|RIGHT)|(?:SHORT|REGULAR|LONG|TALL)\s*-\s*\d+)$/iu', trim($value));
+    }
+
+    private function hasClearlyValidCurrentAxes($byAttribute, $colorAttributeId, $sizeAttributeId): bool
+    {
+        if ($colorAttributeId === false || $sizeAttributeId === false) {
+            return false;
+        }
+
+        $colors = $byAttribute->get($colorAttributeId, collect());
+        $sizes = $byAttribute->get($sizeAttributeId, collect());
+
+        return $colors->count() === 1
+            && $sizes->count() === 1
+            && ! $this->looksLikeSize($colors->first()->value)
+            && $this->looksLikeSize($sizes->first()->value);
     }
 
     private function statusLabel(string $code): string
     {
         return match ($code) {
             'repaired' => 'Исправлено корректно',
+            'current_valid' => 'Текущие оси корректны',
             'no_current_axes' => 'Нет текущих осей',
             'duplicate_axis' => 'Повтор значения одной оси',
             'size_in_color' => 'Размер записан как цвет',
