@@ -63,8 +63,8 @@ class BikeproductsCatalogController extends Controller
         try {
             $supplierCode = $this->selectedSupplierCode($request->input('supplier_code'));
             $snapshot = $this->catalog->queueExcelImport($request->file('file'), $supplierCode);
-            // Возвращаем 202 до тяжёлого разбора даже на сервере с временно синхронной очередью.
-            ProcessSupplierCatalogExcelJob::dispatchAfterResponse($snapshot->id);
+            // Тяжёлый разбор выполняется отдельным queue worker, а не процессом PHP-FPM.
+            ProcessSupplierCatalogExcelJob::dispatch($snapshot->id);
 
             return response()->json([
                 'success' => true,
