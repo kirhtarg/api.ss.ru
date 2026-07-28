@@ -214,7 +214,7 @@ class RepairVariationAxesFromBackup extends Command
     private function looksLikeSize(string $value): bool
     {
         return (bool) preg_match(
-            '/^(?:\d+(?:\s*-\s*\d+)?(?:\s*\([^)]+\))?|(?:XXS|XS|S|M|L|XL|XXL|2XL|3XL|4XL))$/iu',
+            '/^(?:\d+(?:\s*-\s*\d+)?\s*\([^)]+\)|(?:XXS|XS|S|M|L|XL|XXL|2XL|3XL|4XL))$/iu',
             trim($value)
         );
     }
