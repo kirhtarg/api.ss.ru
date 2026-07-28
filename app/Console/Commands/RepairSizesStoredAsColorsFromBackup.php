@@ -56,14 +56,34 @@ class RepairSizesStoredAsColorsFromBackup extends Command
         $candidates = collect();
         foreach ($archived as $variationId => $archiveLinks) {
             $liveLinks = $live->get($variationId, collect());
+            $liveByAttribute = $liveLinks->groupBy('attribute_id');
+            $liveColorLinks = $liveByAttribute->get($colorAttributeId, collect());
+            $liveSizeLinks = $liveByAttribute->get($sizeAttributeId, collect());
+
             if (
                 $archiveLinks->count() !== 1
-                || $liveLinks->count() !== 1
                 || (int) $archiveLinks->first()->attribute_id !== $colorAttributeId
-                || (int) $liveLinks->first()->attribute_id !== $colorAttributeId
                 || ! $this->looksLikeColor($archiveLinks->first()->archived_value)
-                || ! $this->looksLikeSize($liveLinks->first()->live_value)
+                || $liveColorLinks->count() !== 1
+                || ! $this->looksLikeSize($liveColorLinks->first()->live_value)
             ) {
+                continue;
+            }
+
+            $size = null;
+            if ($liveLinks->count() === 1) {
+                // The size exists only in the wrong "Color" axis.
+                $size = $liveColorLinks->first()->live_value;
+            } elseif (
+                $liveLinks->count() === 2
+                && $liveSizeLinks->count() === 1
+                && $this->looksLikeSize($liveSizeLinks->first()->live_value)
+            ) {
+                // A valid size already exists; remove only the extra size from Color.
+                $size = $liveSizeLinks->first()->live_value;
+            }
+
+            if ($size === null) {
                 continue;
             }
 
@@ -73,7 +93,7 @@ class RepairSizesStoredAsColorsFromBackup extends Command
                 'variation_id' => $variationId,
                 'sku' => $archiveLinks->first()->sku,
                 'color' => $archiveLinks->first()->archived_value,
-                'size' => $liveLinks->first()->live_value,
+                'size' => $size,
             ]);
         }
 
