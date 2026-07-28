@@ -2038,7 +2038,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 // Изолированный аудит каталога Bikeproducts. Эти маршруты не меняют shop_* без
                 // отдельного подтверждённого набора изменений.
                 Route::prefix('bikeproducts')->group(function () {
-                    Route::get('/suppliers', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'suppliers']);
+                    Route::get('/profiles', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'profiles']);
+                    Route::put('/profiles/{profile}', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'updateProfile']);
                     Route::get('/snapshots', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'snapshots']);
                     Route::post('/snapshots/excel', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'uploadExcel']);
                     Route::get('/snapshots/{snapshot}/overview', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'overview']);

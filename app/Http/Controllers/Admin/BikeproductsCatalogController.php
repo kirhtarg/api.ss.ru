@@ -4,9 +4,9 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Shop\Property;
-use App\Models\ShopSupplier;
 use App\Models\ShopVariationAttribute;
 use App\Models\SupplierCatalogFieldMapping;
+use App\Models\SupplierCatalogProfile;
 use App\Models\SupplierCatalogSnapshot;
 use App\Services\BikeproductsCatalogService;
 use Illuminate\Http\JsonResponse;
@@ -18,9 +18,24 @@ class BikeproductsCatalogController extends Controller
     {
     }
 
-    public function suppliers(): JsonResponse
+    public function profiles(): JsonResponse
     {
-        return response()->json(['success' => true, 'data' => $this->availableSuppliers()]);
+        return response()->json(['success' => true, 'data' => $this->availableProfiles()]);
+    }
+
+    public function updateProfile(Request $request, SupplierCatalogProfile $profile): JsonResponse
+    {
+        $data = $request->validate([
+            'settings' => ['required', 'array'],
+            'settings.yml_url' => ['nullable', 'url', 'max:1000'],
+            'settings.feed_type' => ['nullable', 'in:auto,xml,yml'],
+        ]);
+
+        $profile->update([
+            'settings' => array_merge($profile->settings ?? [], $data['settings']),
+        ]);
+
+        return response()->json(['success' => true, 'data' => $profile->fresh(['id', 'name', 'code', 'supplier_names', 'settings'])]);
     }
 
     public function snapshots(Request $request): JsonResponse
@@ -50,7 +65,7 @@ class BikeproductsCatalogController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Excel Bikeproducts разобран и сохранён как снимок.',
+                'message' => 'Excel поставщика разобран и сохранён как снимок.',
                 'data' => $snapshot,
             ], 201);
         } catch (\Throwable $exception) {
@@ -58,7 +73,7 @@ class BikeproductsCatalogController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Не удалось разобрать Excel Bikeproducts: '.$exception->getMessage(),
+                'message' => 'Не удалось разобрать Excel поставщика: '.$exception->getMessage(),
             ], 422);
         }
     }
@@ -203,33 +218,17 @@ class BikeproductsCatalogController extends Controller
     {
         $supplierCode = trim(mb_strtolower((string) $supplierCode));
         abort_unless($supplierCode !== '', 422, 'Выберите поставщика.');
-        abort_unless(collect($this->availableSuppliers())->contains('code', $supplierCode), 422, 'Поставщик недоступен для сервиса.');
+        abort_unless(collect($this->availableProfiles())->contains('code', $supplierCode), 422, 'Поставщик недоступен для сервиса.');
 
         return $supplierCode;
     }
 
-    private function availableSuppliers(): array
+    private function availableProfiles(): array
     {
-        $suppliers = ShopSupplier::query()
+        return SupplierCatalogProfile::query()
             ->active()
-            ->ordered()
-            ->get(['id', 'name', 'slug'])
-            ->map(fn (ShopSupplier $supplier) => [
-                'id' => $supplier->id,
-                'name' => $supplier->name,
-                'code' => mb_strtolower($supplier->slug),
-                'is_virtual' => false,
-            ]);
-
-        if (! $suppliers->contains('code', 'bikeproducts')) {
-            $suppliers->prepend([
-                'id' => null,
-                'name' => 'Bikeproducts',
-                'code' => 'bikeproducts',
-                'is_virtual' => true,
-            ]);
-        }
-
-        return $suppliers->values()->all();
+            ->orderBy('name')
+            ->get(['id', 'name', 'code', 'supplier_names', 'settings'])
+            ->all();
     }
 }

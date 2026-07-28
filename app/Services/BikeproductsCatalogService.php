@@ -4,18 +4,16 @@ namespace App\Services;
 
 use App\Models\ShopGoodImage;
 use App\Models\ShopGoodVariation;
-use App\Models\ShopSupplier;
 use App\Models\ShopVariationAttribute;
 use App\Models\SupplierCatalogFieldMapping;
 use App\Models\SupplierCatalogItem;
+use App\Models\SupplierCatalogProfile;
 use App\Models\SupplierCatalogSnapshot;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class BikeproductsCatalogService
@@ -42,21 +40,21 @@ class BikeproductsCatalogService
         $supplierCode = $this->normalizeSupplierCode($supplierCode);
         $this->ensureDefaultMappings($supplierCode);
 
-        $filename = Str::uuid()->toString().'.'.$file->getClientOriginalExtension();
-        $storagePath = 'supplier-catalog/'.$supplierCode.'/'.$filename;
-        Storage::disk('local')->put($storagePath, file_get_contents($file->getRealPath()));
+        // Один актуальный временный разбор на профиль. Исходный файл не сохраняется.
+        SupplierCatalogSnapshot::query()
+            ->where('supplier_code', $supplierCode)
+            ->delete();
 
         $snapshot = SupplierCatalogSnapshot::create([
             'supplier_code' => $supplierCode,
             'source_type' => 'xlsx',
             'source_name' => $file->getClientOriginalName(),
-            'storage_path' => $storagePath,
             'checksum' => hash_file('sha256', $file->getRealPath()),
             'status' => 'processing',
         ]);
 
         try {
-            $result = $this->parseExcel(Storage::disk('local')->path($storagePath), $supplierCode);
+            $result = $this->parseExcel($file->getRealPath(), $supplierCode);
 
             foreach ($result['items'] as &$item) {
                 $item['snapshot_id'] = $snapshot->id;
@@ -555,9 +553,9 @@ class BikeproductsCatalogService
 
         $query = ShopGoodVariation::query()
             ->whereIn('sku', $skus->filter()->unique()->values());
-        $supplierName = $this->supplierName($supplierCode);
-        if ($supplierName !== null) {
-            $query->where('supplier', $supplierName);
+        $supplierNames = $this->supplierNames($supplierCode);
+        if ($supplierNames !== []) {
+            $query->whereIn('supplier', $supplierNames);
         } else {
             // Неизвестный код не должен случайно анализировать вариации другого поставщика.
             $query->whereRaw('1 = 0');
@@ -586,14 +584,13 @@ class BikeproductsCatalogService
         return $supplierCode;
     }
 
-    private function supplierName(string $supplierCode): ?string
+    /** @return array<int, string> */
+    private function supplierNames(string $supplierCode): array
     {
-        $supplier = ShopSupplier::query()->where('slug', $supplierCode)->first(['name']);
-        if ($supplier) {
-            return $supplier->name;
-        }
-
-        return $supplierCode === 'bikeproducts' ? 'Bikeproducts' : null;
+        return SupplierCatalogProfile::query()
+            ->active()
+            ->where('code', $supplierCode)
+            ->value('supplier_names') ?? [];
     }
 
     private function normalizeCellValue(mixed $value): ?string
