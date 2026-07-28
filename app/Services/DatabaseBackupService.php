@@ -939,7 +939,7 @@ class DatabaseBackupService
         }
     }
 
-    /** @return array{passed: bool, duplicate_axis_groups: int, orphan_links: int, legacy_foreign_keys: int, missing_tables: array<int, string>} */
+    /** @return array{passed: bool, duplicate_axis_groups: int, orphan_links: int, orphan_variations: int, orphan_attribute_values: int, legacy_foreign_keys: int, missing_tables: array<int, string>} */
     private function variationIntegrityReport(string $database): array
     {
         $requiredTables = [
@@ -959,6 +959,8 @@ class DatabaseBackupService
                 'passed' => false,
                 'duplicate_axis_groups' => 0,
                 'orphan_links' => 0,
+                'orphan_variations' => 0,
+                'orphan_attribute_values' => 0,
                 'legacy_foreign_keys' => 0,
                 'missing_tables' => $missingTables,
             ];
@@ -980,6 +982,16 @@ class DatabaseBackupService
             .' LEFT JOIN '.$schema.'.`shop_variation_attribute_values` av ON av.id = vav.attribute_value_id'
             .' WHERE v.id IS NULL OR av.id IS NULL'
         );
+        $orphanVariations = (int) DB::scalar(
+            'SELECT COUNT(*) FROM '.$schema.'.`shop_variation_attributes_values` vav'
+            .' LEFT JOIN '.$schema.'.`shop_good_variations` v ON v.id = vav.variation_id'
+            .' WHERE v.id IS NULL'
+        );
+        $orphanAttributeValues = (int) DB::scalar(
+            'SELECT COUNT(*) FROM '.$schema.'.`shop_variation_attributes_values` vav'
+            .' LEFT JOIN '.$schema.'.`shop_variation_attribute_values` av ON av.id = vav.attribute_value_id'
+            .' WHERE av.id IS NULL'
+        );
         $legacyForeignKeys = (int) DB::scalar(
             "SELECT COUNT(*) FROM information_schema.KEY_COLUMN_USAGE WHERE CONSTRAINT_SCHEMA = ? AND REFERENCED_TABLE_NAME REGEXP '(_old|_bk)$'",
             [$database]
@@ -989,6 +1001,8 @@ class DatabaseBackupService
             'passed' => $duplicates === 0 && $orphans === 0 && $legacyForeignKeys === 0,
             'duplicate_axis_groups' => $duplicates,
             'orphan_links' => $orphans,
+            'orphan_variations' => $orphanVariations,
+            'orphan_attribute_values' => $orphanAttributeValues,
             'legacy_foreign_keys' => $legacyForeignKeys,
             'missing_tables' => [],
         ];
@@ -1004,13 +1018,15 @@ class DatabaseBackupService
             $parts[] = 'дубли значений одной оси вариации: '.$integrity['duplicate_axis_groups'];
         }
         if (($integrity['orphan_links'] ?? 0) > 0) {
-            $parts[] = 'битые связи вариаций: '.$integrity['orphan_links'];
+            $parts[] = 'битые связи вариаций: '.$integrity['orphan_links']
+                .' (нет вариации: '.($integrity['orphan_variations'] ?? 0)
+                .', нет значения: '.($integrity['orphan_attribute_values'] ?? 0).')';
         }
         if (($integrity['legacy_foreign_keys'] ?? 0) > 0) {
             $parts[] = 'внешние ключи на _old/_bk: '.$integrity['legacy_foreign_keys'];
         }
 
-        return $subject.' не прошел проверку целостности: '.implode('; ', $parts).'. Восстановление отменено до изменения рабочей базы.';
+        return $subject.' не прошел проверку целостности: '.implode('; ', $parts).'. Операция отменена до изменения базы.';
     }
 
     private function selectedTablesIncludeVariationData(array $selectedTables): bool
