@@ -290,6 +290,12 @@ class DatabaseBackupService
         $this->updateTask($taskId, 'running', 5, 'Подготовка');
 
         $config = $this->connectionConfig();
+        $integrity = in_array($config['driver'], ['mysql', 'mariadb'], true)
+            ? $this->variationIntegrityReport((string) $config['database'])
+            : ['passed' => true, 'skipped' => true];
+        if (! $integrity['passed']) {
+            throw new RuntimeException($this->formatVariationIntegrityFailure($integrity, 'Текущая база'));
+        }
         $extension = match ($config['driver']) {
             'mysql', 'mariadb', 'pgsql' => 'sql.gz',
             'sqlite' => 'sqlite',
@@ -347,6 +353,7 @@ class DatabaseBackupService
             'size_human' => $this->formatBytes(Storage::disk(self::DISK)->size($relativePath)),
             'verified_at' => date('Y-m-d H:i:s'),
             'verification' => 'ok',
+            'integrity' => $integrity,
         ];
 
         $tables = $this->databaseTableManifest($config);
@@ -494,6 +501,8 @@ class DatabaseBackupService
             count($restoreSelection['tables'])
         );
 
+        $restoreStarted = false;
+
         try {
             $this->putRestoreTaskStatus((string) $taskId, [
                 'status' => 'running',
@@ -502,6 +511,7 @@ class DatabaseBackupService
                 'message' => $restoreSelection['mode'] === 'full' ? 'Страховочный бэкап создан, начинаем восстановление базы' : 'Страховочный бэкап создан, начинаем выборочное восстановление таблиц',
             ]);
 
+            $restoreStarted = true;
             $this->restore($filename, $restoreSelection['tables']);
 
             $this->putRestoreTaskStatus((string) $taskId, [
@@ -512,6 +522,7 @@ class DatabaseBackupService
             ]);
 
             DB::select('SELECT 1');
+            $this->assertCurrentVariationIntegrity();
 
             $phpFpmRestarted = $this->restartPhpFpmAfterRestore();
 
@@ -523,6 +534,43 @@ class DatabaseBackupService
                     ? 'База восстановлена из выбранного бэкапа. PHP-FPM перезапущен.'
                     : 'База восстановлена из выбранного бэкапа',
             ]);
+        } catch (\Throwable $restoreError) {
+            $rollbackError = null;
+
+            if ($restoreStarted && ! empty($safetyBackup['filename'])) {
+                try {
+                    $this->putRestoreTaskStatus((string) $taskId, [
+                        'status' => 'running',
+                        'progress' => 96,
+                        'stage' => 'Аварийный откат',
+                        'message' => 'Восстановление не прошло проверку. Возвращаем страховочную копию.',
+                    ]);
+                    $this->restore((string) $safetyBackup['filename'], $restoreSelection['tables']);
+                    $this->assertCurrentVariationIntegrity();
+                    Log::error('Восстановление базы отменено и возвращено из страховочной копии', [
+                        'task_id' => $taskId,
+                        'restore_filename' => $filename,
+                        'safety_backup_filename' => $safetyBackup['filename'],
+                        'error' => $restoreError->getMessage(),
+                    ]);
+                } catch (\Throwable $rollbackException) {
+                    $rollbackError = $rollbackException;
+                    Log::critical('Не удалось выполнить аварийный откат базы', [
+                        'task_id' => $taskId,
+                        'safety_backup_filename' => $safetyBackup['filename'],
+                        'error' => $rollbackException->getMessage(),
+                    ]);
+                }
+            }
+
+            $message = 'Восстановление отменено: '.$restoreError->getMessage();
+            if ($rollbackError) {
+                $message .= ' Аварийный откат также завершился ошибкой: '.$rollbackError->getMessage();
+            } elseif ($restoreStarted) {
+                $message .= ' Страховочная копия восстановлена.';
+            }
+
+            throw new RuntimeException($message, previous: $restoreError);
         } finally {
             $maintenance->deactivate();
         }
@@ -746,14 +794,7 @@ class DatabaseBackupService
         }
 
         if (! $binary) {
-            $this->updateCurrentRestoreTask(55, 'Импорт через PHP/PDO');
-            $this->restoreSqlWithPdo($restorePath);
-            $this->repairLegacyRestoreForeignKeysAfterImport();
-            if ($restorePath !== $absolutePath) {
-                File::delete($restorePath);
-            }
-
-            return;
+            throw new RuntimeException('Для безопасного полного восстановления требуется mysql client. Установите его или укажите DB_BACKUP_MYSQL_PATH.');
         }
 
         $safePath = str_replace('\\', '/', $restorePath);
@@ -768,6 +809,7 @@ class DatabaseBackupService
         ];
 
         try {
+            $this->validateMysqlDumpInTemporaryDatabase($restorePath, $config, $binary, 'Проверка дампа во временной базе');
             $this->updateCurrentRestoreTask(55, 'Импорт через mysql client');
             $this->runProcess($command, ['MYSQL_PWD' => (string) $config['password']], 1800);
             $this->repairLegacyRestoreForeignKeysAfterImport();
@@ -806,6 +848,13 @@ class DatabaseBackupService
 
             $this->updateCurrentRestoreTask(55, 'Нативный импорт во временную базу');
             $this->runProcess($command, ['MYSQL_PWD' => (string) $config['password']], 1800);
+
+            if ($this->selectedTablesIncludeVariationData($selectedTables)) {
+                $integrity = $this->variationIntegrityReport($temporaryDatabase);
+                if (! $integrity['passed']) {
+                    throw new RuntimeException($this->formatVariationIntegrityFailure($integrity, 'Выбранный дамп'));
+                }
+            }
 
             $this->updateCurrentRestoreTask(78, 'Замена выбранных таблиц');
             $this->disconnectOtherApplicationConnections($config);
@@ -847,6 +896,143 @@ class DatabaseBackupService
             } catch (\Throwable $e) {
                 report($e);
             }
+        }
+    }
+
+    /**
+     * Imports a complete dump into a disposable database before a live restore.
+     * A dump with conflicting variation axes must never reach the production DB.
+     */
+    private function validateMysqlDumpInTemporaryDatabase(string $restorePath, array $config, string $binary, string $stage): void
+    {
+        $baseName = preg_replace('/[^a-zA-Z0-9_]/', '_', (string) $config['database']) ?: 'database';
+        $temporaryDatabase = 'verify_'.substr($baseName, 0, 41).'_'.Str::lower(Str::random(8));
+        $temporaryIdentifier = $this->quoteIdentifier($temporaryDatabase);
+
+        try {
+            $this->updateCurrentRestoreTask(48, $stage);
+            DB::unprepared('CREATE DATABASE '.$temporaryIdentifier.' CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
+
+            $safePath = str_replace('\\', '/', $restorePath);
+            $command = [
+                $binary,
+                '--default-character-set=utf8mb4',
+                '--host='.$config['host'],
+                '--port='.(string) $config['port'],
+                '--user='.$config['username'],
+                $temporaryDatabase,
+                '--execute=source '.$safePath,
+            ];
+
+            $this->runProcess($command, ['MYSQL_PWD' => (string) $config['password']], 1800);
+
+            $integrity = $this->variationIntegrityReport($temporaryDatabase);
+            if (! $integrity['passed']) {
+                throw new RuntimeException($this->formatVariationIntegrityFailure($integrity, 'Выбранный дамп'));
+            }
+        } finally {
+            try {
+                DB::unprepared('DROP DATABASE IF EXISTS '.$temporaryIdentifier);
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        }
+    }
+
+    /** @return array{passed: bool, duplicate_axis_groups: int, orphan_links: int, legacy_foreign_keys: int, missing_tables: array<int, string>} */
+    private function variationIntegrityReport(string $database): array
+    {
+        $requiredTables = [
+            'shop_good_variations',
+            'shop_variation_attribute_values',
+            'shop_variation_attributes_values',
+        ];
+        $presentRows = DB::select(
+            'SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN (?, ?, ?)',
+            array_merge([$database], $requiredTables)
+        );
+        $present = array_map(fn ($row) => (string) $row->TABLE_NAME, $presentRows);
+        $missingTables = array_values(array_diff($requiredTables, $present));
+
+        if ($missingTables !== []) {
+            return [
+                'passed' => false,
+                'duplicate_axis_groups' => 0,
+                'orphan_links' => 0,
+                'legacy_foreign_keys' => 0,
+                'missing_tables' => $missingTables,
+            ];
+        }
+
+        $schema = $this->quoteIdentifier($database);
+        $duplicates = (int) DB::scalar(
+            'SELECT COUNT(*) FROM (\n'
+            .' SELECT vav.variation_id, av.attribute_id\n'
+            .' FROM '.$schema.'.`shop_variation_attributes_values` vav\n'
+            .' INNER JOIN '.$schema.'.`shop_variation_attribute_values` av ON av.id = vav.attribute_value_id\n'
+            .' GROUP BY vav.variation_id, av.attribute_id\n'
+            .' HAVING COUNT(*) > 1\n'
+            .') AS duplicate_axes'
+        );
+        $orphans = (int) DB::scalar(
+            'SELECT COUNT(*) FROM '.$schema.'.`shop_variation_attributes_values` vav\n'
+            .' LEFT JOIN '.$schema.'.`shop_good_variations` v ON v.id = vav.variation_id\n'
+            .' LEFT JOIN '.$schema.'.`shop_variation_attribute_values` av ON av.id = vav.attribute_value_id\n'
+            .' WHERE v.id IS NULL OR av.id IS NULL'
+        );
+        $legacyForeignKeys = (int) DB::scalar(
+            "SELECT COUNT(*) FROM information_schema.KEY_COLUMN_USAGE\n"
+            ." WHERE CONSTRAINT_SCHEMA = ? AND REFERENCED_TABLE_NAME REGEXP '(_old|_bk)$'",
+            [$database]
+        );
+
+        return [
+            'passed' => $duplicates === 0 && $orphans === 0 && $legacyForeignKeys === 0,
+            'duplicate_axis_groups' => $duplicates,
+            'orphan_links' => $orphans,
+            'legacy_foreign_keys' => $legacyForeignKeys,
+            'missing_tables' => [],
+        ];
+    }
+
+    private function formatVariationIntegrityFailure(array $integrity, string $subject): string
+    {
+        $parts = [];
+        if (($integrity['missing_tables'] ?? []) !== []) {
+            $parts[] = 'отсутствуют таблицы: '.implode(', ', $integrity['missing_tables']);
+        }
+        if (($integrity['duplicate_axis_groups'] ?? 0) > 0) {
+            $parts[] = 'дубли значений одной оси вариации: '.$integrity['duplicate_axis_groups'];
+        }
+        if (($integrity['orphan_links'] ?? 0) > 0) {
+            $parts[] = 'битые связи вариаций: '.$integrity['orphan_links'];
+        }
+        if (($integrity['legacy_foreign_keys'] ?? 0) > 0) {
+            $parts[] = 'внешние ключи на _old/_bk: '.$integrity['legacy_foreign_keys'];
+        }
+
+        return $subject.' не прошел проверку целостности: '.implode('; ', $parts).'. Восстановление отменено до изменения рабочей базы.';
+    }
+
+    private function selectedTablesIncludeVariationData(array $selectedTables): bool
+    {
+        return array_intersect($selectedTables, [
+            'shop_good_variations',
+            'shop_variation_attribute_values',
+            'shop_variation_attributes_values',
+        ]) !== [];
+    }
+
+    private function assertCurrentVariationIntegrity(): void
+    {
+        $config = $this->connectionConfig();
+        if (! in_array($config['driver'], ['mysql', 'mariadb'], true)) {
+            return;
+        }
+
+        $integrity = $this->variationIntegrityReport((string) $config['database']);
+        if (! $integrity['passed']) {
+            throw new RuntimeException($this->formatVariationIntegrityFailure($integrity, 'Рабочая база после восстановления'));
         }
     }
 
@@ -1216,6 +1402,10 @@ class DatabaseBackupService
 
         if ($selectedTables === []) {
             throw new RuntimeException('Не найдено таблиц для выборочного восстановления.');
+        }
+
+        if ($mode === 'tables' && array_intersect($selectedTables, array_keys(array_filter($availableTables, fn ($group) => $group === 'shop')))) {
+            throw new RuntimeException('Таблицы магазина нельзя восстанавливать по одной: выберите группу «Магазин». Это сохраняет связи товаров, вариаций, изображений и заказов согласованными.');
         }
 
         $blockedTables = array_values(array_filter($selectedTables, fn ($table) => ! $this->isPartialRestoreTableAllowed($table)));
