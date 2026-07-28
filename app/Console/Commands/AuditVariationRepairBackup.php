@@ -125,6 +125,10 @@ class AuditVariationRepairBackup extends Command
             return ['code' => 'current_valid', 'label' => 'Текущие оси корректны', 'recommendation' => 'Текущие данные не менять: архивная связь устарела.'];
         }
 
+        if ($this->hasAllowedChildVariationValue($byAttribute, $colorAttributeId, $sizeAttributeId)) {
+            return ['code' => 'allowed_child_value', 'label' => 'Допустимое значение вариации', 'recommendation' => 'Действия не требуются: значение оставлено по правилу магазина.'];
+        }
+
         if ($colorAttributeId !== false) {
             $colorValues = $byAttribute->get($colorAttributeId, collect())->pluck('value');
             if ($colorValues->contains(fn (string $value) => $this->looksLikeSize($value))) {
@@ -170,11 +174,27 @@ class AuditVariationRepairBackup extends Command
             && $this->looksLikeSize($sizes->first()->value);
     }
 
+    private function hasAllowedChildVariationValue($byAttribute, $colorAttributeId, $sizeAttributeId): bool
+    {
+        if ($colorAttributeId === false || $sizeAttributeId === false) {
+            return false;
+        }
+
+        $colors = $byAttribute->get($colorAttributeId, collect());
+        $sizes = $byAttribute->get($sizeAttributeId, collect());
+
+        return $colors->count() === 1
+            && $sizes->count() === 1
+            && (bool) preg_match('/^ДЕТ\s+/iu', $colors->first()->value)
+            && $this->looksLikeSize($sizes->first()->value);
+    }
+
     private function statusLabel(string $code): string
     {
         return match ($code) {
             'repaired' => 'Исправлено корректно',
             'current_valid' => 'Текущие оси корректны',
+            'allowed_child_value' => 'Допустимое значение вариации',
             'no_current_axes' => 'Нет текущих осей',
             'duplicate_axis' => 'Повтор значения одной оси',
             'size_in_color' => 'Размер записан как цвет',
