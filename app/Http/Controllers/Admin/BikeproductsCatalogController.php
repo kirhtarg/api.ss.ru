@@ -145,6 +145,7 @@ class BikeproductsCatalogController extends Controller
             'conditions.target' => ['nullable', 'in:name,description,short_description,brand,price,sale_price,demping_price,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity'],
             'conditions.adjustment' => ['nullable', 'in:none,add_percent,subtract_percent,add_fixed,subtract_fixed'],
             'conditions.adjustment_value' => ['nullable', 'numeric'],
+            'conditions.name_transform' => ['nullable', 'in:none,strip_trailing_parentheses'],
             'is_check_enabled' => ['required', 'boolean'],
             'is_update_enabled' => ['required', 'boolean'],
         ]);
@@ -167,6 +168,7 @@ class BikeproductsCatalogController extends Controller
             'conditions.target' => ['nullable', 'in:name,description,short_description,brand,price,sale_price,demping_price,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity'],
             'conditions.adjustment' => ['nullable', 'in:none,add_percent,subtract_percent,add_fixed,subtract_fixed'],
             'conditions.adjustment_value' => ['nullable', 'numeric'],
+            'conditions.name_transform' => ['nullable', 'in:none,strip_trailing_parentheses'],
             'is_check_enabled' => ['required', 'boolean'],
             'is_update_enabled' => ['required', 'boolean'],
         ]);
@@ -251,6 +253,25 @@ class BikeproductsCatalogController extends Controller
         ]);
 
         return response()->json(['success' => true, 'data' => $this->catalog->goodAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50)]);
+    }
+
+    public function priceStockAudit(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
+    {
+        if ($response = $this->notReadyResponse($snapshot)) {
+            return $response;
+        }
+
+        $data = $request->validate([
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:10', 'max:200'],
+        ]);
+
+        return response()->json(['success' => true, 'data' => $this->catalog->goodAudit(
+            $snapshot,
+            $data['page'] ?? 1,
+            $data['per_page'] ?? 50,
+            ['price', 'sale_price', 'demping_price', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'],
+        )]);
     }
 
     private function mappingPayload(?SupplierCatalogFieldMapping $mapping): ?array

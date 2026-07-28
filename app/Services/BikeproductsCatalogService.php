@@ -379,12 +379,14 @@ class BikeproductsCatalogService
         $matches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code);
         $variations = $matches->where('type', 'variation')->pluck('model');
         $sourceAxes = [];
+        $sourceAxisValues = [];
         $sourceUrls = [];
 
         foreach ($items as $item) {
             foreach ($item->source_axes ?? [] as $axis) {
                 $name = $axis['attribute_name'] ?: $axis['source_field'];
                 $sourceAxes[$name] = ($sourceAxes[$name] ?? 0) + 1;
+                $sourceAxisValues[$name][$this->normalizeComparisonValue((string) ($axis['value'] ?? ''))] = true;
             }
             foreach ($item->image_urls ?? [] as $url) {
                 $sourceUrls[$url] = ($sourceUrls[$url] ?? 0) + 1;
@@ -392,20 +394,28 @@ class BikeproductsCatalogService
         }
 
         $databaseAxes = [];
-        foreach ($variations as $variation) {
+        $databaseAxisValues = [];
+        $supplierNames = $this->supplierNames($snapshot->supplier_code);
+        $catalogVariations = ShopGoodVariation::query()
+            ->whereIn('supplier', $supplierNames)
+            ->with('attributeValues.attribute')
+            ->get(['id', 'good_id']);
+        foreach ($catalogVariations as $variation) {
             foreach ($variation->attributeValues as $value) {
                 $name = $value->attribute?->name ?? 'Неизвестная ось';
                 $databaseAxes[$name] = ($databaseAxes[$name] ?? 0) + 1;
+                $databaseAxisValues[$name][$this->normalizeComparisonValue((string) $value->value)] = true;
             }
         }
 
-        $supplierNames = $this->supplierNames($snapshot->supplier_code);
         $databaseGoods = ShopGood::query()
             ->where(function ($query) use ($supplierNames) {
                 $query->whereIn('supplier', $supplierNames)
                     ->orWhereHas('variations', fn ($variations) => $variations->whereIn('supplier', $supplierNames));
             })
             ->get(['id']);
+        $databaseGoodIds = $databaseGoods->pluck('id');
+        $goodsWithSupplierVariations = $catalogVariations->pluck('good_id')->unique();
         $sourceProducts = $items->whereNotNull('external_group_key')->pluck('external_group_key')->unique()->count()
             + $items->whereNull('external_group_key')->count();
 
@@ -416,13 +426,23 @@ class BikeproductsCatalogService
                 'source_products' => $sourceProducts,
                 'source_groups' => $items->whereNotNull('external_group_key')->pluck('external_group_key')->unique()->count(),
                 'source_items_without_group' => $items->whereNull('external_group_key')->count(),
+                'source_goods_without_variations' => $items->whereNull('external_group_key')->count(),
+                'source_goods_with_variations' => $items->whereNotNull('external_group_key')->pluck('external_group_key')->unique()->count(),
+                'source_variations' => $items->whereNotNull('external_group_key')->count(),
+                'source_unique_variation_axes' => count($sourceAxisValues),
+                'source_unique_variation_values' => array_sum(array_map('count', $sourceAxisValues)),
                 'source_items_with_images' => $items->filter(fn ($item) => ! empty($item->image_urls))->count(),
                 'source_duplicate_image_urls' => count(array_filter($sourceUrls, static fn (int $count) => $count > 1)),
                 'database_goods' => $databaseGoods->count(),
+                'database_goods_without_variations' => $databaseGoodIds->diff($goodsWithSupplierVariations)->count(),
+                'database_goods_with_variations' => $goodsWithSupplierVariations->count(),
+                'database_variations' => $catalogVariations->count(),
+                'database_unique_variation_axes' => count($databaseAxisValues),
+                'database_unique_variation_values' => array_sum(array_map('count', $databaseAxisValues)),
+                'database_unique_properties' => $databaseGoodIds->isEmpty() ? 0 : DB::table('shop_good_properties')->whereIn('good_id', $databaseGoodIds)->distinct('property_id')->count('property_id'),
                 'database_matching_goods' => $matches->where('type', 'good')->count(),
                 'database_matching_variations' => $matches->where('type', 'variation')->count(),
                 'database_unmatched_source_skus' => $items->count() - $matches->count(),
-                'database_goods_with_variations' => $variations->pluck('good_id')->unique()->count(),
             ],
             'source_axes' => $this->sortStats($sourceAxes),
             'database_axes' => $this->sortStats($databaseAxes),
@@ -486,6 +506,7 @@ class BikeproductsCatalogService
                 'database_variation_id' => $variation?->id,
                 'database_good_id' => $good?->id,
                 'database_name' => $good?->name,
+                'database_slug' => $good?->slug,
                 'differences' => array_values(array_filter($differences, fn (array $difference) => $difference['status'] !== 'not_applicable')),
                 'status' => ! $match ? 'not_found' : (! $variation ? 'not_applicable' : (collect($differences)->contains(fn (array $diff) => ! in_array($diff['status'], ['match', 'not_applicable'], true)) ? 'attention' : 'match')),
             ];
@@ -549,6 +570,14 @@ class BikeproductsCatalogService
                     'good_id' => $good->id,
                     'expected_count' => $expectedCount,
                     'database_count' => $actualCount,
+                    'source_urls' => array_values($item->image_urls ?? []),
+                    'database_paths' => $images
+                        ->filter(fn (ShopGoodImage $image) => $variation ? $image->variation_id === $variation->id : ($image->good_id === $good->id && $image->variation_id === null))
+                        ->pluck('file_path')
+                        ->values()
+                        ->all(),
+                    'good_name' => $good->name,
+                    'good_slug' => $good->slug,
                 ];
             }
         }
@@ -660,6 +689,8 @@ class BikeproductsCatalogService
                 'external_sku' => $item->external_sku,
                 'source_name' => $item->name,
                 'database_good_id' => $goodId,
+                'database_name' => $match ? ($match['type'] === 'good' ? $match['model']->name : $match['model']->good->name) : null,
+                'database_slug' => $match ? ($match['type'] === 'good' ? $match['model']->slug : $match['model']->good->slug) : null,
                 'differences' => $differences,
                 'status' => collect($differences)->contains(fn (array $diff) => $diff['status'] !== 'match') ? 'attention' : 'match',
             ];
@@ -677,7 +708,7 @@ class BikeproductsCatalogService
     }
 
     /** @return array{data: array<int, array<string, mixed>>, meta: array<string, int>} */
-    public function goodAudit(SupplierCatalogSnapshot $snapshot, int $page = 1, int $perPage = 50): array
+    public function goodAudit(SupplierCatalogSnapshot $snapshot, int $page = 1, int $perPage = 50, ?array $onlyTargets = null): array
     {
         $this->assertReadySnapshot($snapshot);
         $paginator = $snapshot->items()->orderBy('id')->paginate($perPage, ['*'], 'page', $page);
@@ -686,6 +717,7 @@ class BikeproductsCatalogService
             ->where('supplier_code', $snapshot->supplier_code)
             ->where('scope', 'good')
             ->where('is_check_enabled', true)
+            ->when($onlyTargets !== null, fn ($query) => $query->whereIn('conditions->target', $onlyTargets))
             ->get();
         $goodIds = $matches->map(fn (array $match) => $match['type'] === 'good' ? $match['model']->id : $match['model']->good_id)->unique()->values();
         $goods = ShopGood::query()->whereIn('id', $goodIds)->with('brands:id,name')->get()->keyBy('id');
@@ -727,6 +759,7 @@ class BikeproductsCatalogService
                 'database_match_type' => $match['type'] ?? null,
                 'database_good_id' => $good?->id,
                 'database_name' => $good?->name,
+                'database_slug' => $good?->slug,
                 'differences' => $differences,
                 'status' => ! $good ? 'not_found' : (collect($differences)->contains(fn (array $diff) => ! in_array($diff['status'], ['match'], true)) ? 'attention' : 'match'),
             ];
@@ -746,6 +779,10 @@ class BikeproductsCatalogService
     /** @param array<string, mixed> $conditions */
     private function applyMappingAdjustment(string $value, array $conditions): string
     {
+        if (($conditions['name_transform'] ?? 'none') === 'strip_trailing_parentheses') {
+            $value = preg_replace('/\\s*\\([^()]*\\)\\s*$/u', '', $value) ?? $value;
+            $value = trim($value);
+        }
         $operation = $conditions['adjustment'] ?? 'none';
         $amount = (float) ($conditions['adjustment_value'] ?? 0);
         if ($operation === 'none' || $amount == 0.0 || ! is_numeric(str_replace(',', '.', $value))) {
@@ -780,7 +817,7 @@ class BikeproductsCatalogService
         $goods = ShopGood::query()
             ->whereIn('sku', $skus)
             ->whereIn('supplier', $supplierNames)
-            ->get(['id', 'sku', 'name', 'supplier']);
+            ->get(['id', 'sku', 'name', 'slug', 'supplier']);
         $variations = $this->findVariationsBySku($skus, $supplierCode);
         $matches = $variations->map(fn (ShopGoodVariation $variation) => ['type' => 'variation', 'model' => $variation]);
 
@@ -811,7 +848,7 @@ class BikeproductsCatalogService
         }
 
         return $query
-            ->with(['good:id,name', 'attributeValues.attribute'])
+            ->with(['good:id,name,slug', 'attributeValues.attribute'])
             ->get()
             ->keyBy('sku');
     }
