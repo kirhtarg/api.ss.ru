@@ -207,21 +207,25 @@ class BikeproductsCatalogController extends Controller
         $data = $request->validate([
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:10', 'max:200'],
+            'search' => ['nullable', 'string', 'max:120'],
+            'filters' => ['nullable', 'array', 'max:10'],
+            'filters.*' => ['string', 'in:match,attention,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing'],
         ]);
 
         return response()->json([
             'success' => true,
-            'data' => $this->catalog->variationAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50),
+            'data' => $this->catalog->variationAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, $data['search'] ?? null, $data['filters'] ?? []),
         ]);
     }
 
-    public function imageAudit(SupplierCatalogSnapshot $snapshot): JsonResponse
+    public function imageAudit(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
     {
         if ($response = $this->notReadyResponse($snapshot)) {
             return $response;
         }
 
-        return response()->json(['success' => true, 'data' => $this->catalog->imageAudit($snapshot)]);
+        $data = $request->validate(['page' => ['nullable', 'integer', 'min:1'], 'per_page' => ['nullable', 'integer', 'min:1', 'max:10'], 'search' => ['nullable', 'string', 'max:120']]);
+        return response()->json(['success' => true, 'data' => $this->catalog->imageAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 10, $data['search'] ?? null)]);
     }
 
     public function propertyAudit(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
@@ -233,11 +237,12 @@ class BikeproductsCatalogController extends Controller
         $data = $request->validate([
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:10', 'max:200'],
+            'search' => ['nullable', 'string', 'max:120'],
         ]);
 
         return response()->json([
             'success' => true,
-            'data' => $this->catalog->propertyAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50),
+            'data' => $this->catalog->propertyAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, $data['search'] ?? null),
         ]);
     }
 
@@ -250,9 +255,10 @@ class BikeproductsCatalogController extends Controller
         $data = $request->validate([
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:10', 'max:200'],
+            'search' => ['nullable', 'string', 'max:120'],
         ]);
 
-        return response()->json(['success' => true, 'data' => $this->catalog->goodAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50)]);
+        return response()->json(['success' => true, 'data' => $this->catalog->goodAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, null, $data['search'] ?? null)]);
     }
 
     public function priceStockAudit(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
@@ -264,6 +270,7 @@ class BikeproductsCatalogController extends Controller
         $data = $request->validate([
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:10', 'max:200'],
+            'search' => ['nullable', 'string', 'max:120'],
         ]);
 
         return response()->json(['success' => true, 'data' => $this->catalog->goodAudit(
@@ -271,6 +278,7 @@ class BikeproductsCatalogController extends Controller
             $data['page'] ?? 1,
             $data['per_page'] ?? 50,
             ['price', 'sale_price', 'demping_price', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'],
+            $data['search'] ?? null,
         )]);
     }
 
