@@ -16,7 +16,6 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
-use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class BikeproductsCatalogService
 {
@@ -84,24 +83,26 @@ class BikeproductsCatalogService
                 throw new \RuntimeException('Временный файл разбора не найден. Загрузите Excel заново.');
             }
             $snapshot->update(['status' => 'processing', 'progress' => 1, 'stage' => 'Чтение листа Excel']);
+            $itemsCount = 0;
             $result = $this->parseExcel($path, $snapshot->supplier_code, function (int $processedRows, int $totalRows) use ($snapshot): void {
                 $snapshot->update([
-                    'progress' => min(92, max(2, (int) floor($processedRows * 92 / max(1, $totalRows)))),
+                    'progress' => $totalRows > 0
+                        ? min(92, max(2, (int) floor($processedRows * 92 / $totalRows)))
+                        : 5,
                     'stage' => 'Разбор строк Excel',
                     'processed_rows' => $processedRows,
                     'total_rows' => $totalRows,
                 ]);
+            }, function (array $items) use ($snapshot, &$itemsCount): void {
+                foreach ($items as &$item) {
+                    $item['snapshot_id'] = $snapshot->id;
+                }
+                unset($item);
+                DB::table('supplier_catalog_items')->insert($items);
+                $itemsCount += count($items);
             });
 
-            $snapshot->update(['progress' => 94, 'stage' => 'Сохранение разобранных строк']);
-            foreach ($result['items'] as &$item) {
-                $item['snapshot_id'] = $snapshot->id;
-            }
-            unset($item);
-
-            foreach (array_chunk($result['items'], 250) as $chunk) {
-                DB::table('supplier_catalog_items')->insert($chunk);
-            }
+            $snapshot->update(['progress' => 94, 'stage' => 'Формирование итоговой статистики']);
 
             $snapshot->update([
                 'status' => 'ready',
@@ -109,7 +110,7 @@ class BikeproductsCatalogService
                 'stage' => 'Готово',
                 'processed_rows' => $result['summary']['rows_total'],
                 'total_rows' => $result['summary']['rows_total'],
-                'items_count' => count($result['items']),
+                'items_count' => $itemsCount,
                 'summary' => $result['summary'],
                 'processed_at' => now(),
                 'storage_path' => null,
@@ -128,79 +129,98 @@ class BikeproductsCatalogService
         }
     }
 
-    /** @return array{items: array<int, array<string, mixed>>, summary: array<string, mixed>} */
-    private function parseExcel(string $path, string $supplierCode, ?callable $onProgress = null): array
+    /** @return array{summary: array<string, mixed>} */
+    private function parseExcel(string $path, string $supplierCode, ?callable $onProgress = null, ?callable $onItems = null): array
     {
-        $reader = IOFactory::createReaderForFile($path);
-        $reader->setReadDataOnly(true);
-        $spreadsheet = $reader->load($path);
-        $worksheet = $this->findCatalogSheet($spreadsheet->getAllSheets());
-
-        if ($worksheet === null) {
-            throw new \RuntimeException('В Excel не найден лист с колонкой CML2_ARTICLE.');
+        if (strtolower(pathinfo($path, PATHINFO_EXTENSION)) !== 'xlsx') {
+            throw new \RuntimeException('Для потокового разбора используйте файл .xlsx. Сохраните старый .xls как .xlsx и загрузите снова.');
         }
 
-        $highestColumn = $worksheet->getHighestDataColumn();
-        $headers = $worksheet->rangeToArray("A1:{$highestColumn}1", null, true, false)[0] ?? [];
-        $headers = array_map(static fn ($value) => trim((string) $value), $headers);
-        $headerKeys = [];
-        foreach ($headers as $index => $header) {
-            if ($header !== '') {
-                $headerKeys[$index] = $header;
-            }
-        }
-
-        if (! in_array(self::SOURCE_COLUMNS['sku'], $headerKeys, true)) {
-            throw new \RuntimeException('Колонка CML2_ARTICLE не найдена в выбранном листе.');
-        }
-
+        $reader = new \OpenSpout\Reader\XLSX\Reader();
+        $reader->open($path);
         $mappings = $this->getMappings($supplierCode);
-        $items = [];
-        $sheetName = $worksheet->getTitle();
-        $rowsTotal = $worksheet->getHighestDataRow() - 1;
+        $sheetName = null;
+        $headerKeys = [];
+        $rowsTotal = 0;
         $fieldStats = [];
         $groupKeys = [];
         $sourceImageUrls = [];
         $rowsWithoutName = 0;
         $rowsWithoutSku = 0;
+        $itemsWithSku = 0;
+        $itemsWithGroup = 0;
+        $itemsWithImages = 0;
         $now = now();
+        $items = [];
+        $batchSize = 100;
 
-        for ($row = 2; $row <= $rowsTotal + 1; $row++) {
-            $values = $worksheet->rangeToArray("A{$row}:{$highestColumn}{$row}", null, true, false)[0] ?? [];
-            $payload = [];
+        try {
+            foreach ($reader->getSheetIterator() as $sheet) {
+                $rowNumber = 0;
+                $candidateHeaders = [];
+                $isCatalogSheet = false;
 
-            foreach ($headerKeys as $index => $header) {
-                $value = $this->normalizeCellValue($values[$index] ?? null);
-                if ($value === null) {
+                foreach ($sheet->getRowIterator() as $row) {
+                    $rowNumber++;
+                    $values = $row->toArray();
+                    if ($rowNumber === 1) {
+                        foreach ($values as $index => $header) {
+                            $header = trim((string) $header);
+                            if ($header !== '') {
+                                $candidateHeaders[$index] = $header;
+                            }
+                        }
+                        if (! in_array(self::SOURCE_COLUMNS['sku'], $candidateHeaders, true)) {
+                            break;
+                        }
+                        $isCatalogSheet = true;
+                        $sheetName = $sheet->getName();
+                        $headerKeys = $candidateHeaders;
+                        continue;
+                    }
+
+                    if (! $isCatalogSheet) {
+                        break;
+                    }
+
+                    $rowsTotal++;
+                    $payload = [];
+                    foreach ($headerKeys as $index => $header) {
+                        $value = $this->normalizeCellValue($values[$index] ?? null);
+                    if ($value === null) {
+                        continue;
+                    }
+
+                    $payload[$header] = $value;
+                    $this->addFieldStat($fieldStats, $header, $value);
+                }
+
+                $sku = trim((string) ($payload[self::SOURCE_COLUMNS['sku']] ?? ''));
+                if ($sku === '') {
+                    $rowsWithoutSku++;
                     continue;
                 }
 
-                $payload[$header] = $value;
-                $this->addFieldStat($fieldStats, $header, $value);
-            }
+                $name = $payload[self::SOURCE_COLUMNS['name']] ?? null;
+                if (! $name) {
+                    $rowsWithoutName++;
+                }
 
-            $sku = trim((string) ($payload[self::SOURCE_COLUMNS['sku']] ?? ''));
-            if ($sku === '') {
-                $rowsWithoutSku++;
-                continue;
-            }
+                $groupKey = $this->nullableString($payload[self::SOURCE_COLUMNS['group']] ?? null);
+                if ($groupKey !== null) {
+                    $groupKeys[$groupKey] = true;
+                    $itemsWithGroup++;
+                }
 
-            $name = $payload[self::SOURCE_COLUMNS['name']] ?? null;
-            if (! $name) {
-                $rowsWithoutName++;
-            }
+                $imageUrls = $this->extractImageUrls($payload);
+                if ($imageUrls !== []) {
+                    $itemsWithImages++;
+                }
+                foreach ($imageUrls as $url) {
+                    $sourceImageUrls[$url] = ($sourceImageUrls[$url] ?? 0) + 1;
+                }
 
-            $groupKey = $this->nullableString($payload[self::SOURCE_COLUMNS['group']] ?? null);
-            if ($groupKey !== null) {
-                $groupKeys[$groupKey] = true;
-            }
-
-            $imageUrls = $this->extractImageUrls($payload);
-            foreach ($imageUrls as $url) {
-                $sourceImageUrls[$url] = ($sourceImageUrls[$url] ?? 0) + 1;
-            }
-
-            $items[] = [
+                $items[] = [
                 'snapshot_id' => 0, // Replaced after snapshot creation below.
                 'external_sku' => $sku,
                 'external_group_key' => $groupKey,
@@ -217,45 +237,53 @@ class BikeproductsCatalogService
                 'raw_payload' => json_encode($payload, JSON_UNESCAPED_UNICODE),
                 'created_at' => $now,
                 'updated_at' => $now,
-            ];
+                ];
+                $itemsWithSku++;
 
-            if ($onProgress !== null && ($row === 2 || $row === $rowsTotal + 1 || $row % 100 === 0)) {
-                $onProgress($row - 1, $rowsTotal);
+                    if (count($items) >= $batchSize) {
+                        if ($onItems !== null) {
+                            $onItems($items);
+                        }
+                        $items = [];
+                    }
+
+                    if ($onProgress !== null && ($rowsTotal === 1 || $rowsTotal % 100 === 0)) {
+                        $onProgress($rowsTotal, 0);
+                    }
+                }
+
+                if ($isCatalogSheet) {
+                    break;
+                }
             }
+        } finally {
+            $reader->close();
         }
 
-        $spreadsheet->disconnectWorksheets();
-        unset($spreadsheet);
+        if ($sheetName === null) {
+            throw new \RuntimeException('Колонка CML2_ARTICLE не найдена в выбранном листе.');
+        }
+        if ($items !== [] && $onItems !== null) {
+            $onItems($items);
+        }
+        if ($onProgress !== null) {
+            $onProgress($rowsTotal, $rowsTotal);
+        }
 
         return [
-            'items' => $items,
             'summary' => [
                 'sheet_name' => $sheetName,
                 'rows_total' => $rowsTotal,
-                'items_with_sku' => count($items),
+                'items_with_sku' => $itemsWithSku,
                 'rows_without_sku' => $rowsWithoutSku,
                 'rows_without_name' => $rowsWithoutName,
                 'groups_count' => count($groupKeys),
-                'items_with_group' => count(array_filter($items, static fn (array $item) => $item['external_group_key'] !== null)),
-                'items_with_images' => count(array_filter($items, static fn (array $item) => json_decode($item['image_urls'], true) !== [])),
+                'items_with_group' => $itemsWithGroup,
+                'items_with_images' => $itemsWithImages,
                 'source_duplicate_image_urls' => count(array_filter($sourceImageUrls, static fn (int $count) => $count > 1)),
                 'fields' => $this->finishFieldStats($fieldStats),
             ],
         ];
-    }
-
-    /** @param array<int, \PhpOffice\PhpSpreadsheet\Worksheet\Worksheet> $sheets */
-    private function findCatalogSheet(array $sheets): ?\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet
-    {
-        foreach ($sheets as $sheet) {
-            $highestColumn = $sheet->getHighestDataColumn();
-            $headers = $sheet->rangeToArray("A1:{$highestColumn}1", null, true, false)[0] ?? [];
-            if (in_array('CML2_ARTICLE', array_map(static fn ($value) => trim((string) $value), $headers), true)) {
-                return $sheet;
-            }
-        }
-
-        return null;
     }
 
     /** @return Collection<int, SupplierCatalogFieldMapping> */
@@ -645,6 +673,12 @@ class BikeproductsCatalogService
     {
         if ($value === null) {
             return null;
+        }
+
+        if ($value instanceof \DateTimeInterface) {
+            $value = $value->format('Y-m-d H:i:s');
+        } elseif (is_array($value)) {
+            $value = implode('', array_map(static fn ($part) => method_exists($part, 'getText') ? $part->getText() : (string) $part, $value));
         }
 
         $value = trim((string) $value);

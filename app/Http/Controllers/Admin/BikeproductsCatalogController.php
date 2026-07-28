@@ -56,7 +56,7 @@ class BikeproductsCatalogController extends Controller
     public function uploadExcel(Request $request): JsonResponse
     {
         $request->validate([
-            'file' => ['required', 'file', 'mimes:xlsx,xls', 'max:122880'],
+            'file' => ['required', 'file', 'mimes:xlsx', 'max:122880'],
             'supplier_code' => ['required', 'string', 'max:80'],
         ]);
 
