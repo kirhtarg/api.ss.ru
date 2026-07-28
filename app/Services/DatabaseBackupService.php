@@ -966,23 +966,22 @@ class DatabaseBackupService
 
         $schema = $this->quoteIdentifier($database);
         $duplicates = (int) DB::scalar(
-            'SELECT COUNT(*) FROM (\n'
-            .' SELECT vav.variation_id, av.attribute_id\n'
-            .' FROM '.$schema.'.`shop_variation_attributes_values` vav\n'
-            .' INNER JOIN '.$schema.'.`shop_variation_attribute_values` av ON av.id = vav.attribute_value_id\n'
-            .' GROUP BY vav.variation_id, av.attribute_id\n'
-            .' HAVING COUNT(*) > 1\n'
+            'SELECT COUNT(*) FROM ('
+            .' SELECT vav.variation_id, av.attribute_id'
+            .' FROM '.$schema.'.`shop_variation_attributes_values` vav'
+            .' INNER JOIN '.$schema.'.`shop_variation_attribute_values` av ON av.id = vav.attribute_value_id'
+            .' GROUP BY vav.variation_id, av.attribute_id'
+            .' HAVING COUNT(*) > 1'
             .') AS duplicate_axes'
         );
         $orphans = (int) DB::scalar(
-            'SELECT COUNT(*) FROM '.$schema.'.`shop_variation_attributes_values` vav\n'
-            .' LEFT JOIN '.$schema.'.`shop_good_variations` v ON v.id = vav.variation_id\n'
-            .' LEFT JOIN '.$schema.'.`shop_variation_attribute_values` av ON av.id = vav.attribute_value_id\n'
+            'SELECT COUNT(*) FROM '.$schema.'.`shop_variation_attributes_values` vav'
+            .' LEFT JOIN '.$schema.'.`shop_good_variations` v ON v.id = vav.variation_id'
+            .' LEFT JOIN '.$schema.'.`shop_variation_attribute_values` av ON av.id = vav.attribute_value_id'
             .' WHERE v.id IS NULL OR av.id IS NULL'
         );
         $legacyForeignKeys = (int) DB::scalar(
-            "SELECT COUNT(*) FROM information_schema.KEY_COLUMN_USAGE\n"
-            ." WHERE CONSTRAINT_SCHEMA = ? AND REFERENCED_TABLE_NAME REGEXP '(_old|_bk)$'",
+            "SELECT COUNT(*) FROM information_schema.KEY_COLUMN_USAGE WHERE CONSTRAINT_SCHEMA = ? AND REFERENCED_TABLE_NAME REGEXP '(_old|_bk)$'",
             [$database]
         );
 
