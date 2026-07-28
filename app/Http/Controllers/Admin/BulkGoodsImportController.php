@@ -449,6 +449,7 @@ class BulkGoodsImportController extends Controller
                     if (!in_array($searchByFieldInVariations, ['name', 'sku'])) {
                         $searchByFieldInVariations = 'name'; // значение по умолчанию
                     }
+                    $replaceVariationAttributesBySku = $request->boolean('replace_variation_attributes_by_sku', false);
 
                     // Получаем поставщика: из данных товара (добавлено при препроцессинге из request) или из request
                     $supplierName = null;
@@ -863,7 +864,7 @@ class BulkGoodsImportController extends Controller
                         }
 
                         // Обновляем вариацию (найденную по имени или по артикулу)
-                        $preserveVariationAttributes = $searchByFieldInVariations === 'sku';
+                        $preserveVariationAttributes = $searchByFieldInVariations === 'sku' && !$replaceVariationAttributesBySku;
                         $variationId = $this->updateVariationFromGoodData(
                             $existingVariation,
                             $goodData,
@@ -890,7 +891,8 @@ class BulkGoodsImportController extends Controller
                         }
 
                         $details = $searchByFieldInVariations === 'sku'
-                            ? 'Найдена по артикулу: ' . ($searchValue ?? $sku) . '. Набор атрибутов сохранен из базы.'
+                            ? 'Найдена по артикулу: ' . ($searchValue ?? $sku) . '. '
+                                .($replaceVariationAttributesBySku ? 'Набор атрибутов заменен значениями из файла.' : 'Набор атрибутов сохранен из базы.')
                             : 'Найдена по имени и совпадению атрибутов: ' . $name;
                         if ($sheet !== 'неизвестно') {
                             $details .= ", Лист: {$sheet}, Строка: {$count}";
@@ -1172,7 +1174,21 @@ class BulkGoodsImportController extends Controller
                         // Товар без вариаций — не создаём вариацию, идём в «if ($existingGood)» ? updateGood (обновление основного товара)
                     }
 
-                    // Логируем текущие значения переменных для отладки
+                    // In corrective SKU mode an unknown SKU must never create a new
+                    // variation: otherwise a typo in the supplier file changes the catalog.
+                    if ($replaceVariationAttributesBySku && $searchByNameInVariations && $searchByFieldInVariations === 'sku' && $hasVariation && !$existingVariation) {
+                        $results['skipped']++;
+                        $sheet = $goodData['_sheet'] ?? 'неизвестно';
+                        $skipItems[] = [
+                            'count' => $count,
+                            'sku' => $sku,
+                            'name' => $name,
+                            'sheet' => $sheet,
+                            'reason' => 'Режим замены значений вариации: вариация с артикулом "'.$sku.'" не найдена. Новая вариация не создана.',
+                        ];
+
+                        continue;
+                    }
 
                     // Если включен поиск в вариациях и товар имеет вариации, но вариация не найдена,
                     // а товар найден - создаем новую вариацию для существующего товара
@@ -1490,7 +1506,7 @@ class BulkGoodsImportController extends Controller
                                         $attachImagesToVariation,
                                         $goodData,
                                         $searchByNameInVariations,
-                                        $searchByNameInVariations && $searchByFieldInVariations === 'sku'
+                                        $searchByNameInVariations && $searchByFieldInVariations === 'sku' && !$replaceVariationAttributesBySku
                                     );
                                 }
                             }
@@ -1734,7 +1750,7 @@ class BulkGoodsImportController extends Controller
                                         $existingVariation,
                                         $goodData,
                                         $searchByNameInVariations,
-                                        $searchByNameInVariations && $searchByFieldInVariations === 'sku'
+                                        $searchByNameInVariations && $searchByFieldInVariations === 'sku' && !$replaceVariationAttributesBySku
                                     );
                                 }
 
@@ -4817,75 +4833,45 @@ class BulkGoodsImportController extends Controller
             $variation->name = $goodData['name'];
         }
 
-        // При точном поиске по SKU оси вариации уже определены в базе. Файл может
-        // содержать только часть осей, поэтому не заменяем существующую комбинацию.
+        // При точном поиске по SKU оси сохраняются по умолчанию. Явный режим
+        // замены подготавливает весь новый набор до удаления старых связей.
         if (!$preserveAttributes && isset($goodData['variation']) && isset($goodData['variation']['attributes']) && is_array($goodData['variation']['attributes'])) {
             $newAttributes = $this->normalizeVariationAttributes($goodData['variation']['attributes']);
+            if ($newAttributes !== []) {
+                $attributeValueIds = [];
 
-            // Удаляем существующие связи с атрибутами
-            DB::table('shop_variation_attributes_values')->where('variation_id', $variation->id)->delete();
+                foreach ($newAttributes as $attr) {
+                    $attributeName = trim((string) $attr['name']);
+                    $attributeValue = trim((string) $attr['value']);
+                    $attribute = DB::table('shop_variation_attributes')->where('name', $attributeName)->first();
 
-            // Добавляем новые связи с атрибутами
-            foreach ($newAttributes as $attr) {
-                if (isset($attr['name']) && isset($attr['value'])) {
-                    $attributeName = trim($attr['name']);
-                    $attributeValue = trim($attr['value']);
-
-                    if (!empty($attributeName) && !empty($attributeValue)) {
-                        // Находим или создаем атрибут
-                        $attribute = DB::table('shop_variation_attributes')
-                            ->where('name', $attributeName)
-                            ->first();
-
-                        if ($attribute) {
-                            try {
-                                // Находим или создаем значение атрибута
-                                $attributeValueRecord = DB::table('shop_variation_attribute_values')
-                                    ->where('attribute_id', $attribute->id)
-                                    ->where('value', $attributeValue)
-                                    ->first();
-
-                                if (!$attributeValueRecord) {
-                                    $newAttributeValueId = DB::table('shop_variation_attribute_values')->insertGetId([
-                                        'attribute_id' => $attribute->id,
-                                        'value' => $attributeValue,
-                                        'created_at' => now(),
-                                        'updated_at' => now(),
-                                    ]);
-
-                                    // Проверяем, это insertGetId вернул валидный ID
-                                    if ($newAttributeValueId && $newAttributeValueId > 0) {
-                                        $attributeValueRecord = (object) ['id' => $newAttributeValueId];
-                                    } else {
-                                        // Если не удалось создать значение атрибута, пропускаем его
-                                        continue;
-                                    }
-                                }
-
-                                // Добавляем ??вязь вариации с значением атрибута
-                                if ($attributeValueRecord && isset($attributeValueRecord->id)) {
-                                    DB::table('shop_variation_attributes_values')->insert([
-                                        'variation_id' => $variation->id,
-                                        'attribute_value_id' => $attributeValueRecord->id,
-                                        'created_at' => now(),
-                                        'updated_at' => now(),
-                                    ]);
-                                }
-                            } catch (\Exception $e) {
-                                // Логируем ошибку, но продолжаем обработку остальных атрибутов
-                                \Log::error('Ошибка при обработке атрибута вариации', [
-                                    'variation_id' => $variation->id,
-                                    'attribute_name' => $attributeName,
-                                    'attribute_value' => $attributeValue,
-                                    'error' => $e->getMessage(),
-                                ]);
-
-                                // Пропускаем этот атрибут и продолжаем со следующим
-                                continue;
-                            }
-                        }
+                    if (!$attribute) {
+                        throw new \InvalidArgumentException("Не найдена характеристика вариации: {$attributeName}");
                     }
+
+                    $attributeValueRecord = DB::table('shop_variation_attribute_values')
+                        ->where('attribute_id', $attribute->id)
+                        ->where('value', $attributeValue)
+                        ->first();
+
+                    $attributeValueIds[] = $attributeValueRecord?->id
+                        ?? DB::table('shop_variation_attribute_values')->insertGetId([
+                            'attribute_id' => $attribute->id,
+                            'value' => $attributeValue,
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ]);
                 }
+
+                DB::transaction(function () use ($variation, $attributeValueIds): void {
+                    DB::table('shop_variation_attributes_values')->where('variation_id', $variation->id)->delete();
+                    DB::table('shop_variation_attributes_values')->insert(array_map(fn ($attributeValueId) => [
+                        'variation_id' => $variation->id,
+                        'attribute_value_id' => $attributeValueId,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ], $attributeValueIds));
+                });
             }
         }
 

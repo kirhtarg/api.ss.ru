@@ -2035,6 +2035,21 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('/audit-1c-duplicates', [\App\Http\Controllers\Admin\BulkGoodsImportController::class, 'auditOneCDuplicates']);
                 Route::post('/audit-1c-duplicates/resolve', [\App\Http\Controllers\Admin\BulkGoodsImportController::class, 'resolveOneCDuplicates']);
 
+                // Изолированный аудит каталога Bikeproducts. Эти маршруты не меняют shop_* без
+                // отдельного подтверждённого набора изменений.
+                Route::prefix('bikeproducts')->group(function () {
+                    Route::get('/suppliers', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'suppliers']);
+                    Route::get('/snapshots', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'snapshots']);
+                    Route::post('/snapshots/excel', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'uploadExcel']);
+                    Route::get('/snapshots/{snapshot}/overview', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'overview']);
+                    Route::get('/snapshots/{snapshot}/fields', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'fields']);
+                    Route::get('/snapshots/{snapshot}/variation-audit', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'variationAudit']);
+                    Route::get('/snapshots/{snapshot}/property-audit', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'propertyAudit']);
+                    Route::get('/snapshots/{snapshot}/image-audit', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'imageAudit']);
+                    Route::post('/field-mappings', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'upsertFieldMapping']);
+                    Route::put('/field-mappings/{mapping}', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'updateFieldMapping']);
+                });
+
                 Route::get('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'show']);
                 Route::post('/', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'store']);
                 Route::put('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'update']);

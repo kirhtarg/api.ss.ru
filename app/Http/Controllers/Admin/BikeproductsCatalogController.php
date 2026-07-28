@@ -1,0 +1,235 @@
+<?php
+
+namespace App\Http\Controllers\Admin;
+
+use App\Http\Controllers\Controller;
+use App\Models\Shop\Property;
+use App\Models\ShopSupplier;
+use App\Models\ShopVariationAttribute;
+use App\Models\SupplierCatalogFieldMapping;
+use App\Models\SupplierCatalogSnapshot;
+use App\Services\BikeproductsCatalogService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+
+class BikeproductsCatalogController extends Controller
+{
+    public function __construct(private readonly BikeproductsCatalogService $catalog)
+    {
+    }
+
+    public function suppliers(): JsonResponse
+    {
+        return response()->json(['success' => true, 'data' => $this->availableSuppliers()]);
+    }
+
+    public function snapshots(Request $request): JsonResponse
+    {
+        $supplierCode = $this->selectedSupplierCode($request->query('supplier_code'));
+
+        return response()->json([
+            'success' => true,
+            'data' => SupplierCatalogSnapshot::query()
+                ->where('supplier_code', $supplierCode)
+                ->latest('id')
+                ->limit(30)
+                ->get(),
+        ]);
+    }
+
+    public function uploadExcel(Request $request): JsonResponse
+    {
+        $request->validate([
+            'file' => ['required', 'file', 'mimes:xlsx,xls', 'max:122880'],
+            'supplier_code' => ['required', 'string', 'max:80'],
+        ]);
+
+        try {
+            $supplierCode = $this->selectedSupplierCode($request->input('supplier_code'));
+            $snapshot = $this->catalog->importExcel($request->file('file'), $supplierCode);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Excel Bikeproducts разобран и сохранён как снимок.',
+                'data' => $snapshot,
+            ], 201);
+        } catch (\Throwable $exception) {
+            report($exception);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Не удалось разобрать Excel Bikeproducts: '.$exception->getMessage(),
+            ], 422);
+        }
+    }
+
+    public function overview(SupplierCatalogSnapshot $snapshot): JsonResponse
+    {
+        return response()->json(['success' => true, 'data' => $this->catalog->overview($snapshot)]);
+    }
+
+    public function fields(SupplierCatalogSnapshot $snapshot): JsonResponse
+    {
+        $this->ensureReadySnapshot($snapshot);
+        $mappings = SupplierCatalogFieldMapping::query()
+            ->where('supplier_code', $snapshot->supplier_code)
+            ->get()
+            ->keyBy(fn (SupplierCatalogFieldMapping $mapping) => $mapping->source_field.'|'.$mapping->scope);
+        $fields = collect($snapshot->summary['fields'] ?? [])->map(function (array $stats, string $sourceField) use ($mappings) {
+            $variationMapping = $mappings->get($sourceField.'|variation');
+            $propertyMapping = $mappings->get($sourceField.'|product');
+
+            return [
+                'source_field' => $sourceField,
+                ...$stats,
+                'variation_mapping' => $this->mappingPayload($variationMapping),
+                'property_mapping' => $this->mappingPayload($propertyMapping),
+            ];
+        })->sortByDesc('nonempty_count')->values();
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'fields' => $fields,
+                'variation_attributes' => ShopVariationAttribute::query()->ordered()->get(['id', 'name']),
+                'properties' => Property::query()->orderBy('name')->get(['id', 'name', 'property_type']),
+            ],
+        ]);
+    }
+
+    public function updateFieldMapping(Request $request, SupplierCatalogFieldMapping $mapping): JsonResponse
+    {
+        $data = $request->validate([
+            'variation_attribute_id' => ['nullable', 'integer', 'exists:shop_variation_attributes,id'],
+            'property_id' => ['nullable', 'integer', 'exists:shop_properties,id'],
+            'display_field' => ['nullable', 'string', 'max:120'],
+            'is_check_enabled' => ['required', 'boolean'],
+            'is_update_enabled' => ['required', 'boolean'],
+        ]);
+
+        $mapping->update($data);
+
+        return response()->json(['success' => true, 'data' => $mapping->fresh(['variationAttribute:id,name', 'property:id,name'])]);
+    }
+
+    public function upsertFieldMapping(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'snapshot_id' => ['required', 'integer', 'exists:supplier_catalog_snapshots,id'],
+            'source_field' => ['required', 'string', 'max:120'],
+            'scope' => ['required', 'in:variation,product'],
+            'variation_attribute_id' => ['nullable', 'integer', 'exists:shop_variation_attributes,id'],
+            'property_id' => ['nullable', 'integer', 'exists:shop_properties,id'],
+            'display_field' => ['nullable', 'string', 'max:120'],
+            'is_check_enabled' => ['required', 'boolean'],
+            'is_update_enabled' => ['required', 'boolean'],
+        ]);
+
+        $snapshot = SupplierCatalogSnapshot::findOrFail($data['snapshot_id']);
+        $this->ensureReadySnapshot($snapshot);
+        abort_unless(array_key_exists($data['source_field'], $snapshot->summary['fields'] ?? []), 422, 'Поле отсутствует в текущем снимке.');
+
+        $mapping = SupplierCatalogFieldMapping::updateOrCreate(
+            [
+                'supplier_code' => $snapshot->supplier_code,
+                'source_field' => $data['source_field'],
+                'scope' => $data['scope'],
+            ],
+            [
+                'variation_attribute_id' => $data['variation_attribute_id'],
+                'property_id' => $data['property_id'],
+                'display_field' => $data['display_field'],
+                'is_check_enabled' => $data['is_check_enabled'],
+                'is_update_enabled' => $data['is_update_enabled'],
+            ]
+        );
+
+        return response()->json(['success' => true, 'data' => $mapping->fresh(['variationAttribute:id,name', 'property:id,name'])]);
+    }
+
+    public function variationAudit(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
+    {
+        $data = $request->validate([
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:10', 'max:200'],
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => $this->catalog->variationAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50),
+        ]);
+    }
+
+    public function imageAudit(SupplierCatalogSnapshot $snapshot): JsonResponse
+    {
+        return response()->json(['success' => true, 'data' => $this->catalog->imageAudit($snapshot)]);
+    }
+
+    public function propertyAudit(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
+    {
+        $data = $request->validate([
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:10', 'max:200'],
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => $this->catalog->propertyAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50),
+        ]);
+    }
+
+    private function mappingPayload(?SupplierCatalogFieldMapping $mapping): ?array
+    {
+        return $mapping ? [
+            'id' => $mapping->id,
+            'scope' => $mapping->scope,
+            'variation_attribute_id' => $mapping->variation_attribute_id,
+            'property_id' => $mapping->property_id,
+            'display_field' => $mapping->display_field,
+            'is_check_enabled' => $mapping->is_check_enabled,
+            'is_update_enabled' => $mapping->is_update_enabled,
+        ] : null;
+    }
+
+    private function ensureReadySnapshot(SupplierCatalogSnapshot $snapshot): void
+    {
+        abort_unless(
+            $snapshot->status === 'ready',
+            404
+        );
+    }
+
+    private function selectedSupplierCode(?string $supplierCode): string
+    {
+        $supplierCode = trim(mb_strtolower((string) $supplierCode));
+        abort_unless($supplierCode !== '', 422, 'Выберите поставщика.');
+        abort_unless(collect($this->availableSuppliers())->contains('code', $supplierCode), 422, 'Поставщик недоступен для сервиса.');
+
+        return $supplierCode;
+    }
+
+    private function availableSuppliers(): array
+    {
+        $suppliers = ShopSupplier::query()
+            ->active()
+            ->ordered()
+            ->get(['id', 'name', 'slug'])
+            ->map(fn (ShopSupplier $supplier) => [
+                'id' => $supplier->id,
+                'name' => $supplier->name,
+                'code' => mb_strtolower($supplier->slug),
+                'is_virtual' => false,
+            ]);
+
+        if (! $suppliers->contains('code', 'bikeproducts')) {
+            $suppliers->prepend([
+                'id' => null,
+                'name' => 'Bikeproducts',
+                'code' => 'bikeproducts',
+                'is_virtual' => true,
+            ]);
+        }
+
+        return $suppliers->values()->all();
+    }
+}

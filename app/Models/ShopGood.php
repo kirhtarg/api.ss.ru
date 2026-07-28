@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class ShopGood extends Model
@@ -98,6 +99,14 @@ class ShopGood extends Model
             if ($good->isDirty('name') && empty($good->slug)) {
                 $good->slug = Str::slug($good->name);
             }
+        });
+
+        static::deleting(function ($good) {
+            // Keep the variation-attribute pivot clean even if an old restored
+            // schema is missing its expected ON DELETE CASCADE constraint.
+            DB::table('shop_variation_attributes_values')
+                ->whereIn('variation_id', $good->variations()->select('id'))
+                ->delete();
         });
     }
 

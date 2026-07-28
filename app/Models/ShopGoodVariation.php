@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\DB;
 
 class ShopGoodVariation extends Model
 {
@@ -59,6 +60,15 @@ class ShopGoodVariation extends Model
         'is_active' => 'boolean',
         'sort_order' => 'integer',
     ];
+
+    protected static function booted(): void
+    {
+        static::deleting(function (self $variation) {
+            DB::table('shop_variation_attributes_values')
+                ->where('variation_id', $variation->id)
+                ->delete();
+        });
+    }
 
     /**
      * Основной товар
