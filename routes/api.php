@@ -2060,6 +2060,8 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::get('/snapshots/{snapshot}/price-stock-selection', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'priceStockSelection']);
                     Route::get('/snapshots/{snapshot}/image-audit', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'imageAudit']);
                     Route::get('/snapshots/{snapshot}/image-selection', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'imageSelection']);
+                    Route::post('/snapshots/{snapshot}/image-content-audit', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'startImageContentAudit']);
+                    Route::get('/snapshots/{snapshot}/image-content-audit/status', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'imageContentAuditStatus']);
                     Route::post('/field-mappings', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'upsertFieldMapping']);
                     Route::put('/field-mappings/{mapping}', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'updateFieldMapping']);
                 });

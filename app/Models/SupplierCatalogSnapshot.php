@@ -26,4 +26,9 @@ class SupplierCatalogSnapshot extends Model
     {
         return $this->hasMany(SupplierCatalogItem::class, 'snapshot_id');
     }
+
+    public function imageAudits(): HasMany
+    {
+        return $this->hasMany(SupplierCatalogImageAudit::class, 'snapshot_id');
+    }
 }

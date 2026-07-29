@@ -10,6 +10,7 @@ use App\Models\SupplierCatalogFieldMapping;
 use App\Models\SupplierCatalogProfile;
 use App\Models\SupplierCatalogSnapshot;
 use App\Jobs\ProcessSupplierCatalogExcelJob;
+use App\Jobs\AuditSupplierCatalogImagesJob;
 use App\Jobs\SyncSupplierCatalogImagesJob;
 use App\Services\BikeproductsCatalogService;
 use Closure;
@@ -171,6 +172,9 @@ class BikeproductsCatalogController extends Controller
         ]);
 
         $mapping->update($data);
+        if ($mapping->scope === 'image') {
+            $this->catalog->invalidateImageContentAudits($mapping->supplier_code);
+        }
         $this->touchSupplierSnapshots($mapping->supplier_code);
 
         return response()->json(['success' => true, 'data' => $mapping->fresh(['variationAttribute:id,name', 'property:id,name'])]);
@@ -215,6 +219,9 @@ class BikeproductsCatalogController extends Controller
                 'is_update_enabled' => $data['is_update_enabled'],
             ]
         );
+        if ($mapping->scope === 'image') {
+            $this->catalog->invalidateImageContentAudits($snapshot->supplier_code);
+        }
         $this->touchSupplierSnapshots($snapshot->supplier_code);
 
         return response()->json(['success' => true, 'data' => $mapping->fresh(['variationAttribute:id,name', 'property:id,name'])]);
@@ -316,6 +323,33 @@ class BikeproductsCatalogController extends Controller
             $data,
             fn () => $this->catalog->imageAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 10, $data['search'] ?? null, $data['statuses'] ?? []),
         )]);
+    }
+
+    public function startImageContentAudit(SupplierCatalogSnapshot $snapshot): JsonResponse
+    {
+        if ($response = $this->notReadyResponse($snapshot)) {
+            return $response;
+        }
+
+        $result = $this->catalog->startImageContentAudit($snapshot);
+        if ($result['started'] && $result['status'] === 'processing') {
+            AuditSupplierCatalogImagesJob::dispatch($snapshot->id);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $result,
+            'message' => $result['started'] ? 'Аудит изображений поставлен в очередь.' : 'Аудит уже был запущен для этого файла.',
+        ], $result['started'] ? 202 : 200);
+    }
+
+    public function imageContentAuditStatus(SupplierCatalogSnapshot $snapshot): JsonResponse
+    {
+        if ($response = $this->notReadyResponse($snapshot)) {
+            return $response;
+        }
+
+        return response()->json(['success' => true, 'data' => $this->catalog->imageContentAuditStatus($snapshot)]);
     }
 
     public function imageSelection(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse

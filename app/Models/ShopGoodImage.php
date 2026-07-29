@@ -14,6 +14,11 @@ class ShopGoodImage extends Model
         'good_id',
         'variation_id',
         'file_path',
+        'content_hash',
+        'perceptual_hash',
+        'image_width',
+        'image_height',
+        'content_checked_at',
         'alt_text',
         'is_main',
         'sort_order',
@@ -22,6 +27,9 @@ class ShopGoodImage extends Model
     protected $casts = [
         'is_main' => 'boolean',
         'sort_order' => 'integer',
+        'image_width' => 'integer',
+        'image_height' => 'integer',
+        'content_checked_at' => 'datetime',
     ];
 
     /**
