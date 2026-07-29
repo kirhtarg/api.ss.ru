@@ -15,6 +15,7 @@ use App\Services\BikeproductsCatalogService;
 use Closure;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Cache;
 
 class BikeproductsCatalogController extends Controller
@@ -67,9 +68,16 @@ class BikeproductsCatalogController extends Controller
     public function uploadExcel(Request $request): JsonResponse
     {
         $request->validate([
-            'file' => ['required', 'file', 'mimes:xlsx', 'max:122880'],
+            'file' => ['required', 'file', 'max:122880'],
             'supplier_code' => ['required', 'string', 'max:80'],
         ]);
+
+        $extension = strtolower((string) $request->file('file')->getClientOriginalExtension());
+        if (! in_array($extension, ['xlsx', 'csv'], true)) {
+            throw ValidationException::withMessages([
+                'file' => ['Поддерживаются файлы .xlsx и .csv.'],
+            ]);
+        }
 
         try {
             $supplierCode = $this->selectedSupplierCode($request->input('supplier_code'));
@@ -79,7 +87,7 @@ class BikeproductsCatalogController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Excel поставлен в очередь на разбор.',
+                'message' => 'Файл поставлен в очередь на разбор.',
                 'data' => $snapshot,
             ], 202);
         } catch (\Throwable $exception) {
@@ -222,6 +230,8 @@ class BikeproductsCatalogController extends Controller
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:10', 'max:200'],
             'search' => ['nullable', 'string', 'max:120'],
+            'statuses' => ['nullable', 'array', 'max:1'],
+            'statuses.*' => ['string', 'in:attention,match'],
             'variation_count' => ['nullable', 'in:all,single,multiple'],
             'filters' => ['nullable', 'array', 'max:10'],
             'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_variation_sku_mismatch,source_sku_other_supplier'],
@@ -231,7 +241,7 @@ class BikeproductsCatalogController extends Controller
             'success' => true,
             'data' => $this->cachedAudit(
                 $snapshot,
-                'variations',
+                'variations-v2',
                 $data,
                 fn () => $this->catalog->variationAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, $data['search'] ?? null, $data['filters'] ?? [], $data['variation_count'] ?? 'all'),
             ),
@@ -293,13 +303,30 @@ class BikeproductsCatalogController extends Controller
             return $response;
         }
 
-        $data = $request->validate(['page' => ['nullable', 'integer', 'min:1'], 'per_page' => ['nullable', 'integer', 'min:1', 'max:10'], 'search' => ['nullable', 'string', 'max:120']]);
+        $data = $request->validate([
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'search' => ['nullable', 'string', 'max:120'],
+            'statuses' => ['nullable', 'array', 'max:1'],
+            'statuses.*' => ['string', 'in:match,different'],
+        ]);
         return response()->json(['success' => true, 'data' => $this->cachedAudit(
             $snapshot,
             'images',
             $data,
-            fn () => $this->catalog->imageAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 10, $data['search'] ?? null),
+            fn () => $this->catalog->imageAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 10, $data['search'] ?? null, $data['statuses'] ?? []),
         )]);
+    }
+
+    public function imageSelection(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
+    {
+        if ($response = $this->notReadyResponse($snapshot)) {
+            return $response;
+        }
+        $data = $request->validate(['search' => ['nullable', 'string', 'max:120']]);
+        return response()->json(['success' => true, 'data' => [
+            'item_ids' => $this->catalog->imageSelection($snapshot, $data['search'] ?? null),
+        ]]);
     }
 
     public function propertyAudit(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
@@ -312,6 +339,8 @@ class BikeproductsCatalogController extends Controller
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:10', 'max:200'],
             'search' => ['nullable', 'string', 'max:120'],
+            'statuses' => ['nullable', 'array', 'max:1'],
+            'statuses.*' => ['string', 'in:attention,match'],
         ]);
 
         return response()->json([
@@ -320,9 +349,23 @@ class BikeproductsCatalogController extends Controller
                 $snapshot,
                 'properties',
                 $data,
-                fn () => $this->catalog->propertyAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, $data['search'] ?? null),
+                fn () => $this->catalog->propertyAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, $data['search'] ?? null, $data['statuses'] ?? []),
             ),
         ]);
+    }
+
+    public function propertySelection(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
+    {
+        if ($response = $this->notReadyResponse($snapshot)) {
+            return $response;
+        }
+        $data = $request->validate([
+            'search' => ['nullable', 'string', 'max:120'],
+        ]);
+
+        return response()->json(['success' => true, 'data' => [
+            'item_ids' => $this->catalog->propertySelection($snapshot, $data['search'] ?? null),
+        ]]);
     }
 
     public function goodAudit(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
@@ -374,9 +417,10 @@ class BikeproductsCatalogController extends Controller
             return $response;
         }
         $data = $request->validate([
-            'scope' => ['required', 'in:goods,prices,properties,images'],
-            'item_ids' => ['required', 'array', 'min:1', 'max:1000'],
+            'scope' => ['required', 'in:goods,prices,stocks,properties,images'],
+            'item_ids' => ['required', 'array', 'min:1', 'max:10000'],
             'item_ids.*' => ['integer', 'distinct'],
+            'image_mode' => ['nullable', 'in:append,replace'],
         ]);
 
         $result = $this->runCatalogAction(
@@ -385,7 +429,7 @@ class BikeproductsCatalogController extends Controller
             $data['scope'],
             'update',
             $data['item_ids'],
-            fn () => $this->catalog->applyMappedUpdate($snapshot, $data['scope'], $data['item_ids']),
+            fn () => $this->catalog->applyMappedUpdate($snapshot, $data['scope'], $data['item_ids'], $data['image_mode'] ?? 'append'),
         );
         if ($data['scope'] === 'images' && $result['affected'] > 0) {
             SyncSupplierCatalogImagesJob::dispatch($snapshot->id, $data['item_ids']);
@@ -405,6 +449,8 @@ class BikeproductsCatalogController extends Controller
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:10', 'max:200'],
             'search' => ['nullable', 'string', 'max:120'],
+            'filters' => ['nullable', 'array', 'max:2'],
+            'filters.*' => ['string', 'in:prices,stocks'],
         ]);
 
         return response()->json(['success' => true, 'data' => $this->cachedAudit(
@@ -417,8 +463,27 @@ class BikeproductsCatalogController extends Controller
                 $data['per_page'] ?? 50,
                 ['price', 'sale_price', 'demping_price', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'],
                 $data['search'] ?? null,
+                [],
+                $data['filters'] ?? [],
+                true,
             ),
         )]);
+    }
+
+    public function priceStockSelection(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
+    {
+        if ($response = $this->notReadyResponse($snapshot)) {
+            return $response;
+        }
+        $data = $request->validate([
+            'search' => ['nullable', 'string', 'max:120'],
+            'filters' => ['nullable', 'array', 'max:2'],
+            'filters.*' => ['string', 'in:prices,stocks'],
+        ]);
+
+        return response()->json(['success' => true, 'data' => [
+            'item_ids' => $this->catalog->priceStockSelection($snapshot, $data['search'] ?? null, $data['filters'] ?? []),
+        ]]);
     }
 
     private function mappingPayload(?SupplierCatalogFieldMapping $mapping): ?array

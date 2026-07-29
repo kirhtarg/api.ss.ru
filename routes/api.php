@@ -2051,11 +2051,14 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::post('/snapshots/{snapshot}/variation-actions', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'applyVariationAction']);
                     Route::post('/snapshots/{snapshot}/action-runs/{actionRun}/rollback', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'rollbackAction']);
                     Route::get('/snapshots/{snapshot}/property-audit', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'propertyAudit']);
+                    Route::get('/snapshots/{snapshot}/property-selection', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'propertySelection']);
                     Route::get('/snapshots/{snapshot}/good-audit', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'goodAudit']);
                     Route::post('/snapshots/{snapshot}/good-actions', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'applyGoodAction']);
                     Route::post('/snapshots/{snapshot}/mapped-updates', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'applyMappedUpdate']);
                     Route::get('/snapshots/{snapshot}/price-stock-audit', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'priceStockAudit']);
+                    Route::get('/snapshots/{snapshot}/price-stock-selection', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'priceStockSelection']);
                     Route::get('/snapshots/{snapshot}/image-audit', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'imageAudit']);
+                    Route::get('/snapshots/{snapshot}/image-selection', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'imageSelection']);
                     Route::post('/field-mappings', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'upsertFieldMapping']);
                     Route::put('/field-mappings/{mapping}', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'updateFieldMapping']);
                 });

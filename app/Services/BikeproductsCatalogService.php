@@ -36,6 +36,7 @@ class BikeproductsCatalogService
     {
         $snapshot = SupplierCatalogSnapshot::find($snapshotId);
         if (! $snapshot || $snapshot->status !== 'ready') return;
+        $imageBaseUrl = $this->supplierImageBaseUrl($snapshot->supplier_code);
         $items = $snapshot->items()->whereIn('id', $itemIds)->get();
         $matches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code);
         foreach ($items as $item) {
@@ -43,7 +44,10 @@ class BikeproductsCatalogService
             if (! $match) continue;
             $variation = $match['type'] === 'variation' ? $match['model'] : null;
             $good = $variation ? $variation->good : $match['model'];
-            foreach (collect($item->image_urls ?? [])->filter()->unique() as $url) {
+            foreach (collect($item->image_urls ?? [])
+                ->map(fn ($url) => $this->absoluteSourceImageUrl((string) $url, $imageBaseUrl))
+                ->filter()
+                ->unique() as $url) {
                 if (! str_starts_with($url, 'http')) continue;
                 try {
                     $response = Http::timeout(45)->connectTimeout(10)->get($url);
@@ -135,7 +139,9 @@ class BikeproductsCatalogService
         $affected = 0;
         $skipped = 0;
 
-        DB::transaction(function () use ($items, $matches, $goodMappings, $propertyMappings, $supplierName, $snapshot, $sourceGroupCounts, &$parentGoodsBySourceGroup, &$affected, &$skipped): void {
+        $imageBaseUrl = $this->supplierImageBaseUrl($snapshot->supplier_code);
+        $propertySyncedGoodIds = [];
+        DB::transaction(function () use ($items, $matches, $goodMappings, $propertyMappings, $supplierName, $snapshot, $sourceGroupCounts, $imageBaseUrl, &$parentGoodsBySourceGroup, &$propertySyncedGoodIds, &$affected, &$skipped): void {
             foreach ($items as $item) {
                 $payload = $item->raw_payload ?? [];
                 $attributes = $this->mappedGoodAttributes($item, $goodMappings);
@@ -159,7 +165,8 @@ class BikeproductsCatalogService
                     if ($brand !== null) {
                         $good->brands()->syncWithoutDetaching([ShopBrand::firstOrCreate(['name' => $brand], ['is_active' => true])->id]);
                     }
-                    $this->syncMappedProperties($good, $payload, $propertyMappings);
+                    $this->syncMappedProperties($good, $payload, $propertyMappings, true);
+                    $propertySyncedGoodIds[$good->id] = true;
                     $affected++;
                     continue;
                 }
@@ -189,7 +196,8 @@ class BikeproductsCatalogService
                         if ($brand !== null) {
                             $good->brands()->syncWithoutDetaching([ShopBrand::firstOrCreate(['name' => $brand], ['is_active' => true])->id]);
                         }
-                        $this->syncMappedProperties($good, $payload, $propertyMappings);
+                        $this->syncMappedProperties($good, $payload, $propertyMappings, true);
+                        $propertySyncedGoodIds[$good->id] = true;
                         $affected++;
                         continue;
                     }
@@ -202,6 +210,11 @@ class BikeproductsCatalogService
                     }
                     if (! $good) {
                         $good = $this->createMappedGood($name, $parentSku, $supplierName, $attributes, $payload, $propertyMappings);
+                        $propertySyncedGoodIds[$good->id] = true;
+                    }
+                    if (! isset($propertySyncedGoodIds[$good->id])) {
+                        $this->syncMappedProperties($good, $payload, $propertyMappings, true);
+                        $propertySyncedGoodIds[$good->id] = true;
                     }
                     $parentGoodsBySourceGroup[$groupKey] = $good;
                     $variation = ShopGoodVariation::create([
@@ -218,6 +231,7 @@ class BikeproductsCatalogService
                         'value' => $axis['value'],
                     ])->id)->all();
                     $variation->attributeValues()->sync($valueIds);
+                    $this->attachSourceImages($good, $variation, $item, $imageBaseUrl);
                     $affected++;
                     continue;
                 }
@@ -236,6 +250,7 @@ class BikeproductsCatalogService
                     'value' => $axis['value'],
                 ])->id)->all();
                 $variation->attributeValues()->sync($valueIds);
+                $this->attachSourceImages($good, $variation, $item, $imageBaseUrl);
                 $affected++;
             }
         });
@@ -244,7 +259,7 @@ class BikeproductsCatalogService
     }
 
     /** @return array{affected: int, skipped: int, message: string} */
-    public function applyMappedUpdate(SupplierCatalogSnapshot $snapshot, string $scope, array $itemIds): array
+    public function applyMappedUpdate(SupplierCatalogSnapshot $snapshot, string $scope, array $itemIds, string $imageMode = 'append'): array
     {
         $this->assertReadySnapshot($snapshot);
         $items = $snapshot->items()->whereIn('id', $itemIds)->get();
@@ -270,30 +285,34 @@ class BikeproductsCatalogService
             return ['affected' => $affected, 'skipped' => $skipped, 'message' => 'Поля товаров обновлены'];
         }
 
-        if ($scope === 'prices') {
+        if (in_array($scope, ['prices', 'stocks'], true)) {
             $mappings = SupplierCatalogFieldMapping::query()->where('supplier_code', $snapshot->supplier_code)->where('scope', 'good')->where('is_check_enabled', true)->get();
-            DB::transaction(function () use ($items, $matches, $mappings, &$affected, &$skipped): void {
+            $targets = $scope === 'prices'
+                ? ['price', 'sale_price', 'demping_price']
+                : ['stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'];
+            DB::transaction(function () use ($items, $matches, $mappings, $targets, &$affected, &$skipped): void {
                 foreach ($items as $item) {
                     $match = $matches->get($item->external_sku);
                     if (! $match) { $skipped++; continue; }
-                    $values = collect($this->mappedGoodAttributes($item, $mappings))->only(['price', 'sale_price', 'demping_price', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'])->all();
+                    $values = collect($this->mappedGoodAttributes($item, $mappings))->only($targets)->all();
                     if ($values === []) { $skipped++; continue; }
                     $model = $match['type'] === 'variation' ? $match['model'] : $match['model'];
                     $model->update($values);
                     $affected++;
                 }
             });
-            return ['affected' => $affected, 'skipped' => $skipped, 'message' => 'Цены и остатки обновлены'];
+            return ['affected' => $affected, 'skipped' => $skipped, 'message' => $scope === 'prices' ? 'Цены обновлены' : 'Остатки обновлены'];
         }
 
         if ($scope === 'properties') {
             $mappings = SupplierCatalogFieldMapping::query()->where('supplier_code', $snapshot->supplier_code)->where('scope', 'product')->where('is_check_enabled', true)->whereNotNull('property_id')->get();
-            DB::transaction(function () use ($items, $matches, $mappings, &$affected, &$skipped): void {
+            $differentItemIds = array_flip($this->propertySelection($snapshot));
+            DB::transaction(function () use ($items, $matches, $mappings, $differentItemIds, &$affected, &$skipped): void {
                 foreach ($items as $item) {
                     $match = $matches->get($item->external_sku);
-                    if (! $match) { $skipped++; continue; }
+                    if (! $match || ! isset($differentItemIds[$item->id])) { $skipped++; continue; }
                     $good = $match['type'] === 'variation' ? $match['model']->good : $match['model'];
-                    $this->syncMappedProperties($good, $item->raw_payload ?? [], $mappings);
+                    $this->syncMappedProperties($good, $item->raw_payload ?? [], $mappings, true);
                     $affected++;
                 }
             });
@@ -301,20 +320,29 @@ class BikeproductsCatalogService
         }
 
         if ($scope === 'images') {
-            DB::transaction(function () use ($items, $matches, &$affected, &$skipped): void {
+            $imageBaseUrl = $this->supplierImageBaseUrl($snapshot->supplier_code);
+            DB::transaction(function () use ($items, $matches, $imageBaseUrl, $imageMode, &$affected, &$skipped): void {
                 foreach ($items as $item) {
                     $match = $matches->get($item->external_sku);
-                    $urls = collect($item->image_urls ?? [])->filter()->unique()->values();
-                    if (! $match || $urls->isEmpty()) { $skipped++; continue; }
+                    $urls = collect($item->image_urls ?? [])
+                        ->map(fn ($url) => $this->absoluteSourceImageUrl((string) $url, $imageBaseUrl))
+                        ->filter()
+                        ->unique()
+                        ->values();
+                    if (! $match || ($urls->isEmpty() && $imageMode !== 'replace')) { $skipped++; continue; }
                     $variation = $match['type'] === 'variation' ? $match['model'] : null;
                     $good = $variation ? $variation->good : $match['model'];
                     $query = ShopGoodImage::query()->where('good_id', $good->id);
                     if ($variation) $query->where('variation_id', $variation->id);
                     else $query->whereNull('variation_id');
                     $existing = $query->pluck('file_path')->all();
+                    if ($imageMode === 'replace') {
+                        $query->delete();
+                        $existing = [];
+                    }
                     $nextSort = (int) $query->max('sort_order') + 1;
                     foreach ($urls as $url) {
-                        if (in_array($url, $existing, true)) continue;
+                        if (collect($existing)->contains(fn (string $path) => $this->sourceImageMatchesDatabasePath($url, $path))) continue;
                         ShopGoodImage::create([
                             'good_id' => $good->id,
                             'variation_id' => $variation?->id,
@@ -326,7 +354,7 @@ class BikeproductsCatalogService
                     $affected++;
                 }
             });
-            return ['affected' => $affected, 'skipped' => $skipped, 'message' => 'URL изображений привязаны'];
+            return ['affected' => $affected, 'skipped' => $skipped, 'message' => $imageMode === 'replace' ? 'Привязки изображений заменены' : 'Недостающие URL изображений привязаны'];
         }
 
         throw new \InvalidArgumentException('Неизвестная область обновления.');
@@ -454,7 +482,7 @@ class BikeproductsCatalogService
 
         $snapshot = SupplierCatalogSnapshot::create([
             'supplier_code' => $supplierCode,
-            'source_type' => 'xlsx',
+            'source_type' => strtolower($file->getClientOriginalExtension()) === 'csv' ? 'csv' : 'xlsx',
             'source_name' => $file->getClientOriginalName(),
             'storage_path' => $temporaryPath,
             'checksum' => hash_file('sha256', $file->getRealPath()),
@@ -477,18 +505,18 @@ class BikeproductsCatalogService
         try {
             $path = Storage::disk('local')->path($snapshot->storage_path);
             if (! is_file($path)) {
-                throw new \RuntimeException('Временный файл разбора не найден. Загрузите Excel заново.');
+                throw new \RuntimeException('Временный файл разбора не найден. Загрузите файл заново.');
             }
-            $snapshot->update(['status' => 'processing', 'progress' => 1, 'stage' => 'Чтение листа Excel']);
+            $sourceLabel = $snapshot->source_type === 'csv' ? 'CSV' : 'Excel';
+            $snapshot->update(['status' => 'processing', 'progress' => 1, 'stage' => 'Чтение '.$sourceLabel]);
             $itemsCount = 0;
-            $profile = SupplierCatalogProfile::query()->where('code', $snapshot->supplier_code)->first();
-            $imageBaseUrl = $this->nullableString($profile?->settings['image_base_url'] ?? null);
+            $imageBaseUrl = $this->supplierImageBaseUrl($snapshot->supplier_code);
             $result = $this->parseExcel($path, $snapshot->supplier_code, $imageBaseUrl, function (int $processedRows, int $totalRows) use ($snapshot): void {
                 $snapshot->update([
                     'progress' => $totalRows > 0
                         ? min(92, max(2, (int) floor($processedRows * 92 / $totalRows)))
                         : 5,
-                    'stage' => 'Разбор строк Excel',
+                    'stage' => 'Разбор строк '.$sourceLabel,
                     'processed_rows' => $processedRows,
                     'total_rows' => $totalRows,
                 ]);
@@ -537,14 +565,54 @@ class BikeproductsCatalogService
         $snapshot->delete();
     }
 
+    /** @return array{delimiter: string, encoding: string} */
+    private function detectCsvFormat(string $path): array
+    {
+        $sample = file_get_contents($path, false, null, 0, 131072);
+        if ($sample === false || $sample === '') {
+            throw new \RuntimeException('CSV-файл пустой или недоступен для чтения.');
+        }
+
+        $encoding = match (true) {
+            str_starts_with($sample, "\xEF\xBB\xBF") => 'UTF-8',
+            str_starts_with($sample, "\xFF\xFE") => 'UTF-16LE',
+            str_starts_with($sample, "\xFE\xFF") => 'UTF-16BE',
+            mb_check_encoding($sample, 'UTF-8') => 'UTF-8',
+            default => 'Windows-1251',
+        };
+
+        $firstLine = strtok($sample, "\r\n");
+        $delimiterCounts = [
+            ';' => substr_count((string) $firstLine, ';'),
+            ',' => substr_count((string) $firstLine, ','),
+            "\t" => substr_count((string) $firstLine, "\t"),
+        ];
+        arsort($delimiterCounts);
+        $delimiter = (string) array_key_first($delimiterCounts);
+        if (($delimiterCounts[$delimiter] ?? 0) === 0) {
+            throw new \RuntimeException('Не удалось определить разделитель CSV. Допустимы ;, , или табуляция.');
+        }
+
+        return ['delimiter' => $delimiter, 'encoding' => $encoding];
+    }
+
     /** @return array{summary: array<string, mixed>} */
     private function parseExcel(string $path, string $supplierCode, ?string $imageBaseUrl = null, ?callable $onProgress = null, ?callable $onItems = null): array
     {
-        if (strtolower(pathinfo($path, PATHINFO_EXTENSION)) !== 'xlsx') {
-            throw new \RuntimeException('Для потокового разбора используйте файл .xlsx. Сохраните старый .xls как .xlsx и загрузите снова.');
+        $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        if (! in_array($extension, ['xlsx', 'csv'], true)) {
+            throw new \RuntimeException('Поддерживаются файлы .xlsx и .csv.');
         }
 
+        $csvFormat = null;
         $reader = new \OpenSpout\Reader\XLSX\Reader();
+        if ($extension === 'csv') {
+            $csvFormat = $this->detectCsvFormat($path);
+            $reader = new \OpenSpout\Reader\CSV\Reader(new \OpenSpout\Reader\CSV\Options(
+                FIELD_DELIMITER: $csvFormat['delimiter'],
+                ENCODING: $csvFormat['encoding'],
+            ));
+        }
         $reader->open($path);
         $mappings = $this->getMappings($supplierCode);
         $sheetName = null;
@@ -573,7 +641,7 @@ class BikeproductsCatalogService
                     $values = $row->toArray();
                     if ($rowNumber === 1) {
                         foreach ($values as $index => $header) {
-                            $header = trim((string) $header);
+                            $header = trim(ltrim((string) $header, "\xEF\xBB\xBF"));
                             if ($header !== '') {
                                 $candidateHeaders[$index] = $header;
                             }
@@ -675,7 +743,7 @@ class BikeproductsCatalogService
         }
 
         if ($sheetName === null) {
-            throw new \RuntimeException('Колонка CML2_ARTICLE не найдена в выбранном листе.');
+            throw new \RuntimeException('Колонка CML2_ARTICLE не найдена в файле.');
         }
         if ($items !== [] && $onItems !== null) {
             $onItems($items);
@@ -687,6 +755,9 @@ class BikeproductsCatalogService
         return [
             'summary' => [
                 'sheet_name' => $sheetName,
+                'source_type' => $extension,
+                'source_encoding' => $csvFormat['encoding'] ?? 'UTF-8',
+                'delimiter' => $csvFormat['delimiter'] ?? null,
                 'rows_total' => $rowsTotal,
                 'items_with_sku' => $itemsWithSku,
                 'rows_without_sku' => $rowsWithoutSku,
@@ -1121,7 +1192,12 @@ class BikeproductsCatalogService
         if ($filters !== []) {
             $matchedRows = $rows->whereIn('status', $filters);
             $expandGoodIds = $matchedRows
-                ->whereIn('status', ['delete_candidate_variation', 'source_variation_missing', 'source_variation_sku_mismatch'])
+                ->whereIn('status', [
+                    'delete_candidate_variation',
+                    'source_variation_missing',
+                    'source_variation_sku_mismatch',
+                    'attention',
+                ])
                 ->pluck('database_good_id')
                 ->filter()
                 ->unique();
@@ -1243,6 +1319,14 @@ class BikeproductsCatalogService
         $backup['goods'] = ShopGood::query()->whereIn('id', $goodIds)->get()->map(fn (ShopGood $good) => $good->getAttributes())->all();
         $backup['variations'] = ShopGoodVariation::query()->whereIn('id', $variationIds)->get()->map(fn (ShopGoodVariation $variation) => $variation->getAttributes())->all();
         $backup['variation_attribute_links'] = DB::table('shop_variation_attributes_values')->whereIn('variation_id', $variationIds)->get()->map(fn ($row) => (array) $row)->all();
+        if ($scope === 'images') {
+            $backup['images'] = ShopGoodImage::query()
+                ->whereIn('good_id', $goodIds)
+                ->orWhereIn('variation_id', $variationIds)
+                ->get()
+                ->map(fn (ShopGoodImage $image) => $image->getAttributes())
+                ->all();
+        }
         return $backup;
     }
 
@@ -1286,14 +1370,14 @@ class BikeproductsCatalogService
         });
     }
 
-    public function imageAudit(SupplierCatalogSnapshot $snapshot, int $page = 1, int $perPage = 10, ?string $search = null): array
+    public function imageAudit(SupplierCatalogSnapshot $snapshot, int $page = 1, int $perPage = 10, ?string $search = null, array $statuses = []): array
     {
         $this->assertReadySnapshot($snapshot);
-        $paginator = $this->snapshotItemsQuery($snapshot, $search)->paginate($perPage, ['*'], 'page', $page);
-        $items = $paginator->getCollection();
+        $items = $this->snapshotItemsQuery($snapshot, $search)->get();
+        $imageBaseUrl = $this->supplierImageBaseUrl($snapshot->supplier_code);
         $sourceUrlGroups = [];
         foreach ($items as $item) {
-            foreach ($item->image_urls ?? [] as $url) {
+            foreach (collect($item->image_urls ?? [])->map(fn ($url) => $this->absoluteSourceImageUrl((string) $url, $imageBaseUrl))->filter() as $url) {
                 $sourceUrlGroups[$url][] = $item->external_sku;
             }
         }
@@ -1323,10 +1407,35 @@ class BikeproductsCatalogService
             }
             $variation = $match['type'] === 'variation' ? $match['model'] : null;
             $good = $variation ? $variation->good : $match['model'];
-            $expectedCount = count($item->image_urls ?? []);
-            $actualCount = $variation
-                ? (int) ($imageCountByVariation->get($variation->id) ?? 0)
-                : (int) ($imageCountByGood->get($good->id) ?? 0);
+            $sourceUrls = collect($item->image_urls ?? [])
+                ->map(fn ($url) => $this->absoluteSourceImageUrl((string) $url, $imageBaseUrl))
+                ->filter()
+                ->unique()
+                ->values();
+            $databasePaths = $images
+                ->filter(fn (ShopGoodImage $image) => $variation ? $image->variation_id === $variation->id : ($image->good_id === $good->id && $image->variation_id === null))
+                ->pluck('file_path')
+                ->values()
+                ->all();
+            $availablePaths = $databasePaths;
+            $imagePairs = [];
+            foreach ($sourceUrls as $sourceUrl) {
+                $pathIndex = collect($availablePaths)->search(fn (string $path) => $this->sourceImageMatchesDatabasePath($sourceUrl, $path));
+                $databasePath = $pathIndex === false ? null : $availablePaths[$pathIndex];
+                if ($pathIndex !== false) {
+                    unset($availablePaths[$pathIndex]);
+                }
+                $imagePairs[] = [
+                    'source_url' => $sourceUrl,
+                    'source_filename' => $this->sourceImageFileName($sourceUrl),
+                    'database_path' => $databasePath,
+                    'database_filename' => $databasePath ? $this->sourceImageFileName($databasePath) : null,
+                    'is_match' => $databasePath !== null,
+                ];
+            }
+            $expectedCount = $sourceUrls->count();
+            $actualCount = count($databasePaths);
+            $isMatch = $expectedCount === $actualCount && collect($imagePairs)->every('is_match');
             $comparison = [
                 'item_id' => $item->id,
                 'external_sku' => $item->external_sku,
@@ -1335,13 +1444,12 @@ class BikeproductsCatalogService
                 'good_id' => $good->id,
                 'expected_count' => $expectedCount,
                 'database_count' => $actualCount,
-                'is_match' => $expectedCount === $actualCount,
-                'source_urls' => array_values($item->image_urls ?? []),
-                'database_paths' => $images
-                    ->filter(fn (ShopGoodImage $image) => $variation ? $image->variation_id === $variation->id : ($image->good_id === $good->id && $image->variation_id === null))
-                    ->pluck('file_path')
-                    ->values()
-                    ->all(),
+                'is_match' => $isMatch,
+                'status' => $isMatch ? 'match' : 'different',
+                'source_urls' => $sourceUrls->all(),
+                'database_paths' => $databasePaths,
+                'image_pairs' => $imagePairs,
+                'database_only_paths' => array_values($availablePaths),
                 'good_name' => $good->name,
                 'good_slug' => $good->slug,
             ];
@@ -1363,6 +1471,28 @@ class BikeproductsCatalogService
             $hashGroups[hash_file('sha256', $physicalPath)][] = $path;
         }
 
+        $stats = [
+            'matched' => count(array_filter($imageComparisons, fn (array $row) => $row['is_match'])),
+            'different' => count($coverageMismatches),
+        ];
+        if ($statuses !== []) {
+            $imageComparisons = array_values(array_filter($imageComparisons, fn (array $row) => in_array($row['status'], $statuses, true)));
+        }
+        $groupedComparisons = collect($imageComparisons)->groupBy('good_id')->map(function (Collection $rows) {
+            $first = $rows->first();
+            return [
+                'good_id' => $first['good_id'],
+                'good_name' => $first['good_name'],
+                'good_slug' => $first['good_slug'],
+                'rows' => $rows->values()->all(),
+            ];
+        })->values();
+        $total = $groupedComparisons->count();
+        $perPage = max(1, $perPage);
+        $lastPage = max(1, (int) ceil($total / $perPage));
+        $page = min(max(1, $page), $lastPage);
+        $pageGroups = $groupedComparisons->slice(($page - 1) * $perPage, $perPage)->values()->all();
+
         return [
             'stats' => [
                 'source_images' => array_sum(array_map('count', $sourceUrlGroups)),
@@ -1373,6 +1503,7 @@ class BikeproductsCatalogService
                 'image_count_mismatches' => count($coverageMismatches),
                 'hashed_files' => $scannedPaths,
                 'hash_scan_limited' => $images->pluck('file_path')->filter()->unique()->count() > $hashLimit,
+                ...$stats,
             ],
             'source_duplicate_urls' => collect($sourceUrlGroups)
                 ->filter(fn (array $skus) => count($skus) > 1)
@@ -1390,22 +1521,33 @@ class BikeproductsCatalogService
                 ->map(fn (array $paths, string $hash) => ['hash' => $hash, 'file_paths' => $paths])
                 ->values(),
             'coverage_mismatches' => $coverageMismatches,
-            'image_comparisons' => $imageComparisons,
+            'image_comparisons' => $pageGroups,
             'meta' => [
-                'current_page' => $paginator->currentPage(),
-                'last_page' => $paginator->lastPage(),
-                'per_page' => $paginator->perPage(),
-                'total' => $paginator->total(),
+                'current_page' => $page,
+                'last_page' => $lastPage,
+                'per_page' => $perPage,
+                'total' => $total,
             ],
         ];
     }
 
-    /** @return array{data: array<int, array<string, mixed>>, meta: array<string, int>} */
-    public function propertyAudit(SupplierCatalogSnapshot $snapshot, int $page = 1, int $perPage = 50, ?string $search = null): array
+    /** @return array<int, int> */
+    public function imageSelection(SupplierCatalogSnapshot $snapshot, ?string $search = null): array
+    {
+        return collect($this->imageAudit($snapshot, 1, 100000, $search, ['different'])['image_comparisons'])
+            ->flatMap(fn (array $group) => $group['rows'])
+            ->pluck('item_id')
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
+    }
+
+    /** @return array{data: array<int, array<string, mixed>>, meta: array<string, int>, stats: array<string, int>} */
+    public function propertyAudit(SupplierCatalogSnapshot $snapshot, int $page = 1, int $perPage = 50, ?string $search = null, array $statuses = []): array
     {
         $this->assertReadySnapshot($snapshot);
-        $paginator = $this->snapshotItemsQuery($snapshot, $search)->paginate($perPage, ['*'], 'page', $page);
-        $matches = $this->resolveSkuMatches($paginator->getCollection()->pluck('external_sku'), $snapshot->supplier_code);
+        $items = $this->snapshotItemsQuery($snapshot, $search)->get();
+        $skuMatches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code);
         $mappings = SupplierCatalogFieldMapping::query()
             ->where('supplier_code', $snapshot->supplier_code)
             ->where('scope', 'product')
@@ -1413,7 +1555,7 @@ class BikeproductsCatalogService
             ->where('is_check_enabled', true)
             ->with('property:id,name')
             ->get();
-        $goodIds = $matches->map(fn (array $match) => $match['type'] === 'good' ? $match['model']->id : $match['model']->good_id)->unique()->values();
+        $goodIds = $skuMatches->map(fn (array $match) => $match['type'] === 'good' ? $match['model']->id : $match['model']->good_id)->unique()->values();
         $propertyQuery = DB::table('shop_good_properties as gp')
             ->join('shop_properties as p', 'p.id', '=', 'gp.property_id')
             ->whereIn('gp.good_id', $goodIds);
@@ -1429,35 +1571,35 @@ class BikeproductsCatalogService
             ->groupBy(fn ($row) => $row->good_id.':'.$row->property_id);
         $rows = [];
 
-        foreach ($paginator->getCollection() as $item) {
-            $match = $matches->get($item->external_sku);
-            $goodId = $match ? ($match['type'] === 'good' ? $match['model']->id : $match['model']->good_id) : null;
-            $differences = [];
+        foreach ($items as $item) {
+            $match = $skuMatches->get($item->external_sku);
             if (! $match) {
-                $differences[] = ['status' => 'source_sku_not_found', 'property' => null, 'source_value' => null, 'database_values' => []];
-            } else {
-                foreach ($mappings as $mapping) {
-                    $rawValue = $this->nullableString($item->raw_payload[$mapping->source_field] ?? null);
-                    if ($rawValue === null) {
-                        continue;
-                    }
-                    $sourceValue = $mapping->display_field
-                        ? ($this->nullableString($item->raw_payload[$mapping->display_field] ?? null) ?? $rawValue)
-                        : $rawValue;
-                    $databaseValues = $properties->get($goodId.':'.$mapping->property_id, collect())
-                        ->pluck('value')
-                        ->filter()
-                        ->values()
-                        ->all();
-                    $matches = collect($databaseValues)->contains(fn (string $value) => $this->normalizeComparisonValue($value) === $this->normalizeComparisonValue($sourceValue));
-                    $differences[] = [
-                        'status' => empty($databaseValues) ? 'missing_in_database' : ($matches ? 'match' : 'different'),
-                        'property' => $mapping->property?->name,
-                        'source_field' => $mapping->source_field,
-                        'source_value' => $sourceValue,
-                        'database_values' => $databaseValues,
-                    ];
+                continue;
+            }
+
+            $goodId = $match['type'] === 'good' ? $match['model']->id : $match['model']->good_id;
+            $differences = [];
+            foreach ($mappings as $mapping) {
+                $rawValue = $this->nullableString($item->raw_payload[$mapping->source_field] ?? null);
+                if ($rawValue === null) {
+                    continue;
                 }
+                $sourceValue = $mapping->display_field
+                    ? ($this->nullableString($item->raw_payload[$mapping->display_field] ?? null) ?? $rawValue)
+                    : $rawValue;
+                $databaseValues = $properties->get($goodId.':'.$mapping->property_id, collect())
+                    ->pluck('value')
+                    ->filter()
+                    ->values()
+                    ->all();
+                $matchesValue = collect($databaseValues)->contains(fn (string $value) => $this->normalizeComparisonValue($value) === $this->normalizeComparisonValue($sourceValue));
+                $differences[] = [
+                    'status' => empty($databaseValues) ? 'missing_in_database' : ($matchesValue ? 'match' : 'different'),
+                    'property' => $mapping->property?->name,
+                    'source_field' => $mapping->source_field,
+                    'source_value' => $sourceValue,
+                    'database_values' => $databaseValues,
+                ];
             }
 
             $rows[] = [
@@ -1465,26 +1607,52 @@ class BikeproductsCatalogService
                 'external_sku' => $item->external_sku,
                 'source_name' => $item->name,
                 'database_good_id' => $goodId,
-                'database_name' => $match ? ($match['type'] === 'good' ? $match['model']->name : $match['model']->good->name) : null,
-                'database_slug' => $match ? ($match['type'] === 'good' ? $match['model']->slug : $match['model']->good->slug) : null,
+                'database_name' => $match['type'] === 'good' ? $match['model']->name : $match['model']->good->name,
+                'database_slug' => $match['type'] === 'good' ? $match['model']->slug : $match['model']->good->slug,
                 'differences' => $differences,
                 'status' => collect($differences)->contains(fn (array $diff) => $diff['status'] !== 'match') ? 'attention' : 'match',
             ];
         }
 
+        $stats = [
+            'matched' => count($rows),
+            'attention' => count(array_filter($rows, fn (array $row) => $row['status'] === 'attention')),
+            'match' => count(array_filter($rows, fn (array $row) => $row['status'] === 'match')),
+        ];
+        if ($statuses !== []) {
+            $rows = array_values(array_filter($rows, fn (array $row) => in_array($row['status'], $statuses, true)));
+        }
+        $total = count($rows);
+        $page = max(1, $page);
+        $perPage = max(1, $perPage);
+        $lastPage = max(1, (int) ceil($total / $perPage));
+        $page = min($page, $lastPage);
+        $rows = array_slice($rows, ($page - 1) * $perPage, $perPage);
+
         return [
             'data' => $rows,
             'meta' => [
-                'current_page' => $paginator->currentPage(),
-                'last_page' => $paginator->lastPage(),
-                'per_page' => $paginator->perPage(),
-                'total' => $paginator->total(),
+                'current_page' => $page,
+                'last_page' => $lastPage,
+                'per_page' => $perPage,
+                'total' => $total,
             ],
+            'stats' => $stats,
         ];
     }
 
+    /** @return array<int, int> */
+    public function propertySelection(SupplierCatalogSnapshot $snapshot, ?string $search = null): array
+    {
+        return collect($this->propertyAudit($snapshot, 1, 100000, $search, ['attention'])['data'])
+            ->pluck('item_id')
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
+    }
+
     /** @return array{data: array<int, array<string, mixed>>, meta: array<string, int>} */
-    public function goodAudit(SupplierCatalogSnapshot $snapshot, int $page = 1, int $perPage = 50, ?array $onlyTargets = null, ?string $search = null, array $statuses = []): array
+    public function goodAudit(SupplierCatalogSnapshot $snapshot, int $page = 1, int $perPage = 50, ?array $onlyTargets = null, ?string $search = null, array $statuses = [], array $differenceTypes = [], bool $paginateByGood = false): array
     {
         $this->assertReadySnapshot($snapshot);
         $sourceItems = $this->snapshotItemsQuery($snapshot, $search)->get();
@@ -1596,12 +1764,43 @@ class BikeproductsCatalogService
         if ($statuses !== []) {
             $rows = array_values(array_filter($rows, fn (array $row) => in_array($row['status'], $statuses, true)));
         }
+        $priceFields = ['price', 'sale_price', 'demping_price'];
+        $stockFields = ['stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'];
+        $statsRows = collect($rows);
+        if ($differenceTypes !== []) {
+            $rows = array_values(array_filter($rows, function (array $row) use ($differenceTypes, $priceFields, $stockFields): bool {
+                return collect($row['differences'])->contains(function (array $difference) use ($differenceTypes, $priceFields, $stockFields): bool {
+                    if (in_array($difference['status'], ['match', 'not_mapped'], true)) {
+                        return false;
+                    }
+                    return (in_array('prices', $differenceTypes, true) && in_array($difference['field'], $priceFields, true))
+                        || (in_array('stocks', $differenceTypes, true) && in_array($difference['field'], $stockFields, true));
+                });
+            }));
+        }
         usort($rows, fn (array $left, array $right) => strcmp((string) ($left['source_name'] ?? $left['database_name']), (string) ($right['source_name'] ?? $right['database_name'])));
-        $total = count($rows);
-        $paginator = new LengthAwarePaginator(array_slice($rows, ($page - 1) * $perPage, $perPage), $total, $perPage, $page);
+        $allRows = collect($rows);
+        $countDifferenceRows = fn (array $fields): int => $statsRows->filter(fn (array $row) => collect($row['differences'])->contains(fn (array $difference) => in_array($difference['field'], $fields, true) && ! in_array($difference['status'], ['match', 'not_mapped'], true)))->count();
+        if ($paginateByGood) {
+            $groups = $allRows->groupBy(fn (array $row) => $row['database_good_id'] ? 'good-'.$row['database_good_id'] : 'source-'.$row['external_sku']);
+            $total = $groups->count();
+            $pageItems = $groups->forPage($page, $perPage)->flatten(1)->values()->all();
+        } else {
+            $total = $allRows->count();
+            $pageItems = $allRows->slice(($page - 1) * $perPage, $perPage)->values()->all();
+        }
+        $paginator = new LengthAwarePaginator($pageItems, $total, $perPage, $page);
 
         return [
             'data' => $paginator->items(),
+            'stats' => [
+                'price_differences' => $countDifferenceRows($priceFields),
+                'stock_differences' => $countDifferenceRows($stockFields),
+                'goods_with_differences' => $statsRows->filter(fn (array $row) => $row['status'] === 'attention')->pluck('database_good_id')->filter()->unique()->count(),
+                'attention' => $statsRows->where('status', 'attention')->count(),
+                'not_found' => $statsRows->where('status', 'not_found')->count(),
+                'missing_in_file' => $statsRows->where('status', 'missing_in_file')->count(),
+            ],
             'meta' => [
                 'current_page' => $paginator->currentPage(),
                 'last_page' => $paginator->lastPage(),
@@ -1609,6 +1808,23 @@ class BikeproductsCatalogService
                 'total' => $paginator->total(),
             ],
         ];
+    }
+
+    /** @return array<int, int> */
+    public function priceStockSelection(SupplierCatalogSnapshot $snapshot, ?string $search = null, array $filters = []): array
+    {
+        $audit = $this->goodAudit(
+            $snapshot,
+            1,
+            100000,
+            ['price', 'sale_price', 'demping_price', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'],
+            $search,
+            [],
+            $filters,
+            true,
+        );
+
+        return collect($audit['data'])->pluck('item_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all();
     }
 
     /** @param array<string, mixed> $conditions */
@@ -1679,8 +1895,15 @@ class BikeproductsCatalogService
     }
 
     /** @param array<string, mixed> $payload @param Collection<int, SupplierCatalogFieldMapping> $mappings */
-    private function syncMappedProperties(ShopGood $good, array $payload, Collection $mappings): void
+    private function syncMappedProperties(ShopGood $good, array $payload, Collection $mappings, bool $replace = false): void
     {
+        $propertyIds = $mappings->pluck('property_id')->map(fn ($id) => (int) $id)->filter()->unique()->values();
+        if ($replace && $propertyIds->isNotEmpty()) {
+            ShopGoodProperty::query()
+                ->where('good_id', $good->id)
+                ->whereIn('property_id', $propertyIds)
+                ->delete();
+        }
         foreach ($mappings as $mapping) {
             $propertyId = (int) $mapping->property_id;
             $value = $this->nullableString($payload[$mapping->source_field] ?? null);
@@ -1694,10 +1917,11 @@ class BikeproductsCatalogService
                 'is_active' => true,
                 'sort_order' => 0,
             ]);
-            ShopGoodProperty::updateOrCreate(
-                ['good_id' => $good->id, 'property_id' => $propertyId],
-                ['shop_property_value_id' => $propertyValue->id],
-            );
+            $attributes = ['shop_property_value_id' => $propertyValue->id];
+            if (Schema::hasColumn('shop_good_properties', 'value')) {
+                $attributes['value'] = $value;
+            }
+            ShopGoodProperty::updateOrCreate(['good_id' => $good->id, 'property_id' => $propertyId], $attributes);
         }
     }
 
@@ -2226,13 +2450,82 @@ class BikeproductsCatalogService
             $urls = [...$urls, ...explode(',', $payload[self::SOURCE_COLUMNS['more_images']])];
         }
 
-        return array_values(array_unique(array_filter(array_map(function ($url) use ($baseUrl) {
-            $url = trim((string) $url);
-            if ($url === '' || str_starts_with($url, 'http://') || str_starts_with($url, 'https://')) {
-                return $url;
+        return array_values(array_unique(array_filter(array_map(
+            fn ($url) => $this->absoluteSourceImageUrl((string) $url, $baseUrl),
+            $urls,
+        ))));
+    }
+
+    private function supplierImageBaseUrl(string $supplierCode): ?string
+    {
+        $profile = SupplierCatalogProfile::query()->where('code', $supplierCode)->first(['settings']);
+        $configuredUrl = $this->nullableString($profile?->settings['image_base_url'] ?? null);
+
+        // У Байкпродакс Excel содержит относительные /upload/... пути. Этот
+        // fallback сохраняет корректные URL и для уже созданных снимков.
+        return $configuredUrl ?? ($supplierCode === 'bikeproducts' ? 'https://www.bikeproducts.ru' : null);
+    }
+
+    private function absoluteSourceImageUrl(string $url, ?string $baseUrl): ?string
+    {
+        $url = trim($url);
+        if ($url === '') {
+            return null;
+        }
+        if (str_starts_with($url, 'http://') || str_starts_with($url, 'https://')) {
+            return $url;
+        }
+
+        return $baseUrl ? rtrim($baseUrl, '/').'/'.ltrim($url, '/') : $url;
+    }
+
+    private function sourceImageFileName(string $url): string
+    {
+        return mb_strtolower(rawurldecode((string) basename((string) parse_url($url, PHP_URL_PATH))));
+    }
+
+    private function sourceImageMatchesDatabasePath(string $sourceUrl, string $databasePath): bool
+    {
+        $sourceName = $this->sourceImageFileName($sourceUrl);
+        $databaseName = $this->sourceImageFileName($databasePath);
+        if ($sourceName !== '' && $sourceName === $databaseName) {
+            return true;
+        }
+
+        $extension = strtolower(pathinfo((string) parse_url($sourceUrl, PHP_URL_PATH), PATHINFO_EXTENSION)) ?: 'jpg';
+        $storedName = hash('sha256', $sourceUrl).'.'.$extension;
+        return mb_strtolower($storedName) === $databaseName;
+    }
+
+    private function attachSourceImages(ShopGood $good, ShopGoodVariation $variation, SupplierCatalogItem $item, ?string $baseUrl): void
+    {
+        $urls = collect($item->image_urls ?? [])
+            ->map(fn ($url) => $this->absoluteSourceImageUrl((string) $url, $baseUrl))
+            ->filter()
+            ->unique()
+            ->values();
+        if ($urls->isEmpty()) {
+            return;
+        }
+
+        $query = ShopGoodImage::query()
+            ->where('good_id', $good->id)
+            ->where('variation_id', $variation->id);
+        $existingPaths = $query->pluck('file_path')->all();
+        $nextSortOrder = (int) $query->max('sort_order') + 1;
+        foreach ($urls as $url) {
+            if (in_array($url, $existingPaths, true)) {
+                continue;
             }
-            return $baseUrl ? rtrim($baseUrl, '/').'/'.ltrim($url, '/') : $url;
-        }, $urls))));
+            ShopGoodImage::create([
+                'good_id' => $good->id,
+                'variation_id' => $variation->id,
+                'file_path' => $url,
+                'alt_text' => $item->clean_name ?: $item->name,
+                'is_main' => $existingPaths === [] && $nextSortOrder === 1,
+                'sort_order' => $nextSortOrder++,
+            ]);
+        }
     }
 
     /** @param array<string, array<string, mixed>> $stats */
