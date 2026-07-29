@@ -30,6 +30,8 @@ use App\Jobs\AuditSupplierCatalogImagesJob;
 
 class BikeproductsCatalogService
 {
+    private const IMAGE_AUDIT_BATCH_SIZE = 5;
+
     /** @var array<string, int> */
     private array $variationAttributeIds = [];
 
@@ -1522,20 +1524,32 @@ class BikeproductsCatalogService
             ->where('updated_at', '<', now()->subMinutes(20))
             ->update(['status' => 'pending']);
 
-        $records = SupplierCatalogImageAudit::query()
-            ->where('snapshot_id', $snapshot->id)
-            ->where('status', 'pending')
-            ->orderBy('id')
-            ->limit(20)
-            ->get();
+        $recordIds = DB::transaction(function () use ($snapshot): array {
+            $records = SupplierCatalogImageAudit::query()
+                ->where('snapshot_id', $snapshot->id)
+                ->where('status', 'pending')
+                ->orderBy('id')
+                ->limit(self::IMAGE_AUDIT_BATCH_SIZE)
+                ->lockForUpdate()
+                ->get(['id']);
+            if ($records->isEmpty()) {
+                return [];
+            }
+
+            SupplierCatalogImageAudit::query()
+                ->whereIn('id', $records->pluck('id'))
+                ->update(['status' => 'processing', 'error_message' => null, 'updated_at' => now()]);
+
+            return $records->pluck('id')->map(fn ($id) => (int) $id)->all();
+        });
+        $records = SupplierCatalogImageAudit::query()->whereIn('id', $recordIds)->orderBy('id')->get();
 
         foreach ($records as $record) {
-            $record->update(['status' => 'processing', 'error_message' => null]);
             $this->inspectSupplierImageUrl($record);
         }
 
         if (SupplierCatalogImageAudit::query()->where('snapshot_id', $snapshot->id)->where('status', 'pending')->exists()) {
-            AuditSupplierCatalogImagesJob::dispatch($snapshot->id)->delay(now()->addSecond());
+            AuditSupplierCatalogImagesJob::dispatch($snapshot->id);
             return;
         }
 

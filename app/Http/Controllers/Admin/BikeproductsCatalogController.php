@@ -333,7 +333,11 @@ class BikeproductsCatalogController extends Controller
 
         $result = $this->catalog->startImageContentAudit($snapshot);
         if ($result['started'] && $result['status'] === 'processing') {
-            AuditSupplierCatalogImagesJob::dispatch($snapshot->id);
+            // Three short independent chains keep the progress responsive but
+            // stay below a supplier-hostile number of simultaneous downloads.
+            for ($worker = 0; $worker < 3; $worker++) {
+                AuditSupplierCatalogImagesJob::dispatch($snapshot->id);
+            }
         }
 
         return response()->json([
