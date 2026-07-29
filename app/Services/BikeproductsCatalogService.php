@@ -36,7 +36,9 @@ class BikeproductsCatalogService
     {
         $snapshot = SupplierCatalogSnapshot::find($snapshotId);
         if (! $snapshot || $snapshot->status !== 'ready') return;
+        $this->ensureDefaultMappings($snapshot->supplier_code);
         $imageBaseUrl = $this->supplierImageBaseUrl($snapshot->supplier_code);
+        $imageSourceFields = $this->imageSourceFields($snapshot->supplier_code);
         $items = $snapshot->items()->whereIn('id', $itemIds)->get();
         $matches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code)
             ->mapWithKeys(fn (array $match, string $sku) => [$this->normalizeSku($sku) => $match]);
@@ -45,10 +47,8 @@ class BikeproductsCatalogService
             if (! $match) continue;
             $variation = $match['type'] === 'variation' ? $match['model'] : null;
             $good = $variation ? $variation->good : $match['model'];
-            foreach (collect($item->image_urls ?? [])
-                ->map(fn ($url) => $this->absoluteSourceImageUrl((string) $url, $imageBaseUrl))
-                ->filter()
-                ->unique() as $url) {
+            foreach ($this->imageSourcesForItem($item, $imageSourceFields, $imageBaseUrl) as $source) {
+                $url = $source['url'];
                 if (! str_starts_with($url, 'http')) continue;
                 try {
                     $response = Http::timeout(45)->connectTimeout(10)->get($url);
@@ -70,6 +70,7 @@ class BikeproductsCatalogService
     public function applyGoodAction(SupplierCatalogSnapshot $snapshot, string $action, array $ids): array
     {
         $this->assertReadySnapshot($snapshot);
+        $this->ensureDefaultMappings($snapshot->supplier_code);
 
         if ($action === 'delete') {
             $supplierNames = $this->supplierNames($snapshot->supplier_code);
@@ -115,6 +116,7 @@ class BikeproductsCatalogService
             ->get();
         $supplierName = $this->supplierNames($snapshot->supplier_code)[0] ?? $snapshot->supplier_code;
         $sourceVariationItems = $this->sourceVariationItems($snapshot);
+        $imageSourceFields = $this->imageSourceFields($snapshot->supplier_code);
         $sourceGroupCounts = $sourceVariationItems
             ->groupBy(fn (SupplierCatalogItem $item) => $item->clean_name ?: $this->sourceGroupName($item->name, $item->external_sku))
             ->map(fn (Collection $group) => $group->count())
@@ -143,7 +145,7 @@ class BikeproductsCatalogService
 
         $imageBaseUrl = $this->supplierImageBaseUrl($snapshot->supplier_code);
         $propertySyncedGoodIds = [];
-        DB::transaction(function () use ($items, $matches, $goodMappings, $propertyMappings, $supplierName, $snapshot, $sourceGroupCounts, $imageBaseUrl, &$parentGoodsBySourceGroup, &$propertySyncedGoodIds, &$affected, &$skipped): void {
+        DB::transaction(function () use ($items, $matches, $goodMappings, $propertyMappings, $supplierName, $snapshot, $sourceGroupCounts, $imageBaseUrl, $imageSourceFields, &$parentGoodsBySourceGroup, &$propertySyncedGoodIds, &$affected, &$skipped): void {
             foreach ($items as $item) {
                 $payload = $item->raw_payload ?? [];
                 $attributes = $this->mappedGoodAttributes($item, $goodMappings);
@@ -233,7 +235,7 @@ class BikeproductsCatalogService
                         'value' => $axis['value'],
                     ])->id)->all();
                     $variation->attributeValues()->sync($valueIds);
-                    $this->attachSourceImages($good, $variation, $item, $imageBaseUrl);
+                    $this->attachSourceImages($good, $variation, $item, $imageBaseUrl, $imageSourceFields);
                     $affected++;
                     continue;
                 }
@@ -252,7 +254,7 @@ class BikeproductsCatalogService
                     'value' => $axis['value'],
                 ])->id)->all();
                 $variation->attributeValues()->sync($valueIds);
-                $this->attachSourceImages($good, $variation, $item, $imageBaseUrl);
+                $this->attachSourceImages($good, $variation, $item, $imageBaseUrl, $imageSourceFields);
                 $affected++;
             }
         });
@@ -264,6 +266,7 @@ class BikeproductsCatalogService
     public function applyMappedUpdate(SupplierCatalogSnapshot $snapshot, string $scope, array $itemIds, string $imageMode = 'append'): array
     {
         $this->assertReadySnapshot($snapshot);
+        $this->ensureDefaultMappings($snapshot->supplier_code);
         $items = $snapshot->items()->whereIn('id', $itemIds)->get();
         $matches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code);
         $affected = 0;
@@ -323,13 +326,12 @@ class BikeproductsCatalogService
 
         if ($scope === 'images') {
             $imageBaseUrl = $this->supplierImageBaseUrl($snapshot->supplier_code);
-            DB::transaction(function () use ($items, $matches, $imageBaseUrl, $imageMode, &$affected, &$skipped): void {
+            $imageSourceFields = $this->imageSourceFields($snapshot->supplier_code);
+            DB::transaction(function () use ($items, $matches, $imageBaseUrl, $imageSourceFields, $imageMode, &$affected, &$skipped): void {
                 foreach ($items as $item) {
                     $match = $matches->get($item->external_sku);
-                    $urls = collect($item->image_urls ?? [])
-                        ->map(fn ($url) => $this->absoluteSourceImageUrl((string) $url, $imageBaseUrl))
-                        ->filter()
-                        ->unique()
+                    $urls = collect($this->imageSourcesForItem($item, $imageSourceFields, $imageBaseUrl))
+                        ->pluck('url')
                         ->values();
                     if (! $match || ($urls->isEmpty() && $imageMode !== 'replace')) { $skipped++; continue; }
                     $variation = $match['type'] === 'variation' ? $match['model'] : null;
@@ -840,6 +842,16 @@ class BikeproductsCatalogService
                 ['supplier_code' => $supplierCode, 'source_field' => $sourceField, 'scope' => 'good'],
                 [
                     'conditions' => ['target' => $target],
+                    'is_check_enabled' => true,
+                    'is_update_enabled' => false,
+                ]
+            );
+        }
+
+        foreach (['PREVIEW_PICTURE', 'DETAIL_PICTURE', 'MORE_PHOTO'] as $sourceField) {
+            SupplierCatalogFieldMapping::firstOrCreate(
+                ['supplier_code' => $supplierCode, 'source_field' => $sourceField, 'scope' => 'image'],
+                [
                     'is_check_enabled' => true,
                     'is_update_enabled' => false,
                 ]
@@ -1375,17 +1387,24 @@ class BikeproductsCatalogService
     public function imageAudit(SupplierCatalogSnapshot $snapshot, int $page = 1, int $perPage = 10, ?string $search = null, array $statuses = []): array
     {
         $this->assertReadySnapshot($snapshot);
+        $this->ensureDefaultMappings($snapshot->supplier_code);
         // This endpoint is paginated, therefore it must not hydrate the large
         // raw payload of every source row or return every mismatch to the UI.
         // Both made the image tab transfer several megabytes before it could
         // render the first ten rows.
         $items = $this->snapshotItemsQuery($snapshot, $search)
-            ->get(['id', 'snapshot_id', 'external_sku', 'name', 'image_urls']);
+            ->get(['id', 'snapshot_id', 'external_sku', 'name', 'raw_payload']);
         $imageBaseUrl = $this->supplierImageBaseUrl($snapshot->supplier_code);
+        $imageSourceFields = $this->imageSourceFields($snapshot->supplier_code);
         $sourceUrlGroups = [];
+        $sourceItemsWithImages = 0;
         foreach ($items as $item) {
-            foreach (collect($item->image_urls ?? [])->map(fn ($url) => $this->absoluteSourceImageUrl((string) $url, $imageBaseUrl))->filter() as $url) {
-                $sourceUrlGroups[$url][] = $item->external_sku;
+            $sources = $this->imageSourcesForItem($item, $imageSourceFields, $imageBaseUrl);
+            if ($sources !== []) {
+                $sourceItemsWithImages++;
+            }
+            foreach ($sources as $source) {
+                $sourceUrlGroups[$source['url']][] = $item->external_sku;
             }
         }
 
@@ -1417,11 +1436,9 @@ class BikeproductsCatalogService
         $imageComparisons = [];
         foreach ($items as $item) {
             $match = $matches->get($this->normalizeSku($item->external_sku));
-            $sourceUrls = collect($item->image_urls ?? [])
-                ->map(fn ($url) => $this->absoluteSourceImageUrl((string) $url, $imageBaseUrl))
-                ->filter()
-                ->unique()
-                ->values();
+            $sourceSources = collect($this->imageSourcesForItem($item, $imageSourceFields, $imageBaseUrl));
+            $sourceUrls = $sourceSources->pluck('url')->values();
+            $sourceFieldsByUrl = $sourceSources->mapWithKeys(fn (array $source) => [$source['url'] => $source['source_fields']]);
             if (! $match) {
                 $imageComparisons[] = [
                     'item_id' => $item->id,
@@ -1439,6 +1456,7 @@ class BikeproductsCatalogService
                     'image_pairs' => $sourceUrls->map(fn (string $url) => [
                         'source_url' => $url,
                         'source_filename' => $this->sourceImageFileName($url),
+                        'source_fields' => $sourceFieldsByUrl->get($url, []),
                         'database_path' => null,
                         'database_filename' => null,
                         'is_match' => false,
@@ -1472,6 +1490,7 @@ class BikeproductsCatalogService
                     'image_pairs' => $sourceUrls->map(fn (string $url) => [
                         'source_url' => $url,
                         'source_filename' => $this->sourceImageFileName($url),
+                        'source_fields' => $sourceFieldsByUrl->get($url, []),
                         'database_path' => null,
                         'database_filename' => null,
                         'is_match' => false,
@@ -1500,6 +1519,7 @@ class BikeproductsCatalogService
                 $imagePairs[] = [
                     'source_url' => $sourceUrl,
                     'source_filename' => $this->sourceImageFileName($sourceUrl),
+                    'source_fields' => $sourceFieldsByUrl->get($sourceUrl, []),
                     'database_path' => $databasePath,
                     'database_filename' => $databasePath ? $this->sourceImageFileName($databasePath) : null,
                     'is_match' => $databasePath !== null,
@@ -1562,7 +1582,8 @@ class BikeproductsCatalogService
         return [
             'stats' => [
                 'source_items' => $items->count(),
-                'source_items_with_images' => $items->filter(fn (SupplierCatalogItem $item) => ! empty($item->image_urls))->count(),
+                'source_items_with_images' => $sourceItemsWithImages,
+                'source_fields' => $imageSourceFields,
                 'source_images' => array_sum(array_map('count', $sourceUrlGroups)),
                 'source_duplicate_url_groups' => count(array_filter($sourceUrlGroups, static fn (array $skus) => count($skus) > 1)),
                 'database_variation_images' => $images->count(),
@@ -2662,6 +2683,47 @@ class BikeproductsCatalogService
         ))));
     }
 
+    /** @return array<int, string> */
+    private function imageSourceFields(string $supplierCode): array
+    {
+        return SupplierCatalogFieldMapping::query()
+            ->where('supplier_code', $supplierCode)
+            ->where('scope', 'image')
+            ->where('is_check_enabled', true)
+            ->pluck('source_field')
+            ->filter(fn ($field) => $this->nullableString($field) !== null)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param array<int, string> $sourceFields
+     * @return array<int, array{url: string, source_fields: array<int, string>}>
+     */
+    private function imageSourcesForItem(SupplierCatalogItem $item, array $sourceFields, ?string $baseUrl): array
+    {
+        $byUrl = [];
+        $payload = $item->raw_payload ?? [];
+        foreach ($sourceFields as $sourceField) {
+            $value = $this->nullableString($payload[$sourceField] ?? null);
+            if ($value === null) {
+                continue;
+            }
+            foreach (preg_split('/\s*,\s*/u', $value) ?: [] as $rawUrl) {
+                $url = $this->absoluteSourceImageUrl($rawUrl, $baseUrl);
+                if ($url === null) {
+                    continue;
+                }
+                $byUrl[$url] ??= ['url' => $url, 'source_fields' => []];
+                $byUrl[$url]['source_fields'][] = $sourceField;
+                $byUrl[$url]['source_fields'] = array_values(array_unique($byUrl[$url]['source_fields']));
+            }
+        }
+
+        return array_values($byUrl);
+    }
+
     private function supplierImageBaseUrl(string $supplierCode): ?string
     {
         $profile = SupplierCatalogProfile::query()->where('code', $supplierCode)->first(['settings']);
@@ -2703,12 +2765,11 @@ class BikeproductsCatalogService
         return mb_strtolower($storedName) === $databaseName;
     }
 
-    private function attachSourceImages(ShopGood $good, ShopGoodVariation $variation, SupplierCatalogItem $item, ?string $baseUrl): void
+    /** @param array<int, string> $sourceFields */
+    private function attachSourceImages(ShopGood $good, ShopGoodVariation $variation, SupplierCatalogItem $item, ?string $baseUrl, array $sourceFields): void
     {
-        $urls = collect($item->image_urls ?? [])
-            ->map(fn ($url) => $this->absoluteSourceImageUrl((string) $url, $baseUrl))
-            ->filter()
-            ->unique()
+        $urls = collect($this->imageSourcesForItem($item, $sourceFields, $baseUrl))
+            ->pluck('url')
             ->values();
         if ($urls->isEmpty()) {
             return;
