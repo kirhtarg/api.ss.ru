@@ -1035,9 +1035,7 @@ class BikeproductsCatalogService
                 : ($otherSupplierVariation || $otherSupplierGood
                     ? 'source_sku_other_supplier'
                     : 'source_good_missing'));
-            $comparisons = $sameAxesVariation
-                ? $this->variationComparisons($sameAxesVariation, $source, $mappings, $snapshot->supplier_code)
-                : $this->sourceOnlyVariationComparisons($source, $mappings, $snapshot->supplier_code, $status);
+            $comparisons = $this->sourceOnlyVariationComparisons($source, $mappings, $snapshot->supplier_code, $status);
             if ($sameAxesVariation) {
                 array_unshift($comparisons, [
                     'status' => 'sku_mismatch',
@@ -1065,19 +1063,16 @@ class BikeproductsCatalogService
                 'external_sku' => $source->external_sku,
                 'source_group_name' => $groupKey,
                 'source_name' => $source->name,
-                'database_match_type' => $sameAxesVariation ? 'variation_axes' : null,
-                'database_variation_id' => $sameAxesVariation?->id,
+                'database_match_type' => null,
+                'database_variation_id' => null,
+                'duplicate_database_variation_id' => $sameAxesVariation?->id,
                 'database_good_id' => $sameAxesVariation?->good_id ?? ($groupDatabaseGood ?? $databaseProduct)?->id,
                 'database_name' => $sameAxesVariation?->good?->name ?? ($groupDatabaseGood ?? $databaseProduct)?->name,
                 'database_slug' => $sameAxesVariation?->good?->slug ?? ($groupDatabaseGood ?? $databaseProduct)?->slug,
-                'database_axes' => $sameAxesVariation?->attributeValues
-                    ->groupBy(fn ($value) => $value->attribute?->name ?? '')
-                    ->map(fn (Collection $values) => $values->pluck('value')->filter()->values()->all())
-                    ->filter(fn (array $values, string $attribute) => $attribute !== '' && $values !== [])
-                    ->all() ?? [],
-                'stock_quantity' => $sameAxesVariation?->stock_quantity,
-                'remote_stock_quantity' => $sameAxesVariation?->remote_stock_quantity,
-                'fast_remote_stock_quantity' => $sameAxesVariation?->fast_remote_stock_quantity,
+                'database_axes' => [],
+                'stock_quantity' => null,
+                'remote_stock_quantity' => null,
+                'fast_remote_stock_quantity' => null,
                 'comparisons' => $comparisons,
                 'differences' => $comparisons,
                 'status' => $status,
@@ -1171,7 +1166,14 @@ class BikeproductsCatalogService
             : $rows->whereIn('status', $filters)->values();
 
         return [
-            'database_variation_ids' => $selectedRows->pluck('database_variation_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all(),
+            'database_variation_ids' => $selectedRows
+                ->pluck('database_variation_id')
+                ->merge($selectedRows->where('status', 'source_variation_sku_mismatch')->pluck('duplicate_database_variation_id'))
+                ->filter()
+                ->map(fn ($id) => (int) $id)
+                ->unique()
+                ->values()
+                ->all(),
             'database_good_ids' => $selectedRows->where('status', 'delete_candidate_good')->pluck('database_good_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all(),
             'source_item_ids' => $selectedRows
                 ->whereIn('status', ['source_good_missing', 'source_variation_missing', 'source_variation_sku_mismatch'])
