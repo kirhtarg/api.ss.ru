@@ -379,7 +379,7 @@ class BikeproductsCatalogController extends Controller
             'per_page' => ['nullable', 'integer', 'min:10', 'max:200'],
             'search' => ['nullable', 'string', 'max:120'],
             'statuses' => ['nullable', 'array', 'max:4'],
-            'statuses.*' => ['string', 'in:match,attention,not_found,missing_in_file'],
+            'statuses.*' => ['string', 'in:match,attention,not_found,missing_in_file,source_name_missing'],
         ]);
 
         return response()->json(['success' => true, 'data' => $this->cachedAudit(

@@ -511,12 +511,12 @@ class BikeproductsCatalogService
             $snapshot->update(['status' => 'processing', 'progress' => 1, 'stage' => 'Чтение '.$sourceLabel]);
             $itemsCount = 0;
             $imageBaseUrl = $this->supplierImageBaseUrl($snapshot->supplier_code);
-            $result = $this->parseExcel($path, $snapshot->supplier_code, $imageBaseUrl, function (int $processedRows, int $totalRows) use ($snapshot, $sourceLabel): void {
+            $result = $this->parseExcel($path, $snapshot->supplier_code, $imageBaseUrl, function (int $processedRows, int $totalRows) use ($snapshot): void {
                 $snapshot->update([
                     'progress' => $totalRows > 0
                         ? min(92, max(2, (int) floor($processedRows * 92 / $totalRows)))
                         : 5,
-                    'stage' => 'Разбор строк '.$sourceLabel,
+                    'stage' => 'Разбор строк '.($snapshot->source_type === 'csv' ? 'CSV' : 'Excel'),
                     'processed_rows' => $processedRows,
                     'total_rows' => $totalRows,
                 ]);
@@ -1752,6 +1752,11 @@ class BikeproductsCatalogService
         foreach ($sourceItems as $item) {
             $match = $matches->get($item->external_sku);
             $good = $match ? $goods->get($match['type'] === 'good' ? $match['model']->id : $match['model']->good_id) : null;
+            // Product metadata belongs to the parent good, while prices and
+            // stocks belong to the exact SKU (variation when it exists).
+            $comparisonModel = $onlyTargets !== null && $match
+                ? $match['model']
+                : $good;
             $differences = [];
             if (! $good) {
                 foreach ($mappings as $mapping) {
@@ -1781,7 +1786,7 @@ class BikeproductsCatalogService
                     $comparisonSourceValue = $this->applyMappingAdjustment($sourceValue, $mapping->conditions ?? []);
                     $databaseValues = $target === 'brand'
                         ? $good->brands->pluck('name')->values()->all()
-                        : [trim((string) ($good->{$target} ?? ''))];
+                        : [trim((string) ($comparisonModel->{$target} ?? ''))];
                     $databaseValues = array_values(array_filter($databaseValues, static fn ($value) => $value !== ''));
                     $matchesValue = collect($databaseValues)->contains(fn (string $value) => $this->normalizeComparisonValue($value) === $this->normalizeComparisonValue($comparisonSourceValue));
                     $differences[] = [
@@ -1797,7 +1802,7 @@ class BikeproductsCatalogService
                 foreach (array_diff($expectedTargets, $mappedTargets) as $target) {
                     $databaseValues = $target === 'brand'
                         ? $good->brands->pluck('name')->values()->all()
-                        : [trim((string) ($good->{$target} ?? ''))];
+                        : [trim((string) ($comparisonModel->{$target} ?? ''))];
                     $differences[] = [
                         'status' => 'not_mapped',
                         'field' => $target,
@@ -1818,7 +1823,9 @@ class BikeproductsCatalogService
                 'database_variation_id' => $match && $match['type'] === 'variation' ? $match['model']->id : null,
                 'source_is_variation' => $this->isSourceVariationItem($item),
                 'differences' => $differences,
-                'status' => ! $good ? 'not_found' : (collect($differences)->contains(fn (array $diff) => ! in_array($diff['status'], ['match'], true)) ? 'attention' : 'match'),
+                'status' => $this->nullableString($item->name) === null
+                    ? 'source_name_missing'
+                    : (! $good ? 'not_found' : (collect($differences)->contains(fn (array $diff) => ! in_array($diff['status'], ['match'], true)) ? 'attention' : 'match')),
             ];
         }
 
@@ -1871,6 +1878,9 @@ class BikeproductsCatalogService
 
         if ($statuses !== []) {
             $rows = array_values(array_filter($rows, fn (array $row) => in_array($row['status'], $statuses, true)));
+        } elseif ($onlyTargets === null) {
+            // Invalid source rows are isolated from normal product workflows.
+            $rows = array_values(array_filter($rows, fn (array $row) => $row['status'] !== 'source_name_missing'));
         }
         $priceFields = ['price', 'sale_price', 'demping_price'];
         $stockFields = ['stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'];
@@ -1942,6 +1952,9 @@ class BikeproductsCatalogService
                 'attention' => $statsRows->where('status', 'attention')->count(),
                 'not_found' => $statsRows->where('status', 'not_found')->count(),
                 'missing_in_file' => $statsRows->where('status', 'missing_in_file')->count(),
+                'source_name_missing' => collect($sourceItems)
+                    ->filter(fn (SupplierCatalogItem $item) => $this->nullableString($item->name) === null)
+                    ->count(),
             ],
             'mapped_targets' => $mappedTargets,
             'meta' => [
