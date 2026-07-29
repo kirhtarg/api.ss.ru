@@ -305,7 +305,7 @@ class BikeproductsCatalogService
                     $match = $matches->get($item->external_sku);
                     if (! $match) { $skipped++; continue; }
                     $good = $match['type'] === 'variation' ? $match['model']->good : $match['model'];
-                    $values = collect($this->mappedGoodAttributes($item, $mappings))->only(['name', 'short_description', 'description', 'price', 'sale_price', 'demping_price', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'])->all();
+                    $values = collect($this->mappedGoodAttributes($item, $mappings))->only(['name', 'short_description', 'description', 'weight', 'depth', 'width', 'height', 'price', 'sale_price', 'demping_price', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'])->all();
                     if ($values === []) { $skipped++; continue; }
                     $good->update($values);
                     $brand = $this->nullableString($this->mappedGoodAttributes($item, $mappings)['brand'] ?? null);
@@ -1953,10 +1953,10 @@ class BikeproductsCatalogService
             ->when(
                 $onlyTargets !== null,
                 fn ($query) => $query->whereIn('conditions->target', $onlyTargets),
-                fn ($query) => $query->whereIn('conditions->target', ['name', 'short_description', 'description', 'brand']),
+                fn ($query) => $query->whereIn('conditions->target', ['name', 'short_description', 'description', 'brand', 'weight', 'depth', 'width', 'height']),
             )
             ->get();
-        $expectedTargets = $onlyTargets ?? ['name', 'short_description', 'description', 'brand'];
+        $expectedTargets = $onlyTargets ?? ['name', 'short_description', 'description', 'brand', 'weight', 'depth', 'width', 'height'];
         $mappedTargets = $mappings->map(fn (SupplierCatalogFieldMapping $mapping) => (string) data_get($mapping->conditions, 'target'))->filter()->unique()->all();
         $goodIds = $matches->map(fn (array $match) => $match['type'] === 'good' ? $match['model']->id : $match['model']->good_id)->unique()->values();
         $goods = ShopGood::query()->whereIn('id', $goodIds)->with('brands:id,name')->get()->keyBy('id');
@@ -1978,11 +1978,15 @@ class BikeproductsCatalogService
                     if ($target === '' || $sourceValue === null) {
                         continue;
                     }
+                    $comparisonSourceValue = $this->normalizeMappedGoodValue(
+                        $this->applyMappingAdjustment($sourceValue, $mapping->conditions ?? []),
+                        $target,
+                    );
                     $differences[] = [
                         'status' => 'missing_in_database',
                         'field' => $target,
                         'source_field' => $mapping->source_field,
-                        'source_value' => $this->applyMappingAdjustment($sourceValue, $mapping->conditions ?? []),
+                        'source_value' => $comparisonSourceValue,
                         'database_values' => [],
                     ];
                 }
@@ -1996,7 +2000,10 @@ class BikeproductsCatalogService
                     if ($target === '' || $sourceValue === null) {
                         continue;
                     }
-                    $comparisonSourceValue = $this->applyMappingAdjustment($sourceValue, $mapping->conditions ?? []);
+                    $comparisonSourceValue = $this->normalizeMappedGoodValue(
+                        $this->applyMappingAdjustment($sourceValue, $mapping->conditions ?? []),
+                        $target,
+                    );
                     $databaseValues = $target === 'brand'
                         ? $good->brands->pluck('name')->values()->all()
                         : [trim((string) ($comparisonModel->{$target} ?? ''))];
@@ -2243,12 +2250,51 @@ class BikeproductsCatalogService
         return rtrim(rtrim(number_format($number, 2, '.', ''), '0'), '.');
     }
 
+    private function isPhysicalGoodField(string $target): bool
+    {
+        return in_array($target, ['weight', 'depth', 'width', 'height'], true);
+    }
+
+    private function normalizeMappedGoodValue(string $value, string $target): string
+    {
+        return $this->isPhysicalGoodField($target)
+            ? $this->normalizePhysicalGoodValue($value, $target)
+            : $value;
+    }
+
+    /**
+     * Store weight in kilograms and dimensions in centimetres, matching the
+     * delivery fields used by the shop. Source values may contain a unit.
+     */
+    private function normalizePhysicalGoodValue(string $value, string $target): string
+    {
+        $normalized = mb_strtolower(trim(str_replace(',', '.', $value)));
+        if (! preg_match('/[-+]?\d+(?:\.\d+)?/', $normalized, $matches)) {
+            return $value;
+        }
+
+        $number = (float) $matches[0];
+        if ($target === 'weight') {
+            if (preg_match('/(?:\bkg\b|кг)/u', $normalized)) {
+                // Stored weight is measured in kilograms.
+            } elseif (preg_match('/(?:\bg\b|гр\.?|г\b)/u', $normalized)) {
+                $number /= 1000;
+            }
+        } elseif (preg_match('/(?:\bmm\b|мм)/u', $normalized)) {
+            $number /= 10;
+        } elseif (preg_match('/(?:\bm\b|метр|м\b)/u', $normalized) && ! preg_match('/(?:\bcm\b|см)/u', $normalized)) {
+            $number *= 100;
+        }
+
+        return rtrim(rtrim(number_format($number, 3, '.', ''), '0'), '.');
+    }
+
     /** @param Collection<int, SupplierCatalogFieldMapping> $mappings @return array<string, mixed> */
     private function mappedGoodAttributes(SupplierCatalogItem $item, Collection $mappings): array
     {
         $attributes = [];
         $allowedTargets = [
-            'name', 'short_description', 'description', 'brand', 'price', 'sale_price', 'demping_price',
+            'name', 'short_description', 'description', 'brand', 'weight', 'depth', 'width', 'height', 'price', 'sale_price', 'demping_price',
             'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity',
         ];
         foreach ($mappings as $mapping) {
@@ -2257,7 +2303,10 @@ class BikeproductsCatalogService
             if (! in_array($target, $allowedTargets, true) || $sourceValue === null) {
                 continue;
             }
-            $attributes[$target] = $this->applyMappingAdjustment($sourceValue, $mapping->conditions ?? []);
+            $value = $this->applyMappingAdjustment($sourceValue, $mapping->conditions ?? []);
+            $attributes[$target] = $this->isPhysicalGoodField($target)
+                ? $this->normalizePhysicalGoodValue($value, $target)
+                : $value;
         }
 
         return $attributes;
