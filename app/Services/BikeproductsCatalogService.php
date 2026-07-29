@@ -1373,7 +1373,12 @@ class BikeproductsCatalogService
     public function imageAudit(SupplierCatalogSnapshot $snapshot, int $page = 1, int $perPage = 10, ?string $search = null, array $statuses = []): array
     {
         $this->assertReadySnapshot($snapshot);
-        $items = $this->snapshotItemsQuery($snapshot, $search)->get();
+        // This endpoint is paginated, therefore it must not hydrate the large
+        // raw payload of every source row or return every mismatch to the UI.
+        // Both made the image tab transfer several megabytes before it could
+        // render the first ten rows.
+        $items = $this->snapshotItemsQuery($snapshot, $search)
+            ->get(['id', 'snapshot_id', 'external_sku', 'name', 'image_urls']);
         $imageBaseUrl = $this->supplierImageBaseUrl($snapshot->supplier_code);
         $sourceUrlGroups = [];
         foreach ($items as $item) {
@@ -1396,8 +1401,11 @@ class BikeproductsCatalogService
                 })
                 ->get(['id', 'good_id', 'variation_id', 'file_path', 'is_main']);
         $pathGroups = $images->groupBy('file_path')->filter(fn (Collection $group) => $group->count() > 1);
-        $imageCountByVariation = $images->groupBy('variation_id')->map(fn (Collection $group) => $group->count());
-        $imageCountByGood = $images->whereNull('variation_id')->groupBy('good_id')->map(fn (Collection $group) => $group->count());
+        // Lookups by owner avoid scanning every database image for every row in
+        // the source file (6k source rows can otherwise become tens of millions
+        // of comparisons).
+        $imagesByVariation = $images->whereNotNull('variation_id')->groupBy('variation_id');
+        $imagesByGood = $images->whereNull('variation_id')->groupBy('good_id');
         $coverageMismatches = [];
         $imageComparisons = [];
         foreach ($items as $item) {
@@ -1437,8 +1445,9 @@ class BikeproductsCatalogService
             }
             $variation = $match['type'] === 'variation' ? $match['model'] : null;
             $good = $variation ? $variation->good : $match['model'];
-            $databasePaths = $images
-                ->filter(fn (ShopGoodImage $image) => $variation ? $image->variation_id === $variation->id : ($image->good_id === $good->id && $image->variation_id === null))
+            $databasePaths = ($variation
+                ? ($imagesByVariation->get($variation->id) ?? collect())
+                : ($imagesByGood->get($good->id) ?? collect()))
                 ->pluck('file_path')
                 ->values()
                 ->all();
@@ -1514,6 +1523,8 @@ class BikeproductsCatalogService
 
         return [
             'stats' => [
+                'source_items' => $items->count(),
+                'source_items_with_images' => $items->filter(fn (SupplierCatalogItem $item) => ! empty($item->image_urls))->count(),
                 'source_images' => array_sum(array_map('count', $sourceUrlGroups)),
                 'source_duplicate_url_groups' => count(array_filter($sourceUrlGroups, static fn (array $skus) => count($skus) > 1)),
                 'database_variation_images' => $images->count(),
@@ -1539,7 +1550,9 @@ class BikeproductsCatalogService
                 ->take(50)
                 ->map(fn (array $paths, string $hash) => ['hash' => $hash, 'file_paths' => $paths])
                 ->values(),
-            'coverage_mismatches' => $coverageMismatches,
+            // A small diagnostic sample is enough for the summary. The table
+            // below is the authoritative, paginated list of every mismatch.
+            'coverage_mismatches_sample' => array_slice($coverageMismatches, 0, 20),
             'image_comparisons' => $pageGroups,
             'meta' => [
                 'current_page' => $page,
@@ -1575,15 +1588,9 @@ class BikeproductsCatalogService
             ->with('property:id,name')
             ->get();
         $matchedGoodIds = $skuMatches->map(fn (array $match) => $match['type'] === 'good' ? $match['model']->id : $match['model']->good_id)->unique()->values();
-        $databaseGoods = ShopGood::query()
-            ->whereIn('supplier', $this->supplierNames($snapshot->supplier_code))
-            ->when(trim((string) $search) !== '', function ($query) use ($search) {
-                $term = '%'.addcslashes(trim((string) $search), '%_\\').'%';
-                $query->where(fn ($nested) => $nested->where('sku', 'like', $term)->orWhere('name', 'like', $term));
-            })
-            ->get(['id', 'sku', 'name', 'slug'])
-            ->keyBy('id');
-        $goodIds = $matchedGoodIds->merge($databaseGoods->keys())->unique()->values();
+        // Characteristics compare only a source line that is matched to a
+        // database good. Empty property values still produce a row below.
+        $goodIds = $matchedGoodIds;
         $propertyQuery = DB::table('shop_good_properties as gp')
             ->join('shop_properties as p', 'p.id', '=', 'gp.property_id')
             ->whereIn('gp.good_id', $goodIds);
@@ -1644,33 +1651,6 @@ class BikeproductsCatalogService
                 'has_database_properties' => $hasDatabaseProperties,
                 'differences' => $differences,
                 'status' => collect($differences)->contains(fn (array $diff) => ! in_array($diff['status'], ['match', 'empty'], true)) ? 'attention' : 'match',
-            ];
-        }
-
-        $representedGoodIds = collect($rows)->pluck('database_good_id')->unique();
-        foreach ($databaseGoods->whereNotIn('id', $representedGoodIds) as $good) {
-            $differences = $mappings->map(function (SupplierCatalogFieldMapping $mapping) use ($properties, $good): array {
-                $databaseValues = $properties->get($good->id.':'.$mapping->property_id, collect())
-                    ->pluck('value')->filter()->values()->all();
-                return [
-                    'status' => empty($databaseValues) ? 'empty' : 'missing_in_file',
-                    'property' => $mapping->property?->name,
-                    'source_field' => $mapping->source_field,
-                    'source_value' => null,
-                    'database_values' => $databaseValues,
-                ];
-            })->values()->all();
-            $rows[] = [
-                'item_id' => null,
-                'external_sku' => $good->sku,
-                'source_name' => null,
-                'database_good_id' => $good->id,
-                'database_name' => $good->name,
-                'database_slug' => $good->slug,
-                'has_source_properties' => false,
-                'has_database_properties' => collect($differences)->contains(fn (array $diff) => $diff['database_values'] !== []),
-                'differences' => $differences,
-                'status' => 'match',
             ];
         }
 
@@ -1879,11 +1859,15 @@ class BikeproductsCatalogService
             ];
         }
 
+        $allAuditRows = collect($rows);
         if ($statuses !== []) {
             $rows = array_values(array_filter($rows, fn (array $row) => in_array($row['status'], $statuses, true)));
         } elseif ($onlyTargets === null) {
-            // Invalid source rows are isolated from normal product workflows.
-            $rows = array_values(array_filter($rows, fn (array $row) => $row['status'] !== 'source_name_missing'));
+            // The product-fields table compares only real file↔database pairs.
+            // Orphans are reported as statistics, not mixed into comparisons.
+            $rows = array_values(array_filter($rows, fn (array $row) => ! in_array($row['status'], [
+                'source_name_missing', 'not_found', 'missing_in_file',
+            ], true)));
         }
         $priceFields = ['price', 'sale_price', 'demping_price'];
         $stockFields = ['stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'];
@@ -1953,8 +1937,8 @@ class BikeproductsCatalogService
                 'source_orphans' => $sourceOrphans,
                 'database_orphans' => $databaseOrphans,
                 'attention' => $statsRows->where('status', 'attention')->count(),
-                'not_found' => $statsRows->where('status', 'not_found')->count(),
-                'missing_in_file' => $statsRows->where('status', 'missing_in_file')->count(),
+                'not_found' => $allAuditRows->where('status', 'not_found')->count(),
+                'missing_in_file' => $allAuditRows->where('status', 'missing_in_file')->count(),
                 'source_name_missing' => collect($sourceItems)
                     ->filter(fn (SupplierCatalogItem $item) => $this->nullableString($item->name) === null)
                     ->count(),
