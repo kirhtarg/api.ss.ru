@@ -235,6 +235,24 @@ class BikeproductsCatalogController extends Controller
         return response()->json(['success' => true, 'data' => $this->catalog->applyVariationAction($snapshot, $data['action'], $data['variation_ids'])]);
     }
 
+    public function variationSelection(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
+    {
+        if ($response = $this->notReadyResponse($snapshot)) {
+            return $response;
+        }
+
+        $data = $request->validate([
+            'search' => ['nullable', 'string', 'max:120'],
+            'filters' => ['nullable', 'array', 'max:10'],
+            'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_sku_other_supplier'],
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => $this->catalog->variationSelection($snapshot, $data['search'] ?? null, $data['filters'] ?? []),
+        ]);
+    }
+
     public function imageAudit(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
     {
         if ($response = $this->notReadyResponse($snapshot)) {

@@ -1079,11 +1079,15 @@ class BikeproductsCatalogService
             'data' => $pageRows,
             'stats' => [
                 'database_goods_with_variations' => $databaseVariations->pluck('good_id')->unique()->count(),
+                'database_variations' => $databaseVariations->count(),
+                'comparison_groups' => $total,
                 'delete_candidate_goods' => $allRows->where('status', 'delete_candidate_good')->pluck('database_good_id')->unique()->count(),
                 'delete_candidate_variations' => $allRows->where('status', 'delete_candidate_variation')->count(),
                 'delete_candidate_variation_goods' => $countGroups($allRows->where('status', 'delete_candidate_variation')),
-                'source_good_missing' => $countGroups($allRows->where('status', 'source_good_missing')),
-                'source_variation_missing' => $countGroups($allRows->where('status', 'source_variation_missing')),
+                'source_good_missing' => $allRows->where('status', 'source_good_missing')->count(),
+                'source_good_missing_groups' => $countGroups($allRows->where('status', 'source_good_missing')),
+                'source_variation_missing' => $allRows->where('status', 'source_variation_missing')->count(),
+                'source_variation_missing_groups' => $countGroups($allRows->where('status', 'source_variation_missing')),
                 'source_sku_other_supplier' => $countGroups($allRows->where('status', 'source_sku_other_supplier')),
                 'attention_goods' => $countGroups($allRows->where('status', 'attention')),
                 'attention_single_variation_goods' => $countGroups($allRows->where('status', 'attention_single_variation')),
@@ -1095,6 +1099,22 @@ class BikeproductsCatalogService
                 'per_page' => $perPage,
                 'total' => $total,
             ],
+        ];
+    }
+
+    /** @return array{database_variation_ids: array<int, int>, source_item_ids: array<int, int>, groups_total: int} */
+    public function variationSelection(SupplierCatalogSnapshot $snapshot, ?string $search = null, array $filters = []): array
+    {
+        $audit = $this->variationAudit($snapshot, 1, 100000, $search, $filters);
+        $rows = collect($audit['data']);
+        $selectedRows = $filters === []
+            ? $rows
+            : $rows->whereIn('status', $filters)->values();
+
+        return [
+            'database_variation_ids' => $selectedRows->pluck('database_variation_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all(),
+            'source_item_ids' => $selectedRows->filter(fn (array $row) => empty($row['database_variation_id']))->pluck('item_id')->filter(fn ($id) => is_numeric($id))->map(fn ($id) => (int) $id)->unique()->values()->all(),
+            'groups_total' => (int) data_get($audit, 'meta.total', 0),
         ];
     }
 

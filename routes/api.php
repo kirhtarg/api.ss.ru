@@ -2047,6 +2047,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::get('/snapshots/{snapshot}/overview', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'overview']);
                     Route::get('/snapshots/{snapshot}/fields', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'fields']);
                     Route::get('/snapshots/{snapshot}/variation-audit', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'variationAudit']);
+                    Route::get('/snapshots/{snapshot}/variation-selection', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'variationSelection']);
                     Route::post('/snapshots/{snapshot}/variation-actions', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'applyVariationAction']);
                     Route::get('/snapshots/{snapshot}/property-audit', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'propertyAudit']);
                     Route::get('/snapshots/{snapshot}/good-audit', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'goodAudit']);
