@@ -511,7 +511,7 @@ class BikeproductsCatalogService
             $snapshot->update(['status' => 'processing', 'progress' => 1, 'stage' => 'Чтение '.$sourceLabel]);
             $itemsCount = 0;
             $imageBaseUrl = $this->supplierImageBaseUrl($snapshot->supplier_code);
-            $result = $this->parseExcel($path, $snapshot->supplier_code, $imageBaseUrl, function (int $processedRows, int $totalRows) use ($snapshot): void {
+            $result = $this->parseExcel($path, $snapshot->supplier_code, $imageBaseUrl, function (int $processedRows, int $totalRows) use ($snapshot, $sourceLabel): void {
                 $snapshot->update([
                     'progress' => $totalRows > 0
                         ? min(92, max(2, (int) floor($processedRows * 92 / $totalRows)))
