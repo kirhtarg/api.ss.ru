@@ -9,10 +9,12 @@ use App\Models\SupplierCatalogActionRun;
 use App\Models\SupplierCatalogFieldMapping;
 use App\Models\SupplierCatalogProfile;
 use App\Models\SupplierCatalogSnapshot;
+use App\Models\SupplierFeedPriceStockRun;
 use App\Jobs\ProcessSupplierCatalogExcelJob;
 use App\Jobs\AuditSupplierCatalogImagesJob;
 use App\Jobs\SyncSupplierCatalogImagesJob;
 use App\Services\BikeproductsCatalogService;
+use App\Services\SupplierFeedPriceStockService;
 use Closure;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -21,7 +23,10 @@ use Illuminate\Support\Facades\Cache;
 
 class BikeproductsCatalogController extends Controller
 {
-    public function __construct(private readonly BikeproductsCatalogService $catalog)
+    public function __construct(
+        private readonly BikeproductsCatalogService $catalog,
+        private readonly SupplierFeedPriceStockService $feedPriceStock,
+    )
     {
     }
 
@@ -37,6 +42,12 @@ class BikeproductsCatalogController extends Controller
             'settings.yml_url' => ['nullable', 'url', 'max:1000'],
             'settings.feed_type' => ['nullable', 'in:auto,xml,yml'],
             'settings.image_base_url' => ['nullable', 'url', 'max:1000'],
+            'settings.feed_sync_enabled' => ['nullable', 'boolean'],
+            'settings.feed_sync_interval_minutes' => ['nullable', 'integer', 'min:5', 'max:1440'],
+            'settings.feed_sku_source' => ['nullable', 'in:offer_id,vendor_code'],
+            'settings.feed_price_target' => ['nullable', 'in:price,sale_price,demping_price'],
+            'settings.feed_stock_target' => ['nullable', 'in:stock_quantity,remote_stock_quantity,fast_remote_stock_quantity'],
+            'settings.feed_available_quantity' => ['nullable', 'integer', 'min:1', 'max:999999'],
         ]);
 
         $profile->update([
@@ -44,6 +55,27 @@ class BikeproductsCatalogController extends Controller
         ]);
 
         return response()->json(['success' => true, 'data' => $profile->fresh(['id', 'name', 'code', 'supplier_names', 'settings'])]);
+    }
+
+    public function queueFeedPriceStockSync(SupplierCatalogProfile $profile): JsonResponse
+    {
+        $run = $this->feedPriceStock->queue($profile);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Синхронизация цены и остатка по фиду поставлена в очередь.',
+            'data' => $run,
+        ], 202);
+    }
+
+    public function feedPriceStockRuns(SupplierCatalogProfile $profile): JsonResponse
+    {
+        return response()->json(['success' => true, 'data' => SupplierFeedPriceStockRun::query()
+            ->where('profile_id', $profile->id)
+            ->latest('id')
+            ->limit(10)
+            ->get(),
+        ]);
     }
 
     public function snapshots(Request $request): JsonResponse

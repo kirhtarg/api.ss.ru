@@ -2038,8 +2038,10 @@ Route::middleware('auth:sanctum')->group(function () {
                 // Изолированный аудит каталога Bikeproducts. Эти маршруты не меняют shop_* без
                 // отдельного подтверждённого набора изменений.
                 Route::prefix('bikeproducts')->group(function () {
-                    Route::get('/profiles', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'profiles']);
-                    Route::put('/profiles/{profile}', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'updateProfile']);
+                Route::get('/profiles', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'profiles']);
+                Route::put('/profiles/{profile}', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'updateProfile']);
+                Route::post('/profiles/{profile}/feed-price-stock/sync', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'queueFeedPriceStockSync']);
+                Route::get('/profiles/{profile}/feed-price-stock/runs', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'feedPriceStockRuns']);
                     Route::get('/snapshots', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'snapshots']);
                     Route::post('/snapshots/excel', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'uploadExcel']);
                     Route::delete('/snapshots/{snapshot}', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'destroySnapshot']);

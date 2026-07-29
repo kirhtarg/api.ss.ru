@@ -104,6 +104,12 @@ return Application::configure(basePath: dirname(__DIR__))
         } catch (\Exception $e) {
             // Если БД недоступна, плановый бэкап не регистрируем.
         }
+
+        // Цены и доступность поставщицких фидов проверяются часто, но сами
+        // запуски отбираются сервисом по индивидуальному интервалу профиля.
+        $schedule->call(function (): void {
+            app(\App\Services\SupplierFeedPriceStockService::class)->scheduleDueRuns();
+        })->name('supplier-feed-price-stock-dispatch')->everyMinute()->withoutOverlapping();
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (\Throwable $e, $request) {
