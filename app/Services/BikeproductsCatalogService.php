@@ -38,9 +38,10 @@ class BikeproductsCatalogService
         if (! $snapshot || $snapshot->status !== 'ready') return;
         $imageBaseUrl = $this->supplierImageBaseUrl($snapshot->supplier_code);
         $items = $snapshot->items()->whereIn('id', $itemIds)->get();
-        $matches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code);
+        $matches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code)
+            ->mapWithKeys(fn (array $match, string $sku) => [$this->normalizeSku($sku) => $match]);
         foreach ($items as $item) {
-            $match = $matches->get($item->external_sku);
+            $match = $matches->get($this->normalizeSku($item->external_sku));
             if (! $match) continue;
             $variation = $match['type'] === 'variation' ? $match['model'] : null;
             $good = $variation ? $variation->good : $match['model'];
@@ -98,7 +99,8 @@ class BikeproductsCatalogService
         }
 
         $items = $snapshot->items()->whereIn('id', $ids)->get();
-        $matches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code);
+        $matches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code)
+            ->mapWithKeys(fn (array $match, string $sku) => [$this->normalizeSku($sku) => $match]);
         $goodMappings = SupplierCatalogFieldMapping::query()
             ->where('supplier_code', $snapshot->supplier_code)
             ->where('scope', 'good')
@@ -154,7 +156,7 @@ class BikeproductsCatalogService
                 }
 
                 $isSourceVariation = $this->isSourceVariationItem($item);
-                $match = $matches->get($item->external_sku);
+                $match = $matches->get($this->normalizeSku($item->external_sku));
                 if (! $isSourceVariation && $match) {
                     $good = $match['type'] === 'variation' ? $match['model']->good : $match['model'];
                     $values = collect($attributes)->except('brand')->all();
@@ -1387,7 +1389,8 @@ class BikeproductsCatalogService
             }
         }
 
-        $matches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code);
+        $matches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code)
+            ->mapWithKeys(fn (array $match, string $sku) => [$this->normalizeSku($sku) => $match]);
         $variations = $matches->where('type', 'variation')->pluck('model');
         $goods = $matches->map(fn (array $match) => $match['type'] === 'good' ? $match['model'] : $match['model']->good)->unique('id')->values();
         $variationIds = $variations->pluck('id');
@@ -1409,7 +1412,7 @@ class BikeproductsCatalogService
         $coverageMismatches = [];
         $imageComparisons = [];
         foreach ($items as $item) {
-            $match = $matches->get($item->external_sku);
+            $match = $matches->get($this->normalizeSku($item->external_sku));
             $sourceUrls = collect($item->image_urls ?? [])
                 ->map(fn ($url) => $this->absoluteSourceImageUrl((string) $url, $imageBaseUrl))
                 ->filter()
@@ -1579,7 +1582,8 @@ class BikeproductsCatalogService
     {
         $this->assertReadySnapshot($snapshot);
         $items = $this->snapshotItemsQuery($snapshot, $search)->get();
-        $skuMatches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code);
+        $skuMatches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code)
+            ->mapWithKeys(fn (array $match, string $sku) => [$this->normalizeSku($sku) => $match]);
         $mappings = SupplierCatalogFieldMapping::query()
             ->where('supplier_code', $snapshot->supplier_code)
             ->where('scope', 'product')
@@ -1607,7 +1611,7 @@ class BikeproductsCatalogService
         $rows = [];
 
         foreach ($items as $item) {
-            $match = $skuMatches->get($item->external_sku);
+            $match = $skuMatches->get($this->normalizeSku($item->external_sku));
             if (! $match) {
                 continue;
             }
