@@ -1435,38 +1435,14 @@ class BikeproductsCatalogService
         $imagesByGood = $images->whereNull('variation_id')->groupBy('good_id');
         $coverageMismatches = [];
         $imageComparisons = [];
+        $excludedWithoutDatabaseMatch = 0;
         foreach ($items as $item) {
             $match = $matches->get($this->normalizeSku($item->external_sku));
             $sourceSources = collect($this->imageSourcesForItem($item, $imageSourceFields, $imageBaseUrl));
             $sourceUrls = $sourceSources->pluck('url')->values();
             $sourceFieldsByUrl = $sourceSources->mapWithKeys(fn (array $source) => [$source['url'] => $source['source_fields']]);
             if (! $match) {
-                $imageComparisons[] = [
-                    'item_id' => $item->id,
-                    'external_sku' => $item->external_sku,
-                    'match_type' => null,
-                    'variation_id' => null,
-                    'good_id' => null,
-                    'group_key' => 'source-'.$item->id,
-                    'expected_count' => $sourceUrls->count(),
-                    'database_count' => 0,
-                    'is_match' => false,
-                    'status' => 'different',
-                    'source_urls' => $sourceUrls->all(),
-                    'database_paths' => [],
-                    'image_pairs' => $sourceUrls->map(fn (string $url) => [
-                        'source_url' => $url,
-                        'source_filename' => $this->sourceImageFileName($url),
-                        'source_fields' => $sourceFieldsByUrl->get($url, []),
-                        'database_path' => null,
-                        'database_filename' => null,
-                        'is_match' => false,
-                    ])->all(),
-                    'database_only_paths' => [],
-                    'good_name' => $item->name ?: 'Товар из файла без соответствия в базе',
-                    'good_slug' => null,
-                    'source_only' => true,
-                ];
+                $excludedWithoutDatabaseMatch++;
                 continue;
             }
             $variation = $match['type'] === 'variation' ? $match['model'] : null;
@@ -1475,32 +1451,7 @@ class BikeproductsCatalogService
             // deleted. They are not valid database matches and must not break
             // the whole audit response with null-property warnings.
             if (! $good) {
-                $imageComparisons[] = [
-                    'item_id' => $item->id,
-                    'external_sku' => $item->external_sku,
-                    'match_type' => 'orphan_variation',
-                    'variation_id' => $variation?->id,
-                    'good_id' => null,
-                    'group_key' => 'source-'.$item->id,
-                    'expected_count' => $sourceUrls->count(),
-                    'database_count' => 0,
-                    'is_match' => false,
-                    'status' => 'different',
-                    'source_urls' => $sourceUrls->all(),
-                    'database_paths' => [],
-                    'image_pairs' => $sourceUrls->map(fn (string $url) => [
-                        'source_url' => $url,
-                        'source_filename' => $this->sourceImageFileName($url),
-                        'source_fields' => $sourceFieldsByUrl->get($url, []),
-                        'database_path' => null,
-                        'database_filename' => null,
-                        'is_match' => false,
-                    ])->all(),
-                    'database_only_paths' => [],
-                    'good_name' => $item->name ?: 'Товар из файла с битой связью вариации',
-                    'good_slug' => null,
-                    'source_only' => true,
-                ];
+                $excludedWithoutDatabaseMatch++;
                 continue;
             }
             $databasePaths = ($variation
@@ -1584,6 +1535,8 @@ class BikeproductsCatalogService
             'stats' => [
                 'source_items' => $items->count(),
                 'source_items_with_images' => $sourceItemsWithImages,
+                'source_items_without_database_match' => $excludedWithoutDatabaseMatch,
+                'source_items_compared' => count($imageComparisons),
                 'source_fields' => $imageSourceFields,
                 'source_images' => array_sum(array_map('count', $sourceUrlGroups)),
                 'source_duplicate_url_groups' => count(array_filter($sourceUrlGroups, static fn (array $skus) => count($skus) > 1)),
