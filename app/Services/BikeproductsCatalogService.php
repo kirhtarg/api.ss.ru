@@ -1817,6 +1817,9 @@ class BikeproductsCatalogService
                 'external_sku' => $item->external_sku,
                 'source_name' => $item->name,
                 'database_match_type' => $match['type'] ?? null,
+                'database_value_source' => $onlyTargets !== null && $match
+                    ? ($match['type'] === 'variation' ? 'variation' : 'good')
+                    : 'good',
                 'database_good_id' => $good?->id,
                 'database_name' => $good?->name,
                 'database_slug' => $good?->slug,
