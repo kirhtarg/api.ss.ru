@@ -587,8 +587,13 @@ class BikeproductsCatalogService
         if ($filters !== []) {
             $rows = $rows->whereIn('status', $filters)->values();
         }
-        $total = $rows->count();
-        $pageRows = $rows->forPage($page, $perPage)->values();
+        // Пагинируем товарами, а не отдельными SKU: все вариации одного товара
+        // всегда остаются на одной странице для наглядной сверки.
+        $groups = $rows->groupBy(fn (array $row) => $row['database_good_id']
+            ? 'good-'.$row['database_good_id']
+            : 'source-'.$row['external_sku']);
+        $total = $groups->count();
+        $pageRows = $groups->forPage($page, $perPage)->flatten(1)->values();
 
         return [
             'data' => $pageRows,
