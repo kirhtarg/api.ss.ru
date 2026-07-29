@@ -40,7 +40,7 @@ class BikeproductsCatalogService
         $imageBaseUrl = $this->supplierImageBaseUrl($snapshot->supplier_code);
         $imageSourceFields = $this->imageSourceFields($snapshot->supplier_code);
         $items = $snapshot->items()->whereIn('id', $itemIds)->get();
-        $matches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code)
+        $matches = $this->resolveImageSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code)
             ->mapWithKeys(fn (array $match, string $sku) => [$this->normalizeSku($sku) => $match]);
         foreach ($items as $item) {
             $match = $matches->get($this->normalizeSku($item->external_sku));
@@ -327,9 +327,10 @@ class BikeproductsCatalogService
         if ($scope === 'images') {
             $imageBaseUrl = $this->supplierImageBaseUrl($snapshot->supplier_code);
             $imageSourceFields = $this->imageSourceFields($snapshot->supplier_code);
-            DB::transaction(function () use ($items, $matches, $imageBaseUrl, $imageSourceFields, $imageMode, &$affected, &$skipped): void {
+            $imageMatches = $this->resolveImageSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code);
+            DB::transaction(function () use ($items, $imageMatches, $imageBaseUrl, $imageSourceFields, $imageMode, &$affected, &$skipped): void {
                 foreach ($items as $item) {
-                    $match = $matches->get($item->external_sku);
+                    $match = $imageMatches->get($item->external_sku);
                     $urls = collect($this->imageSourcesForItem($item, $imageSourceFields, $imageBaseUrl))
                         ->pluck('url')
                         ->values();
@@ -1408,7 +1409,7 @@ class BikeproductsCatalogService
             }
         }
 
-        $matches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code)
+        $matches = $this->resolveImageSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code)
             ->mapWithKeys(fn (array $match, string $sku) => [$this->normalizeSku($sku) => $match]);
         $variations = $matches->where('type', 'variation')->pluck('model');
         $goods = $matches
@@ -2543,6 +2544,43 @@ class BikeproductsCatalogService
         // затем вариацию, если товара с таким SKU нет.
         foreach ($goods as $good) {
             $matches->put($good->sku, ['type' => 'good', 'model' => $good]);
+        }
+
+        return $matches;
+    }
+
+    /**
+     * Resolves image owners by SKU. If a supplier has both a parent product and
+     * its variation with the same SKU, images belong to the variation first.
+     * The parent remains a fallback only when no valid variation is found.
+     *
+     * @param Collection<int, string> $skus
+     * @return Collection<string, array{type: string, model: ShopGood|ShopGoodVariation}>
+     */
+    private function resolveImageSkuMatches(Collection $skus, string $supplierCode): Collection
+    {
+        $skus = $skus->filter()->unique()->values();
+        if ($skus->isEmpty()) {
+            return collect();
+        }
+
+        $supplierNames = $this->supplierNames($supplierCode);
+        if ($supplierNames === []) {
+            return collect();
+        }
+
+        $goods = ShopGood::query()
+            ->whereIn('sku', $skus)
+            ->whereIn('supplier', $supplierNames)
+            ->get(['id', 'sku', 'name', 'slug', 'supplier']);
+        $matches = $goods->mapWithKeys(fn (ShopGood $good) => [$good->sku => ['type' => 'good', 'model' => $good]]);
+
+        foreach ($this->findVariationsBySku($skus, $supplierCode) as $variation) {
+            // Orphaned variations cannot receive images and must not suppress
+            // a usable parent product with the same SKU.
+            if ($variation->good !== null) {
+                $matches->put($variation->sku, ['type' => 'variation', 'model' => $variation]);
+            }
         }
 
         return $matches;
