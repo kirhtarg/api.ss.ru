@@ -58,7 +58,13 @@ class BikeproductsCatalogService
                     $absolutePath = frontend_public_path($relativePath);
                     if (! is_dir(dirname($absolutePath))) mkdir(dirname($absolutePath), 0755, true);
                     if (! is_file($absolutePath)) file_put_contents($absolutePath, $response->body());
-                    ShopGoodImage::query()->where('good_id', $good->id)->when($variation, fn ($q) => $q->where('variation_id', $variation->id), fn ($q) => $q->whereNull('variation_id'))->where('file_path', $url)->update(['file_path' => '/'.$relativePath]);
+                    $imageQuery = ShopGoodImage::query()->where('file_path', $url);
+                    if ($variation) {
+                        $imageQuery->where('variation_id', $variation->id);
+                    } else {
+                        $imageQuery->where('good_id', $good->id)->whereNull('variation_id');
+                    }
+                    $imageQuery->update(['file_path' => '/'.$relativePath]);
                 } catch (\Throwable $exception) {
                     Log::warning('Supplier image download failed', ['snapshot_id' => $snapshotId, 'sku' => $item->external_sku, 'url' => $url, 'error' => $exception->getMessage()]);
                 }
@@ -337,9 +343,9 @@ class BikeproductsCatalogService
                     if (! $match || ($urls->isEmpty() && $imageMode !== 'replace')) { $skipped++; continue; }
                     $variation = $match['type'] === 'variation' ? $match['model'] : null;
                     $good = $variation ? $variation->good : $match['model'];
-                    $query = ShopGoodImage::query()->where('good_id', $good->id);
-                    if ($variation) $query->where('variation_id', $variation->id);
-                    else $query->whereNull('variation_id');
+                    $query = $variation
+                        ? ShopGoodImage::query()->where('variation_id', $variation->id)
+                        : ShopGoodImage::query()->where('good_id', $good->id)->whereNull('variation_id');
                     $existing = $query->pluck('file_path')->all();
                     if ($imageMode === 'replace') {
                         $query->delete();
@@ -349,7 +355,7 @@ class BikeproductsCatalogService
                     foreach ($urls as $url) {
                         if (collect($existing)->contains(fn (string $path) => $this->sourceImageMatchesDatabasePath($url, $path))) continue;
                         ShopGoodImage::create([
-                            'good_id' => $good->id,
+                            'good_id' => $variation ? null : $good->id,
                             'variation_id' => $variation?->id,
                             'file_path' => $url,
                             'is_main' => $existing === [] && $nextSort === 1,
@@ -2766,9 +2772,7 @@ class BikeproductsCatalogService
             return;
         }
 
-        $query = ShopGoodImage::query()
-            ->where('good_id', $good->id)
-            ->where('variation_id', $variation->id);
+        $query = ShopGoodImage::query()->where('variation_id', $variation->id);
         $existingPaths = $query->pluck('file_path')->all();
         $nextSortOrder = (int) $query->max('sort_order') + 1;
         foreach ($urls as $url) {
@@ -2776,7 +2780,7 @@ class BikeproductsCatalogService
                 continue;
             }
             ShopGoodImage::create([
-                'good_id' => $good->id,
+                'good_id' => null,
                 'variation_id' => $variation->id,
                 'file_path' => $url,
                 'alt_text' => $item->clean_name ?: $item->name,
