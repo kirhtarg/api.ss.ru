@@ -5,12 +5,14 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Shop\Property;
 use App\Models\ShopVariationAttribute;
+use App\Models\SupplierCatalogActionRun;
 use App\Models\SupplierCatalogFieldMapping;
 use App\Models\SupplierCatalogProfile;
 use App\Models\SupplierCatalogSnapshot;
 use App\Jobs\ProcessSupplierCatalogExcelJob;
 use App\Jobs\SyncSupplierCatalogImagesJob;
 use App\Services\BikeproductsCatalogService;
+use Closure;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -232,7 +234,14 @@ class BikeproductsCatalogController extends Controller
             'variation_ids' => ['required', 'array', 'min:1', 'max:1000'],
             'variation_ids.*' => ['integer', 'distinct'],
         ]);
-        return response()->json(['success' => true, 'data' => $this->catalog->applyVariationAction($snapshot, $data['action'], $data['variation_ids'])]);
+        return response()->json(['success' => true, 'data' => $this->runCatalogAction(
+            $request,
+            $snapshot,
+            'variations',
+            $data['action'],
+            $data['variation_ids'],
+            fn () => $this->catalog->applyVariationAction($snapshot, $data['action'], $data['variation_ids']),
+        )]);
     }
 
     public function variationSelection(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
@@ -250,6 +259,16 @@ class BikeproductsCatalogController extends Controller
         return response()->json([
             'success' => true,
             'data' => $this->catalog->variationSelection($snapshot, $data['search'] ?? null, $data['filters'] ?? []),
+        ]);
+    }
+
+    public function rollbackAction(SupplierCatalogSnapshot $snapshot, SupplierCatalogActionRun $actionRun): JsonResponse
+    {
+        abort_unless($actionRun->snapshot_id === $snapshot->id, 404);
+
+        return response()->json([
+            'success' => true,
+            'data' => $this->catalog->rollbackVariationAction($actionRun),
         ]);
     }
 
@@ -309,7 +328,14 @@ class BikeproductsCatalogController extends Controller
             'ids.*' => ['integer', 'distinct'],
         ]);
 
-        return response()->json(['success' => true, 'data' => $this->catalog->applyGoodAction($snapshot, $data['action'], $data['ids'])]);
+        return response()->json(['success' => true, 'data' => $this->runCatalogAction(
+            $request,
+            $snapshot,
+            'goods',
+            $data['action'],
+            $data['ids'],
+            fn () => $this->catalog->applyGoodAction($snapshot, $data['action'], $data['ids']),
+        )]);
     }
 
     public function applyMappedUpdate(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
@@ -323,7 +349,14 @@ class BikeproductsCatalogController extends Controller
             'item_ids.*' => ['integer', 'distinct'],
         ]);
 
-        $result = $this->catalog->applyMappedUpdate($snapshot, $data['scope'], $data['item_ids']);
+        $result = $this->runCatalogAction(
+            $request,
+            $snapshot,
+            $data['scope'],
+            'update',
+            $data['item_ids'],
+            fn () => $this->catalog->applyMappedUpdate($snapshot, $data['scope'], $data['item_ids']),
+        );
         if ($data['scope'] === 'images' && $result['affected'] > 0) {
             SyncSupplierCatalogImagesJob::dispatch($snapshot->id, $data['item_ids']);
             $result['message'] .= '. Скачивание файлов запущено в очереди';
@@ -365,6 +398,40 @@ class BikeproductsCatalogController extends Controller
             'is_check_enabled' => $mapping->is_check_enabled,
             'is_update_enabled' => $mapping->is_update_enabled,
         ] : null;
+    }
+
+    /** @param array<int, int> $ids @param Closure(): array<string, mixed> $callback */
+    private function runCatalogAction(Request $request, SupplierCatalogSnapshot $snapshot, string $scope, string $action, array $ids, Closure $callback): array
+    {
+        $run = SupplierCatalogActionRun::create([
+            'snapshot_id' => $snapshot->id,
+            'user_id' => $request->user()?->id,
+            'supplier_code' => $snapshot->supplier_code,
+            'scope' => $scope,
+            'action' => $action,
+            'status' => 'running',
+            'selection' => ['ids' => array_values(array_unique(array_map('intval', $ids)))],
+            'backup' => $this->catalog->actionBackup($snapshot, $scope, $action, $ids),
+        ]);
+
+        try {
+            $result = $callback();
+            $run->update([
+                'status' => 'completed',
+                'result' => $result,
+                'executed_at' => now(),
+            ]);
+            $result['action_run_id'] = $run->id;
+
+            return $result;
+        } catch (\Throwable $exception) {
+            $run->update([
+                'status' => 'failed',
+                'error_message' => $exception->getMessage(),
+                'executed_at' => now(),
+            ]);
+            throw $exception;
+        }
     }
 
     private function notReadyResponse(SupplierCatalogSnapshot $snapshot): ?JsonResponse

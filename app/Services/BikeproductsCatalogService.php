@@ -11,6 +11,7 @@ use App\Models\Shop\ShopGoodProperty;
 use App\Models\ShopVariationAttribute;
 use App\Models\ShopVariationAttributeValue;
 use App\Models\SupplierCatalogFieldMapping;
+use App\Models\SupplierCatalogActionRun;
 use App\Models\SupplierCatalogItem;
 use App\Models\SupplierCatalogProfile;
 use App\Models\SupplierCatalogSnapshot;
@@ -1116,6 +1117,83 @@ class BikeproductsCatalogService
             'source_item_ids' => $selectedRows->filter(fn (array $row) => empty($row['database_variation_id']))->pluck('item_id')->filter(fn ($id) => is_numeric($id))->map(fn ($id) => (int) $id)->unique()->values()->all(),
             'groups_total' => (int) data_get($audit, 'meta.total', 0),
         ];
+    }
+
+    /** @param array<int, int> $ids @return array<string, mixed> */
+    public function actionBackup(SupplierCatalogSnapshot $snapshot, string $scope, string $action, array $ids): array
+    {
+        $ids = array_values(array_unique(array_map('intval', $ids)));
+        $backup = ['scope' => $scope, 'action' => $action, 'ids' => $ids];
+
+        if ($scope === 'variations') {
+            $variations = ShopGoodVariation::query()->whereIn('id', $ids)->get();
+            $goodIds = $variations->pluck('good_id')->unique()->values();
+            $backup['variations'] = $variations->map(fn (ShopGoodVariation $variation) => $variation->getAttributes())->all();
+            $backup['goods'] = ShopGood::query()->whereIn('id', $goodIds)->get()->map(fn (ShopGood $good) => $good->getAttributes())->all();
+            $backup['variation_attribute_links'] = DB::table('shop_variation_attributes_values')->whereIn('variation_id', $ids)->get()->map(fn ($row) => (array) $row)->all();
+            return $backup;
+        }
+
+        if ($scope === 'goods' && $action === 'delete') {
+            $goods = ShopGood::query()->whereIn('id', $ids)->get();
+            $variationIds = ShopGoodVariation::query()->whereIn('good_id', $goods->pluck('id'))->pluck('id');
+            $backup['goods'] = $goods->map(fn (ShopGood $good) => $good->getAttributes())->all();
+            $backup['variations'] = ShopGoodVariation::query()->whereIn('id', $variationIds)->get()->map(fn (ShopGoodVariation $variation) => $variation->getAttributes())->all();
+            $backup['variation_attribute_links'] = DB::table('shop_variation_attributes_values')->whereIn('variation_id', $variationIds)->get()->map(fn ($row) => (array) $row)->all();
+            $backup['good_properties'] = DB::table('shop_good_properties')->whereIn('good_id', $goods->pluck('id'))->get()->map(fn ($row) => (array) $row)->all();
+            $backup['images'] = ShopGoodImage::query()->whereIn('good_id', $goods->pluck('id'))->orWhereIn('variation_id', $variationIds)->get()->map(fn (ShopGoodImage $image) => $image->getAttributes())->all();
+            return $backup;
+        }
+
+        $items = $snapshot->items()->whereIn('id', $ids)->get();
+        $matches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code);
+        $goodIds = $matches->map(fn (array $match) => $match['type'] === 'variation' ? $match['model']->good_id : $match['model']->id)->filter()->unique()->values();
+        $variationIds = $matches->where('type', 'variation')->pluck('model.id')->filter()->values();
+        $backup['source_items'] = $items->map(fn (SupplierCatalogItem $item) => $item->getAttributes())->all();
+        $backup['goods'] = ShopGood::query()->whereIn('id', $goodIds)->get()->map(fn (ShopGood $good) => $good->getAttributes())->all();
+        $backup['variations'] = ShopGoodVariation::query()->whereIn('id', $variationIds)->get()->map(fn (ShopGoodVariation $variation) => $variation->getAttributes())->all();
+        $backup['variation_attribute_links'] = DB::table('shop_variation_attributes_values')->whereIn('variation_id', $variationIds)->get()->map(fn ($row) => (array) $row)->all();
+        return $backup;
+    }
+
+    /** @return array{affected: int, message: string} */
+    public function rollbackVariationAction(SupplierCatalogActionRun $run): array
+    {
+        if ($run->scope !== 'variations' || $run->status !== 'completed') {
+            throw new \InvalidArgumentException('Для этой операции откат недоступен.');
+        }
+
+        $backup = $run->backup ?? [];
+        $variations = collect($backup['variations'] ?? [])->filter(fn (array $row) => ! empty($row['id']))->values();
+        if ($variations->isEmpty()) {
+            throw new \InvalidArgumentException('Резервные данные вариаций не найдены.');
+        }
+
+        return DB::transaction(function () use ($run, $backup, $variations): array {
+            foreach ($backup['goods'] ?? [] as $good) {
+                if (! empty($good['id'])) {
+                    DB::table('shop_goods')->updateOrInsert(['id' => $good['id']], $good);
+                }
+            }
+            foreach ($variations as $variation) {
+                DB::table('shop_good_variations')->updateOrInsert(['id' => $variation['id']], $variation);
+            }
+
+            $variationIds = $variations->pluck('id')->all();
+            DB::table('shop_variation_attributes_values')->whereIn('variation_id', $variationIds)->delete();
+            $links = collect($backup['variation_attribute_links'] ?? [])->filter(fn (array $link) => in_array($link['variation_id'] ?? null, $variationIds, true))->values()->all();
+            if ($links !== []) {
+                DB::table('shop_variation_attributes_values')->insert($links);
+            }
+
+            $run->update([
+                'status' => 'rolled_back',
+                'result' => array_merge($run->result ?? [], ['rollback_affected' => count($variationIds)]),
+                'executed_at' => now(),
+            ]);
+
+            return ['affected' => count($variationIds), 'message' => 'Вариации и их оси восстановлены из резервной копии'];
+        });
     }
 
     public function imageAudit(SupplierCatalogSnapshot $snapshot, int $page = 1, int $perPage = 10, ?string $search = null): array
