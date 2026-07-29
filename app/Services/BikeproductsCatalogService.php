@@ -1402,16 +1402,41 @@ class BikeproductsCatalogService
         $imageComparisons = [];
         foreach ($items as $item) {
             $match = $matches->get($item->external_sku);
-            if (! $match) {
-                continue;
-            }
-            $variation = $match['type'] === 'variation' ? $match['model'] : null;
-            $good = $variation ? $variation->good : $match['model'];
             $sourceUrls = collect($item->image_urls ?? [])
                 ->map(fn ($url) => $this->absoluteSourceImageUrl((string) $url, $imageBaseUrl))
                 ->filter()
                 ->unique()
                 ->values();
+            if (! $match) {
+                $imageComparisons[] = [
+                    'item_id' => $item->id,
+                    'external_sku' => $item->external_sku,
+                    'match_type' => null,
+                    'variation_id' => null,
+                    'good_id' => null,
+                    'group_key' => 'source-'.$item->id,
+                    'expected_count' => $sourceUrls->count(),
+                    'database_count' => 0,
+                    'is_match' => false,
+                    'status' => 'different',
+                    'source_urls' => $sourceUrls->all(),
+                    'database_paths' => [],
+                    'image_pairs' => $sourceUrls->map(fn (string $url) => [
+                        'source_url' => $url,
+                        'source_filename' => $this->sourceImageFileName($url),
+                        'database_path' => null,
+                        'database_filename' => null,
+                        'is_match' => false,
+                    ])->all(),
+                    'database_only_paths' => [],
+                    'good_name' => $item->name ?: 'Товар из файла без соответствия в базе',
+                    'good_slug' => null,
+                    'source_only' => true,
+                ];
+                continue;
+            }
+            $variation = $match['type'] === 'variation' ? $match['model'] : null;
+            $good = $variation ? $variation->good : $match['model'];
             $databasePaths = $images
                 ->filter(fn (ShopGoodImage $image) => $variation ? $image->variation_id === $variation->id : ($image->good_id === $good->id && $image->variation_id === null))
                 ->pluck('file_path')
@@ -1442,6 +1467,7 @@ class BikeproductsCatalogService
                 'match_type' => $match['type'],
                 'variation_id' => $variation?->id,
                 'good_id' => $good->id,
+                'group_key' => 'good-'.$good->id,
                 'expected_count' => $expectedCount,
                 'database_count' => $actualCount,
                 'is_match' => $isMatch,
@@ -1471,7 +1497,7 @@ class BikeproductsCatalogService
         if ($statuses !== []) {
             $imageComparisons = array_values(array_filter($imageComparisons, fn (array $row) => in_array($row['status'], $statuses, true)));
         }
-        $groupedComparisons = collect($imageComparisons)->groupBy('good_id')->map(function (Collection $rows) {
+        $groupedComparisons = collect($imageComparisons)->groupBy('group_key')->map(function (Collection $rows) {
             $first = $rows->first();
             return [
                 'good_id' => $first['good_id'],
@@ -1610,6 +1636,7 @@ class BikeproductsCatalogService
                 'item_id' => $item->id,
                 'external_sku' => $item->external_sku,
                 'source_name' => $item->name,
+                'source_name_missing' => $this->nullableString($item->name) === null,
                 'database_good_id' => $goodId,
                 'database_name' => $match['type'] === 'good' ? $match['model']->name : $match['model']->good->name,
                 'database_slug' => $match['type'] === 'good' ? $match['model']->slug : $match['model']->good->slug,
@@ -1836,6 +1863,7 @@ class BikeproductsCatalogService
                 'database_slug' => $good->slug,
                 'database_variation_id' => null,
                 'source_is_variation' => false,
+                'source_name_missing' => false,
                 'differences' => $databaseDifferences,
                 'status' => 'missing_in_file',
             ];
@@ -1846,6 +1874,15 @@ class BikeproductsCatalogService
         }
         $priceFields = ['price', 'sale_price', 'demping_price'];
         $stockFields = ['stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'];
+        $sourceOrphans = 0;
+        $databaseOrphans = 0;
+        if ($onlyTargets !== null && $paginateByGood) {
+            $sourceOrphans = count(array_filter($rows, fn (array $row) => $row['item_id'] && ! $row['database_good_id']));
+            $databaseOrphans = count(array_filter($rows, fn (array $row) => ! $row['item_id'] && $row['database_good_id']));
+            // Price and stock synchronization is only meaningful for a matched
+            // source row and a concrete database target.
+            $rows = array_values(array_filter($rows, fn (array $row) => $row['item_id'] && $row['database_good_id']));
+        }
         $statsRows = collect($rows);
         if ($differenceTypes !== []) {
             $rows = array_values(array_filter($rows, function (array $row) use ($differenceTypes, $priceFields, $stockFields): bool {
@@ -1894,6 +1931,14 @@ class BikeproductsCatalogService
                     ))
                     ->groupBy($groupKey)
                     ->count(),
+                'synchronized' => $statsRows
+                    ->filter(fn (array $row) => collect($row['differences'])->every(
+                        fn (array $difference) => in_array($difference['status'], ['match', 'not_mapped'], true),
+                    ))
+                    ->groupBy($groupKey)
+                    ->count(),
+                'source_orphans' => $sourceOrphans,
+                'database_orphans' => $databaseOrphans,
                 'attention' => $statsRows->where('status', 'attention')->count(),
                 'not_found' => $statsRows->where('status', 'not_found')->count(),
                 'missing_in_file' => $statsRows->where('status', 'missing_in_file')->count(),
@@ -1931,7 +1976,14 @@ class BikeproductsCatalogService
         $audit = $this->goodAudit($snapshot, 1, 100000, null, $search, [$status]);
         $key = $status === 'missing_in_file' ? 'database_good_id' : 'item_id';
 
-        return collect($audit['data'])->pluck($key)->filter()->map(fn ($id) => (int) $id)->unique()->values()->all();
+        return collect($audit['data'])
+            ->when($status === 'not_found', fn (Collection $rows) => $rows->filter(fn (array $row) => ! ($row['source_name_missing'] ?? false)))
+            ->pluck($key)
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
     }
 
     /** @param array<string, mixed> $conditions */
