@@ -18,6 +18,7 @@ use App\Models\SupplierCatalogSnapshot;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -912,6 +913,15 @@ class BikeproductsCatalogService
     {
         $this->assertReadySnapshot($snapshot);
         $this->ensureDefaultMappings($snapshot->supplier_code);
+        // Построение сверки проходит по всему снимку и всем вариациям поставщика.
+        // Сохраняем эту неизменяемую часть отдельно от поиска, фильтров и пагинации.
+        $baseCacheKey = 'supplier-catalog:variation-audit-base:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        $cachedBase = Cache::store('file')->get($baseCacheKey);
+        if (is_array($cachedBase) && isset($cachedBase['rows'], $cachedBase['variation_counts'], $cachedBase['stats'])) {
+            $allRows = collect($cachedBase['rows']);
+            $variationCountByGood = collect($cachedBase['variation_counts']);
+            $baseStats = $cachedBase['stats'];
+        } else {
         $mappings = $this->getMappings($snapshot->supplier_code);
         $sourceItems = $this->sourceVariationItems($snapshot)
             ->filter(fn (SupplierCatalogItem $item) => $this->normalizeSku($item->external_sku) !== '')
@@ -1081,6 +1091,18 @@ class BikeproductsCatalogService
         }
 
         $allRows = $rows;
+        $baseStats = [
+            'database_goods_with_variations' => $databaseVariations->pluck('good_id')->unique()->count(),
+            'database_variations' => $databaseVariations->count(),
+        ];
+        Cache::store('file')->put($baseCacheKey, [
+            'rows' => $allRows->all(),
+            'variation_counts' => $variationCountByGood->all(),
+            'stats' => $baseStats,
+        ], now()->addMinutes(15));
+        }
+
+        $rows = $allRows;
         if ($search) {
             $needle = mb_strtolower(trim($search));
             $rows = $rows->filter(fn (array $row) => str_contains(mb_strtolower((string) $row['external_sku'].' '.$row['source_name'].' '.$row['database_name']), $needle))->values();
@@ -1130,8 +1152,8 @@ class BikeproductsCatalogService
         return [
             'data' => $pageRows,
             'stats' => [
-                'database_goods_with_variations' => $databaseVariations->pluck('good_id')->unique()->count(),
-                'database_variations' => $databaseVariations->count(),
+                'database_goods_with_variations' => $baseStats['database_goods_with_variations'],
+                'database_variations' => $baseStats['database_variations'],
                 'comparison_groups' => $total,
                 'delete_candidate_goods' => $allRows->where('status', 'delete_candidate_good')->pluck('database_good_id')->unique()->count(),
                 'delete_candidate_variations' => $allRows->where('status', 'delete_candidate_variation')->count(),
