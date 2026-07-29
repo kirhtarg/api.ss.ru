@@ -15,6 +15,7 @@ use App\Services\BikeproductsCatalogService;
 use Closure;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
 class BikeproductsCatalogController extends Controller
 {
@@ -102,7 +103,12 @@ class BikeproductsCatalogController extends Controller
             return $response;
         }
 
-        return response()->json(['success' => true, 'data' => $this->catalog->overview($snapshot)]);
+        return response()->json(['success' => true, 'data' => $this->cachedAudit(
+            $snapshot,
+            'overview',
+            [],
+            fn () => $this->catalog->overview($snapshot),
+        )]);
     }
 
     public function fields(SupplierCatalogSnapshot $snapshot): JsonResponse
@@ -157,6 +163,7 @@ class BikeproductsCatalogController extends Controller
         ]);
 
         $mapping->update($data);
+        $this->touchSupplierSnapshots($mapping->supplier_code);
 
         return response()->json(['success' => true, 'data' => $mapping->fresh(['variationAttribute:id,name', 'property:id,name'])]);
     }
@@ -200,6 +207,7 @@ class BikeproductsCatalogController extends Controller
                 'is_update_enabled' => $data['is_update_enabled'],
             ]
         );
+        $this->touchSupplierSnapshots($snapshot->supplier_code);
 
         return response()->json(['success' => true, 'data' => $mapping->fresh(['variationAttribute:id,name', 'property:id,name'])]);
     }
@@ -221,7 +229,12 @@ class BikeproductsCatalogController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $this->catalog->variationAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, $data['search'] ?? null, $data['filters'] ?? [], $data['variation_count'] ?? 'all'),
+            'data' => $this->cachedAudit(
+                $snapshot,
+                'variations',
+                $data,
+                fn () => $this->catalog->variationAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, $data['search'] ?? null, $data['filters'] ?? [], $data['variation_count'] ?? 'all'),
+            ),
         ]);
     }
 
@@ -281,7 +294,12 @@ class BikeproductsCatalogController extends Controller
         }
 
         $data = $request->validate(['page' => ['nullable', 'integer', 'min:1'], 'per_page' => ['nullable', 'integer', 'min:1', 'max:10'], 'search' => ['nullable', 'string', 'max:120']]);
-        return response()->json(['success' => true, 'data' => $this->catalog->imageAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 10, $data['search'] ?? null)]);
+        return response()->json(['success' => true, 'data' => $this->cachedAudit(
+            $snapshot,
+            'images',
+            $data,
+            fn () => $this->catalog->imageAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 10, $data['search'] ?? null),
+        )]);
     }
 
     public function propertyAudit(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
@@ -298,7 +316,12 @@ class BikeproductsCatalogController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $this->catalog->propertyAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, $data['search'] ?? null),
+            'data' => $this->cachedAudit(
+                $snapshot,
+                'properties',
+                $data,
+                fn () => $this->catalog->propertyAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, $data['search'] ?? null),
+            ),
         ]);
     }
 
@@ -316,7 +339,12 @@ class BikeproductsCatalogController extends Controller
             'statuses.*' => ['string', 'in:match,attention,not_found,missing_in_file'],
         ]);
 
-        return response()->json(['success' => true, 'data' => $this->catalog->goodAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, null, $data['search'] ?? null, $data['statuses'] ?? [])]);
+        return response()->json(['success' => true, 'data' => $this->cachedAudit(
+            $snapshot,
+            'goods',
+            $data,
+            fn () => $this->catalog->goodAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, null, $data['search'] ?? null, $data['statuses'] ?? []),
+        )]);
     }
 
     public function applyGoodAction(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
@@ -379,12 +407,17 @@ class BikeproductsCatalogController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
         ]);
 
-        return response()->json(['success' => true, 'data' => $this->catalog->goodAudit(
+        return response()->json(['success' => true, 'data' => $this->cachedAudit(
             $snapshot,
-            $data['page'] ?? 1,
-            $data['per_page'] ?? 50,
-            ['price', 'sale_price', 'demping_price', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'],
-            $data['search'] ?? null,
+            'prices',
+            $data,
+            fn () => $this->catalog->goodAudit(
+                $snapshot,
+                $data['page'] ?? 1,
+                $data['per_page'] ?? 50,
+                ['price', 'sale_price', 'demping_price', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'],
+                $data['search'] ?? null,
+            ),
         )]);
     }
 
@@ -423,6 +456,7 @@ class BikeproductsCatalogController extends Controller
                 'result' => $result,
                 'executed_at' => now(),
             ]);
+            $snapshot->touch();
             $result['action_run_id'] = $run->id;
 
             return $result;
@@ -434,6 +468,26 @@ class BikeproductsCatalogController extends Controller
             ]);
             throw $exception;
         }
+    }
+
+    /** @param array<string, mixed> $parameters @param Closure(): array<string, mixed> $callback */
+    private function cachedAudit(SupplierCatalogSnapshot $snapshot, string $section, array $parameters, Closure $callback): array
+    {
+        ksort($parameters);
+        $version = $snapshot->updated_at?->format('Uu') ?? '0';
+        $key = 'supplier-catalog:audit:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
+
+        // File cache deliberately avoids depending on Redis for heavyweight
+        // audit payloads and keeps repeated navigation inexpensive.
+        return Cache::store('file')->remember($key, now()->addMinutes(3), $callback);
+    }
+
+    private function touchSupplierSnapshots(string $supplierCode): void
+    {
+        SupplierCatalogSnapshot::query()
+            ->where('supplier_code', $supplierCode)
+            ->where('status', 'ready')
+            ->update(['updated_at' => now()]);
     }
 
     private function notReadyResponse(SupplierCatalogSnapshot $snapshot): ?JsonResponse
