@@ -9,6 +9,7 @@ use App\Models\SupplierCatalogFieldMapping;
 use App\Models\SupplierCatalogProfile;
 use App\Models\SupplierCatalogSnapshot;
 use App\Jobs\ProcessSupplierCatalogExcelJob;
+use App\Jobs\SyncSupplierCatalogImagesJob;
 use App\Services\BikeproductsCatalogService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -30,6 +31,7 @@ class BikeproductsCatalogController extends Controller
             'settings' => ['required', 'array'],
             'settings.yml_url' => ['nullable', 'url', 'max:1000'],
             'settings.feed_type' => ['nullable', 'in:auto,xml,yml'],
+            'settings.image_base_url' => ['nullable', 'url', 'max:1000'],
         ]);
 
         $profile->update([
@@ -115,6 +117,7 @@ class BikeproductsCatalogController extends Controller
             $variationMapping = $mappings->get($sourceField.'|variation');
             $propertyMapping = $mappings->get($sourceField.'|product');
             $goodMapping = $mappings->get($sourceField.'|good');
+            $imageMapping = $mappings->get($sourceField.'|image');
 
             return [
                 'source_field' => $sourceField,
@@ -122,6 +125,7 @@ class BikeproductsCatalogController extends Controller
                 'variation_mapping' => $this->mappingPayload($variationMapping),
                 'property_mapping' => $this->mappingPayload($propertyMapping),
                 'good_mapping' => $this->mappingPayload($goodMapping),
+                'image_mapping' => $this->mappingPayload($imageMapping),
             ];
         })->sortByDesc('nonempty_count')->values();
 
@@ -160,7 +164,7 @@ class BikeproductsCatalogController extends Controller
         $data = $request->validate([
             'snapshot_id' => ['required', 'integer', 'exists:supplier_catalog_snapshots,id'],
             'source_field' => ['required', 'string', 'max:120'],
-            'scope' => ['required', 'in:variation,product,good'],
+            'scope' => ['required', 'in:variation,product,good,image'],
             'variation_attribute_id' => ['nullable', 'integer', 'exists:shop_variation_attributes,id'],
             'property_id' => ['nullable', 'integer', 'exists:shop_properties,id'],
             'display_field' => ['nullable', 'string', 'max:120'],
@@ -218,6 +222,19 @@ class BikeproductsCatalogController extends Controller
         ]);
     }
 
+    public function applyVariationAction(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
+    {
+        if ($response = $this->notReadyResponse($snapshot)) {
+            return $response;
+        }
+        $data = $request->validate([
+            'action' => ['required', 'in:delete,zero_stocks,repair_axes'],
+            'variation_ids' => ['required', 'array', 'min:1', 'max:1000'],
+            'variation_ids.*' => ['integer', 'distinct'],
+        ]);
+        return response()->json(['success' => true, 'data' => $this->catalog->applyVariationAction($snapshot, $data['action'], $data['variation_ids'])]);
+    }
+
     public function imageAudit(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
     {
         if ($response = $this->notReadyResponse($snapshot)) {
@@ -256,9 +273,45 @@ class BikeproductsCatalogController extends Controller
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:10', 'max:200'],
             'search' => ['nullable', 'string', 'max:120'],
+            'statuses' => ['nullable', 'array', 'max:4'],
+            'statuses.*' => ['string', 'in:match,attention,not_found,missing_in_file'],
         ]);
 
-        return response()->json(['success' => true, 'data' => $this->catalog->goodAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, null, $data['search'] ?? null)]);
+        return response()->json(['success' => true, 'data' => $this->catalog->goodAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, null, $data['search'] ?? null, $data['statuses'] ?? [])]);
+    }
+
+    public function applyGoodAction(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
+    {
+        if ($response = $this->notReadyResponse($snapshot)) {
+            return $response;
+        }
+        $data = $request->validate([
+            'action' => ['required', 'in:create,delete'],
+            'ids' => ['required', 'array', 'min:1', 'max:1000'],
+            'ids.*' => ['integer', 'distinct'],
+        ]);
+
+        return response()->json(['success' => true, 'data' => $this->catalog->applyGoodAction($snapshot, $data['action'], $data['ids'])]);
+    }
+
+    public function applyMappedUpdate(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
+    {
+        if ($response = $this->notReadyResponse($snapshot)) {
+            return $response;
+        }
+        $data = $request->validate([
+            'scope' => ['required', 'in:goods,prices,properties,images'],
+            'item_ids' => ['required', 'array', 'min:1', 'max:1000'],
+            'item_ids.*' => ['integer', 'distinct'],
+        ]);
+
+        $result = $this->catalog->applyMappedUpdate($snapshot, $data['scope'], $data['item_ids']);
+        if ($data['scope'] === 'images' && $result['affected'] > 0) {
+            SyncSupplierCatalogImagesJob::dispatch($snapshot->id, $data['item_ids']);
+            $result['message'] .= '. Скачивание файлов запущено в очереди';
+        }
+
+        return response()->json(['success' => true, 'data' => $result]);
     }
 
     public function priceStockAudit(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse

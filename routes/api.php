@@ -2047,8 +2047,11 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::get('/snapshots/{snapshot}/overview', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'overview']);
                     Route::get('/snapshots/{snapshot}/fields', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'fields']);
                     Route::get('/snapshots/{snapshot}/variation-audit', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'variationAudit']);
+                    Route::post('/snapshots/{snapshot}/variation-actions', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'applyVariationAction']);
                     Route::get('/snapshots/{snapshot}/property-audit', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'propertyAudit']);
                     Route::get('/snapshots/{snapshot}/good-audit', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'goodAudit']);
+                    Route::post('/snapshots/{snapshot}/good-actions', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'applyGoodAction']);
+                    Route::post('/snapshots/{snapshot}/mapped-updates', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'applyMappedUpdate']);
                     Route::get('/snapshots/{snapshot}/price-stock-audit', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'priceStockAudit']);
                     Route::get('/snapshots/{snapshot}/image-audit', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'imageAudit']);
                     Route::post('/field-mappings', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'upsertFieldMapping']);
