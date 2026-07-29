@@ -579,6 +579,8 @@ class BikeproductsCatalogService
             if ($databaseSkus->contains($source->external_sku)) continue;
             $hasDatabaseProduct = $sourceDirectGoods->has($source->external_sku);
             $databaseProduct = $sourceDirectGoods->get($source->external_sku);
+            $status = $hasDatabaseProduct ? 'source_variation_missing' : 'source_good_missing';
+            $comparisons = $this->sourceOnlyVariationComparisons($source, $mappings, $snapshot->supplier_code, $status);
             $rows->push([
                 'item_id' => $source->id,
                 'external_sku' => $source->external_sku,
@@ -589,9 +591,9 @@ class BikeproductsCatalogService
                 'database_good_id' => $databaseProduct?->id,
                 'database_name' => $databaseProduct?->name,
                 'database_slug' => $databaseProduct?->slug,
-                'comparisons' => [['status' => $hasDatabaseProduct ? 'source_variation_missing' : 'source_good_missing', 'attribute' => 'SKU вариации', 'source_value' => $source->external_sku, 'database_values' => []]],
-                'differences' => [['status' => $hasDatabaseProduct ? 'source_variation_missing' : 'source_good_missing', 'attribute' => 'SKU вариации', 'source_value' => $source->external_sku, 'database_values' => []]],
-                'status' => $hasDatabaseProduct ? 'source_variation_missing' : 'source_good_missing',
+                'comparisons' => $comparisons,
+                'differences' => $comparisons,
+                'status' => $status,
                 'source_exists' => true,
             ]);
         }
@@ -1066,6 +1068,28 @@ class BikeproductsCatalogService
         return $comparisons;
     }
 
+    /** @param Collection<int, SupplierCatalogFieldMapping> $mappings @return array<int, array<string, mixed>> */
+    private function sourceOnlyVariationComparisons(SupplierCatalogItem $source, Collection $mappings, string $supplierCode, string $status): array
+    {
+        $axes = $this->sourceAxesForItem($source, $mappings, $supplierCode);
+        if ($axes === []) {
+            return [[
+                'status' => $status,
+                'attribute' => 'Вариации',
+                'source_value' => 'В файле нет значений вариации',
+                'database_values' => [],
+            ]];
+        }
+
+        return array_map(static fn (array $axis) => [
+            'status' => $status,
+            'attribute' => $axis['attribute_name'] ?? $axis['source_field'],
+            'source_field' => $axis['source_field'] ?? null,
+            'source_value' => $axis['value'] ?? null,
+            'database_values' => [],
+        ], $axes);
+    }
+
     /** @param array<string, mixed> $payload @return array<int, array<string, mixed>> */
     private function bikeproductsNameAxes(array $payload, string $supplierCode): array
     {
@@ -1104,13 +1128,18 @@ class BikeproductsCatalogService
 
         // Последний вложенный блок — SKU. Год (третья часть) намеренно не используем.
         $contents = trim(preg_replace('/\s*\([^()]*\)\s*$/u', '', $contents) ?? $contents);
-        $parts = array_values(array_filter(array_map('trim', explode(',', $contents)), static fn (string $part) => $part !== ''));
+        // Позиции нельзя сжимать: в "(Black, , 2026 ...)" пустой второй
+        // элемент означает отсутствие размера, а не то, что год стал размером.
+        $parts = array_map('trim', explode(',', $contents));
         if (count($parts) < 2) {
             return $normalized;
         }
 
-        $normalized['color'] = $parts[0];
-        $normalized['size'] = $parts[1];
+        $normalized['color'] = $this->nullableString($parts[0]);
+        $normalized['size'] = $this->nullableString($parts[1]);
+        if ($normalized['color'] === null || $normalized['size'] === null) {
+            return $normalized;
+        }
         $normalized['is_variation'] = true;
 
         return $normalized;
@@ -1142,11 +1171,19 @@ class BikeproductsCatalogService
     private function sourceAxesForItem(SupplierCatalogItem $item, Collection $mappings, string $supplierCode): array
     {
         if ($supplierCode === 'bikeproducts') {
+            $parsed = $this->normalizeSourceVariation($item->raw_payload ?? [], $supplierCode, $item->external_sku);
+            if (! $parsed['is_variation']) {
+                return [];
+            }
             $color = $this->nullableString($item->source_color);
             $size = $this->nullableString($item->source_size);
-            if ($color !== null && $size !== null) {
+            if ($color === $parsed['color'] && $size === $parsed['size']) {
                 return $this->namedVariationAxes($color, $size, $this->standardVariationAttributeIds());
             }
+
+            // Снимок мог быть создан прежним алгоритмом, который сдвигал
+            // значения после пустой позиции. Используем корректный разбор NAME.
+            return $this->namedVariationAxes($parsed['color'], $parsed['size'], $this->standardVariationAttributeIds());
         }
 
         return $this->resolveSourceAxes($item->raw_payload ?? [], $mappings, $supplierCode);
@@ -1154,13 +1191,11 @@ class BikeproductsCatalogService
 
     private function isSourceVariationItem(SupplierCatalogItem $item): bool
     {
-        if ($item->is_source_variation) {
-            return true;
+        if (! empty($item->raw_payload['NAME'])) {
+            return $this->normalizeSourceVariation($item->raw_payload, 'bikeproducts', $item->external_sku)['is_variation'];
         }
 
-        // Снимки, созданные до добавления нормализованных колонок, остаются пригодными для анализа.
-        $normalized = $this->normalizeSourceVariation($item->raw_payload ?? [], 'bikeproducts', $item->external_sku);
-        return $normalized['is_variation'];
+        return (bool) $item->is_source_variation;
     }
 
     /** @return array<string, int> */
