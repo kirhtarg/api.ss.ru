@@ -11,7 +11,7 @@ class SupplierCatalogItem extends Model
     use HasFactory;
 
     protected $fillable = [
-        'snapshot_id', 'external_sku', 'external_group_key', 'name', 'clean_name', 'source_color', 'source_size', 'is_source_variation', 'brand',
+        'snapshot_id', 'external_sku', 'external_group_key', 'name', 'clean_name', 'source_color', 'source_size', 'source_year', 'is_source_variation', 'brand',
         'section', 'sub_section', 'price', 'opt_price', 'quantity', 'in_stock',
         'source_axes', 'image_urls', 'raw_payload',
     ];

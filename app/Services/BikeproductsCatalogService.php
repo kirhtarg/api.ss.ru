@@ -235,6 +235,7 @@ class BikeproductsCatalogService
                 'clean_name' => $normalizedVariation['clean_name'],
                 'source_color' => $normalizedVariation['color'],
                 'source_size' => $normalizedVariation['size'],
+                'source_year' => $normalizedVariation['year'],
                 'is_source_variation' => $normalizedVariation['is_variation'],
                 'brand' => $this->nullableString($payload[self::SOURCE_COLUMNS['brand']] ?? null),
                 'section' => $this->nullableString($payload[self::SOURCE_COLUMNS['section']] ?? null),
@@ -506,22 +507,31 @@ class BikeproductsCatalogService
         $this->ensureDefaultMappings($snapshot->supplier_code);
         $mappings = $this->getMappings($snapshot->supplier_code);
         $sourceItems = $this->sourceVariationItems($snapshot)->keyBy('external_sku');
+        $sourceSingleItems = $this->sourceSingleItems($snapshot)->keyBy('external_sku');
         $supplierNames = $this->supplierNames($snapshot->supplier_code);
         $databaseVariations = ShopGoodVariation::query()
             ->whereIn('supplier', $supplierNames)
             ->whereNotNull('sku')
             ->where('sku', '!=', '')
-            ->with(['good:id,name,slug', 'attributeValues.attribute'])
+            ->with(['good:id,name,slug,sku', 'attributeValues.attribute'])
             ->get();
+        $variationCountByGood = $databaseVariations->countBy('good_id');
         $databaseSkus = $databaseVariations->pluck('sku')->filter()->values();
         $sourceDirectGoods = ShopGood::query()
             ->whereIn('supplier', $supplierNames)
             ->whereIn('sku', $sourceItems->keys())
             ->get(['id', 'sku'])
             ->keyBy('sku');
-        $rows = $databaseVariations->map(function (ShopGoodVariation $variation) use ($sourceItems, $mappings, $snapshot) {
+        $rows = $databaseVariations->map(function (ShopGoodVariation $variation) use ($sourceItems, $sourceSingleItems, $variationCountByGood, $mappings, $snapshot) {
             $source = $sourceItems->get($variation->sku);
-            $comparisons = $this->variationComparisons($variation, $source, $mappings, $snapshot->supplier_code);
+            $isSingleProductSource = false;
+            if ($source === null && $variationCountByGood->get($variation->good_id) === 1) {
+                $source = $sourceSingleItems->get($variation->good?->sku) ?? $sourceSingleItems->get($variation->sku);
+                $isSingleProductSource = $source !== null;
+            }
+            $comparisons = $isSingleProductSource
+                ? $this->singleProductVariationComparisons($variation, $source, $snapshot->supplier_code)
+                : $this->variationComparisons($variation, $source, $mappings, $snapshot->supplier_code);
             $status = $source ? (collect($comparisons)->contains(fn (array $item) => ! in_array($item['status'], ['match', 'not_checked'], true)) ? 'attention' : 'match') : 'delete_candidate_variation';
 
             return [
@@ -529,6 +539,7 @@ class BikeproductsCatalogService
                 'external_sku' => $variation->sku,
                 'source_group_name' => $source ? ($source->clean_name ?: $this->sourceGroupName($source->name, $source->external_sku)) : null,
                 'source_name' => $source?->name,
+                'source_kind' => $isSingleProductSource ? 'single_product' : ($source ? 'variation' : null),
                 'database_match_type' => 'variation',
                 'database_variation_id' => $variation->id,
                 'database_good_id' => $variation->good_id,
@@ -941,6 +952,15 @@ class BikeproductsCatalogService
             ->values();
     }
 
+    /** @return Collection<int, SupplierCatalogItem> */
+    private function sourceSingleItems(SupplierCatalogSnapshot $snapshot): Collection
+    {
+        return $snapshot->items()
+            ->get(['id', 'name', 'clean_name', 'source_year', 'is_source_variation', 'external_sku', 'raw_payload'])
+            ->filter(fn (SupplierCatalogItem $item) => ! $this->isSourceVariationItem($item))
+            ->values();
+    }
+
     /** @param Collection<int, SupplierCatalogFieldMapping> $mappings @return array<int, array<string, mixed>> */
     private function variationComparisons(ShopGoodVariation $variation, ?SupplierCatalogItem $source, Collection $mappings, string $supplierCode): array
     {
@@ -975,6 +995,48 @@ class BikeproductsCatalogService
         return $comparisons;
     }
 
+    /** @return array<int, array<string, mixed>> */
+    private function singleProductVariationComparisons(ShopGoodVariation $variation, SupplierCatalogItem $source, string $supplierCode): array
+    {
+        $attributes = $this->standardVariationAttributeIds();
+        $yearAttributeId = $attributes['Год'] ?? null;
+        if ($supplierCode !== 'bikeproducts' || $yearAttributeId === null) {
+            return $this->variationComparisons($variation, $source, collect(), $supplierCode);
+        }
+
+        $sourceYear = $this->nullableString($source->source_year)
+            ?? $this->nullableString($source->raw_payload['MODELNYY_GOD'] ?? null)
+            ?? (string) now()->year;
+        $databaseAxes = $variation->attributeValues->groupBy('attribute_id')
+            ->map(fn (Collection $values) => $values->pluck('value')->values()->all());
+        $databaseYear = $databaseAxes->get($yearAttributeId, []);
+        $yearMatches = collect($databaseYear)->contains(fn (string $value) => $this->normalizeComparisonValue($value) === $this->normalizeComparisonValue($sourceYear));
+        $comparisons = [[
+            'status' => $databaseYear === [] ? 'missing_in_database' : ($yearMatches ? 'match' : 'different'),
+            'attribute' => 'Год',
+            'source_field' => 'MODELNYY_GOD',
+            'source_value' => $sourceYear,
+            'database_values' => $databaseYear,
+        ]];
+
+        foreach ($databaseAxes as $attributeId => $values) {
+            if ((int) $attributeId === (int) $yearAttributeId) {
+                continue;
+            }
+            $attributeName = $variation->attributeValues->firstWhere('attribute_id', $attributeId)?->attribute?->name ?? 'Неизвестная ось';
+            $comparisons[] = [
+                'status' => 'only_in_database',
+                'attribute' => $attributeName,
+                'source_field' => null,
+                'source_value' => null,
+                'database_values' => $values,
+                'message' => 'У одиночной вариации базы есть ось, которой нет у товара в файле.',
+            ];
+        }
+
+        return $comparisons;
+    }
+
     /** @param array<string, mixed> $payload @return array<int, array<string, mixed>> */
     private function bikeproductsNameAxes(array $payload, string $supplierCode): array
     {
@@ -987,7 +1049,7 @@ class BikeproductsCatalogService
         return $this->namedVariationAxes($normalized['color'], $normalized['size'], $attributes);
     }
 
-    /** @return array{clean_name: ?string, color: ?string, size: ?string, is_variation: bool} */
+    /** @return array{clean_name: ?string, color: ?string, size: ?string, year: ?string, is_variation: bool} */
     private function normalizeSourceVariation(array $payload, string $supplierCode, ?string $fallbackSku = null): array
     {
         $name = $this->nullableString($payload[self::SOURCE_COLUMNS['name']] ?? null);
@@ -995,11 +1057,16 @@ class BikeproductsCatalogService
             'clean_name' => $this->sourceGroupName($name, $fallbackSku),
             'color' => null,
             'size' => null,
+            'year' => null,
             'is_variation' => false,
         ];
         if ($supplierCode !== 'bikeproducts') {
             return $normalized;
         }
+
+        // Год нужен для товаров, которые в файле не имеют цвета/размера,
+        // но в нашей базе оформлены единственной технической вариацией.
+        $normalized['year'] = $this->nullableString($payload['MODELNYY_GOD'] ?? null) ?? (string) now()->year;
 
         $contents = $this->trailingParenthesesContents($name);
         if ($contents === null) {
@@ -1072,7 +1139,7 @@ class BikeproductsCatalogService
     {
         if ($this->variationAttributeIds === []) {
             $this->variationAttributeIds = ShopVariationAttribute::query()
-                ->whereIn('name', ['Цвет', 'Размер'])
+                ->whereIn('name', ['Цвет', 'Размер', 'Год'])
                 ->pluck('id', 'name')
                 ->map(static fn ($id) => (int) $id)
                 ->all();
