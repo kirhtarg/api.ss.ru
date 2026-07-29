@@ -214,13 +214,14 @@ class BikeproductsCatalogController extends Controller
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:10', 'max:200'],
             'search' => ['nullable', 'string', 'max:120'],
+            'variation_count' => ['nullable', 'in:all,single,multiple'],
             'filters' => ['nullable', 'array', 'max:10'],
-            'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_sku_other_supplier'],
+            'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_variation_sku_mismatch,source_sku_other_supplier'],
         ]);
 
         return response()->json([
             'success' => true,
-            'data' => $this->catalog->variationAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, $data['search'] ?? null, $data['filters'] ?? []),
+            'data' => $this->catalog->variationAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, $data['search'] ?? null, $data['filters'] ?? [], $data['variation_count'] ?? 'all'),
         ]);
     }
 
@@ -252,13 +253,14 @@ class BikeproductsCatalogController extends Controller
 
         $data = $request->validate([
             'search' => ['nullable', 'string', 'max:120'],
+            'variation_count' => ['nullable', 'in:all,single,multiple'],
             'filters' => ['nullable', 'array', 'max:10'],
-            'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_sku_other_supplier'],
+            'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_variation_sku_mismatch,source_sku_other_supplier'],
         ]);
 
         return response()->json([
             'success' => true,
-            'data' => $this->catalog->variationSelection($snapshot, $data['search'] ?? null, $data['filters'] ?? []),
+            'data' => $this->catalog->variationSelection($snapshot, $data['search'] ?? null, $data['filters'] ?? [], $data['variation_count'] ?? 'all'),
         ]);
     }
 
