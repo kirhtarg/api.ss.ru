@@ -102,6 +102,11 @@ class ShopGood extends Model
         });
 
         static::deleting(function ($good) {
+            // Old database dumps may not have the foreign key from variations
+            // to goods. Delete through Eloquent as a second line of defence so
+            // variation events and all dependent records are cleaned as well.
+            $good->variations()->get()->each->delete();
+
             // Keep the variation-attribute pivot clean even if an old restored
             // schema is missing its expected ON DELETE CASCADE constraint.
             DB::table('shop_variation_attributes_values')

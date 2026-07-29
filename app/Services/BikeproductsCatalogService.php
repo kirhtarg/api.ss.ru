@@ -1392,7 +1392,11 @@ class BikeproductsCatalogService
         $matches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code)
             ->mapWithKeys(fn (array $match, string $sku) => [$this->normalizeSku($sku) => $match]);
         $variations = $matches->where('type', 'variation')->pluck('model');
-        $goods = $matches->map(fn (array $match) => $match['type'] === 'good' ? $match['model'] : $match['model']->good)->unique('id')->values();
+        $goods = $matches
+            ->map(fn (array $match) => $match['type'] === 'good' ? $match['model'] : $match['model']->good)
+            ->filter()
+            ->unique('id')
+            ->values();
         $variationIds = $variations->pluck('id');
         $goodIds = $goods->pluck('id');
         $images = ($variationIds->isEmpty() && $goodIds->isEmpty())
@@ -1448,6 +1452,37 @@ class BikeproductsCatalogService
             }
             $variation = $match['type'] === 'variation' ? $match['model'] : null;
             $good = $variation ? $variation->good : $match['model'];
+            // Some old variation rows can survive after the parent good was
+            // deleted. They are not valid database matches and must not break
+            // the whole audit response with null-property warnings.
+            if (! $good) {
+                $imageComparisons[] = [
+                    'item_id' => $item->id,
+                    'external_sku' => $item->external_sku,
+                    'match_type' => 'orphan_variation',
+                    'variation_id' => $variation?->id,
+                    'good_id' => null,
+                    'group_key' => 'source-'.$item->id,
+                    'expected_count' => $sourceUrls->count(),
+                    'database_count' => 0,
+                    'is_match' => false,
+                    'status' => 'different',
+                    'source_urls' => $sourceUrls->all(),
+                    'database_paths' => [],
+                    'image_pairs' => $sourceUrls->map(fn (string $url) => [
+                        'source_url' => $url,
+                        'source_filename' => $this->sourceImageFileName($url),
+                        'database_path' => null,
+                        'database_filename' => null,
+                        'is_match' => false,
+                    ])->all(),
+                    'database_only_paths' => [],
+                    'good_name' => $item->name ?: 'Товар из файла с битой связью вариации',
+                    'good_slug' => null,
+                    'source_only' => true,
+                ];
+                continue;
+            }
             $databasePaths = ($variation
                 ? ($imagesByVariation->get($variation->id) ?? collect())
                 : ($imagesByGood->get($good->id) ?? collect()))
@@ -1591,7 +1626,11 @@ class BikeproductsCatalogService
             ->where('is_check_enabled', true)
             ->with('property:id,name')
             ->get();
-        $matchedGoodIds = $skuMatches->map(fn (array $match) => $match['type'] === 'good' ? $match['model']->id : $match['model']->good_id)->unique()->values();
+        $matchedGoodIds = $skuMatches
+            ->map(fn (array $match) => $match['type'] === 'good' ? $match['model']->id : $match['model']->good?->id)
+            ->filter()
+            ->unique()
+            ->values();
         // Characteristics compare only a source line that is matched to a
         // database good. Empty property values still produce a row below.
         $goodIds = $matchedGoodIds;
@@ -1616,7 +1655,11 @@ class BikeproductsCatalogService
                 continue;
             }
 
-            $goodId = $match['type'] === 'good' ? $match['model']->id : $match['model']->good_id;
+            $good = $match['type'] === 'good' ? $match['model'] : $match['model']->good;
+            if (! $good) {
+                continue;
+            }
+            $goodId = $good->id;
             $differences = [];
             foreach ($mappings as $mapping) {
                 $rawValue = $this->nullableString($item->raw_payload[$mapping->source_field] ?? null);
@@ -1649,8 +1692,8 @@ class BikeproductsCatalogService
                 'source_name' => $item->name,
                 'source_name_missing' => $this->nullableString($item->name) === null,
                 'database_good_id' => $goodId,
-                'database_name' => $match['type'] === 'good' ? $match['model']->name : $match['model']->good->name,
-                'database_slug' => $match['type'] === 'good' ? $match['model']->slug : $match['model']->good->slug,
+                'database_name' => $good->name,
+                'database_slug' => $good->slug,
                 'has_source_properties' => $hasSourceProperties,
                 'has_database_properties' => $hasDatabaseProperties,
                 'differences' => $differences,
