@@ -446,7 +446,13 @@ class BikeproductsCatalogService
         $databaseAxisValues = [];
         $supplierNames = $this->supplierNames($snapshot->supplier_code);
         $catalogVariations = ShopGoodVariation::query()
-            ->whereIn('supplier', $supplierNames)
+            ->where(function ($query) use ($supplierNames) {
+                $query->whereIn('supplier', $supplierNames)
+                    ->orWhere(function ($query) use ($supplierNames) {
+                        $query->where(fn ($supplier) => $supplier->whereNull('supplier')->orWhere('supplier', ''))
+                            ->whereHas('good', fn ($good) => $good->whereIn('supplier', $supplierNames));
+                    });
+            })
             ->with('attributeValues.attribute')
             ->get(['id', 'good_id']);
         foreach ($catalogVariations as $variation) {
@@ -510,7 +516,13 @@ class BikeproductsCatalogService
         $sourceSingleItems = $this->sourceSingleItems($snapshot)->keyBy('external_sku');
         $supplierNames = $this->supplierNames($snapshot->supplier_code);
         $databaseVariations = ShopGoodVariation::query()
-            ->whereIn('supplier', $supplierNames)
+            ->where(function ($query) use ($supplierNames) {
+                $query->whereIn('supplier', $supplierNames)
+                    ->orWhere(function ($query) use ($supplierNames) {
+                        $query->where(fn ($supplier) => $supplier->whereNull('supplier')->orWhere('supplier', ''))
+                            ->whereHas('good', fn ($good) => $good->whereIn('supplier', $supplierNames));
+                    });
+            })
             ->whereNotNull('sku')
             ->where('sku', '!=', '')
             ->with(['good:id,name,slug,sku', 'attributeValues.attribute'])
@@ -1236,7 +1248,13 @@ class BikeproductsCatalogService
             ->whereIn('sku', $skus->filter()->unique()->values());
         $supplierNames = $this->supplierNames($supplierCode);
         if ($supplierNames !== []) {
-            $query->whereIn('supplier', $supplierNames);
+            $query->where(function ($query) use ($supplierNames) {
+                $query->whereIn('supplier', $supplierNames)
+                    ->orWhere(function ($query) use ($supplierNames) {
+                        $query->where(fn ($supplier) => $supplier->whereNull('supplier')->orWhere('supplier', ''))
+                            ->whereHas('good', fn ($good) => $good->whereIn('supplier', $supplierNames));
+                    });
+            });
         } else {
             // Неизвестный код не должен случайно анализировать вариации другого поставщика.
             $query->whereRaw('1 = 0');
