@@ -532,7 +532,7 @@ class BikeproductsCatalogService
         $sourceDirectGoods = ShopGood::query()
             ->whereIn('supplier', $supplierNames)
             ->whereIn('sku', $sourceItems->keys())
-            ->get(['id', 'sku'])
+            ->get(['id', 'sku', 'name', 'slug'])
             ->keyBy('sku');
         $rows = $databaseVariations->map(function (ShopGoodVariation $variation) use ($sourceItems, $sourceSingleItems, $variationCountByGood, $mappings, $snapshot) {
             $source = $sourceItems->get($variation->sku);
@@ -544,7 +544,8 @@ class BikeproductsCatalogService
             $comparisons = $isSingleProductSource
                 ? $this->singleProductVariationComparisons($variation, $source, $snapshot->supplier_code)
                 : $this->variationComparisons($variation, $source, $mappings, $snapshot->supplier_code);
-            $status = $source ? (collect($comparisons)->contains(fn (array $item) => ! in_array($item['status'], ['match', 'not_checked'], true)) ? 'attention' : 'match') : 'delete_candidate_variation';
+            $hasDifferences = collect($comparisons)->contains(fn (array $item) => ! in_array($item['status'], ['match', 'not_checked'], true));
+            $status = ! $source ? 'delete_candidate_variation' : ($hasDifferences ? ($variationCountByGood->get($variation->good_id) === 1 ? 'attention_single_variation' : 'attention') : 'match');
 
             return [
                 'item_id' => $source?->id ?? 'db-'.$variation->id,
@@ -577,6 +578,7 @@ class BikeproductsCatalogService
         foreach ($sourceItems as $source) {
             if ($databaseSkus->contains($source->external_sku)) continue;
             $hasDatabaseProduct = $sourceDirectGoods->has($source->external_sku);
+            $databaseProduct = $sourceDirectGoods->get($source->external_sku);
             $rows->push([
                 'item_id' => $source->id,
                 'external_sku' => $source->external_sku,
@@ -584,9 +586,9 @@ class BikeproductsCatalogService
                 'source_name' => $source->name,
                 'database_match_type' => null,
                 'database_variation_id' => null,
-                'database_good_id' => null,
-                'database_name' => null,
-                'database_slug' => null,
+                'database_good_id' => $databaseProduct?->id,
+                'database_name' => $databaseProduct?->name,
+                'database_slug' => $databaseProduct?->slug,
                 'comparisons' => [['status' => $hasDatabaseProduct ? 'source_variation_missing' : 'source_good_missing', 'attribute' => 'SKU вариации', 'source_value' => $source->external_sku, 'database_values' => []]],
                 'differences' => [['status' => $hasDatabaseProduct ? 'source_variation_missing' : 'source_good_missing', 'attribute' => 'SKU вариации', 'source_value' => $source->external_sku, 'database_values' => []]],
                 'status' => $hasDatabaseProduct ? 'source_variation_missing' : 'source_good_missing',
@@ -602,13 +604,22 @@ class BikeproductsCatalogService
         $filters = array_values(array_intersect($filters, [
             'match',
             'attention',
+            'attention_single_variation',
             'delete_candidate_good',
             'delete_candidate_variation',
             'source_good_missing',
             'source_variation_missing',
         ]));
         if ($filters !== []) {
-            $rows = $rows->whereIn('status', $filters)->values();
+            $matchedRows = $rows->whereIn('status', $filters);
+            $expandGoodIds = $matchedRows
+                ->whereIn('status', ['delete_candidate_variation', 'source_variation_missing'])
+                ->pluck('database_good_id')
+                ->filter()
+                ->unique();
+            $rows = $rows
+                ->filter(fn (array $row) => in_array($row['status'], $filters, true) || $expandGoodIds->contains($row['database_good_id']))
+                ->values();
         }
         // Пагинируем товарами, а не отдельными SKU: все вариации одного товара
         // всегда остаются на одной странице для наглядной сверки.
@@ -618,14 +629,20 @@ class BikeproductsCatalogService
         $total = $groups->count();
         $pageRows = $groups->forPage($page, $perPage)->flatten(1)->values();
 
+        $countGroups = fn (Collection $items): int => $items->groupBy(fn (array $row) => $row['database_good_id'] ? 'good-'.$row['database_good_id'] : 'source-'.($row['source_group_name'] ?: $row['external_sku']))->count();
+
         return [
             'data' => $pageRows,
             'stats' => [
                 'database_goods_with_variations' => $databaseVariations->pluck('good_id')->unique()->count(),
                 'delete_candidate_goods' => $allRows->where('status', 'delete_candidate_good')->pluck('database_good_id')->unique()->count(),
                 'delete_candidate_variations' => $allRows->where('status', 'delete_candidate_variation')->count(),
-                'source_good_missing' => $allRows->where('status', 'source_good_missing')->count(),
-                'source_variation_missing' => $allRows->where('status', 'source_variation_missing')->count(),
+                'delete_candidate_variation_goods' => $countGroups($allRows->where('status', 'delete_candidate_variation')),
+                'source_good_missing' => $countGroups($allRows->where('status', 'source_good_missing')),
+                'source_variation_missing' => $countGroups($allRows->where('status', 'source_variation_missing')),
+                'attention_goods' => $countGroups($allRows->where('status', 'attention')),
+                'attention_single_variation_goods' => $countGroups($allRows->where('status', 'attention_single_variation')),
+                'match_goods' => $countGroups($allRows->where('status', 'match')),
             ],
             'meta' => [
                 'current_page' => $page,

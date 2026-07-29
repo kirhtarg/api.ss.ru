@@ -209,7 +209,7 @@ class BikeproductsCatalogController extends Controller
             'per_page' => ['nullable', 'integer', 'min:10', 'max:200'],
             'search' => ['nullable', 'string', 'max:120'],
             'filters' => ['nullable', 'array', 'max:10'],
-            'filters.*' => ['string', 'in:match,attention,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing'],
+            'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing'],
         ]);
 
         return response()->json([
