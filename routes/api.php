@@ -2053,6 +2053,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::get('/snapshots/{snapshot}/property-audit', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'propertyAudit']);
                     Route::get('/snapshots/{snapshot}/property-selection', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'propertySelection']);
                     Route::get('/snapshots/{snapshot}/good-audit', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'goodAudit']);
+                    Route::get('/snapshots/{snapshot}/good-selection', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'goodSelection']);
                     Route::post('/snapshots/{snapshot}/good-actions', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'applyGoodAction']);
                     Route::post('/snapshots/{snapshot}/mapped-updates', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'applyMappedUpdate']);
                     Route::get('/snapshots/{snapshot}/price-stock-audit', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'priceStockAudit']);

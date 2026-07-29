@@ -230,8 +230,8 @@ class BikeproductsCatalogController extends Controller
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:10', 'max:200'],
             'search' => ['nullable', 'string', 'max:120'],
-            'statuses' => ['nullable', 'array', 'max:1'],
-            'statuses.*' => ['string', 'in:attention,match'],
+            'statuses' => ['nullable', 'array', 'max:5'],
+            'statuses.*' => ['string', 'in:attention,match,file_has_properties,file_empty,both_empty,either_has_properties,file_has_database_empty'],
             'variation_count' => ['nullable', 'in:all,single,multiple'],
             'filters' => ['nullable', 'array', 'max:10'],
             'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_variation_sku_mismatch,source_sku_other_supplier'],
@@ -415,6 +415,21 @@ class BikeproductsCatalogController extends Controller
         }
 
         return response()->json(['success' => true, 'data' => $result]);
+    }
+
+    public function goodSelection(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
+    {
+        if ($response = $this->notReadyResponse($snapshot)) {
+            return $response;
+        }
+        $data = $request->validate([
+            'status' => ['required', 'in:attention,not_found,missing_in_file'],
+            'search' => ['nullable', 'string', 'max:120'],
+        ]);
+
+        return response()->json(['success' => true, 'data' => [
+            'ids' => $this->catalog->goodSelection($snapshot, $data['status'], $data['search'] ?? null),
+        ]]);
     }
 
     public function applyMappedUpdate(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse

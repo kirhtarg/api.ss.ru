@@ -1458,18 +1458,11 @@ class BikeproductsCatalogService
                 $coverageMismatches[] = $comparison;
             }
         }
+        // The audit must stay metadata-only. Reading and hashing local files here
+        // blocks the API while hundreds of images are on disk. Images themselves
+        // are loaded only after the user opens the comparison modal.
         $hashGroups = [];
         $scannedPaths = 0;
-        $hashLimit = 1000;
-
-        foreach ($images->pluck('file_path')->filter()->unique()->take($hashLimit) as $path) {
-            $physicalPath = public_path(ltrim($path, '/'));
-            if (! is_file($physicalPath)) {
-                continue;
-            }
-            $scannedPaths++;
-            $hashGroups[hash_file('sha256', $physicalPath)][] = $path;
-        }
 
         $stats = [
             'matched' => count(array_filter($imageComparisons, fn (array $row) => $row['is_match'])),
@@ -1502,7 +1495,7 @@ class BikeproductsCatalogService
                 'database_duplicate_content_groups' => count(array_filter($hashGroups, static fn (array $paths) => count($paths) > 1)),
                 'image_count_mismatches' => count($coverageMismatches),
                 'hashed_files' => $scannedPaths,
-                'hash_scan_limited' => $images->pluck('file_path')->filter()->unique()->count() > $hashLimit,
+                'hash_scan_limited' => false,
                 ...$stats,
             ],
             'source_duplicate_urls' => collect($sourceUrlGroups)
@@ -1555,7 +1548,16 @@ class BikeproductsCatalogService
             ->where('is_check_enabled', true)
             ->with('property:id,name')
             ->get();
-        $goodIds = $skuMatches->map(fn (array $match) => $match['type'] === 'good' ? $match['model']->id : $match['model']->good_id)->unique()->values();
+        $matchedGoodIds = $skuMatches->map(fn (array $match) => $match['type'] === 'good' ? $match['model']->id : $match['model']->good_id)->unique()->values();
+        $databaseGoods = ShopGood::query()
+            ->whereIn('supplier', $this->supplierNames($snapshot->supplier_code))
+            ->when(trim((string) $search) !== '', function ($query) use ($search) {
+                $term = '%'.addcslashes(trim((string) $search), '%_\\').'%';
+                $query->where(fn ($nested) => $nested->where('sku', 'like', $term)->orWhere('name', 'like', $term));
+            })
+            ->get(['id', 'sku', 'name', 'slug'])
+            ->keyBy('id');
+        $goodIds = $matchedGoodIds->merge($databaseGoods->keys())->unique()->values();
         $propertyQuery = DB::table('shop_good_properties as gp')
             ->join('shop_properties as p', 'p.id', '=', 'gp.property_id')
             ->whereIn('gp.good_id', $goodIds);
@@ -1581,20 +1583,20 @@ class BikeproductsCatalogService
             $differences = [];
             foreach ($mappings as $mapping) {
                 $rawValue = $this->nullableString($item->raw_payload[$mapping->source_field] ?? null);
-                if ($rawValue === null) {
-                    continue;
-                }
-                $sourceValue = $mapping->display_field
-                    ? ($this->nullableString($item->raw_payload[$mapping->display_field] ?? null) ?? $rawValue)
-                    : $rawValue;
+                $sourceValue = $rawValue === null
+                    ? null
+                    : ($mapping->display_field
+                        ? ($this->nullableString($item->raw_payload[$mapping->display_field] ?? null) ?? $rawValue)
+                        : $rawValue);
                 $databaseValues = $properties->get($goodId.':'.$mapping->property_id, collect())
-                    ->pluck('value')
-                    ->filter()
-                    ->values()
-                    ->all();
-                $matchesValue = collect($databaseValues)->contains(fn (string $value) => $this->normalizeComparisonValue($value) === $this->normalizeComparisonValue($sourceValue));
+                    ->pluck('value')->filter()->values()->all();
+                $matchesValue = $sourceValue !== null && collect($databaseValues)->contains(
+                    fn (string $value) => $this->normalizeComparisonValue($value) === $this->normalizeComparisonValue($sourceValue),
+                );
                 $differences[] = [
-                    'status' => empty($databaseValues) ? 'missing_in_database' : ($matchesValue ? 'match' : 'different'),
+                    'status' => $sourceValue === null
+                        ? (empty($databaseValues) ? 'empty' : 'missing_in_file')
+                        : (empty($databaseValues) ? 'missing_in_database' : ($matchesValue ? 'match' : 'different')),
                     'property' => $mapping->property?->name,
                     'source_field' => $mapping->source_field,
                     'source_value' => $sourceValue,
@@ -1602,6 +1604,8 @@ class BikeproductsCatalogService
                 ];
             }
 
+            $hasSourceProperties = collect($differences)->contains(fn (array $diff) => $diff['source_value'] !== null);
+            $hasDatabaseProperties = collect($differences)->contains(fn (array $diff) => $diff['database_values'] !== []);
             $rows[] = [
                 'item_id' => $item->id,
                 'external_sku' => $item->external_sku,
@@ -1609,8 +1613,37 @@ class BikeproductsCatalogService
                 'database_good_id' => $goodId,
                 'database_name' => $match['type'] === 'good' ? $match['model']->name : $match['model']->good->name,
                 'database_slug' => $match['type'] === 'good' ? $match['model']->slug : $match['model']->good->slug,
+                'has_source_properties' => $hasSourceProperties,
+                'has_database_properties' => $hasDatabaseProperties,
                 'differences' => $differences,
-                'status' => collect($differences)->contains(fn (array $diff) => $diff['status'] !== 'match') ? 'attention' : 'match',
+                'status' => collect($differences)->contains(fn (array $diff) => ! in_array($diff['status'], ['match', 'empty'], true)) ? 'attention' : 'match',
+            ];
+        }
+
+        $representedGoodIds = collect($rows)->pluck('database_good_id')->unique();
+        foreach ($databaseGoods->whereNotIn('id', $representedGoodIds) as $good) {
+            $differences = $mappings->map(function (SupplierCatalogFieldMapping $mapping) use ($properties, $good): array {
+                $databaseValues = $properties->get($good->id.':'.$mapping->property_id, collect())
+                    ->pluck('value')->filter()->values()->all();
+                return [
+                    'status' => empty($databaseValues) ? 'empty' : 'missing_in_file',
+                    'property' => $mapping->property?->name,
+                    'source_field' => $mapping->source_field,
+                    'source_value' => null,
+                    'database_values' => $databaseValues,
+                ];
+            })->values()->all();
+            $rows[] = [
+                'item_id' => null,
+                'external_sku' => $good->sku,
+                'source_name' => null,
+                'database_good_id' => $good->id,
+                'database_name' => $good->name,
+                'database_slug' => $good->slug,
+                'has_source_properties' => false,
+                'has_database_properties' => collect($differences)->contains(fn (array $diff) => $diff['database_values'] !== []),
+                'differences' => $differences,
+                'status' => 'match',
             ];
         }
 
@@ -1618,9 +1651,25 @@ class BikeproductsCatalogService
             'matched' => count($rows),
             'attention' => count(array_filter($rows, fn (array $row) => $row['status'] === 'attention')),
             'match' => count(array_filter($rows, fn (array $row) => $row['status'] === 'match')),
+            'file_has_properties' => count(array_filter($rows, fn (array $row) => $row['has_source_properties'])),
+            'file_empty' => count(array_filter($rows, fn (array $row) => ! $row['has_source_properties'])),
+            'both_empty' => count(array_filter($rows, fn (array $row) => ! $row['has_source_properties'] && ! $row['has_database_properties'])),
+            'either_has_properties' => count(array_filter($rows, fn (array $row) => $row['has_source_properties'] || $row['has_database_properties'])),
+            'file_has_database_empty' => count(array_filter($rows, fn (array $row) => $row['has_source_properties'] && ! $row['has_database_properties'])),
         ];
         if ($statuses !== []) {
-            $rows = array_values(array_filter($rows, fn (array $row) => in_array($row['status'], $statuses, true)));
+            $rows = array_values(array_filter($rows, function (array $row) use ($statuses): bool {
+                return collect($statuses)->contains(function (string $status) use ($row): bool {
+                    return match ($status) {
+                        'file_has_properties' => $row['has_source_properties'],
+                        'file_empty' => ! $row['has_source_properties'],
+                        'both_empty' => ! $row['has_source_properties'] && ! $row['has_database_properties'],
+                        'either_has_properties' => $row['has_source_properties'] || $row['has_database_properties'],
+                        'file_has_database_empty' => $row['has_source_properties'] && ! $row['has_database_properties'],
+                        default => $row['status'] === $status,
+                    };
+                });
+            }));
         }
         $total = count($rows);
         $page = max(1, $page);
@@ -1661,7 +1710,11 @@ class BikeproductsCatalogService
             ->where('supplier_code', $snapshot->supplier_code)
             ->where('scope', 'good')
             ->where('is_check_enabled', true)
-            ->when($onlyTargets !== null, fn ($query) => $query->whereIn('conditions->target', $onlyTargets))
+            ->when(
+                $onlyTargets !== null,
+                fn ($query) => $query->whereIn('conditions->target', $onlyTargets),
+                fn ($query) => $query->whereIn('conditions->target', ['name', 'short_description', 'description', 'brand']),
+            )
             ->get();
         $expectedTargets = $onlyTargets ?? ['name', 'short_description', 'description', 'brand'];
         $mappedTargets = $mappings->map(fn (SupplierCatalogFieldMapping $mapping) => (string) data_get($mapping->conditions, 'target'))->filter()->unique()->all();
@@ -1674,7 +1727,23 @@ class BikeproductsCatalogService
             $good = $match ? $goods->get($match['type'] === 'good' ? $match['model']->id : $match['model']->good_id) : null;
             $differences = [];
             if (! $good) {
-                $differences[] = ['status' => 'source_sku_not_found', 'field' => null, 'source_value' => null, 'database_values' => []];
+                foreach ($mappings as $mapping) {
+                    $target = (string) data_get($mapping->conditions, 'target');
+                    $sourceValue = $this->nullableString($item->raw_payload[$mapping->source_field] ?? null);
+                    if ($target === '' || $sourceValue === null) {
+                        continue;
+                    }
+                    $differences[] = [
+                        'status' => 'missing_in_database',
+                        'field' => $target,
+                        'source_field' => $mapping->source_field,
+                        'source_value' => $this->applyMappingAdjustment($sourceValue, $mapping->conditions ?? []),
+                        'database_values' => [],
+                    ];
+                }
+                if ($differences === []) {
+                    $differences[] = ['status' => 'source_sku_not_found', 'field' => null, 'source_value' => null, 'database_values' => []];
+                }
             } else {
                 foreach ($mappings as $mapping) {
                     $target = (string) data_get($mapping->conditions, 'target');
@@ -1732,7 +1801,7 @@ class BikeproductsCatalogService
         $supplierNames = $this->supplierNames($snapshot->supplier_code);
         $databaseOnlyGoods = ShopGood::query()
             ->whereIn('supplier', $supplierNames)
-            ->with('variations:id,good_id,sku')
+            ->with(['variations:id,good_id,sku', 'brands:id,name'])
             ->when(trim((string) $search) !== '', function ($query) use ($search) {
                 $term = '%'.addcslashes(trim((string) $search), '%_\\').'%';
                 $query->where(fn ($nested) => $nested->where('sku', 'like', $term)->orWhere('name', 'like', $term));
@@ -1746,6 +1815,17 @@ class BikeproductsCatalogService
                 return $good->variations->every(fn (ShopGoodVariation $variation) => ! in_array((string) $variation->sku, $sourceSkus, true));
             });
         foreach ($databaseOnlyGoods as $good) {
+            $databaseDifferences = collect($expectedTargets)->map(function (string $target) use ($good): array {
+                $values = $target === 'brand'
+                    ? $good->brands->pluck('name')->values()->all()
+                    : [trim((string) ($good->{$target} ?? ''))];
+                return [
+                    'status' => 'missing_in_file',
+                    'field' => $target,
+                    'source_value' => null,
+                    'database_values' => array_values(array_filter($values, static fn ($value) => $value !== '')),
+                ];
+            })->all();
             $rows[] = [
                 'item_id' => null,
                 'external_sku' => $good->sku,
@@ -1756,7 +1836,7 @@ class BikeproductsCatalogService
                 'database_slug' => $good->slug,
                 'database_variation_id' => null,
                 'source_is_variation' => false,
-                'differences' => [['status' => 'missing_in_file', 'field' => null, 'source_value' => null, 'database_values' => []]],
+                'differences' => $databaseDifferences,
                 'status' => 'missing_in_file',
             ];
         }
@@ -1780,7 +1860,18 @@ class BikeproductsCatalogService
         }
         usort($rows, fn (array $left, array $right) => strcmp((string) ($left['source_name'] ?? $left['database_name']), (string) ($right['source_name'] ?? $right['database_name'])));
         $allRows = collect($rows);
-        $countDifferenceRows = fn (array $fields): int => $statsRows->filter(fn (array $row) => collect($row['differences'])->contains(fn (array $difference) => in_array($difference['field'], $fields, true) && ! in_array($difference['status'], ['match', 'not_mapped'], true)))->count();
+        $groupKey = fn (array $row): string => $row['database_good_id']
+            ? 'good-'.$row['database_good_id']
+            : 'source-'.$row['external_sku'];
+        $countDifferenceGroups = function (array $fields) use ($statsRows, $groupKey): int {
+            return $statsRows
+                ->filter(fn (array $row) => collect($row['differences'])->contains(
+                    fn (array $difference) => in_array($difference['field'], $fields, true)
+                        && ! in_array($difference['status'], ['match', 'not_mapped'], true),
+                ))
+                ->groupBy($groupKey)
+                ->count();
+        };
         if ($paginateByGood) {
             $groups = $allRows->groupBy(fn (array $row) => $row['database_good_id'] ? 'good-'.$row['database_good_id'] : 'source-'.$row['external_sku']);
             $total = $groups->count();
@@ -1794,13 +1885,20 @@ class BikeproductsCatalogService
         return [
             'data' => $paginator->items(),
             'stats' => [
-                'price_differences' => $countDifferenceRows($priceFields),
-                'stock_differences' => $countDifferenceRows($stockFields),
-                'goods_with_differences' => $statsRows->filter(fn (array $row) => $row['status'] === 'attention')->pluck('database_good_id')->filter()->unique()->count(),
+                'price_differences' => $countDifferenceGroups($priceFields),
+                'stock_differences' => $countDifferenceGroups($stockFields),
+                'goods_with_differences' => $statsRows
+                    ->filter(fn (array $row) => collect($row['differences'])->contains(
+                        fn (array $difference) => in_array($difference['field'], array_merge($priceFields, $stockFields), true)
+                            && ! in_array($difference['status'], ['match', 'not_mapped'], true),
+                    ))
+                    ->groupBy($groupKey)
+                    ->count(),
                 'attention' => $statsRows->where('status', 'attention')->count(),
                 'not_found' => $statsRows->where('status', 'not_found')->count(),
                 'missing_in_file' => $statsRows->where('status', 'missing_in_file')->count(),
             ],
+            'mapped_targets' => $mappedTargets,
             'meta' => [
                 'current_page' => $paginator->currentPage(),
                 'last_page' => $paginator->lastPage(),
@@ -1825,6 +1923,15 @@ class BikeproductsCatalogService
         );
 
         return collect($audit['data'])->pluck('item_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all();
+    }
+
+    /** @return array<int, int> */
+    public function goodSelection(SupplierCatalogSnapshot $snapshot, string $status, ?string $search = null): array
+    {
+        $audit = $this->goodAudit($snapshot, 1, 100000, null, $search, [$status]);
+        $key = $status === 'missing_in_file' ? 'database_good_id' : 'item_id';
+
+        return collect($audit['data'])->pluck($key)->filter()->map(fn ($id) => (int) $id)->unique()->values()->all();
     }
 
     /** @param array<string, mixed> $conditions */
