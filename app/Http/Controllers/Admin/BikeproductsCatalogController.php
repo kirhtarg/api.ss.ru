@@ -401,14 +401,20 @@ class BikeproductsCatalogController extends Controller
             'ids.*' => ['integer', 'distinct'],
         ]);
 
-        return response()->json(['success' => true, 'data' => $this->runCatalogAction(
+        $result = $this->runCatalogAction(
             $request,
             $snapshot,
             'goods',
             $data['action'],
             $data['ids'],
             fn () => $this->catalog->applyGoodAction($snapshot, $data['action'], $data['ids']),
-        )]);
+        );
+        if ($data['action'] === 'create' && $result['affected'] > 0) {
+            SyncSupplierCatalogImagesJob::dispatch($snapshot->id, $data['ids']);
+            $result['message'] .= '. Скачивание изображений запущено в очереди';
+        }
+
+        return response()->json(['success' => true, 'data' => $result]);
     }
 
     public function applyMappedUpdate(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
