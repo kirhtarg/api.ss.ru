@@ -4724,6 +4724,9 @@ class ShopGoodsController extends Controller
                 'data' => [
                     'path' => $fullPath,
                     'originalUrl' => $imageUrl,
+                    // This hash is calculated before any resize, crop or
+                    // optimization and is safe to persist as source metadata.
+                    'source_content_hash' => hash('sha256', $imageData),
                     'size' => strlen($imageData),
                     'optimized' => $optimize,
                 ],

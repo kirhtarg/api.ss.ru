@@ -32,6 +32,9 @@ class BikeproductsCatalogService
 {
     private const IMAGE_AUDIT_BATCH_SIZE = 5;
 
+    /** @var array{width: int, height: int}|null */
+    private ?array $imageAuditTargetSize = null;
+
     /** @var array<string, int> */
     private array $variationAttributeIds = [];
 
@@ -79,6 +82,7 @@ class BikeproductsCatalogService
                     }
                     $imageQuery->update([
                         'file_path' => '/'.$relativePath,
+                        'source_content_hash' => $contentHash,
                         'content_hash' => $contentHash,
                         'perceptual_hash' => $sourceAudit?->perceptual_hash ?? $this->perceptualImageHash($response->body()),
                         'image_width' => $sourceAudit?->width,
@@ -358,7 +362,7 @@ class BikeproductsCatalogService
             $sourceAudits = $contentAudit['status'] === 'completed'
                 ? SupplierCatalogImageAudit::query()
                     ->where('snapshot_id', $snapshot->id)
-                    ->get(['source_url_hash', 'status'])
+                    ->get(['source_url_hash', 'status', 'content_hash', 'perceptual_hash', 'normalized_crop_hash', 'normalized_white_hash'])
                     ->keyBy('source_url_hash')
                 : collect();
             DB::transaction(function () use ($items, $imageMatches, $imageBaseUrl, $imageSourceFields, $imageMode, $contentAudit, $sourceAudits, &$affected, &$skipped): void {
@@ -373,16 +377,47 @@ class BikeproductsCatalogService
                     // With a completed audit, never erase working images when
                     // every source URL for this variation is broken.
                     if ($imageMode === 'replace' && $allUrls->isNotEmpty() && $urls->isEmpty()) { $skipped++; continue; }
+                    if ($imageMode === 'reconcile' && $contentAudit['status'] !== 'completed') { $skipped++; continue; }
                     if (! $match || ($urls->isEmpty() && $imageMode !== 'replace')) { $skipped++; continue; }
                     $variation = $match['type'] === 'variation' ? $match['model'] : null;
                     $good = $variation ? $variation->good : $match['model'];
                     $query = $variation
                         ? ShopGoodImage::query()->where('variation_id', $variation->id)
                         : ShopGoodImage::query()->where('good_id', $good->id)->whereNull('variation_id');
-                    $existing = $query->pluck('file_path')->all();
+                    $existingImages = $query->orderBy('sort_order')->orderBy('id')->get();
+                    $existing = $existingImages->pluck('file_path')->all();
                     if ($imageMode === 'replace') {
                         $query->delete();
+                        $existingImages = collect();
                         $existing = [];
+                    }
+                    if ($imageMode === 'reconcile') {
+                        // A broken supplier URL is not evidence that the local
+                        // image is obsolete. Keep existing bindings in that case.
+                        $hasUnavailableSource = $allUrls->contains(function (string $url) use ($sourceAudits): bool {
+                            return $sourceAudits->get($this->sourceUrlHash($url))?->status !== 'available';
+                        });
+                        $availableImages = $existingImages->values()->all();
+                        $matchedImageIds = [];
+                        $urlsToAdd = [];
+                        foreach ($urls as $url) {
+                            $sourceAudit = $sourceAudits->get($this->sourceUrlHash($url));
+                            $matchIndex = $this->matchingDatabaseImageIndex($availableImages, $sourceAudit, $url);
+                            if ($matchIndex === false) {
+                                $urlsToAdd[] = $url;
+                                continue;
+                            }
+                            $matchedImageIds[] = $availableImages[$matchIndex]->id;
+                            unset($availableImages[$matchIndex]);
+                        }
+                        if (! $hasUnavailableSource && $availableImages !== []) {
+                            ShopGoodImage::query()->whereIn('id', collect($availableImages)->pluck('id'))->delete();
+                        }
+                        $existing = $existingImages
+                            ->whereIn('id', $matchedImageIds)
+                            ->pluck('file_path')
+                            ->all();
+                        $urls = collect($urlsToAdd)->values();
                     }
                     $nextSort = (int) $query->max('sort_order') + 1;
                     foreach ($urls as $url) {
@@ -398,7 +433,9 @@ class BikeproductsCatalogService
                     $affected++;
                 }
             });
-            return ['affected' => $affected, 'skipped' => $skipped, 'message' => $imageMode === 'replace' ? 'Привязки изображений заменены' : 'Недостающие URL изображений привязаны'];
+            return ['affected' => $affected, 'skipped' => $skipped, 'message' => $imageMode === 'replace'
+                ? 'Привязки изображений заменены'
+                : ($imageMode === 'reconcile' ? 'Лишние привязки удалены, недостающие изображения добавлены' : 'Недостающие URL изображений привязаны')];
         }
 
         throw new \InvalidArgumentException('Неизвестная область обновления.');
@@ -1431,6 +1468,25 @@ class BikeproductsCatalogService
         $this->ensureDefaultMappings($snapshot->supplier_code);
         $existing = $this->imageContentAuditStatus($snapshot);
         if ($existing['total'] > 0) {
+            $needsNormalization = SupplierCatalogImageAudit::query()
+                ->where('snapshot_id', $snapshot->id)
+                ->where('status', 'available')
+                ->where(function ($query): void {
+                    $query->whereNull('normalized_crop_hash')->orWhereNull('normalized_white_hash');
+                })
+                ->exists();
+            if ($needsNormalization) {
+                SupplierCatalogImageAudit::query()
+                    ->where('snapshot_id', $snapshot->id)
+                    ->where('status', 'available')
+                    ->where(function ($query): void {
+                        $query->whereNull('normalized_crop_hash')->orWhereNull('normalized_white_hash');
+                    })
+                    ->update(['status' => 'pending', 'updated_at' => now()]);
+                $this->updateImageAuditSummary($snapshot, 'processing');
+
+                return ['started' => true, ...$this->imageContentAuditStatus($snapshot)];
+            }
             if (($existing['database_pending'] ?? 0) > 0) {
                 $this->updateImageAuditSummary($snapshot, 'processing');
                 return ['started' => true, ...$this->imageContentAuditStatus($snapshot)];
@@ -1604,7 +1660,7 @@ class BikeproductsCatalogService
             ->mapWithKeys(fn (array $match, string $sku) => [$this->normalizeSku($sku) => $match]);
         $sourceAudits = SupplierCatalogImageAudit::query()
             ->where('snapshot_id', $snapshot->id)
-            ->get(['source_url_hash', 'status', 'content_hash', 'perceptual_hash', 'mime_type', 'width', 'height', 'error_message'])
+            ->get(['source_url_hash', 'status', 'content_hash', 'perceptual_hash', 'normalized_crop_hash', 'normalized_white_hash', 'mime_type', 'width', 'height', 'error_message'])
             ->keyBy('source_url_hash');
         $variations = $matches->where('type', 'variation')->pluck('model');
         $goods = $matches
@@ -1621,7 +1677,7 @@ class BikeproductsCatalogService
                     if ($variationIds->isNotEmpty()) $query->whereIn('variation_id', $variationIds);
                     if ($goodIds->isNotEmpty()) $query->orWhereIn('good_id', $goodIds);
                 })
-                ->get(['id', 'good_id', 'variation_id', 'file_path', 'is_main', 'content_hash', 'perceptual_hash', 'image_width', 'image_height']);
+                ->get(['id', 'good_id', 'variation_id', 'file_path', 'is_main', 'source_content_hash', 'content_hash', 'perceptual_hash', 'image_width', 'image_height']);
         $pathGroups = $images->groupBy('file_path')->filter(fn (Collection $group) => $group->count() > 1);
         // Lookups by owner avoid scanning every database image for every row in
         // the source file (6k source rows can otherwise become tens of millions
@@ -1630,6 +1686,7 @@ class BikeproductsCatalogService
         $imagesByGood = $images->whereNull('variation_id')->groupBy('good_id');
         $coverageMismatches = [];
         $imageComparisons = [];
+        $sourceHashBackfill = [];
         $excludedWithoutDatabaseMatch = 0;
         foreach ($items as $item) {
             $match = $matches->get($this->normalizeSku($item->external_sku));
@@ -1663,7 +1720,8 @@ class BikeproductsCatalogService
                 $comparisonType = 'different';
                 $imageIndex = false;
                 if ($sourceStatus === 'available' && $sourceAudit?->content_hash) {
-                    $imageIndex = collect($availableImages)->search(fn (ShopGoodImage $image) => $image->content_hash === $sourceAudit->content_hash);
+                    $imageIndex = collect($availableImages)->search(fn (ShopGoodImage $image) =>
+                        $image->source_content_hash === $sourceAudit->content_hash || $image->content_hash === $sourceAudit->content_hash);
                     if ($imageIndex !== false) {
                         $comparisonType = 'content';
                     }
@@ -1677,6 +1735,24 @@ class BikeproductsCatalogService
                         $comparisonType = 'visual';
                     }
                 }
+                if ($imageIndex === false && $sourceStatus === 'available') {
+                    $imageIndex = collect($availableImages)->search(function (ShopGoodImage $image) use ($sourceAudit): bool {
+                        if (! $this->isImageAtAuditTargetAspect($image)) {
+                            return false;
+                        }
+                        foreach ([$sourceAudit?->normalized_crop_hash, $sourceAudit?->normalized_white_hash] as $hash) {
+                            $distance = $this->perceptualHashDistance($hash, $image->perceptual_hash);
+                            if ($distance !== null && $distance <= 6) {
+                                return true;
+                            }
+                        }
+
+                        return false;
+                    });
+                    if ($imageIndex !== false) {
+                        $comparisonType = 'normalized';
+                    }
+                }
                 if ($imageIndex === false && ($sourceStatus === 'not_audited' || collect($availableImages)->contains(fn (ShopGoodImage $image) => $image->content_hash === null))) {
                     $imageIndex = collect($availableImages)->search(fn (ShopGoodImage $image) => $this->sourceImageMatchesDatabasePath($sourceUrl, $image->file_path));
                     if ($imageIndex !== false) {
@@ -1684,6 +1760,11 @@ class BikeproductsCatalogService
                     }
                 }
                 $databaseImage = $imageIndex === false ? null : $availableImages[$imageIndex];
+                if ($databaseImage && $sourceAudit?->content_hash
+                    && in_array($comparisonType, ['content', 'visual', 'normalized'], true)
+                    && $databaseImage->source_content_hash !== $sourceAudit->content_hash) {
+                    $sourceHashBackfill[$databaseImage->id] = $sourceAudit->content_hash;
+                }
                 if ($imageIndex !== false) unset($availableImages[$imageIndex]);
                 $imagePairs[] = [
                     'source_url' => $sourceUrl,
@@ -1700,6 +1781,7 @@ class BikeproductsCatalogService
             $expectedCount = $sourceUrls->count();
             $actualCount = count($databasePaths);
             $isMatch = $expectedCount === $actualCount && collect($imagePairs)->every('is_match');
+            $matchSummary = collect($imagePairs)->countBy('comparison_type')->all();
             $comparison = [
                 'item_id' => $item->id,
                 'external_sku' => $item->external_sku,
@@ -1714,6 +1796,7 @@ class BikeproductsCatalogService
                 'source_urls' => $sourceUrls->all(),
                 'database_paths' => $databasePaths,
                 'image_pairs' => $imagePairs,
+                'match_summary' => $matchSummary,
                 'database_only_paths' => collect($availableImages)->pluck('file_path')->values()->all(),
                 'good_name' => $good->name,
                 'good_slug' => $good->slug,
@@ -1722,6 +1805,13 @@ class BikeproductsCatalogService
             if (! $comparison['is_match']) {
                 $coverageMismatches[] = $comparison;
             }
+        }
+        if ($sourceHashBackfill !== []) {
+            DB::table('shop_good_images')->upsert(
+                collect($sourceHashBackfill)->map(fn (string $hash, int $id) => ['id' => $id, 'source_content_hash' => $hash])->values()->all(),
+                ['id'],
+                ['source_content_hash'],
+            );
         }
         // The audit must stay metadata-only. Reading and hashing local files here
         // blocks the API while hundreds of images are on disk. Images themselves
@@ -1735,11 +1825,25 @@ class BikeproductsCatalogService
             'filename_matches' => collect($imageComparisons)->flatMap(fn (array $row) => $row['image_pairs'])->where('comparison_type', 'filename')->count(),
             'content_matches' => collect($imageComparisons)->flatMap(fn (array $row) => $row['image_pairs'])->where('comparison_type', 'content')->count(),
             'visual_matches' => collect($imageComparisons)->flatMap(fn (array $row) => $row['image_pairs'])->where('comparison_type', 'visual')->count(),
+            'normalized_matches' => collect($imageComparisons)->flatMap(fn (array $row) => $row['image_pairs'])->where('comparison_type', 'normalized')->count(),
             'broken_source_urls' => collect($imageComparisons)->flatMap(fn (array $row) => $row['image_pairs'])->where('source_status', 'broken')->count(),
             'unchecked_source_urls' => collect($imageComparisons)->flatMap(fn (array $row) => $row['image_pairs'])->where('source_status', 'not_audited')->count(),
         ];
         if ($statuses !== []) {
-            $imageComparisons = array_values(array_filter($imageComparisons, fn (array $row) => in_array($row['status'], $statuses, true)));
+            $imageComparisons = array_values(array_filter($imageComparisons, function (array $row) use ($statuses): bool {
+                return collect($statuses)->contains(function (string $status) use ($row): bool {
+                    if (in_array($status, ['match', 'different'], true)) {
+                        return $row['status'] === $status;
+                    }
+                    if ($status === 'broken') {
+                        return collect($row['image_pairs'])->contains(fn (array $pair) => $pair['source_status'] === 'broken');
+                    }
+                    if ($status === 'visual') {
+                        return collect($row['image_pairs'])->contains(fn (array $pair) => in_array($pair['comparison_type'], ['visual', 'normalized'], true));
+                    }
+                    return collect($row['image_pairs'])->contains(fn (array $pair) => $pair['comparison_type'] === $status);
+                });
+            }));
         }
         $groupedComparisons = collect($imageComparisons)->groupBy('group_key')->map(function (Collection $rows) {
             $first = $rows->first();
@@ -3073,6 +3177,7 @@ class BikeproductsCatalogService
                 'status' => 'available',
                 'content_hash' => hash('sha256', $body),
                 'perceptual_hash' => $this->perceptualImageHash($body),
+                ...$this->normalizedPerceptualImageHashes($body),
                 'mime_type' => $mimeType ?: null,
                 'width' => is_array($image) ? (int) ($image[0] ?? 0) : null,
                 'height' => is_array($image) ? (int) ($image[1] ?? 0) : null,
@@ -3101,7 +3206,19 @@ class BikeproductsCatalogService
         }
 
         try {
-            $scaled = imagecreatetruecolor(9, 8);
+            return $this->perceptualImageHashFromResource($source);
+        } finally {
+            imagedestroy($source);
+        }
+    }
+
+    private function perceptualImageHashFromResource(\GdImage $source): ?string
+    {
+        $scaled = imagecreatetruecolor(9, 8);
+        if ($scaled === false) {
+            return null;
+        }
+        try {
             imagecopyresampled($scaled, $source, 0, 0, 0, 0, 9, 8, imagesx($source), imagesy($source));
             $bits = '';
             for ($y = 0; $y < 8; $y++) {
@@ -3115,8 +3232,6 @@ class BikeproductsCatalogService
                     $previous = $gray;
                 }
             }
-            imagedestroy($scaled);
-
             $hash = '';
             for ($index = 0; $index < strlen($bits); $index += 4) {
                 $hash .= dechex(bindec(substr($bits, $index, 4)));
@@ -3124,8 +3239,111 @@ class BikeproductsCatalogService
 
             return $hash;
         } finally {
+            imagedestroy($scaled);
+        }
+    }
+
+    /** @return array{normalized_crop_hash: ?string, normalized_white_hash: ?string} */
+    private function normalizedPerceptualImageHashes(string $binary): array
+    {
+        if (! function_exists('imagecreatefromstring')) {
+            return ['normalized_crop_hash' => null, 'normalized_white_hash' => null];
+        }
+        $source = @imagecreatefromstring($binary);
+        if ($source === false) {
+            return ['normalized_crop_hash' => null, 'normalized_white_hash' => null];
+        }
+
+        try {
+            $target = $this->imageAuditTargetSize();
+            $crop = $this->imageAuditCrop($source, $target['width'], $target['height']);
+            $white = $this->imageAuditFitWhite($source, $target['width'], $target['height']);
+
+            return [
+                'normalized_crop_hash' => $crop ? $this->perceptualImageHashFromResource($crop) : null,
+                'normalized_white_hash' => $white ? $this->perceptualImageHashFromResource($white) : null,
+            ];
+        } finally {
+            if (isset($crop) && $crop instanceof \GdImage) imagedestroy($crop);
+            if (isset($white) && $white instanceof \GdImage) imagedestroy($white);
             imagedestroy($source);
         }
+    }
+
+    /** @return array{width: int, height: int} */
+    private function imageAuditTargetSize(): array
+    {
+        if ($this->imageAuditTargetSize !== null) {
+            return $this->imageAuditTargetSize;
+        }
+        $settings = DB::table('settings')->whereIn('key', ['shop_good_width', 'shop_good_height'])->pluck('value', 'key');
+
+        return $this->imageAuditTargetSize = [
+            'width' => max(1, (int) ($settings['shop_good_width'] ?? 500)),
+            'height' => max(1, (int) ($settings['shop_good_height'] ?? 500)),
+        ];
+    }
+
+    private function isImageAtAuditTargetAspect(ShopGoodImage $image): bool
+    {
+        if (! $image->image_width || ! $image->image_height) {
+            return true;
+        }
+        $target = $this->imageAuditTargetSize();
+
+        return abs(($image->image_width / $image->image_height) - ($target['width'] / $target['height'])) <= 0.02;
+    }
+
+    /** @param array<int, ShopGoodImage> $availableImages */
+    private function matchingDatabaseImageIndex(array $availableImages, ?SupplierCatalogImageAudit $sourceAudit, string $sourceUrl): int|false
+    {
+        if ($sourceAudit?->content_hash) {
+            $index = collect($availableImages)->search(fn (ShopGoodImage $image) =>
+                $image->source_content_hash === $sourceAudit->content_hash || $image->content_hash === $sourceAudit->content_hash);
+            if ($index !== false) return $index;
+        }
+        if ($sourceAudit) {
+            $index = collect($availableImages)->search(function (ShopGoodImage $image) use ($sourceAudit): bool {
+                $distance = $this->perceptualHashDistance($sourceAudit->perceptual_hash, $image->perceptual_hash);
+                if ($distance !== null && $distance <= 6) return true;
+                if (! $this->isImageAtAuditTargetAspect($image)) return false;
+                foreach ([$sourceAudit->normalized_crop_hash, $sourceAudit->normalized_white_hash] as $hash) {
+                    $normalizedDistance = $this->perceptualHashDistance($hash, $image->perceptual_hash);
+                    if ($normalizedDistance !== null && $normalizedDistance <= 6) return true;
+                }
+
+                return false;
+            });
+            if ($index !== false) return $index;
+        }
+
+        return collect($availableImages)->search(fn (ShopGoodImage $image) => $this->sourceImageMatchesDatabasePath($sourceUrl, $image->file_path));
+    }
+
+    private function imageAuditCrop(\GdImage $source, int $targetWidth, int $targetHeight): \GdImage|false
+    {
+        $scale = max($targetWidth / imagesx($source), $targetHeight / imagesy($source));
+        $width = max(1, (int) round(imagesx($source) * $scale));
+        $height = max(1, (int) round(imagesy($source) * $scale));
+        $canvas = imagecreatetruecolor($targetWidth, $targetHeight);
+        if ($canvas === false) return false;
+        imagecopyresampled($canvas, $source, (int) round(($targetWidth - $width) / 2), (int) round(($targetHeight - $height) / 2), 0, 0, $width, $height, imagesx($source), imagesy($source));
+
+        return $canvas;
+    }
+
+    private function imageAuditFitWhite(\GdImage $source, int $targetWidth, int $targetHeight): \GdImage|false
+    {
+        $scale = min($targetWidth / imagesx($source), $targetHeight / imagesy($source));
+        $width = max(1, (int) round(imagesx($source) * $scale));
+        $height = max(1, (int) round(imagesy($source) * $scale));
+        $canvas = imagecreatetruecolor($targetWidth, $targetHeight);
+        if ($canvas === false) return false;
+        $white = imagecolorallocate($canvas, 255, 255, 255);
+        imagefilledrectangle($canvas, 0, 0, $targetWidth, $targetHeight, $white);
+        imagecopyresampled($canvas, $source, (int) round(($targetWidth - $width) / 2), (int) round(($targetHeight - $height) / 2), 0, 0, $width, $height, imagesx($source), imagesy($source));
+
+        return $canvas;
     }
 
     private function perceptualHashDistance(?string $left, ?string $right): ?int

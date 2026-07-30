@@ -347,7 +347,7 @@ class BikeproductsCatalogController extends Controller
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
             'search' => ['nullable', 'string', 'max:120'],
             'statuses' => ['nullable', 'array', 'max:1'],
-            'statuses.*' => ['string', 'in:match,different'],
+            'statuses.*' => ['string', 'in:match,different,content,visual,broken'],
         ]);
         return response()->json(['success' => true, 'data' => $this->cachedAudit(
             $snapshot,
@@ -511,7 +511,7 @@ class BikeproductsCatalogController extends Controller
             'scope' => ['required', 'in:goods,prices,stocks,properties,images'],
             'item_ids' => ['required', 'array', 'min:1', 'max:10000'],
             'item_ids.*' => ['integer', 'distinct'],
-            'image_mode' => ['nullable', 'in:append,replace'],
+            'image_mode' => ['nullable', 'in:append,replace,reconcile'],
         ]);
 
         $result = $this->runCatalogAction(

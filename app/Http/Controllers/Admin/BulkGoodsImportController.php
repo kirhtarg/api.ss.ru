@@ -3161,12 +3161,13 @@ class BulkGoodsImportController extends Controller
             }
         }
 
-        $imageRecord = static function ($filePath) use ($attachToVariation, $good, $variation) {
+        $imageRecord = static function ($filePath, ?string $sourceContentHash = null) use ($attachToVariation, $good, $variation) {
             if ($attachToVariation) {
                 return [
                     'good_id' => null,
                     'variation_id' => $variation->id,
                     'file_path' => $filePath,
+                    'source_content_hash' => $sourceContentHash,
                     'is_main' => false,
                     'sort_order' => 0,
                 ];
@@ -3176,6 +3177,7 @@ class BulkGoodsImportController extends Controller
                 'good_id' => $good->id,
                 'variation_id' => null,
                 'file_path' => $filePath,
+                'source_content_hash' => $sourceContentHash,
                 'is_main' => false,
                 'sort_order' => 0,
             ];
@@ -3190,7 +3192,10 @@ class BulkGoodsImportController extends Controller
                     if ($downloadResponse && isset($downloadResponse['data']['path'])) {
                         if (isset($downloadResponse['data']['skipped']) && $downloadResponse['data']['skipped']) {                             $this->importLogService->logImageSkipped($imageUrl, 'Файл уже существует на диске (пропущено API)', $good->sku ?? null);
                         }
-                        ShopGoodImage::create($imageRecord($downloadResponse['data']['path']));
+                        ShopGoodImage::create($imageRecord(
+                            $downloadResponse['data']['path'],
+                            $downloadResponse['data']['source_content_hash'] ?? null,
+                        ));
                         if (!(isset($downloadResponse['data']['skipped']) && $downloadResponse['data']['skipped'])) {
                             $stats['downloaded']++;
                         }

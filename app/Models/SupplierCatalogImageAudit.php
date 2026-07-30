@@ -17,6 +17,8 @@ class SupplierCatalogImageAudit extends Model
         'status',
         'content_hash',
         'perceptual_hash',
+        'normalized_crop_hash',
+        'normalized_white_hash',
         'mime_type',
         'width',
         'height',

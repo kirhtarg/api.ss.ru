@@ -14,6 +14,7 @@ class ShopGoodImage extends Model
         'good_id',
         'variation_id',
         'file_path',
+        'source_content_hash',
         'content_hash',
         'perceptual_hash',
         'image_width',
