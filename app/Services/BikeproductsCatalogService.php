@@ -371,9 +371,8 @@ class BikeproductsCatalogService
                     $allUrls = collect($this->imageSourcesForItem($item, $imageSourceFields, $imageBaseUrl))
                         ->pluck('url')
                         ->values();
-                    $urls = $contentAudit['status'] === 'completed'
-                        ? $allUrls->filter(fn (string $url) => $sourceAudits->get($this->sourceUrlHash($url))?->status === 'available')->values()
-                        : $allUrls;
+                    if ($contentAudit['status'] !== 'completed') { $skipped++; continue; }
+                    $urls = $allUrls->filter(fn (string $url) => $sourceAudits->get($this->sourceUrlHash($url))?->status === 'available')->values();
                     // With a completed audit, never erase working images when
                     // every source URL for this variation is broken.
                     if ($imageMode === 'replace' && $allUrls->isNotEmpty() && $urls->isEmpty()) { $skipped++; continue; }
@@ -1658,6 +1657,7 @@ class BikeproductsCatalogService
 
         $matches = $this->resolveImageSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code)
             ->mapWithKeys(fn (array $match, string $sku) => [$this->normalizeSku($sku) => $match]);
+        $contentAuditStatus = $this->imageContentAuditStatus($snapshot);
         $sourceAudits = SupplierCatalogImageAudit::query()
             ->where('snapshot_id', $snapshot->id)
             ->get(['source_url_hash', 'status', 'content_hash', 'perceptual_hash', 'normalized_crop_hash', 'normalized_white_hash', 'mime_type', 'width', 'height', 'error_message'])
@@ -1783,18 +1783,38 @@ class BikeproductsCatalogService
                     'is_match' => $databaseImage !== null,
                 ];
             }
-            $expectedCount = $sourceUrls->count();
+            $sourceStatusCounts = collect($imagePairs)->countBy('source_status');
+            $sourceTotalCount = $sourceUrls->count();
+            $availableSourceCount = (int) ($sourceStatusCounts['available'] ?? 0);
+            $brokenSourceCount = (int) ($sourceStatusCounts['broken'] ?? 0);
+            $unsupportedSourceCount = (int) ($sourceStatusCounts['unsupported'] ?? 0);
+            $hasUnavailableSource = ($brokenSourceCount + $unsupportedSourceCount) > 0;
+            $hasAvailableSource = $contentAuditStatus['status'] === 'completed' ? $availableSourceCount > 0 : $sourceTotalCount > 0;
+            $expectedCount = $contentAuditStatus['status'] === 'completed' ? $availableSourceCount : $sourceTotalCount;
             $actualCount = count($databasePaths);
-            $isMatch = $expectedCount === $actualCount && collect($imagePairs)->every('is_match');
+            $isMatch = ! $hasUnavailableSource && $expectedCount === $actualCount && collect($imagePairs)->every('is_match');
             $matchSummary = collect($imagePairs)->countBy('comparison_type')->all();
+            $variationLabel = $variation
+                ? $variation->attributeValues
+                    ->map(fn ($value) => trim(($value->attribute?->name ? $value->attribute->name.': ' : '').(string) $value->value))
+                    ->filter()
+                    ->implode(', ')
+                : null;
             $comparison = [
                 'item_id' => $item->id,
                 'external_sku' => $item->external_sku,
                 'match_type' => $match['type'],
                 'variation_id' => $variation?->id,
+                'variation_label' => $variationLabel,
                 'good_id' => $good->id,
                 'group_key' => 'good-'.$good->id,
+                'source_total_count' => $sourceTotalCount,
                 'expected_count' => $expectedCount,
+                'available_source_count' => $availableSourceCount,
+                'broken_source_count' => $brokenSourceCount,
+                'unsupported_source_count' => $unsupportedSourceCount,
+                'has_available_source' => $hasAvailableSource,
+                'has_unavailable_source' => $hasUnavailableSource,
                 'database_count' => $actualCount,
                 'is_match' => $isMatch,
                 'status' => $isMatch ? 'match' : 'different',
@@ -1827,6 +1847,7 @@ class BikeproductsCatalogService
         $stats = [
             'matched' => count(array_filter($imageComparisons, fn (array $row) => $row['is_match'])),
             'different' => count($coverageMismatches),
+            'actionable_different' => collect($coverageMismatches)->where('has_available_source', true)->count(),
             'filename_matches' => collect($imageComparisons)->flatMap(fn (array $row) => $row['image_pairs'])->where('comparison_type', 'filename')->count(),
             'content_matches' => collect($imageComparisons)->flatMap(fn (array $row) => $row['image_pairs'])->where('comparison_type', 'content')->count(),
             'visual_matches' => collect($imageComparisons)->flatMap(fn (array $row) => $row['image_pairs'])->where('comparison_type', 'visual')->count(),
@@ -1882,7 +1903,7 @@ class BikeproductsCatalogService
                 'hash_scan_limited' => false,
                 ...$stats,
             ],
-            'content_audit' => $this->imageContentAuditStatus($snapshot),
+            'content_audit' => $contentAuditStatus,
             'source_duplicate_urls' => collect($sourceUrlGroups)
                 ->filter(fn (array $skus) => count($skus) > 1)
                 ->take(50)
@@ -1916,6 +1937,7 @@ class BikeproductsCatalogService
     {
         return collect($this->imageAudit($snapshot, 1, 100000, $search, ['different'])['image_comparisons'])
             ->flatMap(fn (array $group) => $group['rows'])
+            ->filter(fn (array $row) => ($row['has_available_source'] ?? false) && ! ($row['source_only'] ?? false))
             ->pluck('item_id')
             ->map(fn ($id) => (int) $id)
             ->values()
