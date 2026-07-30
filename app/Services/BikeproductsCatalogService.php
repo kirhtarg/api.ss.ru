@@ -1763,7 +1763,12 @@ class BikeproductsCatalogService
                 if ($databaseImage && $sourceAudit?->content_hash
                     && in_array($comparisonType, ['content', 'visual', 'normalized'], true)
                     && $databaseImage->source_content_hash !== $sourceAudit->content_hash) {
-                    $sourceHashBackfill[$databaseImage->id] = $sourceAudit->content_hash;
+                    $sourceHashBackfill[$databaseImage->id] = [
+                        'source_content_hash' => $sourceAudit->content_hash,
+                        // MySQL validates non-nullable columns before checking
+                        // the duplicate id. The path is not updated by upsert.
+                        'file_path' => $databaseImage->file_path,
+                    ];
                 }
                 if ($imageIndex !== false) unset($availableImages[$imageIndex]);
                 $imagePairs[] = [
@@ -1808,7 +1813,7 @@ class BikeproductsCatalogService
         }
         if ($sourceHashBackfill !== []) {
             DB::table('shop_good_images')->upsert(
-                collect($sourceHashBackfill)->map(fn (string $hash, int $id) => ['id' => $id, 'source_content_hash' => $hash])->values()->all(),
+                collect($sourceHashBackfill)->map(fn (array $row, int $id) => ['id' => $id, ...$row])->values()->all(),
                 ['id'],
                 ['source_content_hash'],
             );
