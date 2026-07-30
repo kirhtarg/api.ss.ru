@@ -1431,6 +1431,10 @@ class BikeproductsCatalogService
         $this->ensureDefaultMappings($snapshot->supplier_code);
         $existing = $this->imageContentAuditStatus($snapshot);
         if ($existing['total'] > 0) {
+            if (($existing['database_pending'] ?? 0) > 0) {
+                $this->updateImageAuditSummary($snapshot, 'processing');
+                return ['started' => true, ...$this->imageContentAuditStatus($snapshot)];
+            }
             return ['started' => false, ...$existing];
         }
 
@@ -1476,7 +1480,10 @@ class BikeproductsCatalogService
             ->pluck('total', 'status');
         $total = (int) $counts->sum();
         $pending = (int) ($counts['pending'] ?? 0) + (int) ($counts['processing'] ?? 0);
-        $completed = $total > 0 && $pending === 0;
+        $databaseCoverage = $pending > 0 || $total === 0
+            ? ['total' => 0, 'hashed' => 0, 'unavailable' => 0, 'pending' => 0]
+            : $this->databaseImageHashCoverage($snapshot);
+        $completed = $total > 0 && $pending === 0 && $databaseCoverage['pending'] === 0;
         $summary = $snapshot->summary['image_content_audit'] ?? [];
 
         $status = $total === 0
@@ -1492,6 +1499,10 @@ class BikeproductsCatalogService
             'available' => (int) ($counts['available'] ?? 0),
             'broken' => (int) ($counts['broken'] ?? 0),
             'unsupported' => (int) ($counts['unsupported'] ?? 0),
+            'database_total' => $databaseCoverage['total'],
+            'database_hashed' => $databaseCoverage['hashed'],
+            'database_unavailable' => $databaseCoverage['unavailable'],
+            'database_pending' => $databaseCoverage['pending'],
             'completed_at' => $summary['completed_at'] ?? null,
         ];
     }
@@ -1557,7 +1568,11 @@ class BikeproductsCatalogService
             return;
         }
 
-        $this->auditDatabaseImagesForSnapshot($snapshot);
+        $databaseAudit = $this->auditDatabaseImagesForSnapshot($snapshot);
+        if ($databaseAudit['pending'] > 0) {
+            AuditSupplierCatalogImagesJob::dispatch($snapshot->id)->delay(now()->addSecond());
+            return;
+        }
         $this->updateImageAuditSummary($snapshot, 'completed');
     }
 
@@ -3131,49 +3146,117 @@ class BikeproductsCatalogService
         return $distance;
     }
 
-    private function auditDatabaseImagesForSnapshot(SupplierCatalogSnapshot $snapshot): void
+    /** @return array{total: int, hashed: int, unavailable: int, pending: int} */
+    private function databaseImageHashCoverage(SupplierCatalogSnapshot $snapshot): array
     {
-        $items = $snapshot->items()->get(['external_sku']);
-        $matches = $this->resolveImageSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code);
-        $variationIds = $matches->where('type', 'variation')->pluck('model.id')->filter()->unique()->values();
-        $goodIds = $matches->where('type', 'good')->pluck('model.id')->filter()->unique()->values();
-        if ($variationIds->isEmpty() && $goodIds->isEmpty()) {
-            return;
+        $query = $this->databaseImagesForSnapshot($snapshot);
+        if ($query === null) {
+            return ['total' => 0, 'hashed' => 0, 'unavailable' => 0, 'pending' => 0];
         }
 
-        ShopGoodImage::query()
-            ->where(function ($query) use ($variationIds, $goodIds) {
-                if ($variationIds->isNotEmpty()) {
-                    $query->whereIn('variation_id', $variationIds);
-                }
-                if ($goodIds->isNotEmpty()) {
-                    $query->orWhere(fn ($nested) => $nested->whereIn('good_id', $goodIds)->whereNull('variation_id'));
-                }
-            })
-            ->orderBy('id')
-            ->chunkById(200, function (Collection $images): void {
-                foreach ($images as $image) {
-                    if ($image->content_hash !== null || str_starts_with((string) $image->file_path, 'http')) {
-                        continue;
-                    }
-                    $path = frontend_public_path(ltrim((string) $image->file_path, '/'));
-                    if (! is_file($path) || filesize($path) > 20 * 1024 * 1024) {
-                        continue;
-                    }
+        $total = (int) (clone $query)->count();
+        $hashed = (int) (clone $query)->whereNotNull('content_hash')->count();
+        $unavailable = (int) (clone $query)->whereNull('content_hash')->whereNotNull('content_checked_at')->count();
+
+        return [
+            'total' => $total,
+            'hashed' => $hashed,
+            'unavailable' => $unavailable,
+            'pending' => max(0, $total - $hashed - $unavailable),
+        ];
+    }
+
+    /** @return \Illuminate\Database\Eloquent\Builder<ShopGoodImage>|null */
+    private function databaseImagesForSnapshot(SupplierCatalogSnapshot $snapshot)
+    {
+        $version = $snapshot->updated_at?->format('Uu') ?? '0';
+        $owners = Cache::store('file')->remember(
+            'supplier-image-audit-owners:'.$snapshot->id.':'.$version,
+            now()->addHour(),
+            function () use ($snapshot): array {
+                $items = $snapshot->items()->get(['external_sku']);
+                $matches = $this->resolveImageSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code);
+                return [
+                    'variation_ids' => $matches->where('type', 'variation')->pluck('model.id')->filter()->unique()->values()->all(),
+                    'good_ids' => $matches->where('type', 'good')->pluck('model.id')->filter()->unique()->values()->all(),
+                ];
+            },
+        );
+        $variationIds = collect($owners['variation_ids'] ?? []);
+        $goodIds = collect($owners['good_ids'] ?? []);
+        if ($variationIds->isEmpty() && $goodIds->isEmpty()) {
+            return null;
+        }
+
+        return ShopGoodImage::query()->where(function ($query) use ($variationIds, $goodIds) {
+            if ($variationIds->isNotEmpty()) {
+                $query->whereIn('variation_id', $variationIds);
+            }
+            if ($goodIds->isNotEmpty()) {
+                $query->orWhere(fn ($nested) => $nested->whereIn('good_id', $goodIds)->whereNull('variation_id'));
+            }
+        });
+    }
+
+    /** @return array{pending: int} */
+    private function auditDatabaseImagesForSnapshot(SupplierCatalogSnapshot $snapshot): array
+    {
+        $query = $this->databaseImagesForSnapshot($snapshot);
+        if ($query === null) {
+            return ['pending' => 0];
+        }
+
+        // This runs in the same background queue as supplier URLs. Keep each
+        // pass short, then enqueue the next one so the UI remains responsive.
+        $images = $query->whereNull('content_hash')->whereNull('content_checked_at')
+            ->orderBy('id')->limit(25)->get();
+        foreach ($images as $image) {
+            $binary = $this->databaseImageBinary((string) $image->file_path);
+            if ($binary === null) {
+                $image->update(['content_checked_at' => now()]);
+                continue;
+            }
+            $dimensions = @getimagesizefromstring($binary);
+            $image->update([
+                'content_hash' => hash('sha256', $binary),
+                'perceptual_hash' => $this->perceptualImageHash($binary),
+                'image_width' => is_array($dimensions) ? (int) ($dimensions[0] ?? 0) : null,
+                'image_height' => is_array($dimensions) ? (int) ($dimensions[1] ?? 0) : null,
+                'content_checked_at' => now(),
+            ]);
+        }
+
+        return ['pending' => $this->databaseImageHashCoverage($snapshot)['pending']];
+    }
+
+    private function databaseImageBinary(string $filePath): ?string
+    {
+        $filePath = trim($filePath);
+        if ($filePath === '') {
+            return null;
+        }
+        if (! str_starts_with($filePath, 'http')) {
+            try {
+                $path = frontend_public_path(ltrim($filePath, '/'));
+                if (is_file($path) && filesize($path) <= 20 * 1024 * 1024) {
                     $binary = @file_get_contents($path);
-                    if ($binary === false || $binary === '') {
-                        continue;
+                    if ($binary !== false && $binary !== '') {
+                        return $binary;
                     }
-                    $dimensions = @getimagesizefromstring($binary);
-                    $image->update([
-                        'content_hash' => hash('sha256', $binary),
-                        'perceptual_hash' => $this->perceptualImageHash($binary),
-                        'image_width' => is_array($dimensions) ? (int) ($dimensions[0] ?? 0) : null,
-                        'image_height' => is_array($dimensions) ? (int) ($dimensions[1] ?? 0) : null,
-                        'content_checked_at' => now(),
-                    ]);
                 }
-            });
+            } catch (\Throwable) {
+                // The public URL below is a safe fallback when API and shop
+                // frontend are deployed on separate hosts.
+            }
+            $filePath = 'https://skateandsnow.ru/'.ltrim($filePath, '/');
+        }
+        try {
+            $response = Http::timeout(20)->connectTimeout(8)->get($filePath);
+            $binary = $response->successful() ? $response->body() : '';
+            return $binary !== '' && strlen($binary) <= 20 * 1024 * 1024 ? $binary : null;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     private function updateImageAuditSummary(SupplierCatalogSnapshot $snapshot, string $status): void
